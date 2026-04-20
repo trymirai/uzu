@@ -1,0 +1,27 @@
+[package]
+name = "hanashi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+shoji.workspace = true
+token-stream-parser.workspace = true
+tokenizers.workspace = true
+openai-harmony.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+minijinja.workspace = true
+minijinja-contrib.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
+llm_json.workspace = true
+libc.workspace = true
+indexmap.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true

@@ -1,32 +1,19 @@
-// needed for tests to resolve `uzu::` imports
-extern crate self as uzu;
+#[cfg(feature = "bindings-uniffi")]
+shoji::uniffi_reexport_scaffolding!();
+#[cfg(feature = "bindings-uniffi")]
+uniffi::setup_scaffolding!();
 
-mod array;
-mod audio;
-mod classifier;
-mod config;
-mod data_type;
-mod encodable_block;
-mod forward_pass;
-mod language_model;
-mod parameters;
-mod speculators;
-#[cfg(feature = "tracing")]
-mod tracer;
-mod trie;
-mod utils;
+#[cfg(not(target_family = "wasm"))]
+pub mod device;
+#[cfg(not(target_family = "wasm"))]
+pub mod engine;
+#[cfg(not(target_family = "wasm"))]
+pub mod helpers;
+#[cfg(not(target_family = "wasm"))]
+pub mod logs;
+#[cfg(not(target_family = "wasm"))]
+pub mod registry;
+#[cfg(not(target_family = "wasm"))]
+pub mod storage;
 
-pub mod backends;
-pub mod prelude;
-pub mod session;
-
-pub use array::{Array, ArrayContextExt, allocation_as_slice};
-#[cfg(metal_backend)]
-pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
-pub use config::ConfigDataType;
-pub use data_type::{ArrayElement, DataType};
-pub use language_model::gumbel::{gumbel_float, revidx};
-pub use parameters::{ParameterLoader, read_safetensors_metadata};
-#[cfg(feature = "tracing")]
-pub use tracer::TraceValidator;
-pub use utils::VERSION;
+pub use backend_uzu::*;

@@ -1,0 +1,49 @@
+{
+    "jinja": {
+        "template": "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}",
+        "required_functions": [],
+        "preamble_control_key": "add_generation_prompt",
+        "bos_token_key": "bos_token"
+    },
+    "canonization": {
+        "role_key": "role",
+        "type_key": "type",
+        "text_key": "text",
+        "url_key": "url"
+    },
+    "rendering": {
+        "system": {
+            "role": "system",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        },
+        "user": {
+            "role": "user",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        },
+        "assistant": {
+            "role": "assistant",
+            "message": {
+                "content": {
+                    "required": true,
+                    "blocks": [
+                        "text"
+                    ]
+                }
+            }
+        }
+    }
+}

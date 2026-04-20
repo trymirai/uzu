@@ -1,0 +1,341 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "message",
+                "open_token": "<|start|>",
+                "close_tokens": [
+                    "<|end|>",
+                    "<|return|>",
+                    "<|call|>"
+                ],
+                "groups": [
+                    {
+                        "type": "greedy",
+                        "name": "role"
+                    },
+                    {
+                        "type": "open",
+                        "name": "channel",
+                        "open_token": "<|channel|>"
+                    },
+                    {
+                        "type": "open",
+                        "name": "content_type",
+                        "open_token": "<|constrain|>"
+                    },
+                    {
+                        "type": "open",
+                        "name": "content",
+                        "open_token": "<|message|>"
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {
+        "root": [
+            {
+                "type": "get",
+                "key": "$value"
+            },
+            {
+                "type": "reduce",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "role"
+                    }
+                ],
+                "if": {
+                    "type": "equals",
+                    "value": "assistant"
+                },
+                "then": [
+                    {
+                        "type": "call",
+                        "name": "merge_assistant"
+                    }
+                ]
+            }
+        ],
+        "merge_assistant": [
+            {
+                "type": "object",
+                "fields": {
+                    "role": [
+                        {
+                            "type": "get",
+                            "path": [
+                                0,
+                                "role"
+                            ]
+                        }
+                    ],
+                    "content": [
+                        {
+                            "type": "each",
+                            "apply": [
+                                {
+                                    "type": "call",
+                                    "name": "map_section"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "filter",
+                            "condition": {
+                                "type": "not",
+                                "condition": {
+                                    "type": "is_null"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "map_section": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "channel"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "starts_with",
+                            "value": "commentary to"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "build_tool_call"
+                            }
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "resolve",
+                        "key": "channel",
+                        "map": {
+                            "final": "$text",
+                            "analysis": "reasoning"
+                        }
+                    },
+                    {
+                        "type": "switch",
+                        "key": [
+                            {
+                                "type": "get",
+                                "key": "channel"
+                            }
+                        ],
+                        "cases": [
+                            {
+                                "when": {
+                                    "type": "is_null"
+                                },
+                                "then": [
+                                    {
+                                        "type": "literal",
+                                        "value": null
+                                    }
+                                ]
+                            }
+                        ],
+                        "default": [
+                            {
+                                "type": "object",
+                                "fields": {
+                                    "type": [
+                                        {
+                                            "type": "get",
+                                            "key": "channel"
+                                        }
+                                    ],
+                                    "value": [
+                                        {
+                                            "type": "get",
+                                            "key": "content"
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "message": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "path": [
+                            "$value",
+                            "channel"
+                        ]
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "commentary"
+                        },
+                        "then": [
+                            {
+                                "type": "switch",
+                                "key": [
+                                    {
+                                        "type": "get",
+                                        "path": [
+                                            "$value",
+                                            "content"
+                                        ]
+                                    }
+                                ],
+                                "cases": [
+                                    {
+                                        "when": {
+                                            "type": "is_null"
+                                        },
+                                        "then": [
+                                            {
+                                                "type": "get",
+                                                "key": "$value"
+                                            }
+                                        ]
+                                    }
+                                ],
+                                "default": [
+                                    {
+                                        "type": "get",
+                                        "key": "$value"
+                                    },
+                                    {
+                                        "type": "object",
+                                        "fields": {
+                                            "role": [
+                                                {
+                                                    "type": "get",
+                                                    "key": "role"
+                                                }
+                                            ],
+                                            "channel": [
+                                                {
+                                                    "type": "literal",
+                                                    "value": "analysis"
+                                                }
+                                            ],
+                                            "content": [
+                                                {
+                                                    "type": "get",
+                                                    "key": "content"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "when": {
+                            "type": "starts_with",
+                            "value": "commentary to"
+                        },
+                        "then": [
+                            {
+                                "type": "on",
+                                "field": "$finished",
+                                "with": "$value",
+                                "do": [
+                                    {
+                                        "type": "object",
+                                        "fields": {
+                                            "role": [
+                                                {
+                                                    "type": "get",
+                                                    "key": "role"
+                                                }
+                                            ],
+                                            "channel": [
+                                                {
+                                                    "type": "get",
+                                                    "key": "channel"
+                                                }
+                                            ],
+                                            "content": [
+                                                {
+                                                    "type": "get",
+                                                    "key": "content"
+                                                },
+                                                {
+                                                    "type": "parse_json",
+                                                    "repair": true
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "get",
+                        "key": "$value"
+                    }
+                ]
+            }
+        ],
+        "build_tool_call": [
+            {
+                "type": "object",
+                "fields": {
+                    "type": [
+                        {
+                            "type": "literal",
+                            "value": "tool_call"
+                        }
+                    ],
+                    "value": [
+                        {
+                            "type": "object",
+                            "fields": {
+                                "name": [
+                                    {
+                                        "type": "get",
+                                        "key": "channel"
+                                    },
+                                    {
+                                        "type": "regex_find_all",
+                                        "pattern": "\\.([^.\\s]+)"
+                                    },
+                                    {
+                                        "type": "first"
+                                    }
+                                ],
+                                "arguments": [
+                                    {
+                                        "type": "get",
+                                        "key": "content"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

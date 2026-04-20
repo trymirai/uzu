@@ -33,12 +33,12 @@ For a detailed explanation of the architecture, please refer to the [documentati
 Or you can download any supported model that has already been converted using:
 
 ```bash
-cd ./tools/helpers/
-uv run main.py list-models # show the list of supported models
-uv run main.py download-model {REPO_ID} # download a specific model using repo_id
+cd ./tools/
+uv run downloader list # show the list of supported models
+uv run downloader download {REPO_ID} # download a specific model using repo_id
 ```
 
-After that, you can find the downloaded model at `./models/{VERSION}/`.
+After that, you can find the downloaded model at `./workspace/models/{VERSION}/`.
 
 Alternatively, you can export a specific model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
@@ -133,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 To run benchmarks, you can use the following command:
 
 ```bash
-cargo run --release -p cli -- bench ./models/{ENGINE_VERSION}/{MODEL_NAME} ./models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_task.json ./models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench ./workspace/models/{ENGINE_VERSION}/{MODEL_NAME} ./workspace/models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_task.json ./workspace/models/{ENGINE_VERSION}/{MODEL_NAME}/benchmark_result.json
 ```
 
 `benchmark_task.json` will be automatically generated after the model is downloaded via `./tools/helpers/`, as described earlier.

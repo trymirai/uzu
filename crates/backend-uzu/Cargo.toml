@@ -1,0 +1,114 @@
+[package]
+name = "backend-uzu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+build = "build/main.rs"
+
+[dependencies]
+dsl.workspace = true
+shoji.workspace = true
+half.workspace = true
+ndarray.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+rangemap.workspace = true
+bytemuck.workspace = true
+zerocopy = { workspace = true, features = ["derive"] }
+xxhash-rust = { workspace = true, features = ["xxh3"] }
+memmap2.workspace = true
+num-traits.workspace = true
+regex.workspace = true
+libc.workspace = true
+minijinja.workspace = true
+minijinja-contrib.workspace = true
+rand.workspace = true
+sysinfo.workspace = true
+itertools.workspace = true
+schemars.workspace = true
+rustix.workspace = true
+
+# metal on macos requires objc2, bytesize, metal
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
+objc2 = { workspace = true, optional = true }
+objc2-foundation = { workspace = true, optional = true }
+bytesize = { workspace = true, optional = true }
+metal = { workspace = true, optional = true }
+
+# grammar on non-wasm requires xgrammar
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+xgrammar = { workspace = true, optional = true }
+
+[dev-dependencies]
+test-tag.workspace = true
+proptest.workspace = true
+criterion.workspace = true
+criterion-macro.workspace = true
+rand_distr.workspace = true
+is_close.workspace = true
+serde_json5.workspace = true
+schemars.workspace = true
+comfy-table.workspace = true
+indicatif.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = { workspace = true, default-features = true }
+proptest = { workspace = true, default-features = true }
+
+[build-dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+bindgen.workspace = true
+walkdir.workspace = true
+depfile.workspace = true
+tempfile.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["unbounded_depth"] }
+futures.workspace = true
+tokio.workspace = true
+blake3.workspace = true
+quote.workspace = true
+proc-macro2.workspace = true
+syn.workspace = true
+prettyplease.workspace = true
+itertools.workspace = true
+cbindgen.workspace = true
+rhai.workspace = true
+
+# metal on macos requires clang-ast for dsl build
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
+clang-ast = { workspace = true, optional = true }
+
+[features]
+default = ["metal", "grammar"]
+
+metal = [
+    "dep:clang-ast",
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:bytesize",
+    "dep:metal",
+]
+grammar = ["dep:xgrammar"]
+tracing = []
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+
+[[test]]
+name = "kernel"
+path = "tests/unit/kernel/test_entry.rs"
+
+[[bench]]
+name = "kernel"
+path = "tests/unit/kernel/bench_entry.rs"
+
+[[test]]
+name = "performance"
+path = "tests/performance/mod.rs"

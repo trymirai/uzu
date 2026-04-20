@@ -1,0 +1,215 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "message",
+                "open_token": "<|turn>",
+                "close_tokens": [
+                    "<turn|>",
+                    "<eos>"
+                ],
+                "groups": [
+                    {
+                        "type": "greedy",
+                        "name": "role",
+                        "capturing_limit": 1
+                    },
+                    {
+                        "type": "greedy",
+                        "name": "content",
+                        "groups": [
+                            {
+                                "type": "bounded",
+                                "name": "channel",
+                                "open_token": "<|channel>",
+                                "close_tokens": [
+                                    "<channel|>"
+                                ],
+                                "groups": [
+                                    {
+                                        "type": "greedy",
+                                        "name": "channel_name",
+                                        "capturing_limit": 1
+                                    },
+                                    {
+                                        "type": "greedy",
+                                        "name": "channel_content"
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "bounded",
+                                "name": "tool_call",
+                                "open_token": "<|tool_call>",
+                                "close_tokens": [
+                                    "<tool_call|>"
+                                ]
+                            },
+                            {
+                                "type": "bounded",
+                                "name": "tool_call_result",
+                                "open_token": "<|tool_response>",
+                                "close_tokens": [
+                                    "<tool_response|>"
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {
+        "content": [
+            {
+                "type": "get",
+                "key": "$value"
+            },
+            {
+                "type": "each",
+                "apply": [
+                    {
+                        "type": "call",
+                        "name": "map_content_section"
+                    }
+                ]
+            },
+            {
+                "type": "filter",
+                "condition": {
+                    "type": "not",
+                    "condition": {
+                        "type": "is_null"
+                    }
+                }
+            }
+        ],
+        "map_content_section": [
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "type"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "equals",
+                            "value": "channel"
+                        },
+                        "then": [
+                            {
+                                "type": "call",
+                                "name": "map_channel"
+                            }
+                        ]
+                    }
+                ],
+                "default": []
+            }
+        ],
+        "map_channel": [
+            {
+                "type": "get",
+                "key": "value"
+            },
+            {
+                "type": "resolve",
+                "key": "channel_name",
+                "map": {
+                    "thought": "reasoning"
+                }
+            },
+            {
+                "type": "switch",
+                "key": [
+                    {
+                        "type": "get",
+                        "key": "channel_name"
+                    }
+                ],
+                "cases": [
+                    {
+                        "when": {
+                            "type": "is_null"
+                        },
+                        "then": [
+                            {
+                                "type": "literal",
+                                "value": null
+                            }
+                        ]
+                    }
+                ],
+                "default": [
+                    {
+                        "type": "object",
+                        "fields": {
+                            "type": [
+                                {
+                                    "type": "get",
+                                    "key": "channel_name"
+                                }
+                            ],
+                            "value": [
+                                {
+                                    "type": "get",
+                                    "key": "channel_content"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ],
+        "tool_call": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "regex_replace",
+                        "pattern": "call:(\\w+)\\{([\\s\\S]*)\\}",
+                        "template": "{\"name\": \"$1\", \"arguments\": {$2}}"
+                    },
+                    {
+                        "type": "regex_replace",
+                        "pattern": "<\\|\"\\|>",
+                        "template": "\""
+                    },
+                    {
+                        "type": "parse_json",
+                        "repair": true
+                    }
+                ]
+            }
+        ],
+        "tool_call_result": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "regex_replace",
+                        "pattern": "^response:(\\w+)\\{([\\s\\S]*)\\}",
+                        "template": "{\"name\": \"$1\", \"value\": {$2}}"
+                    },
+                    {
+                        "type": "regex_replace",
+                        "pattern": "<\\|\"\\|>",
+                        "template": "\""
+                    },
+                    {
+                        "type": "parse_json",
+                        "repair": true
+                    }
+                ]
+            }
+        ]
+    }
+}

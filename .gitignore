@@ -24,7 +24,8 @@
 /models/
 
 # Local-only dev tools
-/crates/uzu/examples/quick_chat.rs
-/external
+.env
+.DS_Store
+.claude/settings.local.json
 
 tools/gpu_trace/*.json

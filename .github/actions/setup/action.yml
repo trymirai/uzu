@@ -10,8 +10,8 @@ inputs:
     description: "Install metal toolchain"
     required: false
     default: 'false'
-  test_model:
-    description: "Download test model"
+  test_data:
+    description: "Download test data"
     required: false
     default: 'false'
   nextest:
@@ -51,14 +51,22 @@ runs:
     - if: inputs.nextest == 'true'
       uses: taiki-e/install-action@nextest
 
-    - if: inputs.test_model == 'true'
+    - if: inputs.test_data == 'true'
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
 
-    - if: inputs.test_model == 'true'
+    - if: inputs.test_data == 'true'
       run: |
         mkdir -p ~/.cache/ci-uzu/models
-        ln -sf ~/.cache/ci-uzu/models models
+        ln -sf ~/.cache/ci-uzu/models workspace/models
         ./scripts/download_test_model.sh
+
+        mkdir -p ~/.cache/ci-uzu/data/configs
+        mkdir -p ~/.cache/ci-uzu/data/tokenizers
+        ln -sf ~/.cache/ci-uzu/data/configs workspace/data/configs
+        ln -sf ~/.cache/ci-uzu/data/tokenizers workspace/data/tokenizers
+        cd ./tools/
+        uv run export configs
+        uv run export tokenizers
       shell: bash

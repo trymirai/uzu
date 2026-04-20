@@ -1,0 +1,51 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "message",
+                "open_token": "<|start_header_id|>",
+                "close_tokens": [
+                    "<|eot_id|>"
+                ],
+                "groups": [
+                    {
+                        "type": "greedy",
+                        "name": "role",
+                        "capturing_limit": 1
+                    },
+                    {
+                        "type": "open",
+                        "name": "content",
+                        "open_token": "<|end_header_id|>",
+                        "groups": [
+                            {
+                                "type": "bounded",
+                                "name": "tool_call",
+                                "open_token": "<tool_call>",
+                                "close_tokens": [
+                                    "</tool_call>"
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {
+        "tool_call": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "parse_json",
+                        "repair": true
+                    }
+                ]
+            }
+        ]
+    }
+}

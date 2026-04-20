@@ -1,0 +1,115 @@
+{
+    "reduction": {
+        "groups": [
+            {
+                "type": "bounded",
+                "name": "message",
+                "open_token": "<|start_header_id|>",
+                "close_tokens": [
+                    "<|eot_id|>",
+                    "<|eom_id|>"
+                ],
+                "groups": [
+                    {
+                        "type": "greedy",
+                        "name": "role",
+                        "capturing_limit": 1
+                    },
+                    {
+                        "type": "open",
+                        "name": "content",
+                        "open_token": "<|end_header_id|>",
+                        "groups": [
+                            {
+                                "type": "open",
+                                "name": "tool_call",
+                                "open_token": "<|python_tag|>"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    "transformation": {
+        "tool_call": [
+            {
+                "type": "on",
+                "field": "$finished",
+                "with": "$value",
+                "do": [
+                    {
+                        "type": "switch",
+                        "key": [],
+                        "cases": [
+                            {
+                                "when": {
+                                    "type": "contains",
+                                    "value": ".call("
+                                },
+                                "then": [
+                                    {
+                                        "type": "regex_replace",
+                                        "pattern": "(\\w+)\\.call\\(([\\s\\S]*)\\)",
+                                        "template": "{\"name\": \"$1\", \"arguments\": {$2}}"
+                                    },
+                                    {
+                                        "type": "regex_replace",
+                                        "regex_engine": "extended",
+                                        "pattern": "(\\w+)=('(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|.*?)(?=,\\s*\\w+=|[}\\]]|$)",
+                                        "template": "\"$1\": $2"
+                                    },
+                                    {
+                                        "type": "parse_json",
+                                        "repair": true
+                                    }
+                                ]
+                            },
+                            {
+                                "when": {
+                                    "type": "starts_with",
+                                    "value": "{"
+                                },
+                                "then": [
+                                    {
+                                        "type": "regex_find_all",
+                                        "pattern": "([^;]+)"
+                                    },
+                                    {
+                                        "type": "each",
+                                        "apply": [
+                                            {
+                                                "type": "regex_replace",
+                                                "pattern": "\"type\"\\s*:\\s*\"function\"\\s*,\\s*\"function\"\\s*:\\s*(?:\\{\\s*\"name\"\\s*:)?",
+                                                "template": "\"name\":"
+                                            },
+                                            {
+                                                "type": "regex_replace",
+                                                "pattern": "\"parameters\"",
+                                                "template": "\"arguments\""
+                                            },
+                                            {
+                                                "type": "parse_json",
+                                                "repair": true
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ],
+                        "default": [
+                            {
+                                "type": "format",
+                                "template": "{\"name\": \"code_interpreter\", \"arguments\": {\"code\": \"{}\"}}"
+                            },
+                            {
+                                "type": "parse_json",
+                                "repair": true
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

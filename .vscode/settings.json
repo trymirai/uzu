@@ -1,4 +1,28 @@
 {
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit",
+  },
+  "files.associations": {
+    "*.h": "metal",
+  },
+  "rust-analyzer.rustfmt.extraArgs": [
+    "+nightly"
+  ],
+  "[rust]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+  },
+  "rust-analyzer.check.workspace": false,
+  "rust-analyzer.cargo.allTargets": false,
+  "rust-analyzer.check.noDefaultFeatures": true,
+  "rust-analyzer.testExplorer": true,
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.procMacro.enable": true,
+  "[metal]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "eugenebokhan.metal-analyzer",
+  },
   "metal-analyzer.diagnostics.onType": true,
   "metal-analyzer.diagnostics.onSave": true,
   "metal-analyzer.diagnostics.debounceMs": 300,
@@ -9,36 +33,34 @@
   "metal-analyzer.formatting.command": "clang-format",
   "metal-analyzer.formatting.args": [],
   "metal-analyzer.diagnostics.scope": "workspace",
-  "metal-analyzer.indexing.excludePaths": [
-    "external/uzu-plus"
-  ],
   "metal-analyzer.compiler.includePaths": [],
   "metal-analyzer.compiler.extraFlags": [],
-  "editor.formatOnSave": true,
-  "editor.codeActionsOnSave": {
-    "source.organizeImports": "explicit",
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
   },
-  "rust-analyzer.rustfmt.extraArgs": [
-    "+nightly"
+  "python.defaultInterpreterPath": "tools/.venv/bin/python",
+  "python.testing.pytestArgs": [
+    "tests"
   ],
-  "rust-analyzer.check.workspace": false,
-  "rust-analyzer.cargo.allTargets": false,
-  "rust-analyzer.check.noDefaultFeatures": true,
-  "rust-analyzer.testExplorer": true,
-  "[rust]": {
-    "editor.defaultFormatter": "rust-lang.rust-analyzer",
-  },
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": false,
+  "ruff.path": [
+    "tools/.venv/bin/ruff"
+  ],
   "[swift]": {
     "editor.formatOnSave": true,
   },
   "[toml]": {
+    "editor.formatOnSave": true,
     "editor.defaultFormatter": "tamasfe.even-better-toml",
   },
-  "[metal]": {
-    "editor.defaultFormatter": "eugenebokhan.metal-analyzer",
+  "[json]": {
     "editor.formatOnSave": true,
-  },
-  "files.associations": {
-    "*.h": "metal",
+    "editor.defaultFormatter": "vscode.json-language-features"
   },
 }

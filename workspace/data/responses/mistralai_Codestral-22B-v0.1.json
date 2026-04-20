@@ -1,0 +1,73 @@
+[
+    {
+        "repo_id": "mistralai/Codestral-22B-v0.1",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<s>[INST] What is the current temperature in London?[/INST]",
+            "completion": "I'm an AI and I don't have personal experiences or the ability to directly access real-time data. However, I can help you find the current temperature in London. As of now, the current temperature in London is approximately 15\u00b0C (59\u00b0F) with a light breeze. However, this information might have changed. I recommend checking a reliable weather website or app for the most accurate and up-to-date information.</s>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "mistralai/Codestral-22B-v0.1",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<s>[INST] You are a helpful assistant\n\nWhat is the current wind speed in London?[/INST]",
+            "completion": "I'm an AI and I don't have the ability to experience the physical world, including weather conditions. However, I can provide you with real-time weather information. As of now, the wind speed in London is 10 miles per hour.</s>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "mistralai/Codestral-22B-v0.1",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<s>[INST] You are a helpful assistant\n\nWhat is the current temperature and wind speed in London?[/INST]",
+            "completion": "I'm an AI and I don't have the ability to experience or perceive the physical world, including weather conditions. However, I can provide you with real-time weather information. As of now, the current temperature in London is approximately 15\u00b0C (59\u00b0F) with a wind speed of 10 miles per hour. Please check a reliable weather source for the most accurate and up-to-date information.</s>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    }
+]

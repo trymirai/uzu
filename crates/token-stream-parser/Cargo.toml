@@ -1,0 +1,22 @@
+[package]
+name = "token-stream-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+json-transform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+jsonschema.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokenizers.workspace = true
+tracing-subscriber.workspace = true
+tracing-tree.workspace = true

@@ -1,0 +1,1636 @@
+[
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\nThinking Process:\n\n1.  **Identify the user's request:** The user is asking for the current temperature in London.\n2.  **Check available resources:** I am a large language model (Gemma 4). I do not have built-in, real-time access to the internet, current weather data, or external APIs (like weather services) unless a specific tool/endpoint has been provided in the prompt.\n3.  **Review instructions/constraints:** The instructions state I must not use tools unless explicitly provided. No tools were provided in this prompt.\n4.  **Determine feasibility:** I cannot provide real-time, up-to-the-minute weather information.\n5.  **Formulate the response:**\n    *   Acknowledge the request.\n    *   State the limitation (lack of real-time data access).\n    *   Advise the user on how to find the information (search engine, dedicated weather app, weather website).\n6.  **Final output generation.**<channel|>I do not have access to real-time information like current weather conditions.\n\nTo get the current temperature in London, please check a reliable weather website (like the BBC Weather or AccuWeather) or use a search engine.<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "I am sorry, but I do not have real-time access to current weather information, so I cannot tell you the current temperature in London. Please check a reliable weather website or app for the most up-to-date information.<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\nThinking Process:\n\n1.  **Analyze the Request:** The user is asking for the current temperature in London.\n2.  **Determine Information Type:** This requires real-time, external, up-to-date data (weather data).\n3.  **Check Capabilities/Limitations:**\n    *   I am Gemma 4, an LLM.\n    *   I do not have inherent real-time access to the internet, live weather APIs, or GPS location services unless a specific tool or external API endpoint is provided in the current context.\n    *   No tools were provided in the prompt.\n4.  **Formulate the Response:** I must clearly state that I cannot provide real-time data and instruct the user on how they can find the answer.\n\n5.  **Drafting the Answer (Self-Correction/Refinement):** Instead of just saying \"I don't know,\" I should be helpful. I should tell them *where* to look (Google, weather apps, etc.).\n\n6.  **Final Output Generation.**<channel|>I do not have access to real-time data, so I cannot give you the current temperature in London.\n\nTo get the most accurate, up-to-the-minute weather information, please check a reliable source such as:\n\n*   Google Search (by typing \"weather in London\")\n*   A dedicated weather app (e.g., AccuWeather, BBC Weather)\n*   The Meteorological Office (Met Office) website<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "I do not have real-time access to current weather information, so I cannot tell you the current temperature in London.\n\nTo find out the current temperature, I recommend checking a reliable weather website or using a weather application.<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\n1. **Analyze the user request:** The user is asking for \"the current temperature in London\".\n\n2. **Examine available tools:** I have one tool available: `get_current_temperature`.\n\n3. **Analyze the `get_current_temperature` function signature:**\n   - It requires a `location` object.\n   - The `location` object requires `city` (STRING) and `country` (STRING).\n   - It requires a `unit` (STRING, enum: 'celsius', 'fahrenheit').\n\n4. **Identify missing information:**\n   - The user provided the city: \"London\".\n   - The user *did not* provide the country for London. While London is generally known to be in the UK, the tool specification requires the country explicitly.\n   - The user *did not* specify a unit (Celsius or Fahrenheit).\n\n5. **Determine the next step:** Since required parameters (`country` and `unit`) are missing for the tool call, I cannot fulfill the request immediately. I must ask the user for the missing information.\n\n6. **Formulate the response:** The response should acknowledge the request and ask for the necessary details (country and unit).\n\n7. **Refine the response:** Ask for the country of London and the preferred temperature unit.<channel|>I can help with that! Could you please provide the country for London and which unit you would like the temperature in (Celsius or Fahrenheit)?<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "Could you please specify the country for London, and what unit you would like the temperature in (Celsius or Fahrenheit)?<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\n1. **Analyze the user's request:** The user is asking for \"the current temperature in London.\"\n\n2. **Examine available tools:** I have one tool available: `get_current_wind_speed(location: string)`.\n\n3. **Determine tool relevance:**\n    * The user is asking for *temperature*.\n    * The available tool provides *wind speed*.\n    * There is no tool available to get the *temperature*.\n\n4. **Formulate the response:** Since the available tool cannot fulfill the request (it only gets wind speed, not temperature), I must inform the user about this limitation. I should respond directly to the user in natural language, explaining that I cannot provide the temperature with the current tools.\n\n5. **Final Answer Generation:** Construct a user-facing response that politely states the inability to fulfill the request due to tool limitations.<channel|>I'm sorry, I cannot provide the current temperature. I only have access to a tool that can get the current wind speed.<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "I do not have the capability to provide real-time weather information such as the current temperature. I can, however, get the current wind speed if you provide a location.<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|><|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\n1. **Analyze the Request:** The user is asking for \"the current temperature in London\".\n\n2. **Examine Available Tools:**\n    * `get_current_temperature`: Gets the current temperature. It requires `location` (which needs `city` and `country`) and `unit`.\n    * `get_current_wind_speed`: Gets the wind speed. It requires a `location` string (\"City, Country\").\n\n3. **Determine Necessary Information:** To use `get_current_temperature`, I need:\n    * `city`: \"London\" (Provided)\n    * `country`: (Missing)\n    * `unit`: (Missing, but a default or clarification might be needed later)\n\n4. **Check for Missing Information:** The country for \"London\" is not provided.\n\n5. **Formulate Response:** Since a required parameter (`country`) for the necessary tool (`get_current_temperature`) is missing, I must ask the user for that information before I can call the tool.\n\n6. **Construct the Question:** Ask the user to specify the country for London.<channel|>Could you please specify which country London is in?<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature in London?<turn|>\n<|turn>model\n",
+            "completion": "Can you please specify which country London is in?<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\nHere's a thinking process to construct the answer:\n\n1.  **Identify the core request:** The user is asking for the \"current wind speed in London.\"\n2.  **Analyze the nature of the request:** This requires real-time, up-to-the-minute weather data.\n3.  **Determine capability:** As an AI language model, I do not have direct, live access to a constantly updated, proprietary weather sensor network. My knowledge is based on the data I was trained on, which is not real-time.\n4.  **Formulate the necessary disclaimer/explanation:** I must inform the user that I cannot provide live, accurate weather data.\n5.  **Provide helpful alternatives (The Solution):** Since I can't give the answer directly, I must tell the user *where* they can find the answer. Good sources include:\n    *   Dedicated weather apps (AccuWeather, BBC Weather, etc.).\n    *   Official meteorological websites (Met Office in the UK).\n    *   Search engines (Google search).\n6.  **Construct the final response:** Combine the disclaimer with the helpful resources to give a complete and useful answer. (Self-Correction: Be polite and direct.)<channel|>I do not have access to real-time, live weather data. Therefore, I cannot tell you the exact wind speed in London right now.\n\nTo get the most accurate and current information, please check one of these reliable sources:\n\n*   **The UK Met Office website or app** (This is the official source for UK weather).\n*   **Google Weather Search** (Simply searching \"wind speed London\" will usually give you a real-time reading).\n*   **A dedicated weather app** (like BBC Weather, AccuWeather, etc.).<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I do not have real-time access to live weather data, so I cannot give you the *current* wind speed in London.\n\nTo get the most accurate and up-to-date information, I recommend checking one of the following sources:\n\n* **The UK Met Office website or app** (This is the official source for UK weather).\n* **Google Weather** (Simply searching \"weather London\" on Google will usually show current conditions).\n* **A dedicated weather application** on your phone.<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\nThinking Process:\n\n1.  **Identify the core request:** The user is asking for the \"current wind speed in London.\"\n2.  **Determine the necessary information:** To answer this accurately, I need real-time, up-to-date weather data for London.\n3.  **Assess capabilities:** As an LLM, I do not have direct, real-time access to live sensors or APIs unless a specific tool has been provided.\n4.  **Check for tool availability:** No external tool (like a weather API or Google Search endpoint) has been provided in the prompt.\n5.  **Formulate the response:**\n    *   Acknowledge the request.\n    *   State the limitation (I cannot provide real-time data).\n    *   Provide actionable advice on how the user can find the information (suggest reliable sources).\n6.  **Refine the suggestions:** Good sources include official meteorological services (like the UK Met Office) or major weather apps/websites.\n\n*(Self-Correction/Review):* I must avoid making up a number, as that would be inaccurate and unhelpful.\n\n7.  **Final Output Generation.**<channel|>I do not have real-time access to live weather data, so I cannot give you the current wind speed in London right now.\n\nTo get the most accurate and up-to-the-minute information, please check a reliable weather source such as:\n\n*   **The UK Met Office website or app**\n*   **AccuWeather**\n*   **The BBC Weather website**<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I do not have real-time access to current weather data, so I cannot tell you the exact wind speed in London right now.\n\nTo get the most accurate and up-to-date information, I recommend checking one of these sources:\n\n* **A reliable weather website** (like the BBC Weather, Met Office, or Weather Underground).\n* **A weather app** on your phone.\n\nThese sources will provide you with the current wind speed and forecast for London!<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\nThe user is asking for the current wind speed in London.\nI need to examine the available tools to see if any can provide this information.\nThe only available tool is `get_current_temperature`, which can get the current temperature at a location.\nThis tool does *not* provide wind speed information.\n\nSince I do not have a tool to fetch wind speed, I must inform the user about this limitation.<channel|>I'm sorry, I cannot provide you with the current wind speed. I only have a tool that can retrieve the current temperature.<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I am sorry, but I cannot provide you with the current wind speed. I only have access to a tool that can retrieve the current temperature.<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|tool_call>call:get_current_wind_speed{location:<|\"|>London, UK<|\"|>}<tool_call|><eos>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|tool_call>call:get_current_wind_speed{location:<|\"|>London, UK<|\"|>}<tool_call|><|tool_response>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\n1. **Analyze the user's request:** The user is asking for \"the current wind speed in London\".\n\n2. **Examine the available tools:**\n    * `get_current_temperature`: This tool gets the temperature, not the wind speed.\n    * `get_current_wind_speed`: This tool gets the current wind speed.\n\n3. **Determine the required parameters for `get_current_wind_speed`:** The `get_current_wind_speed` tool requires one parameter: `location`, which is described as \"The location to get the wind speed for, in the format 'City, Country'\".\n\n4. **Extract information from the user's request:** The user provided \"London\".\n\n5. **Identify missing information:** To satisfy the `location` parameter format (\"City, Country\"), the country for \"London\" is needed.\n\n6. **Formulate a response:** Since the country is missing, the model cannot call the tool yet. It must ask the user for the missing information.\n\n7. **Construct the clarifying question:** Ask the user to specify the country for London.<channel|>Could you please specify which country London is in?<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|tool_call>call:get_current_wind_speed{location:<|\"|>London, United Kingdom<|\"|>}<tool_call|><eos>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\nThinking Process:\n\n1.  **Analyze the Request:** The user is asking for the current temperature and wind speed in London.\n2.  **Identify Necessary Information/Tools:** To answer this, I need real-time, up-to-date weather data.\n3.  **Check Available Capabilities:** As a language model, I do not have inherent, real-time access to the internet or live APIs (like weather services) unless a specific tool has been provided in the context.\n4.  **Scan Context for Tools:** No specific weather or internet search tools were provided in the prompt.\n5.  **Formulate the Response:** Since I cannot provide live data, I must inform the user about this limitation and direct them to a reliable source where they can find the information.\n\n6.  **Draft the Output (Self-Correction/Refinement):** Instead of just saying \"I can't,\" I should be helpful. I should suggest specific, reliable sources (e.g., major weather websites or apps).\n\n7.  **Final Output Generation.** (This leads to the helpful, explanatory response.)<channel|>I am sorry, but as an AI, I do not have real-time access to live weather data. The temperature and wind speed in London are constantly changing!\n\nTo get the most accurate, up-to-the-minute information, I recommend checking one of these sources:\n\n*   **A dedicated weather app** on your phone (like AccuWeather or The Weather Channel)\n*   **A search engine** (e.g., typing \"weather in London\")\n*   **The official Met Office website** for the UK.<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I don't have real-time access to live weather data. To get the current temperature and wind speed in London, please check a reliable weather website or app like:\n\n* **AccuWeather**\n* **The Weather Channel**\n* **BBC Weather**\n\nThese sources will give you the most up-to-date information!<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\nThinking Process:\n\n1.  **Identify the user's request:** The user is asking for the current temperature and wind speed in London.\n2.  **Determine the necessary information:** This requires real-time, external data (weather data).\n3.  **Check available tools/capabilities:** As an AI model, I do not have built-in, real-time access to live weather APIs unless a specific tool has been provided in the prompt context.\n4.  **Constraint Check:** No weather tool or search engine endpoint was provided.\n5.  **Formulate the response:**\n    *   Acknowledge the request.\n    *   State the limitation (I cannot provide live, real-time data).\n    *   Advise the user on how to get the accurate information (e.g., use a dedicated weather website or app).\n\n6.  **Refine the response (Self-Correction/Tone Check):** The tone should be helpful and apologetic regarding the limitation. (Drafting the final helpful response).<channel|>I am sorry, but I do not have real-time access to current weather data. To get the most accurate and up-to-date temperature and wind speed in London, please check a reliable weather website (like the BBC Weather, AccuWeather, or a local meteorological service) or use a weather app on your phone.<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I do not have real-time access to current weather data, so I cannot tell you the exact temperature and wind speed in London right now.\n\nTo get the most accurate and up-to-date information, I recommend checking a reliable weather website or using a weather app like:\n\n* **The Met Office (UK's national weather service)**\n* **AccuWeather**\n* **The Weather Channel**\n\nJust search for \"weather in London\" on your preferred search engine!<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\n1.  **Analyze the Request:** The user is asking for two pieces of information: \"current temperature\" and \"wind speed\" in \"London\".\n\n2.  **Examine Available Tools:** I have one tool available: `get_current_temperature`.\n\n3.  **Analyze Tool Capabilities:**\n    *   `get_current_temperature(location: {city: STRING, country: STRING}, unit: STRING)`\n    *   This tool can provide the *temperature* for a specific location (city and country) in a specified unit (Celsius or Fahrenheit).\n    *   It *cannot* provide the *wind speed*.\n\n4.  **Determine Missing Information:**\n    *   To use the available tool, I need the country for London (which is likely the UK, but it's not explicitly given).\n    *   I need to know which unit the user prefers (Celsius or Fahrenheit), though I could ask for clarification if necessary.\n    *   Crucially, the tool does not support fetching wind speed.\n\n5.  **Formulate the Response Strategy:**\n    *   Acknowledge the limitations: I can only get the temperature, not the wind speed.\n    *   Address the temperature request: I need more information (the country and the preferred unit) to use the `get_current_temperature` tool.\n\n6.  **Refine the Response (Self-Correction/Refinement):**\n    *   The user asked for *both* temperature and wind speed.\n    *   I *must* inform the user about the limitation regarding wind speed.\n    *   For the temperature, I need the country and unit.\n\n7.  **Final Output Generation:** Construct a response that explains the limitation (wind speed) and requests the necessary parameters (country, unit) for the achievable task (temperature). (The prompt does not provide enough context to execute the tool call successfully yet.)<channel|>I can provide you with the current temperature in London, but I do not have the capability to provide wind speed.\n\nTo get the temperature, could you please specify the **country** for London and your preferred **unit** (Celsius or Fahrenheit)?<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I can only get the current temperature with the available tools. I cannot provide the wind speed.\n\nWhat unit would you like the temperature in, **Celsius** or **Fahrenheit**?<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\n1. **Analyze the user's request:** The user is asking for \"the current temperature and wind speed in London.\"\n\n2. **Examine available tools:** The only available tool is `get_current_wind_speed`.\n   - `get_current_wind_speed` requires a `location` (in \"City, Country\" format) and returns the wind speed.\n\n3. **Identify missing information/capabilities:**\n   - The user asked for *both* temperature and wind speed.\n   - The available tool *only* provides wind speed, not temperature.\n\n4. **Determine the next step:**\n   - I can use the available tool to get the wind speed for London, UK.\n   - I cannot get the temperature with the current tools.\n\n5. **Formulate the response:**\n   - Acknowledge the limitations (cannot get temperature).\n   - Call the tool for the information I *can* retrieve (wind speed).\n\n6. **Construct the tool call:**\n   - Tool name: `get_current_wind_speed`\n   - Arguments: `location: \"London, UK\"` (Assuming \"London\" refers to London, UK, which is standard practice for location-based queries).\n\n7. **Final Output Generation:** Generate the tool call JSON block. (Self-correction: Ensure the location format matches the tool's requirement: \"City, Country\").<channel|><|tool_call>call:get_current_wind_speed{location:<|\"|>London, UK<|\"|>}<tool_call|><eos>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I can only get the wind speed for a location, not the current temperature. Would you like me to get the wind speed in London?<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": true
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\n<|think|>You are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "<|channel>thought\n1. **Analyze the user's request:** The user is asking for two pieces of information about London: the current temperature and the current wind speed.\n\n2. **Examine available tools:**\n    * `get_current_temperature(location: {city: string, country: string}, unit: \"celsius\" | \"fahrenheit\")`\n    * `get_current_wind_speed(location: string)`\n\n3. **Determine required information for `get_current_temperature`:**\n    * `location`: Requires `city` and `country`. The user provided \"London\", which is the city. The country is implied as the UK, but it's not explicitly stated.\n    * `unit`: The user did not specify a unit (Celsius or Fahrenheit).\n\n4. **Determine required information for `get_current_wind_speed`:**\n    * `location`: Requires a string in the format \"City, Country\". The user provided \"London\". The country is missing.\n\n5. **Identify missing information:**\n    * For temperature: The country (UK) and the unit (Celsius or Fahrenheit).\n    * For wind speed: The country (UK).\n\n6. **Formulate a response strategy:** Since crucial information is missing to call the tools accurately, the model must ask the user for the missing details before it can proceed.\n\n7. **Construct the response:** Ask the user for the country of London (though it's likely the UK, confirmation is best practice) and the preferred temperature unit.<channel|>Could you please specify the country for London and the unit you would like the temperature in (Celsius or Fahrenheit)?<turn|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "google/gemma-4-E4B-it",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {
+                "enable_thinking": false
+            }
+        },
+        "result": {
+            "prompt": "<bos><|turn>system\nYou are a helpful assistant<|tool>declaration:get_current_temperature{description:<|\"|>Get the current temperature at a location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the temperature for<|\"|>,properties:{city:{description:<|\"|>The city name<|\"|>,type:<|\"|>STRING<|\"|>},country:{description:<|\"|>The country name<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>city<|\"|>,<|\"|>country<|\"|>],type:<|\"|>OBJECT<|\"|>},unit:{description:<|\"|>The unit to return the temperature in.<|\"|>,enum:[<|\"|>celsius<|\"|>,<|\"|>fahrenheit<|\"|>],type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>,<|\"|>unit<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><|tool>declaration:get_current_wind_speed{description:<|\"|>Get the current wind speed in km/h at a given location.<|\"|>,parameters:{properties:{location:{description:<|\"|>The location to get the wind speed for, in the format \"City, Country\"<|\"|>,type:<|\"|>STRING<|\"|>}},required:[<|\"|>location<|\"|>],type:<|\"|>OBJECT<|\"|>}}<tool|><turn|>\n<|turn>user\nWhat is the current temperature and wind speed in London?<turn|>\n<|turn>model\n",
+            "completion": "I need to know the country for London to get the temperature. Also, would you like the temperature in Celsius or Fahrenheit?<turn|>"
+        },
+        "expectations": {
+            "reasoning": false,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    }
+]

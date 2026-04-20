@@ -73,6 +73,7 @@ jobs:
 
     env:
       CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       FEATURE_FLAGS: >-
         ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
         ${{ matrix.backend != 'cpu' && format('--features {0}', matrix.backend) || '' }}
@@ -84,7 +85,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           metal: ${{ matrix.backend == 'metal' }}
-          test_model: true
+          test_data: true
           nextest: true
           target: ${{ matrix.target }}
 
@@ -99,7 +100,7 @@ jobs:
         if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar || matrix.backend == 'cpu' && !matrix.tracing && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
         run: |
           cargo +stable nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
-            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu --lib --test kernel' || '' }}
+            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p backend-uzu --lib --test kernel' || '' }}
 
   completed:
     name: completed

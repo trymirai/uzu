@@ -1,0 +1,789 @@
+[
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature in London. Hmm, I need to figure out how to respond. First, I should check if I have access to real-time data. Wait, but I remember that my knowledge is up to October 2023, and I don't have live data capabilities. So I can't provide the exact current temperature. \n\nWait, but maybe the user expects me to know or provide an approximate. Since I can't access live info, I should inform them that I can't provide real-time data. But maybe I can suggest checking a weather service. Alternatively, if I have general knowledge up to 2023, perhaps I can state that my information is up to a certain date. Wait, but the user might just want the current temperature. Since I can't access live data, I should politely say I can't provide real-time info but maybe give a general answer based on typical London weather?\n\nWait, but maybe the user expects me to say I can't do that. Let me think. The instructions say to avoid harmful content, but this isn't harmful. The user just wants the current temperature. Since I can't access live data, I should respond that I can't provide current temperature but suggest checking a weather service. Alternatively, maybe I can state that my knowledge is up to 2023, and perhaps give an example of how temperature might be around, say, 15\u00b0C? Wait no, that's arbitrary. Alternatively, maybe I should just say I can't access real-time data and recommend using a weather app. \n\nAlternatively, maybe the user expects me to say I don't have access but offer to help with other info. Let me check the guidelines: the user wants the response in a helpful way. So the best approach is to inform them I can't provide current data but suggest checking a reliable source like weather websites or apps. Also, maybe mention that London's current temperature is typically around X, but since I can't know, better to say I can't retrieve live data. Yeah, that's better. So the response should be something like: \"I can't provide real-time weather data, but you can check a reliable weather service or app for the latest temperature in London.\" That should work. Make sure it's concise and helpful.\n</think>\n\nI don't have access to real-time data or current weather information. For the most accurate and up-to-date temperature in London, I recommend checking a trusted weather service like the BBC Weather, Weather.com, or a local news outlet's weather section. Let me know if you'd like help finding such resources! \ud83c\udf24\ufe0f<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature in London. Hmm, I need to figure out how to respond. First, I should check if I have access to real-time data. Wait, but I remember that my knowledge is up to October 2023, and I don't have live data capabilities. So I can't provide the exact current temperature. \n\nWait, but maybe the user expects me to know or provide an approximate. Since I can't access live info, I should inform them that I can't provide real-time data. But maybe I can suggest checking a weather service. Alternatively, if I have general knowledge up to 2023, perhaps I can state that my information is up to a certain date. Wait, but the user might just want the current temperature. Since I can't access live data, I should politely say I can't provide real-time info but maybe give a general answer based on typical London weather?\n\nWait, but maybe the user expects me to say I can't do that. Let me think. The instructions say to avoid harmful content, but this isn't harmful. The user just wants the current temperature. Since I can't access live data, I should respond that I can't provide current temperature but suggest checking a weather service. Alternatively, maybe I can state that my knowledge is up to 2023, and perhaps give an example of how temperature might be around, say, 15\u00b0C? Wait no, that's arbitrary. Alternatively, maybe I should just say I can't access real-time data and recommend using a weather app. \n\nAlternatively, maybe the user expects me to say I don't have access but offer to help with other info. Let me check the guidelines: the user wants the response in a helpful way. So the best approach is to inform them I can't provide current data but suggest checking a reliable source like weather websites or apps. Also, maybe mention that London's current temperature is typically around X, but since I can't know, better to say I can't retrieve live data. Yeah, that's better. So the response should be something like: \"I can't provide real-time weather data, but you can check a reliable weather service or app for the latest temperature in London.\" That should work. Make sure it's concise and helpful.\n</think>\n\nI don't have access to real-time data or current weather information. For the most accurate and up-to-date temperature in London, I recommend checking a trusted weather service like the BBC Weather, Weather.com, or a local news outlet's weather section. Let me know if you'd like help finding such resources! \ud83c\udf24\ufe0f<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature in London. I need to use the get_current_temperature function provided. The function requires location and unit parameters. The location should be an object with city and country. Since the user mentioned London, the city is London and the country is the UK. The unit isn't specified, but maybe I should default to Celsius since it's commonly used there, but wait, the function allows specifying either celsius or fahrenheit. The user didn't specify, so maybe I should ask? Wait no, the function requires the unit parameter. Wait, looking back at the tool definition: the parameters are location (object with city and country), unit (enum: celsius or fahrenheit), and return is a number. Wait, actually, the parameters for get_current_temperature are location (which is an object with city and country), unit (which is required?), wait no: looking at the parameters, the required fields are location and unit. Wait the tool's required parameters are location and unit. Wait the tool's parameters are: \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": ..., \"country\": ...}, \"unit\": ...}, \"return\": ...}}, \"required\": [\"location\", \"unit\"]}. Wait, actually, the required fields are location and unit. Wait the function's required parameters are location and unit. Wait the user hasn't specified the unit, so I need to choose either celsius or fahrenheit. Since London uses Celsius typically, maybe I should pick celsius. Alternatively, maybe the user expects Fahrenheit? Hmm. But since the user didn't specify, perhaps I should assume Celsius as it's standard in the UK. So I'll set unit to \"celsius\". Then the location is London, country is UK. So the arguments would be location: { \"city\": \"London\", \"country\": \"UK\" }, unit: \"celsius\". So the function call should be get_current_temperature with those parameters. Let me make sure I structure the JSON correctly. The location object has city and country, and unit is \"celsius\". So the tool_call should be:\n\n{\n  \"name\": \"get_current_temperature\",\n  \"arguments\": {\n    \"location\": {\n      \"city\": \"London\",\n      \"country\": \"UK\"\n    },\n    \"unit\": \"celsius\"\n  }\n}\n\nYes, that should work. I need to make sure that the parameters are correctly formatted. The user asked for London's temperature, so this should retrieve it.\n</think>\n<|tool_call_start|>[get_current_temperature(unit='celsius', location={'city': 'London', 'country': 'UK'}, return=0)]<|tool_call_end|><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature in London. Hmm, looking at the tools provided, wait a second. The available tool here is get_current_wind_speed, which gives wind speed in km/h. But the user is asking for temperature. Oh no, there's no tool listed for temperature. Wait, maybe I missed something. Let me check again. The tools section only has get_current_wind_speed. So there's no function available to get temperature. \n\nWait, the user might have made a mistake, or maybe I need to inform them that I can't provide the temperature. Since the tools don't include a temperature function, I can't retrieve that data. I should let them know I can't help with temperature but maybe suggest they check another source. Alternatively, maybe there's a misunderstanding. Wait, maybe the user intended to ask about wind speed but said temperature? Or perhaps there's a tool I'm supposed to use differently. No, according to the given tools, only wind speed is available. \n\nSo I need to respond that I can't provide the temperature because the necessary tool isn't available. I should apologize and explain that my current capabilities are limited to wind speed. Alternatively, maybe the user confused wind speed with temperature? Not sure. But according to the instructions, I should just state that I can't answer the temperature question with the available tools. So the correct response is to inform them I can't retrieve temperature data and mention the available tool for wind speed if they need that instead.\n</think>\n\nI currently don't have access to a tool that provides temperature data. My available tool only allows me to retrieve wind speed information. Would you like me to provide the current wind speed for a specific location instead?<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the current temperature in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}, {\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current temperature in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature in London. I need to figure out which tool to use here. Looking at the available tools, there's get_current_temperature which requires location and unit. The parameters are location (as an object with city and country) and unit. Since the user just said London, I should specify the city as London and country as UK, I guess? Wait, but maybe the country is optional? Wait, the parameters for get_current_temperature require both city and country. So I need to make sure to include both. London is in the UK, so country would be United Kingdom or UK. Let me check the function's required parameters again. The location object needs city and country. So I'll set city: \"London\", country: \"United Kingdom\". Then the unit is optional? Wait no, looking back, the parameters for get_current_temperature have \"unit\" as optional? Wait no, looking at the tool definition: the parameters for get_current_temperature are location (which is an object with city and country), and unit is optional? Wait no, the parameters are: \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": ..., \"country\": ...}, \"required\": [\"city\", \"country\"]}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"]}}, \"required\": [\"location\", \"unit\"]}. Wait, no, wait the \"unit\" is not required? Wait the required fields are \"location\" and \"unit\"? Wait no, looking again: the required array is [\"location\", \"unit\"]? Wait no, wait the tool's required array is [\"location\", \"unit\"]? Wait no, looking at the tool's JSON: \"required\": [\"location\", \"unit\"], but wait the parameters for get_current_temperature have \"location\" as an object with city and country, and \"unit\" is a separate parameter. Wait the required fields are \"location\" and \"unit\"? Wait the tool's required array is [\"location\", \"unit\"], but \"location\" is an object with city and country. Hmm, maybe I need to parse that correctly. The function's required parameters are \"location\" (which is an object with city and country) and \"unit\". Wait no, looking again: the tool's parameters are structured as:\n\n\"parameters\": {\n  \"type\": \"object\",\n  \"properties\": {\n    \"location\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"city\": ..., \n        \"country\": ...\n      },\n      \"required\": [\"city\", \"country\"]\n    },\n    \"unit\": {\n      \"type\": \"string\",\n      \"enum\": [\"celsius\", \"fahrenheit\"]\n    }\n  },\n  \"required\": [\"location\", \"unit\"]\n}\n\nWait, no, the \"required\" array includes \"location\" and \"unit\". Wait, but \"location\" is an object with city and country. So the user needs to provide city and country within the location object, and also specify the unit. Since the user asked for temperature but didn't specify unit, maybe I should assume celsius? Or should I ask? Wait the user didn't specify, but the function requires the unit. Since the user didn't specify, perhaps I should default to celsius, as it's common in many countries. Alternatively, maybe the function can handle it if unit is optional? Wait no, according to the tool definition, \"unit\" is in the required list. Wait the required array is [\"location\", \"unit\"], but \"location\" is an object requiring city and country, and \"unit\" is a separate parameter. Wait maybe I misread. Let me check again: the tool's required parameters are \"location\" and \"unit\". Wait no, looking at the tool's JSON: \"required\": [\"location\", \"unit\"], but \"location\" is an object with city and country. So to call get_current_temperature, I need to provide the location object (with city and country) and the unit. Since the user didn't specify the unit, perhaps I should choose one, maybe celsius as default. Alternatively, maybe the function expects the user to specify, but since the user didn't, perhaps I should pick celsius. Alternatively, maybe the function can handle it if unit is optional? Wait no, according to the tool definition, \"unit\" is required because it's in the required array. Wait the tool's required fields are \"location\" and \"unit\". Wait the \"location\" is required as an object with city and country, and \"unit\" is required. So I have to provide both. Since the user didn't specify, perhaps I should assume celsius, as it's commonly used in many contexts. So I'll set unit to \"celsius\". Therefore, the function call would be get_current_temperature with location: { \"city\": \"London\", \"country\": \"UK\" }, unit: \"celsius\". Alternatively, maybe the country is \"United Kingdom\". Hmm, but the user just said London, so country could be \"UK\" or \"United Kingdom\". Either should work. Let's go with \"United Kingdom\". So the tool call would be:\n\n{\n  \"name\": \"get_current_temperature\",\n  \"arguments\": {\n    \"location\": {\n      \"city\": \"London\",\n      \"country\": \"United Kingdom\"\n    },\n    \"unit\": \"celsius\"\n  }\n}\n\nWait but the user might expect Fahrenheit? Not sure, but since the user didn't specify, maybe celsius is safer. Alternatively, maybe the function can handle it without specifying, but according to the tool's definition, unit is required. So I'll proceed with celsius. So that's the plan.\n</think>\n<|tool_call_start|>[get_current_temperature(location={'city': 'London', 'country': 'United Kingdom'}, unit='celsius')]<|tool_call_end|><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current wind speed in London. Hmm, I need to figure out how to answer that. First, I should check if I have access to real-time data. Wait, I remember that my knowledge is up until July 2024, but I don't have live data capabilities. So I can't provide real-time wind speed. \n\nI should inform them that I can't access live data. But maybe I can suggest checking a weather service or app. Alternatively, if there's a general way to estimate it. Wait, maybe I can mention typical wind speeds in London. London's weather can vary a lot, but generally, it's around 10-20 km/h on average. But I should be careful not to give a specific number without knowing the current conditions.\n\nWait, the user might expect a specific answer. Since I can't provide real-time info, I should state that I can't retrieve live data but offer alternatives. Also, maybe mention that wind speed can be found via weather websites or apps like Weather.com, AccuWeather, or a smartphone app. Also, perhaps note that wind speed can vary based on time of day and weather patterns. Make sure to keep it helpful and direct them to reliable sources. Avoid making up numbers. So the response should be honest about limitations but helpful in guiding them to where they can find the info. Let me structure that.\n</think>\n\nI don't have access to real-time data or live weather information, including current wind speeds. For up-to-date wind speed in London, I recommend checking a reliable weather service like [Weather.com](https://www.weather.com), [AccuWeather](https://www.accuweather.com), or a weather app like Weather.com or your device's built-in weather app. Wind speeds can vary based on time of day, season, and local conditions, so checking a trusted source will give you the most accurate information. Let me know if you'd like help interpreting weather forecasts!<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current wind speed in London. Hmm, I need to figure out how to answer that. First, I should check if I have access to real-time data. Wait, I remember that my knowledge is up until July 2024, but I don't have live data capabilities. So I can't provide real-time wind speed. \n\nI should inform them that I can't access live data. But maybe I can suggest checking a weather service or app. Alternatively, if there's a general way to estimate it. Wait, maybe I can mention typical wind speeds in London. London's weather can vary a lot, but generally, it's around 10-20 km/h on average. But I should be careful not to give a specific number without knowing the current conditions.\n\nWait, the user might expect a specific answer. Since I can't provide real-time info, I should state that I can't retrieve live data but offer alternatives. Also, maybe mention that wind speed can be found via weather websites or apps like Weather.com, AccuWeather, or a smartphone app. Also, perhaps note that wind speed can vary based on time of day and weather patterns. Make sure to keep it helpful and direct them to reliable sources. Avoid making up numbers. So the response should be honest about limitations but helpful in guiding them to where they can find the info. Let me structure that.\n</think>\n\nI don't have access to real-time data or live weather information, including current wind speeds. For up-to-date wind speed in London, I recommend checking a reliable weather service like [Weather.com](https://www.weather.com), [AccuWeather](https://www.accuweather.com), or a weather app like Weather.com or your device's built-in weather app. Wind speeds can vary based on time of day, season, and local conditions, so checking a trusted source will give you the most accurate information. Let me know if you'd like help interpreting weather forecasts!<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current wind speed in London. Hmm, looking at the tools provided, there's a function called get_current_temperature, but wait, that's for temperature. The user is asking about wind speed, which isn't covered by the available tools. The tools listed only have get_current_temperature. Oh no, there's no function for wind speed. \n\nWait, maybe I should check again. The tools section only shows get_current_temperature. So the user is asking for wind speed, which isn't supported by the available functions. Since I can't access other tools, I need to inform them that I can't retrieve wind speed data. But maybe I should confirm if there's another way? No, according to the tools given, there's no function for wind speed. Therefore, I should tell the user that I can't provide that information because the necessary tool isn't available. I should apologize and explain that my current capabilities are limited to temperature, not wind speed. Let me make sure I didn't miss any other functions. No, the only tool listed is get_current_temperature. So yes, I have to respond that I can't help with wind speed.\n</think>\n\nI don't have access to a tool that provides wind speed information. My current capabilities are limited to retrieving temperature data. Would you like me to help with the current temperature in London instead?<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current wind speed in London. I need to use the tool provided, which is get_current_wind_speed. The function requires a location parameter in the format \"City, Country\". Since the user mentioned London, I should format the location as \"London, United Kingdom\" to be specific. The tool will return the wind speed in km/h. I should call the function with that location. I don't see any other parameters needed. Just make sure the location is correctly specified. Alright, I'll generate the tool call with \"London, United Kingdom\" as the location.\n</think>\n<|tool_call_start|>[get_current_wind_speed(location='London, United Kingdom')]<|tool_call_end|><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}, {\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current wind speed in London. I need to figure out which tool to use here. Looking at the available tools, there's get_current_wind_speed which provides wind speed in km/h for a given location. The parameters require a location in \"City, Country\" format. Since the user just said London, I should specify the country as well. London is in the UK, so the location would be \"London, UK\". The function requires the location parameter, so I'll structure the arguments accordingly. I don't need the temperature tool here because the question is specifically about wind speed. So I'll call get_current_wind_speed with location \"London, UK\". Let me double-check the parameters: location is required, formatted as \"City, Country\", and the return value is the wind speed. Alright, that should work.\n</think>\n<|tool_call_start|>[get_current_wind_speed(location='London, UK')]<|tool_call_end|><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": null,
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature and wind speed in London. I need to figure out how to answer that. Since I can't access real-time data, I should inform them that I can't provide live updates. But maybe I can give a general idea based on typical conditions. Wait, but maybe I should check if there's a way to get that info. Wait, no, as an AI, I don't have access to live data. So I should tell them I can't provide current data but maybe suggest checking a weather service. Alternatively, if I have to answer without external sources, perhaps state that I can't retrieve real-time info but can offer general advice. Hmm. Alternatively, maybe the user expects a hypothetical answer. Wait, the user might just want a straightforward response. Let me make sure. The user might be expecting me to say I can't access current data, but perhaps provide a typical scenario. For example, if it's currently 20\u00b0C with 10 km/h wind, but I should be careful not to give false info. Alternatively, maybe mention that I can't provide live data but can explain how to find it. Wait, the instructions say to act as a helpful assistant. So perhaps the best approach is to apologize and explain the limitation, then suggest checking a reliable weather service. Alternatively, maybe the user expects a specific answer. Wait, maybe I should just state that I can't access real-time data but can guide them on where to find it. Let me structure the response: start with the limitation, then suggest sources like weather websites or apps. Also, maybe mention that if they provide the current data, I can help interpret it. Alternatively, maybe the user expects a fictional answer? No, better to be honest. So final answer: explain inability to provide current data, suggest checking a weather service, and offer to help with other info if possible.\n</think>\n\nI don't have access to real-time data or current weather information. For up-to-date temperature and wind speed in London, I recommend checking a reliable weather service like [weather.com](https://www.weather.com), the BBC Weather, or a weather app like Weather.com or AccuWeather. If you provide specific details (e.g., \"What is the temperature in London today?\"), I can help interpret general climate patterns or historical averages! Let me know how I can assist further. \ud83c\udf24\ufe0f<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature and wind speed in London. I need to figure out how to answer that. Since I can't access real-time data, I should inform them that I can't provide live updates. But maybe I can give a general idea based on typical conditions. Wait, but maybe I should check if there's a way to get that info. Wait, no, as an AI, I don't have access to live data. So I should tell them I can't provide current data but maybe suggest checking a weather service. Alternatively, if I have to answer without external sources, perhaps state that I can't retrieve real-time info but can offer general advice. Hmm. Alternatively, maybe the user expects a hypothetical answer. Wait, the user might just want a straightforward response. Let me make sure. The user might be expecting me to say I can't access current data, but perhaps provide a typical scenario. For example, if it's currently 20\u00b0C with 10 km/h wind, but I should be careful not to give false info. Alternatively, maybe mention that I can't provide live data but can explain how to find it. Wait, the instructions say to act as a helpful assistant. So perhaps the best approach is to apologize and explain the limitation, then suggest checking a reliable weather service. Alternatively, maybe the user expects a specific answer. Wait, maybe I should just state that I can't access real-time data but can guide them on where to find it. Let me structure the response: start with the limitation, then suggest sources like weather websites or apps. Also, maybe mention that if they provide the current data, I can help interpret it. Alternatively, maybe the user expects a fictional answer? No, better to be honest. So final answer: explain inability to provide current data, suggest checking a weather service, and offer to help with other info if possible.\n</think>\n\nI don't have access to real-time data or current weather information. For up-to-date temperature and wind speed in London, I recommend checking a reliable weather service like [weather.com](https://www.weather.com), the BBC Weather, or a weather app like Weather.com or AccuWeather. If you provide specific details (e.g., \"What is the temperature in London today?\"), I can help interpret general climate patterns or historical averages! Let me know how I can assist further. \ud83c\udf24\ufe0f<|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": []
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature and wind speed in London. Hmm, looking at the tools provided, there's a function called get_current_temperature. Wait, but the description says it gets the current temperature at a location. However, the parameters for that function are location (which is an object with city and country), unit, and return. Wait, but the user also asked for wind speed. Oh, wait a second\u2014the tool provided only mentions temperature. The function's description says it gets temperature, but the parameters don't include wind speed. Oh no, maybe there's a mistake here. Let me check again.\n\nThe tool's name is get_current_temperature, and its parameters are location (city and country), unit. The return is a number. But the user is asking for both temperature and wind speed. Since the available tool only provides temperature, not wind speed, I can't get wind speed with the given functions. Wait, maybe I misread the tool's description. Let me check again. The tool's description says \"Get the current temperature at a location.\" So it only gives temperature. The user also wants wind speed, which isn't covered by this tool. Since the user asked for both temperature and wind speed, but the available tool can only provide temperature, I need to inform them that wind speed isn't available through the current tools. Alternatively, maybe the user made a mistake, but I have to work with what's given. So I should call get_current_temperature for London's temperature, but since wind speed isn't possible, I should mention that I can provide temperature but not wind speed. Wait, but the user might expect wind speed. Since the tool doesn't support it, I should state that I can only provide temperature. Alternatively, maybe the tool's parameters have a mistake? Let me check again. The parameters for get_current_temperature require location as an object with city and country, and unit. The return is a number (temperature). So yes, only temperature. Therefore, I can answer the temperature part, but not wind speed. So I should respond that I can get the temperature but not wind speed. But the user asked for both. Since the user might not know the tool's limitations, I should say I can provide the temperature, and note that wind speed isn't available. Alternatively, maybe the user intended just temperature. Let me proceed: call get_current_temperature for London, UK, and unit as specified. Since the user didn't specify unit, maybe default to celsius or ask? Wait, the user didn't specify unit, but the function requires unit as a parameter. Since the user didn't specify, perhaps assume celsius? Or maybe the function can handle it. Wait, the function's parameters require \"unit\" to be either celsius or fahrenheit. Since the user didn't specify, maybe pick one, but perhaps the function can handle it. Wait, the user might expect either, but since the user is in London, which commonly uses Celsius, maybe default to celsius. So I'll set unit to \"celsius\". Then, the function call would be get_current_temperature with location {city: \"London\", country: \"UK\"}, unit: \"celsius\". Then, the response will give temperature. But since the user also asked for wind speed, which isn't available, I need to inform them that wind speed isn't possible with current tools. So the answer will be temperature, and mention that wind speed isn't available. Alternatively, maybe the user just wants temperature, so proceed with that. So the final answer would state the temperature, and note that wind speed can't be provided. Alright, let's structure the response accordingly.\n</think>\n<|tool_call_start|>[get_current_temperature(location={'city': 'London', 'country': 'UK'}, unit='celsius')]<|tool_call_end|><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature"
+            ]
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature and wind speed in London. Hmm, looking at the tools provided, there's a function called get_current_wind_speed which gives wind speed in km/h. But wait, the user also wants the temperature. Oh, wait a second, the available tools only include get_current_wind_speed. There's no function for temperature. \n\nSo, the problem here is that I can only use the tools given. Since temperature isn't covered by any function, I can't retrieve that. But maybe the user expects me to use the wind speed tool and then mention that temperature isn't available. Wait, but maybe I should check again. The tools section only lists get_current_wind_speed. So I can only provide wind speed. But the user asked for both temperature and wind speed. Since temperature isn't possible with current tools, I need to inform them that I can't get temperature but can provide wind speed. Alternatively, maybe the user made a mistake, but I have to work with what's given.\n\nWait, perhaps I should respond that I can get the wind speed but not the temperature. Let me confirm: the user asked for both, but since only wind speed tool exists, I should state that I can provide wind speed but not temperature. So I should call get_current_wind_speed for London, then explain that temperature isn't available. Alternatively, maybe the user expects me to say I can't get temperature. Let me structure the response: first, call the available function for wind speed, then inform the user that temperature isn't possible with current tools. But the user might need both. Alternatively, maybe I should just answer what's possible. Let me proceed step by step. The function requires location as \"London, UK\" perhaps. So I'll call get_current_wind_speed with location \"London, UK\". Then, in the response, I'll state the wind speed result and note that temperature isn't available through current tools. That should be the best I can do.\n</think>\n<|tool_call_start|>[get_current_wind_speed(location='London, UK')]<|tool_call_end|><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_wind_speed"
+            ]
+        }
+    },
+    {
+        "repo_id": "LiquidAI/LFM2.5-1.2B-Thinking",
+        "parameters": {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant"
+                },
+                {
+                    "role": "user",
+                    "content": "What is the current temperature and wind speed in London?"
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_temperature",
+                        "description": "Get the current temperature at a location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "object",
+                                    "properties": {
+                                        "city": {
+                                            "type": "string",
+                                            "description": "The city name"
+                                        },
+                                        "country": {
+                                            "type": "string",
+                                            "description": "The country name"
+                                        }
+                                    },
+                                    "required": [
+                                        "city",
+                                        "country"
+                                    ],
+                                    "description": "The location to get the temperature for"
+                                },
+                                "unit": {
+                                    "type": "string",
+                                    "enum": [
+                                        "celsius",
+                                        "fahrenheit"
+                                    ],
+                                    "description": "The unit to return the temperature in."
+                                }
+                            },
+                            "required": [
+                                "location",
+                                "unit"
+                            ]
+                        },
+                        "return": {
+                            "type": "number"
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_current_wind_speed",
+                        "description": "Get the current wind speed in km/h at a given location.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "description": "The location to get the wind speed for, in the format \"City, Country\""
+                                }
+                            },
+                            "required": [
+                                "location"
+                            ]
+                        },
+                        "return": {
+                            "type": "number",
+                            "description": "The current wind speed in km/h"
+                        }
+                    }
+                }
+            ],
+            "context": {}
+        },
+        "result": {
+            "prompt": "<|startoftext|><|im_start|>system\nYou are a helpful assistant\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_current_temperature\", \"description\": \"Get the current temperature at a location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"The city name\"}, \"country\": {\"type\": \"string\", \"description\": \"The country name\"}}, \"required\": [\"city\", \"country\"], \"description\": \"The location to get the temperature for\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"The unit to return the temperature in.\"}}, \"required\": [\"location\", \"unit\"]}, \"return\": {\"type\": \"number\"}}}, {\"type\": \"function\", \"function\": {\"name\": \"get_current_wind_speed\", \"description\": \"Get the current wind speed in km/h at a given location.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The location to get the wind speed for, in the format \\\"City, Country\\\"\"}}, \"required\": [\"location\"]}, \"return\": {\"type\": \"number\", \"description\": \"The current wind speed in km/h\"}}}]<|im_end|>\n<|im_start|>user\nWhat is the current temperature and wind speed in London?<|im_end|>\n<|im_start|>assistant\n",
+            "completion": "<think> Okay, let's see. The user is asking for the current temperature and wind speed in London. I need to figure out which tools to use here. \n\nFirst, looking at the available functions: there's get_current_temperature and get_current_wind_speed. Both require location parameters. The user specified London, so I need to make sure the location is properly formatted. \n\nFor the temperature function, the parameters are location (which should be \"London, UK\" maybe?), and unit. Wait, the function's parameters are location as an object with city and country, and unit which can be celsius or fahrenheit. Since the user didn't specify the unit, maybe I should default to one, but perhaps the user expects Celsius since it's common in the UK. But the function requires specifying unit. Hmm, but the user might want either, but since they didn't say, maybe I should pick one. Wait, the function's required parameters are location and unit. Wait no, looking back: the get_current_temperature function's required parameters are location and unit. Wait no, checking the tool definition again: \n\nWait the first tool, get_current_temperature, parameters are location (object with city and country), and unit (enum: celsius or fahrenheit). The required fields are location and unit. Wait no, looking at the parameters: \"required\": [\"location\", \"unit\"], but location is an object with city and country. Wait the parameters for get_current_temperature are: location is an object with city and country, and unit is a string. So to call get_current_temperature, I need to provide location as {\"city\": \"London\", \"country\": \"UK\"} and unit as either \"celsius\" or \"fahrenheit\". Since the user didn't specify, maybe I should assume Celsius since it's London. Alternatively, maybe the user expects both? Wait no, the user just asked for temperature and wind speed. \n\nSimilarly, for wind speed, the function get_current_wind_speed requires location as \"City, Country\", so London, UK. The return parameter is the wind speed in km/h. \n\nSo I need to make two separate function calls: one for temperature and one for wind speed. \n\nWait, but the user wants both temperature and wind speed. So first call get_current_temperature with location London, UK and unit celsius (assuming), and then get_current_wind_speed with location London, UK. \n\nWait but the user might not care about the unit, but since the function requires specifying unit, I have to choose one. Since London uses Celsius typically, I'll go with celsius. \n\nSo the steps are: \n\n1. Call get_current_temperature with location {\"city\": \"London\", \"country\": \"UK\"}, unit \"celsius\".\n2. Call get_current_wind_speed with location \"London, UK\".\n\nThen combine the results to answer the user. \n\nWait but the parameters for get_current_temperature's location is an object with city and country. So yes, London, UK. \n\nSo I'll structure the tool calls accordingly. \n\nWait, but the user might expect both temperature and wind speed. So I need to make sure both functions are called. \n\nTherefore, the tool calls should be two separate function calls. \n\nSo first tool call: name get_current_temperature, arguments: location { \"city\": \"London\", \"country\": \"UK\" }, unit \"celsius\". \n\nSecond tool call: name get_current_wind_speed, arguments: location \"London, UK\". \n\nThen, once I get those results, I can present both values to the user. \n\nI need to make sure that the parameters are correctly formatted. Also, check if the country is correctly specified. Since London is in the UK, country is \"UK\". \n\nYes, that should work. So the final answer will be the temperature and wind speed from these two calls.\n</think>\n<|tool_call_start|>[get_current_temperature(location={'city': 'London', 'country': 'UK'}, unit='celsius'), get_current_wind_speed(location='London, UK')]<|tool_call_end|><|im_end|>"
+        },
+        "expectations": {
+            "reasoning": true,
+            "tool_call_names": [
+                "get_current_temperature",
+                "get_current_wind_speed"
+            ]
+        }
+    }
+]
