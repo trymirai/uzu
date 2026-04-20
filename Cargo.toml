@@ -135,6 +135,13 @@ openai-harmony = "0.0.8"
 dirs = "6.0.0"
 dotenvy = "0.15.7"
 
+[workspace.metadata.dinghy]
+forward-cfgs = ["metal_backend", "grammar_xgrammar"]
+
+[workspace.metadata.dinghy.test-attribute-aliases]
+uzu_test = "dinghy_apple_runner_macros::test_case"
+uzu_bench = "dinghy_apple_runner_macros::bench_case"
+
 [profile.dev.build-override]
 opt-level = 3
 
