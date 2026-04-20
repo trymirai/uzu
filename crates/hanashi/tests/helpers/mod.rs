@@ -2,10 +2,8 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use hanashi::chat::types::{
-    ContentBlock, Message, ReasoningEffort, Role, ToolDescription, ToolNamespace, TranslationInput,
-};
 use serde::Deserialize;
+use shoji::types::{ContentBlock, Message, ReasoningEffort, Role, ToolDescription, ToolNamespace, TranslationInput};
 use tokenizers::Tokenizer;
 
 fn test_data_path() -> PathBuf {

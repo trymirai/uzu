@@ -2,43 +2,100 @@ mod config;
 mod downloader;
 mod error;
 
+use std::collections::HashMap;
+
+use backend_uzu::inference_backend::{Backend as UzuBackend, Config as UzuBackendConfig};
 pub use config::Config;
 pub use downloader::Downloader;
 pub use error::Error;
-use nagare::{
-    device::Device,
-    helpers::SharedAccess,
-    registry::{CachedRegistry, MergedRegistry, Registry, types::Model},
-    storage::{Config as StorageConfig, Storage},
+use shoji::{
+    traits::{Backend, BackendInstance, Registry},
+    types::Model,
 };
 use tokio::runtime::Handle;
+use tokio_stream::wrappers::BroadcastStream;
+
+use crate::{
+    device::Device,
+    helpers::{SharedAccess, is_endpoint_reachable},
+    logs,
+    registry::{
+        CachedRegistry, Error as RegistryError, MergedRegistry,
+        mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
+        openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
+    },
+    storage::{Config as StorageConfig, Storage, types::DownloadState},
+};
 
 pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
+    backends: HashMap<String, Box<dyn Backend>>,
 }
 
 impl Engine {
-    pub async fn new(_config: Config) -> Result<Self, Error> {
+    pub async fn new(config: Config) -> Result<Self, Error> {
         let tokio_handle = Handle::try_current().map_err(|error| Error::TokioError {
             message: error.to_string(),
         })?;
 
         let device = Device::new()?;
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage = SharedAccess::new(
-            Storage::new(tokio_handle.clone(), StorageConfig::new(device.clone(), None, "mirai".to_string())).await?,
-        );
+        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string());
+        logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
-        let engine = Self {
+        let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);
+
+        let uzu_backend_config = UzuBackendConfig {};
+        let uzu_backend: Box<dyn Backend> =
+            Box::new(UzuBackend::new(uzu_backend_config).map_err(|error| Error::Backend {
+                message: error.to_string(),
+            })?);
+
+        let mirai_registry_config = MiraiRegistryConfig {
+            api_key: config.mirai_api_key,
+            device: device.clone(),
+            backends: vec![MiraiBackend {
+                identifier: uzu_backend.identifier(),
+                version: uzu_backend.version(),
+            }],
+            include_traces: false,
+        };
+        let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
+
+        let mut engine = Self {
             storage,
             registry,
+            backends: HashMap::new(),
         };
+        engine.add_backend(uzu_backend);
+        engine.add_registry(mirai_registry).await?;
 
-        // if let Some(openai_api_key) = config.openai_api_key {
-        //     let openai_registry = OpenAIRegistry::new(OpenAIConfig::openai(openai_api_key))?;
-        //     engine.add_registry(Box::new(openai_registry)).await?;
-        // }
+        if let Some(openai_api_key) = config.openai_api_key {
+            let openai_registry = OpenAIRegistry::new(OpenAIConfig::openai(openai_api_key))?;
+            engine.add_registry(Box::new(openai_registry)).await?;
+        }
+
+        let ollama_config = OpenAIConfig::ollama();
+        if is_endpoint_reachable(&ollama_config.api_endpoint).await {
+            let ollama_registry = OpenAIRegistry::new(ollama_config)?;
+            engine.add_registry(Box::new(ollama_registry)).await?;
+        }
+
+        if let Some(baseten_api_key) = config.baseten_api_key {
+            let baseten_registry = OpenAIRegistry::new(OpenAIConfig::baseten(baseten_api_key))?;
+            engine.add_registry(Box::new(baseten_registry)).await?;
+        }
+
+        if let Some(anthropic_api_key) = config.anthropic_api_key {
+            let anthropic_registry = OpenAIRegistry::new(OpenAIConfig::anthropic(anthropic_api_key))?;
+            engine.add_registry(Box::new(anthropic_registry)).await?;
+        }
+
+        if let Some(openrouter_api_key) = config.openrouter_api_key {
+            let openrouter_registry = OpenAIRegistry::new(OpenAIConfig::openrouter(openrouter_api_key))?;
+            engine.add_registry(Box::new(openrouter_registry)).await?;
+        }
 
         Ok(engine)
     }
@@ -47,7 +104,7 @@ impl Engine {
 impl Engine {
     pub async fn add_registry(
         &self,
-        registry: Box<dyn Registry>,
+        registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), Error> {
         self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
         self.handle_registry_resfresh().await?;
@@ -61,6 +118,22 @@ impl Engine {
         self.registry.lock().await.remove(registry_identifier)?;
         self.handle_registry_resfresh().await?;
         Ok(())
+    }
+}
+
+impl Engine {
+    pub fn add_backend(
+        &mut self,
+        backend: Box<dyn Backend>,
+    ) {
+        self.backends.insert(backend.identifier(), backend);
+    }
+
+    pub fn remove_backend(
+        &mut self,
+        identifier: &str,
+    ) {
+        self.backends.remove(identifier);
     }
 }
 
@@ -90,6 +163,10 @@ impl Engine {
         model: &Model,
     ) -> Downloader {
         Downloader::new(model.identifier(), self.storage.clone())
+    }
+
+    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
+        self.storage.lock().await.subscribe()
     }
 
     async fn handle_registry_resfresh(&self) -> Result<(), Error> {
