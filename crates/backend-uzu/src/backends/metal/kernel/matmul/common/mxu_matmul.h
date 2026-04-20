@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mxu_fragment_layout.h"
+#include "mxu_fragment.h"
 
 namespace uzu {
 namespace matmul {

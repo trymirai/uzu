@@ -20,7 +20,7 @@ template <
     bool aligned_n,
     bool aligned_k,
     typename AccumulatorType = float>
-auto gemm_loop(
+METAL_FUNC auto gemm_loop(
     const device T* left_ptr,
     const device T* right_ptr,
     int leading_dimension_a,
