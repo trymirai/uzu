@@ -5,6 +5,7 @@
 #include <metal_stdlib>
 
 #include "../../common/integral_constant.h"
+#include "../../common/thread_context.h"
 using namespace uzu;
 
 #include "defines.h"
@@ -36,12 +37,15 @@ struct MxuFragment {
   template <typename U>
   using FragmentVector = typename metal::vec<U, ELEMENTS_PER_FRAG>;
 
-  METAL_FUNC static short2 get_lane_coordinate() {
-    const ushort simd_lane_id = __metal_get_thread_index_in_simdgroup(ushort());
-    const short quad_id = simd_lane_id >> 2;
-    const short lane_row = ((quad_id & 4) | ((simd_lane_id >> 1) & 3));
-    const short lane_col = ((quad_id & 2) | (simd_lane_id & 1)) * 4;
-    return short2{lane_col, lane_row};
+  METAL_FUNC static short2 get_position(
+      const thread ThreadContext& thread_context
+  ) {
+    const ushort simdgroup_index = ushort(thread_context.simdgroup_index);
+    const short quad_id = simdgroup_index / 4;
+    const short thread_row = (quad_id & 4) + (simdgroup_index / 2) % 4;
+    const short thread_col =
+        ((quad_id & 2) + simdgroup_index % 2) * ELEMENT_COLS;
+    return short2{thread_col, thread_row};
   }
 
   template <
@@ -56,11 +60,12 @@ struct MxuFragment {
       SourcePointerType source,
       RowStride row_stride,
       ColStride col_stride,
-      RowOffset row_offset = {},
-      ColOffset col_offset = {}
+      RowOffset row_offset,
+      ColOffset col_offset,
+      const thread ThreadContext& thread_context
   ) {
-    const short2 lane_coord = get_lane_coordinate();
-    source += lane_coord.y * row_stride + lane_coord.x * col_stride;
+    const short2 position = get_position(thread_context);
+    source += position.y * row_stride + position.x * col_stride;
 
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < ELEMENT_ROWS; i++) {
@@ -99,13 +104,14 @@ struct MxuFragment {
       ColStride col_stride,
       RowLimit row_limit,
       ColLimit col_limit,
-      RowOffset row_offset = {},
-      ColOffset col_offset = {}
+      RowOffset row_offset,
+      ColOffset col_offset,
+      const thread ThreadContext& thread_context
   ) {
-    const short2 lane_coord = get_lane_coordinate();
-    source += lane_coord.y * row_stride + lane_coord.x * col_stride;
-    auto local_row_limit = row_limit - lane_coord.y;
-    auto local_col_limit = col_limit - lane_coord.x;
+    const short2 position = get_position(thread_context);
+    source += position.y * row_stride + position.x * col_stride;
+    auto local_row_limit = row_limit - position.y;
+    auto local_col_limit = col_limit - position.x;
 
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < ELEMENT_ROWS; i++) {
@@ -135,13 +141,14 @@ struct MxuFragment {
       DestinationPointerType destination,
       RowStride row_stride,
       ColStride col_stride,
-      RowOffset row_offset = {},
-      ColOffset col_offset = {}
+      RowOffset row_offset,
+      ColOffset col_offset,
+      const thread ThreadContext& thread_context
   ) {
     using U = PointerElementType<DestinationPointerType>;
 
-    const short2 lane_coord = get_lane_coordinate();
-    destination += lane_coord.y * row_stride + lane_coord.x * col_stride;
+    const short2 position = get_position(thread_context);
+    destination += position.y * row_stride + position.x * col_stride;
 
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < ELEMENT_ROWS; i++) {
@@ -180,15 +187,16 @@ struct MxuFragment {
       ColStride col_stride,
       RowLimit row_limit,
       ColLimit col_limit,
-      RowOffset row_offset = {},
-      ColOffset col_offset = {}
+      RowOffset row_offset,
+      ColOffset col_offset,
+      const thread ThreadContext& thread_context
   ) {
     using U = PointerElementType<DestinationPointerType>;
 
-    const short2 lane_coord = get_lane_coordinate();
-    destination += lane_coord.y * row_stride + lane_coord.x * col_stride;
-    auto local_row_limit = row_limit - lane_coord.y;
-    auto local_col_limit = col_limit - lane_coord.x;
+    const short2 position = get_position(thread_context);
+    destination += position.y * row_stride + position.x * col_stride;
+    auto local_row_limit = row_limit - position.y;
+    auto local_col_limit = col_limit - position.x;
 
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < ELEMENT_ROWS; i++) {

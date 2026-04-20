@@ -55,7 +55,8 @@ KERNEL(MatmulGemmMpp)(
               align_k,
               ab_scale,
               thread_context.threadgroup_index,
-              uint2(group_x, group_y));
+              uint2(group_x, group_y),
+              thread_context);
     });
   });
 }

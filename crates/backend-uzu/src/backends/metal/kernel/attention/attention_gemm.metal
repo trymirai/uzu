@@ -23,7 +23,7 @@ struct TransformScale {
 
 template <typename T>
 METAL_FUNC T row_reduce_max(T v) {
-  // SimdgroupMultiplyAccumulate::get_lane_coordinates mapping groups lanes for
+  // SimdgroupMultiplyAccumulate::get_position mapping groups lanes for
   // a row as: {lane, lane^1, lane^8, (lane^1)^8}. Reduce in two steps.
   v = metal::max(v, simd_shuffle_xor(v, 1));
   v = metal::max(v, simd_shuffle_xor(v, 8));
@@ -222,12 +222,10 @@ PUBLIC KERNEL(AttentionGemm)(
 
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
-  const short2 lane_coordinates =
-      SimdgroupMultiplyAccumulateType::get_lane_coordinates(
-          thread_context.simdgroup_index
-      );
-  const short lane_row = lane_coordinates.y;
-  const short lane_col = lane_coordinates.x;
+  const short2 position =
+      SimdgroupMultiplyAccumulateType::get_position(thread_context);
+  const short lane_row = position.y;
+  const short lane_col = position.x;
 
   const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS *
                                    short(thread_context.threadgroup_index);

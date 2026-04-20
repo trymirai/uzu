@@ -154,12 +154,13 @@ struct ThreadgroupGemm {
       const bool is_accumulate,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
-      uint simd_lane_id [[thread_index_in_simdgroup]],
-      uint simd_group_id [[simdgroup_index_in_threadgroup]],
-      uint2 threadgroup_position [[threadgroup_position_in_grid]],
-      uint3 thread_position [[thread_position_in_threadgroup]]
+      const thread ThreadContext& thread_context,
+      uint2 threadgroup_position,
+      uint3 thread_position
   ) {
     (void)thread_position;
+    const uint simd_lane_id = thread_context.simdgroup_index;
+    const uint simd_group_id = thread_context.threadgroup_index;
 
     const int swizzle_stride = pow2(params->swizzle_log);
     const int swizzled_row_id = threadgroup_position.y * swizzle_stride +
@@ -199,7 +200,7 @@ struct ThreadgroupGemm {
         simd_lane_id
     );
 
-    thread ThreadgroupTileType threadgroup_tile(simd_group_id, simd_lane_id);
+    thread ThreadgroupTileType threadgroup_tile(thread_context);
 
     TransformScaleAccumulate<AccumulatorType, AccumulatorType> epilogue(
         ab_scale,

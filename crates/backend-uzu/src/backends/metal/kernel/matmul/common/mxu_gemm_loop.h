@@ -28,7 +28,8 @@ METAL_FUNC auto gemm_loop(
     int K,
     int aligned_k_iterations,
     const short simdgroup_limit_m,
-    const short simdgroup_limit_n
+    const short simdgroup_limit_n,
+    const thread ThreadContext& thread_context
 ) {
   constexpr ushort TILES_M = SIMDGROUP_BLOCK_M / MxuFragment::FRAGMENT_ROWS;
   constexpr ushort TILES_N = SIMDGROUP_BLOCK_N / MxuFragment::FRAGMENT_COLS;
@@ -40,7 +41,7 @@ METAL_FUNC auto gemm_loop(
   constexpr int RIGHT_TILE_ROWS = transpose_b ? TILES_N : TILES_K;
   constexpr int RIGHT_TILE_COLS = transpose_b ? TILES_K : TILES_N;
 
-  MxuTile<AccumulatorType, TILES_M, TILES_N> accumulator;
+  MxuTile<AccumulatorType, TILES_M, TILES_N> accumulator(thread_context);
   accumulator.clear();
 
   METAL_PRAGMA_NO_UNROLL
@@ -49,8 +50,8 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < BLOCK_K; inner_k += SIMDGROUP_BLOCK_K) {
-      MxuTile<T, LEFT_TILE_ROWS, LEFT_TILE_COLS> left_tile;
-      MxuTile<T, RIGHT_TILE_ROWS, RIGHT_TILE_COLS> right_tile;
+      MxuTile<T, LEFT_TILE_ROWS, LEFT_TILE_COLS> left_tile(thread_context);
+      MxuTile<T, RIGHT_TILE_ROWS, RIGHT_TILE_COLS> right_tile(thread_context);
 
       const int left_offset =
           transpose_a ? inner_k * leading_dimension_a : inner_k;
@@ -105,8 +106,8 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < remaining_k; inner_k += SIMDGROUP_BLOCK_K) {
-      MxuTile<T, LEFT_TILE_ROWS, LEFT_TILE_COLS> left_tile;
-      MxuTile<T, RIGHT_TILE_ROWS, RIGHT_TILE_COLS> right_tile;
+      MxuTile<T, LEFT_TILE_ROWS, LEFT_TILE_COLS> left_tile(thread_context);
+      MxuTile<T, RIGHT_TILE_ROWS, RIGHT_TILE_COLS> right_tile(thread_context);
 
       const short safe_k = max(short(0), short(remaining_k - inner_k));
 
@@ -122,12 +123,11 @@ METAL_FUNC auto gemm_loop(
       const int right_offset =
           transpose_b ? inner_k : inner_k * leading_dimension_b;
 
-      left_tile
-          .load_safe(left_ptr + left_offset, leading_dimension_a, left_limits);
+      left_tile.load_safe(
+          left_ptr + left_offset, leading_dimension_a, left_limits
+      );
       right_tile.load_safe(
-          right_ptr + right_offset,
-          leading_dimension_b,
-          right_limits
+          right_ptr + right_offset, leading_dimension_b, right_limits
       );
 
       tile_matmad(

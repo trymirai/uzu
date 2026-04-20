@@ -30,8 +30,10 @@ struct MxuTile {
   typedef typename FragmentType::template FragmentVector<T> FragmentVectorType;
 
   FragmentVectorType fragment_data[NUM_FRAGS];
+  ThreadContext thread_context;
 
-  METAL_FUNC MxuTile() thread {}
+  METAL_FUNC MxuTile(const thread ThreadContext& thread_context) thread
+      : thread_context(thread_context) {}
 
   METAL_FUNC constexpr void clear() {
     METAL_PRAGMA_UNROLL
@@ -98,7 +100,8 @@ struct MxuTile {
             leading_dimension,
             Int<1>{},
             idx_row * Int<FragmentType::FRAGMENT_ROWS>{},
-            idx_col * Int<FragmentType::FRAGMENT_COLS>{}
+            idx_col * Int<FragmentType::FRAGMENT_COLS>{},
+            thread_context
         );
       });
     });
@@ -117,7 +120,8 @@ struct MxuTile {
             leading_dimension,
             Int<1>{},
             idx_row * Int<FragmentType::FRAGMENT_ROWS>{},
-            idx_col * Int<FragmentType::FRAGMENT_COLS>{}
+            idx_col * Int<FragmentType::FRAGMENT_COLS>{},
+            thread_context
         );
       });
     });
@@ -139,7 +143,8 @@ struct MxuTile {
             tile_dimensions.y,
             tile_dimensions.x,
             idx_row * Int<FragmentType::FRAGMENT_ROWS>{},
-            idx_col * Int<FragmentType::FRAGMENT_COLS>{}
+            idx_col * Int<FragmentType::FRAGMENT_COLS>{},
+            thread_context
         );
       });
     });
@@ -161,7 +166,8 @@ struct MxuTile {
             tile_dimensions.y,
             tile_dimensions.x,
             idx_row * Int<FragmentType::FRAGMENT_ROWS>{},
-            idx_col * Int<FragmentType::FRAGMENT_COLS>{}
+            idx_col * Int<FragmentType::FRAGMENT_COLS>{},
+            thread_context
         );
       });
     });

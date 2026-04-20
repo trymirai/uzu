@@ -42,7 +42,8 @@ struct GemmMppCore {
       const bool align_k,
       const float ab_scale,
       uint simd_group_id,
-      uint2 threadgroup_position
+      uint2 threadgroup_position,
+      const thread ThreadContext& thread_context
   ) {
     uint tile_id_x, tile_id_y;
     if (params->use_morton) {
@@ -140,7 +141,8 @@ struct GemmMppCore {
                       int(params->K),
                       aligned_k_iterations,
                       simdgroup_limit_m,
-                      simdgroup_limit_n
+                      simdgroup_limit_n,
+                      thread_context
                   );
 
                   if constexpr (APPLY_AB_SCALE) {
@@ -152,7 +154,7 @@ struct GemmMppCore {
                   }
 
                   if constexpr (IS_ACCUMULATE) {
-                    MxuTile<T, TILES_M, TILES_N> existing_output;
+                    MxuTile<T, TILES_M, TILES_N> existing_output(thread_context);
                     if constexpr (aligned_m.value && aligned_n.value) {
                       existing_output.load(
                           output_ptr,

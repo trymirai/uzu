@@ -57,8 +57,7 @@ KERNEL(MatmulGemm)(
           is_accumulate,
           a_shared,
           b_shared,
-          thread_context.simdgroup_index,
-          thread_context.threadgroup_index,
+          thread_context,
           uint2(group_x, group_y),
           uint3(thread_x, thread_y, thread_z));
 }

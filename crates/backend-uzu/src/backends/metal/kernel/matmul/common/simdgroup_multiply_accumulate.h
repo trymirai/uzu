@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../common/thread_context.h"
 #include "defines.h"
 
 using namespace metal;
@@ -39,13 +40,15 @@ struct SimdgroupMultiplyAccumulate<T, 8, 8> {
   typedef metal::simdgroup_matrix<T, ROWS, COLS> SimdgroupMatrixType;
   typedef metal::vec<T, THREAD_ELEMENT_COUNT> ThreadDataType;
 
-  METAL_FUNC static constexpr short2 get_lane_coordinates(
-      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  METAL_FUNC static constexpr short2 get_position(
+      const thread ThreadContext& thread_context
   ) {
-    const short quad_index = simd_lane_id / 4;
-    const short lane_row = (quad_index & 4) + ((simd_lane_id / 2) % 4);
-    const short lane_col = (quad_index & 2) * 2 + (simd_lane_id % 2) * 2;
-    return short2{lane_col, lane_row};
+    const ushort simdgroup_index = ushort(thread_context.simdgroup_index);
+    const short quad_index = simdgroup_index / 4;
+    const short position_row = (quad_index & 4) + (simdgroup_index / 2) % 4;
+    const short position_col =
+        ((quad_index & 2) + simdgroup_index % 2) * THREAD_ELEMENT_COLS;
+    return short2{position_col, position_row};
   }
 
   template <typename SourcePointerType, typename RowStride, typename ColStride>

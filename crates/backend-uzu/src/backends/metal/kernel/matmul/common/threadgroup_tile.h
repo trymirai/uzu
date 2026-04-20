@@ -80,18 +80,15 @@ struct ThreadgroupTile {
   ushort a_shared_offset;
   ushort b_shared_offset;
 
-  METAL_FUNC ThreadgroupTile(
-      ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]]
-  ) {
+  METAL_FUNC ThreadgroupTile(const thread ThreadContext& thread_context) {
+    const ushort simd_group_id = ushort(thread_context.threadgroup_index);
     ushort tile_row_base =
         SIMDGROUP_BLOCK_SIZE * (simd_group_id / SIMDGROUPS_PER_COLUMN);
     ushort tile_col_base =
         SIMDGROUP_BLOCK_SIZE * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
-    const ushort2 simdgroup_coordinates = ushort2(
-        SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd_lane_id)
-    );
+    const ushort2 simdgroup_coordinates =
+        ushort2(SimdgroupMultiplyAccumulateType::get_position(thread_context));
     simdgroup_row_offset = simdgroup_coordinates.y;
     simdgroup_col_offset = simdgroup_coordinates.x;
 
