@@ -3,7 +3,10 @@ use shoji::{
         State,
         backend::chat_token::{Backend, Instance},
     },
-    types::encoding::Message,
+    types::{
+        encoding::Message,
+        session::chat::{Config, StreamConfig},
+    },
 };
 
 use super::Error;
@@ -16,9 +19,10 @@ pub struct Session {
 impl Session {
     pub async fn new(
         backend: &dyn Backend,
+        config: Config,
         reference: String,
     ) -> Result<Self, Error> {
-        let instance = backend.instance(reference, ()).await.map_err(|error| Error::Backend {
+        let instance = backend.instance(reference, config).await.map_err(|error| Error::Backend {
             message: error.to_string(),
         })?;
         let state = instance.state().await.map_err(|error| Error::Backend {
@@ -40,6 +44,7 @@ impl Session {
     pub async fn stream(
         &mut self,
         _input: Vec<Message>,
+        _config: StreamConfig,
     ) -> Result<(), Error> {
         todo!("Implement chat session via token stream")
     }

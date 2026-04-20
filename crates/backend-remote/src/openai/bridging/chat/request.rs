@@ -1,12 +1,10 @@
 use async_openai::types::chat::{
     ChatCompletionStreamOptions, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, ToolChoiceOptions,
 };
-use shoji::{
-    traits::backend::chat::StreamConfig,
-    types::{
-        encoding::{Message, MessageList},
-        session::chat::{SamplingMethod, SamplingPolicy},
-    },
+use shoji::types::{
+    basic::{SamplingMethod, SamplingPolicy},
+    encoding::{Message, MessageList},
+    session::chat::StreamConfig,
 };
 
 use crate::openai::{

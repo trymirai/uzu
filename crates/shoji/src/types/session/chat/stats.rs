@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "ChatStats")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Stats {
     pub duration: f64,

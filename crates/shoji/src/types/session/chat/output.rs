@@ -5,7 +5,7 @@ use crate::types::{
     session::chat::{FinishReason, Stats},
 };
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "ChatOutput")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Output {
     pub message: Message,

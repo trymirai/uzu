@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::chat::SamplingMethod;
+use crate::types::basic::SamplingMethod;
 
-#[bindings::export(Enum)]
+#[bindings::export(Enum, name = "SamplingPolicy")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SamplingPolicy {
     Default {},

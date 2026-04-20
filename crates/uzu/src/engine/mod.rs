@@ -12,7 +12,7 @@ pub use error::Error;
 use nagare::chat::Session as ChatSession;
 use shoji::{
     traits::{Backend, Registry},
-    types::model::Model,
+    types::{model::Model, session::chat::Config as ChatConfig},
 };
 use tokio::runtime::Handle;
 use tokio_stream::wrappers::BroadcastStream;
@@ -260,11 +260,12 @@ impl Engine {
     pub async fn chat(
         &self,
         model: Model,
+        config: ChatConfig,
     ) -> Result<ChatSession, Error> {
         let path = self.model_path(&model).await;
         if let Some(backend_entity) = model.backend_entity() {
             let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::BackendNotFound)?;
-            let session = ChatSession::new(backend.as_ref(), model, path).await?;
+            let session = ChatSession::new(backend.as_ref(), config, model, path).await?;
             Ok(session)
         } else {
             return Err(Error::BackendNotFound);

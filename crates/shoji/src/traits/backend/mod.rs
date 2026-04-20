@@ -1,4 +1,3 @@
-pub mod chat;
 pub mod chat_message;
 pub mod chat_token;
 pub mod classification;

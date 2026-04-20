@@ -1,12 +1,10 @@
 use async_openai::types::responses::{
     CreateResponse, InputParam, Reasoning, ReasoningSummary, Tool as ResponseTool, ToolChoiceOptions, ToolChoiceParam,
 };
-use shoji::{
-    traits::backend::chat::StreamConfig,
-    types::{
-        encoding::{Message, MessageList},
-        session::chat::{SamplingMethod, SamplingPolicy},
-    },
+use shoji::types::{
+    basic::{SamplingMethod, SamplingPolicy},
+    encoding::{Message, MessageList},
+    session::chat::StreamConfig,
 };
 
 use crate::openai::{

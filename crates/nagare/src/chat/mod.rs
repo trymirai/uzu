@@ -8,6 +8,7 @@ use shoji::{
     types::{
         encoding::Message,
         model::{Model, Specialization},
+        session::chat::{Config, StreamConfig},
     },
 };
 
@@ -19,6 +20,7 @@ pub enum Session {
 impl Session {
     pub async fn new(
         backend: &dyn Backend,
+        config: Config,
         model: Model,
         path: Option<String>,
     ) -> Result<Self, Error> {
@@ -28,12 +30,12 @@ impl Session {
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
         if let Some(token_backend) = backend.as_chat_via_token_capable() {
-            let session = token::Session::new(token_backend, reference).await?;
+            let session = token::Session::new(token_backend, config, reference).await?;
             return Ok(Self::Token(session));
         }
 
         if let Some(message_backend) = backend.as_chat_via_message_capable() {
-            let session = message::Session::new(message_backend, reference).await?;
+            let session = message::Session::new(message_backend, config, reference).await?;
             return Ok(Self::Message(session));
         }
 
@@ -50,10 +52,11 @@ impl Session {
     pub async fn stream(
         &mut self,
         input: Vec<Message>,
+        config: StreamConfig,
     ) -> Result<(), Error> {
         match self {
-            Session::Token(session) => session.stream(input).await,
-            Session::Message(session) => session.stream(input).await,
+            Session::Token(session) => session.stream(input, config).await,
+            Session::Message(session) => session.stream(input, config).await,
         }
     }
 }

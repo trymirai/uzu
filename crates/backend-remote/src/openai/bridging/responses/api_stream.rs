@@ -3,8 +3,8 @@ use std::{pin::Pin, sync::Arc};
 use async_openai::{Client, config::OpenAIConfig};
 use futures::{FutureExt, Stream, StreamExt, stream};
 use shoji::{
-    traits::backend::{Error as BackendError, chat::StreamConfig, chat_message::Output},
-    types::encoding::Message,
+    traits::backend::{Error as BackendError, chat_message::Output},
+    types::{encoding::Message, session::chat::StreamConfig},
 };
 use tokio_util::sync::CancellationToken;
 

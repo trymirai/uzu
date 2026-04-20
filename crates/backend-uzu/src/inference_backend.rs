@@ -5,13 +5,15 @@ use std::{
 };
 
 use futures::{Stream, stream};
-use shoji::traits::{
-    Backend as BackendTrait, Instance as InstanceTrait, State as StateTrait,
-    backend::{
-        Error as BackendError,
-        chat::StreamConfig,
-        chat_token::{self, StreamInput, StreamOutput},
+use shoji::{
+    traits::{
+        Backend as BackendTrait, Instance as InstanceTrait, State as StateTrait,
+        backend::{
+            Error as BackendError,
+            chat_token::{self, StreamInput, StreamOutput},
+        },
     },
+    types::session::chat::{Config, StreamConfig},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -56,7 +58,7 @@ impl chat_token::Backend for Backend {
     fn instance(
         &self,
         reference: String,
-        _config: chat_token::Config,
+        _config: Config,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn chat_token::Instance>, BackendError>> + Send + '_>> {
         Box::pin(async move {
             let path = PathBuf::from(&reference);

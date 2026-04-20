@@ -2,13 +2,15 @@ use std::{pin::Pin, sync::Arc};
 
 use async_openai::{Client, config::OpenAIConfig};
 use futures::Stream;
-use shoji::traits::{
-    Instance as InstanceTrait, State as StateTrait,
-    backend::{
-        Error as BackendError,
-        chat::StreamConfig,
-        chat_message::{StreamInput, StreamOutput},
+use shoji::{
+    traits::{
+        Instance as InstanceTrait, State as StateTrait,
+        backend::{
+            Error as BackendError,
+            chat_message::{StreamInput, StreamOutput},
+        },
     },
+    types::session::chat::StreamConfig,
 };
 use tokio_util::sync::CancellationToken;
 

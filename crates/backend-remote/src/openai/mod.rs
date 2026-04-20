@@ -11,9 +11,12 @@ use async_openai::{Client, config::OpenAIConfig};
 pub use config::{ApiType, Config};
 pub use error::Error;
 pub use instance::Instance;
-use shoji::traits::{
-    Backend as BackendTrait,
-    backend::{Error as BackendError, chat_message},
+use shoji::{
+    traits::{
+        Backend as BackendTrait,
+        backend::{Error as BackendError, chat_message},
+    },
+    types::session::chat::Config as ChatConfig,
 };
 
 pub struct Backend {
@@ -65,7 +68,7 @@ impl chat_message::Backend for Backend {
     fn instance(
         &self,
         reference: String,
-        _config: chat_message::Config,
+        _config: ChatConfig,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn chat_message::Instance>, BackendError>> + Send + '_>> {
         let client = self.client.clone();
         let api_type = self.config.api_type.clone();

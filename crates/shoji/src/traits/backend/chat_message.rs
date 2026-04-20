@@ -3,10 +3,10 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    traits::backend::{Error, Instance as InstanceTrait, chat::StreamConfig},
+    traits::backend::{Error, Instance as InstanceTrait},
     types::{
         encoding::{Message, ToolCall},
-        session::chat::{FinishReason, Stats},
+        session::chat::{Config, FinishReason, Stats, StreamConfig},
     },
 };
 
@@ -26,7 +26,6 @@ pub struct Output {
     pub stats: Stats,
 }
 
-pub type Config = ();
 pub type StreamInput = Vec<Message>;
 pub type StreamOutput = Output;
 
