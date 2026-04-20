@@ -116,7 +116,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             x_array.allocation(),
             w_array.allocation(),
             b_array.as_ref().map(|bias| bias.allocation()),
-            None::<&uzu::backends::common::Allocation<B>>,
+            None::<&backend_uzu::backends::common::Allocation<B>>,
             &mut x_out,
             &mut b_out,
             &mut c_out,

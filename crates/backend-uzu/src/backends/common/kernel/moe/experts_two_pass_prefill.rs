@@ -53,9 +53,10 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             return;
         }
 
-        let hidden_bytes = args.total_rows * args.d_ff * DataType::F32.size_in_bytes();
         let (hidden_buffer, hidden_range) = args.hidden.as_buffer_range();
-        encoder.encode_fill(hidden_buffer, hidden_range.start..hidden_range.start + hidden_bytes, 0);
+        if !hidden_range.is_empty() {
+            encoder.encode_fill(hidden_buffer, hidden_range, 0);
+        }
 
         self.tile_map.encode_counts(
             encoder,

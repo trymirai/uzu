@@ -208,7 +208,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         &self,
         encoder: &mut Encoder<B>,
         arguments: QuantizedMatmulArguments<'_, B>,
-    ) -> Result<(), QuantizedMatmulError<B>> {
+    ) {
         let QuantizedMatmulArguments {
             a,
             b,
@@ -245,7 +245,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         if batch_dim >= 8 && self.output_dim > 1 {
             if let Some(kernel) = self.matrix_matrix.pick(batch_dim) {
                 encode_kernel!(kernel, hadamard_factors);
-                return Ok(());
+                return;
             }
         }
 
@@ -253,8 +253,6 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             MatrixVectorKernel::Qmv(k) => encode_kernel!(k),
             MatrixVectorKernel::QmvFast(k) => encode_kernel!(k, hadamard_factors),
         }
-
-        Ok(())
     }
 }
 

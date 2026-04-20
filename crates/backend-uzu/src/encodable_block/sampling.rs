@@ -86,21 +86,17 @@ impl<B: Backend> Sampling<B> {
         &self,
         args: SamplingArguments<'_, B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.kernel
-            .encode(
-                args.logits,
-                args.seeds,
-                args.bitmask,
-                args.output,
-                args.sampling_method,
-                args.batch_size,
-                args.vocab_size,
-                encoder,
-            )
-            .expect("Sampling encoding failed");
-
-        Ok(())
+    ) -> Result<(), SamplingError<B>> {
+        self.kernel.encode(
+            args.logits,
+            args.seeds,
+            args.bitmask,
+            args.output,
+            args.sampling_method,
+            args.batch_size,
+            args.vocab_size,
+            encoder,
+        )
     }
 }
 

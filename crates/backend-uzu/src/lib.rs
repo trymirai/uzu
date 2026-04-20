@@ -21,7 +21,7 @@ pub mod backends;
 pub mod prelude;
 pub mod session;
 
-pub use array::{Array, ArrayContextExt};
+pub use array::{Array, ArrayContextExt, allocation_as_slice};
 #[cfg(metal_backend)]
 pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use config::ConfigDataType;

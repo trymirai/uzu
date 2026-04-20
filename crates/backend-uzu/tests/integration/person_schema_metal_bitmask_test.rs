@@ -2,10 +2,6 @@
 
 use std::path::PathBuf;
 
-use metal::MTLDevice;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use tokenizers::Tokenizer;
 use backend_uzu::{
     Array, DataType,
     backends::{
@@ -13,6 +9,10 @@ use backend_uzu::{
         metal::Metal,
     },
 };
+use metal::MTLDevice;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use tokenizers::Tokenizer;
 use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

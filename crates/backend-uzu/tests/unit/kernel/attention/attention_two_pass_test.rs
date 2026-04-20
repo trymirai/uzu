@@ -136,9 +136,9 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
         input.scale,
         input.num_heads,
         input.suffix_length,
-        None::<&uzu::backends::common::Allocation<B>>,
+        None::<&backend_uzu::backends::common::Allocation<B>>,
         None,
-        None::<&uzu::backends::common::Allocation<B>>,
+        None::<&backend_uzu::backends::common::Allocation<B>>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();

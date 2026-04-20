@@ -2,16 +2,18 @@
 
 use std::sync::Arc;
 
-use backend_uzu::prelude::{FixedTokensSpeculator, PromptLookupSpeculator, SpeculatorConfig};
+use backend_uzu::{
+    prelude::{FixedTokensSpeculator, PromptLookupSpeculator, SpeculatorConfig},
+    session::{
+        Session,
+        config::{DecodingConfig, RunConfig},
+        parameter::{AsyncBatchSize, SamplingSeed},
+        types::{Input, Message, Output},
+    },
+};
 use shoji::types::ClassificationFeature;
 use test_tag::tag;
 use tokenizers::Tokenizer;
-use backend_uzu::session::{
-    Session,
-    config::{DecodingConfig, RunConfig},
-    parameter::{AsyncBatchSize, SamplingSeed},
-    types::{Input, Message, Output},
-};
 
 use crate::common::path::get_test_model_path;
 

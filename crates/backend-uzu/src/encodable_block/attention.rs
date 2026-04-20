@@ -220,27 +220,26 @@ impl<B: Backend> Attention<B> {
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = args.kv_cache_layer.is_some();
-        let mut extracted_values = None;
-
-        // For classifiers (no KV cache): extract values from QKV into a dedicated extracted_values buffer.
-        if !has_kv_cache {
-            let mut values =
-                encoder.allocate_scratch(size_for_shape(&[num_groups, suffix_length, head_dim], self.data_type))?;
-            self.update_kv_cache_inplace_kernel.encode(
-                None::<&Allocation<B>>,
-                qkv,
-                &mut rotated_keys,
-                &mut values,
-                num_groups as u32,
-                num_heads as u32,
-                head_dim as u32,
-                suffix_length as u32,
-                0u32,
-                max_sequence_length as u32,
-                encoder,
-            );
-            extracted_values = Some(values);
-        }
+        let extracted_values = (!has_kv_cache)
+            .then(|| {
+                let mut values =
+                    encoder.allocate_scratch(size_for_shape(&[num_groups, suffix_length, head_dim], self.data_type))?;
+                self.update_kv_cache_inplace_kernel.encode(
+                    None::<&Allocation<B>>,
+                    qkv,
+                    &mut rotated_keys,
+                    &mut values,
+                    num_groups as u32,
+                    num_heads as u32,
+                    head_dim as u32,
+                    suffix_length as u32,
+                    0u32,
+                    max_sequence_length as u32,
+                    encoder,
+                );
+                Ok(values)
+            })
+            .transpose()?;
 
         let k_head_stride = (max_sequence_length * head_dim) as i32;
         let k_seq_stride = head_dim as i32;
@@ -301,7 +300,7 @@ impl<B: Backend> Attention<B> {
             max_sequence_length,
             head_dim,
             encoder,
-        );
+        )?;
 
         if let Some(gate_kernel) = &self.gate_kernel {
             let total_elements = (suffix_length * num_heads * head_dim) as u32;
@@ -339,7 +338,7 @@ impl<B: Backend> Attention<B> {
         max_sequence_length: usize,
         head_dim: usize,
         encoder: &mut Encoder<B>,
-    ) {
+    ) -> Result<(), B::Error> {
         match variant {
             KernelVariant::Gemm => {
                 let args = AttentionGemmArguments {
@@ -361,7 +360,7 @@ impl<B: Backend> Attention<B> {
                     sliding_window_size: self.sliding_window_size,
                     scale,
                 };
-                self.gemm_block.encode(context, encoder, args).expect("Failed to encode AttentionGemmBlock");
+                self.gemm_block.encode(context, encoder, args)?;
             },
             KernelVariant::SinglePass => {
                 let kernel = self
@@ -399,14 +398,11 @@ impl<B: Backend> Attention<B> {
                     .get(&(head_dim as u32))
                     .unwrap_or_else(|| panic!("Can not find AttentionTwoPass2Kernel for key {:?}", kernel_key));
                 let mut partials = encoder
-                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32 * head_dim], DataType::F32))
-                    .expect("Failed to allocate attention partials");
-                let mut sums = encoder
-                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))
-                    .expect("Failed to allocate attention sums");
-                let mut maxs = encoder
-                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))
-                    .expect("Failed to allocate attention maxs");
+                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32 * head_dim], DataType::F32))?;
+                let mut sums =
+                    encoder.allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))?;
+                let mut maxs =
+                    encoder.allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))?;
                 kernel_pass1.encode(
                     queries,
                     keys,
@@ -440,6 +436,8 @@ impl<B: Backend> Attention<B> {
                 );
             },
         }
+
+        Ok(())
     }
 }
 

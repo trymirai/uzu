@@ -237,39 +237,32 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 
         // Clear internal MoE buffers
         if suffix_length > 0 && k > 0 {
-            let entries = suffix_length * k;
-            let topk_bytes = entries * std::mem::size_of::<i32>();
-            let tok2row_bytes = entries * std::mem::size_of::<i32>();
-
             // Clear topk_ids and tok2row buffers
-            if topk_bytes > 0 {
-                let (buffer, range) = topk_ids.as_buffer_range();
-                encoder.encode_fill(buffer, range.start..range.start + topk_bytes, 0xFF);
+            let (buffer, range) = topk_ids.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0xFF);
             }
-            if tok2row_bytes > 0 {
-                let (buffer, range) = tok2row.as_buffer_range();
-                encoder.encode_fill(buffer, range.start..range.start + tok2row_bytes, 0xFF);
+            let (buffer, range) = tok2row.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0xFF);
             }
 
             // Clear hidden buffer
-            let hidden_bytes = suffix_length * k * self.hidden_dim * DataType::F32.size_in_bytes();
-            if hidden_bytes > 0 {
-                let (buffer, range) = hidden.as_buffer_range();
-                encoder.encode_fill(buffer, range.start..range.start + hidden_bytes, 0);
+            let (buffer, range) = hidden.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0);
             }
 
             // Clear y_partial buffer
-            let y_partial_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
-            if y_partial_bytes > 0 {
-                let (buffer, range) = y_partial.as_buffer_range();
-                encoder.encode_fill(buffer, range.start..range.start + y_partial_bytes, 0);
+            let (buffer, range) = y_partial.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0);
             }
 
             // Clear x_perm buffer
-            let x_perm_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
-            if x_perm_bytes > 0 {
-                let (buffer, range) = x_perm.as_buffer_range();
-                encoder.encode_fill(buffer, range.start..range.start + x_perm_bytes, 0);
+            let (buffer, range) = x_perm.as_buffer_range();
+            if !range.is_empty() {
+                encoder.encode_fill(buffer, range, 0);
             }
         }
 

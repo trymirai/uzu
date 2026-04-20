@@ -253,20 +253,18 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
-        self.kernel
-            .encode(
-                encoder,
-                QuantizedMatmulArguments {
-                    a: input,
-                    b: &self.weights,
-                    scales: &self.scales,
-                    zero_points_or_biases: &self.zero_points_or_biases,
-                    output: &mut output,
-                    hadamard_factors: self.output_hadamard_factors.as_ref(),
-                    batch_dim,
-                },
-            )
-            .expect("Failed to encode quantized matmul");
+        self.kernel.encode(
+            encoder,
+            QuantizedMatmulArguments {
+                a: input,
+                b: &self.weights,
+                scales: &self.scales,
+                zero_points_or_biases: &self.zero_points_or_biases,
+                output: &mut output,
+                hadamard_factors: self.output_hadamard_factors.as_ref(),
+                batch_dim,
+            },
+        );
 
         if let (Some(bias_add_kernel), Some(biases)) = (&self.bias_add_kernel, &self.biases) {
             let total_length = batch_dim * self.output_dim;

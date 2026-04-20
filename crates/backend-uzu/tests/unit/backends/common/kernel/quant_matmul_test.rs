@@ -361,7 +361,7 @@ fn execute_quantized_matmul<B: Backend>(
                 batch_dim: batch,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
-            kernel.encode(&mut encoder, args).unwrap();
+            kernel.encode(&mut encoder, args);
             encoder.end_encoding().submit().wait_until_completed().unwrap();
         }
     }
@@ -378,7 +378,7 @@ fn execute_quantized_matmul<B: Backend>(
             batch_dim: batch,
         };
         let mut encoder = Encoder::new(ctx).unwrap();
-        kernel.encode(&mut encoder, args).unwrap();
+        kernel.encode(&mut encoder, args);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
     let elapsed = start.elapsed();

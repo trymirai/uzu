@@ -130,7 +130,7 @@ fn get_output<
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        None::<&uzu::backends::common::Allocation<B>>,
+        None::<&backend_uzu::backends::common::Allocation<B>>,
         scales_array.allocation(),
         &mut qkv,
         input.batch_size,

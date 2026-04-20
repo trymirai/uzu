@@ -1,8 +1,8 @@
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 use backend_uzu::backends::common::{
     Encoder,
     kernel::moe::{MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments},
 };
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::encodable_block::mlp::moe::tests::{
     common::helpers::{

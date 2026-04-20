@@ -624,20 +624,18 @@ impl<B: Backend> Embedding<B> {
                         readout,
                     },
             } => {
-                readout
-                    .encode(
-                        encoder,
-                        QuantizedMatmulArguments {
-                            a: input_allocation,
-                            b: weights,
-                            scales,
-                            zero_points_or_biases: biases,
-                            output: output_allocation,
-                            hadamard_factors: None,
-                            batch_dim,
-                        },
-                    )
-                    .expect("Failed to encode embedding readout quantized matmul");
+                readout.encode(
+                    encoder,
+                    QuantizedMatmulArguments {
+                        a: input_allocation,
+                        b: weights,
+                        scales,
+                        zero_points_or_biases: biases,
+                        output: output_allocation,
+                        hadamard_factors: None,
+                        batch_dim,
+                    },
+                );
             },
         };
 
