@@ -1,5 +1,4 @@
 use crate::{
-    array::{Array, ArrayContextExt},
     backends::common::{
         Backend, Encoder, SparseBuffer,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
@@ -17,8 +16,8 @@ pub enum KVSlice<B: Backend> {
         base_ring_offset: usize,
         base_ring_length: usize,
         slots: Vec<usize>,
-        keys: SparseArray<B>, // [num_groups, slots.len(), head_dim]
-        values: Array<B>,     // [num_groups, slots.len(), head_dim]
+        keys: SparseArray<B>,   // [num_groups, slots.len(), head_dim]
+        values: SparseArray<B>, // [num_groups, slots.len(), head_dim]
     },
 }
 
@@ -46,7 +45,7 @@ pub struct KVCacheLayer<B: Backend> {
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
     pub keys: SparseArray<B>,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub values: Array<B>,
+    pub values: SparseArray<B>,
 }
 
 impl<B: Backend> KVCacheLayer<B> {
@@ -156,7 +155,7 @@ impl<B: Backend> KVCacheLayer<B> {
         let layer_data = KVLayerData {
             key_buffer: self.keys.sparse_buffer().borrow().buffer(),
             key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer: self.values.buffer(),
+            value_buffer: self.values.sparse_buffer().borrow().buffer(),
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
@@ -212,8 +211,7 @@ impl<B: Backend> KVCacheLayer<B> {
 
                 let slice_shape = [num_groups, len, head_dim];
                 let mut slice_keys = context.create_sparse_array(&slice_shape, dtype, "kv_cache_layer_slice_keys");
-                let mut slice_values =
-                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
+                let mut slice_values = context.create_sparse_array(&slice_shape, dtype, "kv_cache_layer_slice_values");
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()

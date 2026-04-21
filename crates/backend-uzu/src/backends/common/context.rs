@@ -1,6 +1,6 @@
 use std::{env, path::Path, rc::Rc};
 
-use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer, SparseBuffer};
+use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
 
 pub trait Context: Sized {
     type Backend: Backend<Context = Self>;

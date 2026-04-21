@@ -6,9 +6,8 @@ use std::{
 };
 
 use metal::{
-    MTL4CommandQueue, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLEvent, MTLHeap,
-    MTLHeapDescriptor, MTLHeapType, MTLResourceOptions, MTLSharedEvent, MTLSparsePageSize, MTLSparseTextureMappingMode,
-    MTLStorageMode,
+    MTL4CommandQueue, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor,
+    MTLHeapType, MTLResourceOptions, MTLSharedEvent, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
 };
 use objc2::__framework_prelude::{ProtocolObject, Retained};
 use objc2_foundation::NSRange;

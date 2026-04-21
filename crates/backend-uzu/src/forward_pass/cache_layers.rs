@@ -148,7 +148,7 @@ impl<B: Backend> CacheLayers<B> {
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                         ),
-                        values: context.create_array_zeros(
+                        values: context.create_sparse_array(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
@@ -369,7 +369,7 @@ impl<B: Backend> CacheLayers<B> {
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                     );
-                    let mut new_values = context.create_array_zeros(
+                    let mut new_values = context.create_sparse_array(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),

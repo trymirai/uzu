@@ -182,7 +182,7 @@ impl<B: Backend> Attention<B> {
         let num_groups = rotated_keys_array.shape()[0];
         let is_trie = state.token_subtrie_ranges.is_some();
 
-        let (segment_prefix_length, ring_params, key_cache_sparse_array, value_cache_array) =
+        let (segment_prefix_length, ring_params, key_cache_sparse_array, value_cache_sparse_array) =
             if let Some(cache_layers) = state.cache_layers() {
                 let projection_step = parameters.projection_step.unwrap_or(0);
                 let cache = cache_layers.borrow();
@@ -254,8 +254,10 @@ impl<B: Backend> Attention<B> {
         let key_cache_buffer_rc = key_cache_sparse_buffer_ref.as_ref().map(|ref_mut| ref_mut.buffer());
         let mut key_cache_buffer_ref = key_cache_buffer_rc.as_ref().map(|buffer| buffer.borrow_mut());
 
-        let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
-        let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
+        let value_cache_sparse_buffer_rc = value_cache_sparse_array.as_ref().map(|array| array.sparse_buffer());
+        let value_cache_sparse_buffer_ref = value_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
+        let value_cache_buffer_rc = value_cache_sparse_buffer_ref.as_ref().map(|ref_mut| ref_mut.buffer());
+        let mut value_cache_buffer_ref = value_cache_buffer_rc.as_ref().map(|buffer| buffer.borrow_mut());
 
         let extracted_values_array = (!has_kv_cache).then(|| state.array(ArrayId::ExtractedValues));
         let extracted_values_buf_rc = extracted_values_array.as_ref().map(|a| a.buffer());
@@ -308,7 +310,7 @@ impl<B: Backend> Attention<B> {
                 Some(rotated_keys_buf_borrow.deref()),
                 qkv_buf_borrow.deref(),
                 key_cache_buffer_ref.as_mut().unwrap().deref_mut(),
-                value_cache_buf_borrow.as_mut().unwrap().deref_mut(),
+                value_cache_buffer_ref.as_mut().unwrap().deref_mut(),
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
@@ -325,7 +327,7 @@ impl<B: Backend> Attention<B> {
             rotated_keys_buf_borrow.deref()
         };
         let value_cache_buffer: &B::Buffer = if has_kv_cache {
-            value_cache_buf_borrow.as_ref().unwrap().deref()
+            value_cache_buffer_ref.as_ref().unwrap().deref()
         } else {
             extracted_values_buf_borrow.as_ref().unwrap().deref()
         };
