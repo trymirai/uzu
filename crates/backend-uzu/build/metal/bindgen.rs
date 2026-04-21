@@ -220,13 +220,23 @@ pub fn bindgen(
                                     quote! { compute_encoder.set_value(&#arg_name, #arg_count); },
                                     None,
                                 ),
-                                MetalConstantType::Array => (
+                                MetalConstantType::Array(None) => (
                                     quote! { &[#arg_dtype] },
                                     None,
                                     None,
                                     quote! { compute_encoder.set_slice(#arg_name, #arg_count); },
                                     None,
                                 ),
+                                MetalConstantType::Array(Some(size)) => {
+                                    let arg_size: Expr = syn::parse_str(&size).unwrap();
+                                    (
+                                        quote! { &[#arg_dtype; #arg_size] },
+                                        None,
+                                        None,
+                                        quote! { compute_encoder.set_slice(#arg_name, #arg_count); },
+                                        None,
+                                    )
+                                },
                             }
                         },
                         _ => unreachable!(),

@@ -21,7 +21,7 @@ use crate::common::{
 #[derive(PartialEq, Debug)]
 pub enum FunctionArgumentType {
     Buffer(KernelBufferAccess),
-    Constant(Type),
+    Constant(Type, Option<Expr>),
     Scalar(Type),
     Specialization(Type),
 }
@@ -40,12 +40,20 @@ impl FunctionArgument {
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
                 FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
-                FunctionArgumentType::Constant(ty) => KernelArgumentType::Constant(
+                FunctionArgumentType::Constant(ty, None) => KernelArgumentType::Constant(
+                    format!("&[{}]", ty.to_token_stream().to_string().replace(" :: ", "::")).into_boxed_str(),
+                ),
+                FunctionArgumentType::Constant(ty, Some(sz)) => KernelArgumentType::Constant(
+                    format!(
+                        "&[{}; {}]",
+                        ty.to_token_stream().to_string().replace(" :: ", "::"),
+                        sz.to_token_stream().to_string(),
+                    )
+                    .into_boxed_str(),
+                ),
+                FunctionArgumentType::Scalar(ty) => KernelArgumentType::Constant(
                     ty.to_token_stream().to_string().replace(" :: ", "::").into_boxed_str(),
                 ),
-                FunctionArgumentType::Scalar(ty) => {
-                    KernelArgumentType::Scalar(ty.to_token_stream().to_string().replace(" :: ", "::").into_boxed_str())
-                },
                 FunctionArgumentType::Specialization(_) => {
                     return None;
                 },
@@ -353,10 +361,6 @@ impl CpuCompiler {
                     },
                     KernelArgumentType::Constant(ty) => {
                         let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
-                        (None, quote! { &[#ty] })
-                    },
-                    KernelArgumentType::Scalar(ty) => {
-                        let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
                         (None, quote! { #ty })
                     },
                 };
@@ -405,8 +409,11 @@ impl CpuCompiler {
                             })
                         }
                     },
-                    FunctionArgumentType::Constant(_) => {
+                    FunctionArgumentType::Constant(_, None) => {
                         Some(quote! { let #argument_ident = #argument_ident.to_vec().into_boxed_slice(); })
+                    },
+                    FunctionArgumentType::Constant(_, Some(_)) => {
+                        Some(quote! { let #argument_ident = Box::new(*#argument_ident); })
                     },
                     FunctionArgumentType::Scalar(_) => None,
                     FunctionArgumentType::Specialization(_) => {
@@ -434,7 +441,7 @@ impl CpuCompiler {
                             quote! { #argument_ident.as_ptr() as _ }
                         }
                     },
-                    FunctionArgumentType::Constant(_) => quote! { #argument_ident.as_ref() },
+                    FunctionArgumentType::Constant(_, _) => quote! { &*#argument_ident },
                     FunctionArgumentType::Scalar(_) | FunctionArgumentType::Specialization(_) => {
                         quote! { #argument_ident }
                     },
@@ -581,7 +588,8 @@ impl CpuCompiler {
                 KernelBufferAccess::Read
             }),
             Type::Reference(ty) => match *ty.elem {
-                Type::Slice(ty) => FunctionArgumentType::Constant(*ty.elem),
+                Type::Slice(ty) => FunctionArgumentType::Constant(*ty.elem, None),
+                Type::Array(ty) => FunctionArgumentType::Constant(*ty.elem, Some(ty.len)),
                 ty => bail!("unsupported reference type: {} ({:?})", ty.to_token_stream().to_string(), ty),
             },
             Type::Path(ty) => FunctionArgumentType::Scalar(Type::Path(ty)),
