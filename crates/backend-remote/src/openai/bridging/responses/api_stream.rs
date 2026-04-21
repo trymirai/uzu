@@ -4,7 +4,7 @@ use async_openai::{Client, config::OpenAIConfig};
 use futures::{FutureExt, Stream, StreamExt, stream};
 use shoji::{
     traits::backend::{Error as BackendError, chat_message::Output},
-    types::{encoding::Message, session::chat::StreamConfig},
+    types::session::chat::{Message, StreamConfig},
 };
 use tokio_util::sync::CancellationToken;
 

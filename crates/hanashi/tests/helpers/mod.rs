@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use serde::Deserialize;
-use shoji::types::encoding::{
+use shoji::types::session::chat::{
     ContentBlock, Message, ReasoningEffort, Role, ToolDescription, ToolNamespace, TranslationInput,
 };
 use tokenizers::Tokenizer;

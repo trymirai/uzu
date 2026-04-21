@@ -3,7 +3,7 @@ use openai_harmony::chat::{
 };
 use shoji::types::{
     basic::Value,
-    encoding::{ToolDescription, ToolFunction, ToolNamespace},
+    session::chat::{ToolDescription, ToolFunction, ToolNamespace},
 };
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};

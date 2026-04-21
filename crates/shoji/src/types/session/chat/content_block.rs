@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::types::{
     basic::Value,
-    encoding::{ReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
+    session::chat::{ReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
 };
 
 #[bindings::export(Enum, name = "ContentBlockType")]

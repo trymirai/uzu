@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::encoding::Capabilities;
+use shoji::types::session::chat::Capabilities;
 
 use crate::chat::{Error, hanashi::Config as HanashiConfig, harmony::Config as HarmonyConfig};
 

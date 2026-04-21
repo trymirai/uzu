@@ -17,7 +17,7 @@ use openai_harmony::{
 };
 use shoji::types::{
     basic::{Token, TokenId},
-    encoding::Message,
+    session::chat::Message,
 };
 
 use crate::{

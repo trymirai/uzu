@@ -2,7 +2,7 @@ use async_openai::types::responses::{
     EasyInputContent, EasyInputMessage, FunctionCallOutput, FunctionCallOutputItemParam, FunctionToolCall, InputItem,
     Item, MessageType, Role as ResponseRole,
 };
-use shoji::types::encoding::{Message, Role};
+use shoji::types::session::chat::{Message, Role};
 
 use crate::openai::Error;
 

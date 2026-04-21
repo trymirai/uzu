@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use serde_json::Value;
-use shoji::types::encoding::{
+use shoji::types::session::chat::{
     ContentBlock as OriginalContentBlock, ContentBlockType, Message as OriginalMessage, Role, TranslationInput,
 };
 

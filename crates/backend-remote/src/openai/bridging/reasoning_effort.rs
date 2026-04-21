@@ -1,5 +1,5 @@
 use async_openai::types::chat::ReasoningEffort as OpenAIReasoningEffort;
-use shoji::types::encoding::ReasoningEffort;
+use shoji::types::session::chat::ReasoningEffort;
 
 pub fn build(effort: ReasoningEffort) -> OpenAIReasoningEffort {
     match effort {

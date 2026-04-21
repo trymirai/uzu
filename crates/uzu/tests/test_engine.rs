@@ -8,7 +8,7 @@ use uzu::engine::{Config, Engine};
 
 #[ignore]
 #[tokio::test]
-async fn test_engine() {
+async fn test_engine_chat() {
     dotenvy::dotenv().ok();
 
     let config = Config::default();

@@ -18,9 +18,8 @@ use shoji::{
     },
     types::{
         basic::{CancellationToken, Value},
-        encoding::{Message, ToolCall},
         model::{Model, Specialization},
-        session::chat::{Config, Output, StreamConfig},
+        session::chat::{Config, Message, Output, StreamConfig, ToolCall},
     },
 };
 use tokio::sync::{Mutex, mpsc};

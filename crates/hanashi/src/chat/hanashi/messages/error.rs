@@ -1,4 +1,4 @@
-use shoji::types::encoding::{ContentBlockType, Role};
+use shoji::types::session::chat::{ContentBlockType, Role};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

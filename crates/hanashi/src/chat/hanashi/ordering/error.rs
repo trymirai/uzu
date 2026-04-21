@@ -1,4 +1,4 @@
-use shoji::types::encoding::Role;
+use shoji::types::session::chat::Role;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

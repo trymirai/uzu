@@ -5,7 +5,7 @@ use async_openai::types::chat::{
     ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
     FunctionCall,
 };
-use shoji::types::encoding::{Message, Role};
+use shoji::types::session::chat::{Message, Role};
 
 use crate::openai::Error;
 

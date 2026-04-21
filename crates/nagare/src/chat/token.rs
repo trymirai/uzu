@@ -9,10 +9,7 @@ use shoji::{
             chat_token::{Backend, Instance},
         },
     },
-    types::{
-        encoding::Message,
-        session::chat::{Config, StreamConfig},
-    },
+    types::session::chat::{Config, Message, StreamConfig},
 };
 use tokio_util::sync::CancellationToken;
 

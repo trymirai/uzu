@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
-    types::{encoding::Message, session::text_to_speech::PcmBatch},
+    types::session::{chat::Message, text_to_speech::PcmBatch},
 };
 
 pub type Config = ();

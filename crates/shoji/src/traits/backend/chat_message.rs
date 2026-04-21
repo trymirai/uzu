@@ -4,10 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
-    types::{
-        encoding::{Message, ToolCall},
-        session::chat::{Config, FinishReason, Stats, StreamConfig},
-    },
+    types::session::chat::{Config, FinishReason, Message, Stats, StreamConfig, ToolCall},
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

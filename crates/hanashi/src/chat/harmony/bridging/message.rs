@@ -6,7 +6,7 @@ use openai_harmony::chat::{
 };
 use shoji::types::{
     basic::Value,
-    encoding::{ContentBlock, Message, ReasoningEffort, Role, ToolCall, ToolNamespace},
+    session::chat::{ContentBlock, Message, ReasoningEffort, Role, ToolCall, ToolNamespace},
 };
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};

@@ -1,6 +1,6 @@
 use shoji::{
     traits::backend::chat_message::ToolCallState as OutputToolCallState,
-    types::{basic::Value, encoding::ToolCall},
+    types::{basic::Value, session::chat::ToolCall},
 };
 
 use crate::openai::stream_state::ToolCallChunk;

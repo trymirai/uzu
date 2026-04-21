@@ -7,10 +7,10 @@ use shoji::{
             SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy,
             SamplingSeed as ShojiSamplingSeed,
         },
-        encoding::{Message as ShojiMessage, MessageList, ReasoningEffort, Role as ShojiRole},
         session::chat::{
             Config as ShojiChatConfig, ContextLength as ShojiContextLength, FinishReason as ShojiFinishReason,
-            Grammar as ShojiGrammar, SpeculationPreset as ShojiSpeculationPreset, Stats as ShojiStats, StreamConfig,
+            Grammar as ShojiGrammar, Message as ShojiMessage, MessageList, ReasoningEffort, Role as ShojiRole,
+            SpeculationPreset as ShojiSpeculationPreset, Stats as ShojiStats, StreamConfig,
         },
     },
 };

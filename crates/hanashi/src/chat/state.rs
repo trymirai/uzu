@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::{basic::Token, encoding::Message};
+use shoji::types::{basic::Token, session::chat::Message};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

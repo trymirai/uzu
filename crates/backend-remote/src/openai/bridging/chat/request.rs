@@ -3,8 +3,7 @@ use async_openai::types::chat::{
 };
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
-    encoding::{Message, MessageList},
-    session::chat::StreamConfig,
+    session::chat::{Message, MessageList, StreamConfig},
 };
 
 use crate::openai::{

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{
     basic::Value,
-    encoding::{ContentBlock, ReasoningEffort, Role, ToolCall, ToolNamespace},
+    session::chat::{ContentBlock, ReasoningEffort, Role, ToolCall, ToolNamespace},
 };
 
 #[bindings::export(Struct, name = "Message")]
