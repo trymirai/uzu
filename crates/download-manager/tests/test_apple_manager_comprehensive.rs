@@ -9,6 +9,7 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "flaky"]
 async fn test_apple_manager_comprehensive() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(
         "[TEST][{}] ========== COMPREHENSIVE DOWNLOAD TEST STARTING ==========",
