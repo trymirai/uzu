@@ -99,7 +99,7 @@ pub enum MetalBufferAccess {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MetalConstantType {
     Scalar,
-    Array,
+    Array(Option<Box<str>>),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -267,9 +267,18 @@ impl MetalArgument {
         } else if let ["const", "constant", c_type_scalar, "*"] =
             self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
         {
+            let size = if self.source.contains('[') && self.source.contains(']') {
+                let lbracket = self.source.rfind('[').context("sized constant missing size bracket")? + 1;
+                let rbracket = self.source.rfind(']').context("sized constant missing size bracket")?;
+                let size_expr = &self.source[lbracket..rbracket];
+                Some(size_expr.into())
+            } else {
+                None
+            };
+
             Ok(MetalArgumentType::Constant((
                 Self::scalar_type_to_rust(c_type_scalar)?.into(),
-                MetalConstantType::Array,
+                MetalConstantType::Array(size),
             )))
         } else if self.c_type.contains("threadgroup") && self.c_type.contains('*') {
             let lbracket = self.source.rfind('[').context("threadgroup missing size bracket")? + 1;
@@ -397,13 +406,20 @@ impl MetalKernelInfo {
                     Ok(MetalArgumentType::Constant((ty, MetalConstantType::Scalar))) => Some(KernelArgument {
                         name: a.name.clone(),
                         conditional: a.argument_condition().unwrap().is_some(),
-                        ty: KernelArgumentType::Scalar(ty),
-                    }),
-                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array))) => Some(KernelArgument {
-                        name: a.name.clone(),
-                        conditional: a.argument_condition().unwrap().is_some(),
                         ty: KernelArgumentType::Constant(ty),
                     }),
+                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array(None)))) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        conditional: a.argument_condition().unwrap().is_some(),
+                        ty: KernelArgumentType::Constant(format!("&[{ty}]").into_boxed_str()),
+                    }),
+                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array(Some(size))))) => {
+                        Some(KernelArgument {
+                            name: a.name.clone(),
+                            conditional: a.argument_condition().unwrap().is_some(),
+                            ty: KernelArgumentType::Constant(format!("&[{ty}; {size}]").into_boxed_str()),
+                        })
+                    },
                     _ => None,
                 })
                 .collect(),
