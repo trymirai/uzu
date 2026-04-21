@@ -217,7 +217,8 @@ PUBLIC KERNEL(AttentionGemm)(
   const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS *
                                    short(thread_context.threadgroup_index);
 
-  const short query_shared_offset = simdgroup_row_base * query_leading_dimension;
+  const short query_shared_offset =
+      simdgroup_row_base * query_leading_dimension;
   constexpr short query_tile_stride = SIMDGROUP_BLOCK_SIZE;
 
   const short key_shared_offset = 0;
@@ -428,7 +429,8 @@ PUBLIC KERNEL(AttentionGemm)(
         const short dd = id * SIMDGROUP_BLOCK_SIZE;
 
         value_fragment.load(
-            &value_shared[value_shared_offset + kk * value_leading_dimension + dd],
+            &value_shared
+                [value_shared_offset + kk * value_leading_dimension + dd],
             value_leading_dimension,
             1
         );

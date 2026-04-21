@@ -64,8 +64,7 @@ struct ThreadgroupTile {
   ushort b_shared_offset;
 
   METAL_FUNC ThreadgroupTile(const thread ThreadContext& thread_context)
-      : a_fragment(thread_context),
-        b_fragment(thread_context),
+      : a_fragment(thread_context), b_fragment(thread_context),
         c_fragment(thread_context) {
     const ushort simd_group_id = ushort(thread_context.threadgroup_index);
     tile_row_offset =
@@ -89,13 +88,8 @@ struct ThreadgroupTile {
          k_block_index += SIMDGROUP_BLOCK_SIZE) {
       simdgroup_barrier(mem_flags::mem_none);
 
-      a_fragment.load(
-          a_shared,
-          A_STRIDE_ROW,
-          A_STRIDE_INNER,
-          SIMDGROUPS_PER_ROW,
-          1
-      );
+      a_fragment
+          .load(a_shared, A_STRIDE_ROW, A_STRIDE_INNER, SIMDGROUPS_PER_ROW, 1);
 
       simdgroup_barrier(mem_flags::mem_none);
 
@@ -176,8 +170,8 @@ struct ThreadgroupTile {
       const int column_stride_c,
       thread const EpilogueOp& epilogue_operation
   ) {
-    const device U* c_pointer =
-        C + tile_row_offset * leading_dimension_c + tile_col_offset * column_stride_c;
+    const device U* c_pointer = C + tile_row_offset * leading_dimension_c +
+                                tile_col_offset * column_stride_c;
     const short2 position =
         SimdgroupFragmentOpsType::get_position(c_fragment.thread_context);
 
@@ -202,9 +196,9 @@ struct ThreadgroupTile {
             const ushort element_index =
                 row_offset * SimdgroupFragmentOpsType::THREAD_ELEMENT_COLS +
                 col_offset;
-            const U c_value =
-                c_pointer[(row_base + row_offset) * leading_dimension_c +
-                          (col_base + col_offset) * column_stride_c];
+            const U c_value = c_pointer
+                [(row_base + row_offset) * leading_dimension_c +
+                 (col_base + col_offset) * column_stride_c];
             block_data[element_index] = epilogue_operation.apply(
                 block_data[element_index],
                 static_cast<AccumulatorType>(c_value)
@@ -223,8 +217,8 @@ struct ThreadgroupTile {
       short2 tile_dimensions,
       thread const EpilogueOp& epilogue_operation
   ) {
-    const device U* c_pointer =
-        C + tile_row_offset * leading_dimension_c + tile_col_offset * column_stride_c;
+    const device U* c_pointer = C + tile_row_offset * leading_dimension_c +
+                                tile_col_offset * column_stride_c;
     tile_dimensions -= short2(tile_col_offset, tile_row_offset);
     const short2 position =
         SimdgroupFragmentOpsType::get_position(c_fragment.thread_context);
@@ -252,9 +246,9 @@ struct ThreadgroupTile {
               const ushort element_index =
                   row_offset * SimdgroupFragmentOpsType::THREAD_ELEMENT_COLS +
                   col_offset;
-              const U c_value =
-                  c_pointer[(row_base + row_offset) * leading_dimension_c +
-                            (col_base + col_offset) * column_stride_c];
+              const U c_value = c_pointer
+                  [(row_base + row_offset) * leading_dimension_c +
+                   (col_base + col_offset) * column_stride_c];
               block_data[element_index] = epilogue_operation.apply(
                   block_data[element_index],
                   static_cast<AccumulatorType>(c_value)

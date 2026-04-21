@@ -66,11 +66,10 @@ struct SimdgroupFragmentOps {
     for (ushort i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        destination[i * THREAD_ELEMENT_COLS + j] =
-            static_cast<T>(
-                source[(row_offset + i) * row_stride +
-                       (col_offset + j) * col_stride]
-            );
+        destination[i * THREAD_ELEMENT_COLS + j] = static_cast<T>(
+            source
+                [(row_offset + i) * row_stride + (col_offset + j) * col_stride]
+        );
       }
     }
   }
@@ -140,8 +139,9 @@ struct SimdgroupFragmentOps {
     for (ushort i = 0; i < THREAD_ELEMENT_ROWS; i++) {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < THREAD_ELEMENT_COLS; j++) {
-        destination[(row_offset + i) * row_stride + (col_offset + j) * col_stride] =
-            static_cast<U>(source[i * THREAD_ELEMENT_COLS + j]);
+        destination
+            [(row_offset + i) * row_stride + (col_offset + j) * col_stride] =
+                static_cast<U>(source[i * THREAD_ELEMENT_COLS + j]);
       }
     }
   }

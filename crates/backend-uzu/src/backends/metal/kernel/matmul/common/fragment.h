@@ -219,7 +219,7 @@ struct Fragment {
     );
   }
 
- private:
+private:
   template <class Fn>
   METAL_FUNC void for_each_fragment(Fn fn) thread {
     const_for_loop<0, TILE_ROWS, 1>([&](auto row_index) {

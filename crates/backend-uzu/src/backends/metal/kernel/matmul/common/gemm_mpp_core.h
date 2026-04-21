@@ -151,14 +151,14 @@ struct GemmMppCore {
                     METAL_PRAGMA_UNROLL
                     for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
                          i++) {
-                      accumulator_tile.elements()[i] *= AccumulatorType(ab_scale);
+                      accumulator_tile.elements()[i] *=
+                          AccumulatorType(ab_scale);
                     }
                   }
 
                   if constexpr (IS_ACCUMULATE) {
-                    Fragment<T, TILES_M, TILES_N, MxuFragmentOps> existing_output(
-                        thread_context
-                    );
+                    Fragment<T, TILES_M, TILES_N, MxuFragmentOps>
+                        existing_output(thread_context);
                     if constexpr (aligned_m.value && aligned_n.value) {
                       existing_output.load(
                           output_ptr,
