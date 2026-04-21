@@ -39,7 +39,8 @@ fn test_attention_config() {
                 "logit_soft_cap": null,
                 "has_sinks": false,
                 "has_qkv_biases": false,
-                "has_out_biases": false
+                "has_out_biases": false,
+                "use_rope": true
             }
         "#;
 
@@ -78,6 +79,7 @@ fn test_attention_config() {
         has_out_biases: false,
         has_gate: false,
         gate_projection_config: None,
+        use_rope: true,
         partial_rope_dim: None,
     };
 
