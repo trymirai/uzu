@@ -1,5 +1,5 @@
 use openai_harmony::chat::Role as ExternalRole;
-use shoji::types::Role;
+use shoji::types::encoding::Role;
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
 

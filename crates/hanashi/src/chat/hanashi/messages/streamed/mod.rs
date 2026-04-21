@@ -6,7 +6,7 @@ use std::{collections::HashMap, str::FromStr};
 pub use content::Content;
 pub use section::Section;
 use serde::{Deserialize, Deserializer};
-use shoji::types::{Message as CommonMessage, Role};
+use shoji::types::encoding::{Message as CommonMessage, Role};
 
 #[derive(Deserialize)]
 pub struct Message {

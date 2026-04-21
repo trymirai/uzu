@@ -1,6 +1,6 @@
 use std::{error::Error, future::Future, pin::Pin};
 
-use crate::types::Model;
+use crate::types::model::Model;
 
 pub trait Registry: Send + Sync {
     type Error: Error;

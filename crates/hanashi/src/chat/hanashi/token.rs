@@ -1,4 +1,4 @@
-use shoji::types::Token;
+use shoji::types::basic::Token;
 use token_stream_parser::types::Token as ParserToken;
 
 pub trait ToParserToken {

@@ -1,3 +1,5 @@
+use nagare::chat::Error as ChatError;
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -11,8 +13,10 @@ pub enum Error {
     Storage(#[from] crate::storage::Error),
     #[error(transparent)]
     Registry(#[from] crate::registry::Error),
-    #[error("Backend error: {message}")]
-    Backend {
-        message: String,
-    },
+    #[error("Unable to create backend")]
+    UnableToCreateBackend,
+    #[error("Backend not found")]
+    BackendNotFound,
+    #[error(transparent)]
+    Chat(#[from] ChatError),
 }

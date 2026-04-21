@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::{Accessibility, Entity, Model, Quantization, Specialization};
+use shoji::types::model::{Accessibility, Entity, Model, Quantization, Specialization};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

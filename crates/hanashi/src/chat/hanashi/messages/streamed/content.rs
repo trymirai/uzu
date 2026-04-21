@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shoji::types::{ContentBlock, Role, ToolCall};
+use shoji::types::encoding::{ContentBlock, Role, ToolCall};
 
 use crate::chat::hanashi::messages::streamed::Section;
 
@@ -23,6 +23,7 @@ impl Content {
             }],
             Content::Value(value) => match role {
                 Role::Tool {} => vec![ContentBlock::ToolCallResult {
+                    identifier: None,
                     name: None,
                     value: value.into(),
                 }],

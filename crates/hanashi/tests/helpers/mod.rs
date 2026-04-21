@@ -3,7 +3,9 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use serde::Deserialize;
-use shoji::types::{ContentBlock, Message, ReasoningEffort, Role, ToolDescription, ToolNamespace, TranslationInput};
+use shoji::types::encoding::{
+    ContentBlock, Message, ReasoningEffort, Role, ToolDescription, ToolNamespace, TranslationInput,
+};
 use tokenizers::Tokenizer;
 
 fn test_data_path() -> PathBuf {
