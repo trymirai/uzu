@@ -103,7 +103,7 @@ struct ThreadgroupGemmMpp {
       const device T* left_matrix,
       const device T* right_matrix,
       device T* output_matrix,
-      const constant GemmParams* params,
+      const constant GemmParams& params,
       const bool align_m,
       const bool align_n,
       const bool is_accumulate,
@@ -115,7 +115,7 @@ struct ThreadgroupGemmMpp {
       uint2 threadgroup_position
   ) {
     uint tile_id_x, tile_id_y;
-    if (params->use_morton) {
+    if (params.use_morton) {
       uint linear_id = threadgroup_position.x;
       uint morton_x = linear_id;
       uint morton_y = linear_id >> 1;
@@ -136,8 +136,8 @@ struct ThreadgroupGemmMpp {
       tile_id_y = threadgroup_position.y;
     }
 
-    if (tile_id_x >= params->threadgroups_per_row ||
-        tile_id_y >= params->threadgroups_per_column) {
+    if (tile_id_x >= params.threadgroups_per_row ||
+        tile_id_y >= params.threadgroups_per_column) {
       return;
     }
 
@@ -147,9 +147,9 @@ struct ThreadgroupGemmMpp {
     const size_t block_col_start_long = size_t(block_col_start);
 
     const device T* left_block_ptr =
-        left_matrix + block_row_start_long * params->leading_dimension_a;
+        left_matrix + block_row_start_long * params.leading_dimension_a;
     const device T* right_block_ptr =
-        right_matrix + block_col_start_long * params->leading_dimension_b;
+        right_matrix + block_col_start_long * params.leading_dimension_b;
 
     ThreadgroupLoader<
         T,
@@ -160,7 +160,7 @@ struct ThreadgroupGemmMpp {
         THREADGROUP_SIZE>
         left_loader(
             left_block_ptr,
-            params->leading_dimension_a,
+            params.leading_dimension_a,
             left_shared,
             ushort(simd_group_id),
             ushort(simd_lane_id)
@@ -174,7 +174,7 @@ struct ThreadgroupGemmMpp {
         THREADGROUP_SIZE>
         right_loader(
             right_block_ptr,
-            params->leading_dimension_b,
+            params.leading_dimension_b,
             right_shared,
             ushort(simd_group_id),
             ushort(simd_lane_id)
@@ -186,8 +186,8 @@ struct ThreadgroupGemmMpp {
         SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
     device T* output_ptr =
-        output_matrix + block_row_start_long * params->leading_dimension_d +
-        block_col_start_long + tile_row_offset * params->leading_dimension_d +
+        output_matrix + block_row_start_long * params.leading_dimension_d +
+        block_col_start_long + tile_row_offset * params.leading_dimension_d +
         tile_col_offset;
 
     const short simdgroup_limit_m =
@@ -195,14 +195,14 @@ struct ThreadgroupGemmMpp {
             ? SIMDGROUP_BLOCK_M
             : short(
                   min(int(SIMDGROUP_BLOCK_M),
-                      int(params->M) - int(block_row_start + tile_row_offset))
+                      int(params.M) - int(block_row_start + tile_row_offset))
               );
     const short simdgroup_limit_n =
         align_n
             ? SIMDGROUP_BLOCK_N
             : short(
                   min(int(SIMDGROUP_BLOCK_N),
-                      int(params->N) - int(block_col_start + tile_col_offset))
+                      int(params.N) - int(block_col_start + tile_col_offset))
               );
 
     constexpr auto matmul_descriptor = mpp::tensor_ops::matmul2d_descriptor(
@@ -234,20 +234,20 @@ struct ThreadgroupGemmMpp {
             decltype(right_tensor),
             AccumulatorType>();
 
-    const uint leading_dimension_d = params->leading_dimension_d;
+    const uint leading_dimension_d = params.leading_dimension_d;
 
     AccumulatorType accumulator_storage[TILES_M * TILES_N]
                                        [ACCUMULATOR_CAPACITY] = {{0}};
 
-    const uint full_prefetch_iterations = params->K / PREFETCH_K;
-    const uint k_remainder = params->K - full_prefetch_iterations * PREFETCH_K;
+    const uint full_prefetch_iterations = params.K / PREFETCH_K;
+    const uint k_remainder = params.K - full_prefetch_iterations * PREFETCH_K;
 
     const ushort actual_block_rows =
         align_m ? BLOCK_ROWS
-                : ushort(min(uint(BLOCK_ROWS), params->M - block_row_start));
+                : ushort(min(uint(BLOCK_ROWS), params.M - block_row_start));
     const ushort actual_block_cols =
         align_n ? BLOCK_COLS
-                : ushort(min(uint(BLOCK_COLS), params->N - block_col_start));
+                : ushort(min(uint(BLOCK_COLS), params.N - block_col_start));
 
     // Main loop
     for (uint outer_k = 0; outer_k < full_prefetch_iterations; outer_k++) {

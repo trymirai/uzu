@@ -110,10 +110,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let mut state = context.create_array_from(&[input.state.len()], &input.state, "state").into_allocation();
     let mut y = context.create_array_uninitialized(&[total_x], T::data_type(), "y").into_allocation();
 
-    let x_strides: Vec<u32> = input.x_strides.iter().map(|&s| s as u32).collect();
-    let dt_strides: Vec<u32> = input.dt_strides.iter().map(|&s| s as u32).collect();
-    let cb_strides: Vec<u32> = input.cb_strides.iter().map(|&s| s as u32).collect();
-    let state_strides: Vec<u32> = input.state_strides.iter().map(|&s| s as u32).collect();
+    let x_strides: [u32; 3] = input.x_strides.map(|s| s as u32);
+    let dt_strides: [u32; 2] = input.dt_strides.map(|s| s as u32);
+    let cb_strides: [u32; 3] = input.cb_strides.map(|s| s as u32);
+    let state_strides: [u32; 3] = input.state_strides.map(|s| s as u32);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     match kernel_type {

@@ -59,10 +59,10 @@ impl<B: Backend> SSDPrefillKernels<B> {
         args: SSDPrefillArguments<'_, B>,
         mode: SSDPrefillMode,
     ) {
-        let x_strides: Vec<u32> = args.x_strides.iter().map(|x| *x as u32).collect();
-        let dt_strides: Vec<u32> = args.dt_strides.iter().map(|x| *x as u32).collect();
-        let cb_strides: Vec<u32> = args.cb_strides.iter().map(|x| *x as u32).collect();
-        let state_strides: Vec<u32> = args.state_strides.iter().map(|x| *x as u32).collect();
+        let x_strides: [u32; 3] = args.x_strides.map(|x| x as u32);
+        let dt_strides: [u32; 2] = args.dt_strides.map(|x| x as u32);
+        let cb_strides: [u32; 3] = args.cb_strides.map(|x| x as u32);
+        let state_strides: [u32; 3] = args.state_strides.map(|x| x as u32);
 
         if mode == SSDPrefillMode::SinglePass {
             if args.state_size == 64 {
@@ -78,10 +78,10 @@ impl<B: Backend> SSDPrefillKernels<B> {
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
-                    x_strides.as_slice(),
-                    dt_strides.as_slice(),
-                    cb_strides.as_slice(),
-                    state_strides.as_slice(),
+                    &x_strides,
+                    &dt_strides,
+                    &cb_strides,
+                    &state_strides,
                     args.channels as u32,
                     args.head_dim as u32,
                     encoder,
@@ -99,10 +99,10 @@ impl<B: Backend> SSDPrefillKernels<B> {
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
-                    x_strides.as_slice(),
-                    dt_strides.as_slice(),
-                    cb_strides.as_slice(),
-                    state_strides.as_slice(),
+                    &x_strides,
+                    &dt_strides,
+                    &cb_strides,
+                    &state_strides,
                     args.channels as u32,
                     args.head_dim as u32,
                     encoder,
@@ -121,10 +121,10 @@ impl<B: Backend> SSDPrefillKernels<B> {
                 args.suffix_len as u32,
                 args.group_size,
                 args.state_size,
-                x_strides.as_slice(),
-                dt_strides.as_slice(),
-                cb_strides.as_slice(),
-                state_strides.as_slice(),
+                &x_strides,
+                &dt_strides,
+                &cb_strides,
+                &state_strides,
                 args.channels as u32,
                 args.head_dim as u32,
                 encoder,

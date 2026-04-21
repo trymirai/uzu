@@ -2,37 +2,53 @@ mod config;
 
 use std::{future::Future, pin::Pin};
 
+use async_openai::{Client, config::OpenAIConfig};
 pub use config::Config;
-use openai_api_rs::v1::api::OpenAIClient;
-use regex::Regex;
+use fancy_regex::Regex;
+use serde::Deserialize;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::{Accessibility, Entity, EntityType, Model, Specialization},
+    types::model::{Accessibility, Entity, EntityType, Model as ShojiModel, Specialization},
 };
+
+#[derive(Debug, Deserialize)]
+struct Model {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListModelsResponse {
+    data: Vec<Model>,
+}
 
 use crate::registry::Error;
 
 pub struct Registry {
     config: Config,
-    client: OpenAIClient,
+    client: Client<OpenAIConfig>,
     model_filter: Option<Regex>,
 }
 
 impl Registry {
     pub fn new(config: Config) -> Result<Self, Error> {
-        let mut client_builder = OpenAIClient::builder().with_endpoint(config.api_endpoint.clone());
-        if let Some(api_key) = config.api_key.clone() {
-            client_builder = client_builder.with_api_key(api_key);
+        let mut openai_config = OpenAIConfig::new().with_api_base(&config.api_endpoint);
+        if let Some(api_key) = config.api_key.as_ref() {
+            openai_config = openai_config.with_api_key(api_key);
         }
-        if let Some(headers) = config.headers.clone() {
-            for (key, value) in headers.iter() {
-                client_builder = client_builder.with_header(key, value);
+        if let Some(headers) = config.headers.as_ref() {
+            for (key, value) in headers {
+                let name =
+                    reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|error| Error::UnableToCreate {
+                        message: error.to_string(),
+                    })?;
+                openai_config =
+                    openai_config.with_header(name, value.as_str()).map_err(|error| Error::UnableToCreate {
+                        message: error.to_string(),
+                    })?;
             }
         }
 
-        let client = client_builder.build().map_err(|error| Error::UnableToCreate {
-            message: error.to_string(),
-        })?;
+        let client = Client::with_config(openai_config);
 
         let model_filter = config.model_filter_pattern.as_deref().map(Regex::new).transpose().map_err(|error| {
             Error::UnableToCreate {
@@ -55,13 +71,13 @@ impl RegistryTrait for Registry {
         self.config.identifier.clone()
     }
 
-    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Error>> + Send + '_>> {
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ShojiModel>, Error>> + Send + '_>> {
         Box::pin(async {
-            let response = self.client.list_models().await.map_err(|error| Error::UnableToGetModels {
-                message: error.to_string(),
-            })?;
-            let mut identifiers =
-                response.inner.data.into_iter().filter_map(|model| model.id.clone()).collect::<Vec<_>>();
+            let response: ListModelsResponse =
+                self.client.models().list_byot().await.map_err(|error| Error::UnableToGetModels {
+                    message: error.to_string(),
+                })?;
+            let mut identifiers = response.data.into_iter().map(|model| model.id).collect::<Vec<_>>();
             identifiers.sort();
 
             let registry_entity = self.create_entity(EntityType::Registry);
@@ -71,7 +87,9 @@ impl RegistryTrait for Registry {
 
             let models = identifiers
                 .into_iter()
-                .filter(|identifier| self.model_filter.as_ref().is_none_or(|regex| regex.is_match(identifier)))
+                .filter(|identifier| {
+                    self.model_filter.as_ref().is_none_or(|regex| regex.is_match(identifier).unwrap_or(false))
+                })
                 .map(|identifier| {
                     let variant_entity = Entity {
                         r#type: EntityType::Variant,
@@ -82,7 +100,7 @@ impl RegistryTrait for Registry {
                         version: None,
                         icons: vec![],
                     };
-                    let model = Model {
+                    let model = ShojiModel {
                         identifier: identifier.clone(),
                         entities: vec![
                             registry_entity.clone(),

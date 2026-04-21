@@ -1,4 +1,4 @@
-use shoji::types::Role;
+use shoji::types::encoding::Role;
 
 use crate::chat::hanashi::ordering::{Config, Error};
 

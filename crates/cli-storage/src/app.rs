@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use crossterm::event::KeyCode;
 use futures_util::StreamExt;
 use ratatui::widgets::ListState;
-use shoji::types::Model;
+use shoji::types::model::Model;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use uzu::{engine::Engine, storage::types::DownloadState};
 
@@ -31,7 +31,8 @@ impl App {
         engine: Arc<Engine>,
         tokio_handle: tokio::runtime::Handle,
     ) -> Self {
-        let models = engine.models().await.unwrap().into_iter().filter(|model| model.is_local()).collect::<Vec<_>>();
+        let models =
+            engine.models().await.unwrap().into_iter().filter(|model| model.is_downloadable()).collect::<Vec<_>>();
 
         // Fetch initial state for all models
         let mut models_with_state = HashMap::new();

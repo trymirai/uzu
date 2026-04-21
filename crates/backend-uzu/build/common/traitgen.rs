@@ -46,10 +46,6 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                 },
                 KernelArgumentType::Constant(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    quote! { &[#ty] }
-                },
-                KernelArgumentType::Scalar(ty) => {
-                    let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                     quote! { #ty }
                 },
             };

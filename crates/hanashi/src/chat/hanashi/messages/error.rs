@@ -1,4 +1,4 @@
-use shoji::types::{ContentBlockType, Role};
+use shoji::types::encoding::{ContentBlockType, Role};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

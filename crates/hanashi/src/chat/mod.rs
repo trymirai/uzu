@@ -8,7 +8,7 @@ mod state;
 pub use config::Config;
 pub use context::{Context, TokenizerLocation};
 pub use error::Error;
-use shoji::types::{Message, TokenId};
+use shoji::types::{basic::TokenId, encoding::Message};
 pub use state::{State, SynchronizationError, SynchronizationResult};
 
 use crate::{

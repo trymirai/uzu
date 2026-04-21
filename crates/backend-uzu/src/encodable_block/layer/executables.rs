@@ -172,6 +172,7 @@ impl<B: Backend> LayerExecutables<B> {
                         gate_projection,
                         qk_norm,
                         rope: rope_block,
+                        use_rope: attention_config.use_rope,
                         attention,
                         out_projection,
                         num_heads: layer_num_heads,
@@ -346,6 +347,7 @@ impl<B: Backend> LayerExecutables<B> {
                 gate_projection,
                 qk_norm,
                 rope,
+                use_rope,
                 attention,
                 out_projection,
                 num_heads,
@@ -373,7 +375,11 @@ impl<B: Backend> LayerExecutables<B> {
                     *num_groups,
                     *head_dim,
                     rope_max_sequence_length,
-                    rope_dim,
+                    if *use_rope {
+                        rope_dim
+                    } else {
+                        0
+                    },
                     encoder,
                 )?;
                 let kv_cache_layer = cache_layer

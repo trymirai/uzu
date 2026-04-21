@@ -11,7 +11,7 @@ use backend_uzu::{
         types::{Input, Message, Output},
     },
 };
-use shoji::types::ClassificationFeature;
+use shoji::types::session::chat::Feature;
 use test_tag::tag;
 use tokenizers::Tokenizer;
 
@@ -59,7 +59,7 @@ fn test_text_session_with_prompt_lookup_speculator() {
 fn test_text_session_with_fixed_speculator() {
     let tokenizer = Tokenizer::from_file(get_test_model_path().join("tokenizer.json")).unwrap();
 
-    let feature = ClassificationFeature {
+    let feature = Feature {
         name: String::from("sentiment"),
         values: vec!["Happy", "Sad", "Angry", "Fearful", "Surprised", "Disgusted"]
             .into_iter()

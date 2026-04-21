@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::{Message, Token};
+use shoji::types::{basic::Token, encoding::Message};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

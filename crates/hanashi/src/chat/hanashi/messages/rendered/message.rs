@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
-use shoji::types::{ContentBlockType, Message as OriginalMessage, Role};
+use shoji::types::encoding::{ContentBlockType, Message as OriginalMessage, Role};
 
 use crate::chat::hanashi::messages::{
     Error,

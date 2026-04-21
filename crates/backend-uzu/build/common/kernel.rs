@@ -8,7 +8,6 @@ pub enum KernelBufferAccess {
 pub enum KernelArgumentType {
     Buffer(KernelBufferAccess),
     Constant(Box<str>),
-    Scalar(Box<str>),
 }
 
 #[derive(PartialEq, Debug, Clone)]
