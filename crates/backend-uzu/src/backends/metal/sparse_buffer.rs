@@ -15,6 +15,8 @@ use crate::{
     prelude::MetalContext,
 };
 
+const PAGE_SIZE: MTLSparsePageSize = MTLSparsePageSize::KB16;
+
 #[derive(Debug)]
 pub struct MetalSparseBuffer {
     buffer: Rc<RefCell<Retained<ProtocolObject<dyn MTLBuffer>>>>,
@@ -30,14 +32,13 @@ impl MetalSparseBuffer {
         context: &MetalContext,
         capacity: usize,
     ) -> Result<MetalSparseBuffer, MetalError> {
-        let page_size = MTLSparsePageSize::KB16;
-        let page_size_bytes = Self::get_page_size_bytes(page_size);
+        let page_size_bytes = Self::get_page_size_bytes(PAGE_SIZE);
         let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
 
         let Some(buffer) = context.device.new_buffer_with_length_options_placement_sparse_page_size(
             aligned_capacity,
             MTLResourceOptions::STORAGE_MODE_PRIVATE,
-            page_size,
+            PAGE_SIZE,
         ) else {
             return Err(MetalError::SparseBufferAlloc(aligned_capacity));
         };
@@ -46,7 +47,8 @@ impl MetalSparseBuffer {
         head_desc.set_type(MTLHeapType::Placement);
         head_desc.set_storage_mode(MTLStorageMode::Shared);
         head_desc.set_size(aligned_capacity);
-        head_desc.set_sparse_page_size(page_size);
+        head_desc.set_sparse_page_size(PAGE_SIZE);
+        head_desc.set_max_compatible_placement_sparse_page_size(PAGE_SIZE);
         let Some(heap) = context.device.new_heap_with_descriptor(&head_desc) else {
             return Err(MetalError::SparseHeapAlloc(aligned_capacity, page_size_bytes));
         };
@@ -65,12 +67,18 @@ impl MetalSparseBuffer {
         offset: usize,
         length: usize,
     ) {
+        let tile_size = Self::get_page_size_bytes(PAGE_SIZE);
+        let tiles_count = length.div_ceil(tile_size);
+        let tiles_offset = offset.div_ceil(tile_size);
+        let tiles_heap_offset = self.length / tile_size;
+
         let op = MTL4UpdateSparseBufferMappingOperation {
             mode: MTLSparseTextureMappingMode::Map,
-            buffer_range: NSRange::new(offset, length),
-            heap_offset: self.length,
+            buffer_range: NSRange::new(tiles_offset, tiles_count),
+            heap_offset: tiles_heap_offset,
         };
-        self.length += length;
+        self.length += tiles_count * tile_size;
+
         self.queue.update_buffer_mappings_heap_operations_count(
             &self.buffer.borrow().deref(),
             Some(&self.heap),

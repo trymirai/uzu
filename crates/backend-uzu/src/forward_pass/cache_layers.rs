@@ -11,6 +11,7 @@ use crate::{
         short_conv_layer::ShortConvLayer,
         ssm_layer::SSMLayer,
     },
+    utils::SparseArrayContext,
 };
 
 #[derive(Debug)]
@@ -142,7 +143,7 @@ impl<B: Backend> CacheLayers<B> {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: context.create_array_zeros(
+                        keys: context.create_sparse_array(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
@@ -363,7 +364,7 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.create_array_zeros(
+                    let mut new_keys = context.create_sparse_array(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),

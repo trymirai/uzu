@@ -1,9 +1,10 @@
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{
-        Backend, Encoder,
+        Backend, Encoder, SparseBuffer,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
+    utils::{SparseArray, SparseArrayContext},
 };
 
 #[derive(Clone)]
@@ -16,8 +17,8 @@ pub enum KVSlice<B: Backend> {
         base_ring_offset: usize,
         base_ring_length: usize,
         slots: Vec<usize>,
-        keys: Array<B>,   // [num_groups, slots.len(), head_dim]
-        values: Array<B>, // [num_groups, slots.len(), head_dim]
+        keys: SparseArray<B>, // [num_groups, slots.len(), head_dim]
+        values: Array<B>,     // [num_groups, slots.len(), head_dim]
     },
 }
 
@@ -43,7 +44,7 @@ pub const INVALID_POSITION: usize = i32::MAX as usize;
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub keys: Array<B>,
+    pub keys: SparseArray<B>,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
     pub values: Array<B>,
 }
@@ -153,7 +154,7 @@ impl<B: Backend> KVCacheLayer<B> {
         let v_shape = self.values.shape();
 
         let layer_data = KVLayerData {
-            key_buffer: self.keys.buffer(),
+            key_buffer: self.keys.sparse_buffer().borrow().buffer(),
             key_shape: [k_shape[0], k_shape[1], k_shape[2]],
             value_buffer: self.values.buffer(),
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
@@ -210,8 +211,7 @@ impl<B: Backend> KVCacheLayer<B> {
                 let dtype = self.keys.data_type();
 
                 let slice_shape = [num_groups, len, head_dim];
-                let mut slice_keys =
-                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
+                let mut slice_keys = context.create_sparse_array(&slice_shape, dtype, "kv_cache_layer_slice_keys");
                 let mut slice_values =
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
 

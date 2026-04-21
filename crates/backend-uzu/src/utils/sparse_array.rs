@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use crate::{
     DataType,
@@ -8,7 +8,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct SparseArray<B: Backend> {
-    buffer: B::SparseBuffer,
+    buffer: Rc<RefCell<B::SparseBuffer>>,
     data_type: DataType,
     shape: Box<[usize]>,
 }
@@ -20,9 +20,11 @@ impl<B: Backend> SparseArray<B> {
         shape: &[usize],
     ) -> Self {
         let size = size_for_shape(shape, data_type);
-        let buffer = context.create_sparse_buffer(size).expect("Failed to create sparse buffer");
+        let mut buffer = context.create_sparse_buffer(size).expect("Failed to create sparse buffer");
+        // TODO: remove
+        buffer.extend(size);
         Self {
-            buffer,
+            buffer: Rc::new(RefCell::new(buffer)),
             data_type,
             shape: shape.into(),
         }
@@ -57,12 +59,18 @@ impl<B: Backend> SparseArray<B> {
         todo!()
     }
 
-    pub fn sparse_buffer(&self) -> &B::SparseBuffer {
-        &self.buffer
+    pub fn sparse_buffer(&self) -> Rc<RefCell<B::SparseBuffer>> {
+        self.buffer.clone()
     }
+}
 
-    pub fn sparse_buffer_mut(&mut self) -> &mut B::SparseBuffer {
-        &mut self.buffer
+impl<B: Backend> Clone for SparseArray<B> {
+    fn clone(&self) -> Self {
+        Self {
+            buffer: self.buffer.clone(),
+            data_type: self.data_type(),
+            shape: self.shape.clone(),
+        }
     }
 }
 
@@ -87,7 +95,7 @@ impl<C: Context> SparseArrayContext for C {
         label: &str,
     ) -> SparseArray<Self::Backend> {
         let array: SparseArray<Self::Backend> = SparseArray::new(self, data_type, shape);
-        array.sparse_buffer().buffer().borrow_mut().set_label(Some(label));
+        array.sparse_buffer().borrow_mut().buffer().borrow_mut().set_label(Some(label));
         array
     }
 }

@@ -10,7 +10,7 @@ use itertools::iproduct;
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Backend, Encoder, Kernels, SparseBuffer,
         gpu_types::ring::RingParams,
         kernel::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
@@ -182,7 +182,7 @@ impl<B: Backend> Attention<B> {
         let num_groups = rotated_keys_array.shape()[0];
         let is_trie = state.token_subtrie_ranges.is_some();
 
-        let (segment_prefix_length, ring_params, key_cache_array, value_cache_array) =
+        let (segment_prefix_length, ring_params, key_cache_sparse_array, value_cache_array) =
             if let Some(cache_layers) = state.cache_layers() {
                 let projection_step = parameters.projection_step.unwrap_or(0);
                 let cache = cache_layers.borrow();
@@ -213,7 +213,7 @@ impl<B: Backend> Attention<B> {
                 (0, None, None, None)
             };
 
-        let max_sequence_length = if let Some(ref array) = key_cache_array {
+        let max_sequence_length = if let Some(ref array) = key_cache_sparse_array {
             array.shape()[1]
         } else {
             suffix_length
@@ -249,8 +249,10 @@ impl<B: Backend> Attention<B> {
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
 
-        let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
-        let mut key_cache_buf_borrow = key_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
+        let key_cache_sparse_buffer_rc = key_cache_sparse_array.as_ref().map(|array| array.sparse_buffer());
+        let key_cache_sparse_buffer_ref = key_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
+        let key_cache_buffer_rc = key_cache_sparse_buffer_ref.as_ref().map(|ref_mut| ref_mut.buffer());
+        let mut key_cache_buffer_ref = key_cache_buffer_rc.as_ref().map(|buffer| buffer.borrow_mut());
 
         let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
         let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
@@ -305,7 +307,7 @@ impl<B: Backend> Attention<B> {
             self.update_kv_cache_kernel.encode(
                 Some(rotated_keys_buf_borrow.deref()),
                 qkv_buf_borrow.deref(),
-                key_cache_buf_borrow.as_mut().unwrap().deref_mut(),
+                key_cache_buffer_ref.as_mut().unwrap().deref_mut(),
                 value_cache_buf_borrow.as_mut().unwrap().deref_mut(),
                 num_groups as u32,
                 num_heads as u32,
@@ -318,7 +320,7 @@ impl<B: Backend> Attention<B> {
         }
 
         let key_cache_buffer: &B::Buffer = if has_kv_cache {
-            key_cache_buf_borrow.as_ref().unwrap().deref()
+            key_cache_buffer_ref.as_ref().unwrap().deref()
         } else {
             rotated_keys_buf_borrow.deref()
         };
