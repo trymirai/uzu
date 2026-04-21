@@ -5,7 +5,7 @@ mod error;
 use std::{collections::HashMap, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
-use backend_uzu::inference_backend::Backend as UzuBackend;
+use backend_uzu::inference::Backend as UzuBackend;
 pub use config::Config;
 pub use downloader::Downloader;
 pub use error::Error;
@@ -60,7 +60,7 @@ impl Engine {
         };
 
         {
-            let uzu_backend = UzuBackend::new().map_err(|_| Error::UnableToCreateBackend)?;
+            let uzu_backend = UzuBackend::new();
             let uzu_backend_identifier = uzu_backend.identifier();
             let uzu_backend_version = uzu_backend.version();
 

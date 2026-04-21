@@ -18,7 +18,7 @@ pub fn build(message: &Message) -> Result<Vec<InputItem>, Error> {
                 _ => return Err(Error::UnsupportedRole),
             };
             let text = message.text();
-            if !text.is_empty() {
+            if let Some(text) = text {
                 items.push(InputItem::EasyMessage(EasyInputMessage {
                     r#type: MessageType::default(),
                     role,

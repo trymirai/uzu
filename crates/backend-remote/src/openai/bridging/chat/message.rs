@@ -30,7 +30,7 @@ pub fn build(message: &Message) -> Result<ChatCompletionRequestMessage, Error> {
             let content = serde_json::to_string(&value).map_err(|error| Error::Serialization {
                 message: error.to_string(),
             })?;
-            (ResolvedRole::Tool, content, None, tool_call_id.clone())
+            (ResolvedRole::Tool, Some(content), None, tool_call_id.clone())
         },
         Role::Developer {}
         | Role::Custom {
@@ -54,19 +54,25 @@ pub fn build(message: &Message) -> Result<ChatCompletionRequestMessage, Error> {
     });
 
     Ok(match role {
-        ResolvedRole::System => ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
-            content: ChatCompletionRequestSystemMessageContent::Text(content),
-            name: None,
+        ResolvedRole::System => ChatCompletionRequestMessage::System({
+            let content = content.ok_or(Error::ContentRequired)?;
+            ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(content),
+                name: None,
+            }
         }),
-        ResolvedRole::User => ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
-            content: ChatCompletionRequestUserMessageContent::Text(content),
-            name: None,
+        ResolvedRole::User => ChatCompletionRequestMessage::User({
+            let content = content.ok_or(Error::ContentRequired)?;
+            ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(content),
+                name: None,
+            }
         }),
         ResolvedRole::Assistant => {
-            let text_content = if content.is_empty() {
-                None
-            } else {
+            let text_content = if let Some(content) = content {
                 Some(ChatCompletionRequestAssistantMessageContent::Text(content))
+            } else {
+                None
             };
             #[allow(deprecated)]
             ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
@@ -78,9 +84,12 @@ pub fn build(message: &Message) -> Result<ChatCompletionRequestMessage, Error> {
                 function_call: None,
             })
         },
-        ResolvedRole::Tool => ChatCompletionRequestMessage::Tool(ChatCompletionRequestToolMessage {
-            content: ChatCompletionRequestToolMessageContent::Text(content),
-            tool_call_id: tool_call_id.unwrap_or_default(),
+        ResolvedRole::Tool => ChatCompletionRequestMessage::Tool({
+            let content = content.ok_or(Error::ContentRequired)?;
+            ChatCompletionRequestToolMessage {
+                content: ChatCompletionRequestToolMessageContent::Text(content),
+                tool_call_id: tool_call_id.unwrap_or_default(),
+            }
         }),
     })
 }

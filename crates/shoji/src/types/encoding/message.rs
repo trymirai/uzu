@@ -130,12 +130,18 @@ impl Message {
         blocks_by_type!(self, ReasoningEffort, value).next()
     }
 
-    pub fn text(&self) -> String {
-        blocks_by_type!(self, Text, value).collect::<String>()
+    pub fn text(&self) -> Option<String> {
+        blocks_by_type!(self, Text, value).reduce(|mut text, value| {
+            text.push_str(&value);
+            text
+        })
     }
 
-    pub fn reasoning(&self) -> String {
-        blocks_by_type!(self, Reasoning, value).collect::<String>()
+    pub fn reasoning(&self) -> Option<String> {
+        blocks_by_type!(self, Reasoning, value).reduce(|mut reasoning, value| {
+            reasoning.push_str(&value);
+            reasoning
+        })
     }
 
     pub fn tool_namespaces(&self) -> Vec<ToolNamespace> {
