@@ -8,4 +8,4 @@ mod sparse_array;
 pub mod version;
 
 pub use sparse_array::{SparseArray, SparseArrayContext};
-pub use version::VERSION;
+pub use version::{TOOLCHAIN_VERSION, VERSION};

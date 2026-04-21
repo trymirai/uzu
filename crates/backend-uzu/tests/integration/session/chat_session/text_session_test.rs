@@ -1,12 +1,19 @@
 #![cfg(metal_backend)]
 
-use backend_uzu::session::{
-    Session,
-    config::{DecodingConfig, RunConfig},
-    parameter::SamplingSeed,
-    types::{Input, Message, Output},
+use std::sync::Arc;
+
+use backend_uzu::{
+    prelude::{FixedTokensSpeculator, PromptLookupSpeculator, SpeculatorConfig},
+    session::{
+        Session,
+        config::{DecodingConfig, RunConfig},
+        parameter::SamplingSeed,
+        types::{Input, Message, Output},
+    },
 };
+use shoji::types::session::chat::Feature;
 use test_tag::tag;
+use tokenizers::Tokenizer;
 
 use crate::common::path::get_test_model_path;
 
@@ -22,6 +29,67 @@ fn build_default_text() -> String {
 #[test]
 fn test_text_session_base() {
     run(build_default_text(), build_decoding_config(), 128);
+}
+
+#[tag(heavy)]
+#[test]
+fn test_text_session_with_prompt_lookup_speculator() {
+    let number_of_speculated_tokens = 16 - 1;
+    let speculator = PromptLookupSpeculator::new_with_params(3);
+    let speculator_config = SpeculatorConfig {
+        number_of_speculated_tokens,
+        speculator: Arc::new(speculator),
+    };
+    let decoding_config = build_decoding_config().with_speculator_config(speculator_config);
+
+    let text_to_summarize = "A Large Language Model (LLM) is a type of artificial intelligence that processes and generates human-like text. It is trained on vast datasets containing books, articles, and web content, allowing it to understand and predict language patterns. LLMs use deep learning, particularly transformer-based architectures, to analyze text, recognize context, and generate coherent responses. These models have a wide range of applications, including chatbots, content creation, translation, and code generation. One of the key strengths of LLMs is their ability to generate contextually relevant text based on prompts. They utilize self-attention mechanisms to weigh the importance of words within a sentence, improving accuracy and fluency. Examples of popular LLMs include OpenAI's GPT series, Google's BERT, and Meta's LLaMA. As these models grow in size and sophistication, they continue to enhance human-computer interactions, making AI-powered communication more natural and effective.";
+    let text = format!("Text is: \"{}\". Write only summary itself.", text_to_summarize);
+
+    run(text, decoding_config, 256);
+}
+
+#[tag(heavy)]
+#[test]
+fn test_text_session_with_fixed_speculator() {
+    let tokenizer = Tokenizer::from_file(get_test_model_path().join("tokenizer.json")).unwrap();
+
+    let feature = Feature {
+        name: String::from("sentiment"),
+        values: vec!["Happy", "Sad", "Angry", "Fearful", "Surprised", "Disgusted"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+    };
+    let proposals: Vec<Vec<u64>> = feature
+        .values
+        .iter()
+        .map(|value| {
+            tokenizer.encode(value.clone().as_str(), false).unwrap().get_ids().iter().map(|&id| id as u64).collect()
+        })
+        .collect();
+    let speculator = FixedTokensSpeculator::new(proposals);
+    let speculator_config = SpeculatorConfig {
+        number_of_speculated_tokens: speculator.max_trie_nodes(),
+        speculator: Arc::new(speculator),
+    };
+    let decoding_config = build_decoding_config().with_speculator_config(speculator_config);
+
+    let text_to_detect_feature = "Today's been awesome! Everything just feels right, and I can't stop smiling.";
+    let text = format!(
+        "Text is: \"{}\". Choose {} from the list: {}. Answer with one word. Dont't add dot at the end.",
+        text_to_detect_feature,
+        feature.name,
+        feature.values.join(", ")
+    );
+
+    run(text, decoding_config, 32);
+}
+
+#[ignore]
+#[tag(heavy)]
+#[test]
+fn test_text_session_ngram_speculator_chat() {
+    todo!("Implement test_text_session_ngram_speculator_chat")
 }
 
 #[tag(heavy)]

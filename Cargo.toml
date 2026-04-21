@@ -2,15 +2,18 @@
 members = [
     "crates/dsl",
     "crates/bindings",
+    "crates/shoji",
+    "crates/backend-uzu",
+    "crates/backend-remote",
     "crates/json-transform",
     "crates/token-stream-parser",
     "crates/hanashi",
     "crates/nagare",
     "crates/download-manager",
-    "crates/backend-uzu",
     "crates/uzu",
     "crates/benchmarks",
     "crates/cli",
+    "crates/cli-storage",
 ]
 resolver = "3"
 
@@ -25,13 +28,15 @@ repository = "https://github.com/trymirai/uzu"
 [workspace.dependencies]
 dsl = { path = "crates/dsl" }
 bindings = { path = "crates/bindings", default-features = false }
+shoji = { path = "crates/shoji", default-features = false }
+backend-uzu = { path = "crates/backend-uzu", default-features = false }
+backend-remote = { path = "crates/backend-remote", default-features = false }
 json-transform = { path = "crates/json-transform", default-features = false }
 token-stream-parser = { path = "crates/token-stream-parser", default-features = false }
 hanashi = { path = "crates/hanashi", default-features = false }
 nagare = { path = "crates/nagare", default-features = false }
 download-manager = { path = "crates/download-manager", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
-backend-uzu = { path = "crates/backend-uzu", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
@@ -115,7 +120,7 @@ reqwest = { version = "0.13.2", features = [
     "blocking",
     "query",
 ] }
-tokio-util = "0.7.17"
+tokio-util = { version = "0.7.17", default-features = false, features = ["rt"] }
 async-shutdown = "0.2.2"
 objc-sys = "0.3.5"
 crc32c = "0.6.8"
@@ -134,6 +139,9 @@ tsify = { version = "0.5.6", features = ["js"] }
 openai-harmony = "0.0.8"
 dirs = "6.0.0"
 dotenvy = "0.15.7"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+async-openai = { version = "0.35.0", features = ["chat-completion", "model", "byot", "responses"] }
 
 [profile.dev.build-override]
 opt-level = 3

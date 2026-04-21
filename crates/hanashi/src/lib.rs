@@ -1,6 +1,3 @@
-#[cfg(feature = "bindings-uniffi")]
-uniffi::setup_scaffolding!();
-
 pub mod chat;
 
 pub trait Encoding {

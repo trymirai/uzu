@@ -7,21 +7,83 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
-[dependencies]
-backend-uzu.workspace = true
-
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-nagare.workspace = true
-serde.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
-
-[dev-dependencies]
-dotenvy.workspace = true
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
 default = ["metal", "grammar"]
 metal = ["backend-uzu/metal"]
 grammar = ["backend-uzu/grammar"]
 tracing = ["backend-uzu/tracing"]
+bindings = [
+    "bindings-uniffi",
+    "bindings-napi",
+    "bindings-pyo3",
+    "bindings-wasm",
+]
+bindings-uniffi = ["shoji/bindings-uniffi", "dep:uniffi"]
+bindings-napi = [
+    "shoji/bindings-napi",
+    "dep:napi",
+    "dep:napi-derive",
+    "dep:napi-build",
+]
+bindings-pyo3 = ["shoji/bindings-pyo3", "dep:pyo3"]
+bindings-wasm = [
+    "shoji/bindings-wasm",
+    "dep:wasm-bindgen",
+    "dep:serde-wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:tsify",
+]
+
+[dependencies]
+bindings.workspace = true
+backend-uzu.workspace = true
+shoji.workspace = true
+uniffi = { workspace = true, optional = true }
+napi = { workspace = true, optional = true }
+napi-derive = { workspace = true, optional = true }
+pyo3 = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+serde-wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+tsify = { workspace = true, optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+backend-remote.workspace = true
+nagare.workspace = true
+download-manager.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+dirs.workspace = true
+sysinfo.workspace = true
+reqwest.workspace = true
+indexmap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+async-openai.workspace = true
+fancy-regex.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-security.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+chrono.workspace = true
+tempfile.workspace = true
+indicatif.workspace = true
+dotenvy.workspace = true
+
+[build-dependencies]
+napi-build = { workspace = true, optional = true }

@@ -62,6 +62,7 @@ impl<B: Backend> LayerExecutables<B> {
         let (mixer, mixer_hadamard_factors) = match &layer_config.mixer_config {
             MixerConfig::Attention(attention_config) => {
                 let rope_block = rope.expect("RoPE encoder missing for attention layer");
+                let use_rope = attention_config.use_rope;
 
                 let layer_num_heads = attention_config.num_heads.unwrap_or(num_heads);
                 let layer_num_groups = attention_config.num_groups.unwrap_or(num_groups);
@@ -155,6 +156,7 @@ impl<B: Backend> LayerExecutables<B> {
                         gate_projection,
                         qk_norm,
                         rope: rope_block,
+                        use_rope,
                         attention,
                         out_projection,
                     },
@@ -318,6 +320,7 @@ impl<B: Backend> LayerExecutables<B> {
                 gate_projection,
                 qk_norm,
                 rope,
+                use_rope,
                 attention,
                 out_projection,
             } => {
@@ -328,7 +331,7 @@ impl<B: Backend> LayerExecutables<B> {
                 if let Some(norm) = qk_norm {
                     norm.encode(state, encoder)?;
                 }
-                rope.encode(state, encoder)?;
+                rope.encode(state, *use_rope, encoder)?;
                 attention.encode(state, parameters, encoder)?;
                 out_projection.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
