@@ -9,7 +9,10 @@ use backend_uzu::inference::Backend as UzuBackend;
 pub use config::Config;
 pub use downloader::Downloader;
 pub use error::Error;
-use nagare::{chat::Session as ChatSession, classification::Session as ClassificationSession};
+use nagare::{
+    chat::Session as ChatSession, classification::Session as ClassificationSession,
+    text_to_speech::Session as TextToSpeechSession,
+};
 use shoji::{
     traits::{Backend, Registry},
     types::{model::Model, session::chat::Config as ChatConfig},
@@ -286,6 +289,20 @@ impl Engine {
         if let Some(backend_entity) = model.backend_entity() {
             let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::BackendNotFound)?;
             let session = ClassificationSession::new(backend.as_ref(), model, path).await?;
+            Ok(session)
+        } else {
+            return Err(Error::BackendNotFound);
+        }
+    }
+
+    pub async fn text_to_speech(
+        &self,
+        model: Model,
+    ) -> Result<TextToSpeechSession, Error> {
+        let path = self.model_path(&model).await;
+        if let Some(backend_entity) = model.backend_entity() {
+            let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::BackendNotFound)?;
+            let session = TextToSpeechSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {
             return Err(Error::BackendNotFound);

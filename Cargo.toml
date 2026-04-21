@@ -151,6 +151,7 @@ async-openai = { version = "0.35.0", features = [
     "byot",
     "responses",
 ] }
+hound = "3.5.1"
 
 [profile.dev.build-override]
 opt-level = 3

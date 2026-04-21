@@ -1,4 +1,6 @@
-use nagare::{chat::Error as ChatError, classification::Error as ClassificationError};
+use nagare::{
+    chat::Error as ChatError, classification::Error as ClassificationError, text_to_speech::Error as TextToSpeechError,
+};
 
 #[bindings::export(Error, name = "EngineError")]
 #[derive(Debug, thiserror::Error)]
@@ -22,4 +24,6 @@ pub enum Error {
     Chat(#[from] ChatError),
     #[error(transparent)]
     Classification(#[from] ClassificationError),
+    #[error(transparent)]
+    TextToSpeech(#[from] TextToSpeechError),
 }

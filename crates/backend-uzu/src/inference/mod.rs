@@ -3,6 +3,7 @@ mod classification;
 mod container;
 mod error;
 mod model_metadata;
+mod text_to_speech;
 
 use std::pin::Pin;
 
@@ -14,10 +15,14 @@ pub use model_metadata::{ModelMetadata, resolve_model_metadata};
 use shoji::{
     traits::{
         Backend as BackendTrait,
-        backend::{Error as BackendError, chat_message as chat_message_trait, classification as classification_trait},
+        backend::{
+            Error as BackendError, chat_message as chat_message_trait, classification as classification_trait,
+            text_to_speech as text_to_speech_trait,
+        },
     },
     types::session::chat::Config as ShojiChatConfig,
 };
+pub use text_to_speech::Instance as TextToSpeechInstance;
 
 use crate::TOOLCHAIN_VERSION;
 
@@ -45,6 +50,10 @@ impl BackendTrait for Backend {
     fn as_classification_capable(&self) -> Option<&dyn classification_trait::Backend> {
         Some(self)
     }
+
+    fn as_text_to_speech_capable(&self) -> Option<&dyn text_to_speech_trait::Backend> {
+        Some(self)
+    }
 }
 
 impl chat_message_trait::Backend for Backend {
@@ -69,6 +78,19 @@ impl classification_trait::Backend for Backend {
         Box::pin(async move {
             let instance = ClassificationInstance::new(reference).map_err(|error| Box::new(error) as BackendError)?;
             Ok(Box::new(instance) as Box<dyn classification_trait::Instance>)
+        })
+    }
+}
+
+impl text_to_speech_trait::Backend for Backend {
+    fn instance(
+        &self,
+        reference: String,
+        _config: text_to_speech_trait::Config,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn text_to_speech_trait::Instance>, BackendError>> + Send + '_>> {
+        Box::pin(async move {
+            let instance = TextToSpeechInstance::new(reference).map_err(|error| Box::new(error) as BackendError)?;
+            Ok(Box::new(instance) as Box<dyn text_to_speech_trait::Instance>)
         })
     }
 }
