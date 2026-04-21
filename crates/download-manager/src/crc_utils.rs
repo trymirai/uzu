@@ -38,7 +38,6 @@ pub fn calculate_and_verify_crc(
     Ok(crc == expected_crc)
 }
 
-#[allow(dead_code)]
 pub fn save_crc_file(
     file_path: &Path,
     crc_value: &str,

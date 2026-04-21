@@ -3,20 +3,13 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use crate::{
-    DownloadId, DownloadInfo, TaskID, compute_download_id,
+    DownloadId, DownloadInfo, compute_download_id,
     managers::apple::{URLSessionDownloadTaskResumeData, URLSessionResumeDataHandler},
     prelude::*,
 };
 
-#[allow(unused)]
 #[async_trait]
 pub trait UrlSessionDownloadTaskExt {
-    fn task_identifier(&self) -> TaskID;
-    fn task_description(&self) -> Option<String>;
-    fn set_task_description(
-        &self,
-        s: &str,
-    );
     fn download_info(&self) -> Option<DownloadInfo>;
     fn set_download_info(
         &self,
@@ -31,25 +24,9 @@ pub trait UrlSessionDownloadTaskExt {
 
 #[async_trait]
 impl UrlSessionDownloadTaskExt for NSURLSessionDownloadTask {
-    fn task_identifier(&self) -> TaskID {
-        unsafe { msg_send![self, taskIdentifier] }
-    }
-
-    fn task_description(&self) -> Option<String> {
-        let desc_opt = self.taskDescription();
-        desc_opt.map(|d| d.to_string())
-    }
-
-    fn set_task_description(
-        &self,
-        s: &str,
-    ) {
-        let ns = NSString::from_str(s);
-        self.setTaskDescription(Some(&ns));
-    }
-
     fn download_info(&self) -> Option<DownloadInfo> {
-        self.task_description().and_then(|desc| serde_json::from_str::<crate::DownloadInfo>(&desc).ok())
+        let desc_opt = self.taskDescription();
+        desc_opt.and_then(|desc| serde_json::from_str::<crate::DownloadInfo>(&desc.to_string()).ok())
     }
 
     fn set_download_info(

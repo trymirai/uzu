@@ -137,25 +137,3 @@ pub async fn release_lock(
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))??;
     Ok(())
 }
-
-/// Try to acquire a lock (non-blocking check first)
-pub async fn try_acquire_lock(
-    tokio_handle: &TokioHandle,
-    lock_path: &Path,
-    manager_id: &str,
-) -> Result<bool, std::io::Error> {
-    let lock_path_buf = lock_path.to_path_buf();
-    let manager_id_str = manager_id.to_string();
-    let process_id = std::process::id();
-
-    let lock_state = tokio_handle
-        .spawn_blocking(move || check_lock_file(&lock_path_buf, &manager_id_str, process_id))
-        .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-
-    if lock_state.is_conflict() {
-        return Ok(false);
-    }
-    acquire_lock(tokio_handle, lock_path, manager_id).await?;
-    Ok(true)
-}

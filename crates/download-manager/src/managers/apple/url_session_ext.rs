@@ -4,33 +4,21 @@ use crate::{
     prelude::*,
 };
 
-#[allow(unused)]
 pub struct URLSessionTasks {
-    pub data_tasks: Box<[Retained<NSURLSessionDataTask>]>,
-    pub upload_tasks: Box<[Retained<NSURLSessionUploadTask>]>,
     pub download_tasks: Box<[Retained<NSURLSessionDownloadTask>]>,
 }
 
 impl Default for URLSessionTasks {
     fn default() -> Self {
         Self {
-            data_tasks: Box::default(),
-            upload_tasks: Box::default(),
             download_tasks: Box::default(),
         }
     }
 }
 
-#[allow(unused)]
 #[async_trait::async_trait]
 pub trait URLSessionExt {
     async fn get_tasks(&self) -> URLSessionTasks;
-    fn get_tasks_blocking(&self) -> URLSessionTasks;
-    fn description(&self) -> Option<String>;
-    fn set_description(
-        &self,
-        s: &str,
-    );
     fn download_task_with_url(
         &self,
         source_url: &str,
@@ -49,11 +37,9 @@ impl URLSessionExt for NSURLSession {
             let sender = Arc::new(Mutex::new(Some(sender)));
             let handler = URLSessionGetTasksCompletionHandler::new({
                 let sender = sender.clone();
-                move |data_tasks, upload_tasks, download_tasks| {
+                move |_data_tasks, _upload_tasks, download_tasks| {
                     if let Some(s) = sender.lock().unwrap().take() {
                         let _ = s.send(URLSessionTasks {
-                            data_tasks,
-                            upload_tasks,
                             download_tasks,
                         });
                     }
@@ -63,39 +49,6 @@ impl URLSessionExt for NSURLSession {
             receiver
         };
         receiver.await.unwrap_or(URLSessionTasks::default())
-    }
-
-    fn get_tasks_blocking(&self) -> URLSessionTasks {
-        use std::sync::{Arc, Mutex, mpsc::sync_channel};
-        let (sender, receiver) = sync_channel(1);
-        let sender = Arc::new(Mutex::new(Some(sender)));
-        let handler = URLSessionGetTasksCompletionHandler::new({
-            let sender = sender.clone();
-            move |data_tasks, upload_tasks, download_tasks| {
-                if let Some(s) = sender.lock().unwrap().take() {
-                    let _ = s.send(URLSessionTasks {
-                        data_tasks,
-                        upload_tasks,
-                        download_tasks,
-                    });
-                }
-            }
-        });
-        unsafe { self.getTasksWithCompletionHandler(&handler) };
-        receiver.recv().unwrap_or_default()
-    }
-
-    fn description(&self) -> Option<String> {
-        let desc_opt = self.sessionDescription();
-        desc_opt.map(|d| d.to_string())
-    }
-
-    fn set_description(
-        &self,
-        s: &str,
-    ) {
-        let ns = NSString::from_str(s);
-        self.setSessionDescription(Some(&ns));
     }
 
     fn download_task_with_url(

@@ -40,19 +40,6 @@ impl AsyncFetcherDownloadManager {
         }
     }
 
-    #[allow(unused)]
-    pub fn manager_id(&self) -> &str {
-        &self.manager_id
-    }
-
-    #[allow(unused)]
-    pub async fn new(
-        config: AsyncFetcherConfig,
-        tokio_handle: TokioHandle,
-    ) -> Result<Self, DownloadError> {
-        Self::new_with_manager_id(config, tokio_handle, None).await
-    }
-
     pub async fn new_with_manager_id(
         config: AsyncFetcherConfig,
         tokio_handle: TokioHandle,
@@ -60,8 +47,7 @@ impl AsyncFetcherDownloadManager {
     ) -> Result<Self, DownloadError> {
         let manager_id = custom_manager_id.unwrap_or_else(|| Self::generate_manager_id());
 
-        let (global_broadcast_sender, _global_broadcast_receiver) =
-            tokio_broadcast_channel::<(DownloadId, FileDownloadEvent)>(256);
+        let (global_broadcast_sender, _) = tokio_broadcast_channel::<(DownloadId, FileDownloadEvent)>(256);
         let global_broadcast_sender = Arc::new(global_broadcast_sender);
 
         let task_cache: TaskCache = Arc::new(TokioMutex::new(HashMap::new()));
@@ -85,7 +71,6 @@ impl AsyncFetcherDownloadManager {
 
 #[async_trait::async_trait]
 impl FileDownloadManager for AsyncFetcherDownloadManager {
-    #[allow(unused)]
     fn manager_id(&self) -> &str {
         &self.manager_id
     }

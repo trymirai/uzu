@@ -14,22 +14,20 @@ use crate::{
 };
 
 pub struct FileDownloadTask {
-    pub download_id: Uuid,
-    pub source_url: String,
-    pub destination: PathBuf,
-    pub file_check: FileCheck,
-    pub manager_id: String,
+    download_id: Uuid,
+    source_url: String,
+    destination: PathBuf,
+    file_check: FileCheck,
+    manager_id: String,
     expected_bytes: Option<u64>,
     state: Arc<TokioMutex<FileDownloadState>>,
     broadcast_sender: TokioBroadcastSender<FileDownloadState>,
-    pub internal_state: TokioMutex<InternalDownloadState<()>>,
+    internal_state: TokioMutex<InternalDownloadState<()>>,
     config: AsyncFetcherConfig,
     shutdown_manager: Arc<TokioMutex<Option<ShutdownManager<()>>>>,
-    fetcher_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     tokio_handle: TokioHandle,
     completed_tx: tokio::sync::watch::Sender<bool>,
-    _completed_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 impl std::fmt::Debug for FileDownloadTask {
@@ -59,8 +57,8 @@ impl FileDownloadTask {
         config: AsyncFetcherConfig,
         tokio_handle: TokioHandle,
     ) -> Self {
-        let (broadcast_sender, _receiver) = tokio_broadcast_channel::<FileDownloadState>(64);
-        let (completed_tx, completed_rx) = tokio::sync::watch::channel(false);
+        let (broadcast_sender, _) = tokio_broadcast_channel::<FileDownloadState>(64);
+        let (completed_tx, _) = tokio::sync::watch::channel(false);
         Self {
             download_id,
             source_url,
@@ -73,11 +71,9 @@ impl FileDownloadTask {
             internal_state: TokioMutex::new(internal_state),
             config,
             shutdown_manager: Arc::new(TokioMutex::new(None)),
-            fetcher_task: Arc::new(TokioMutex::new(None)),
             listener_task: Arc::new(TokioMutex::new(None)),
             tokio_handle,
             completed_tx,
-            _completed_rx: completed_rx,
         }
     }
 
@@ -470,10 +466,6 @@ impl FileDownloadTask {
                 let paused_state = FileDownloadState::paused(downloaded_bytes, total_bytes);
                 self.update_state_and_broadcast(paused_state).await;
 
-                if let Some(task) = self.fetcher_task.lock().await.take() {
-                    task.abort();
-                    let _ = task.await;
-                }
                 // Reconcile lock (release)
                 self.reconcile_lock_state().await;
 
@@ -513,11 +505,6 @@ impl FileDownloadTask {
             } => {
                 if let Some(shutdown) = self.shutdown_manager.lock().await.as_ref() {
                     let _ = shutdown.trigger_shutdown(());
-                }
-
-                if let Some(task) = self.fetcher_task.lock().await.take() {
-                    task.abort();
-                    let _ = task.await;
                 }
             },
             InternalDownloadState::Paused {

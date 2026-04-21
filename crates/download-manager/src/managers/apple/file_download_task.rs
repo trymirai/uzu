@@ -13,20 +13,19 @@ use crate::{
 };
 
 pub struct FileDownloadTask {
-    pub download_id: Uuid,
-    pub source_url: String,
-    pub destination: PathBuf,
-    pub file_check: FileCheck,
-    pub manager_id: String,
+    download_id: Uuid,
+    source_url: String,
+    destination: PathBuf,
+    file_check: FileCheck,
+    manager_id: String,
     expected_bytes: Option<u64>,
     state: Arc<TokioMutex<FileDownloadState>>,
     broadcast_sender: TokioBroadcastSender<FileDownloadState>,
-    pub internal_state: TokioMutex<InternalDownloadState<Retained<NSURLSessionDownloadTask>>>,
+    internal_state: TokioMutex<InternalDownloadState<Retained<NSURLSessionDownloadTask>>>,
     session: Option<Retained<NSURLSession>>,
     listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     tokio_handle: TokioHandle,
     completed_tx: tokio::sync::watch::Sender<bool>,
-    _completed_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 impl std::fmt::Debug for FileDownloadTask {
@@ -56,8 +55,8 @@ impl FileDownloadTask {
         session: Option<Retained<NSURLSession>>,
         tokio_handle: TokioHandle,
     ) -> Self {
-        let (broadcast_sender, _receiver) = tokio_broadcast_channel::<FileDownloadState>(64);
-        let (completed_tx, completed_rx) = tokio::sync::watch::channel(false);
+        let (broadcast_sender, _) = tokio_broadcast_channel::<FileDownloadState>(64);
+        let (completed_tx, _) = tokio::sync::watch::channel(false);
         Self {
             download_id,
             source_url,
@@ -72,7 +71,6 @@ impl FileDownloadTask {
             listener_task: Arc::new(TokioMutex::new(None)),
             tokio_handle,
             completed_tx,
-            _completed_rx: completed_rx,
         }
     }
 
@@ -766,7 +764,6 @@ impl FileDownloadTask {
             listener_task: Arc::new(TokioMutex::new(None)),
             tokio_handle: self.tokio_handle.clone(),
             completed_tx: self.completed_tx.clone(),
-            _completed_rx: self.completed_tx.subscribe(),
         }
     }
 }

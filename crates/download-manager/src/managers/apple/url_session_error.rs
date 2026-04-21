@@ -148,42 +148,6 @@ impl URLSessionErrorCode {
     pub fn should_ignore(&self) -> bool {
         matches!(self, Self::Cancelled)
     }
-
-    /// Check if this is a network connectivity error
-    pub fn is_network_error(&self) -> bool {
-        matches!(
-            self,
-            Self::NotConnectedToInternet
-                | Self::NetworkConnectionLost
-                | Self::CannotConnectToHost
-                | Self::TimedOut
-                | Self::CannotLoadFromNetwork
-        )
-    }
-
-    /// Check if this is a DNS/host resolution error
-    pub fn is_dns_error(&self) -> bool {
-        matches!(self, Self::CannotFindHost | Self::DNSLookupFailed)
-    }
-
-    /// Check if this is a certificate/security error
-    pub fn is_certificate_error(&self) -> bool {
-        matches!(
-            self,
-            Self::SecureConnectionFailed
-                | Self::ServerCertificateHasBadDate
-                | Self::ServerCertificateUntrusted
-                | Self::ServerCertificateHasUnknownRoot
-                | Self::ServerCertificateNotYetValid
-                | Self::ClientCertificateRejected
-                | Self::ClientCertificateRequired
-        )
-    }
-
-    /// Check if this error is retryable (might succeed on retry)
-    pub fn is_retryable(&self) -> bool {
-        self.is_network_error() || matches!(self, Self::TimedOut | Self::ResourceUnavailable | Self::BadServerResponse)
-    }
 }
 
 /// Parsed error information from NSError
@@ -191,23 +155,18 @@ impl URLSessionErrorCode {
 pub struct URLSessionError {
     /// Parsed error code
     pub code: URLSessionErrorCode,
-    /// Error domain (e.g., "NSURLErrorDomain")
-    pub domain: String,
     /// Localized error description from the system
     pub localized_description: String,
 }
 
-#[allow(unused)]
 impl URLSessionError {
     /// Parse an NSError into a URLSessionError
     pub fn from_nserror(error: &NSError) -> Self {
         let code = URLSessionErrorCode::from_error_code(error.code() as i64);
-        let domain = error.domain().to_string();
         let localized_description = error.localizedDescription().to_string();
 
         Self {
             code,
-            domain,
             localized_description,
         }
     }
@@ -222,39 +181,8 @@ impl URLSessionError {
         }
     }
 
-    /// Get a detailed error message suitable for logging
-    pub fn debug_message(&self) -> String {
-        format!(
-            "code={}, domain={}, desc='{}', type={}",
-            self.code.code(),
-            self.domain,
-            self.localized_description,
-            self.code.description()
-        )
-    }
-
     /// Check if this error should be ignored
     pub fn should_ignore(&self) -> bool {
         self.code.should_ignore()
-    }
-
-    /// Check if this is a network connectivity error
-    pub fn is_network_error(&self) -> bool {
-        self.code.is_network_error()
-    }
-
-    /// Check if this is a DNS/host resolution error
-    pub fn is_dns_error(&self) -> bool {
-        self.code.is_dns_error()
-    }
-
-    /// Check if this is a certificate/security error
-    pub fn is_certificate_error(&self) -> bool {
-        self.code.is_certificate_error()
-    }
-
-    /// Check if this error is retryable
-    pub fn is_retryable(&self) -> bool {
-        self.code.is_retryable()
     }
 }

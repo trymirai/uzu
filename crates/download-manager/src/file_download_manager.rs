@@ -59,14 +59,10 @@ pub async fn create_download_manager(
         FileDownloadManagerType::Apple => {
             #[cfg(target_vendor = "apple")]
             {
-                use crate::managers::apple::{SessionConfig, URLSessionDownloadManager, URLSessionDropPolicy};
-                let manager = URLSessionDownloadManager::new_with_manager_id(
-                    SessionConfig::default(),
-                    URLSessionDropPolicy::FinishTasksAndInvalidate,
-                    tokio_handle,
-                    identifier,
-                )
-                .await?;
+                use crate::managers::apple::{SessionConfig, URLSessionDownloadManager};
+                let manager =
+                    URLSessionDownloadManager::new_with_manager_id(SessionConfig::default(), tokio_handle, identifier)
+                        .await?;
                 return Ok(Box::new(manager) as Box<dyn FileDownloadManager>);
             }
             return Err(DownloadError::UnsupportedType);

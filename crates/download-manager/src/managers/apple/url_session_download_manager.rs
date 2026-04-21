@@ -18,13 +18,6 @@ use crate::{
 
 type TaskCache = Arc<TokioMutex<HashMap<DownloadId, Arc<dyn FileDownloadTaskTrait>>>>;
 
-#[allow(unused)]
-#[derive(Debug, Clone)]
-pub enum URLSessionDropPolicy {
-    FinishTasksAndInvalidate,
-    InvalidateAndCancel,
-}
-
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct URLSessionDownloadManager {
@@ -32,7 +25,6 @@ pub struct URLSessionDownloadManager {
     session: Retained<NSURLSession>,
     delegate: Retained<URLSessionDelegate>,
     delegate_protocol_object: Retained<ProtocolObject<dyn NSURLSessionDelegate>>,
-    drop_policy: URLSessionDropPolicy,
     pub global_broadcast_sender: Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>>,
     tokio_handle: TokioHandle,
     task_cache: TaskCache,
@@ -53,30 +45,14 @@ impl URLSessionDownloadManager {
         }
     }
 
-    #[allow(unused)]
-    pub fn manager_id(&self) -> &str {
-        &self.manager_id
-    }
-
-    #[allow(unused)]
-    pub async fn new(
-        session_config: SessionConfig,
-        drop_policy: URLSessionDropPolicy,
-        tokio_handle: TokioHandle,
-    ) -> Result<Self, DownloadError> {
-        Self::new_with_manager_id(session_config, drop_policy, tokio_handle, None).await
-    }
-
     pub async fn new_with_manager_id(
         session_config: SessionConfig,
-        drop_policy: URLSessionDropPolicy,
         tokio_handle: TokioHandle,
         custom_manager_id: Option<String>,
     ) -> Result<Self, DownloadError> {
         let manager_id = custom_manager_id.unwrap_or_else(|| Self::generate_manager_id());
 
-        let (global_broadcast_sender, _global_broadcast_receiver) =
-            tokio_broadcast_channel::<(DownloadId, FileDownloadEvent)>(256);
+        let (global_broadcast_sender, _) = tokio_broadcast_channel::<(DownloadId, FileDownloadEvent)>(256);
         let global_broadcast_sender = Arc::new(global_broadcast_sender);
 
         let task_cache: TaskCache = Arc::new(TokioMutex::new(HashMap::new()));
@@ -97,7 +73,6 @@ impl URLSessionDownloadManager {
                 session,
                 delegate: delegate.clone(),
                 delegate_protocol_object,
-                drop_policy,
                 global_broadcast_sender,
                 tokio_handle,
                 task_cache,
@@ -111,22 +86,6 @@ impl URLSessionDownloadManager {
         tracing::debug!("[DOWNLOAD_MANAGER] Task cache initialized, ready for downloads");
 
         Ok(backend)
-    }
-
-    /// Invalidate the underlying NSURLSession and cancel all tasks.
-    /// Safe to call multiple times; used by tests to ensure cleanup on exit.
-    fn invalidate_and_cancel(&self) {
-        autoreleasepool(|_| {
-            self.session.invalidateAndCancel();
-        });
-    }
-
-    /// Finish all outstanding tasks and invalidate the session.
-    /// For background sessions, tasks may continue in the background.
-    fn finish_tasks_and_invalidate(&self) {
-        autoreleasepool(|_| {
-            self.session.finishTasksAndInvalidate();
-        });
     }
 
     async fn initialize_task_cache(&self) -> Result<(), DownloadError> {
@@ -224,14 +183,9 @@ impl URLSessionDownloadManager {
 
 impl Drop for URLSessionDownloadManager {
     fn drop(&mut self) {
-        match self.drop_policy {
-            URLSessionDropPolicy::FinishTasksAndInvalidate => {
-                self.finish_tasks_and_invalidate();
-            },
-            URLSessionDropPolicy::InvalidateAndCancel => {
-                self.invalidate_and_cancel();
-            },
-        }
+        autoreleasepool(|_| {
+            self.session.finishTasksAndInvalidate();
+        });
     }
 }
 

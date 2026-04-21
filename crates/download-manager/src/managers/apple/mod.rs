@@ -9,20 +9,19 @@ mod url_session_ext;
 mod url_session_get_tasks_handler;
 mod url_session_resume_data_handler;
 mod url_session_state_reducer;
-mod url_session_task_ext;
 
-pub use file_download_task::FileDownloadTask;
-pub use session_config::SessionConfig;
-pub use url_session_delegate::URLSessionDelegate;
-pub use url_session_download_manager::{URLSessionDownloadManager, URLSessionDropPolicy};
+pub(crate) use file_download_task::FileDownloadTask;
+pub(crate) use session_config::SessionConfig;
+pub(crate) use url_session_delegate::URLSessionDelegate;
+pub(crate) use url_session_download_manager::URLSessionDownloadManager;
 pub use url_session_download_task_resume_data::URLSessionDownloadTaskResumeData;
-pub use url_session_error::URLSessionError;
-pub use url_session_get_tasks_handler::URLSessionGetTasksCompletionHandler;
-pub use url_session_resume_data_handler::URLSessionResumeDataHandler;
+pub(crate) use url_session_error::URLSessionError;
+pub(crate) use url_session_get_tasks_handler::URLSessionGetTasksCompletionHandler;
+pub(crate) use url_session_resume_data_handler::URLSessionResumeDataHandler;
 
 use crate::prelude::*;
 
-pub type URLSessionDownloadTaskState = Option<NSURLSessionTaskState>;
+pub(crate) type URLSessionDownloadTaskState = Option<NSURLSessionTaskState>;
 
-pub use url_session_download_task_ext::UrlSessionDownloadTaskExt;
-pub use url_session_ext::URLSessionExt;
+pub(crate) use url_session_download_task_ext::UrlSessionDownloadTaskExt;
+pub(crate) use url_session_ext::URLSessionExt;
