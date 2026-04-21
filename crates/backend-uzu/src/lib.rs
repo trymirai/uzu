@@ -22,7 +22,8 @@ pub mod prelude;
 pub mod session;
 
 pub use array::{
-    Array, ArrayContextExt, allocation_as_slice, allocation_copy_from_slice, allocation_from_slice, allocation_to_vec,
+    AllocationAccessError, Array, ArrayContextExt, allocation_as_slice, allocation_copy_from_slice,
+    allocation_from_slice, allocation_to_vec,
 };
 #[cfg(metal_backend)]
 pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};

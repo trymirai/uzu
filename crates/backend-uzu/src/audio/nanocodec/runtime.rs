@@ -366,7 +366,9 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
 
         Ok(DecodedPaddedAudio {
-            samples: allocation_as_slice::<f32, B>(&output).to_vec(),
+            samples: allocation_as_slice::<f32, B>(&output)
+                .map_err(|err| AudioError::Runtime(format!("failed to read FSQ decode output allocation: {err}")))?
+                .to_vec(),
             channels: self.config.channels(),
             frames,
             lengths: lengths_usize,
@@ -450,7 +452,9 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
 
-        let encoded_tokens = allocation_as_slice::<i32, B>(&tokens).to_vec();
+        let encoded_tokens = allocation_as_slice::<i32, B>(&tokens)
+            .map_err(|err| AudioError::Runtime(format!("failed to read FSQ encode token allocation: {err}")))?
+            .to_vec();
         let mut tokens_u32 = vec![0_u32; encoded_tokens.len()];
         for (index, &token) in encoded_tokens.iter().enumerate() {
             if token < 0 {

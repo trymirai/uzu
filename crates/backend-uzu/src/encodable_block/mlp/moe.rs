@@ -224,10 +224,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut topk_probs = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], self.data_type))?;
 
         if suffix_length > 0 && k > 0 {
-            let (buffer, range) = topk_ids.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0xFF);
-            }
+            encoder.encode_fill_allocation(&topk_ids, 0xFF);
         }
 
         if suffix_length > 0 && e > 0 && k > 0 {
@@ -268,10 +265,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
 
         if suffix_length > 0 && k > 0 {
-            let (buffer, range) = tok2row.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0xFF);
-            }
+            encoder.encode_fill_allocation(&tok2row, 0xFF);
         }
 
         self.scatter_bases_kernel.encode(
@@ -303,10 +297,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 
         let mut x_perm = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
         if suffix_length > 0 && k > 0 {
-            let (buffer, range) = x_perm.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0);
-            }
+            encoder.encode_fill_allocation(&x_perm, 0);
         }
 
         self.gather_kernels.encode(
@@ -335,15 +326,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut y_partial = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
 
         if suffix_length > 0 && k > 0 {
-            let (buffer, range) = hidden.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0);
-            }
-
-            let (buffer, range) = y_partial.as_buffer_range();
-            if !range.is_empty() {
-                encoder.encode_fill(buffer, range, 0);
-            }
+            encoder.encode_fill_allocation(&hidden, 0);
+            encoder.encode_fill_allocation(&y_partial, 0);
         }
 
         let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;

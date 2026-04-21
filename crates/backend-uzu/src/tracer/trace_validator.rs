@@ -654,7 +654,9 @@ impl<B: Backend> TraceValidator<B> {
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
-        let produced_slice = allocation_as_slice::<Precision, B>(produced_allocation).to_vec();
+        let produced_slice = allocation_as_slice::<Precision, B>(produced_allocation)
+            .expect("Failed to read produced allocation")
+            .to_vec();
         let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), &produced_slice)
             .expect("Failed to reshape allocation");
 
@@ -926,7 +928,7 @@ impl<B: Backend> TraceValidator<B> {
         shape: &[usize],
     ) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
-        let logits = allocation_as_slice::<Precision, B>(logits).to_vec();
+        let logits = allocation_as_slice::<Precision, B>(logits).expect("Failed to read logits allocation").to_vec();
         let logits = ArrayView::from_shape(IxDyn(shape), &logits).expect("invalid logits trace shape");
         sampler.sample(logits)
     }

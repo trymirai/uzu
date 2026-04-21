@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path, time::Instant};
 
 #[cfg(feature = "tracing")]
 use super::ActivationTrace;
-use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
+use super::{ClassificationOutput, ClassificationStats, ClassifierContext, ClassifierError};
 use crate::{
     DataType,
     array::allocation_as_slice,
@@ -212,15 +212,25 @@ impl<B: Backend> Classifier<B> {
         let num_labels = self.context.model_config.model_config.num_labels;
         let logits_data_type: DataType =
             self.context.model_config.model_config.prediction_head_config.readout_config.activation_precision().into();
+        let allocation_read_error = |err| {
+            Error::Classifier(ClassifierError::Custom(format!("failed to read classifier logits allocation: {err}")))
+        };
 
         match logits_data_type {
-            DataType::F32 => Ok(allocation_as_slice::<f32, B>(logits).iter().copied().take(num_labels).collect()),
+            DataType::F32 => Ok(allocation_as_slice::<f32, B>(logits)
+                .map_err(allocation_read_error)?
+                .iter()
+                .copied()
+                .take(num_labels)
+                .collect()),
             DataType::F16 => Ok(allocation_as_slice::<half::f16, B>(logits)
+                .map_err(allocation_read_error)?
                 .into_iter()
                 .take(num_labels)
                 .map(|x| x.to_f32())
                 .collect::<Box<[_]>>()),
             DataType::BF16 => Ok(allocation_as_slice::<half::bf16, B>(logits)
+                .map_err(allocation_read_error)?
                 .into_iter()
                 .take(num_labels)
                 .map(|x| x.to_f32())

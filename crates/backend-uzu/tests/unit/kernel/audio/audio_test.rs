@@ -137,7 +137,7 @@ fn audio_conv1d_replicate_matches_reference_f32() {
         );
     });
 
-    let got = allocation_as_slice::<f32, Metal>(&output);
+    let got = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio conv1d output");
     for index in 0..output_len {
         let delta = (expected[index] - got[index]).abs();
         assert!(
@@ -225,7 +225,7 @@ fn audio_causal_conv1d_matches_reference_f32() {
         );
     });
 
-    let got = allocation_as_slice::<f32, Metal>(&output);
+    let got = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio causal conv1d output");
     for index in 0..output_len {
         let delta = (expected[index] - got[index]).abs();
         assert!(
@@ -326,7 +326,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
         );
     });
 
-    let got = allocation_as_slice::<f32, Metal>(&output);
+    let got = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio transpose conv output");
     for index in 0..output_len {
         let delta = (expected[index] - got[index]).abs();
         assert!(
@@ -446,7 +446,8 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
             );
         });
 
-        let got = allocation_as_slice::<f32, Metal>(&output);
+        let got =
+            allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio causal transpose output");
         for index in 0..output_len {
             let delta = (expected[index] - got[index]).abs();
             assert!(
@@ -494,7 +495,7 @@ fn audio_leaky_relu_matches_reference_f32() {
         );
     });
 
-    let got = allocation_as_slice::<f32, Metal>(&output);
+    let got = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio leaky relu output");
     for index in 0..n {
         let expected = if input_values[index] >= 0.0 {
             input_values[index]
@@ -526,7 +527,7 @@ fn audio_tanh_matches_reference_f32() {
         kernel.encode(Some(input_buffer), output_buffer, n as u32, ActivationType::TANH, command_buffer);
     });
 
-    let got = allocation_as_slice::<f32, Metal>(&output);
+    let got = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio tanh output");
     for index in 0..n {
         let expected = input_values[index].tanh();
         let delta = (expected - got[index]).abs();
@@ -559,7 +560,7 @@ fn audio_add_matches_reference_f32() {
         add_kernel.encode(a_buffer, b_buffer, sum_buffer, n as i32, command_buffer);
     });
 
-    let sum_got = allocation_as_slice::<f32, Metal>(&sum);
+    let sum_got = allocation_as_slice::<f32, Metal>(&sum).expect("Failed to read audio add output");
 
     for index in 0..n {
         let expected_sum = a_values[index] + b_values[index];
@@ -620,7 +621,7 @@ fn audio_half_snake_matches_reference_f32() {
         );
     });
 
-    let got = allocation_as_slice::<f32, Metal>(&output);
+    let got = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio half snake output");
     let expected = half_snake_reference(HalfSnakeSpec {
         input: &input_values,
         alpha: &alpha_values,
@@ -740,7 +741,7 @@ fn audio_norm_ncs_matches_reference_f32() {
             );
         });
 
-        let got = allocation_as_slice::<f32, Metal>(&output);
+        let got = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read audio norm output");
         let expected = reference(subtract_mean);
         for index in 0..input_len {
             let delta = (expected[index] - got[index]).abs();
@@ -805,7 +806,7 @@ fn audio_fsq_decode_matches_reference() {
     let expected =
         fsq_decode_reference(&[0, 7, 11, 3, 5, 9], &[2], batch_size, num_groups, seq_len, codebook_dim, &num_levels)
             .expect("reference decode");
-    let actual = allocation_as_slice::<f32, Metal>(&output);
+    let actual = allocation_as_slice::<f32, Metal>(&output).expect("Failed to read FSQ decode output");
 
     for (index, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
         let delta = (a - e).abs();
@@ -880,7 +881,7 @@ fn audio_fsq_encode_matches_reference() {
         eps,
     )
     .expect("reference encode");
-    let actual = allocation_as_slice::<i32, Metal>(&tokens);
+    let actual = allocation_as_slice::<i32, Metal>(&tokens).expect("Failed to read FSQ encode output");
 
     assert_eq!(actual, expected);
 }

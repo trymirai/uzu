@@ -193,6 +193,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_seeds = repeat_n(0, tokens_length - 1).chain(flat_trie.token_seeds()).chunks(prefill_step_size);
 
         let mut last_sampling_output: Option<Allocation<B>> = None;
+        let mut last_sampling_length = 0;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
@@ -310,6 +311,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 self.registered_prefix_len = prefix_offset + tokens_start_index + tokens_processed_this_step;
             }
 
+            last_sampling_length = sampling_length;
             last_sampling_output = sampling_output;
             run_times.push(run_time);
         }
@@ -322,8 +324,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 forwardpass_durations: run_times,
             });
         }
-        let sampled_tokens =
-            self.read_sampling_output(final_sampling_output.as_ref().expect("sampling output must exist"), 1)?;
+        let sampled_tokens = self.read_sampling_output(
+            final_sampling_output.as_ref().expect("sampling output must exist"),
+            last_sampling_length,
+        )?;
 
         let last_suffix_start = prefill_step_size * (prefill_steps - 1);
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
@@ -533,14 +537,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             Array::from_allocation(async_token_ids_allocation, 0, &token_ids_shape, token_ids_data_type)
         });
         let results_slot = self.context.async_buffers.results.get(slot).expect("async result slot must exist");
-        let (sampling_output_buffer, sampling_output_range) =
-            encoded_forward_pass.sampling_output.as_ref().expect("Sampling output must exist").as_buffer_range();
-        let (results_buffer, results_range) = results_slot.as_buffer_range();
-        encoded_forward_pass.encoder.encode_copy(
-            sampling_output_buffer,
-            sampling_output_range.start..sampling_output_range.start + std::mem::size_of::<u32>(),
-            results_buffer,
-            results_range.start..results_range.start + std::mem::size_of::<u32>(),
+        encoded_forward_pass.encoder.encode_copy_allocation(
+            encoded_forward_pass.sampling_output.as_ref().expect("Sampling output must exist"),
+            results_slot.allocation(),
         );
 
         // Scatter + register for all transformer layers

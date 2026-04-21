@@ -53,10 +53,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             return;
         }
 
-        let (hidden_buffer, hidden_range) = args.hidden.as_buffer_range();
-        if !hidden_range.is_empty() {
-            encoder.encode_fill(hidden_buffer, hidden_range, 0);
-        }
+        encoder.encode_fill_allocation(args.hidden, 0);
 
         self.tile_map.encode_counts(
             encoder,

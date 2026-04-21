@@ -62,21 +62,21 @@ fn overwrite_allocation(
     for (index, value) in updates {
         data[*index] = *value;
     }
-    allocation_copy_from_slice(allocation, &data);
+    allocation_copy_from_slice(allocation, &data).expect("Failed to seed allocation");
 }
 
 fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 1_000.0 + idx as f32).collect();
-        allocation_copy_from_slice(&layer.keys, &data);
+        allocation_copy_from_slice(&layer.keys, &data).expect("Failed to seed key allocation");
         data
     };
 
     let initial_values = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 2_000.0 + idx as f32).collect();
-        allocation_copy_from_slice(&layer.values, &data);
+        allocation_copy_from_slice(&layer.values, &data).expect("Failed to seed value allocation");
         data
     };
 

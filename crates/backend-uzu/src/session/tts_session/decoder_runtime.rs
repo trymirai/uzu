@@ -330,14 +330,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         result_slot: usize,
     ) {
         let results_slot = self.ctx.async_chain_results.view_at_offset(result_slot * std::mem::size_of::<u32>(), &[1]);
-        let (sampling_output_buffer, sampling_output_range) = sampling_output.as_buffer_range();
-        let (results_buffer, results_range) = results_slot.as_buffer_range();
-        encoder.encode_copy(
-            sampling_output_buffer,
-            sampling_output_range.start..sampling_output_range.start + std::mem::size_of::<u32>(),
-            results_buffer,
-            results_range.start..results_range.start + std::mem::size_of::<u32>(),
-        );
+        encoder.encode_copy_allocation(sampling_output, results_slot.allocation());
     }
 
     pub(super) fn prefill_without_sampling(
@@ -1001,20 +994,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 token_count,
                 model_dim,
             })?;
-        let src_offset = shortcut
-            .as_buffer_range()
-            .1
-            .start
-            .checked_add(row_offset)
-            .ok_or(TtsModelConfigError::HiddenCaptureSourceOffsetOverflow)?;
-        let (shortcut_buffer, _) = shortcut.as_buffer_range();
-        let (capture_buffer, capture_range) = self.single_hidden_capture.as_buffer_range();
-        encoder.encode_copy(
-            shortcut_buffer,
-            src_offset..src_offset + model_dim * bytes_per_element,
-            capture_buffer,
-            capture_range.start..capture_range.start + model_dim * bytes_per_element,
-        );
+        let source = shortcut.view_at_offset(row_offset, model_dim * bytes_per_element);
+        let destination = self.single_hidden_capture.view_at_offset(0, model_dim * bytes_per_element);
+        encoder.encode_copy_allocation(&source, &destination);
         Ok(())
     }
 
@@ -1030,14 +1012,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 model_dim,
             },
         )?;
-        let (override_buffer, override_range) = override_embedding.as_buffer_range();
-        let (main_buffer, main_range) = main.as_buffer_range();
-        encoder.encode_copy(
-            override_buffer,
-            override_range.start..override_range.start + model_dim_bytes,
-            main_buffer,
-            main_range.start..main_range.start + model_dim_bytes,
-        );
+        let source = override_embedding.view_at_offset(0, model_dim_bytes);
+        let destination = main.view_at_offset(0, model_dim_bytes);
+        encoder.encode_copy_allocation(&source, &destination);
         Ok(())
     }
 
@@ -1146,18 +1123,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 src_slot,
             },
         )?;
-        let copy_size =
-            count.checked_mul(std::mem::size_of::<u32>()).ok_or(TtsModelConfigError::AsyncChainCopySizeOverflow {
-                count,
-            })?;
-        let (results_buffer, results_range) = self.ctx.async_chain_results.as_buffer_range();
-        let (dst_buffer, dst_range) = dst.as_buffer_range();
-        encoder.encode_copy(
-            results_buffer,
-            results_range.start + src_offset..results_range.start + src_offset + copy_size,
-            dst_buffer,
-            dst_range.start..dst_range.start + copy_size,
-        );
+        count.checked_mul(std::mem::size_of::<u32>()).ok_or(TtsModelConfigError::AsyncChainCopySizeOverflow {
+            count,
+        })?;
+        let source = self.ctx.async_chain_results.view_at_offset(src_offset, &[count]);
+        encoder.encode_copy_allocation(source.allocation(), dst.allocation());
         Ok(())
     }
 

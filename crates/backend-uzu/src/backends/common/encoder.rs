@@ -60,7 +60,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         &mut self,
         src: &B::Buffer,
         src_range: Range<usize>,
-        dst: &B::Buffer,
+        dst: &mut B::Buffer,
         dst_range: Range<usize>,
     ) {
         let size = src_range.end - src_range.start;
@@ -75,7 +75,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
                 flags: AccessFlags::copy_write(),
             },
         ]);
-        let dst: &mut B::Buffer = unsafe { std::mem::transmute_copy(&dst) };
         self.command_buffer.encode_copy(src, src_range, dst, dst_range);
     }
 
@@ -84,14 +83,22 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         src: &Allocation<B>,
         dst: &Allocation<B>,
     ) {
-        let (src_buffer, src_range) = src.as_buffer_range();
-        let (dst_buffer, dst_range) = dst.as_buffer_range();
-        self.encode_copy(src_buffer, src_range, dst_buffer, dst_range);
+        let src_buffer = src.buffer();
+        let src_buffer = src_buffer.borrow();
+        let src_range = src.as_buffer_range().1;
+        if src_range.is_empty() {
+            return;
+        }
+
+        let dst_buffer = dst.buffer();
+        let mut dst_buffer = dst_buffer.borrow_mut();
+        let dst_range = dst.as_buffer_range().1;
+        self.encode_copy(&src_buffer, src_range, &mut dst_buffer, dst_range);
     }
 
     pub fn encode_fill(
         &mut self,
-        dst: &B::Buffer,
+        dst: &mut B::Buffer,
         range: Range<usize>,
         value: u8,
     ) {
@@ -99,7 +106,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             range: dst.gpu_address_subrange(range.clone()),
             flags: AccessFlags::copy_write(),
         }]);
-        let dst: &mut B::Buffer = unsafe { std::mem::transmute_copy(&dst) };
         self.command_buffer.encode_fill(dst, range, value);
     }
 
@@ -108,8 +114,13 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         dst: &Allocation<B>,
         value: u8,
     ) {
-        let (buffer, range) = dst.as_buffer_range();
-        self.encode_fill(buffer, range, value);
+        let buffer = dst.buffer();
+        let mut buffer = buffer.borrow_mut();
+        let range = dst.as_buffer_range().1;
+        if range.is_empty() {
+            return;
+        }
+        self.encode_fill(&mut buffer, range, value);
     }
 
     pub fn access(

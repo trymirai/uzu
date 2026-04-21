@@ -1,6 +1,8 @@
 use std::{fmt, ops::Range, os::raw::c_void, ptr::NonNull};
 
+use bytemuck::PodCastError;
 use ndarray::{ArrayView, Dimension, IxDyn};
+use thiserror::Error;
 
 use crate::{
     ArrayElement, DataType,
@@ -12,6 +14,25 @@ pub struct Array<B: Backend> {
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AllocationAccessError {
+    #[error("allocation CPU address {address:#x} is not aligned for element size {element_size}")]
+    MisalignedAddress {
+        address: usize,
+        element_size: usize,
+    },
+    #[error("allocation range length {byte_len} is not divisible by element size {element_size}")]
+    LengthNotMultiple {
+        byte_len: usize,
+        element_size: usize,
+    },
+    #[error("allocation write of {write_len} bytes exceeds range of {range_len} bytes")]
+    WriteExceedsRange {
+        write_len: usize,
+        range_len: usize,
+    },
 }
 
 impl<B: Backend> Array<B> {
@@ -223,38 +244,73 @@ impl<B: Backend> Array<B> {
     }
 }
 
-pub fn allocation_as_slice<T: ArrayElement, B: Backend>(allocation: &Allocation<B>) -> &[T] {
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe {
-        let bytes = std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len());
-        bytemuck::cast_slice(bytes)
+fn map_slice_cast_error<T: ArrayElement, B: Backend>(
+    allocation: &Allocation<B>,
+    error: PodCastError,
+) -> AllocationAccessError {
+    let element_size = size_of::<T>();
+    match error {
+        PodCastError::TargetAlignmentGreaterAndInputNotAligned | PodCastError::AlignmentMismatch => {
+            let (buffer, range) = allocation.as_buffer_range();
+            AllocationAccessError::MisalignedAddress {
+                address: buffer.cpu_ptr().as_ptr() as usize + range.start,
+                element_size,
+            }
+        },
+        PodCastError::OutputSliceWouldHaveSlop | PodCastError::SizeMismatch => {
+            AllocationAccessError::LengthNotMultiple {
+                byte_len: allocation.as_buffer_range().1.len(),
+                element_size,
+            }
+        },
     }
+}
+
+pub fn allocation_as_slice<T: ArrayElement, B: Backend>(
+    allocation: &Allocation<B>
+) -> Result<&[T], AllocationAccessError> {
+    let (buffer, range) = allocation.as_buffer_range();
+    if range.is_empty() {
+        return Ok(&[]);
+    }
+    let bytes =
+        unsafe { std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len()) };
+    bytemuck::try_cast_slice(bytes).map_err(|error| map_slice_cast_error::<T, B>(allocation, error))
 }
 
 pub fn allocation_copy_from_slice<B: Backend, T: ArrayElement>(
     allocation: &Allocation<B>,
     data: &[T],
-) {
+) -> Result<(), AllocationAccessError> {
     let bytes = bytemuck::cast_slice(data);
+    if bytes.is_empty() {
+        return Ok(());
+    }
     let (buffer, range) = allocation.as_buffer_range();
-    assert!(bytes.len() <= range.len(), "Allocation write exceeds range");
+    if bytes.len() > range.len() {
+        return Err(AllocationAccessError::WriteExceedsRange {
+            write_len: bytes.len(),
+            range_len: range.len(),
+        });
+    }
     let destination =
         unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len()) };
     destination.copy_from_slice(bytes);
+    Ok(())
 }
 
 pub fn allocation_from_slice<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {
-    let byte_len = (data.len() * size_of::<T>()).max(1);
+    let byte_len = data.len() * size_of::<T>();
     let allocation = context.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation");
-    allocation_copy_from_slice(&allocation, data);
+    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation from slice");
     allocation
 }
 
 pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
-    allocation_as_slice::<T, B>(allocation).to_vec()
+    allocation_as_slice::<T, B>(allocation).expect("Failed to read allocation as slice").to_vec()
 }
 
 impl<B: Backend> Clone for Array<B> {

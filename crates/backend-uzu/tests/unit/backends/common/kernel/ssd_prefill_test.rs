@@ -254,14 +254,9 @@ fn run_conv_scan_once<B: Backend>(
     if use_scratch && tap_count > 0 {
         let bytes = channels * tap_count * size_of::<f32>();
         if bytes > 0 {
-            let (scratch_buffer, scratch_range) = scratch_buf.as_buffer_range();
-            let (state_buffer, state_range) = state_buf.as_buffer_range();
-            encoder.encode_copy(
-                scratch_buffer,
-                scratch_range.start..scratch_range.start + bytes,
-                state_buffer,
-                state_range.start..state_range.start + bytes,
-            );
+            let source = scratch_buf.view_at_offset(0, bytes);
+            let destination = state_buf.view_at_offset(0, bytes);
+            encoder.encode_copy_allocation(&source, &destination);
         }
     }
 

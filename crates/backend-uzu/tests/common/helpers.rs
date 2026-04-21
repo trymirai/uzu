@@ -49,7 +49,7 @@ pub fn write_allocation<B: Backend, T: ArrayElement>(
     allocation: &Allocation<B>,
     data: &[T],
 ) {
-    allocation_copy_from_slice(allocation, data)
+    allocation_copy_from_slice(allocation, data).expect("Failed to write allocation")
 }
 
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
@@ -231,8 +231,7 @@ pub fn run_attention_gemm<T: ArrayElement + Float, B: Backend>(
             {
                 let dirty_scratch =
                     encoder.allocate_scratch(output_size_bytes).expect("Failed to allocate dirty scratch");
-                let (buffer, range) = dirty_scratch.as_buffer_range();
-                encoder.encode_fill(buffer, range, 0x7f);
+                encoder.encode_fill_allocation(&dirty_scratch, 0x7f);
             }
 
             let mut scratch_output =
@@ -249,9 +248,7 @@ pub fn run_attention_gemm<T: ArrayElement + Float, B: Backend>(
                 &mut encoder,
             );
 
-            let (source_buffer, source_range) = scratch_output.as_buffer_range();
-            let (destination_buffer, destination_range) = output.as_buffer_range();
-            encoder.encode_copy(source_buffer, source_range, destination_buffer, destination_range);
+            encoder.encode_copy_allocation(&scratch_output, &output);
 
             drop(scratch_output);
             submit_encoder(encoder);
@@ -288,8 +285,7 @@ where
         let dirty_scratch = encoder
             .allocate_scratch(allocation_size_bytes::<T>(attention_output_elements))
             .expect("Failed to allocate dirty scratch");
-        let (buffer, range) = dirty_scratch.as_buffer_range();
-        encoder.encode_fill(buffer, range, 0x5a);
+        encoder.encode_fill_allocation(&dirty_scratch, 0x5a);
     }
 
     let mut attention_output = encoder

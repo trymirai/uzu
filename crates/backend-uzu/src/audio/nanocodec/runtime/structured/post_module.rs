@@ -463,14 +463,9 @@ impl StructuredAudioCodecGraph {
 
             for &batch_index in &batch_indices {
                 if !copied_output_prefix {
-                    let (latent_buffer, latent_range) = latent_nsc.as_buffer_range();
-                    let (output_buffer, output_range) = output.as_buffer_range();
-                    encoder.encode_copy(
-                        latent_buffer,
-                        latent_range.start..latent_range.start + full_copy_bytes,
-                        output_buffer,
-                        output_range.start..output_range.start + full_copy_bytes,
-                    );
+                    let source = latent_nsc.allocation().view_at_offset(0, full_copy_bytes);
+                    let destination = output.allocation().view_at_offset(0, full_copy_bytes);
+                    encoder.encode_copy_allocation(&source, &destination);
                     copied_output_prefix = true;
                 }
                 let source = array_batch_view(&latent_nsc, batch_index, frames, self.input_dim, active_len)?;
@@ -479,9 +474,7 @@ impl StructuredAudioCodecGraph {
                     &[active_len, self.input_dim],
                     self.vocoder_data_type,
                 );
-                let (source_buffer, source_range) = source.as_buffer_range();
-                let (main_buffer, main_range) = main_array.as_buffer_range();
-                encoder.encode_copy(source_buffer, source_range, main_buffer, main_range);
+                encoder.encode_copy_allocation(source.allocation(), main_array.allocation());
                 let main = Self::encode_post_module_layers(
                     &runtime,
                     &token_inputs,
@@ -490,9 +483,7 @@ impl StructuredAudioCodecGraph {
                     encoder,
                 )?;
                 let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
-                let (main_buffer, main_range) = main.as_buffer_range();
-                let (destination_buffer, destination_range) = destination.as_buffer_range();
-                encoder.encode_copy(main_buffer, main_range, destination_buffer, destination_range);
+                encoder.encode_copy_allocation(&main, destination.allocation());
             }
         }
 

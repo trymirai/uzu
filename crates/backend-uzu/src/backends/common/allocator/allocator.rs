@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     ops::Range,
-    pin::Pin,
     rc::{Rc, Weak},
 };
 
@@ -10,7 +9,7 @@ use crate::backends::common::{Backend, Buffer, Context};
 
 pub struct Allocation<B: Backend> {
     allocator: Rc<Allocator<B>>,
-    buffer: *const B::Buffer,
+    buffer: Rc<RefCell<B::Buffer>>,
     range: Range<usize>,
     owner_range: Range<usize>,
     owner_token: Rc<()>,
@@ -18,7 +17,11 @@ pub struct Allocation<B: Backend> {
 
 impl<B: Backend> Allocation<B> {
     pub fn as_buffer_range<'a>(&'a self) -> (&'a B::Buffer, Range<usize>) {
-        (unsafe { &*self.buffer }, self.range.clone())
+        (unsafe { &*self.buffer.as_ptr() }, self.range.clone())
+    }
+
+    pub fn buffer(&self) -> Rc<RefCell<B::Buffer>> {
+        self.buffer.clone()
     }
 
     pub fn view_at_offset(
@@ -31,7 +34,7 @@ impl<B: Backend> Allocation<B> {
         assert!(end <= self.range.end, "Allocation view exceeds backing range");
         Self {
             allocator: self.allocator.clone(),
-            buffer: self.buffer,
+            buffer: self.buffer.clone(),
             range: start..end,
             owner_range: self.owner_range.clone(),
             owner_token: self.owner_token.clone(),
@@ -43,7 +46,7 @@ impl<B: Backend> Clone for Allocation<B> {
     fn clone(&self) -> Self {
         Self {
             allocator: self.allocator.clone(),
-            buffer: self.buffer,
+            buffer: self.buffer.clone(),
             range: self.range.clone(),
             owner_range: self.owner_range.clone(),
             owner_token: self.owner_token.clone(),
@@ -54,7 +57,7 @@ impl<B: Backend> Clone for Allocation<B> {
 impl<B: Backend> Drop for Allocation<B> {
     fn drop(&mut self) {
         if Rc::strong_count(&self.owner_token) == 1 {
-            self.allocator.free(self.buffer, self.owner_range.clone())
+            self.allocator.free(self.buffer.as_ptr() as *const B::Buffer, self.owner_range.clone())
         }
     }
 }
@@ -80,7 +83,7 @@ pub enum AllocationType<'a, B: Backend> {
 }
 
 struct AllocatorBuffer<B: Backend> {
-    buffer: Pin<Box<B::Buffer>>,
+    buffer: Rc<RefCell<B::Buffer>>,
     range_allocator: RangeAllocator<usize>,
 }
 
@@ -122,7 +125,7 @@ impl<B: Backend> Allocator<B> {
 
         let mut allocator_buffers = self.allocator_buffers.borrow_mut();
 
-        let mut found: Option<(*const B::Buffer, Range<usize>)> = None;
+        let mut found: Option<(Rc<RefCell<B::Buffer>>, Range<usize>)> = None;
 
         for allocator_buffer in allocator_buffers.iter_mut() {
             if let Some(range) = allocator_buffer.range_allocator.allocate_range_aligned(
@@ -130,7 +133,7 @@ impl<B: Backend> Allocator<B> {
                 alignment,
                 allocation_type.clone(),
             ) {
-                found = Some((allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer, range));
+                found = Some((allocator_buffer.buffer.clone(), range));
                 break;
             }
         }
@@ -145,11 +148,13 @@ impl<B: Backend> Allocator<B> {
             };
 
             let mut allocator_buffer = AllocatorBuffer::<B> {
-                buffer: Box::pin(self.context.upgrade().unwrap().create_buffer(new_allocator_buffer_size)?), // Upgrade can never fail
+                buffer: Rc::new(RefCell::new(
+                    self.context.upgrade().unwrap().create_buffer(new_allocator_buffer_size)?,
+                )), // Upgrade can never fail
                 range_allocator: RangeAllocator::new(0..new_allocator_buffer_size),
             };
 
-            let buffer = allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer;
+            let buffer = allocator_buffer.buffer.clone();
             let range = allocator_buffer
                 .range_allocator
                 .allocate_range_aligned(allocation_size, alignment, allocation_type)
@@ -158,7 +163,7 @@ impl<B: Backend> Allocator<B> {
             allocator_buffers.push(allocator_buffer);
 
             *self.peak_memory_usage.borrow_mut() =
-                allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.length()).sum();
+                allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.borrow().length()).sum();
 
             (buffer, range)
         };
@@ -213,7 +218,7 @@ impl<B: Backend> Allocator<B> {
             .iter_mut()
             .enumerate()
             .find(|(_allocator_buffer_index, allocator_buffer)| {
-                (allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer) == buffer
+                (allocator_buffer.buffer.as_ptr() as *const B::Buffer) == buffer
             })
             .unwrap(); // Can never fail
 

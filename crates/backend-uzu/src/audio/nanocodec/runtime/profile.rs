@@ -29,12 +29,20 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
                 AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
             })?;
         }
+        let allocation_read_error =
+            |err| AudioError::Runtime(format!("failed to read FishAudio decoder output allocation: {err}"));
         let samples: Vec<f32> = match self.data_type {
-            DataType::F32 => allocation_as_slice::<f32, B>(&self.output).to_vec(),
-            DataType::F16 => allocation_as_slice::<half::f16, B>(&self.output).iter().map(|&v| f32::from(v)).collect(),
-            DataType::BF16 => {
-                allocation_as_slice::<half::bf16, B>(&self.output).iter().map(|&v| f32::from(v)).collect()
-            },
+            DataType::F32 => allocation_as_slice::<f32, B>(&self.output).map_err(allocation_read_error)?.to_vec(),
+            DataType::F16 => allocation_as_slice::<half::f16, B>(&self.output)
+                .map_err(allocation_read_error)?
+                .iter()
+                .map(|&v| f32::from(v))
+                .collect(),
+            DataType::BF16 => allocation_as_slice::<half::bf16, B>(&self.output)
+                .map_err(allocation_read_error)?
+                .iter()
+                .map(|&v| f32::from(v))
+                .collect(),
             dt => return Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
         };
         Ok(DecodedPaddedAudio {

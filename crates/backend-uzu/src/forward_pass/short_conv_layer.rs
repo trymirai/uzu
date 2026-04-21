@@ -60,14 +60,9 @@ impl<B: Backend> ShortConvLayer<B> {
         let elem_bytes = self.data_type.size_in_bytes();
         let bytes_per_token = model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
         let src_start = commit_index.saturating_mul(bytes_per_token);
-        let (src_buffer, src_range) = self.suffix_state.as_buffer_range();
-        let (dst_buffer, dst_range) = self.conv_state.as_buffer_range();
-        let copy_len = bytes_per_token.min(dst_range.len());
-        encoder.encode_copy(
-            src_buffer,
-            src_range.start + src_start..src_range.start + src_start + copy_len,
-            dst_buffer,
-            dst_range.start..dst_range.start + copy_len,
-        );
+        let copy_len = bytes_per_token.min(self.conv_state.as_buffer_range().1.len());
+        let source = self.suffix_state.view_at_offset(src_start, copy_len);
+        let destination = self.conv_state.view_at_offset(0, copy_len);
+        encoder.encode_copy_allocation(&source, &destination);
     }
 }

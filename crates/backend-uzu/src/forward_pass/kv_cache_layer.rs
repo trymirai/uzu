@@ -74,29 +74,14 @@ impl<B: Backend> KVCacheLayer<B> {
         let destination_block_size = destination_seq * row_size;
         let copy_size = row_count * row_size;
 
-        let (source_keys_buffer, source_keys_range) = self.keys.as_buffer_range();
-        let (source_values_buffer, source_values_range) = self.values.as_buffer_range();
-        let (destination_keys_buffer, destination_keys_range) = destination.keys.as_buffer_range();
-        let (destination_values_buffer, destination_values_range) = destination.values.as_buffer_range();
-
         for group in 0..num_groups {
-            let source_key_offset = source_keys_range.start + group * source_block_size;
-            let source_value_offset = source_values_range.start + group * source_block_size;
-            let destination_key_offset = destination_keys_range.start + group * destination_block_size;
-            let destination_value_offset = destination_values_range.start + group * destination_block_size;
+            let source_keys = self.keys.view_at_offset(group * source_block_size, copy_size);
+            let source_values = self.values.view_at_offset(group * source_block_size, copy_size);
+            let destination_keys = destination.keys.view_at_offset(group * destination_block_size, copy_size);
+            let destination_values = destination.values.view_at_offset(group * destination_block_size, copy_size);
 
-            encoder.encode_copy(
-                source_keys_buffer,
-                source_key_offset..source_key_offset + copy_size,
-                destination_keys_buffer,
-                destination_key_offset..destination_key_offset + copy_size,
-            );
-            encoder.encode_copy(
-                source_values_buffer,
-                source_value_offset..source_value_offset + copy_size,
-                destination_values_buffer,
-                destination_value_offset..destination_value_offset + copy_size,
-            );
+            encoder.encode_copy_allocation(&source_keys, &destination_keys);
+            encoder.encode_copy_allocation(&source_values, &destination_values);
         }
     }
 
