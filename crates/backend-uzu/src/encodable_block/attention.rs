@@ -205,24 +205,15 @@ impl<B: Backend> Attention<B> {
                     },
                     _ => None,
                 };
-                let key_cache_array = layer.keys.clone();
-                let value_cache_array = layer.values.clone();
 
-                (segment_prefix_length, ring_params, Some(key_cache_array), Some(value_cache_array))
+                (segment_prefix_length, ring_params, Some(layer.keys.clone()), Some(layer.values.clone()))
             } else {
                 (0, None, None, None)
             };
 
-        let max_sequence_length = if let Some(ref array) = key_cache_sparse_array {
-            array.shape()[1]
-        } else {
-            suffix_length
-        };
-
         let is_kv_cache_ring = ring_params.is_some();
-
+        let max_sequence_length = key_cache_sparse_array.as_ref().map_or(suffix_length, |array| array.shape()[1]);
         let sequence_length = segment_prefix_length + suffix_length;
-
         let gqa_factor = num_heads / num_groups;
         let scale = self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
 

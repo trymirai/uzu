@@ -9,7 +9,7 @@ use std::{
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
+    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError, sparse_buffer::CpuSparseBuffer},
 };
 
 pub struct CpuContext {
@@ -21,10 +21,10 @@ impl Context for CpuContext {
     type Backend = Cpu;
 
     fn new() -> Result<Rc<Self>, CpuError> {
-        let (command_queue_sender, command_queue_receiever) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let (command_queue_sender, command_queue_receiver) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
 
         thread::spawn(|| {
-            for command_buffer in command_queue_receiever {
+            for command_buffer in command_queue_receiver {
                 command_buffer();
             }
         });
@@ -61,7 +61,7 @@ impl Context for CpuContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        todo!()
+        Ok(CpuSparseBuffer::new(capacity))
     }
 
     fn create_allocation(
