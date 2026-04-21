@@ -1,0 +1,19 @@
+[package]
+name = "backend-remote"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+shoji.workspace = true
+async-openai.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+reqwest.workspace = true
+indexmap.workspace = true

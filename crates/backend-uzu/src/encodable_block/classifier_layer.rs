@@ -19,6 +19,7 @@ pub struct ClassifierLayer<B: Backend> {
     qkv_projection: Box<dyn Linear<B>>,
     qk_norm: Option<QKNorm<B>>,
     rope: Rc<Rope<B>>,
+    use_rope: bool,
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
@@ -46,6 +47,7 @@ impl<B: Backend> ClassifierLayer<B> {
     ) -> Self {
         let ctx = context.as_ref(); // Reference for functions expecting &B::Context
         let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
+        let use_rope = attention_config.use_rope;
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
 
         let copy_main_to_shortcut_mixer =
@@ -195,6 +197,7 @@ impl<B: Backend> ClassifierLayer<B> {
             qkv_projection,
             qk_norm,
             rope,
+            use_rope,
             attention,
             out_projection,
             post_attention_norm,
@@ -240,7 +243,7 @@ impl<B: Backend> ClassifierLayer<B> {
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(state, encoder)?;
         }
-        self.rope.encode(state, encoder)?;
+        self.rope.encode(state, self.use_rope, encoder)?;
         self.attention.encode(state, parameters, encoder)?;
         self.out_projection.encode(state, encoder)?;
         #[cfg(feature = "tracing")]

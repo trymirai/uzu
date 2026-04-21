@@ -1,6 +1,7 @@
 mod cached;
 mod error;
 mod fixed;
+pub mod local;
 mod merged;
 pub mod mirai;
 pub mod openai;

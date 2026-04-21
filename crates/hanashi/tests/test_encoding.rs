@@ -14,7 +14,7 @@ use helpers::{
     build_messages, load_registry, load_response_test_data, load_tokenizer, normalize_pattern, response_path,
     tokenizer_directory,
 };
-use shoji::types::{ContentBlock, Message, ReasoningEffort, Role};
+use shoji::types::encoding::{ContentBlock, Message, ReasoningEffort, Role};
 
 fn print_warning(message: &str) {
     println!("\x1b[33m{}\x1b[0m", message);

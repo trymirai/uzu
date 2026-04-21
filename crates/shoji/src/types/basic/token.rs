@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub type TokenId = u32;
 pub type TokenValue = String;
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "Token")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Token {
