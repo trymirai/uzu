@@ -10,6 +10,8 @@ mod encodable_block;
 mod forward_pass;
 mod language_model;
 mod parameters;
+/// Experimental SMC-SD scaffolding. Unstable API — see `docs/smcsd/design.md`.
+pub mod smc;
 mod speculators;
 #[cfg(feature = "tracing")]
 mod tracer;
