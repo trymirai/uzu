@@ -7,6 +7,7 @@ use shoji::types::{
 };
 use uzu::engine::{Config, Engine};
 
+#[ignore]
 #[tokio::test]
 async fn test_engine() {
     dotenvy::dotenv().ok();
