@@ -1,8 +1,14 @@
-use std::{cell::RefCell, ops::Deref, ptr::NonNull, rc::Rc};
+use std::{
+    cell::RefCell,
+    ptr::NonNull,
+    rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use metal::{
-    MTL4CommandQueue, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor,
-    MTLHeapType, MTLResourceOptions, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
+    MTL4CommandQueue, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLEvent, MTLHeap,
+    MTLHeapDescriptor, MTLHeapType, MTLResourceOptions, MTLSharedEvent, MTLSparsePageSize, MTLSparseTextureMappingMode,
+    MTLStorageMode,
 };
 use objc2::__framework_prelude::{ProtocolObject, Retained};
 use objc2_foundation::NSRange;
@@ -15,14 +21,16 @@ use crate::{
     prelude::MetalContext,
 };
 
-const PAGE_SIZE: MTLSparsePageSize = MTLSparsePageSize::KB16;
-
 #[derive(Debug)]
 pub struct MetalSparseBuffer {
     buffer: Rc<RefCell<Retained<ProtocolObject<dyn MTLBuffer>>>>,
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
     queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
 
+    sync_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
+    sync_counter: AtomicU64,
+
+    page_size: MTLSparsePageSize,
     capacity: usize,
     length: usize,
 }
@@ -32,24 +40,24 @@ impl MetalSparseBuffer {
         context: &MetalContext,
         capacity: usize,
     ) -> Result<MetalSparseBuffer, MetalError> {
-        let page_size_bytes = Self::get_page_size_bytes(PAGE_SIZE);
+        let page_size = MTLSparsePageSize::KB16;
+        let page_size_bytes = Self::get_page_size_bytes(page_size);
         let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
 
         let Some(buffer) = context.device.new_buffer_with_length_options_placement_sparse_page_size(
             aligned_capacity,
             MTLResourceOptions::STORAGE_MODE_PRIVATE,
-            PAGE_SIZE,
+            page_size,
         ) else {
             return Err(MetalError::SparseBufferAlloc(aligned_capacity));
         };
 
-        let head_desc = MTLHeapDescriptor::new();
-        head_desc.set_type(MTLHeapType::Placement);
-        head_desc.set_storage_mode(MTLStorageMode::Shared);
-        head_desc.set_size(aligned_capacity);
-        head_desc.set_sparse_page_size(PAGE_SIZE);
-        head_desc.set_max_compatible_placement_sparse_page_size(PAGE_SIZE);
-        let Some(heap) = context.device.new_heap_with_descriptor(&head_desc) else {
+        let heap_desc = MTLHeapDescriptor::new();
+        heap_desc.set_type(MTLHeapType::Placement);
+        heap_desc.set_storage_mode(MTLStorageMode::Shared);
+        heap_desc.set_size(aligned_capacity);
+        heap_desc.set_max_compatible_placement_sparse_page_size(page_size);
+        let Some(heap) = context.device.new_heap_with_descriptor(&heap_desc) else {
             return Err(MetalError::SparseHeapAlloc(aligned_capacity, page_size_bytes));
         };
 
@@ -57,53 +65,27 @@ impl MetalSparseBuffer {
             buffer: Rc::new(RefCell::new(buffer)),
             heap,
             queue: context.command_queue4.clone(),
+            sync_event: context.device.new_shared_event().unwrap(),
+            sync_counter: AtomicU64::new(0),
+            page_size,
             capacity: aligned_capacity,
             length: 0,
         })
     }
 
-    fn map(
+    fn execute_operations(
         &mut self,
-        offset: usize,
-        length: usize,
+        operations: &[MTL4UpdateSparseBufferMappingOperation],
     ) {
-        let tile_size = Self::get_page_size_bytes(PAGE_SIZE);
-        let tiles_count = length.div_ceil(tile_size);
-        let tiles_offset = offset.div_ceil(tile_size);
-        let tiles_heap_offset = self.length / tile_size;
-
-        let op = MTL4UpdateSparseBufferMappingOperation {
-            mode: MTLSparseTextureMappingMode::Map,
-            buffer_range: NSRange::new(tiles_offset, tiles_count),
-            heap_offset: tiles_heap_offset,
-        };
-        self.length += tiles_count * tile_size;
-
+        let value = self.sync_counter.fetch_add(1, Ordering::Relaxed) + 1;
         self.queue.update_buffer_mappings_heap_operations_count(
-            &self.buffer.borrow().deref(),
+            &self.buffer.borrow(),
             Some(&self.heap),
-            NonNull::from_ref(&op),
-            1,
-        )
-    }
-
-    #[allow(dead_code)]
-    fn unmap(
-        &self,
-        offset: usize,
-        length: usize,
-    ) {
-        let op = MTL4UpdateSparseBufferMappingOperation {
-            mode: MTLSparseTextureMappingMode::Unmap,
-            buffer_range: NSRange::new(offset, length),
-            heap_offset: 0,
-        };
-        self.queue.update_buffer_mappings_heap_operations_count(
-            &self.buffer.borrow().deref(),
-            Some(&self.heap),
-            NonNull::from_ref(&op),
-            1,
-        )
+            NonNull::new(operations.as_ptr() as *mut _).unwrap(),
+            operations.len(),
+        );
+        self.queue.signal_event_value(self.sync_event.as_ref(), value);
+        self.sync_event.wait_until_signaled_value_timeout_ms(value, u64::MAX);
     }
 
     fn get_page_size_bytes(size: MTLSparsePageSize) -> usize {
@@ -130,7 +112,23 @@ impl SparseBuffer for MetalSparseBuffer {
         &mut self,
         add_length: usize,
     ) {
-        self.map(self.length, add_length);
+        let page_size_bytes = Self::get_page_size_bytes(self.page_size);
+        let mapped_pages = self.length.div_ceil(page_size_bytes);
+        let new_length = self.length + add_length;
+        let new_mapped_pages = new_length.div_ceil(page_size_bytes);
+        let new_pages_count = new_mapped_pages - mapped_pages;
+        if new_pages_count == 0 {
+            return;
+        }
+
+        self.length += add_length;
+
+        let operation = MTL4UpdateSparseBufferMappingOperation {
+            mode: MTLSparseTextureMappingMode::Map,
+            buffer_range: NSRange::new(mapped_pages, new_pages_count),
+            heap_offset: mapped_pages,
+        };
+        self.execute_operations(&[operation]);
     }
 
     fn length(&self) -> usize {
