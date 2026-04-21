@@ -1,8 +1,10 @@
-use futures::StreamExt;
+use std::pin::Pin;
+
+use futures::{Stream, StreamExt};
 use shoji::{
     traits::{
         State,
-        backend::chat_message::{Backend, Instance},
+        backend::chat_message::{Backend, Instance, Output},
     },
     types::{
         encoding::Message,
@@ -43,18 +45,19 @@ impl Session {
         Ok(())
     }
 
-    pub async fn stream(
-        &mut self,
-        input: Vec<Message>,
+    pub fn stream<'a>(
+        &'a mut self,
+        input: &'a Vec<Message>,
         config: StreamConfig,
-    ) -> Result<(), Error> {
-        let mut stream = self.instance.stream(&input, self.state.as_mut(), config, CancellationToken::new());
-        while let Some(event) = stream.next().await {
-            match event {
-                Ok(output) => println!("{output:?}"),
-                Err(error) => eprintln!("stream error: {error}"),
-            }
-        }
-        Ok(())
+        cancel_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = Result<Output, Error>> + Send + 'a>> {
+        self.instance
+            .stream(input, self.state.as_mut(), config, cancel_token)
+            .map(|event| {
+                event.map_err(|error| Error::Backend {
+                    message: error.to_string(),
+                })
+            })
+            .boxed()
     }
 }

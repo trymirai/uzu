@@ -108,7 +108,7 @@ impl InstanceTrait for Instance {
         _input: &'a Self::StreamInput,
         _state: &'a mut dyn StateTrait,
         _config: Self::StreamConfig,
-        _cancel: CancellationToken,
+        _cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, BackendError>> + Send + 'a>> {
         Box::pin(stream::once(async { Err(Box::new(Error::StreamFailed) as BackendError) }))
     }

@@ -43,7 +43,7 @@ pub trait Instance: Send + Sync {
         input: &'a Self::StreamInput,
         state: &'a mut dyn State,
         config: Self::StreamConfig,
-        cancel: CancellationToken,
+        cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>>;
 }
 

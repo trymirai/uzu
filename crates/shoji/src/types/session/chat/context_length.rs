@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 #[bindings::export(Enum, name = "ChatContextLength")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ContextLength {
-    Default,
-    Maximal,
+    Default {},
+    Maximal {},
     Custom {
         length: i64,
     },
@@ -12,6 +12,6 @@ pub enum ContextLength {
 
 impl Default for ContextLength {
     fn default() -> Self {
-        ContextLength::Default
+        ContextLength::Default {}
     }
 }

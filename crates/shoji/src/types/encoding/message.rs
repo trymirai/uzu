@@ -94,6 +94,24 @@ impl Message {
             value: reasoning,
         })
     }
+
+    pub fn with_tool_call(
+        self,
+        tool_call: ToolCall,
+    ) -> Self {
+        self.with_block(ContentBlock::ToolCall {
+            value: tool_call,
+        })
+    }
+
+    pub fn with_tool_call_candidate(
+        self,
+        value: Value,
+    ) -> Self {
+        self.with_block(ContentBlock::ToolCallCandidate {
+            value,
+        })
+    }
 }
 
 macro_rules! blocks_by_type {

@@ -7,4 +7,6 @@ pub enum Error {
     },
     #[error("Unsupported model")]
     UnsupportedModel,
+    #[error("Unable to perform operation in current state")]
+    UnableToPerformOperationInCurrentState,
 }
