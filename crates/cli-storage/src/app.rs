@@ -192,7 +192,7 @@ impl App {
             if let Some(model_with_state) = models_guard.get(&id) {
                 use uzu::storage::types::DownloadPhase::*;
                 match model_with_state.state.phase {
-                    Downloaded => {
+                    Downloaded {} => {
                         // Already installed; ignore download command
                     },
                     _ => {
