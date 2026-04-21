@@ -31,6 +31,7 @@ impl<B: Backend> Rope<B> {
     pub fn encode(
         &self,
         state: &mut ForwardPassState<B>,
+        use_rope: bool,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let token_positions = state.array(ArrayId::TokenPositions);
@@ -43,7 +44,11 @@ impl<B: Backend> Rope<B> {
         let suffix_length = qkv.shape()[0];
 
         let rope_max_seq_len = cosines.shape()[0];
-        let rope_dim = cosines.shape()[1];
+        let rope_dim = if use_rope {
+            cosines.shape()[1]
+        } else {
+            0
+        };
 
         let num_heads = rotated_queries.shape()[0];
         let head_dim = rotated_queries.shape()[2];
