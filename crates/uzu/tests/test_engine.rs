@@ -1,6 +1,5 @@
 #![cfg(not(target_family = "wasm"))]
 
-use futures::StreamExt;
 use shoji::types::{
     encoding::Message,
     session::chat::{Config as ChatConfig, StreamConfig as ChatStreamConfig},
@@ -54,8 +53,7 @@ async fn test_engine() {
     }
 
     let messages = vec![Message::user().with_text("What is my name?".to_string())];
-    let (mut stream, _) = session.stream(messages, ChatStreamConfig::default());
-    while let Some(_) = stream.next().await {}
+    let _ = session.run(messages, ChatStreamConfig::default()).await.unwrap();
 
     let messages = session.messages().await;
     for message in messages {

@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enum, name = "Role")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Role {
     User {},

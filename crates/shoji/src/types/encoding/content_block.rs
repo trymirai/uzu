@@ -10,7 +10,7 @@ use crate::types::{
     encoding::{ReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
 };
 
-#[bindings::export(Enum)]
+#[bindings::export(Enum, name = "ContentBlockType")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContentBlockType {
     Identity,
@@ -103,7 +103,7 @@ impl<'d> Deserialize<'d> for ContentBlockType {
     }
 }
 
-#[bindings::export(Enum)]
+#[bindings::export(Enum, name = "ContentBlock")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {

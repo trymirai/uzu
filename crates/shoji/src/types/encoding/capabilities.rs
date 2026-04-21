@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "Capabilities")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
     pub supports_reasoning: bool,

@@ -131,7 +131,11 @@ uniffi = "0.31.0"
 napi = { version = "3.8.3", features = ["napi10", "object_indexmap"] }
 napi-derive = "3.5.2"
 napi-build = "2.3.1"
-pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.28.2", features = [
+    "extension-module",
+    "abi3-py38",
+    "experimental-async",
+] }
 wasm-bindgen = { version = "0.2.114", features = ["serde-serialize"] }
 serde-wasm-bindgen = "0.6.5"
 wasm-bindgen-futures = "0.4.64"
@@ -141,7 +145,12 @@ dirs = "6.0.0"
 dotenvy = "0.15.7"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
-async-openai = { version = "0.35.0", features = ["chat-completion", "model", "byot", "responses"] }
+async-openai = { version = "0.35.0", features = [
+    "chat-completion",
+    "model",
+    "byot",
+    "responses",
+] }
 
 [profile.dev.build-override]
 opt-level = 3

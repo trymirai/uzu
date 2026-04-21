@@ -21,16 +21,22 @@ bindings = [
     "bindings-pyo3",
     "bindings-wasm",
 ]
-bindings-uniffi = ["shoji/bindings-uniffi", "dep:uniffi"]
+bindings-uniffi = [
+    "shoji/bindings-uniffi",
+    "nagare/bindings-uniffi",
+    "dep:uniffi",
+]
 bindings-napi = [
     "shoji/bindings-napi",
+    "nagare/bindings-napi",
     "dep:napi",
     "dep:napi-derive",
     "dep:napi-build",
 ]
-bindings-pyo3 = ["shoji/bindings-pyo3", "dep:pyo3"]
+bindings-pyo3 = ["shoji/bindings-pyo3", "nagare/bindings-pyo3", "dep:pyo3"]
 bindings-wasm = [
     "shoji/bindings-wasm",
+    "nagare/bindings-wasm",
     "dep:wasm-bindgen",
     "dep:serde-wasm-bindgen",
     "dep:wasm-bindgen-futures",

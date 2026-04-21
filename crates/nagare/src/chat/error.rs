@@ -1,3 +1,4 @@
+#[bindings::export(Error, name = "ChatSessionError")]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -9,4 +10,6 @@ pub enum Error {
     UnsupportedModel,
     #[error("Unable to perform operation in current state")]
     UnableToPerformOperationInCurrentState,
+    #[error("No response")]
+    NoResponse,
 }

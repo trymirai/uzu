@@ -3881,17 +3881,27 @@ dependencies = [
 name = "nagare"
 version = "0.1.9"
 dependencies = [
+ "bindings",
  "futures",
  "hanashi",
  "indexmap 2.14.0",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "pyo3",
  "reqwest 0.13.2",
  "serde",
+ "serde-wasm-bindgen",
  "serde_json",
  "shoji",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tsify",
+ "uniffi",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

@@ -1,5 +1,6 @@
 use nagare::chat::Error as ChatError;
 
+#[bindings::export(Error, name = "EngineError")]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

@@ -2,10 +2,14 @@ mod error;
 pub mod message;
 pub mod token;
 
-use std::{pin::Pin, sync::Arc};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 pub use error::Error;
-use futures::{Stream, StreamExt};
+use futures::{Stream as FuturesStream, StreamExt};
 use indexmap::IndexMap;
 use shoji::{
     traits::{
@@ -20,7 +24,27 @@ use shoji::{
     },
 };
 use tokio::sync::{Mutex, mpsc};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+
+pub struct Stream {
+    receiver: mpsc::UnboundedReceiver<Result<Vec<Output>, Error>>,
+}
+
+impl Stream {
+    pub async fn next(&mut self) -> Option<Result<Vec<Output>, Error>> {
+        self.receiver.recv().await
+    }
+}
+
+impl FuturesStream for Stream {
+    type Item = Result<Vec<Output>, Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.receiver.poll_recv(context)
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum State {
@@ -103,11 +127,27 @@ impl Session {
         result
     }
 
+    pub async fn run(
+        &self,
+        input: Vec<Message>,
+        config: StreamConfig,
+    ) -> Result<Vec<Output>, Error> {
+        let (mut stream, _) = self.stream(input, config);
+        let mut outputs: Option<Vec<Output>> = None;
+        while let Some(progress) = stream.next().await {
+            match progress {
+                Ok(current_outputs) => outputs = Some(current_outputs.clone()),
+                Err(error) => return Err(error),
+            }
+        }
+        outputs.ok_or(Error::NoResponse)
+    }
+
     pub fn stream(
         &self,
         input: Vec<Message>,
         config: StreamConfig,
-    ) -> (Pin<Box<dyn Stream<Item = Result<Vec<Output>, Error>> + Send>>, CancellationToken) {
+    ) -> (Stream, CancellationToken) {
         let cancel_token_to_return = CancellationToken::new();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<Output>, Error>>();
 
@@ -186,7 +226,12 @@ impl Session {
             }
         });
 
-        (Box::pin(UnboundedReceiverStream::new(receiver)), cancel_token_to_return)
+        (
+            Stream {
+                receiver,
+            },
+            cancel_token_to_return,
+        )
     }
 }
 

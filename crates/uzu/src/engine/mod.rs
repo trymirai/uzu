@@ -33,6 +33,7 @@ use crate::{
     },
 };
 
+#[bindings::export(Class, name = "Engine")]
 pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
@@ -233,14 +234,16 @@ impl Engine {
                 let storage = self.storage.lock().await;
                 let state = storage.state(&model.identifier()).await?;
                 match state.phase {
-                    DownloadPhase::Downloaded => {
+                    DownloadPhase::Downloaded {} => {
                         storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
                     },
-                    DownloadPhase::NotDownloaded
-                    | DownloadPhase::Downloading
-                    | DownloadPhase::Paused
-                    | DownloadPhase::Locked
-                    | DownloadPhase::Error(_) => None,
+                    DownloadPhase::NotDownloaded {}
+                    | DownloadPhase::Downloading {}
+                    | DownloadPhase::Paused {}
+                    | DownloadPhase::Locked {}
+                    | DownloadPhase::Error {
+                        ..
+                    } => None,
                 }
             }
         } else {

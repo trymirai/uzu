@@ -7,7 +7,7 @@ use crate::types::{
     encoding::{ContentBlock, ReasoningEffort, Role, ToolCall, ToolNamespace},
 };
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "Message")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Message {

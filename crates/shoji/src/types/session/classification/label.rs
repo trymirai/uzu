@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "ClassificationLabel")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Label {
     pub index: i64,

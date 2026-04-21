@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enum, name = "HashMethod")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HashMethod {
@@ -10,7 +10,7 @@ pub enum HashMethod {
     MD5,
 }
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "Hash")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Hash {

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enum, name = "ImageFormat")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFormat {
@@ -9,7 +9,7 @@ pub enum ImageFormat {
     Svg,
 }
 
-#[bindings::export(Enum)]
+#[bindings::export(Enum, name = "ImageTheme")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageTheme {
@@ -17,7 +17,7 @@ pub enum ImageTheme {
     Dark,
 }
 
-#[bindings::export(Struct)]
+#[bindings::export(Struct, name = "Image")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Image {

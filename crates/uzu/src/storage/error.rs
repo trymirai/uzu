@@ -1,5 +1,6 @@
 use crate::{registry::Error as RegistryError, storage::types::DownloadPhase};
 
+#[bindings::export(Error, name = "StorageError")]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

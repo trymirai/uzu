@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
     },
 };
 
+#[bindings::export(Class, name = "Downloader")]
 pub struct Downloader {
     identifier: String,
     storage: SharedAccess<Storage>,
@@ -34,11 +36,13 @@ impl Downloader {
             identifier: self.identifier.clone(),
         })?;
         let result = match state.phase {
-            DownloadPhase::Downloading | DownloadPhase::Downloaded => Ok(()),
-            DownloadPhase::NotDownloaded | DownloadPhase::Paused | DownloadPhase::Locked => {
+            DownloadPhase::Downloading {} | DownloadPhase::Downloaded {} => Ok(()),
+            DownloadPhase::NotDownloaded {} | DownloadPhase::Paused {} | DownloadPhase::Locked {} => {
                 Ok(self.storage.lock().await.download(&self.identifier).await?)
             },
-            DownloadPhase::Error(_) => {
+            DownloadPhase::Error {
+                ..
+            } => {
                 let storage = self.storage.lock().await;
                 storage.delete(&self.identifier).await?;
                 Ok(storage.download(&self.identifier).await?)
@@ -60,7 +64,7 @@ impl Downloader {
         let Some(state) = self.state().await else {
             return None;
         };
-        if matches!(state.phase, DownloadPhase::Downloaded) {
+        if matches!(state.phase, DownloadPhase::Downloaded {}) {
             return None;
         }
         let stream = self.storage.lock().await.subscribe();
@@ -95,11 +99,13 @@ impl Stream {
                         bytes_downloaded: state.downloaded_bytes,
                     };
                     match state.phase {
-                        DownloadPhase::Downloading | DownloadPhase::Locked => {},
-                        DownloadPhase::NotDownloaded
-                        | DownloadPhase::Downloaded
-                        | DownloadPhase::Error(_)
-                        | DownloadPhase::Paused => {
+                        DownloadPhase::Downloading {} | DownloadPhase::Locked {} => {},
+                        DownloadPhase::NotDownloaded {}
+                        | DownloadPhase::Downloaded {}
+                        | DownloadPhase::Error {
+                            ..
+                        }
+                        | DownloadPhase::Paused {} => {
                             *stream_guard = None;
                         },
                     }
@@ -111,9 +117,11 @@ impl Stream {
     }
 }
 
+#[bindings::export(Struct, name = "DownloaderUpdate")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Update {
-    pub bytes_total: u64,
-    pub bytes_downloaded: u64,
+    pub bytes_total: i64,
+    pub bytes_downloaded: i64,
 }
 
 impl Update {

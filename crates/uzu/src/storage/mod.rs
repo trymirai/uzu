@@ -148,7 +148,7 @@ impl Storage {
                     identifier.clone(),
                     files.into(),
                     cache_path.clone(),
-                    DownloadState::not_downloaded(total_bytes),
+                    DownloadState::not_downloaded(total_bytes as i64),
                     download_manager.clone(),
                     file_tasks,
                     self.handle.clone(),
@@ -159,7 +159,7 @@ impl Storage {
                 let _ = item.reconcile().await;
                 let item_state = item.state().await;
 
-                if matches!(item_state.phase, DownloadPhase::NotDownloaded)
+                if matches!(item_state.phase, DownloadPhase::NotDownloaded {})
                     && cache_path.exists()
                     && let Ok(entries) = read_dir(&cache_path)
                 {
@@ -180,7 +180,7 @@ impl Storage {
                     identifier.clone(),
                     files.into(),
                     cache_path.clone(),
-                    DownloadState::not_downloaded(total_bytes),
+                    DownloadState::not_downloaded(total_bytes as i64),
                     download_manager.clone(),
                     Vec::new(),
                     self.handle.clone(),

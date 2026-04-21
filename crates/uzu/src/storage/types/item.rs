@@ -310,7 +310,7 @@ impl Item {
         if !Self::can_transition_to_downloading(&current_state.phase) {
             return Err(Error::InvalidStateTransition {
                 from: current_state.phase.clone(),
-                to: DownloadPhase::Downloading,
+                to: DownloadPhase::Downloading {},
             });
         }
 
@@ -343,7 +343,7 @@ impl Item {
         if !current_state.can_pause() {
             return Err(Error::InvalidStateTransition {
                 from: current_state.phase.clone(),
-                to: DownloadPhase::Paused,
+                to: DownloadPhase::Paused {},
             });
         }
 
@@ -396,7 +396,7 @@ impl Item {
         }
 
         let total_bytes: u64 = self.files.iter().map(|f| f.size as u64).sum();
-        let not_downloaded_state = DownloadState::not_downloaded(total_bytes);
+        let not_downloaded_state = DownloadState::not_downloaded(total_bytes as i64);
         self.update_state_and_broadcast(not_downloaded_state).await;
         Ok(())
     }
@@ -637,7 +637,10 @@ impl Item {
     fn can_transition_to_downloading(from: &DownloadPhase) -> bool {
         matches!(
             from,
-            DownloadPhase::NotDownloaded | DownloadPhase::Downloading | DownloadPhase::Paused | DownloadPhase::Error(_)
+            DownloadPhase::NotDownloaded {}
+                | DownloadPhase::Downloading {}
+                | DownloadPhase::Paused {}
+                | DownloadPhase::Error { .. }
         )
     }
 }
