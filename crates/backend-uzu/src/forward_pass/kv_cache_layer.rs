@@ -152,14 +152,18 @@ impl<B: Backend> KVCacheLayer<B> {
         let k_shape = self.keys.shape();
         let v_shape = self.values.shape();
 
+        let key_buffer_rc = self.keys.sparse_buffer();
+        let mut key_buffer = key_buffer_rc.borrow_mut();
+        let value_buffer_rc = self.values.sparse_buffer();
+        let mut value_buffer = value_buffer_rc.borrow_mut();
         let layer_data = KVLayerData {
-            key_buffer: self.keys.sparse_buffer().borrow().buffer(),
+            key_buffer: key_buffer.buffer_mut(),
             key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer: self.values.sparse_buffer().borrow().buffer(),
+            value_buffer: value_buffer.buffer_mut(),
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
-        let _ = kv_cache_update.encode(&[layer_data], source_indices, destination_indices, encoder);
+        let _ = kv_cache_update.encode(&mut [layer_data], source_indices, destination_indices, encoder);
     }
 
     pub fn register_accepted_tokens(

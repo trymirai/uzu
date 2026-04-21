@@ -95,7 +95,10 @@ impl<C: Context> SparseArrayContext for C {
         label: &str,
     ) -> SparseArray<Self::Backend> {
         let array: SparseArray<Self::Backend> = SparseArray::new(self, data_type, shape);
-        array.sparse_buffer().borrow_mut().buffer().borrow_mut().set_label(Some(label));
+        let sparse_buffer_rc = array.sparse_buffer();
+        let mut sparse_buffer_ref_mut = sparse_buffer_rc.borrow_mut();
+        let sparse_buffer = sparse_buffer_ref_mut.buffer_mut();
+        sparse_buffer.set_label(Some(label));
         array
     }
 }

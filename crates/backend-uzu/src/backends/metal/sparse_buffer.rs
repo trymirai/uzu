@@ -1,7 +1,5 @@
 use std::{
-    cell::RefCell,
     ptr::NonNull,
-    rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -22,7 +20,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct MetalSparseBuffer {
-    buffer: Rc<RefCell<Retained<ProtocolObject<dyn MTLBuffer>>>>,
+    buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
     queue: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
 
@@ -61,7 +59,7 @@ impl MetalSparseBuffer {
         };
 
         Ok(Self {
-            buffer: Rc::new(RefCell::new(buffer)),
+            buffer,
             heap,
             queue: context.command_queue4.clone(),
             sync_event: context.device.new_shared_event().unwrap(),
@@ -78,7 +76,7 @@ impl MetalSparseBuffer {
     ) {
         let value = self.sync_counter.fetch_add(1, Ordering::Relaxed) + 1;
         self.queue.update_buffer_mappings_heap_operations_count(
-            &self.buffer.borrow(),
+            &self.buffer,
             Some(&self.heap),
             NonNull::new(operations.as_ptr() as *mut _).unwrap(),
             operations.len(),
@@ -99,8 +97,12 @@ impl MetalSparseBuffer {
 impl SparseBuffer for MetalSparseBuffer {
     type Backend = Metal;
 
-    fn buffer(&self) -> Rc<RefCell<<Self::Backend as Backend>::Buffer>> {
-        self.buffer.clone()
+    fn buffer(&self) -> &<Self::Backend as Backend>::Buffer {
+        &self.buffer
+    }
+
+    fn buffer_mut(&mut self) -> &mut <Self::Backend as Backend>::Buffer {
+        &mut self.buffer
     }
 
     fn capacity(&self) -> usize {

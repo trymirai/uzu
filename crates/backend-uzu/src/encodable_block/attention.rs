@@ -250,14 +250,10 @@ impl<B: Backend> Attention<B> {
         let has_kv_cache = state.cache_layers().is_some();
 
         let key_cache_sparse_buffer_rc = key_cache_sparse_array.as_ref().map(|array| array.sparse_buffer());
-        let key_cache_sparse_buffer_ref = key_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
-        let key_cache_buffer_rc = key_cache_sparse_buffer_ref.as_ref().map(|ref_mut| ref_mut.buffer());
-        let mut key_cache_buffer_ref = key_cache_buffer_rc.as_ref().map(|buffer| buffer.borrow_mut());
+        let mut key_cache_sparse_buffer_ref = key_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
 
         let value_cache_sparse_buffer_rc = value_cache_sparse_array.as_ref().map(|array| array.sparse_buffer());
-        let value_cache_sparse_buffer_ref = value_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
-        let value_cache_buffer_rc = value_cache_sparse_buffer_ref.as_ref().map(|ref_mut| ref_mut.buffer());
-        let mut value_cache_buffer_ref = value_cache_buffer_rc.as_ref().map(|buffer| buffer.borrow_mut());
+        let mut value_cache_sparse_buffer_ref = value_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
 
         let extracted_values_array = (!has_kv_cache).then(|| state.array(ArrayId::ExtractedValues));
         let extracted_values_buf_rc = extracted_values_array.as_ref().map(|a| a.buffer());
@@ -309,8 +305,8 @@ impl<B: Backend> Attention<B> {
             self.update_kv_cache_kernel.encode(
                 Some(rotated_keys_buf_borrow.deref()),
                 qkv_buf_borrow.deref(),
-                key_cache_buffer_ref.as_mut().unwrap().deref_mut(),
-                value_cache_buffer_ref.as_mut().unwrap().deref_mut(),
+                key_cache_sparse_buffer_ref.as_mut().unwrap().buffer_mut(),
+                value_cache_sparse_buffer_ref.as_mut().unwrap().buffer_mut(),
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
@@ -322,12 +318,12 @@ impl<B: Backend> Attention<B> {
         }
 
         let key_cache_buffer: &B::Buffer = if has_kv_cache {
-            key_cache_buffer_ref.as_ref().unwrap().deref()
+            key_cache_sparse_buffer_ref.as_ref().unwrap().buffer()
         } else {
             rotated_keys_buf_borrow.deref()
         };
         let value_cache_buffer: &B::Buffer = if has_kv_cache {
-            value_cache_buffer_ref.as_ref().unwrap().deref()
+            value_cache_sparse_buffer_ref.as_ref().unwrap().buffer()
         } else {
             extracted_values_buf_borrow.as_ref().unwrap().deref()
         };
