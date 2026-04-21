@@ -54,7 +54,15 @@ impl RegistryTrait for Registry {
                 let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                     continue;
                 };
-                models.push(self.model(name));
+
+                let model = self.model(name);
+                let model = match self.config.resolver.as_ref() {
+                    Some(resolver) => resolver(model),
+                    None => Some(model),
+                };
+                if let Some(model) = model {
+                    models.push(model);
+                }
             }
 
             Ok(models)

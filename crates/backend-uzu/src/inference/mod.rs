@@ -1,12 +1,14 @@
 mod chat;
 mod container;
 mod error;
+mod model_metadata;
 
 use std::pin::Pin;
 
 pub use chat::Instance as ChatInstance;
 pub use container::Container;
 pub use error::Error;
+pub use model_metadata::{ModelMetadata, resolve_model_metadata};
 use shoji::{
     traits::{
         Backend as BackendTrait,

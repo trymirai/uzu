@@ -69,7 +69,7 @@ impl Engine {
                 device: device.clone(),
                 backends: vec![MiraiBackend {
                     identifier: uzu_backend_identifier.clone(),
-                    version: uzu_backend_version,
+                    version: uzu_backend_version.clone(),
                 }],
                 include_traces: false,
             };
@@ -79,8 +79,11 @@ impl Engine {
             engine.add_registry(mirai_registry).await?;
 
             if let Some(lalamo_path) = config.lalamo_path {
-                let lalamo_registry =
-                    LocalRegistry::new(LocalRegistryConfig::lalamo(uzu_backend_identifier, lalamo_path))?;
+                let lalamo_registry = LocalRegistry::new(LocalRegistryConfig::lalamo(
+                    uzu_backend_identifier,
+                    uzu_backend_version,
+                    lalamo_path,
+                ))?;
                 engine.add_registry(Box::new(lalamo_registry)).await?;
             }
         }
