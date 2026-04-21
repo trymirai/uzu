@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin};
 
-use shoji::{traits::Registry, types::Model};
+use shoji::{traits::Registry, types::model::Model};
 use tokio::sync::Mutex;
 
 use crate::registry::Error;

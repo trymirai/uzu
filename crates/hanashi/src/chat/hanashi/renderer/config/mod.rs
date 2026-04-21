@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 pub use jinja::JinjaConfig;
 pub use jinja_function::JinjaFunction;
 use serde::{Deserialize, Serialize};
-use shoji::types::{ContentBlockType, Role};
+use shoji::types::encoding::{ContentBlockType, Role};
 
 use crate::chat::hanashi::messages::{
     canonical::Config as CanonicalConfig,

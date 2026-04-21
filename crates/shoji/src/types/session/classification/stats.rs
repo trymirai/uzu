@@ -1,0 +1,14 @@
+use serde::{Deserialize, Serialize};
+
+#[bindings::export(Struct, name = "ClassificationStats")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Stats {
+    pub preprocessing_duration: f64,
+    pub forward_pass_duration: f64,
+    pub postprocessing_duration: f64,
+    pub total_duration: f64,
+    pub tokens_count: i64,
+    pub tokens_per_second: f64,
+    pub predicted_label: String,
+    pub confidence: f64,
+}

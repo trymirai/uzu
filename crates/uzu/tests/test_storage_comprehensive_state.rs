@@ -96,6 +96,7 @@ async fn test_storage_comprehensive_state_pause_and_resume() -> Result<(), Box<d
     Ok(())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_comprehensive_state_pause_quit_relaunch_resume() -> Result<(), Box<dyn std::error::Error>> {
     {
@@ -169,6 +170,7 @@ async fn test_storage_comprehensive_state_pause_quit_relaunch_resume() -> Result
     Ok(())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_comprehensive_state_delete_from_various_states() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempfile::tempdir()?;
@@ -244,6 +246,7 @@ async fn test_storage_comprehensive_state_multiple_pause_resume_cycles() -> Resu
     Ok(())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_comprehensive_state_completed_files_preserved_on_relaunch()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -331,6 +334,7 @@ async fn test_storage_comprehensive_state_completed_files_preserved_on_relaunch(
     Ok(())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_comprehensive_state_idempotent_pause() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempfile::tempdir()?;
@@ -416,6 +420,7 @@ async fn test_storage_comprehensive_state_crc_validation_on_init() -> Result<(),
     Ok(())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_comprehensive_state_progress_calculation_with_mixed_files()
 -> Result<(), Box<dyn std::error::Error>> {

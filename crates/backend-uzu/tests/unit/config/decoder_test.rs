@@ -77,7 +77,8 @@ fn test_decoder_config() {
                         "logit_soft_cap": null,
                         "has_sinks": false,
                         "has_qkv_biases": false,
-                        "has_out_biases": false
+                        "has_out_biases": false,
+                        "use_rope": true
                     },
                     "post_attention_norm_config": null,
                     "pre_mlp_norm_config": {
@@ -199,6 +200,7 @@ fn test_decoder_config() {
                 has_out_biases: false,
                 has_gate: false,
                 gate_projection_config: None,
+                use_rope: true,
                 partial_rope_dim: None,
             }),
             mlp_config: MLPConfig::Dense(DenseMLPConfig {
@@ -291,7 +293,8 @@ fn test_decoder_config_with_layer_configs() {
                             "logit_soft_cap": null,
                             "has_sinks": false,
                             "has_qkv_biases": false,
-                            "has_out_biases": false
+                            "has_out_biases": false,
+                            "use_rope": true
                         },
                         "post_mixer_norm_config": null,
                         "pre_mlp_norm_config": {
@@ -342,7 +345,8 @@ fn test_decoder_config_with_layer_configs() {
                             "logit_soft_cap": null,
                             "has_sinks": false,
                             "has_qkv_biases": false,
-                            "has_out_biases": false
+                            "has_out_biases": false,
+                            "use_rope": true
                         },
                         "post_mixer_norm_config": null,
                         "pre_mlp_norm_config": {

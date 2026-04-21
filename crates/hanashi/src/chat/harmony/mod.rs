@@ -15,7 +15,10 @@ use openai_harmony::{
     },
     load_harmony_encoding,
 };
-use shoji::types::{Message, Token, TokenId};
+use shoji::types::{
+    basic::{Token, TokenId},
+    encoding::Message,
+};
 
 use crate::{
     Encoding as EncodingTrait,

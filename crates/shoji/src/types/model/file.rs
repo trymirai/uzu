@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Hash, HashMethod};
+use crate::types::model::{Hash, HashMethod};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

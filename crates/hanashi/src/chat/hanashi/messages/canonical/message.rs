@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use serde_json::Value;
-use shoji::types::{
+use shoji::types::encoding::{
     ContentBlock as OriginalContentBlock, ContentBlockType, Message as OriginalMessage, Role, TranslationInput,
 };
 
@@ -127,6 +127,7 @@ impl Message {
                 value,
             } => serde_json::to_value(value.clone()),
             OriginalContentBlock::ToolCallResult {
+                identifier: _,
                 name: _,
                 value,
             } => serde_json::to_value(value.clone()),

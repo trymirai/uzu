@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::Capabilities;
+use shoji::types::encoding::Capabilities;
 
 use crate::chat::harmony::EncodingName;
 

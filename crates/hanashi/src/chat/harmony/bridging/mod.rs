@@ -5,7 +5,7 @@ mod role;
 mod tool_namespace;
 
 pub use message::{bridge_messages_from_harmony, bridge_messages_to_harmony};
-use shoji::types::{ContentBlockType, ReasoningEffort, Role};
+use shoji::types::encoding::{ContentBlockType, ReasoningEffort, Role};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
