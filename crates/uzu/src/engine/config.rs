@@ -15,6 +15,8 @@ pub struct Config {
     pub xai_api_key: Option<String>,
     pub baseten_api_key: Option<String>,
     pub openrouter_api_key: Option<String>,
+    pub allow_ollama_usage: bool,
+    pub allow_lmstudio_usage: bool,
 }
 
 impl Default for Config {
@@ -29,6 +31,8 @@ impl Default for Config {
             xai_api_key: env::var("XAI_API_KEY").ok(),
             baseten_api_key: env::var("BASETEN_API_KEY").ok(),
             openrouter_api_key: env::var("OPENROUTER_API_KEY").ok(),
+            allow_ollama_usage: true,
+            allow_lmstudio_usage: true,
         }
     }
 }
@@ -103,6 +107,22 @@ impl Config {
         openrouter_api_key: String,
     ) -> Self {
         self.openrouter_api_key = Some(openrouter_api_key);
+        self
+    }
+
+    pub fn with_allow_ollama_usage(
+        mut self,
+        allow_ollama_usage: bool,
+    ) -> Self {
+        self.allow_ollama_usage = allow_ollama_usage;
+        self
+    }
+
+    pub fn with_allow_lmstudio_usage(
+        mut self,
+        allow_lmstudio_usage: bool,
+    ) -> Self {
+        self.allow_lmstudio_usage = allow_lmstudio_usage;
         self
     }
 }

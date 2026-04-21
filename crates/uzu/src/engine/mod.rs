@@ -86,13 +86,13 @@ impl Engine {
         }
 
         let mut openai_configs: Vec<OpenAIConfig> = vec![];
-        {
+        if config.allow_ollama_usage {
             let ollama_config = OpenAIConfig::ollama();
             if is_endpoint_reachable(&ollama_config.api_endpoint).await {
                 openai_configs.push(ollama_config);
             }
         }
-        {
+        if config.allow_lmstudio_usage {
             let lmstudio_config = OpenAIConfig::lmstudio();
             if is_endpoint_reachable(&lmstudio_config.api_endpoint).await {
                 openai_configs.push(lmstudio_config);
