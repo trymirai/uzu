@@ -1,5 +1,3 @@
-mod pcm_batch;
-mod stats;
+mod interaction;
 
-pub use pcm_batch::PcmBatch;
-pub use stats::Stats;
+pub use interaction::*;

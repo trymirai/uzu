@@ -1,11 +1,5 @@
-mod label;
-mod message;
-mod output;
-mod role;
-mod stats;
+mod encoding;
+mod interaction;
 
-pub use label::Label;
-pub use message::Message;
-pub use output::Output;
-pub use role::Role;
-pub use stats::Stats;
+pub use encoding::*;
+pub use interaction::*;
