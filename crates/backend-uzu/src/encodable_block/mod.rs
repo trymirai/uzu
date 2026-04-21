@@ -28,7 +28,7 @@ pub(crate) use delta_net_mixer::DeltaNetMixer;
 pub use embedding::Embedding;
 pub use layer::LayerExecutables;
 pub use layer_norm::{LayerNorm, LayerNormError};
-pub use linear::Linear;
+pub use linear::{Linear, LoraFusion};
 pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::Mlp;
 pub use normalization::Normalization;

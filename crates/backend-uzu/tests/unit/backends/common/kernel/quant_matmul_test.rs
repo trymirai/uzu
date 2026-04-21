@@ -343,7 +343,7 @@ fn execute_quantized_matmul<B: Backend>(
             },
             quantization_type,
             use_hadamard: false,
-            use_lora: false,
+            lora_rank: None,
         },
     )
     .unwrap();

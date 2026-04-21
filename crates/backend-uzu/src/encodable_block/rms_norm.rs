@@ -8,6 +8,7 @@ use std::{
 
 use thiserror::Error;
 
+use super::LoraFusion;
 use crate::{
     DataType,
     backends::common::{
@@ -35,10 +36,7 @@ pub struct RMSNorm<B: Backend> {
     shortcut_array_id: Option<ArrayId>,
     scales_buffer: Rc<RefCell<B::Buffer>>,
     hadamard_factors_buffer: Option<B::Buffer>,
-    /// When set, fuse the A_down' GEMV into this RMSNorm kernel.
-    /// Contains the adapter_down_prime buffer (= A_down @ H, pre-computed at model-load time).
-    /// h is written to `state.common_aux.lora_intermediate` at encode time.
-    lora_adapter_down_prime: Option<B::Buffer>,
+    lora_rotated_adapter_down: Option<B::Buffer>,
     use_sampling_range: bool,
 }
 
@@ -53,63 +51,7 @@ impl<B: Backend> RMSNorm<B> {
         hadamard_factors_buffer: Option<B::Buffer>,
         shortcut_array_id: Option<ArrayId>,
         residual_add: bool,
-    ) -> Result<Self, RMSNormError<B>> {
-        Self::new_inner(
-            context,
-            intermediate_data_type,
-            config,
-            input_array_id,
-            output_array_id,
-            parameter_tree,
-            hadamard_factors_buffer,
-            shortcut_array_id,
-            residual_add,
-            None::<B::Buffer>,
-        )
-    }
-
-    /// Create an RMSNorm with a fused LoRA A_down' GEMV for the decode path.
-    ///
-    /// `adapter_down_prime` is the offline-composed buffer (A_down @ H), shape [rank, K].
-    /// At encode time h = A_down_prime @ y_scaled is written to `state.common_aux.lora_intermediate`.
-    /// This replaces the separate A_down GEMV dispatch for the QLoRA decode path.
-    pub fn new_with_lora_fuse(
-        context: &B::Context,
-        intermediate_data_type: DataType,
-        config: NormalizationConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<B::Context>,
-        hadamard_factors_buffer: Option<B::Buffer>,
-        shortcut_array_id: Option<ArrayId>,
-        residual_add: bool,
-        adapter_down_prime: B::Buffer,
-    ) -> Result<Self, RMSNormError<B>> {
-        Self::new_inner(
-            context,
-            intermediate_data_type,
-            config,
-            input_array_id,
-            output_array_id,
-            parameter_tree,
-            hadamard_factors_buffer,
-            shortcut_array_id,
-            residual_add,
-            Some(adapter_down_prime),
-        )
-    }
-
-    fn new_inner(
-        context: &B::Context,
-        intermediate_data_type: DataType,
-        config: NormalizationConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<B::Context>,
-        hadamard_factors_buffer: Option<B::Buffer>,
-        shortcut_array_id: Option<ArrayId>,
-        residual_add: bool,
-        lora_adapter_down_prime: Option<B::Buffer>,
+        lora: Option<LoraFusion<B>>,
     ) -> Result<Self, RMSNormError<B>> {
         let scales = parameter_tree.leaf_array("scales").map_err(RMSNormError::ParameterError)?;
 
@@ -121,7 +63,9 @@ impl<B: Backend> RMSNorm<B> {
             UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
         };
 
-        let use_lora = lora_adapter_down_prime.is_some();
+        let use_lora = lora.is_some();
+        // 16 is the only compiled LORA_RANK variant; unused when use_lora=false.
+        let kernel_lora_rank = lora.as_ref().map(|l| l.rank).unwrap_or(16);
 
         let kernel = <B::Kernels as Kernels>::RMSNormKernel::new(
             context,
@@ -129,6 +73,7 @@ impl<B: Backend> RMSNorm<B> {
             scales_type,
             output_type,
             accumulation_data_type,
+            kernel_lora_rank,
             input_array_id == output_array_id,
             config.upcast_mode == UpcastMode::FullLayer,
             shortcut_array_id.is_some(),
@@ -146,7 +91,7 @@ impl<B: Backend> RMSNorm<B> {
             shortcut_array_id,
             scales_buffer: scales.buffer(),
             hadamard_factors_buffer,
-            lora_adapter_down_prime,
+            lora_rotated_adapter_down: lora.map(|l| l.rotated_adapter_down),
             use_sampling_range: false,
         })
     }
@@ -196,7 +141,7 @@ impl<B: Backend> RMSNorm<B> {
         let mut shortcut_borrow = shortcut_rc.as_ref().map(|rc| rc.borrow_mut());
 
         // For the fused LoRA path: h_output goes into lora_intermediate.
-        let lora_h_rc = self.lora_adapter_down_prime.as_ref().map(|_| {
+        let lora_h_rc = self.lora_rotated_adapter_down.as_ref().map(|_| {
             state
                 .common_aux
                 .lora_intermediate
@@ -212,7 +157,7 @@ impl<B: Backend> RMSNorm<B> {
             (output_array.buffer().borrow_mut().deref_mut(), output_offset),
             shortcut_borrow.as_deref_mut().map(|b| (b, input_offset)),
             self.hadamard_factors_buffer.as_ref(),
-            self.lora_adapter_down_prime.as_ref(),
+            self.lora_rotated_adapter_down.as_ref(),
             lora_h_borrow.as_deref_mut(),
             batch_len as u32,
             element_count as u32,

@@ -8,21 +8,20 @@
 using namespace metal;
 
 #define BLOCK_SIZE 1024
-// Maximum supported LoRA rank for the fused RMSNorm+A_down path.
-#define LORA_RANK 16
 
-template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
+template <typename InputT, typename ScaleT, typename OutputT, typename AccumT, uint LORA_RANK>
 VARIANTS(InputT, float, half, bfloat)
 VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
+VARIANTS(LORA_RANK, 16)
 PUBLIC KERNEL(RMSNorm)(
     const device InputT* input OPTIONAL(!in_place),
     const device ScaleT* scales,
     device OutputT* output,
     device InputT* shortcut OPTIONAL(copy_to_shortcut),
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
-    const device OutputT* adapter_down_prime OPTIONAL(use_lora),
+    const device OutputT* rotated_adapter_down OPTIONAL(use_lora),
     device OutputT* h_output OPTIONAL(use_lora),
     constant uint& batch_size,
     constant uint& element_count,
@@ -83,18 +82,10 @@ PUBLIC KERNEL(RMSNorm)(
       static_cast<AccumT>(epsilon)
   );
 
-  // Step 3 - elementwise normalization (and optional LoRA h accumulation)
-  //
-  // When use_lora=true, also compute h[r] = A_down_prime[r, :] @ y_scaled for
-  // r in [0, LORA_RANK).  A_down_prime = A_down @ H was pre-computed offline at
-  // model-load time, so multiplying by the pre-Hadamard scaled-normalised value
-  // (y_scaled = scale * normalised(input)) reproduces the same h that the
-  // stand-alone A_down GEMV would have produced from y_rht.
-  float h_partial[LORA_RANK];
-  if (use_lora) {
-    for (uint r = 0; r < LORA_RANK; r++)
-      h_partial[r] = 0.0f;
-  }
+  // Step 3 - elementwise normalization (and optional LoRA h accumulation).
+  // h[r] = rotated_adapter_down[r, :] @ y_scaled — pre-butterfly operand since
+  // rotated_adapter_down = A_down @ H was composed at model-load time.
+  float h_partial[LORA_RANK] = {0};
 
   for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
     AccumT x;
@@ -118,13 +109,11 @@ PUBLIC KERNEL(RMSNorm)(
       val = static_cast<OutputT>(x * rms_inv) * static_cast<OutputT>(scale);
     }
 
-    // Accumulate partial dot products for h = A_down_prime @ y_scaled.
-    // This uses the pre-Hadamard scaled value (val before the butterfly), which
-    // is the correct operand given A_down_prime = A_down @ H.
     if (use_lora) {
-      float y_i = float(val);
+      float y_i = static_cast<float>(val);
       for (uint r = 0; r < LORA_RANK; r++)
-        h_partial[r] += float(adapter_down_prime[r * element_count + i]) * y_i;
+        h_partial[r] +=
+            static_cast<float>(rotated_adapter_down[i * LORA_RANK + r]) * y_i;
     }
 
     if (use_hadamard) {
@@ -138,11 +127,10 @@ PUBLIC KERNEL(RMSNorm)(
     output[i] = val;
   }
 
-  // Step 4 (only when use_lora) - cross-thread reduce h_partial[r] and write
-  // h_output. Reuse shared_sum (size METAL_SIMD_SIZE = 32) sequentially for
-  // each of the LORA_RANK=16 h rows.  shared_sum is idle after step 2.
+  // Step 4 (use_lora) — reduce h_partial across threads into h_output.
+  // Reuses shared_sum (idle after step 2) sequentially for each of LORA_RANK
+  // rows.
   if (use_lora) {
-    // h_output is indexed by [batch_idx * LORA_RANK + r].
     h_output += batch_idx * LORA_RANK;
     for (uint r = 0; r < LORA_RANK; r++) {
       float h_r =

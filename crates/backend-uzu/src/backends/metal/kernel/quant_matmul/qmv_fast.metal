@@ -3,10 +3,11 @@
 #include "../hadamard_transform/hadamard_transform.h"
 #include "quant_matmul.h"
 
-template <typename T, uint GROUP_SIZE, uint BITS>
+template <typename T, uint GROUP_SIZE, uint BITS, uint LORA_RANK>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
+VARIANTS(LORA_RANK, 16)
 PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const device uint32_t* weights,
     const device T* scales,
@@ -26,7 +27,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const bool use_hadamard SPECIALIZE,
     const bool use_lora SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
-    threadgroup float h_lora[16],
+    threadgroup float h_lora[LORA_RANK],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
     const uint simd_lane THREADS(32),
@@ -76,8 +77,9 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   output += batch_idx * out_vec_size + out_row;
 
   if (use_lora) {
-    if (simd_group == 0 && simd_lane < 16) {
-      h_lora[simd_lane] = float(h_input[simd_lane]);
+    uint tid = simd_group * 32 + simd_lane;
+    if (tid < LORA_RANK) {
+      h_lora[tid] = static_cast<float>(h_input[tid]);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
@@ -196,17 +198,19 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     if (simd_group == 0) {
       uint global_out_idx = out_block_idx * 32 + simd_lane;
       if (global_out_idx < out_vec_size) {
-        float base_h = float(simdgroup_random_hadamard_transform(
+        float base_h = static_cast<float>(simdgroup_random_hadamard_transform(
             static_cast<ushort>(simd_lane),
-            T(shared_results[simd_lane]),
+            static_cast<T>(shared_results[simd_lane]),
             hadamard_factors[global_out_idx]
         ));
 
         if (use_lora) {
           // All 32 lanes of simdgroup 0 compute their output element's delta
           float delta = 0.0f;
-          for (uint r = 0; r < 16; r++)
-            delta += float(adapter_up[global_out_idx * 16 + r]) * h_lora[r];
+          for (uint r = 0; r < LORA_RANK; r++)
+            delta +=
+                static_cast<float>(adapter_up[global_out_idx * LORA_RANK + r]) *
+                h_lora[r];
           output[simd_lane] = static_cast<T>(base_h + lora_scale * delta);
         } else {
           output[simd_lane] = static_cast<T>(base_h);
@@ -219,8 +223,11 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         float val = result[row];
         if (use_lora) {
           float delta = 0.0f;
-          for (uint r = 0; r < 16; r++)
-            delta += float(adapter_up[(out_row + row) * 16 + r]) * h_lora[r];
+          for (uint r = 0; r < LORA_RANK; r++)
+            delta += static_cast<float>(
+                         adapter_up[(out_row + row) * LORA_RANK + r]
+                     ) *
+                     h_lora[r];
           val += lora_scale * delta;
         }
         output[row] = static_cast<T>(val);

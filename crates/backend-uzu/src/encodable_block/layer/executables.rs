@@ -59,8 +59,7 @@ impl<B: Backend> LayerExecutables<B> {
         let tensor_add = TensorAddBiasKernel::new(context, intermediate_data_type, false)
             .expect("Failed to create TensorAddBiasKernel kernel"); // TODO: this function return Result
 
-        // (mixer, input_hadamard_factors, pre_attention_adapter_down_prime)
-        let (mixer, mixer_hadamard_factors, mixer_adapter_down_prime) = match &layer_config.mixer_config {
+        let (mixer, mixer_hadamard_factors, mixer_lora) = match &layer_config.mixer_config {
             MixerConfig::Attention(attention_config) => {
                 let rope_block = rope.expect("RoPE encoder missing for attention layer");
                 let use_rope = attention_config.use_rope;
@@ -72,18 +71,17 @@ impl<B: Backend> LayerExecutables<B> {
                 let q_dim = layer_num_heads * layer_head_dim;
                 let kv_dim = layer_num_groups * layer_head_dim;
 
-                let (qkv_projection, input_hadamard_factors, qkv_adapter_down_prime) =
-                    <dyn Linear<B>>::new_extracting_input_hadamard(
-                        &attention_config.qkv_projection_config,
-                        attention_config.has_qkv_biases,
-                        model_dim,
-                        [q_dim, kv_dim, kv_dim],
-                        context,
-                        &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
-                        ArrayId::Main,
-                        ArrayId::QKV,
-                    )
-                    .expect("Failed to create qkv projection");
+                let (qkv_projection, input_hadamard_factors, qkv_lora) = <dyn Linear<B>>::new_extracting_input_fusions(
+                    &attention_config.qkv_projection_config,
+                    attention_config.has_qkv_biases,
+                    model_dim,
+                    [q_dim, kv_dim, kv_dim],
+                    context,
+                    &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
+                    ArrayId::Main,
+                    ArrayId::QKV,
+                )
+                .expect("Failed to create qkv projection");
 
                 let has_gate = attention_config.has_gate || attention_config.gate_projection_config.is_some();
                 let gate_projection = if has_gate {
@@ -163,7 +161,7 @@ impl<B: Backend> LayerExecutables<B> {
                         out_projection,
                     },
                     input_hadamard_factors,
-                    qkv_adapter_down_prime,
+                    qkv_lora,
                 )
             },
             MixerConfig::Mamba(mamba_config) => {
@@ -187,7 +185,7 @@ impl<B: Backend> LayerExecutables<B> {
                 )
             },
             MixerConfig::ShortConv(short_conv_config) => {
-                let (mixer, input_hadamard_factors, in_proj_adapter_down_prime) = ShortConvMixer::new(
+                let (mixer, input_hadamard_factors, in_proj_lora) = ShortConvMixer::new(
                     context,
                     layer_type.clone(),
                     short_conv_config.clone(),
@@ -200,7 +198,7 @@ impl<B: Backend> LayerExecutables<B> {
                         mixer,
                     },
                     input_hadamard_factors,
-                    in_proj_adapter_down_prime,
+                    in_proj_lora,
                 )
             },
             MixerConfig::DeltaNet(delta_net_config) => {
@@ -217,55 +215,40 @@ impl<B: Backend> LayerExecutables<B> {
             },
         };
 
-        let pre_attention_norm = if let Some(adapter_down_prime) = mixer_adapter_down_prime {
-            RMSNorm::new_with_lora_fuse(
-                context,
-                intermediate_data_type,
-                layer_config.pre_attention_norm_config.clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
-                mixer_hadamard_factors,
-                Some(ArrayId::Shortcut),
-                layer_index > 0,
-                adapter_down_prime,
-            )
-            .expect("Failed to create RMS norm kernel with LoRA fuse")
-        } else {
+        let pre_attention_norm = RMSNorm::new(
+            context,
+            intermediate_data_type,
+            layer_config.pre_attention_norm_config.clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
+            mixer_hadamard_factors,
+            Some(ArrayId::Shortcut),
+            layer_index > 0,
+            mixer_lora,
+        )
+        .expect("Failed to create RMS norm kernel");
+
+        let plain_rms_norm = |subtree_name: &str, cfg: crate::config::NormalizationConfig| {
             RMSNorm::new(
                 context,
                 intermediate_data_type,
-                layer_config.pre_attention_norm_config.clone(),
+                cfg,
                 ArrayId::Main,
                 ArrayId::Main,
-                &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
-                mixer_hadamard_factors,
-                Some(ArrayId::Shortcut),
-                layer_index > 0,
+                &decoder_layer_loader.subtree(subtree_name).unwrap(),
+                None,
+                None,
+                false,
+                None,
             )
             .expect("Failed to create RMS norm kernel")
         };
 
-        let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
-            Some(
-                RMSNorm::new(
-                    context,
-                    intermediate_data_type,
-                    norm_config.clone(),
-                    ArrayId::Main,
-                    ArrayId::Main,
-                    &decoder_layer_loader.subtree("post_mixer_norm").unwrap(),
-                    None,
-                    None,
-                    false,
-                )
-                .expect("Failed to create RMS norm kernel"),
-            )
-        } else {
-            None
-        };
+        let post_attention_norm =
+            layer_config.post_attention_norm_config.clone().map(|c| plain_rms_norm("post_mixer_norm", c));
 
-        let (mlp, mlp_input_hadamard_factors, mlp_adapter_down_prime) = <dyn Mlp<B>>::new(
+        let (mlp, mlp_input_hadamard_factors, mlp_lora) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             model_dim,
             hidden_dim,
@@ -274,53 +257,21 @@ impl<B: Backend> LayerExecutables<B> {
         )
         .expect("Failed to create mlp block");
 
-        let pre_mlp_norm = if let Some(adapter_down_prime) = mlp_adapter_down_prime {
-            RMSNorm::new_with_lora_fuse(
-                context,
-                intermediate_data_type,
-                layer_config.pre_mlp_norm_config.clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-                mlp_input_hadamard_factors,
-                Some(ArrayId::Shortcut),
-                true,
-                adapter_down_prime,
-            )
-            .expect("Failed to create pre-MLP RMS norm kernel with LoRA fuse")
-        } else {
-            RMSNorm::new(
-                context,
-                intermediate_data_type,
-                layer_config.pre_mlp_norm_config.clone(),
-                ArrayId::Main,
-                ArrayId::Main,
-                &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
-                mlp_input_hadamard_factors,
-                Some(ArrayId::Shortcut),
-                true,
-            )
-            .expect("Failed to create RMS norm kernel")
-        };
+        let pre_mlp_norm = RMSNorm::new(
+            context,
+            intermediate_data_type,
+            layer_config.pre_mlp_norm_config.clone(),
+            ArrayId::Main,
+            ArrayId::Main,
+            &decoder_layer_loader.subtree("pre_mlp_norm").unwrap(),
+            mlp_input_hadamard_factors,
+            Some(ArrayId::Shortcut),
+            true,
+            mlp_lora,
+        )
+        .expect("Failed to create pre-MLP RMS norm kernel");
 
-        let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
-            Some(
-                RMSNorm::new(
-                    context,
-                    intermediate_data_type,
-                    norm_config.clone(),
-                    ArrayId::Main,
-                    ArrayId::Main,
-                    &decoder_layer_loader.subtree("post_mlp_norm").unwrap(),
-                    None,
-                    None,
-                    false,
-                )
-                .expect("Failed to create RMS norm kernel"),
-            )
-        } else {
-            None
-        };
+        let post_mlp_norm = layer_config.post_mlp_norm_config.clone().map(|c| plain_rms_norm("post_mlp_norm", c));
 
         Self {
             #[cfg(feature = "tracing")]
@@ -372,38 +323,20 @@ impl<B: Backend> LayerExecutables<B> {
                 rope.encode(state, *use_rope, encoder)?;
                 attention.encode(state, parameters, encoder)?;
                 out_projection.encode(state, encoder)?;
-                #[cfg(feature = "tracing")]
-                if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
-                }
             },
             MixerExecutables::StateSpace {
                 mixer,
-            } => {
-                mixer.encode(state, encoder)?;
-                #[cfg(feature = "tracing")]
-                if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
-                }
-            },
+            } => mixer.encode(state, encoder)?,
             MixerExecutables::ShortConv {
                 mixer,
-            } => {
-                mixer.encode(state, encoder)?;
-                #[cfg(feature = "tracing")]
-                if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
-                }
-            },
+            } => mixer.encode(state, encoder)?,
             MixerExecutables::DeltaNet {
                 mixer,
-            } => {
-                mixer.encode(state, encoder)?;
-                #[cfg(feature = "tracing")]
-                if let Some(ref layer_traces) = layer_traces {
-                    state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
-                }
-            },
+            } => mixer.encode(state, encoder)?,
+        }
+        #[cfg(feature = "tracing")]
+        if let Some(ref layer_traces) = layer_traces {
+            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {

@@ -9,18 +9,20 @@ use crate::ArrayElement;
 #[variants(ScaleT, f32, f16, bf16)]
 #[variants(OutputT, f32, f16, bf16)]
 #[variants(AccumT, f32, f16)]
+#[variants(LORA_RANK, 16)]
 pub fn rms_norm<
     InputT: ArrayElement + Float,
     ScaleT: ArrayElement + Float,
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
+    const LORA_RANK: u32,
 >(
     #[optional(!in_place)] input: Option<*const InputT>,
     scales: *const ScaleT,
     output: *mut OutputT,
     #[optional(copy_to_shortcut)] shortcut: Option<*mut InputT>,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
-    #[optional(use_lora)] adapter_down_prime: Option<*const OutputT>,
+    #[optional(use_lora)] rotated_adapter_down: Option<*const OutputT>,
     #[optional(use_lora)] h_output: Option<*mut OutputT>,
     batch_size: u32,
     element_count: u32,
@@ -35,9 +37,6 @@ pub fn rms_norm<
 ) {
     if use_hadamard {
         unimplemented!("not supported yet");
-    }
-    if use_lora {
-        unimplemented!("RMSNorm use_lora not supported on CPU backend");
     }
 
     let input = match in_place {
@@ -74,6 +73,8 @@ pub fn rms_norm<
         let rms_inv = AccumT::from((mean_sq + epsilon).to_f32().unwrap().sqrt().recip()).unwrap();
 
         // Normalization and scaling
+        let lora_rank = LORA_RANK as usize;
+        let mut h_partial = vec![0f32; lora_rank];
         for i in 0..element_count {
             let input_val = if residual_add {
                 unsafe { AccumT::from(*shortcut.unwrap().add(batch_offset + i)).unwrap() }
@@ -93,6 +94,19 @@ pub fn rms_norm<
                 normalized_out * scale_with_offset_out
             };
             unsafe { *output.add(batch_offset + i) = result };
+            if use_lora {
+                let y_i = result.to_f32().unwrap();
+                let adp = rotated_adapter_down.unwrap();
+                for r in 0..lora_rank {
+                    h_partial[r] += unsafe { (*adp.add(i * lora_rank + r)).to_f32().unwrap() } * y_i;
+                }
+            }
+        }
+        if use_lora {
+            let h_out = h_output.unwrap();
+            for r in 0..lora_rank {
+                unsafe { *h_out.add(batch * lora_rank + r) = OutputT::from(h_partial[r]).unwrap() };
+            }
         }
     }
 }

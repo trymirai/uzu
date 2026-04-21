@@ -85,6 +85,13 @@ pub enum QuantizedLinearError<B: Backend> {
     },
 }
 
+/// LoRA A_up for `QuantizedLinear`: fused into QmvFast at rank=16, else dispatched standalone.
+pub struct LoraAdapter<B: Backend> {
+    pub buffer: B::Buffer,
+    pub scale: f32,
+    pub rank: u32,
+}
+
 pub struct QuantizedLinear<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
@@ -109,7 +116,7 @@ impl<B: Backend> QuantizedLinear<B> {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         output_hadamard_factors: Option<B::Buffer>,
-        lora_adapter: Option<(B::Buffer, f32)>,
+        lora: Option<LoraAdapter<B>>,
     ) -> Result<Self, QuantizedLinearError<B>> {
         let kernel_data_type: DataType = config.activation_precision.into();
         if !matches!(kernel_data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
@@ -225,7 +232,7 @@ impl<B: Backend> QuantizedLinear<B> {
                 mode: config.weight_quantization_mode,
                 quantization_type,
                 use_hadamard: output_hadamard_factors.is_some(),
-                use_lora: lora_adapter.is_some(),
+                lora_rank: lora.as_ref().map(|l| l.rank),
             },
         )
         .map_err(QuantizedLinearError::QuantizedMatmulError)?;
@@ -238,11 +245,27 @@ impl<B: Backend> QuantizedLinear<B> {
             scales_buffer: scales.buffer(),
             zero_points_or_biases_buffer,
             output_hadamard_factors,
-            lora_adapter,
+            lora_adapter: lora.map(|l| (l.buffer, l.scale)),
             output_dim,
             input_array_id,
             output_array_id,
         })
+    }
+}
+
+impl<B: Backend> QuantizedLinear<B> {
+    /// True when the underlying kernel fuses the LoRA A_up dispatch; caller
+    /// should skip the separate A_up GEMM to avoid double-counting.
+    pub fn use_qmv_fast_fuse_lora_a_up(
+        &self,
+        batch_dim: usize,
+    ) -> bool {
+        self.kernel.use_qmv_fast_fuse_lora_a_up(batch_dim)
+    }
+
+    /// Returns a reference to the LoRA A_up buffer, if present.
+    pub fn lora_adapter_up(&self) -> Option<&B::Buffer> {
+        self.lora_adapter.as_ref().map(|(b, _)| b)
     }
 }
 

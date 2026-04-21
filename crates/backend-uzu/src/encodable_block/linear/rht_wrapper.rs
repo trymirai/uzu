@@ -66,6 +66,7 @@ impl<B: Backend> RHTLinearWrapper<B> {
             output_factors,
             input_dimension,
             output_dimension,
+            false,
         )
         .map_err(|e| RHTLinearWrapperError::InnerLinearError(Box::new(e)))?;
 

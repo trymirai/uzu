@@ -17,6 +17,8 @@ use itertools::iproduct;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
+const LORA_RANK: u32 = 16;
+
 use crate::{
     common::{assert::assert_eq_float, type_short_name},
     uzu_bench, uzu_test,
@@ -72,7 +74,7 @@ fn get_test_data_basic<
         in_place,
     };
 
-    let (output, _, _) = get_output::<Cpu, InputT, ScaleT, OutputT, AccumT>(&input);
+    let (output, _, _, _) = get_output::<Cpu, InputT, ScaleT, OutputT, AccumT>(&input, None);
     (input, output)
 }
 
@@ -109,7 +111,7 @@ fn get_test_data_edge<
         in_place,
     };
 
-    let (output, _, _) = get_output::<Cpu, InputT, ScaleT, OutputT, AccumT>(&input);
+    let (output, _, _, _) = get_output::<Cpu, InputT, ScaleT, OutputT, AccumT>(&input, None);
     (input, output)
 }
 
@@ -120,8 +122,9 @@ fn get_output<
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
 >(
-    input: &Input<InputT, ScaleT, OutputT>
-) -> (Vec<OutputT>, f64, Duration) {
+    input: &Input<InputT, ScaleT, OutputT>,
+    rotated_adapter_down: Option<&[OutputT]>,
+) -> (Vec<OutputT>, Option<Vec<OutputT>>, f64, Duration) {
     let context = B::Context::new().expect("Failed to create Context");
     let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
         &context,
@@ -129,12 +132,13 @@ fn get_output<
         ScaleT::data_type(),
         OutputT::data_type(),
         AccumT::data_type(),
+        LORA_RANK,
         input.in_place,
         input.full_layer,
         false,
         false,
         false,
-        false,
+        rotated_adapter_down.is_some(),
     )
     .expect("Failed to create RMSNormKernel");
 
@@ -151,28 +155,44 @@ fn get_output<
         false => context.create_array_uninitialized(&[input_size], OutputT::data_type(), ""),
     };
 
+    let adp_array = rotated_adapter_down.map(|a| context.create_array_from(&[a.len()], a, ""));
+    let h_out_array = rotated_adapter_down.map(|_| {
+        context.create_array_uninitialized(
+            &[(input.batch_size as usize) * LORA_RANK as usize],
+            OutputT::data_type(),
+            "",
+        )
+    });
+
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        input_buffer,
-        scales_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
-        None::<&mut B::Buffer>,
-        None::<&B::Buffer>,
-        None::<&B::Buffer>,
-        None::<&mut B::Buffer>,
-        input.batch_size,
-        input.element_count,
-        input.epsilon,
-        input.scale_offset,
-        &mut encoder,
-    );
+    {
+        let adp_borrow = adp_array.as_ref().map(|a| a.buffer());
+        let adp_ref = adp_borrow.as_ref().map(|b| b.borrow());
+        let h_out_borrow = h_out_array.as_ref().map(|a| a.buffer());
+        let mut h_out_ref = h_out_borrow.as_ref().map(|b| b.borrow_mut());
+        kernel.encode(
+            input_buffer,
+            scales_array.buffer().borrow().deref(),
+            output_array.buffer().borrow_mut().deref_mut(),
+            None::<&mut B::Buffer>,
+            None::<&B::Buffer>,
+            adp_ref.as_ref().map(|r| r.deref()),
+            h_out_ref.as_mut().map(|r| r.deref_mut()),
+            input.batch_size,
+            input.element_count,
+            input.epsilon,
+            input.scale_offset,
+            &mut encoder,
+        );
+    }
 
     let instant = Instant::now();
     let completed = encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
     let gpu_elapsed_ms = completed.gpu_execution_time();
 
-    (output_array.as_slice().to_vec(), host_elapsed_ms, gpu_elapsed_ms)
+    let h_output = h_out_array.as_ref().map(|a| a.as_slice().to_vec());
+    (output_array.as_slice().to_vec(), h_output, host_elapsed_ms, gpu_elapsed_ms)
 }
 
 fn test_internal<
@@ -195,7 +215,7 @@ fn test_internal<
     };
 
     for_each_non_cpu_backend!(|B| {
-        let (output, _, _) = get_output::<B, InputT, ScaleT, OutputT, AccumT>(input);
+        let (output, _, _, _) = get_output::<B, InputT, ScaleT, OutputT, AccumT>(input, None);
         let msg = format!(
             "RMSNorm kernel test failed with backend={}, full_layer={}, in_place={}",
             std::any::type_name::<B>(),
@@ -242,6 +262,50 @@ fn test_edge<
         let (input, expected) = get_test_data_edge::<InputT, ScaleT, OutputT, AccumT>(false, *in_place);
         test_internal::<InputT, ScaleT, OutputT, AccumT>(&input, expected.as_slice())
     }
+}
+
+#[uzu_test]
+fn test_lora_bf16() {
+    type InputT = bf16;
+    type ScaleT = bf16;
+    type OutputT = bf16;
+    type AccumT = f32;
+    let batch_size = 2usize;
+    let element_count = 512usize;
+
+    let input_data: Vec<bf16> = (0..batch_size * element_count)
+        .map(|i| bf16::from_f32(0.5 * f32::sin(i as f32 * 0.03)))
+        .collect();
+    let scales_data: Vec<bf16> = (0..element_count)
+        .map(|i| bf16::from_f32(0.5 + 0.5 * f32::sin(i as f32 * 0.07)))
+        .collect();
+    let rotated_adapter_down: Vec<bf16> = (0..LORA_RANK as usize * element_count)
+        .map(|i| bf16::from_f32(0.01 * f32::sin(i as f32 * 0.11)))
+        .collect();
+
+    let input = Input::<InputT, ScaleT, OutputT> {
+        input: input_data.clone().into_boxed_slice(),
+        scales: scales_data.into_boxed_slice(),
+        output: input_data.into_boxed_slice(),
+        batch_size: batch_size as u32,
+        element_count: element_count as u32,
+        epsilon: 1e-5,
+        scale_offset: 0.0,
+        full_layer: true,
+        in_place: false,
+    };
+
+    let (cpu_main, cpu_h, _, _) =
+        get_output::<Cpu, InputT, ScaleT, OutputT, AccumT>(&input, Some(&rotated_adapter_down));
+    let cpu_h = cpu_h.unwrap();
+    let eps = 0.016f32;
+
+    for_each_non_cpu_backend!(|B| {
+        let (metal_main, metal_h, _, _) =
+            get_output::<B, InputT, ScaleT, OutputT, AccumT>(&input, Some(&rotated_adapter_down));
+        assert_eq_float::<OutputT>(&cpu_main, &metal_main, eps, "main");
+        assert_eq_float::<OutputT>(&cpu_h, &metal_h.unwrap(), eps, "h");
+    });
 }
 
 fn get_rms_norm_data(
@@ -395,9 +459,22 @@ fn test_edge_f16_f16_f16_f16() {
 // benchmarks
 #[uzu_bench]
 fn bench_rms_norm(c: &mut Criterion) {
+    run_rms_norm_bench(c, false);
+}
+
+#[uzu_bench]
+fn bench_rms_norm_lora(c: &mut Criterion) {
+    run_rms_norm_bench(c, true);
+}
+
+fn run_rms_norm_bench(
+    c: &mut Criterion,
+    use_lora: bool,
+) {
     type T = f32;
     let epsilon = 1e-6f32;
     let scale_offset = 0.0f32;
+    let lora_rank = LORA_RANK as usize;
 
     for_each_backend!(|B| {
         let context = <B as Backend>::Context::new().unwrap();
@@ -408,52 +485,65 @@ fn bench_rms_norm(c: &mut Criterion) {
             T::data_type(),
             T::data_type(),
             T::data_type(),
+            LORA_RANK,
+            false,
+            use_lora, // full_layer = true when use_lora (h_partial accumulates in accum precision)
             false,
             false,
             false,
-            false,
-            false,
-            false,
+            use_lora,
         )
         .unwrap();
 
-        let mut group = c.benchmark_group(format!("{}/Kernel/RMSNorm", type_short_name::<B>()));
+        let group_name = if use_lora { "RMSNormLoRA" } else { "RMSNorm" };
+        let mut group = c.benchmark_group(format!("{}/Kernel/{}", type_short_name::<B>(), group_name));
 
-        for (batch_size, model_dim) in iproduct!(
-            [1, 4, 32, 128, 1024], // Batch sizes
-            [
-                1024, // LFM2-350M
-                1152, // Gemma-3-1b
-                2048, // Llama-3.2-1B
-                2560, // Qwen3-4B
-                3072, // Llama-3.2-3B
-                4096, // Qwen3-8B
-                5120, // Qwen2.5-32B
-            ]
-        ) {
-            let (input_data, scale_data) = get_rms_norm_data(1337, batch_size, model_dim);
+        #[rustfmt::skip]
+        let (batches, dims): (&[usize], &[usize]) = if use_lora {
+            (
+                &[1, 32], // decode and prefill
+                &[
+                    2048, // Llama-3.2-1B
+                    4096, // Qwen3-8B / LFM2-3B
+                ],
+            )
+        } else {
+            (
+                &[1, 4, 32, 128, 1024], // Batch sizes
+                &[
+                    1024, // LFM2-350M
+                    1152, // Gemma-3-1b
+                    2048, // Llama-3.2-1B
+                    2560, // Qwen3-4B
+                    3072, // Llama-3.2-3B
+                    4096, // Qwen3-8B
+                    5120, // Qwen2.5-32B
+                ],
+            )
+        };
+
+        for (&batch_size, &model_dim) in iproduct!(batches, dims) {
             let input_size = batch_size * model_dim;
+            let (input_data, scale_data) = get_rms_norm_data(1337, batch_size, model_dim);
 
             let input_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
+            let scales_buffer = context.create_buffer(model_dim * std::mem::size_of::<T>()).unwrap();
             unsafe {
                 std::slice::from_raw_parts_mut::<T>(input_buffer.cpu_ptr().as_ptr() as *mut T, input_size)
                     .copy_from_slice(input_data.as_ref());
-            }
-
-            let scales_buffer = context.create_buffer(model_dim * std::mem::size_of::<T>()).unwrap();
-            unsafe {
                 std::slice::from_raw_parts_mut::<T>(scales_buffer.cpu_ptr().as_ptr() as *mut T, model_dim)
                     .copy_from_slice(scale_data.as_ref());
             }
-
             let mut output_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
+            let adapter_buffer =
+                use_lora.then(|| context.create_buffer(lora_rank * model_dim * std::mem::size_of::<T>()).unwrap());
+            let mut h_output_buffer =
+                use_lora.then(|| context.create_buffer(batch_size * lora_rank * std::mem::size_of::<T>()).unwrap());
 
-            group.throughput(Throughput::Elements((batch_size * model_dim) as u64));
-
+            group.throughput(Throughput::Elements(input_size as u64));
             group.bench_function(BenchmarkId::from_parameter(format!("Batch[{batch_size}]Dim[{model_dim}]")), |b| {
                 b.iter_custom(|n_iters| {
                     let mut encoder = Encoder::<B>::new(&context).unwrap();
-
                     for _ in 0..n_iters {
                         kernel.encode(
                             Some(&input_buffer),
@@ -461,8 +551,8 @@ fn bench_rms_norm(c: &mut Criterion) {
                             &mut output_buffer,
                             None::<&mut <B as Backend>::Buffer>,
                             None::<&<B as Backend>::Buffer>,
-                            None::<&<B as Backend>::Buffer>,
-                            None::<&mut <B as Backend>::Buffer>,
+                            adapter_buffer.as_ref(),
+                            h_output_buffer.as_mut(),
                             batch_size as u32,
                             model_dim as u32,
                             epsilon,
@@ -470,7 +560,6 @@ fn bench_rms_norm(c: &mut Criterion) {
                             &mut encoder,
                         );
                     }
-
                     encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
                 })
             });

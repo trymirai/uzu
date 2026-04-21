@@ -5,7 +5,10 @@ pub use dense::DenseMlp;
 pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
-use super::linear::{Linear, LinearBlockError};
+use super::{
+    LoraFusion,
+    linear::{Linear, LinearBlockError},
+};
 use crate::{
     DataType,
     backends::common::{Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
@@ -35,34 +38,33 @@ pub enum MlpBlockError<B: Backend> {
 }
 
 impl<B: Backend> dyn Mlp<B> {
-    /// Returns `(mlp, input_hadamard_factors, adapter_down_prime)`.
+    /// Returns `(mlp, input_hadamard_factors, up_lora)`.
     ///
-    /// `input_hadamard_factors` is for the pre-MLP RMSNorm (Hadamard fused into it).
-    /// `adapter_down_prime` is the offline-composed A_down @ H buffer when the MLP
-    /// up_projection is a QLoRA layer — used to fuse A_down into the pre-MLP RMSNorm.
+    /// - `input_hadamard_factors`: Hadamard factors to fuse into the pre-MLP RMSNorm.
+    /// - `up_lora`: `A_down @ H` + rank for the QLoRA up-projection, letting the
+    ///   pre-MLP RMSNorm absorb the A_down GEMV. `None` when up isn't QLoRA.
     pub fn new(
         config: &MLPConfig,
         model_dimension: usize,
         hidden_dimension: usize,
         context: &B::Context,
         parameter_tree: &ParameterTree<B::Context>,
-    ) -> Result<(Box<dyn Mlp<B>>, Option<B::Buffer>, Option<B::Buffer>), MlpBlockError<B>> {
+    ) -> Result<(Box<dyn Mlp<B>>, Option<B::Buffer>, Option<LoraFusion<B>>), MlpBlockError<B>> {
         if let MLPConfig::Dense(dense_config) = config {
             let data_type: DataType = dense_config.linear_config.activation_precision().into();
 
-            let (up_projection, up_input_hadamard_factors, up_adapter_down_prime) =
-                <dyn Linear<B>>::new_extracting_input_hadamard(
-                    &dense_config.linear_config,
-                    false,
-                    model_dimension,
-                    [2 * hidden_dimension],
-                    context,
-                    &parameter_tree.subtree("up_projection")?,
-                    ArrayId::Main,
-                    ArrayId::MlpFusedUp,
-                )?;
+            let (up_projection, up_input_hadamard_factors, up_lora) = <dyn Linear<B>>::new_extracting_input_fusions(
+                &dense_config.linear_config,
+                false,
+                model_dimension,
+                [2 * hidden_dimension],
+                context,
+                &parameter_tree.subtree("up_projection")?,
+                ArrayId::Main,
+                ArrayId::MlpFusedUp,
+            )?;
 
-            let (down_projection, down_input_hadamard_factors, _) = <dyn Linear<B>>::new_extracting_input_hadamard(
+            let (down_projection, down_input_hadamard_factors, _) = <dyn Linear<B>>::new_extracting_input_fusions(
                 &dense_config.linear_config,
                 false,
                 hidden_dimension,
@@ -85,7 +87,7 @@ impl<B: Backend> dyn Mlp<B> {
             return Ok((
                 Box::new(DenseMlp::new(up_projection, gate, down_projection)),
                 up_input_hadamard_factors,
-                up_adapter_down_prime,
+                up_lora,
             ));
         }
 
