@@ -1,8 +1,8 @@
 #![cfg(not(target_family = "wasm"))]
 
-use shoji::types::{
-    encoding::Message,
-    session::chat::{Config as ChatConfig, StreamConfig as ChatStreamConfig},
+use shoji::types::session::{
+    chat::{Config as ChatConfig, Message as ChatMessage, StreamConfig as ChatStreamConfig},
+    classification::Message as ClassificationMessage,
 };
 use uzu::engine::{Config, Engine};
 
@@ -37,10 +37,10 @@ async fn test_engine_chat() {
     session.reset().await.unwrap();
 
     let messages = vec![
-        Message::system().with_text("You are a helpful assistant.".to_string()),
-        Message::user().with_text("My name is John Doe".to_string()),
+        ChatMessage::system().with_text("You are a helpful assistant.".to_string()),
+        ChatMessage::user().with_text("My name is John Doe".to_string()),
     ];
-    let (mut stream, _) = session.response_stream(messages, ChatStreamConfig::default());
+    let (mut stream, _) = session.reply_with_stream(messages, ChatStreamConfig::default());
     while let Some(progress) = stream.next().await {
         match progress {
             Ok(outputs) => {
@@ -62,11 +62,26 @@ async fn test_engine_chat() {
         }
     }
 
-    let messages = vec![Message::user().with_text("What is my name?".to_string())];
-    let _ = session.response(messages, ChatStreamConfig::default()).await.unwrap();
+    let messages = vec![ChatMessage::user().with_text("What is my name?".to_string())];
+    let _ = session.reply(messages, ChatStreamConfig::default()).await.unwrap();
 
     let messages = session.messages().await;
     for message in messages {
         println!("Message: {message:?}");
     }
+}
+
+#[ignore]
+#[tokio::test]
+async fn test_engine_classification() {
+    dotenvy::dotenv().ok();
+
+    let config = Config::default();
+    let engine = Engine::new(config).await.unwrap();
+    let model = engine.model("ModernBERT-Chat-Moderation").await.unwrap().unwrap();
+    let session = engine.classification(model).await.unwrap();
+
+    let messages = vec![ClassificationMessage::user("Hi!".to_string())];
+    let result = session.classify(messages).await.unwrap();
+    println!("Output: {result:?}");
 }

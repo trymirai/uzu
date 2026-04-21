@@ -1,4 +1,4 @@
-use nagare::chat::Error as ChatError;
+use nagare::{chat::Error as ChatError, classification::Error as ClassificationError};
 
 #[bindings::export(Error, name = "EngineError")]
 #[derive(Debug, thiserror::Error)]
@@ -20,4 +20,6 @@ pub enum Error {
     BackendNotFound,
     #[error(transparent)]
     Chat(#[from] ChatError),
+    #[error(transparent)]
+    Classification(#[from] ClassificationError),
 }

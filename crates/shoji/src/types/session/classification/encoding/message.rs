@@ -9,3 +9,23 @@ pub struct Message {
     pub role: Role,
     pub content: String,
 }
+
+impl Message {
+    pub fn new(
+        role: Role,
+        content: String,
+    ) -> Self {
+        Self {
+            role,
+            content,
+        }
+    }
+
+    pub fn user(content: String) -> Self {
+        Self::new(Role::User, content)
+    }
+
+    pub fn assistant(content: String) -> Self {
+        Self::new(Role::Assistant, content)
+    }
+}

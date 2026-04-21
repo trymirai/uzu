@@ -7,7 +7,7 @@ use crate::types::{
     session::chat::{ContentBlock, ReasoningEffort, Role, ToolCall, ToolNamespace},
 };
 
-#[bindings::export(Struct, name = "Message")]
+#[bindings::export(Struct, name = "ChatMessage")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Message {

@@ -126,12 +126,12 @@ impl Session {
         result
     }
 
-    pub async fn response(
+    pub async fn reply(
         &self,
         input: Vec<Message>,
         config: StreamConfig,
     ) -> Result<Vec<Output>, Error> {
-        let (mut stream, _) = self.response_stream(input, config);
+        let (mut stream, _) = self.reply_with_stream(input, config);
         let mut outputs: Option<Vec<Output>> = None;
         while let Some(progress) = stream.next().await {
             match progress {
@@ -142,7 +142,7 @@ impl Session {
         outputs.ok_or(Error::NoResponse)
     }
 
-    pub fn response_stream(
+    pub fn reply_with_stream(
         &self,
         input: Vec<Message>,
         config: StreamConfig,

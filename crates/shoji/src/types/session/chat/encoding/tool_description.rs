@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::session::chat::ToolFunction;
 
-#[bindings::export(Enum, name = "ToolDescription")]
+#[bindings::export(Enum, name = "ChatToolDescription")]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDescription {
