@@ -6,7 +6,7 @@ use std::{
 
 use download_manager::{FileDownloadManager, FileDownloadState, FileDownloadTask};
 use futures_util::future::join_all;
-use shoji::types::File;
+use shoji::types::model::File;
 use tokio::{
     runtime::Handle,
     sync::broadcast::{Sender, channel},

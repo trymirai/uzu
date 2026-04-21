@@ -1,4 +1,4 @@
-use shoji::types::Role;
+use shoji::types::encoding::Role;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

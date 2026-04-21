@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use shoji::types::{Accessibility, Entity, EntityType, File, Hash, HashMethod, Model, Reference};
+use shoji::types::model::{Accessibility, Entity, EntityType, File, Hash, HashMethod, Model, Reference};
 use tokio::runtime::Handle;
 use uzu::{
     device::Device,

@@ -11,7 +11,7 @@ mod translation_input;
 
 pub use capabilities::Capabilities;
 pub use content_block::{ContentBlock, ContentBlockType};
-pub use message::Message;
+pub use message::{Message, MessageList};
 pub use reasoning_effort::ReasoningEffort;
 pub use role::Role;
 pub use tool_call::ToolCall;

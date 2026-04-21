@@ -9,7 +9,7 @@ pub use config::{Backend, Config};
 use indexmap::IndexMap;
 use nagare::api::{Client, Config as ClientConfig};
 use reqwest::header::AUTHORIZATION;
-use shoji::{traits::Registry as RegistryTrait, types::Model};
+use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 pub use types::Response;
 
 use crate::registry::Error;

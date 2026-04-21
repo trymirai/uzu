@@ -2,7 +2,7 @@ mod bundled;
 mod tokens;
 
 use serde::{Deserialize, Serialize};
-use shoji::types::{Capabilities, ContentBlockType, ReasoningEffort};
+use shoji::types::encoding::{Capabilities, ContentBlockType, ReasoningEffort};
 use token_stream_parser::token_stream::TokenStreamParserConfig;
 pub use tokens::TokensConfig;
 
