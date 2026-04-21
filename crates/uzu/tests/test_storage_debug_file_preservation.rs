@@ -188,7 +188,7 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
             let state = model.state().await;
-            if matches!(state.phase, DownloadPhase::Paused) {
+            if matches!(state.phase, DownloadPhase::Paused {}) {
                 break;
             }
             if i == 19 {}
@@ -198,7 +198,7 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
         progress_at_pause = state.progress();
         bytes_at_pause = state.downloaded_bytes;
         _total_bytes = state.total_bytes;
-        if !matches!(state.phase, DownloadPhase::Paused) {}
+        if !matches!(state.phase, DownloadPhase::Paused {}) {}
         let model_dir = test_storage.config.cache_model_path(&test_storage.model(0)).unwrap();
         let mut resume_files = Vec::new();
         if model_dir.exists() {
@@ -244,7 +244,7 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
         let state = model.state().await;
         let progress_after_relaunch = state.progress();
         let bytes_after_relaunch = state.downloaded_bytes;
-        assert!(matches!(state.phase, DownloadPhase::Paused), "Model should be Paused after relaunch");
+        assert!(matches!(state.phase, DownloadPhase::Paused {}), "Model should be Paused after relaunch");
         let progress_diff = (progress_at_pause - progress_after_relaunch).abs();
         let _bytes_diff = (bytes_at_pause as i64 - bytes_after_relaunch as i64).abs();
         assert!(
@@ -360,7 +360,7 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
         let model_before_pause = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
 
         let state = model_before_pause.state().await;
-        if !matches!(state.phase, DownloadPhase::Downloaded) {
+        if !matches!(state.phase, DownloadPhase::Downloaded {}) {
             let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
             model.pause().await?;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -388,7 +388,7 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
         let _progress_after_relaunch = state.progress();
         let downloaded_bytes_after_relaunch = state.downloaded_bytes;
         assert!(
-            matches!(state.phase, DownloadPhase::Paused | DownloadPhase::Downloaded),
+            matches!(state.phase, DownloadPhase::Paused {} | DownloadPhase::Downloaded {}),
             "Model should be Paused or Downloaded after relaunch, got: {:?}",
             state.phase
         );
@@ -411,7 +411,7 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
 
         // Only try to resume if not already downloaded
         let state = model_relaunched.state().await;
-        if !matches!(state.phase, DownloadPhase::Downloaded) {
+        if !matches!(state.phase, DownloadPhase::Downloaded {}) {
             let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
             model.download().await?;
             tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
@@ -422,7 +422,10 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
         let _progress_after_resume = state.progress();
         let downloaded_bytes_after_resume = state.downloaded_bytes;
         assert!(
-            matches!(state.phase, DownloadPhase::Downloading | DownloadPhase::Paused | DownloadPhase::Downloaded),
+            matches!(
+                state.phase,
+                DownloadPhase::Downloading {} | DownloadPhase::Paused {} | DownloadPhase::Downloaded {}
+            ),
             "Model should be Downloading, Paused, or Downloaded after resume, got: {:?}",
             state.phase
         );

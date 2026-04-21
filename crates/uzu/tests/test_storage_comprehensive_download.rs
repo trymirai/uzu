@@ -33,7 +33,7 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
         initial_state.total_bytes,
         initial_state.phase
     );
-    let pb = ProgressBar::new(initial_state.total_bytes);
+    let pb = ProgressBar::new(initial_state.total_bytes as u64);
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%, {bytes_per_sec}, eta {eta}) - {msg}")
@@ -59,15 +59,15 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
                 state.total_bytes
             );
             if id == model_identifier_clone {
-                pb_clone.set_position(state.downloaded_bytes);
+                pb_clone.set_position(state.downloaded_bytes as u64);
                 if state.downloaded_bytes >= quarter_threshold {
                     tracing::info!("[PHASE1] ✓ Reached 25% threshold");
-                    let _ = phase1_tx.send(state.downloaded_bytes).await;
+                    let _ = phase1_tx.send(state.downloaded_bytes as u64).await;
                     break;
                 }
-                if matches!(state.phase, DownloadPhase::Downloaded) {
+                if matches!(state.phase, DownloadPhase::Downloaded {}) {
                     tracing::info!("[PHASE1] ✓ Downloaded state reached (completed before 25%)");
-                    let _ = phase1_tx.send(state.downloaded_bytes).await;
+                    let _ = phase1_tx.send(state.downloaded_bytes as u64).await;
                     break;
                 }
             }
@@ -87,7 +87,7 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
     monitor_task.abort();
 
     let current_state = model.state().await;
-    if matches!(current_state.phase, DownloadPhase::Downloaded) {
+    if matches!(current_state.phase, DownloadPhase::Downloaded {}) {
         tracing::info!("\n[TEST] ========== Download completed early, skipping pause/resume tests ==========");
         pb.finish_with_message("Download completed");
         return Ok(());
@@ -117,13 +117,13 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
         const TIMEOUT: Duration = Duration::from_secs(120);
         while let Ok(Some(Ok((id, state)))) = tokio::time::timeout(TIMEOUT, updates.next()).await {
             if id == model_identifier_clone {
-                pb_clone.set_position(state.downloaded_bytes);
+                pb_clone.set_position(state.downloaded_bytes as u64);
                 if state.downloaded_bytes >= half_threshold {
-                    let _ = phase3_tx.send(state.downloaded_bytes).await;
+                    let _ = phase3_tx.send(state.downloaded_bytes as u64).await;
                     break;
                 }
-                if matches!(state.phase, DownloadPhase::Downloaded) {
-                    let _ = phase3_tx.send(state.downloaded_bytes).await;
+                if matches!(state.phase, DownloadPhase::Downloaded {}) {
+                    let _ = phase3_tx.send(state.downloaded_bytes as u64).await;
                     break;
                 }
             }
@@ -145,7 +145,7 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
     let cancelled_state = model.state().await;
     tracing::info!("[PHASE4] ✓ Cancelled state confirmed: phase={:?}", cancelled_state.phase);
     assert!(
-        matches!(cancelled_state.phase, DownloadPhase::NotDownloaded),
+        matches!(cancelled_state.phase, DownloadPhase::NotDownloaded {}),
         "Expected model to be in NotDownloaded state after cancellation, got {:?}",
         cancelled_state.phase
     );
@@ -161,13 +161,13 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
         const TIMEOUT: Duration = Duration::from_secs(120);
         while let Ok(Some(Ok((id, state)))) = tokio::time::timeout(TIMEOUT, updates.next()).await {
             if id == model_identifier_clone {
-                pb_clone.set_position(state.downloaded_bytes);
+                pb_clone.set_position(state.downloaded_bytes as u64);
                 if state.downloaded_bytes >= half_threshold {
-                    let _ = phase5_tx.send(state.downloaded_bytes).await;
+                    let _ = phase5_tx.send(state.downloaded_bytes as u64).await;
                     break;
                 }
-                if matches!(state.phase, DownloadPhase::Downloaded) {
-                    let _ = phase5_tx.send(state.downloaded_bytes).await;
+                if matches!(state.phase, DownloadPhase::Downloaded {}) {
+                    let _ = phase5_tx.send(state.downloaded_bytes as u64).await;
                     break;
                 }
             }
@@ -212,16 +212,18 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
                 state.total_bytes
             );
             if id == model_identifier_clone {
-                pb_clone.set_position(state.downloaded_bytes);
+                pb_clone.set_position(state.downloaded_bytes as u64);
                 match state.phase {
-                    DownloadPhase::Downloaded => {
+                    DownloadPhase::Downloaded {} => {
                         tracing::info!("[PHASE7] ✓ Downloaded state reached!");
                         pb_clone.finish_with_message("✓ Download complete!");
                         let send_result = phase7_tx.send(()).await;
                         tracing::info!("[PHASE7] Channel send result: {:?}", send_result);
                         break;
                     },
-                    DownloadPhase::Error(ref err) => {
+                    DownloadPhase::Error {
+                        message: ref err,
+                    } => {
                         tracing::info!("[PHASE7] ✗ Error state reached: {}", err);
                         pb_clone.abandon_with_message(format!("✗ Error: {}", err));
                         break;
@@ -250,7 +252,7 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
     tracing::info!("[TEST] Final model state: {:?}, bytes: {}", final_state.phase, final_state.downloaded_bytes);
 
     assert!(
-        matches!(final_state.phase, DownloadPhase::Downloaded),
+        matches!(final_state.phase, DownloadPhase::Downloaded {}),
         "Expected Downloaded state, got {:?}",
         final_state.phase
     );

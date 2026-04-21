@@ -18,10 +18,10 @@ async fn test_storage_comprehensive_state_fresh_download_to_completion() -> Resu
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
     let state = model.state().await;
-    assert!(matches!(state.phase, DownloadPhase::NotDownloaded), "Fresh model should be NotDownloaded");
+    assert!(matches!(state.phase, DownloadPhase::NotDownloaded {}), "Fresh model should be NotDownloaded");
 
     // Set up progress bar
-    let pb = ProgressBar::new(state.total_bytes);
+    let pb = ProgressBar::new(state.total_bytes as u64);
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%, {bytes_per_sec}) - {msg}")
@@ -38,8 +38,8 @@ async fn test_storage_comprehensive_state_fresh_download_to_completion() -> Resu
     let monitor = tokio::spawn(async move {
         while let Ok(Some(Ok((id, state)))) = tokio::time::timeout(Duration::from_secs(120), updates.next()).await {
             if id == test_storage.model(0).identifier() {
-                pb_clone.set_position(state.downloaded_bytes);
-                if matches!(state.phase, DownloadPhase::Downloaded) {
+                pb_clone.set_position(state.downloaded_bytes as u64);
+                if matches!(state.phase, DownloadPhase::Downloaded {}) {
                     pb_clone.finish_with_message("✓ Downloaded");
                     let _ = done_tx.send(()).await;
                     break;
@@ -52,7 +52,7 @@ async fn test_storage_comprehensive_state_fresh_download_to_completion() -> Resu
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let state = model.state().await;
-    assert!(matches!(state.phase, DownloadPhase::Downloading), "Should be Downloading after start");
+    assert!(matches!(state.phase, DownloadPhase::Downloading {}), "Should be Downloading after start");
 
     // Wait for completion with timeout
     let completed = tokio::time::timeout(Duration::from_secs(600), done_rx.recv()).await;
@@ -61,7 +61,7 @@ async fn test_storage_comprehensive_state_fresh_download_to_completion() -> Resu
     assert!(completed.is_ok(), "Download did not complete within timeout");
 
     let state = model.state().await;
-    assert!(matches!(state.phase, DownloadPhase::Downloaded), "Should be Downloaded after completion");
+    assert!(matches!(state.phase, DownloadPhase::Downloaded {}), "Should be Downloaded after completion");
 
     Ok(())
 }
@@ -83,7 +83,7 @@ async fn test_storage_comprehensive_state_pause_and_resume() -> Result<(), Box<d
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
     let state = model.state().await;
-    assert!(matches!(state.phase, DownloadPhase::Paused), "Should be Paused after pause command");
+    assert!(matches!(state.phase, DownloadPhase::Paused {}), "Should be Paused after pause command");
     let paused_progress = state.progress();
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
 
@@ -91,7 +91,7 @@ async fn test_storage_comprehensive_state_pause_and_resume() -> Result<(), Box<d
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
     let state = model.state().await;
-    assert!(matches!(state.phase, DownloadPhase::Downloading), "Should be Downloading after resume");
+    assert!(matches!(state.phase, DownloadPhase::Downloading {}), "Should be Downloading after resume");
     assert!(state.progress() >= paused_progress, "Progress should not decrease after resume");
     Ok(())
 }
@@ -138,7 +138,7 @@ async fn test_storage_comprehensive_state_pause_quit_relaunch_resume() -> Result
         let model =
             storage_2.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found after relaunch")?;
         let state = model.state().await;
-        assert!(matches!(state.phase, DownloadPhase::Paused), "Model should remain Paused after relaunch");
+        assert!(matches!(state.phase, DownloadPhase::Paused {}), "Model should remain Paused after relaunch");
         assert!(state.progress() >= paused_progress, "Progress should not decrease after relaunch");
         let model_dir = test_storage_2.config.cache_model_path(&test_storage_2.model(0)).unwrap();
         if model_dir.exists() {
@@ -165,7 +165,7 @@ async fn test_storage_comprehensive_state_pause_quit_relaunch_resume() -> Result
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let model = storage_2.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found")?;
         let state = model.state().await;
-        assert!(matches!(state.phase, DownloadPhase::Downloading), "Should be Downloading after resume");
+        assert!(matches!(state.phase, DownloadPhase::Downloading {}), "Should be Downloading after resume");
     }
     Ok(())
 }
@@ -187,7 +187,7 @@ async fn test_storage_comprehensive_state_delete_from_various_states() -> Result
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
     let state = model.state().await;
-    assert!(matches!(state.phase, DownloadPhase::Paused), "Should be Paused");
+    assert!(matches!(state.phase, DownloadPhase::Paused {}), "Should be Paused");
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
 
     model.cancel().await?;
@@ -230,7 +230,10 @@ async fn test_storage_comprehensive_state_multiple_pause_resume_cycles() -> Resu
         let state = model.state().await;
         let paused_progress = state.progress();
         assert!(
-            matches!(state.phase, DownloadPhase::Paused | DownloadPhase::Downloaded | DownloadPhase::Downloading),
+            matches!(
+                state.phase,
+                DownloadPhase::Paused {} | DownloadPhase::Downloaded {} | DownloadPhase::Downloading {}
+            ),
             "Should be Paused/Downloaded/Downloading in cycle {} (got {:?})",
             cycle,
             state.phase
@@ -329,7 +332,7 @@ async fn test_storage_comprehensive_state_completed_files_preserved_on_relaunch(
         }
         let model = test_storage_2.storage.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found")?;
         let state = model.state().await;
-        assert!(matches!(state.phase, DownloadPhase::Paused), "Model should be Paused after relaunch");
+        assert!(matches!(state.phase, DownloadPhase::Paused {}), "Model should be Paused after relaunch");
     }
     Ok(())
 }
@@ -358,7 +361,7 @@ async fn test_storage_comprehensive_state_idempotent_pause() -> Result<(), Box<d
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
     let state = model.state().await;
-    assert!(matches!(state.phase, DownloadPhase::Paused), "Should remain Paused after second pause");
+    assert!(matches!(state.phase, DownloadPhase::Paused {}), "Should remain Paused after second pause");
     assert_eq!(state.progress(), progress_after_first_pause, "Progress should not change on idempotent pause");
     Ok(())
 }
@@ -392,7 +395,7 @@ async fn test_storage_comprehensive_state_crc_validation_on_init() -> Result<(),
     let model = test_storage.storage.get(&test_storage.model(0).identifier()).await;
     if let Some(m) = model {
         let state = m.state().await;
-        if !matches!(state.phase, DownloadPhase::Downloaded) {
+        if !matches!(state.phase, DownloadPhase::Downloaded {}) {
             let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
             model.pause().await?;
         }
@@ -413,7 +416,10 @@ async fn test_storage_comprehensive_state_crc_validation_on_init() -> Result<(),
         let model = test_storage_2.storage.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found")?;
         let state = model.state().await;
         assert!(
-            matches!(state.phase, DownloadPhase::Paused | DownloadPhase::Downloading | DownloadPhase::Downloaded),
+            matches!(
+                state.phase,
+                DownloadPhase::Paused {} | DownloadPhase::Downloading {} | DownloadPhase::Downloaded {}
+            ),
             "Model should be in a valid state after relaunch (Paused, Downloading, or Downloaded)"
         );
     }
@@ -451,7 +457,10 @@ async fn test_storage_comprehensive_state_progress_calculation_with_mixed_files(
             let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
             let state = model.state().await;
             let downloaded_bytes = state.downloaded_bytes;
-            assert!(downloaded_bytes >= expected_config_bytes, "Downloaded bytes should include completed config.json");
+            assert!(
+                downloaded_bytes >= expected_config_bytes as i64,
+                "Downloaded bytes should include completed config.json"
+            );
         }
     }
     Ok(())
