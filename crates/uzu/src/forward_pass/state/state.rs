@@ -731,22 +731,6 @@ impl<B: Backend> ForwardPassState<B> {
         }
     }
 
-    pub fn set_sampling_window(
-        &mut self,
-        sampling_start: usize,
-        sampling_length: usize,
-        is_prefilling: bool,
-    ) {
-        match &mut self.mode {
-            ForwardPassMode::LanguageModelGenerator(state) => {
-                state.sampling_start = sampling_start;
-                state.sampling_length = sampling_length;
-                state.is_prefilling = is_prefilling;
-            },
-            ForwardPassMode::Classifier(_) => unreachable!("sampling window is only available for language models"),
-        }
-    }
-
     pub fn cache_layers(&self) -> Option<&Rc<RefCell<CacheLayers<B>>>> {
         match &self.mode {
             ForwardPassMode::LanguageModelGenerator(state) => Some(&state.cache_layers),

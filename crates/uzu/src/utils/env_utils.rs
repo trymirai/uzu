@@ -2,9 +2,6 @@
 pub enum EnvVar {
     CaptureFirstDecode,
     CaptureFirstPrefill,
-    MlpBlocksByLayerJson,
-    MlpStaticBlocks,
-    MlpStaticKeepRatio,
 }
 
 impl EnvVar {
@@ -12,9 +9,6 @@ impl EnvVar {
         match self {
             EnvVar::CaptureFirstDecode => "UZU_CAPTURE_FIRST_DECODE",
             EnvVar::CaptureFirstPrefill => "UZU_CAPTURE_FIRST_PREFILL",
-            EnvVar::MlpBlocksByLayerJson => "UZU_MLP_BLOCKS_BY_LAYER_JSON",
-            EnvVar::MlpStaticBlocks => "UZU_MLP_STATIC_BLOCKS",
-            EnvVar::MlpStaticKeepRatio => "UZU_MLP_STATIC_KEEP_RATIO",
         }
     }
 

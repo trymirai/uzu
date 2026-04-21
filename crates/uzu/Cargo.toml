@@ -46,6 +46,7 @@ is_close.workspace = true
 serde_json5.workspace = true
 schemars.workspace = true
 mpsgraph.workspace = true
+tempfile.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true

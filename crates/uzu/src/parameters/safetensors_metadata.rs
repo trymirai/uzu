@@ -1,6 +1,12 @@
 // This code is based on the safetensors implementation: https://docs.rs/safetensors/latest/src/safetensors/tensor.rs.html
 
-use std::{collections::HashMap, fs::File, os::unix::fs::FileExt};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    io::Write,
+    os::unix::fs::FileExt,
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -23,6 +29,20 @@ pub enum HeaderLoadingError {
     JsonError(#[from] serde_json::Error),
 }
 
+#[derive(Debug, Error)]
+pub enum SafetensorsWriteError {
+    #[error("Failed to serialize safetensors header")]
+    JsonError(#[from] serde_json::Error),
+    #[error("Tensor `{name}` has {actual_size} bytes, expected {expected_size}")]
+    InvalidTensorSize {
+        name: String,
+        expected_size: usize,
+        actual_size: usize,
+    },
+    #[error("Failed to write safetensors file")]
+    Io(#[from] std::io::Error),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HashMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -37,6 +57,13 @@ pub struct TensorInfo {
     pub dtype: Dtype,
     pub shape: Vec<usize>,
     pub data_offsets: (usize, usize),
+}
+
+#[derive(Debug, Clone)]
+pub struct TensorData {
+    pub dtype: Dtype,
+    pub shape: Vec<usize>,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -110,6 +137,24 @@ impl From<DataType> for Dtype {
     }
 }
 
+impl Dtype {
+    pub const fn into_data_type(self) -> DataType {
+        match self {
+            Dtype::F16 => DataType::F16,
+            Dtype::BF16 => DataType::BF16,
+            Dtype::F32 => DataType::F32,
+            Dtype::I8 => DataType::I8,
+            Dtype::U8 => DataType::U8,
+            Dtype::I32 => DataType::I32,
+            Dtype::U32 => DataType::U32,
+            Dtype::I64 => DataType::I64,
+            Dtype::U64 => DataType::U64,
+            Dtype::BOOL => DataType::I8,
+            _ => panic!("Unsupported dtype: {self:?}"),
+        }
+    }
+}
+
 const MAX_HEADER_SIZE: usize = 100_000_000;
 
 pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoadingError> {
@@ -128,4 +173,46 @@ pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoading
     let metadata: HashMetadata =
         serde_json::from_str(string).map_err(|_| HeaderLoadingError::InvalidHeaderDeserialization)?;
     Ok((stop, metadata))
+}
+
+pub fn write_safetensors(
+    path: &Path,
+    metadata: Option<HashMap<String, String>>,
+    tensors: &BTreeMap<String, TensorData>,
+) -> Result<(), SafetensorsWriteError> {
+    let mut header = serde_json::Map::new();
+    if let Some(metadata) = metadata {
+        header.insert("__metadata__".to_string(), serde_json::to_value(metadata)?);
+    }
+
+    let mut data_offset = 0usize;
+    for (name, tensor) in tensors {
+        let expected_size = tensor.dtype.into_data_type().size_in_bytes() * tensor.shape.iter().product::<usize>();
+        if tensor.bytes.len() != expected_size {
+            return Err(SafetensorsWriteError::InvalidTensorSize {
+                name: name.clone(),
+                expected_size,
+                actual_size: tensor.bytes.len(),
+            });
+        }
+        let next_offset = data_offset + tensor.bytes.len();
+        header.insert(
+            name.clone(),
+            serde_json::to_value(TensorInfo {
+                dtype: tensor.dtype,
+                shape: tensor.shape.clone(),
+                data_offsets: (data_offset, next_offset),
+            })?,
+        );
+        data_offset = next_offset;
+    }
+
+    let header_bytes = serde_json::to_vec(&header)?;
+    let mut file = File::create(path)?;
+    file.write_all(&(header_bytes.len() as u64).to_le_bytes())?;
+    file.write_all(&header_bytes)?;
+    for tensor in tensors.values() {
+        file.write_all(&tensor.bytes)?;
+    }
+    Ok(())
 }
