@@ -1,25 +1,30 @@
-use std::path::PathBuf;
-
-use uzu::session::{
-    ChatSession,
-    config::{DecodingConfig, RunConfig},
-    types::{Input, Output},
+use uzu::{
+    engine::{Config as EngineConfig, Engine},
+    types::session::chat::{Config, Message, StreamConfig},
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = std::env::var("UZU_MODEL_PATH")
-        .map_err(|_| -> Box<dyn std::error::Error> { "UZU_MODEL_PATH environment variable is not set.".into() })?;
-    let model_path_buf = PathBuf::from(model_path);
-    let mut session = ChatSession::new(model_path_buf, DecodingConfig::default())?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = EngineConfig::default();
+    let engine = Engine::new(config).await?;
 
-    let input = Input::Text(String::from("Tell about London"));
-    let output = session.run(
-        input,
-        RunConfig::default().tokens_limit(128),
-        Some(|_: Output| {
-            return true;
-        }),
-    )?;
-    println!("{}", output.text.original);
+    let model = engine.model("alibaba:qwen3:0.6b").await?.ok_or("Model not found")?;
+
+    let downloader = engine.downloader(&model);
+    downloader.resume().await?;
+    if let Some(stream) = downloader.progress().await {
+        while let Some(update) = stream.next().await {
+            println!("Downloading: {}", update.progress());
+        }
+    }
+
+    let session = engine.chat(model, Config::default()).await?;
+    let outputs = session
+        .reply(vec![Message::user().with_text("Tell about London".to_string())], StreamConfig::default())
+        .await?;
+    for output in outputs {
+        println!("{}", output.message.text().unwrap_or_default());
+    }
+
     Ok(())
 }
