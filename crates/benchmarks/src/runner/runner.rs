@@ -3,8 +3,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use sysinfo::System;
-use uzu::{
+use backend_uzu::{
     VERSION,
     session::{
         ChatSession,
@@ -13,6 +12,7 @@ use uzu::{
         types::{Input, Output},
     },
 };
+use sysinfo::System;
 
 use crate::runner::{
     helpers::get_memory_usage,

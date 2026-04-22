@@ -1,10 +1,12 @@
 #![cfg(not(target_family = "wasm"))]
 
-use shoji::types::session::{
-    chat::{Config as ChatConfig, Message as ChatMessage, StreamConfig as ChatStreamConfig},
-    classification::Message as ClassificationMessage,
+use uzu::{
+    engine::{Config, Engine},
+    types::session::{
+        chat::{Config as ChatConfig, Message as ChatMessage, StreamConfig as ChatStreamConfig},
+        classification::Message as ClassificationMessage,
+    },
 };
-use uzu::engine::{Config, Engine};
 
 #[ignore]
 #[tokio::test]

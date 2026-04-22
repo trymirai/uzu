@@ -18,4 +18,4 @@ pub mod registry;
 #[cfg(not(target_family = "wasm"))]
 pub mod storage;
 
-pub use backend_uzu::*;
+pub use shoji::*;
