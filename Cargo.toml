@@ -140,6 +140,7 @@ pyo3 = { version = "0.28.2", features = [
     "extension-module",
     "abi3-py38",
     "experimental-async",
+    "multiple-pymethods",
 ] }
 wasm-bindgen = { version = "0.2.114", features = ["serde-serialize"] }
 serde-wasm-bindgen = "0.6.5"

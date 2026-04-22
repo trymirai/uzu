@@ -24,7 +24,7 @@ async fn test_engine_chat() {
         println!("{:?}, {}, {:?}, {:?}", registry_identifier, identifier, download_phase, model.specializations);
     }
 
-    let model = engine.model("alibaba:qwen3:0.6b").await.unwrap().unwrap();
+    let model = engine.model("alibaba:qwen3:0.6b".to_string()).await.unwrap().unwrap();
     if model.is_downloadable() {
         let downloader = engine.downloader(&model);
         downloader.resume().await.unwrap();
@@ -80,7 +80,7 @@ async fn test_engine_classification() {
 
     let config = Config::default();
     let engine = Engine::new(config).await.unwrap();
-    let model = engine.model("ModernBERT-Chat-Moderation").await.unwrap().unwrap();
+    let model = engine.model("ModernBERT-Chat-Moderation".to_string()).await.unwrap().unwrap();
     let session = engine.classification(model).await.unwrap();
 
     let messages = vec![ClassificationMessage::user("Hi!".to_string())];
@@ -95,7 +95,7 @@ async fn test_engine_text_to_speech() {
 
     let config = Config::default();
     let engine = Engine::new(config).await.unwrap();
-    let model = engine.model("s1-mini").await.unwrap().unwrap();
+    let model = engine.model("s1-mini".to_string()).await.unwrap().unwrap();
     let session = engine.text_to_speech(model).await.unwrap();
     let result = session.synthesize("London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.".to_string()).await.unwrap();
 

@@ -1,25 +1,31 @@
 use tokio_util::sync::CancellationToken as TokioCancellationToken;
 
+#[bindings::export(Class)]
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
     inner: TokioCancellationToken,
 }
 
+#[bindings::export(Implementation)]
 impl CancellationToken {
+    #[bindings::export(Constructor)]
     pub fn new() -> Self {
         Self {
             inner: TokioCancellationToken::new(),
         }
     }
 
+    #[bindings::export(Method)]
     pub fn cancel(&self) {
         self.inner.cancel();
     }
 
+    #[bindings::export(Method)]
     pub fn is_cancelled(&self) -> bool {
         self.inner.is_cancelled()
     }
 
+    #[bindings::export(Method)]
     pub fn child(&self) -> Self {
         Self {
             inner: self.inner.child_token(),

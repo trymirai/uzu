@@ -11,6 +11,7 @@ use std::{
 pub use error::Error;
 use futures::{Stream as FuturesStream, StreamExt};
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{
         Backend,
@@ -24,6 +25,7 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
+#[bindings::export(Class)]
 pub struct Stream {
     receiver: mpsc::UnboundedReceiver<Result<Vec<Output>, Error>>,
 }
@@ -45,7 +47,8 @@ impl FuturesStream for Stream {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[bindings::export(Enum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum State {
     Idle,
     Generation,
@@ -58,12 +61,14 @@ enum Instance {
     Message(message::Session),
 }
 
+#[bindings::export(Class)]
 pub struct Session {
     instance: Arc<Mutex<Instance>>,
     state: Arc<Mutex<State>>,
     messages: Arc<Mutex<Vec<Message>>>,
 }
 
+#[bindings::export(Implementation)]
 impl Session {
     pub async fn new(
         backend: &dyn Backend,
@@ -91,14 +96,17 @@ impl Session {
         })
     }
 
+    #[bindings::export(Method)]
     pub async fn state(&self) -> State {
         *self.state.lock().await
     }
 
+    #[bindings::export(Method)]
     pub async fn messages(&self) -> Vec<Message> {
         self.messages.lock().await.clone()
     }
 
+    #[bindings::export(Method)]
     pub async fn reset(&self) -> Result<(), Error> {
         {
             let mut state = self.state.lock().await;
@@ -126,6 +134,7 @@ impl Session {
         result
     }
 
+    #[bindings::export(Method)]
     pub async fn reply(
         &self,
         input: Vec<Message>,
@@ -142,6 +151,7 @@ impl Session {
         outputs.ok_or(Error::NoResponse)
     }
 
+    #[bindings::export(Method)]
     pub fn reply_with_stream(
         &self,
         input: Vec<Message>,

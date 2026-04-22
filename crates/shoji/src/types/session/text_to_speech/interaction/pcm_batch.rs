@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Struct, name = "TextToSpeechPcmBatch")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PcmBatch {
     pub samples: Vec<f64>,

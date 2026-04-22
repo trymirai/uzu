@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::model::{Accessibility, Entity, EntityType, Quantization, Reference, Specialization};
 
-#[bindings::export(Struct, name = "Model")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Model {

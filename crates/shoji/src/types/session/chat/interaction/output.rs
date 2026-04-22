@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::session::chat::{FinishReason, Message, Stats};
 
-#[bindings::export(Struct, name = "ChatOutput")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Output {
     pub message: Message,

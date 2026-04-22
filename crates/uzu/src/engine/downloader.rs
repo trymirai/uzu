@@ -10,12 +10,13 @@ use crate::{
     },
 };
 
-#[bindings::export(Class, name = "Downloader")]
+#[bindings::export(Class)]
 pub struct Downloader {
     identifier: String,
     storage: SharedAccess<Storage>,
 }
 
+#[bindings::export(Implementation)]
 impl Downloader {
     pub(crate) fn new(
         identifier: String,
@@ -27,6 +28,7 @@ impl Downloader {
         }
     }
 
+    #[bindings::export(Method)]
     pub async fn state(&self) -> Option<DownloadState> {
         self.storage.lock().await.state(&self.identifier).await
     }
@@ -51,14 +53,17 @@ impl Downloader {
         result
     }
 
+    #[bindings::export(Method)]
     pub async fn pause(&self) -> Result<(), Error> {
         Ok(self.storage.lock().await.pause(&self.identifier).await?)
     }
 
+    #[bindings::export(Method)]
     pub async fn delete(&self) -> Result<(), Error> {
         Ok(self.storage.lock().await.delete(&self.identifier).await?)
     }
 
+    #[bindings::export(Method)]
     pub async fn progress(&self) -> Option<Stream> {
         let identifier = self.identifier.clone();
         let Some(state) = self.state().await else {
@@ -72,11 +77,13 @@ impl Downloader {
     }
 }
 
+#[bindings::export(Class)]
 pub struct Stream {
     identifier: String,
     stream: SharedAccess<Option<BroadcastStream<(String, DownloadState)>>>,
 }
 
+#[bindings::export(Implementation)]
 impl Stream {
     pub(crate) fn new(
         identifier: String,
@@ -88,6 +95,7 @@ impl Stream {
         }
     }
 
+    #[bindings::export(Method)]
     pub async fn next(&self) -> Option<Update> {
         let mut stream_guard = self.stream.lock().await;
         let stream = stream_guard.as_mut()?;
@@ -117,7 +125,7 @@ impl Stream {
     }
 }
 
-#[bindings::export(Struct, name = "DownloaderUpdate")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Update {
     pub bytes_total: i64,

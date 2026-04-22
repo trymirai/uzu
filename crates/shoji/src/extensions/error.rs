@@ -1,4 +1,4 @@
-#[bindings::export(Error, name = "ExtensionsError")]
+#[bindings::export(Error)]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

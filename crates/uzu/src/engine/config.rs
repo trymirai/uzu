@@ -2,7 +2,7 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Struct, name = "EngineConfig")]
+#[bindings::export(Class)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Config {
@@ -17,6 +17,14 @@ pub struct Config {
     pub openrouter_api_key: Option<String>,
     pub allow_ollama_usage: bool,
     pub allow_lmstudio_usage: bool,
+}
+
+#[bindings::export(Implementation)]
+impl Config {
+    #[bindings::export(Constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 impl Default for Config {
@@ -37,92 +45,126 @@ impl Default for Config {
     }
 }
 
+#[bindings::export(Implementation)]
 impl Config {
+    #[bindings::export(Method)]
     pub fn with_mirai_api_key(
-        mut self,
+        &self,
         mirai_api_key: String,
     ) -> Self {
-        self.mirai_api_key = Some(mirai_api_key);
-        self
+        Self {
+            mirai_api_key: Some(mirai_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_lalamo_path(
-        mut self,
+        &self,
         lalamo_path: String,
     ) -> Self {
-        self.lalamo_path = Some(lalamo_path);
-        self
+        Self {
+            lalamo_path: Some(lalamo_path),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_huggingface_api_key(
-        mut self,
+        &self,
         huggingface_api_key: String,
     ) -> Self {
-        self.huggingface_api_key = Some(huggingface_api_key);
-        self
+        Self {
+            huggingface_api_key: Some(huggingface_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_openai_api_key(
-        mut self,
+        &self,
         openai_api_key: String,
     ) -> Self {
-        self.openai_api_key = Some(openai_api_key);
-        self
+        Self {
+            openai_api_key: Some(openai_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_anthropic_api_key(
-        mut self,
+        &self,
         anthropic_api_key: String,
     ) -> Self {
-        self.anthropic_api_key = Some(anthropic_api_key);
-        self
+        Self {
+            anthropic_api_key: Some(anthropic_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_gemini_api_key(
-        mut self,
+        &self,
         gemini_api_key: String,
     ) -> Self {
-        self.gemini_api_key = Some(gemini_api_key);
-        self
+        Self {
+            gemini_api_key: Some(gemini_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_xai_api_key(
-        mut self,
+        &self,
         xai_api_key: String,
     ) -> Self {
-        self.xai_api_key = Some(xai_api_key);
-        self
+        Self {
+            xai_api_key: Some(xai_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_baseten_api_key(
-        mut self,
+        &self,
         baseten_api_key: String,
     ) -> Self {
-        self.baseten_api_key = Some(baseten_api_key);
-        self
+        Self {
+            baseten_api_key: Some(baseten_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_openrouter_api_key(
-        mut self,
+        &self,
         openrouter_api_key: String,
     ) -> Self {
-        self.openrouter_api_key = Some(openrouter_api_key);
-        self
+        Self {
+            openrouter_api_key: Some(openrouter_api_key),
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_allow_ollama_usage(
-        mut self,
+        &self,
         allow_ollama_usage: bool,
     ) -> Self {
-        self.allow_ollama_usage = allow_ollama_usage;
-        self
+        Self {
+            allow_ollama_usage,
+            ..self.clone()
+        }
     }
 
+    #[bindings::export(Method)]
     pub fn with_allow_lmstudio_usage(
-        mut self,
+        &self,
         allow_lmstudio_usage: bool,
     ) -> Self {
-        self.allow_lmstudio_usage = allow_lmstudio_usage;
-        self
+        Self {
+            allow_lmstudio_usage,
+            ..self.clone()
+        }
     }
 }

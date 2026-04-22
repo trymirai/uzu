@@ -1,22 +1,35 @@
+mod napi;
+mod pyo3;
+mod uniffi;
+mod wasm;
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, LitStr, Token,
+    Attribute, Ident, ImplItem, ItemImpl, Token,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
 
-enum BindingKind {
+pub(crate) enum BindingKind {
     Enum,
     Struct,
     Class,
-    Impl,
+    Implementation,
+    Method,
+    Constructor,
+    Factory,
     Error,
+}
+
+pub(crate) enum MethodFlavor {
+    Plain,
+    Constructor,
+    Factory,
 }
 
 struct ExportArguments {
     kind: BindingKind,
-    name: Option<LitStr>,
 }
 
 impl Parse for ExportArguments {
@@ -26,61 +39,21 @@ impl Parse for ExportArguments {
             "Enum" => BindingKind::Enum,
             "Struct" => BindingKind::Struct,
             "Class" => BindingKind::Class,
-            "Impl" => BindingKind::Impl,
+            "Implementation" => BindingKind::Implementation,
+            "Method" => BindingKind::Method,
+            "Constructor" => BindingKind::Constructor,
+            "Factory" => BindingKind::Factory,
             "Error" => BindingKind::Error,
             other => {
                 return Err(syn::Error::new(identifier.span(), format!("Unknown binding kind: {other}")));
             },
         };
-
-        let name = if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-            let key: Ident = input.parse()?;
-            if key != "name" {
-                return Err(syn::Error::new(key.span(), format!("Unknown parameter: {key}, expected 'name'")));
-            }
-            if matches!(kind, BindingKind::Impl) {
-                return Err(syn::Error::new(key.span(), "'name' parameter is not supported for Impl"));
-            }
-            input.parse::<Token![=]>()?;
-            Some(input.parse::<LitStr>()?)
-        } else {
-            None
-        };
-
+        if input.peek(Token![,]) {
+            return Err(input.error("bindings::export accepts a single kind argument"));
+        }
         Ok(ExportArguments {
             kind,
-            name,
         })
-    }
-}
-
-fn uniffi_name_attribute(name: &Option<LitStr>) -> proc_macro2::TokenStream {
-    match name {
-        Some(name) => quote! {
-            #[cfg_attr(feature = "bindings-uniffi", uniffi(name = #name))]
-        },
-        None => quote! {},
-    }
-}
-
-fn napi_attribute(
-    name: &Option<LitStr>,
-    object: bool,
-) -> proc_macro2::TokenStream {
-    match (name, object) {
-        (Some(name), true) => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object, js_name = #name))]
-        },
-        (Some(name), false) => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(js_name = #name))]
-        },
-        (None, true) => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object))]
-        },
-        (None, false) => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
-        },
     }
 }
 
@@ -91,51 +64,53 @@ pub fn export(
 ) -> TokenStream {
     let ExportArguments {
         kind,
-        name,
     } = parse_macro_input!(arguments as ExportArguments);
-    let item = parse_macro_input!(item as syn::Item);
-    let uniffi_name = uniffi_name_attribute(&name);
 
-    let attributes = match kind {
-        BindingKind::Enum => {
-            let napi = napi_attribute(&name, false);
+    match kind {
+        BindingKind::Enum | BindingKind::Struct | BindingKind::Class => {
+            let item = parse_macro_input!(item as syn::Item);
+            let napi = napi::attributes(&kind);
+            let uniffi = uniffi::attributes(&kind);
+            let pyo3 = pyo3::attributes(&kind);
+            let wasm = wasm::attributes(&kind);
             quote! {
-                #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Enum))]
                 #napi
-                #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass(eq, from_py_object))]
-                #[cfg_attr(feature = "bindings-wasm", derive(tsify::Tsify))]
-                #[cfg_attr(feature = "bindings-wasm", tsify(into_wasm_abi, from_wasm_abi))]
-                #uniffi_name
+                #uniffi
+                #pyo3
+                #wasm
+                #item
             }
+            .into()
         },
-        BindingKind::Struct => {
-            let napi = napi_attribute(&name, true);
+        BindingKind::Implementation => {
+            let mut item_implementation = match syn::parse::<ItemImpl>(item) {
+                Ok(item_implementation) => item_implementation,
+                Err(error) => return error.to_compile_error().into(),
+            };
+            for item in &mut item_implementation.items {
+                if let ImplItem::Fn(method) = item {
+                    rewrite_method_attributes(&mut method.attrs);
+                }
+            }
+            let napi = napi::attributes(&kind);
+            let uniffi = uniffi::attributes(&kind);
+            let pyo3 = pyo3::attributes(&kind);
+            let wasm = wasm::attributes(&kind);
             quote! {
-                #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Record))]
                 #napi
-                #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass(get_all, from_py_object))]
-                #[cfg_attr(feature = "bindings-wasm", derive(tsify::Tsify))]
-                #[cfg_attr(feature = "bindings-wasm", tsify(into_wasm_abi, from_wasm_abi))]
-                #uniffi_name
+                #uniffi
+                #pyo3
+                #wasm
+                #item_implementation
             }
+            .into()
         },
-        BindingKind::Class => {
-            let napi = napi_attribute(&name, false);
-            quote! {
-                #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Object))]
-                #napi
-                #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass)]
-                #[cfg_attr(feature = "bindings-wasm", wasm_bindgen::prelude::wasm_bindgen)]
-                #uniffi_name
-            }
-        },
-        BindingKind::Impl => quote! {
-            #[cfg_attr(feature = "bindings-uniffi", uniffi::export)]
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
-            #[cfg_attr(feature = "bindings-pyo3", pyo3::pymethods)]
-            #[cfg_attr(feature = "bindings-wasm", wasm_bindgen::prelude::wasm_bindgen)]
+        BindingKind::Method | BindingKind::Constructor | BindingKind::Factory => {
+            let tokens = proc_macro2::TokenStream::from(item);
+            quote! { #tokens }.into()
         },
         BindingKind::Error => {
+            let item = parse_macro_input!(item as syn::Item);
             let type_name = match &item {
                 syn::Item::Enum(item_enum) => &item_enum.ident,
                 _ => {
@@ -144,40 +119,64 @@ pub fn export(
                         .into();
                 },
             };
-
-            return quote! {
-                #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Error))]
-                #uniffi_name
+            let uniffi = uniffi::error_attribute();
+            let napi_impl = napi::error_implementation(type_name);
+            let pyo3_impl = pyo3::error_implementation(type_name);
+            let wasm_impl = wasm::error_implementation(type_name);
+            quote! {
+                #uniffi
                 #item
-
-                #[cfg(feature = "bindings-napi")]
-                impl From<#type_name> for napi::Error {
-                    fn from(error: #type_name) -> Self {
-                        napi::Error::from_reason(error.to_string())
-                    }
-                }
-
-                #[cfg(feature = "bindings-pyo3")]
-                impl From<#type_name> for pyo3::PyErr {
-                    fn from(error: #type_name) -> Self {
-                        pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
-                    }
-                }
-
-                #[cfg(feature = "bindings-wasm")]
-                impl From<#type_name> for wasm_bindgen::JsValue {
-                    fn from(error: #type_name) -> Self {
-                        wasm_bindgen::JsValue::from_str(&error.to_string())
-                    }
-                }
+                #napi_impl
+                #pyo3_impl
+                #wasm_impl
             }
-            .into();
+            .into()
         },
-    };
-
-    quote! {
-        #attributes
-        #item
     }
-    .into()
+}
+
+fn rewrite_method_attributes(attributes: &mut Vec<Attribute>) {
+    let mut rewritten_attributes: Vec<Attribute> = Vec::with_capacity(attributes.len());
+    for attribute in attributes.drain(..) {
+        match method_flavor(&attribute) {
+            Some(flavor) => {
+                rewritten_attributes.push(napi::method_attribute(&flavor));
+                if let Some(attribute) = uniffi::method_attribute(&flavor) {
+                    rewritten_attributes.push(attribute);
+                }
+                if let Some(attribute) = pyo3::method_attribute(&flavor) {
+                    rewritten_attributes.push(attribute);
+                }
+            },
+            None => rewritten_attributes.push(attribute),
+        }
+    }
+    *attributes = rewritten_attributes;
+}
+
+fn method_flavor(attribute: &Attribute) -> Option<MethodFlavor> {
+    if !is_exportable_attribute(attribute) {
+        return None;
+    }
+    let arguments: ExportArguments = attribute.parse_args().ok()?;
+    match arguments.kind {
+        BindingKind::Method => Some(MethodFlavor::Plain),
+        BindingKind::Constructor => Some(MethodFlavor::Constructor),
+        BindingKind::Factory => Some(MethodFlavor::Factory),
+        _ => None,
+    }
+}
+
+fn is_exportable_attribute(attribute: &Attribute) -> bool {
+    let path = attribute.path();
+    let Some(last) = path.segments.last() else {
+        return false;
+    };
+    if last.ident != "export" {
+        return false;
+    }
+    match path.segments.first() {
+        Some(first) if first.ident == "bindings" || first.ident == "export" => true,
+        _ => false,
+    }
 }

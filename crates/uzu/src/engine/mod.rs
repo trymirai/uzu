@@ -36,7 +36,7 @@ use crate::{
     },
 };
 
-#[bindings::export(Class, name = "Engine")]
+#[bindings::export(Class)]
 pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
@@ -133,6 +133,14 @@ impl Engine {
     }
 }
 
+#[bindings::export(Implementation)]
+impl Engine {
+    #[bindings::export(Factory)]
+    pub async fn create(config: &Config) -> Result<Self, Error> {
+        Self::new(config.clone()).await
+    }
+}
+
 impl Engine {
     pub async fn add_registry(
         &self,
@@ -169,41 +177,47 @@ impl Engine {
     }
 }
 
+#[bindings::export(Implementation)]
 impl Engine {
+    #[bindings::export(Method)]
     pub async fn models(&self) -> Result<Vec<Model>, Error> {
         self.registry.lock().await.models().await.map_err(Error::from)
     }
 
+    #[bindings::export(Method)]
     pub async fn model(
         &self,
-        identifier: &str,
+        identifier: String,
     ) -> Result<Option<Model>, Error> {
-        if let Some(model) = self.model_by_identifier(identifier).await? {
+        if let Some(model) = self.model_by_identifier(identifier.clone()).await? {
             return Ok(Some(model));
         }
-        if let Some(model) = self.model_by_repo_id(identifier).await? {
+        if let Some(model) = self.model_by_repo_id(identifier.clone()).await? {
             return Ok(Some(model));
         }
-        self.model_by_path(identifier).await
+        self.model_by_path(identifier.clone()).await
     }
 
+    #[bindings::export(Method)]
     pub async fn model_by_identifier(
         &self,
-        identifier: &str,
+        identifier: String,
     ) -> Result<Option<Model>, Error> {
-        self.registry.lock().await.model_by_identifier(identifier).await.map_err(Error::from)
+        self.registry.lock().await.model_by_identifier(&identifier).await.map_err(Error::from)
     }
 
+    #[bindings::export(Method)]
     pub async fn model_by_repo_id(
         &self,
-        repo_id: &str,
+        repo_id: String,
     ) -> Result<Option<Model>, Error> {
-        self.registry.lock().await.model_by_repo_id(repo_id).await.map_err(Error::from)
+        self.registry.lock().await.model_by_repo_id(&repo_id).await.map_err(Error::from)
     }
 
+    #[bindings::export(Method)]
     pub async fn model_by_path(
         &self,
-        path: &str,
+        path: String,
     ) -> Result<Option<Model>, Error> {
         let models = self.models().await?;
         for model in models {

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::storage::types::DownloadPhase;
 
-#[bindings::export(Struct, name = "DownloadState")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DownloadState {
     pub total_bytes: i64,

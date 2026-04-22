@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Enum, name = "SamplingMethod")]
+#[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SamplingMethod {
     Greedy {},

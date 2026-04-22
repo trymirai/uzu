@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::model::{File, Repository};
 
-#[bindings::export(Enum, name = "ModelReference")]
+#[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Reference {

@@ -10,7 +10,7 @@ use crate::types::{
     session::chat::{ReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
 };
 
-#[bindings::export(Enum, name = "ChatContentBlockType")]
+#[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContentBlockType {
     Identity,
@@ -103,7 +103,7 @@ impl<'d> Deserialize<'d> for ContentBlockType {
     }
 }
 
-#[bindings::export(Enum, name = "ChatContentBlock")]
+#[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {

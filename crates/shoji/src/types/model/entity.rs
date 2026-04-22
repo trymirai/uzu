@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::model::Image;
 
-#[bindings::export(Enum, name = "EntityType")]
+#[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
@@ -13,7 +13,7 @@ pub enum EntityType {
     Variant,
 }
 
-#[bindings::export(Struct, name = "Entity")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Entity {

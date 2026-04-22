@@ -2,7 +2,7 @@ use nagare::{
     chat::Error as ChatError, classification::Error as ClassificationError, text_to_speech::Error as TextToSpeechError,
 };
 
-#[bindings::export(Error, name = "EngineError")]
+#[bindings::export(Error)]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

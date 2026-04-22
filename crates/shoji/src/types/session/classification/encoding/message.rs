@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::session::classification::Role;
 
-#[bindings::export(Struct, name = "ClassificationMessage")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Message {

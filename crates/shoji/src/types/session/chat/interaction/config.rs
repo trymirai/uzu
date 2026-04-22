@@ -5,7 +5,7 @@ use crate::types::{
     session::chat::{ContextLength, SpeculationPreset},
 };
 
-#[bindings::export(Struct, name = "ChatConfig")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub context_length: ContextLength,

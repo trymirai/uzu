@@ -79,7 +79,7 @@ impl App {
                 } else {
                     // Model not in local HashMap; fetch from storage and add it
                     drop(models_guard);
-                    if let Some(fresh_model) = engine.model_by_identifier(&model_id).await.unwrap() {
+                    if let Some(fresh_model) = engine.model_by_identifier(model_id.clone()).await.unwrap() {
                         let state = engine.downloader(&fresh_model).state().await.unwrap();
                         let mut models_guard = models.lock().await;
                         models_guard.insert(

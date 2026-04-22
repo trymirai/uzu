@@ -1,4 +1,4 @@
-#[bindings::export(Error, name = "ClassificationSessionError")]
+#[bindings::export(Error)]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

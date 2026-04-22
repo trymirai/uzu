@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::session::classification::Stats;
 
-#[bindings::export(Struct, name = "ClassificationOutput")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Output {
     pub logits: Vec<f64>,

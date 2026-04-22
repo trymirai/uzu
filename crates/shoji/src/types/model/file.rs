@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::model::{Hash, HashMethod};
 
-#[bindings::export(Struct, name = "File")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct File {

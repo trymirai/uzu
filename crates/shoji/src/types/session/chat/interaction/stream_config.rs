@@ -5,7 +5,7 @@ use crate::types::{
     session::chat::Grammar,
 };
 
-#[bindings::export(Struct, name = "ChatStreamConfig")]
+#[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StreamConfig {
     pub token_limit: Option<u32>,

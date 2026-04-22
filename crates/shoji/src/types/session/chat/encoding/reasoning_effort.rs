@@ -5,7 +5,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-#[bindings::export(Enum, name = "ChatReasoningEffort")]
+#[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReasoningEffort {
     Disabled,
