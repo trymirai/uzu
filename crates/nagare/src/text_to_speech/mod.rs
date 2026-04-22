@@ -21,11 +21,16 @@ use tokio::sync::{Mutex, mpsc};
 #[bindings::export(Class)]
 pub struct TextToSpeechSessionStream {
     receiver: Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>,
+    cancel_token: CancellationToken,
 }
 
 impl TextToSpeechSessionStream {
     pub async fn next(&self) -> Option<Result<PcmBatch, TextToSpeechSessionError>> {
         self.receiver.lock().await.recv().await
+    }
+
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
     }
 }
 
@@ -90,7 +95,7 @@ impl TextToSpeechSession {
 
 #[bindings::export(Implementation)]
 impl TextToSpeechSession {
-    #[bindings::export(Method)]
+    #[bindings::export(Getter)]
     pub async fn state(&self) -> TextToSpeechSessionState {
         *self.state.lock().await
     }
@@ -100,7 +105,7 @@ impl TextToSpeechSession {
         &self,
         input: String,
     ) -> Result<PcmBatch, TextToSpeechSessionError> {
-        let (stream, _) = self.synthesize_stream(input);
+        let stream = self.synthesize_stream(input);
         let mut batches: Vec<PcmBatch> = Vec::new();
         while let Some(event) = stream.next().await {
             match event {
@@ -119,7 +124,7 @@ impl TextToSpeechSession {
     fn synthesize_stream(
         &self,
         input: String,
-    ) -> (TextToSpeechSessionStream, CancellationToken) {
+    ) -> TextToSpeechSessionStream {
         let cancel_token_to_return = CancellationToken::new();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<PcmBatch, TextToSpeechSessionError>>();
 
@@ -162,11 +167,9 @@ impl TextToSpeechSession {
             *state.lock().await = TextToSpeechSessionState::Idle;
         });
 
-        (
-            TextToSpeechSessionStream {
-                receiver: Mutex::new(receiver),
-            },
-            cancel_token_to_return,
-        )
+        TextToSpeechSessionStream {
+            receiver: Mutex::new(receiver),
+            cancel_token: cancel_token_to_return,
+        }
     }
 }

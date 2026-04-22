@@ -228,9 +228,19 @@ impl Engine {
     }
 }
 
-#[bindings::export(Implementation)]
 impl Engine {
-    #[bindings::export(Method)]
+    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
+        self.storage.lock().await.subscribe()
+    }
+
+    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
+        let models = self.registry.lock().await.models().await?;
+        self.storage.lock().await.refresh(models).await?;
+        Ok(())
+    }
+}
+
+impl Engine {
     pub fn downloader(
         &self,
         model: &Model,
@@ -238,11 +248,6 @@ impl Engine {
         Downloader::new(model.identifier(), self.storage.clone())
     }
 
-    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
-        self.storage.lock().await.subscribe()
-    }
-
-    #[bindings::export(Method)]
     pub async fn model_path(
         &self,
         model: &Model,
@@ -270,12 +275,6 @@ impl Engine {
             None
         };
         path
-    }
-
-    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
-        let models = self.registry.lock().await.models().await?;
-        self.storage.lock().await.refresh(models).await?;
-        Ok(())
     }
 }
 

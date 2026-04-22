@@ -28,11 +28,16 @@ use tokio::sync::{Mutex, mpsc};
 #[bindings::export(Class)]
 pub struct ChatSessionStream {
     receiver: Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>,
+    cancel_token: CancellationToken,
 }
 
 impl ChatSessionStream {
     pub async fn next(&self) -> Option<Result<Vec<ChatReply>, ChatSessionError>> {
         self.receiver.lock().await.recv().await
+    }
+
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
     }
 }
 
@@ -98,12 +103,12 @@ impl ChatSession {
 
 #[bindings::export(Implementation)]
 impl ChatSession {
-    #[bindings::export(Method)]
+    #[bindings::export(Getter)]
     pub async fn state(&self) -> ChatSessionState {
         *self.state.lock().await
     }
 
-    #[bindings::export(Method)]
+    #[bindings::export(Getter)]
     pub async fn messages(&self) -> Vec<ChatMessage> {
         self.messages.lock().await.clone()
     }
@@ -142,7 +147,7 @@ impl ChatSession {
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
     ) -> Result<Vec<ChatReply>, ChatSessionError> {
-        let (stream, _) = self.reply_with_stream(input, config);
+        let stream = self.reply_with_stream(input, config);
         let mut outputs: Option<Vec<ChatReply>> = None;
         while let Some(progress) = stream.next().await {
             match progress {
@@ -158,7 +163,7 @@ impl ChatSession {
         &self,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
-    ) -> (ChatSessionStream, CancellationToken) {
+    ) -> ChatSessionStream {
         let cancel_token_to_return = CancellationToken::new();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
 
@@ -237,12 +242,10 @@ impl ChatSession {
             }
         });
 
-        (
-            ChatSessionStream {
-                receiver: Mutex::new(receiver),
-            },
-            cancel_token_to_return,
-        )
+        ChatSessionStream {
+            receiver: Mutex::new(receiver),
+            cancel_token: cancel_token_to_return,
+        }
     }
 }
 

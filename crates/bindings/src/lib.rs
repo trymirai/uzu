@@ -20,6 +20,8 @@ pub(crate) enum BindingKind {
     Method,
     Constructor,
     Factory,
+    Getter,
+    Setter,
     Error,
 }
 
@@ -27,6 +29,8 @@ pub(crate) enum MethodFlavor {
     Plain,
     Constructor,
     Factory,
+    Getter,
+    Setter,
 }
 
 struct ExportArguments {
@@ -45,6 +49,8 @@ impl Parse for ExportArguments {
             "Method" => BindingKind::Method,
             "Constructor" => BindingKind::Constructor,
             "Factory" => BindingKind::Factory,
+            "Getter" => BindingKind::Getter,
+            "Setter" => BindingKind::Setter,
             "Error" => BindingKind::Error,
             other => {
                 return Err(syn::Error::new(identifier.span(), format!("Unknown binding kind: {other}")));
@@ -122,7 +128,11 @@ pub fn export(
             }
             .into()
         },
-        BindingKind::Method | BindingKind::Constructor | BindingKind::Factory => {
+        BindingKind::Method
+        | BindingKind::Constructor
+        | BindingKind::Factory
+        | BindingKind::Getter
+        | BindingKind::Setter => {
             let tokens = proc_macro2::TokenStream::from(item);
             quote! { #tokens }.into()
         },
@@ -180,6 +190,8 @@ fn method_flavor(attribute: &Attribute) -> Option<MethodFlavor> {
         BindingKind::Method => Some(MethodFlavor::Plain),
         BindingKind::Constructor => Some(MethodFlavor::Constructor),
         BindingKind::Factory => Some(MethodFlavor::Factory),
+        BindingKind::Getter => Some(MethodFlavor::Getter),
+        BindingKind::Setter => Some(MethodFlavor::Setter),
         _ => None,
     }
 }

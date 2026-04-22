@@ -16,7 +16,6 @@ pub struct Downloader {
     storage: SharedAccess<Storage>,
 }
 
-#[bindings::export(Implementation)]
 impl Downloader {
     pub(crate) fn new(
         identifier: String,
@@ -27,8 +26,11 @@ impl Downloader {
             storage,
         }
     }
+}
 
-    #[bindings::export(Method)]
+#[bindings::export(Implementation)]
+impl Downloader {
+    #[bindings::export(Getter)]
     pub async fn state(&self) -> Option<DownloadState> {
         self.storage.lock().await.state(&self.identifier).await
     }
@@ -63,8 +65,9 @@ impl Downloader {
     pub async fn delete(&self) -> Result<(), EngineError> {
         Ok(self.storage.lock().await.delete(&self.identifier).await?)
     }
+}
 
-    #[bindings::export(Method)]
+impl Downloader {
     pub async fn progress(&self) -> Option<DownloaderStream> {
         let identifier = self.identifier.clone();
         let Some(state) = self.state().await else {
@@ -84,7 +87,6 @@ pub struct DownloaderStream {
     stream: SharedAccess<Option<BroadcastStream<(String, DownloadState)>>>,
 }
 
-#[bindings::export(Implementation)]
 impl DownloaderStream {
     pub(crate) fn new(
         identifier: String,
@@ -95,7 +97,10 @@ impl DownloaderStream {
             stream: SharedAccess::new(Some(stream)),
         }
     }
+}
 
+#[bindings::export(Implementation)]
+impl DownloaderStream {
     #[bindings::export(Method)]
     pub async fn next(&self) -> Option<DownloaderStreamUpdate> {
         let mut stream_guard = self.stream.lock().await;

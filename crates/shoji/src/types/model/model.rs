@@ -16,23 +16,29 @@ pub struct Model {
     pub accessibility: ModelAccessibility,
 }
 
+#[bindings::export(Implementation)]
 impl Model {
+    #[bindings::export(Getter)]
     pub fn identifier(&self) -> String {
         self.identifier.clone()
     }
 
+    #[bindings::export(Getter)]
     pub fn cache_identifier(&self) -> String {
         self.identifier.replace(":", "-").replace("/", "-")
     }
 
+    #[bindings::export(Getter)]
     pub fn is_local(&self) -> bool {
         matches!(self.accessibility, ModelAccessibility::Local { .. })
     }
 
+    #[bindings::export(Getter)]
     pub fn is_remote(&self) -> bool {
         matches!(self.accessibility, ModelAccessibility::Remote { .. })
     }
 
+    #[bindings::export(Getter)]
     pub fn is_downloadable(&self) -> bool {
         matches!(
             self.accessibility,
@@ -42,6 +48,7 @@ impl Model {
         )
     }
 
+    #[bindings::export(Getter)]
     pub fn repo_ids(&self) -> Vec<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -82,6 +89,7 @@ impl Model {
         }
     }
 
+    #[bindings::export(Getter)]
     pub fn local_external_path(&self) -> Option<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -104,6 +112,7 @@ impl Model {
         }
     }
 
+    #[bindings::export(Getter)]
     pub fn reference_name(&self) -> Option<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -116,6 +125,7 @@ impl Model {
         }
     }
 
+    #[bindings::export(Getter)]
     pub fn checkpoint_version(&self) -> Option<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -140,23 +150,29 @@ impl Model {
     }
 }
 
+#[bindings::export(Implementation)]
 impl Model {
+    #[bindings::export(Getter)]
     pub fn registry_entity(&self) -> Option<ModelEntity> {
         self.entity(ModelEntityType::Registry)
     }
 
+    #[bindings::export(Getter)]
     pub fn backend_entity(&self) -> Option<ModelEntity> {
         self.entity(ModelEntityType::Backend)
     }
 
+    #[bindings::export(Getter)]
     pub fn vendor_entity(&self) -> Option<ModelEntity> {
         self.entity(ModelEntityType::Vendor)
     }
 
+    #[bindings::export(Getter)]
     pub fn family_entity(&self) -> Option<ModelEntity> {
         self.entity(ModelEntityType::Family)
     }
 
+    #[bindings::export(Getter)]
     pub fn variant_entity(&self) -> Option<ModelEntity> {
         self.entity(ModelEntityType::Variant)
     }

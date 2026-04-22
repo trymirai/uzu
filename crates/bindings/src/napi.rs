@@ -32,6 +32,12 @@ pub fn method_attribute(flavor: &MethodFlavor) -> Attribute {
         MethodFlavor::Factory => parse_quote! {
             #[cfg_attr(feature = "bindings-napi", napi(factory))]
         },
+        MethodFlavor::Getter => parse_quote! {
+            #[cfg_attr(feature = "bindings-napi", napi(getter))]
+        },
+        MethodFlavor::Setter => parse_quote! {
+            #[cfg_attr(feature = "bindings-napi", napi(setter))]
+        },
     }
 }
 

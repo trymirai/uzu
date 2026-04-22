@@ -33,7 +33,6 @@ pub struct ClassificationSession {
     state: Arc<Mutex<ClassificationSessionState>>,
 }
 
-#[bindings::export(Implementation)]
 impl ClassificationSession {
     pub async fn new(
         backend: &dyn Backend,
@@ -62,8 +61,11 @@ impl ClassificationSession {
             state: Arc::new(Mutex::new(ClassificationSessionState::Idle)),
         })
     }
+}
 
-    #[bindings::export(Method)]
+#[bindings::export(Implementation)]
+impl ClassificationSession {
+    #[bindings::export(Getter)]
     pub async fn state(&self) -> ClassificationSessionState {
         *self.state.lock().await
     }

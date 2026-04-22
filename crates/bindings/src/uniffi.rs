@@ -23,7 +23,7 @@ pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
 
 pub fn method_attribute(flavor: &MethodFlavor) -> Option<Attribute> {
     match flavor {
-        MethodFlavor::Plain => None,
+        MethodFlavor::Plain | MethodFlavor::Getter | MethodFlavor::Setter => None,
         MethodFlavor::Constructor | MethodFlavor::Factory => Some(parse_quote! {
             #[cfg_attr(feature = "bindings-uniffi", uniffi::constructor)]
         }),

@@ -20,16 +20,9 @@ impl CancellationToken {
         self.inner.cancel();
     }
 
-    #[bindings::export(Method)]
+    #[bindings::export(Getter)]
     pub fn is_cancelled(&self) -> bool {
         self.inner.is_cancelled()
-    }
-
-    #[bindings::export(Method)]
-    pub fn child(&self) -> Self {
-        Self {
-            inner: self.inner.child_token(),
-        }
     }
 }
 
