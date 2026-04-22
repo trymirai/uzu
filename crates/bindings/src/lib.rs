@@ -77,18 +77,74 @@ pub fn export(
     } = parse_macro_input!(arguments as ExportArguments);
 
     match kind {
-        BindingKind::Enum | BindingKind::Struct | BindingKind::Class | BindingKind::ClassCloneable => {
+        BindingKind::Enum => {
+            let item = parse_macro_input!(item as syn::Item);
+            let item_enum = match &item {
+                syn::Item::Enum(item_enum) => item_enum,
+                _ => {
+                    return syn::Error::new_spanned(&item, "bindings::export(Enum) must be applied to an enum")
+                        .to_compile_error()
+                        .into();
+                },
+            };
+
+            let mut has_unit_fields = false;
+            let mut has_named_fields = false;
+            for variant in &item_enum.variants {
+                match variant.fields {
+                    syn::Fields::Unit => has_unit_fields = true,
+                    syn::Fields::Named(_) => has_named_fields = true,
+                    syn::Fields::Unnamed(_) => {
+                        return syn::Error::new_spanned(
+                            &variant.fields,
+                            "bindings::export(Enum) variants must use named fields (use `{}` for empty variants), tuple variants are not supported",
+                        )
+                        .to_compile_error()
+                        .into();
+                    },
+                }
+            }
+            if has_unit_fields && has_named_fields {
+                return syn::Error::new_spanned(
+                    &item_enum.ident,
+                    "bindings::export(Enum) variants must all be unit (e.g. `Foo`) or all be named (e.g. `Foo {}`, `Foo { x: i64 }`), mixing is not supported",
+                )
+                .to_compile_error()
+                .into();
+            }
+
+            let enum_is_data = has_named_fields;
+            let uniffi = uniffi::attributes(&kind);
+            let pyo3 = pyo3::attributes(&kind);
+            let wasm = wasm::attributes(&kind);
+
+            if enum_is_data {
+                let variant_classes = napi::enum_variant_classes(&item_enum.ident, &item_enum.variants);
+                quote! {
+                    #uniffi
+                    #pyo3
+                    #wasm
+                    #item
+                    #variant_classes
+                }
+                .into()
+            } else {
+                let napi = napi::attributes(&kind);
+                quote! {
+                    #napi
+                    #uniffi
+                    #pyo3
+                    #wasm
+                    #item
+                }
+                .into()
+            }
+        },
+        BindingKind::Struct | BindingKind::Class | BindingKind::ClassCloneable => {
             let item = parse_macro_input!(item as syn::Item);
             let type_name = match &item {
                 syn::Item::Struct(item_struct) => Some(&item_struct.ident),
-                syn::Item::Enum(item_enum) => Some(&item_enum.ident),
                 _ => None,
-            };
-            let enum_has_data_variants = match &item {
-                syn::Item::Enum(item_enum) => {
-                    item_enum.variants.iter().any(|variant| !matches!(variant.fields, syn::Fields::Unit))
-                },
-                _ => false,
             };
             let napi = napi::attributes(&kind);
             let uniffi = uniffi::attributes(&kind);
@@ -96,7 +152,6 @@ pub fn export(
             let wasm = wasm::attributes(&kind);
             let napi_value = match (&kind, type_name) {
                 (BindingKind::Struct, Some(ident)) => napi::struct_value_implementations(ident),
-                (BindingKind::Enum, Some(ident)) if enum_has_data_variants => napi::struct_value_implementations(ident),
                 (BindingKind::ClassCloneable, Some(ident)) => napi::class_value_implementations(ident),
                 _ => quote! {},
             };

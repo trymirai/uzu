@@ -35,7 +35,7 @@ impl ToHarmony for ToolDescription {
     fn to_harmony(self) -> Result<Self::Output, Error> {
         match self {
             ToolDescription::Function {
-                function,
+                tool_function: function,
             } => {
                 let parameters = function.parameters.map(serde_json::Value::try_from).transpose().map_err(|error| {
                     Error::SerializationFailed {
@@ -54,7 +54,7 @@ impl FromHarmony for ToolDescription {
 
     fn from_harmony(input: Self::Input) -> Self {
         ToolDescription::Function {
-            function: ToolFunction {
+            tool_function: ToolFunction {
                 name: input.name,
                 description: input.description,
                 parameters: input.parameters.map(Value::from),

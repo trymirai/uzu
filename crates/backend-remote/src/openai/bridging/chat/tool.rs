@@ -5,7 +5,7 @@ use crate::openai::Error;
 
 pub fn build(description: ToolDescription) -> Result<ChatCompletionTools, Error> {
     let ToolDescription::Function {
-        function,
+        tool_function: function,
     } = description;
     let parameters = match function.parameters {
         Some(value) => {

@@ -7,6 +7,7 @@ use crate::types::basic::ToolFunction;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDescription {
     Function {
-        function: ToolFunction,
+        #[serde(rename = "function")]
+        tool_function: ToolFunction,
     },
 }

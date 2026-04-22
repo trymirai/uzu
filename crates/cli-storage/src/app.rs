@@ -39,7 +39,7 @@ impl App {
         for model in models {
             let state = engine.downloader(&model).state().await.unwrap();
             models_with_state.insert(
-                model.identifier(),
+                model.identifier.clone(),
                 ModelWithState {
                     model,
                     state,

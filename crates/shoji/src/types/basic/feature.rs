@@ -6,17 +6,3 @@ pub struct Feature {
     pub name: String,
     pub values: Vec<String>,
 }
-
-#[bindings::export(Implementation)]
-impl Feature {
-    #[bindings::export(Constructor)]
-    pub fn new(
-        name: String,
-        values: Vec<String>,
-    ) -> Self {
-        Self {
-            name,
-            values,
-        }
-    }
-}
