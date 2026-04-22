@@ -578,11 +578,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
                             self.decoder_arguments(&token_inputs, 1, 0, 1, &mut *cache_layers),
                             DecoderDecodeInput::TokenIds,
                             decoder_logits,
+                            None,
                             &encoding_parameters,
                             encoder,
                         )
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?
-                        .0
                 };
                 let mut sampling_output = self.create_sampling_output(1);
                 self.encode_sampling_on(
@@ -795,29 +795,37 @@ impl<B: Backend> TokenDecoderRunner<B> {
             },
         }
         let decoder_logits = self.create_decoder_logits(sampling_length);
-        let (mut logits, shortcut) = {
+        let mut logits = {
             let mut cache_layers = self.ctx.cache_layers.borrow_mut();
+            let decoder_arguments = DecoderArguments {
+                activation_data_type: self.ctx.model_shape.activation_data_type(),
+                token_ids: token_inputs.token_ids(),
+                token_positions: token_inputs.token_positions(),
+                token_parents: token_inputs.token_parents(),
+                token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
+                shared_buffers: self.ctx.shared_buffers.as_ref(),
+                cache_layers: Some(&mut *cache_layers),
+                batch_dim: token_count,
+                sampling_start,
+                sampling_length,
+                rope_max_sequence_length: self.ctx.model_shape.context_length(),
+                rope_dim: self.ctx.model_shape.rope_dim(),
+                #[cfg(feature = "tracing")]
+                trace: None,
+            };
+            let hidden_capture = capture_hidden.then_some(&mut self.single_hidden_capture);
             self.ctx
                 .executables
                 .encode_decode(
-                    self.decoder_arguments(
-                        &token_inputs,
-                        token_count,
-                        sampling_start,
-                        sampling_length,
-                        &mut *cache_layers,
-                    ),
+                    decoder_arguments,
                     DecoderDecodeInput::Embeddings(main),
                     decoder_logits,
+                    hidden_capture,
                     &encoding_parameters,
                     encoder,
                 )
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?
         };
-        if capture_hidden {
-            // After output norm with residual_add, Shortcut holds the un-normalized full residual
-            self.encode_capture_last_hidden_into_single_buffer_on(encoder, &shortcut, token_count)?;
-        }
         let mut sampling_output = self.create_sampling_output(sampling_length);
         self.encode_sampling_on(
             encoder,
@@ -983,29 +991,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
             self.register_positions_and_advance(token_count);
             Ok(token)
         })
-    }
-
-    fn encode_capture_last_hidden_into_single_buffer_on(
-        &mut self,
-        encoder: &mut Encoder<B>,
-        shortcut: &Allocation<B>,
-        token_count: usize,
-    ) -> Result<(), Error> {
-        if token_count == 0 {
-            return Err(Error::GenerateFailed);
-        }
-        let model_dim = self.ctx.decoder_config.model_dim;
-        let bytes_per_element = self.ctx.model_shape.activation_data_type().size_in_bytes();
-        let row_offset = (token_count - 1)
-            .checked_mul(model_dim)
-            .and_then(|value| value.checked_mul(bytes_per_element))
-            .ok_or(TtsModelConfigError::HiddenCaptureRowOffsetOverflow {
-                token_count,
-                model_dim,
-            })?;
-        let byte_len = model_dim * bytes_per_element;
-        encoder.encode_copy(shortcut, row_offset..row_offset + byte_len, &mut self.single_hidden_capture, 0..byte_len);
-        Ok(())
     }
 
     fn encode_override_first_row_from_device_on(

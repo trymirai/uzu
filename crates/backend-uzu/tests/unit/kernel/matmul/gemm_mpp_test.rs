@@ -96,6 +96,7 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
     matmul_kernel.encode(
         MatmulArguments {
             a: &left_allocation,
+            a_offset: 0,
             b: right_array.allocation(),
             ab_scale: input.ab_scale,
             c: argument_c,
@@ -138,6 +139,7 @@ fn get_mpp_output(
     matmul_kernel.encode_with_path(
         MatmulArguments {
             a: &left_allocation,
+            a_offset: 0,
             b: right_array.allocation(),
             ab_scale: input.ab_scale,
             c: argument_c,
@@ -271,6 +273,7 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
                         matmul_kernel.encode_with_path(
                             MatmulArguments {
                                 a: &left_allocation,
+                                a_offset: 0,
                                 b: right_array.allocation(),
                                 ab_scale: 1.0,
                                 c: MatmulArgumentC::None,

@@ -477,7 +477,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let slot = pass_idx % batch_size;
 
         let last_token = *self.tokens.last().ok_or(Error::PrefillFailed)?;
-        let token_position = self.context.async_buffers.prefill_count.get().saturating_sub(1) + pass_idx;
+        let token_position = self.context.async_buffers.positions.as_slice::<i32>()[pass_idx] as usize;
+        let token_seed = self.context.async_buffers.seeds.as_slice::<u64>()[pass_idx];
 
         let task = Task {
             token_ids: &[last_token],
@@ -493,8 +494,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let token_ids_allocation = (pass_idx > 0)
             .then(|| self.async_token_ids.clone().expect("previous async pass must provide token_ids allocation"));
-        let token_positions_allocation = Some(self.context.async_buffers.position(pass_idx));
-        let sampling_inputs = self.async_sampling_inputs(pass_idx);
+        let sampling_inputs = SamplingInputs::from_slices(self.context.context.as_ref(), &[token_seed], None, None);
 
         let is_first_decode = !is_continuation;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
@@ -505,7 +505,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let batch_dim = task.active_row_count;
         let sampling_start = task.sampling_start;
         let sampling_length = task.sampling_length;
-        let token_inputs = self.build_token_inputs(task, token_ids_allocation, token_positions_allocation);
+        let token_inputs = self.build_token_inputs(task, token_ids_allocation, None);
         let mut encoded_forward_pass = Self::encode_forward_pass(
             &self.context,
             token_inputs,
@@ -769,7 +769,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
             pending,
         ) = encoded_forward_pass.submit();
 
-        pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        drop(completed);
 
         let run_time = run_start.elapsed().as_secs_f64();
 
@@ -847,11 +848,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
                     decoder_arguments,
                     DecoderDecodeInput::TokenIds,
                     decoder_logits,
+                    None,
                     parameters,
                     &mut encoder,
                 )
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?
-                .0;
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             let sampling_inputs = sampling_inputs.as_ref().expect("Sampling requires sampling inputs");
             let sampling_result = context.gpu_sampler.encode(
@@ -914,18 +915,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             &mask[start..end]
         });
         SamplingInputs::from_slices(self.context.context.as_ref(), seeds, bitmask, bitmask_row_len)
-    }
-
-    fn async_sampling_inputs(
-        &self,
-        pass_idx: usize,
-    ) -> SamplingInputs<B> {
-        let seeds = self.context.async_buffers.seed(pass_idx);
-
-        SamplingInputs {
-            seeds,
-            bitmask: None,
-        }
     }
 
     fn read_sampling_output(

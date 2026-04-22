@@ -71,6 +71,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     kernel.encode(
         MatmulArguments {
             a: &a_allocation,
+            a_offset: 0,
             b: b_array.allocation(),
             ab_scale: 1.0,
             c: MatmulArgumentC::None,

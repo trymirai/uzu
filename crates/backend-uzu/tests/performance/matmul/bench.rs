@@ -44,6 +44,7 @@ fn encode_and_run(
     kernel.encode(
         MatmulArguments {
             a: a_buffer,
+            a_offset: 0,
             b: b_buffer,
             ab_scale: 1.0,
             c: MatmulArgumentC::None,

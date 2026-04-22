@@ -38,6 +38,7 @@ pub struct QuantizedMatmulConfiguration {
 
 pub struct QuantizedMatmulArguments<'a, B: Backend> {
     pub a: &'a Allocation<B>,
+    pub a_offset: usize,
     pub b: &'a Allocation<B>,
     pub scales: &'a Allocation<B>,
     pub zero_points_or_biases: &'a Allocation<B>,
@@ -211,6 +212,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
     ) {
         let QuantizedMatmulArguments {
             a,
+            a_offset,
             b,
             scales,
             zero_points_or_biases,
@@ -231,7 +233,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     scales,
                     zero_points,
                     biases,
-                    a,
+                    (a, a_offset),
                     output,
                     $($hadamard,)?
                     self.input_dim as u32,

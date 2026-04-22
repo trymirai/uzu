@@ -302,6 +302,7 @@ where
     matmul.encode(
         MatmulArguments {
             a: &attention_output,
+            a_offset: 0,
             b: &weights_allocation,
             ab_scale: 1.0,
             c: MatmulArgumentC::None,

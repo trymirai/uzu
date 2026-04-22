@@ -282,6 +282,7 @@ impl<B: Backend> TraceValidator<B> {
                     decoder_arguments,
                     DecoderDecodeInput::TokenIds,
                     logits,
+                    None,
                     &EncodingParameters::new(),
                     &mut encoder,
                 )

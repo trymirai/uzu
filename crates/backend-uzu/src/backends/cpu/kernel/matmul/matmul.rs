@@ -38,6 +38,7 @@ impl MatmulKernel for MatmulCpuKernel {
     ) {
         let MatmulArguments {
             a,
+            a_offset,
             b,
             ab_scale,
             c,
@@ -57,7 +58,7 @@ impl MatmulKernel for MatmulCpuKernel {
         let (a, a_range) = a.as_buffer_range();
         let (b, b_range) = b.as_buffer_range();
         let (d, d_range) = d.as_buffer_range();
-        let a_offset = a_range.start;
+        let a_offset = a_range.start + a_offset;
         let b_offset = b_range.start;
         let d_offset = d_range.start;
 

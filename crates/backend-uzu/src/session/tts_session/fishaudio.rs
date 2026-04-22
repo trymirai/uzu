@@ -515,6 +515,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             semantic_bridge.projection.encode(
                 MatmulArguments {
                     a: slow_hidden_capture,
+                    a_offset: 0,
                     b: weights,
                     ab_scale: 1.0,
                     c: MatmulArgumentC::None,

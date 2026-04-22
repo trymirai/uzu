@@ -95,20 +95,6 @@ impl<B: Backend> AsyncBuffers<B> {
     pub fn reset_counter(&self) {
         self.counter.set(0);
     }
-
-    pub fn position(
-        &self,
-        index: usize,
-    ) -> Array<B> {
-        self.positions.view_at_offset(index * std::mem::size_of::<i32>(), &[1])
-    }
-
-    pub fn seed(
-        &self,
-        index: usize,
-    ) -> Array<B> {
-        self.seeds.view_at_offset(index * std::mem::size_of::<u64>(), &[1])
-    }
 }
 
 pub struct LanguageModelGeneratorContext<B: Backend> {

@@ -131,6 +131,7 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
         self.kernel.borrow_mut().encode(
             MatmulArguments {
                 a: &input,
+                a_offset: 0,
                 b: &self.weights,
                 ab_scale: 1.0,
                 c: match self.bias.as_ref() {

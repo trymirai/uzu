@@ -132,6 +132,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         adapter_kernel.encode(
             MatmulArguments {
                 a: &input,
+                a_offset: 0,
                 b: &self.adapter_down,
                 ab_scale: 1.0,
                 c: MatmulArgumentC::None,
@@ -148,6 +149,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         adapter_kernel.encode(
             MatmulArguments {
                 a: &intermediate,
+                a_offset: 0,
                 b: &self.adapter_up,
                 ab_scale: self.lora_scale,
                 c: MatmulArgumentC::Accumulate,

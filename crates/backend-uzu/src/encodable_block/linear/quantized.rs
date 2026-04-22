@@ -255,6 +255,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
             encoder,
             QuantizedMatmulArguments {
                 a: &input,
+                a_offset: 0,
                 b: &self.weights,
                 scales: &self.scales,
                 zero_points_or_biases: &self.zero_points_or_biases,

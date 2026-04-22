@@ -325,11 +325,13 @@ impl<B: Backend> Decoder<B> {
         args: DecoderArguments<B>,
         input: DecoderDecodeInput<B>,
         logits: Allocation<B>,
+        hidden_capture: Option<&mut Allocation<B>>,
         parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
-    ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
+    ) -> Result<Allocation<B>, DecoderError<B>> {
         let sampling_start = args.sampling_start;
         let sampling_length = args.sampling_length;
+        let batch_dim = args.batch_dim;
         #[cfg(feature = "tracing")]
         let mut trace = args.trace;
         let main = match input {
@@ -338,7 +340,7 @@ impl<B: Backend> Decoder<B> {
             },
             DecoderDecodeInput::Embeddings(main) => main,
         };
-        let (mut main, mut shortcut) = self.run_layers(
+        let (main, mut shortcut) = self.run_layers(
             DecoderArguments {
                 activation_data_type: args.activation_data_type,
                 token_ids: args.token_ids,
@@ -360,21 +362,26 @@ impl<B: Backend> Decoder<B> {
             encoder,
         )?;
 
-        main = self
+        let output_norm = self
             .norm
             .encode(&main, sampling_start, sampling_length, Some(&mut shortcut), encoder)
             .map_err(DecoderError::BackendError)?;
+        if let Some(hidden_capture) = hidden_capture {
+            let row_size_bytes = shortcut.as_buffer_range().1.len() / batch_dim;
+            let input_offset = (batch_dim - 1) * row_size_bytes;
+            encoder.encode_copy(&shortcut, input_offset..input_offset + row_size_bytes, hidden_capture, ..);
+        }
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut trace.output_norm, ..);
+            encoder.encode_copy(&output_norm, .., &mut trace.output_norm, ..);
         }
 
         let mut logits = logits;
-        self.embed.encode_readout(sampling_length, &main, &mut logits, encoder)?;
+        self.embed.encode_readout(sampling_length, 0, &output_norm, &mut logits, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
             encoder.encode_copy(&logits, .., &mut trace.logits, ..);
         }
-        Ok((logits, shortcut))
+        Ok(logits)
     }
 }

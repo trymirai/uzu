@@ -561,6 +561,7 @@ impl<B: Backend> Embedding<B> {
     pub fn encode_readout(
         &self,
         batch_dim: usize,
+        input_offset: usize,
         input_allocation: &Allocation<B>,
         output_allocation: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
@@ -591,6 +592,7 @@ impl<B: Backend> Embedding<B> {
                 readout.borrow_mut().encode(
                     MatmulArguments {
                         a: input_allocation,
+                        a_offset: input_offset,
                         b: weights,
                         ab_scale: 1.0,
                         c: MatmulArgumentC::None,
@@ -626,6 +628,7 @@ impl<B: Backend> Embedding<B> {
                     encoder,
                     QuantizedMatmulArguments {
                         a: input_allocation,
+                        a_offset: input_offset,
                         b: weights,
                         scales,
                         zero_points_or_biases: biases,

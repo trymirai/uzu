@@ -26,6 +26,7 @@ pub enum MatmulArgumentC<'a, B: Backend> {
 pub struct MatmulArguments<'a, B: Backend> {
     /// A: [M, K]
     pub a: &'a Allocation<B>,
+    pub a_offset: usize,
     /// B: [N, K]
     pub b: &'a Allocation<B>,
     /// AB scale: also known as alpha
