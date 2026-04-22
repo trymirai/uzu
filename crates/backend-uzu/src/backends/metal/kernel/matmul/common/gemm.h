@@ -234,8 +234,12 @@ struct ThreadgroupGemm {
       }
 
       threadgroup_tile
-          .apply_epilogue(d, params.leading_dimension_d, 1, epilogue);
-      threadgroup_tile.store_result(d, params.leading_dimension_d);
+          .template apply_epilogue<false>(
+              d, params.leading_dimension_d, 1, epilogue
+          );
+      threadgroup_tile.template store_result<false>(
+          d, params.leading_dimension_d
+      );
       return;
     }
     ///////////////////////////////////////////////////////////////////////////
@@ -263,8 +267,12 @@ struct ThreadgroupGemm {
         );
 
         threadgroup_tile
-            .apply_epilogue(d, params.leading_dimension_d, 1, epilogue);
-        threadgroup_tile.store_result(d, params.leading_dimension_d);
+            .template apply_epilogue<false>(
+                d, params.leading_dimension_d, 1, epilogue
+            );
+        threadgroup_tile.template store_result<false>(
+            d, params.leading_dimension_d
+        );
         return;
 
       } else if (threadgroup_block_cols == BLOCK_COLS) {
@@ -280,14 +288,14 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.apply_epilogue_safe(
+        threadgroup_tile.template apply_epilogue<true>(
             d,
             params.leading_dimension_d,
             1,
-            short2(threadgroup_block_cols, threadgroup_block_rows),
-            epilogue
+            epilogue,
+            short2(threadgroup_block_cols, threadgroup_block_rows)
         );
-        threadgroup_tile.store_result_safe(
+        threadgroup_tile.template store_result<true>(
             d,
             params.leading_dimension_d,
             short2(threadgroup_block_cols, threadgroup_block_rows)
@@ -307,14 +315,14 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.apply_epilogue_safe(
+        threadgroup_tile.template apply_epilogue<true>(
             d,
             params.leading_dimension_d,
             1,
-            short2(threadgroup_block_cols, threadgroup_block_rows),
-            epilogue
+            epilogue,
+            short2(threadgroup_block_cols, threadgroup_block_rows)
         );
-        threadgroup_tile.store_result_safe(
+        threadgroup_tile.template store_result<true>(
             d,
             params.leading_dimension_d,
             short2(threadgroup_block_cols, threadgroup_block_rows)
@@ -334,14 +342,14 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.apply_epilogue_safe(
+        threadgroup_tile.template apply_epilogue<true>(
             d,
             params.leading_dimension_d,
             1,
-            short2(threadgroup_block_cols, threadgroup_block_rows),
-            epilogue
+            epilogue,
+            short2(threadgroup_block_cols, threadgroup_block_rows)
         );
-        threadgroup_tile.store_result_safe(
+        threadgroup_tile.template store_result<true>(
             d,
             params.leading_dimension_d,
             short2(threadgroup_block_cols, threadgroup_block_rows)

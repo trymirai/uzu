@@ -11,6 +11,12 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
+///////////////////////////////////////////////////////////////////////////////
+// Fragment - a thread-private tile of values arranged as TILE_ROWS x TILE_COLS
+// sub-tiles. Ops provides the sub-tile shape constants and the MMA primitive;
+// Fragment itself owns lane positioning and device<->register transfer.
+///////////////////////////////////////////////////////////////////////////////
+
 template <typename T, ushort TILE_ROWS_, ushort TILE_COLS_, class Ops>
 struct Fragment {
   using FragmentOpsType = Ops;
@@ -48,6 +54,24 @@ struct Fragment {
   METAL_FUNC Fragment(const thread ThreadContext& thread_context) thread
       : thread_context(thread_context) {}
 
+  // Lane origin (row, col) within a single FRAGMENT_ROWS x FRAGMENT_COLS
+  // sub-tile. The mapping depends only on Ops::THREAD_ELEMENT_COLS, so it is
+  // identical for every Fragment sharing that Ops type.
+  METAL_FUNC static constexpr short2 get_position(
+      const thread ThreadContext& thread_context
+  ) {
+    const ushort simdgroup_index = ushort(thread_context.simdgroup_index);
+    const short quad = simdgroup_index / 4;
+    const short row = (quad & 4) + (simdgroup_index / 2) % 4;
+    const short col =
+        ((quad & 2) + simdgroup_index % 2) * Ops::THREAD_ELEMENT_COLS;
+    return short2{col, row};
+  }
+
+  METAL_FUNC short2 get_position() const thread {
+    return get_position(thread_context);
+  }
+
   METAL_FUNC constexpr void clear() {
     METAL_PRAGMA_UNROLL
     for (ushort index = 0; index < NUM_FRAGS; ++index) {
@@ -79,169 +103,185 @@ struct Fragment {
     return reinterpret_cast<thread ElementType*>(fragment_data);
   }
 
+  // Unsafe load: copy a (TILE_ROWS * FRAGMENT_ROWS) x (TILE_COLS * FRAGMENT_COLS)
+  // block from device memory into fragment registers. ColStride defaults to the
+  // compile-time constant 1 so that the row-major fast path triggers when the
+  // caller omits it. Tile strides control the gap between sub-tiles.
   template <
       class Ptr,
       class RowStride,
-      class ColStride,
+      class ColStride = Int<1>,
       class TileRowStride = Int<1>,
       class TileColStride = Int<1>>
   METAL_FUNC void load(
       Ptr source,
       RowStride row_stride,
-      ColStride col_stride,
+      ColStride col_stride = {},
       TileRowStride tile_row_stride = {},
       TileColStride tile_col_stride = {}
   ) thread {
-    for_each_fragment([&](auto row_index, auto col_index) {
-      Ops::load(
-          fragment_at(row_index.value, col_index.value),
-          source,
-          row_stride,
-          col_stride,
-          row_index.value * FRAGMENT_ROWS * tile_row_stride,
-          col_index.value * FRAGMENT_COLS * tile_col_stride,
-          thread_context
-      );
-    });
+    transfer<LOAD, UNSAFE>(
+        source,
+        row_stride,
+        col_stride,
+        Int<0>{},
+        Int<0>{},
+        tile_row_stride,
+        tile_col_stride
+    );
   }
 
-  template <class Ptr>
-  METAL_FUNC void load(Ptr source, const int leading_dimension) thread {
-    load(source, leading_dimension, Int<1>{});
-  }
-
-  template <
-      class Ptr,
-      class RowStride,
-      class ColStride,
-      class RowLimit,
-      class ColLimit,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
-  METAL_FUNC void load_safe(
-      Ptr source,
-      RowStride row_stride,
-      ColStride col_stride,
-      RowLimit row_limit,
-      ColLimit col_limit,
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
-  ) thread {
-    for_each_fragment([&](auto row_index, auto col_index) {
-      Ops::load_safe(
-          fragment_at(row_index.value, col_index.value),
-          source,
-          row_stride,
-          col_stride,
-          row_limit,
-          col_limit,
-          row_index.value * FRAGMENT_ROWS * tile_row_stride,
-          col_index.value * FRAGMENT_COLS * tile_col_stride,
-          thread_context
-      );
-    });
-  }
-
-  template <class Ptr>
+  // Safe load: col_stride is implicitly 1; out-of-bounds elements become T(0).
+  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
   METAL_FUNC void load_safe(
       Ptr source,
       const int leading_dimension,
-      const short2 tile_dimensions
+      const short2 tile_dimensions,
+      TileRowStride tile_row_stride = {},
+      TileColStride tile_col_stride = {}
   ) thread {
-    load_safe(
+    transfer<LOAD, SAFE>(
         source,
         leading_dimension,
         Int<1>{},
         tile_dimensions.y,
-        tile_dimensions.x
+        tile_dimensions.x,
+        tile_row_stride,
+        tile_col_stride
     );
   }
 
+  // Unsafe store: mirror of load. Same defaults apply.
   template <
       class Ptr,
       class RowStride,
-      class ColStride,
+      class ColStride = Int<1>,
       class TileRowStride = Int<1>,
       class TileColStride = Int<1>>
   METAL_FUNC void store(
       Ptr destination,
       RowStride row_stride,
-      ColStride col_stride,
+      ColStride col_stride = {},
       TileRowStride tile_row_stride = {},
       TileColStride tile_col_stride = {}
   ) thread {
-    for_each_fragment([&](auto row_index, auto col_index) {
-      Ops::store(
-          fragment_at(row_index.value, col_index.value),
-          destination,
-          row_stride,
-          col_stride,
-          row_index.value * FRAGMENT_ROWS * tile_row_stride,
-          col_index.value * FRAGMENT_COLS * tile_col_stride,
-          thread_context
-      );
-    });
+    transfer<STORE, UNSAFE>(
+        destination,
+        row_stride,
+        col_stride,
+        Int<0>{},
+        Int<0>{},
+        tile_row_stride,
+        tile_col_stride
+    );
   }
 
-  template <class Ptr>
-  METAL_FUNC void store(Ptr destination, const int leading_dimension) thread {
-    store(destination, leading_dimension, Int<1>{});
-  }
-
-  template <
-      class Ptr,
-      class RowStride,
-      class ColStride,
-      class RowLimit,
-      class ColLimit,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
-  METAL_FUNC void store_safe(
-      Ptr destination,
-      RowStride row_stride,
-      ColStride col_stride,
-      RowLimit row_limit,
-      ColLimit col_limit,
-      TileRowStride tile_row_stride = {},
-      TileColStride tile_col_stride = {}
-  ) thread {
-    for_each_fragment([&](auto row_index, auto col_index) {
-      Ops::store_safe(
-          fragment_at(row_index.value, col_index.value),
-          destination,
-          row_stride,
-          col_stride,
-          row_limit,
-          col_limit,
-          row_index.value * FRAGMENT_ROWS * tile_row_stride,
-          col_index.value * FRAGMENT_COLS * tile_col_stride,
-          thread_context
-      );
-    });
-  }
-
-  template <class Ptr>
+  // Safe store: col_stride is implicitly 1; out-of-bounds elements are skipped.
+  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
   METAL_FUNC void store_safe(
       Ptr destination,
       const int leading_dimension,
-      const short2 tile_dimensions
+      const short2 tile_dimensions,
+      TileRowStride tile_row_stride = {},
+      TileColStride tile_col_stride = {}
   ) thread {
-    store_safe(
+    transfer<STORE, SAFE>(
         destination,
         leading_dimension,
         Int<1>{},
         tile_dimensions.y,
-        tile_dimensions.x
+        tile_dimensions.x,
+        tile_row_stride,
+        tile_col_stride
     );
   }
 
 private:
+  METAL_CONST bool LOAD = true;
+  METAL_CONST bool STORE = false;
+  METAL_CONST bool SAFE = true;
+  METAL_CONST bool UNSAFE = false;
+
   template <class Fn>
   METAL_FUNC void for_each_fragment(Fn fn) thread {
     const_for_loop<0, TILE_ROWS, 1>([&](auto row_index) {
       const_for_loop<0, TILE_COLS, 1>([&](auto col_index) {
         fn(row_index, col_index);
       });
+    });
+  }
+
+  // Unified memory transfer between device memory and fragment registers.
+  //
+  // IS_LOAD  - true to read into fragment_data, false to write back.
+  // IS_SAFE  - true to bounds-check each element against (row_limit, col_limit);
+  //            on load, out-of-bounds elements become T(0); on store, skipped.
+  //
+  // When ColStride is a compile-time 1, the column-stride multiplication is
+  // elided to help the compiler collapse strength-reduced addressing.
+  template <
+      bool IS_LOAD,
+      bool IS_SAFE,
+      class Ptr,
+      class RowStride,
+      class ColStride,
+      class RowLimit,
+      class ColLimit,
+      class TileRowStride,
+      class TileColStride>
+  METAL_FUNC void transfer(
+      Ptr ptr,
+      RowStride row_stride,
+      ColStride col_stride,
+      RowLimit row_limit,
+      ColLimit col_limit,
+      TileRowStride tile_row_stride,
+      TileColStride tile_col_stride
+  ) thread {
+    using U = PointerElementType<Ptr>;
+    constexpr bool col_stride_is_one = metal::is_same_v<ColStride, Int<1>>;
+
+    const short2 position = get_position();
+    ptr += position.y * row_stride + position.x * col_stride;
+    const auto local_row_limit = row_limit - position.y;
+    const auto local_col_limit = col_limit - position.x;
+
+    for_each_fragment([&](auto tile_row, auto tile_col) {
+      thread auto& frag = fragment_at(tile_row.value, tile_col.value);
+      const auto row_base = tile_row.value * FRAGMENT_ROWS * tile_row_stride;
+      const auto col_base = tile_col.value * FRAGMENT_COLS * tile_col_stride;
+
+      METAL_PRAGMA_UNROLL
+      for (ushort i = 0; i < Ops::THREAD_ELEMENT_ROWS; i++) {
+        const auto row = row_base + i * Ops::THREAD_ELEMENT_ROW_STRIDE;
+        METAL_PRAGMA_UNROLL
+        for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; j++) {
+          const ushort element_index = i * Ops::THREAD_ELEMENT_COLS + j;
+          const auto col = col_base + j;
+          const auto offset = col_stride_is_one
+              ? (row * row_stride + col)
+              : (row * row_stride + col * col_stride);
+
+          if constexpr (IS_LOAD) {
+            if constexpr (IS_SAFE) {
+              const bool in_bounds =
+                  (row < local_row_limit) && (col < local_col_limit);
+              frag[element_index] =
+                  in_bounds ? static_cast<T>(ptr[offset]) : T(0);
+            } else {
+              frag[element_index] = static_cast<T>(ptr[offset]);
+            }
+          } else {
+            if constexpr (IS_SAFE) {
+              if ((row < local_row_limit) && (col < local_col_limit)) {
+                ptr[offset] = static_cast<U>(frag[element_index]);
+              }
+            } else {
+              ptr[offset] = static_cast<U>(frag[element_index]);
+            }
+          }
+        }
+      }
     });
   }
 };

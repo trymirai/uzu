@@ -4,7 +4,7 @@
 #include "../../common/integral_constant.h"
 using namespace uzu;
 #include "fragment.h"
-#include "mxu_fragment.h"
+#include "mxu_fragment_ops.h"
 #include "mxu_gemm_loop.h"
 #include "../../generated/matmul.h"
 

@@ -3,7 +3,7 @@
 #include "../common/thread_context.h"
 #include "../matmul/common/loader.h"
 #include "../matmul/common/fragment.h"
-#include "../matmul/common/simdgroup_multiply_accumulate.h"
+#include "../matmul/common/alu_fragment_ops.h"
 #include "../generated/ring.h"
 #include "../generated/trie.h"
 #include "../generated/attention.h"
@@ -24,7 +24,7 @@ struct TransformScale {
 
 template <typename T>
 METAL_FUNC T row_reduce_max(T v) {
-  // SimdgroupFragmentOps::get_position mapping groups lanes for
+  // AluFragmentOps::get_position mapping groups lanes for
   // a row as: {lane, lane^1, lane^8, (lane^1)^8}. Reduce in two steps.
   v = metal::max(v, simd_shuffle_xor(v, 1));
   v = metal::max(v, simd_shuffle_xor(v, 8));
@@ -168,7 +168,7 @@ PUBLIC KERNEL(AttentionGemm)(
   // MMA tiles
   constexpr short SIMDGROUP_BLOCK_SIZE = 8;
   using AccumType = float;
-  using SimdgroupFragmentOpsType = SimdgroupFragmentOps<AccumType>;
+  using AluFragmentOpsType = AluFragmentOps<AccumType>;
 
   constexpr int SIMDGROUPS_PER_THREADGROUP =
       SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
@@ -189,29 +189,28 @@ PUBLIC KERNEL(AttentionGemm)(
 
   static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
 
-  Fragment<AccumType, QUERY_GRID_ROWS, 1, SimdgroupFragmentOpsType>
+  Fragment<AccumType, QUERY_GRID_ROWS, 1, AluFragmentOpsType>
       query_fragment(thread_context);
-  Fragment<AccumType, 1, KEY_GRID_COLS, SimdgroupFragmentOpsType> key_fragment(
+  Fragment<AccumType, 1, KEY_GRID_COLS, AluFragmentOpsType> key_fragment(
       thread_context
   );
-  Fragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, SimdgroupFragmentOpsType>
+  Fragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, AluFragmentOpsType>
       score_fragment(thread_context);
-  Fragment<AccumType, 1, 1, SimdgroupFragmentOpsType> value_fragment(
+  Fragment<AccumType, 1, 1, AluFragmentOpsType> value_fragment(
       thread_context
   );
   Fragment<
       AccumType,
       QUERY_GRID_ROWS,
       HEAD_DIM_GRID_COLS,
-      SimdgroupFragmentOpsType>
+      AluFragmentOpsType>
       output_fragment(thread_context);
 
   output_fragment.clear();
 
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
-  const short2 position =
-      SimdgroupFragmentOpsType::get_position(thread_context);
+  const short2 position = output_fragment.get_position();
   const short lane_row = position.y;
   const short lane_col = position.x;
 
@@ -300,7 +299,7 @@ PUBLIC KERNEL(AttentionGemm)(
       );
 
       simdgroup_barrier(mem_flags::mem_none);
-      SimdgroupFragmentOpsType::template tile_matmul<false, false>(
+      AluFragmentOpsType::tile_matmul(
           score_fragment,
           query_fragment,
           key_fragment
@@ -440,7 +439,7 @@ PUBLIC KERNEL(AttentionGemm)(
           simdgroup_barrier(mem_flags::mem_none);
         }
 
-        SimdgroupFragmentOpsType::multiply_accumulate(
+        AluFragmentOpsType::multiply_accumulate(
             output_fragment.fragment_at(0, id),
             score_fragment.fragment_at(0, ik),
             value_fragment.fragment_at(0, 0),
