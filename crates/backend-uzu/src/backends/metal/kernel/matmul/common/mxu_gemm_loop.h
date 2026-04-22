@@ -35,11 +35,11 @@ METAL_FUNC auto gemm_loop(
   constexpr ushort TILES_N = SIMDGROUP_BLOCK_N / MxuFragmentOps::FRAGMENT_COLS;
   constexpr ushort TILES_K = SIMDGROUP_BLOCK_K / MxuFragmentOps::FRAGMENT_ROWS;
 
-  constexpr int LEFT_TILE_ROWS = transpose_a ? TILES_K : TILES_M;
-  constexpr int LEFT_TILE_COLS = transpose_a ? TILES_M : TILES_K;
+  constexpr ushort LEFT_TILE_ROWS = transpose_a ? TILES_K : TILES_M;
+  constexpr ushort LEFT_TILE_COLS = transpose_a ? TILES_M : TILES_K;
 
-  constexpr int RIGHT_TILE_ROWS = transpose_b ? TILES_N : TILES_K;
-  constexpr int RIGHT_TILE_COLS = transpose_b ? TILES_K : TILES_N;
+  constexpr ushort RIGHT_TILE_ROWS = transpose_b ? TILES_N : TILES_K;
+  constexpr ushort RIGHT_TILE_COLS = transpose_b ? TILES_K : TILES_N;
 
   Fragment<AccumulatorType, TILES_M, TILES_N, MxuFragmentOps> accumulator(
       thread_context

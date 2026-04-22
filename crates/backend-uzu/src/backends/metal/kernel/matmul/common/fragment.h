@@ -11,14 +11,14 @@ using namespace metal;
 namespace uzu {
 namespace matmul {
 
-template <typename T, int TILE_ROWS_, int TILE_COLS_, class Ops>
+template <typename T, ushort TILE_ROWS_, ushort TILE_COLS_, class Ops>
 struct Fragment {
   using FragmentOpsType = Ops;
   using ElementType = T;
   using ThreadVectorType = typename Ops::template ThreadVector<T>;
 
-  METAL_CONST ushort TILE_ROWS = ushort(TILE_ROWS_);
-  METAL_CONST ushort TILE_COLS = ushort(TILE_COLS_);
+  METAL_CONST ushort TILE_ROWS = TILE_ROWS_;
+  METAL_CONST ushort TILE_COLS = TILE_COLS_;
 
   METAL_CONST ushort FRAGMENT_ROWS = ushort(Ops::FRAGMENT_ROWS);
   METAL_CONST ushort FRAGMENT_COLS = ushort(Ops::FRAGMENT_COLS);

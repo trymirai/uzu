@@ -10,10 +10,10 @@ namespace matmul {
 
 template <
     typename T,
-    int GRID_ROWS_,
-    int GRID_COLS_,
+    ushort GRID_ROWS,
+    ushort GRID_COLS,
     class SimdgroupOps = SimdgroupFragmentOps<T>>
-using SimdgroupFragment = Fragment<T, GRID_ROWS_, GRID_COLS_, SimdgroupOps>;
+using SimdgroupFragment = Fragment<T, GRID_ROWS, GRID_COLS, SimdgroupOps>;
 
 } // namespace matmul
 } // namespace uzu

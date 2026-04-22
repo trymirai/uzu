@@ -181,10 +181,10 @@ PUBLIC KERNEL(AttentionGemm)(
 
   // Q sequence multiply-accumulate blocks per simdgroup (QUERY_GRID_ROWS == 1
   // for the 32-row block layout)
-  constexpr int QUERY_GRID_ROWS =
+  constexpr ushort QUERY_GRID_ROWS =
       BLOCK_QUERY_ROWS / (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE);
-  constexpr int KEY_GRID_COLS = BK / SIMDGROUP_BLOCK_SIZE;
-  constexpr int HEAD_DIM_GRID_COLS = BD / SIMDGROUP_BLOCK_SIZE;
+  constexpr ushort KEY_GRID_COLS = BK / SIMDGROUP_BLOCK_SIZE;
+  constexpr ushort HEAD_DIM_GRID_COLS = BD / SIMDGROUP_BLOCK_SIZE;
 
   static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
 
