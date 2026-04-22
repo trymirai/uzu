@@ -17,6 +17,22 @@ struct Fragment {
   using ElementType = T;
   using ThreadVectorType = typename Ops::template ThreadVector<T>;
 
+  static_assert(
+      Ops::FRAGMENT_ROWS > 0 && Ops::FRAGMENT_COLS > 0,
+      "Ops must expose positive FRAGMENT_ROWS/FRAGMENT_COLS"
+  );
+  static_assert(
+      Ops::ELEMENTS_PER_THREAD ==
+          (Ops::FRAGMENT_ROWS * Ops::FRAGMENT_COLS) / METAL_SIMD_SIZE,
+      "Ops::ELEMENTS_PER_THREAD must equal "
+      "(FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE"
+  );
+  static_assert(
+      sizeof(ThreadVectorType) == Ops::ELEMENTS_PER_THREAD * sizeof(T),
+      "Ops::ThreadVector<T> must be tightly packed "
+      "(elements() relies on it)"
+  );
+
   METAL_CONST ushort TILE_ROWS = TILE_ROWS_;
   METAL_CONST ushort TILE_COLS = TILE_COLS_;
 
