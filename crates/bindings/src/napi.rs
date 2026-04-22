@@ -14,6 +14,9 @@ pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
         BindingKind::Implementation => quote! {
             #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
         },
+        BindingKind::Alias => quote! {
+            #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
+        },
         _ => quote! {},
     }
 }

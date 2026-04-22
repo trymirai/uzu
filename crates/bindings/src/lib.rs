@@ -15,6 +15,7 @@ pub(crate) enum BindingKind {
     Enum,
     Struct,
     Class,
+    Alias,
     Implementation,
     Method,
     Constructor,
@@ -39,6 +40,7 @@ impl Parse for ExportArguments {
             "Enum" => BindingKind::Enum,
             "Struct" => BindingKind::Struct,
             "Class" => BindingKind::Class,
+            "Alias" => BindingKind::Alias,
             "Implementation" => BindingKind::Implementation,
             "Method" => BindingKind::Method,
             "Constructor" => BindingKind::Constructor,
@@ -69,6 +71,21 @@ pub fn export(
     match kind {
         BindingKind::Enum | BindingKind::Struct | BindingKind::Class => {
             let item = parse_macro_input!(item as syn::Item);
+            let napi = napi::attributes(&kind);
+            let uniffi = uniffi::attributes(&kind);
+            let pyo3 = pyo3::attributes(&kind);
+            let wasm = wasm::attributes(&kind);
+            quote! {
+                #napi
+                #uniffi
+                #pyo3
+                #wasm
+                #item
+            }
+            .into()
+        },
+        BindingKind::Alias => {
+            let item = parse_macro_input!(item as syn::ItemType);
             let napi = napi::attributes(&kind);
             let uniffi = uniffi::attributes(&kind);
             let pyo3 = pyo3::attributes(&kind);
