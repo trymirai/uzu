@@ -3,7 +3,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 use crate::{
     DataType,
     array::size_for_shape,
-    backends::common::{Backend, Buffer, Context, SparseBuffer},
+    backends::common::{Backend, Buffer, Context, Encoder, SparseBuffer},
 };
 
 #[derive(Debug)]
@@ -44,6 +44,7 @@ impl<B: Backend> SparseArray<B> {
         axis: usize,
         src_range: Range<usize>,
         dst_offset: usize,
+        encoder: &mut Encoder<B>,
     ) {
         assert_eq!(self.data_type(), source.data_type(), "Arrays must have the same data type");
         assert_eq!(self.shape().len(), source.shape().len(), "Rank mismatch");
@@ -56,7 +57,47 @@ impl<B: Backend> SparseArray<B> {
             }
         }
 
-        todo!()
+        let elem_size = self.data_type().size_in_bytes();
+
+        // The number of contiguous elements to copy for each slice operation
+        let block_size_elems = self.shape().iter().skip(axis + 1).product::<usize>();
+        let block_size_bytes = block_size_elems * elem_size;
+
+        // The total number of blocks to copy
+        let num_blocks: usize = self.shape().iter().take(axis).product();
+
+        // Strides between the start of each block
+        let src_stride_bytes = source.shape()[axis] * block_size_bytes;
+        let dst_stride_bytes = self.shape()[axis] * block_size_bytes;
+
+        let rows_to_copy = src_range.end - src_range.start;
+        assert!(dst_offset + rows_to_copy <= self.shape()[axis]);
+        assert!(src_range.end <= source.shape()[axis]);
+
+        let src_sparse_buffer_rc = source.sparse_buffer();
+        let src_sparse_buffer = src_sparse_buffer_rc.borrow();
+        let dst_sparse_buffer_rc = self.sparse_buffer();
+        let mut dst_sparse_buffer = dst_sparse_buffer_rc.borrow_mut();
+
+        let copy_bytes = rows_to_copy * block_size_bytes;
+        for i in 0..num_blocks {
+            let src_block_start = i * src_stride_bytes;
+            let dst_block_start = i * dst_stride_bytes;
+
+            let src_start = src_block_start + src_range.start * block_size_bytes;
+            let src_rng = Range {
+                start: src_start,
+                end: src_start + copy_bytes,
+            };
+
+            let dst_start = dst_block_start + dst_offset * block_size_bytes;
+            let dst_rng = Range {
+                start: dst_start,
+                end: dst_start + copy_bytes,
+            };
+
+            encoder.encode_copy(src_sparse_buffer.buffer(), src_rng, dst_sparse_buffer.buffer_mut(), dst_rng);
+        }
     }
 
     pub fn sparse_buffer(&self) -> Rc<RefCell<B::SparseBuffer>> {

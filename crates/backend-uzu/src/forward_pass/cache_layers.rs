@@ -302,13 +302,14 @@ impl<B: Backend> CacheLayers<B> {
     pub fn slice(
         &self,
         context: &B::Context,
+        encoder: &mut Encoder<B>,
         range: std::ops::Range<usize>,
     ) -> Option<CacheLayersSlice<B>> {
         let mut layers = Vec::with_capacity(self.data.len());
         for layer in self.data.iter() {
             match layer {
                 CacheLayer::Transformer(kv) => {
-                    let Some(slice) = kv.slice(context, range.clone()) else {
+                    let Some(slice) = kv.slice(context, encoder, range.clone()) else {
                         return None;
                     };
                     layers.push(CacheLayerSlice::Transformer(slice));
@@ -326,13 +327,14 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn apply_slice(
         &mut self,
+        encoder: &mut Encoder<B>,
         slice: &CacheLayersSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
         for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
-                    kv.apply_slice(&s, range.clone());
+                    kv.apply_slice(encoder, &s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
@@ -345,6 +347,7 @@ impl<B: Backend> CacheLayers<B> {
         &self,
         context: &B::Context,
     ) -> Self {
+        let mut encoder = Encoder::<B>::new(context).expect("Failed to create Encoder");
         let mut max_prefix_capacity_across_layers = 0usize;
         let data: Box<[CacheLayer<B>]> = self
             .data
@@ -376,8 +379,8 @@ impl<B: Backend> CacheLayers<B> {
                     );
 
                     if copy_rows > 0 {
-                        new_keys.copy_slice(&layer.keys, 1, 0..copy_rows, 0);
-                        new_values.copy_slice(&layer.values, 1, 0..copy_rows, 0);
+                        new_keys.copy_slice(&layer.keys, 1, 0..copy_rows, 0, &mut encoder);
+                        new_values.copy_slice(&layer.values, 1, 0..copy_rows, 0, &mut encoder);
                     }
 
                     CacheLayer::Transformer(KVCacheLayer {
@@ -461,6 +464,8 @@ impl<B: Backend> CacheLayers<B> {
                 },
             })
             .collect();
+
+        encoder.end_encoding();
 
         Self {
             max_suffix_length: self.max_suffix_length,

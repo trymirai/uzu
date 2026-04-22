@@ -191,6 +191,7 @@ impl<B: Backend> KVCacheLayer<B> {
     pub fn slice(
         &self,
         context: &B::Context,
+        encoder: &mut Encoder<B>,
         range: std::ops::Range<usize>,
     ) -> Option<KVSlice<B>> {
         match self.state {
@@ -230,8 +231,8 @@ impl<B: Backend> KVCacheLayer<B> {
                     .collect();
 
                 for (i, &slot) in slots.iter().enumerate() {
-                    slice_keys.copy_slice(&self.keys, 1, slot..slot + 1, i);
-                    slice_values.copy_slice(&self.values, 1, slot..slot + 1, i);
+                    slice_keys.copy_slice(&self.keys, 1, slot..slot + 1, i, encoder);
+                    slice_values.copy_slice(&self.values, 1, slot..slot + 1, i, encoder);
                 }
 
                 Some(KVSlice::Window {
@@ -248,6 +249,7 @@ impl<B: Backend> KVCacheLayer<B> {
 
     pub fn apply_slice(
         &mut self,
+        encoder: &mut Encoder<B>,
         slice: &KVSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
@@ -289,8 +291,8 @@ impl<B: Backend> KVCacheLayer<B> {
                         *ring_length = *base_ring_length;
 
                         for (i, &slot) in slots.iter().enumerate() {
-                            self.keys.copy_slice(keys, 1, i..i + 1, slot);
-                            self.values.copy_slice(values, 1, i..i + 1, slot);
+                            self.keys.copy_slice(keys, 1, i..i + 1, slot, encoder);
+                            self.values.copy_slice(values, 1, i..i + 1, slot, encoder);
                         }
                     },
                     Some(r) => {
@@ -320,8 +322,8 @@ impl<B: Backend> KVCacheLayer<B> {
 
                         for (i, &slot) in slots[r.clone()].iter().enumerate() {
                             let src_i = r.start + i;
-                            self.keys.copy_slice(keys, 1, src_i..src_i + 1, slot);
-                            self.values.copy_slice(values, 1, src_i..src_i + 1, slot);
+                            self.keys.copy_slice(keys, 1, src_i..src_i + 1, slot, encoder);
+                            self.values.copy_slice(values, 1, src_i..src_i + 1, slot, encoder);
                         }
                     },
                 }
