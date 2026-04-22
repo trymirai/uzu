@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
+use backend_uzu::session::{
+    config::RunConfig,
+    types::{Error, FinishReason, Input, Output, ParsedText, RunStats, Stats, StepStats, Text, TotalStats},
+};
 use cli::server::{
     handle_chat_completions,
     state::{RunSession, SessionState, SessionWrapper},
 };
 use rocket::{http::Status, local::asynchronous::Client, routes};
 use serde_json::{Value, json};
-use uzu::session::{
-    config::RunConfig,
-    types::{Error, FinishReason, Input, Output, ParsedText, RunStats, Stats, StepStats, Text, TotalStats},
-};
 
 struct MockSession {
     result: Result<String, Error>,
