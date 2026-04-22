@@ -4,7 +4,7 @@ use async_openai::{Client, config::OpenAIConfig};
 use futures::{FutureExt, Stream, StreamExt, stream};
 use shoji::{
     traits::backend::{Error as BackendError, chat_message::Output},
-    types::session::chat::{Message, StreamConfig},
+    types::session::chat::{ChatMessage, ChatStreamConfig},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -24,8 +24,8 @@ impl bridging::ApiStream for ApiStream {
         &self,
         client: Arc<Client<OpenAIConfig>>,
         model: String,
-        config: StreamConfig,
-        messages: Vec<Message>,
+        config: ChatStreamConfig,
+        messages: Vec<ChatMessage>,
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, BackendError>> + Send>> {
         let stream = async move {

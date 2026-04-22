@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::{basic::Token, session::chat::Message};
+use shoji::types::{basic::Token, session::chat::ChatMessage};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -17,7 +17,7 @@ pub enum SynchronizationResult {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct State {
     pub tokens: Vec<Token>,
-    pub messages: Vec<Message>,
+    pub messages: Vec<ChatMessage>,
 }
 
 impl State {
@@ -27,7 +27,7 @@ impl State {
 
     pub fn synchronize_messages(
         &mut self,
-        streamed_messages: &[Message],
+        streamed_messages: &[ChatMessage],
     ) -> Result<SynchronizationResult, SynchronizationError> {
         let last_message = self.messages.last().ok_or(SynchronizationError::Desynchronization)?;
         let last_matched_index = streamed_messages

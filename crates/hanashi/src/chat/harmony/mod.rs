@@ -17,7 +17,7 @@ use openai_harmony::{
 };
 use shoji::types::{
     basic::{Token, TokenId},
-    session::chat::Message,
+    session::chat::ChatMessage,
 };
 
 use crate::{
@@ -34,7 +34,7 @@ pub struct Encoding {
 impl EncodingTrait for Encoding {
     type Config = Config;
     type Context = Context;
-    type Input = Vec<Message>;
+    type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
     type State = State;
     type Error = Error;

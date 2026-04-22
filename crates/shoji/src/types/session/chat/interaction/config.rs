@@ -2,31 +2,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{
     basic::SamplingSeed,
-    session::chat::{ContextLength, SpeculationPreset},
+    session::chat::{ChatContextLength, ChatSpeculationPreset},
 };
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Config {
-    pub context_length: ContextLength,
+pub struct ChatConfig {
+    pub context_length: ChatContextLength,
     pub sampling_seed: SamplingSeed,
-    pub speculation_preset: Option<SpeculationPreset>,
+    pub speculation_preset: Option<ChatSpeculationPreset>,
 }
 
-impl Default for Config {
+impl Default for ChatConfig {
     fn default() -> Self {
         Self {
-            context_length: ContextLength::default(),
+            context_length: ChatContextLength::default(),
             sampling_seed: SamplingSeed::default(),
             speculation_preset: None,
         }
     }
 }
 
-impl Config {
+impl ChatConfig {
     pub fn with_context_length(
         self,
-        context_length: ContextLength,
+        context_length: ChatContextLength,
     ) -> Self {
         Self {
             context_length,
@@ -35,7 +35,7 @@ impl Config {
     }
 }
 
-impl Config {
+impl ChatConfig {
     pub fn with_sampling_seed(
         self,
         sampling_seed: SamplingSeed,
@@ -47,10 +47,10 @@ impl Config {
     }
 }
 
-impl Config {
+impl ChatConfig {
     pub fn with_speculation_preset(
         self,
-        speculation_preset: Option<SpeculationPreset>,
+        speculation_preset: Option<ChatSpeculationPreset>,
     ) -> Self {
         Self {
             speculation_preset,

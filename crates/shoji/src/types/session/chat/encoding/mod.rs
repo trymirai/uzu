@@ -8,10 +8,10 @@ mod tool_function;
 mod tool_namespace;
 mod translation_input;
 
-pub use content_block::{ContentBlock, ContentBlockType};
-pub use message::{Message, MessageList};
-pub use reasoning_effort::ReasoningEffort;
-pub use role::Role;
+pub use content_block::{ChatContentBlock, ChatContentBlockType};
+pub use message::{ChatMessage, MessageList};
+pub use reasoning_effort::ChatReasoningEffort;
+pub use role::ChatRole;
 pub use tool_call::ToolCall;
 pub use tool_description::ToolDescription;
 pub use tool_function::ToolFunction;

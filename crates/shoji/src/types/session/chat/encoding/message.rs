@@ -4,20 +4,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{
     basic::Value,
-    session::chat::{ContentBlock, ReasoningEffort, Role, ToolCall, ToolNamespace},
+    session::chat::{ChatContentBlock, ChatReasoningEffort, ChatRole, ToolCall, ToolNamespace},
 };
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct Message {
-    pub role: Role,
-    pub content: Vec<ContentBlock>,
+pub struct ChatMessage {
+    pub role: ChatRole,
+    pub content: Vec<ChatContentBlock>,
     pub metadata: HashMap<String, Value>,
 }
 
-impl Message {
-    pub fn for_role(role: Role) -> Self {
+impl ChatMessage {
+    pub fn for_role(role: ChatRole) -> Self {
         Self {
             role,
             content: vec![],
@@ -26,30 +26,30 @@ impl Message {
     }
 
     pub fn system() -> Self {
-        Self::for_role(Role::System {})
+        Self::for_role(ChatRole::System {})
     }
 
     pub fn developer() -> Self {
-        Self::for_role(Role::Developer {})
+        Self::for_role(ChatRole::Developer {})
     }
 
     pub fn user() -> Self {
-        Self::for_role(Role::User {})
+        Self::for_role(ChatRole::User {})
     }
 
     pub fn assistant() -> Self {
-        Self::for_role(Role::Assistant {})
+        Self::for_role(ChatRole::Assistant {})
     }
 
     pub fn tool() -> Self {
-        Self::for_role(Role::Tool {})
+        Self::for_role(ChatRole::Tool {})
     }
 }
 
-impl Message {
+impl ChatMessage {
     fn with_block(
         self,
-        block: ContentBlock,
+        block: ChatContentBlock,
     ) -> Self {
         let mut content = self.content;
         content.push(block);
@@ -61,9 +61,9 @@ impl Message {
 
     pub fn with_reasoning_effort(
         self,
-        reasoning_effort: ReasoningEffort,
+        reasoning_effort: ChatReasoningEffort,
     ) -> Self {
-        self.with_block(ContentBlock::ReasoningEffort {
+        self.with_block(ChatContentBlock::ReasoningEffort {
             value: reasoning_effort,
         })
     }
@@ -72,7 +72,7 @@ impl Message {
         self,
         tool_namespaces: Vec<ToolNamespace>,
     ) -> Self {
-        self.with_block(ContentBlock::Tools {
+        self.with_block(ChatContentBlock::Tools {
             namespaces: tool_namespaces,
         })
     }
@@ -81,7 +81,7 @@ impl Message {
         self,
         text: String,
     ) -> Self {
-        self.with_block(ContentBlock::Text {
+        self.with_block(ChatContentBlock::Text {
             value: text,
         })
     }
@@ -90,7 +90,7 @@ impl Message {
         self,
         reasoning: String,
     ) -> Self {
-        self.with_block(ContentBlock::Reasoning {
+        self.with_block(ChatContentBlock::Reasoning {
             value: reasoning,
         })
     }
@@ -99,7 +99,7 @@ impl Message {
         self,
         tool_call: ToolCall,
     ) -> Self {
-        self.with_block(ContentBlock::ToolCall {
+        self.with_block(ChatContentBlock::ToolCall {
             value: tool_call,
         })
     }
@@ -108,7 +108,7 @@ impl Message {
         self,
         value: Value,
     ) -> Self {
-        self.with_block(ContentBlock::ToolCallCandidate {
+        self.with_block(ChatContentBlock::ToolCallCandidate {
             value,
         })
     }
@@ -117,7 +117,7 @@ impl Message {
 macro_rules! blocks_by_type {
     ($self:expr, $variant:ident, $field:ident) => {
         $self.content.iter().filter_map(|block| match block {
-            ContentBlock::$variant {
+            ChatContentBlock::$variant {
                 $field,
             } => Some($field.clone()),
             _ => None,
@@ -125,8 +125,8 @@ macro_rules! blocks_by_type {
     };
 }
 
-impl Message {
-    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+impl ChatMessage {
+    pub fn reasoning_effort(&self) -> Option<ChatReasoningEffort> {
         blocks_by_type!(self, ReasoningEffort, value).next()
     }
 
@@ -156,7 +156,7 @@ impl Message {
         self.content
             .iter()
             .filter_map(|block| match block {
-                ContentBlock::ToolCallResult {
+                ChatContentBlock::ToolCallResult {
                     identifier,
                     name,
                     value,
@@ -168,12 +168,12 @@ impl Message {
 }
 
 pub trait MessageList {
-    fn reasoning_effort(&self) -> Option<ReasoningEffort>;
+    fn reasoning_effort(&self) -> Option<ChatReasoningEffort>;
     fn tool_namespaces(&self) -> Vec<ToolNamespace>;
 }
 
-impl MessageList for Vec<Message> {
-    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+impl MessageList for Vec<ChatMessage> {
+    fn reasoning_effort(&self) -> Option<ChatReasoningEffort> {
         self.iter().find_map(|message| message.reasoning_effort())
     }
 

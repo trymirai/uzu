@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Role {
+pub enum ChatRole {
     User {},
     Assistant {},
     System {},
@@ -19,35 +19,35 @@ pub enum Role {
     },
 }
 
-impl FromStr for Role {
+impl FromStr for ChatRole {
     type Err = Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
-            "user" => Role::User {},
-            "assistant" => Role::Assistant {},
-            "system" => Role::System {},
-            "developer" => Role::Developer {},
-            "tool" => Role::Tool {},
-            other => Role::Custom {
+            "user" => ChatRole::User {},
+            "assistant" => ChatRole::Assistant {},
+            "system" => ChatRole::System {},
+            "developer" => ChatRole::Developer {},
+            "tool" => ChatRole::Tool {},
+            other => ChatRole::Custom {
                 name: other.to_string(),
             },
         })
     }
 }
 
-impl Display for Role {
+impl Display for ChatRole {
     fn fmt(
         &self,
         formatter: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
         let name = match self {
-            Role::User {} => "user",
-            Role::Assistant {} => "assistant",
-            Role::System {} => "system",
-            Role::Developer {} => "developer",
-            Role::Tool {} => "tool",
-            Role::Custom {
+            ChatRole::User {} => "user",
+            ChatRole::Assistant {} => "assistant",
+            ChatRole::System {} => "system",
+            ChatRole::Developer {} => "developer",
+            ChatRole::Tool {} => "tool",
+            ChatRole::Custom {
                 name,
             } => name,
         };
@@ -55,7 +55,7 @@ impl Display for Role {
     }
 }
 
-impl Serialize for Role {
+impl Serialize for ChatRole {
     fn serialize<S: Serializer>(
         &self,
         serializer: S,
@@ -64,9 +64,9 @@ impl Serialize for Role {
     }
 }
 
-impl<'d> Deserialize<'d> for Role {
+impl<'d> Deserialize<'d> for ChatRole {
     fn deserialize<D: Deserializer<'d>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Ok(Role::from_str(&name).map_err(de::Error::custom)?)
+        Ok(ChatRole::from_str(&name).map_err(de::Error::custom)?)
     }
 }

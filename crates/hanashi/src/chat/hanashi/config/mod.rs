@@ -2,7 +2,7 @@ mod bundled;
 mod tokens;
 
 use serde::{Deserialize, Serialize};
-use shoji::types::session::chat::{Capabilities, ContentBlockType, ReasoningEffort};
+use shoji::types::session::chat::{ChatCapabilities, ChatContentBlockType, ChatReasoningEffort};
 use token_stream_parser::token_stream::TokenStreamParserConfig;
 pub use tokens::TokensConfig;
 
@@ -86,12 +86,12 @@ pub enum Config {
 }
 
 impl Config {
-    pub fn capabilities(&self) -> Result<Capabilities, Error> {
+    pub fn capabilities(&self) -> Result<ChatCapabilities, Error> {
         let resolved = self.clone().resolve()?;
         let rendering = &resolved.rendering;
 
         let supports_multiple_tool_calls = rendering
-            .get_rendering_field_for_block_type(&ContentBlockType::ToolCall)
+            .get_rendering_field_for_block_type(&ChatContentBlockType::ToolCall)
             .and_then(|field| match &field.config {
                 FieldConfig::Collected {
                     limit,
@@ -102,23 +102,25 @@ impl Config {
             .map_or(true, |limit| limit > 1);
 
         let supports_disable_reasoning = rendering
-            .get_rendering_field_for_block_type(&ContentBlockType::ReasoningEffort)
+            .get_rendering_field_for_block_type(&ChatContentBlockType::ReasoningEffort)
             .map_or(false, |field| match &field.config {
                 FieldConfig::Unique {
                     mapping: Some(mapping),
                     ..
-                } => mapping.contains_key(ReasoningEffort::Disabled.to_string().as_str()),
+                } => mapping.contains_key(ChatReasoningEffort::Disabled.to_string().as_str()),
                 _ => false,
             });
 
-        let tools_role_and_field = rendering.get_rendering_role_and_field_for_block_type(&ContentBlockType::Tools);
+        let tools_role_and_field = rendering.get_rendering_role_and_field_for_block_type(&ChatContentBlockType::Tools);
         let supports_tools = tools_role_and_field.is_some();
         let requires_tools = tools_role_and_field
             .map(|(role, field)| field.required && !resolved.ordering.is_role_avoidable(role))
             .unwrap_or(false);
 
-        Ok(Capabilities {
-            supports_reasoning: rendering.get_rendering_field_for_block_type(&ContentBlockType::Reasoning).is_some(),
+        Ok(ChatCapabilities {
+            supports_reasoning: rendering
+                .get_rendering_field_for_block_type(&ChatContentBlockType::Reasoning)
+                .is_some(),
             supports_disable_reasoning,
             supports_tools,
             supports_multiple_tool_calls,

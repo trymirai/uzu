@@ -7,12 +7,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::types::{
     basic::Value,
-    session::chat::{ReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
+    session::chat::{ChatReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
 };
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ContentBlockType {
+pub enum ChatContentBlockType {
     Identity,
     ReasoningEffort,
     ConversationStartDate,
@@ -32,62 +32,62 @@ pub enum ContentBlockType {
     Custom,
 }
 
-impl FromStr for ContentBlockType {
+impl FromStr for ChatContentBlockType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "identity" => Ok(ContentBlockType::Identity),
-            "reasoning_effort" => Ok(ContentBlockType::ReasoningEffort),
-            "conversation_start_date" => Ok(ContentBlockType::ConversationStartDate),
-            "knowledge_cutoff" => Ok(ContentBlockType::KnowledgeCutoff),
-            "builtin_tools" => Ok(ContentBlockType::BuiltinTools),
-            "tools" => Ok(ContentBlockType::Tools),
-            "text" => Ok(ContentBlockType::Text),
-            "image" => Ok(ContentBlockType::Image),
-            "video" => Ok(ContentBlockType::Video),
-            "audio" => Ok(ContentBlockType::Audio),
-            "file" => Ok(ContentBlockType::File),
-            "reasoning" => Ok(ContentBlockType::Reasoning),
-            "tool_call" => Ok(ContentBlockType::ToolCall),
-            "tool_call_candidate" => Ok(ContentBlockType::ToolCallCandidate),
-            "tool_call_result" => Ok(ContentBlockType::ToolCallResult),
-            "translation" => Ok(ContentBlockType::Translation),
-            "custom" => Ok(ContentBlockType::Custom),
+            "identity" => Ok(ChatContentBlockType::Identity),
+            "reasoning_effort" => Ok(ChatContentBlockType::ReasoningEffort),
+            "conversation_start_date" => Ok(ChatContentBlockType::ConversationStartDate),
+            "knowledge_cutoff" => Ok(ChatContentBlockType::KnowledgeCutoff),
+            "builtin_tools" => Ok(ChatContentBlockType::BuiltinTools),
+            "tools" => Ok(ChatContentBlockType::Tools),
+            "text" => Ok(ChatContentBlockType::Text),
+            "image" => Ok(ChatContentBlockType::Image),
+            "video" => Ok(ChatContentBlockType::Video),
+            "audio" => Ok(ChatContentBlockType::Audio),
+            "file" => Ok(ChatContentBlockType::File),
+            "reasoning" => Ok(ChatContentBlockType::Reasoning),
+            "tool_call" => Ok(ChatContentBlockType::ToolCall),
+            "tool_call_candidate" => Ok(ChatContentBlockType::ToolCallCandidate),
+            "tool_call_result" => Ok(ChatContentBlockType::ToolCallResult),
+            "translation" => Ok(ChatContentBlockType::Translation),
+            "custom" => Ok(ChatContentBlockType::Custom),
             other => Err(format!("Unknown content block type: {other}")),
         }
     }
 }
 
-impl Display for ContentBlockType {
+impl Display for ChatContentBlockType {
     fn fmt(
         &self,
         formatter: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
         let name = match self {
-            ContentBlockType::Identity => "identity",
-            ContentBlockType::ReasoningEffort => "reasoning_effort",
-            ContentBlockType::ConversationStartDate => "conversation_start_date",
-            ContentBlockType::KnowledgeCutoff => "knowledge_cutoff",
-            ContentBlockType::BuiltinTools => "builtin_tools",
-            ContentBlockType::Tools => "tools",
-            ContentBlockType::Text => "text",
-            ContentBlockType::Image => "image",
-            ContentBlockType::Video => "video",
-            ContentBlockType::Audio => "audio",
-            ContentBlockType::File => "file",
-            ContentBlockType::Reasoning => "reasoning",
-            ContentBlockType::ToolCall => "tool_call",
-            ContentBlockType::ToolCallCandidate => "tool_call_candidate",
-            ContentBlockType::ToolCallResult => "tool_call_result",
-            ContentBlockType::Translation => "translation",
-            ContentBlockType::Custom => "custom",
+            ChatContentBlockType::Identity => "identity",
+            ChatContentBlockType::ReasoningEffort => "reasoning_effort",
+            ChatContentBlockType::ConversationStartDate => "conversation_start_date",
+            ChatContentBlockType::KnowledgeCutoff => "knowledge_cutoff",
+            ChatContentBlockType::BuiltinTools => "builtin_tools",
+            ChatContentBlockType::Tools => "tools",
+            ChatContentBlockType::Text => "text",
+            ChatContentBlockType::Image => "image",
+            ChatContentBlockType::Video => "video",
+            ChatContentBlockType::Audio => "audio",
+            ChatContentBlockType::File => "file",
+            ChatContentBlockType::Reasoning => "reasoning",
+            ChatContentBlockType::ToolCall => "tool_call",
+            ChatContentBlockType::ToolCallCandidate => "tool_call_candidate",
+            ChatContentBlockType::ToolCallResult => "tool_call_result",
+            ChatContentBlockType::Translation => "translation",
+            ChatContentBlockType::Custom => "custom",
         };
         write!(formatter, "{name}")
     }
 }
 
-impl Serialize for ContentBlockType {
+impl Serialize for ChatContentBlockType {
     fn serialize<S: Serializer>(
         &self,
         serializer: S,
@@ -96,22 +96,22 @@ impl Serialize for ContentBlockType {
     }
 }
 
-impl<'d> Deserialize<'d> for ContentBlockType {
+impl<'d> Deserialize<'d> for ChatContentBlockType {
     fn deserialize<D: Deserializer<'d>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        ContentBlockType::from_str(&name).map_err(de::Error::custom)
+        ChatContentBlockType::from_str(&name).map_err(de::Error::custom)
     }
 }
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ContentBlock {
+pub enum ChatContentBlock {
     Identity {
         value: String,
     },
     ReasoningEffort {
-        value: ReasoningEffort,
+        value: ChatReasoningEffort,
     },
     ConversationStartDate {
         value: String,
@@ -166,60 +166,60 @@ pub enum ContentBlock {
     },
 }
 
-impl ContentBlock {
-    pub fn get_type(&self) -> ContentBlockType {
+impl ChatContentBlock {
+    pub fn get_type(&self) -> ChatContentBlockType {
         match self {
-            ContentBlock::Identity {
+            ChatContentBlock::Identity {
                 ..
-            } => ContentBlockType::Identity,
-            ContentBlock::ReasoningEffort {
+            } => ChatContentBlockType::Identity,
+            ChatContentBlock::ReasoningEffort {
                 ..
-            } => ContentBlockType::ReasoningEffort,
-            ContentBlock::ConversationStartDate {
+            } => ChatContentBlockType::ReasoningEffort,
+            ChatContentBlock::ConversationStartDate {
                 ..
-            } => ContentBlockType::ConversationStartDate,
-            ContentBlock::KnowledgeCutoff {
+            } => ChatContentBlockType::ConversationStartDate,
+            ChatContentBlock::KnowledgeCutoff {
                 ..
-            } => ContentBlockType::KnowledgeCutoff,
-            ContentBlock::BuiltinTools {
+            } => ChatContentBlockType::KnowledgeCutoff,
+            ChatContentBlock::BuiltinTools {
                 ..
-            } => ContentBlockType::BuiltinTools,
-            ContentBlock::Tools {
+            } => ChatContentBlockType::BuiltinTools,
+            ChatContentBlock::Tools {
                 ..
-            } => ContentBlockType::Tools,
-            ContentBlock::Text {
+            } => ChatContentBlockType::Tools,
+            ChatContentBlock::Text {
                 ..
-            } => ContentBlockType::Text,
-            ContentBlock::Image {
+            } => ChatContentBlockType::Text,
+            ChatContentBlock::Image {
                 ..
-            } => ContentBlockType::Image,
-            ContentBlock::Video {
+            } => ChatContentBlockType::Image,
+            ChatContentBlock::Video {
                 ..
-            } => ContentBlockType::Video,
-            ContentBlock::Audio {
+            } => ChatContentBlockType::Video,
+            ChatContentBlock::Audio {
                 ..
-            } => ContentBlockType::Audio,
-            ContentBlock::File {
+            } => ChatContentBlockType::Audio,
+            ChatContentBlock::File {
                 ..
-            } => ContentBlockType::File,
-            ContentBlock::Reasoning {
+            } => ChatContentBlockType::File,
+            ChatContentBlock::Reasoning {
                 ..
-            } => ContentBlockType::Reasoning,
-            ContentBlock::ToolCall {
+            } => ChatContentBlockType::Reasoning,
+            ChatContentBlock::ToolCall {
                 ..
-            } => ContentBlockType::ToolCall,
-            ContentBlock::ToolCallCandidate {
+            } => ChatContentBlockType::ToolCall,
+            ChatContentBlock::ToolCallCandidate {
                 ..
-            } => ContentBlockType::ToolCallCandidate,
-            ContentBlock::ToolCallResult {
+            } => ChatContentBlockType::ToolCallCandidate,
+            ChatContentBlock::ToolCallResult {
                 ..
-            } => ContentBlockType::ToolCallResult,
-            ContentBlock::Translation {
+            } => ChatContentBlockType::ToolCallResult,
+            ChatContentBlock::Translation {
                 ..
-            } => ContentBlockType::Translation,
-            ContentBlock::Custom {
+            } => ChatContentBlockType::Translation,
+            ChatContentBlock::Custom {
                 ..
-            } => ContentBlockType::Custom,
+            } => ChatContentBlockType::Custom,
         }
     }
 }

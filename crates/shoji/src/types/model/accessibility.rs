@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::model::{Reference, Repository};
+use crate::types::model::{ModelReference, Repository};
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Accessibility {
+pub enum ModelAccessibility {
     Local {
-        reference: Reference,
+        reference: ModelReference,
     },
     Remote {
         repository: Option<Repository>,

@@ -8,7 +8,7 @@ mod state;
 pub use config::Config;
 pub use context::{Context, TokenizerLocation};
 pub use error::Error;
-use shoji::types::{basic::TokenId, session::chat::Message};
+use shoji::types::{basic::TokenId, session::chat::ChatMessage};
 pub use state::{State, SynchronizationError, SynchronizationResult};
 
 use crate::{
@@ -39,7 +39,7 @@ pub enum Encoding {
 impl EncodingTrait for Encoding {
     type Config = Config;
     type Context = Context;
-    type Input = Vec<Message>;
+    type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
     type State = State;
     type Error = Error;

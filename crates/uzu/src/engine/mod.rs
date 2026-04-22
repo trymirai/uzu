@@ -15,7 +15,7 @@ use nagare::{
 };
 use shoji::{
     traits::{Backend, Registry},
-    types::{model::Model, session::chat::Config as ChatConfig},
+    types::{model::Model, session::chat::ChatConfig},
 };
 use tokio::runtime::Handle;
 use tokio_stream::wrappers::BroadcastStream;

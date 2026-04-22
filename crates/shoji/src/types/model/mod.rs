@@ -9,13 +9,13 @@ mod reference;
 mod repository;
 mod specialization;
 
-pub use accessibility::Accessibility;
+pub use accessibility::ModelAccessibility;
 pub use entity::{Entity, EntityType};
 pub use file::File;
 pub use hash::{Hash, HashMethod};
 pub use image::{Image, ImageFormat, ImageTheme};
 pub use model::Model;
-pub use quantization::Quantization;
-pub use reference::Reference;
+pub use quantization::ModelQuantization;
+pub use reference::ModelReference;
 pub use repository::Repository;
-pub use specialization::Specialization;
+pub use specialization::ModelSpecialization;

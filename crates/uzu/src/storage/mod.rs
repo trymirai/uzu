@@ -13,7 +13,7 @@ use download_manager::{
     FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
 };
 pub use error::Error;
-use shoji::types::model::{Accessibility, File, Model, Reference};
+use shoji::types::model::{File, Model, ModelAccessibility, ModelReference};
 use tokio::{
     runtime::Handle,
     sync::broadcast::{Sender, channel},
@@ -252,26 +252,26 @@ impl Storage {
         model: &Model,
     ) -> Result<Vec<File>, Error> {
         match &model.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match &reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     files,
                     ..
                 } => Ok(files.clone()),
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     ..
                 } => Err(Error::UnsupportedItem {
                     identifier: model.identifier(),
                 }),
-                Reference::Local {
+                ModelReference::Local {
                     ..
                 } => Err(Error::UnsupportedItem {
                     identifier: model.identifier(),
                 }),
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
             } => Err(Error::UnsupportedItem {
                 identifier: model.identifier(),

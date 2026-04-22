@@ -6,7 +6,7 @@ use shoji::{
         State,
         backend::chat_message::{Backend, Instance, Output},
     },
-    types::session::chat::{Config, Message, StreamConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatStreamConfig},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +20,7 @@ pub struct Session {
 impl Session {
     pub async fn new(
         backend: &dyn Backend,
-        config: Config,
+        config: ChatConfig,
         reference: String,
     ) -> Result<Self, Error> {
         let instance = backend.instance(reference, config).await.map_err(|error| Error::Backend {
@@ -44,8 +44,8 @@ impl Session {
 
     pub fn stream<'a>(
         &'a mut self,
-        input: &'a Vec<Message>,
-        config: StreamConfig,
+        input: &'a Vec<ChatMessage>,
+        config: ChatStreamConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, Error>> + Send + 'a>> {
         self.instance

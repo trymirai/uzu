@@ -1,6 +1,6 @@
 use uzu::{
     engine::{Config as EngineConfig, Engine},
-    types::session::chat::{Config, Message, StreamConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatStreamConfig},
 };
 
 #[tokio::main]
@@ -18,9 +18,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let session = engine.chat(model, Config::default()).await?;
+    let session = engine.chat(model, ChatConfig::default()).await?;
     let outputs = session
-        .reply(vec![Message::user().with_text("Tell about London".to_string())], StreamConfig::default())
+        .reply(vec![ChatMessage::user().with_text("Tell about London".to_string())], ChatStreamConfig::default())
         .await?;
     for output in outputs {
         println!("{}", output.message.text().unwrap_or_default());

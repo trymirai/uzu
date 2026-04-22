@@ -1,19 +1,19 @@
 use openai_harmony::chat::Role as ExternalRole;
-use shoji::types::session::chat::Role;
+use shoji::types::session::chat::ChatRole;
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
 
-impl ToHarmony for Role {
+impl ToHarmony for ChatRole {
     type Output = ExternalRole;
 
     fn to_harmony(self) -> Result<Self::Output, Error> {
         match self {
-            Role::User {} => Ok(ExternalRole::User),
-            Role::Assistant {} => Ok(ExternalRole::Assistant),
-            Role::System {} => Ok(ExternalRole::System),
-            Role::Developer {} => Ok(ExternalRole::Developer),
-            Role::Tool {} => Ok(ExternalRole::Tool),
-            Role::Custom {
+            ChatRole::User {} => Ok(ExternalRole::User),
+            ChatRole::Assistant {} => Ok(ExternalRole::Assistant),
+            ChatRole::System {} => Ok(ExternalRole::System),
+            ChatRole::Developer {} => Ok(ExternalRole::Developer),
+            ChatRole::Tool {} => Ok(ExternalRole::Tool),
+            ChatRole::Custom {
                 ..
             } => Err(Error::UnsupportedRole {
                 role: self.clone(),
@@ -22,16 +22,16 @@ impl ToHarmony for Role {
     }
 }
 
-impl FromHarmony for Role {
+impl FromHarmony for ChatRole {
     type Input = ExternalRole;
 
     fn from_harmony(input: Self::Input) -> Self {
         match input {
-            ExternalRole::User => Role::User {},
-            ExternalRole::Assistant => Role::Assistant {},
-            ExternalRole::System => Role::System {},
-            ExternalRole::Developer => Role::Developer {},
-            ExternalRole::Tool => Role::Tool {},
+            ExternalRole::User => ChatRole::User {},
+            ExternalRole::Assistant => ChatRole::Assistant {},
+            ExternalRole::System => ChatRole::System {},
+            ExternalRole::Developer => ChatRole::Developer {},
+            ExternalRole::Tool => ChatRole::Tool {},
         }
     }
 }

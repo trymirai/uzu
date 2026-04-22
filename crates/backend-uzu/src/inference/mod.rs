@@ -20,7 +20,7 @@ use shoji::{
             text_to_speech as text_to_speech_trait,
         },
     },
-    types::session::chat::Config as ShojiChatConfig,
+    types::session::chat::ChatConfig as ShojiChatConfig,
 };
 pub use text_to_speech::Instance as TextToSpeechInstance;
 

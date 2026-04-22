@@ -7,13 +7,13 @@ use crate::types::{
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StreamConfig {
+pub struct ChatStreamConfig {
     pub token_limit: Option<u32>,
     pub sampling_policy: SamplingPolicy,
     pub grammar: Option<Grammar>,
 }
 
-impl Default for StreamConfig {
+impl Default for ChatStreamConfig {
     fn default() -> Self {
         Self {
             token_limit: None,
@@ -23,7 +23,7 @@ impl Default for StreamConfig {
     }
 }
 
-impl StreamConfig {
+impl ChatStreamConfig {
     pub fn with_token_limit(
         self,
         token_limit: Option<u32>,

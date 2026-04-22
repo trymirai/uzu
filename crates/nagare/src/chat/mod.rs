@@ -19,25 +19,25 @@ use shoji::{
     },
     types::{
         basic::{CancellationToken, Value},
-        model::{Model, Specialization},
-        session::chat::{Config, Message, Output, StreamConfig, ToolCall},
+        model::{Model, ModelSpecialization},
+        session::chat::{ChatConfig, ChatMessage, ChatOutput, ChatStreamConfig, ToolCall},
     },
 };
 use tokio::sync::{Mutex, mpsc};
 
 #[bindings::export(Class)]
 pub struct Stream {
-    receiver: mpsc::UnboundedReceiver<Result<Vec<Output>, Error>>,
+    receiver: mpsc::UnboundedReceiver<Result<Vec<ChatOutput>, Error>>,
 }
 
 impl Stream {
-    pub async fn next(&mut self) -> Option<Result<Vec<Output>, Error>> {
+    pub async fn next(&mut self) -> Option<Result<Vec<ChatOutput>, Error>> {
         self.receiver.recv().await
     }
 }
 
 impl FuturesStream for Stream {
-    type Item = Result<Vec<Output>, Error>;
+    type Item = Result<Vec<ChatOutput>, Error>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -65,18 +65,18 @@ enum Instance {
 pub struct Session {
     instance: Arc<Mutex<Instance>>,
     state: Arc<Mutex<State>>,
-    messages: Arc<Mutex<Vec<Message>>>,
+    messages: Arc<Mutex<Vec<ChatMessage>>>,
 }
 
 #[bindings::export(Implementation)]
 impl Session {
     pub async fn new(
         backend: &dyn Backend,
-        config: Config,
+        config: ChatConfig,
         model: Model,
         path: Option<String>,
     ) -> Result<Self, Error> {
-        if !model.specializations.contains(&Specialization::Chat) {
+        if !model.specializations.contains(&ModelSpecialization::Chat) {
             return Err(Error::UnsupportedModel);
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
@@ -102,7 +102,7 @@ impl Session {
     }
 
     #[bindings::export(Method)]
-    pub async fn messages(&self) -> Vec<Message> {
+    pub async fn messages(&self) -> Vec<ChatMessage> {
         self.messages.lock().await.clone()
     }
 
@@ -137,11 +137,11 @@ impl Session {
     #[bindings::export(Method)]
     pub async fn reply(
         &self,
-        input: Vec<Message>,
-        config: StreamConfig,
-    ) -> Result<Vec<Output>, Error> {
+        input: Vec<ChatMessage>,
+        config: ChatStreamConfig,
+    ) -> Result<Vec<ChatOutput>, Error> {
         let (mut stream, _) = self.reply_with_stream(input, config);
-        let mut outputs: Option<Vec<Output>> = None;
+        let mut outputs: Option<Vec<ChatOutput>> = None;
         while let Some(progress) = stream.next().await {
             match progress {
                 Ok(current_outputs) => outputs = Some(current_outputs.clone()),
@@ -154,11 +154,11 @@ impl Session {
     #[bindings::export(Method)]
     pub fn reply_with_stream(
         &self,
-        input: Vec<Message>,
-        config: StreamConfig,
+        input: Vec<ChatMessage>,
+        config: ChatStreamConfig,
     ) -> (Stream, CancellationToken) {
         let cancel_token_to_return = CancellationToken::new();
-        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<Output>, Error>>();
+        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatOutput>, Error>>();
 
         let instance = self.instance.clone();
         let state = self.state.clone();
@@ -186,7 +186,7 @@ impl Session {
                 messages.clone()
             };
 
-            let mut outputs: IndexMap<u32, Output> = IndexMap::new();
+            let mut outputs: IndexMap<u32, ChatOutput> = IndexMap::new();
 
             let mut instance = instance.lock().await;
             let mut stream = match &mut *instance {
@@ -199,7 +199,7 @@ impl Session {
                 match partial_output {
                     Ok(backend_output) => {
                         let message = build_message(&backend_output);
-                        let output = Output {
+                        let output = ChatOutput {
                             message: message.clone(),
                             stats: backend_output.stats.clone(),
                             finish_reason: backend_output.finish_reason.clone(),
@@ -244,8 +244,8 @@ impl Session {
     }
 }
 
-fn build_message(output: &BackendOutput) -> Message {
-    let mut message = Message::assistant();
+fn build_message(output: &BackendOutput) -> ChatMessage {
+    let mut message = ChatMessage::assistant();
     if let Some(reasoning) = &output.reasoning {
         message = message.with_reasoning(reasoning.clone());
     }

@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use serde_json::Value;
 use shoji::types::session::chat::{
-    ContentBlock as OriginalContentBlock, ContentBlockType, Message as OriginalMessage, Role, TranslationInput,
+    ChatContentBlock as OriginalContentBlock, ChatContentBlockType, ChatMessage as OriginalMessage, ChatRole,
+    TranslationInput,
 };
 
 use crate::chat::hanashi::messages::{
@@ -12,7 +13,7 @@ use crate::chat::hanashi::messages::{
 };
 
 pub struct Message {
-    pub role: Role,
+    pub role: ChatRole,
     pub content: Vec<ContentBlock>,
     pub metadata: HashMap<String, Value>,
 }
@@ -21,7 +22,7 @@ impl Message {
     pub fn from_message(
         message: &OriginalMessage,
         config: &Config,
-        raw_types: &[ContentBlockType],
+        raw_types: &[ChatContentBlockType],
     ) -> Result<Self, Error> {
         let mut content = Vec::new();
         for block in &message.content {

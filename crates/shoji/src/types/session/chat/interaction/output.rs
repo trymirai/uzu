@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::chat::{FinishReason, Message, Stats};
+use crate::types::session::chat::{ChatFinishReason, ChatMessage, ChatStats};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Output {
-    pub message: Message,
-    pub stats: Stats,
-    pub finish_reason: Option<FinishReason>,
+pub struct ChatOutput {
+    pub message: ChatMessage,
+    pub stats: ChatStats,
+    pub finish_reason: Option<ChatFinishReason>,
 }

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use shoji::types::model::{Accessibility, Entity, EntityType, File, Hash, HashMethod, Model, Reference};
+use shoji::types::model::{Entity, EntityType, File, Hash, HashMethod, Model, ModelAccessibility, ModelReference};
 use tokio::runtime::Handle;
 use uzu::{
     device::Device,
@@ -165,8 +165,8 @@ fn test_model(index: usize) -> Model {
         specializations: vec![],
         number_of_parameters: None,
         quantization: None,
-        accessibility: Accessibility::Local {
-            reference: Reference::Mirai {
+        accessibility: ModelAccessibility::Local {
+            reference: ModelReference::Mirai {
                 toolchain_version: "1.0".to_string(),
                 repository: None,
                 source_repository: None,

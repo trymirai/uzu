@@ -12,7 +12,7 @@ use shoji::{
     traits::{Backend, State as StateTrait, backend::text_to_speech::Instance},
     types::{
         basic::CancellationToken,
-        model::{Model, Specialization},
+        model::{Model, ModelSpecialization},
         session::text_to_speech::PcmBatch,
     },
 };
@@ -61,7 +61,7 @@ impl Session {
         model: Model,
         path: Option<String>,
     ) -> Result<Self, Error> {
-        if !model.specializations.contains(&Specialization::TextToSpeech) {
+        if !model.specializations.contains(&ModelSpecialization::TextToSpeech) {
             return Err(Error::UnsupportedModel);
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());

@@ -10,7 +10,7 @@ use shoji::{
             chat_message::{StreamInput, StreamOutput},
         },
     },
-    types::session::chat::StreamConfig,
+    types::session::chat::ChatStreamConfig,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -53,7 +53,7 @@ impl Instance {
 }
 
 impl InstanceTrait for Instance {
-    type StreamConfig = StreamConfig;
+    type StreamConfig = ChatStreamConfig;
     type StreamInput = StreamInput;
     type StreamOutput = StreamOutput;
 

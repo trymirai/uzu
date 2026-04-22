@@ -5,7 +5,7 @@ use std::{fs, future::Future, path::Path, pin::Pin};
 pub use config::Config;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Accessibility, Entity, EntityType, Model, Reference, Specialization},
+    types::model::{Entity, EntityType, Model, ModelAccessibility, ModelReference, ModelSpecialization},
 };
 
 use crate::registry::Error;
@@ -86,11 +86,11 @@ impl Registry {
                 self.entity(EntityType::Family, &self.config.identifier, &self.config.name),
                 self.entity(EntityType::Variant, &identifier, &identifier),
             ],
-            specializations: vec![Specialization::Chat],
+            specializations: vec![ModelSpecialization::Chat],
             number_of_parameters: None,
             quantization: None,
-            accessibility: Accessibility::Local {
-                reference: Reference::Local {
+            accessibility: ModelAccessibility::Local {
+                reference: ModelReference::Local {
                     path: path.to_string_lossy().to_string(),
                 },
             },

@@ -3,7 +3,7 @@ use std::time::Instant;
 use indexmap::IndexMap;
 use shoji::{
     traits::backend::chat_message::Output,
-    types::session::chat::{FinishReason, Stats},
+    types::session::chat::{ChatFinishReason, ChatStats},
 };
 
 use crate::openai::tool_call_state::ToolCallState;
@@ -21,7 +21,7 @@ pub struct StreamChunk {
     pub content: Option<String>,
     pub reasoning: Option<String>,
     pub tool_calls: Vec<ToolCallChunk>,
-    pub finish_reason: Option<FinishReason>,
+    pub finish_reason: Option<ChatFinishReason>,
     pub tokens_input: Option<u32>,
     pub tokens_output: Option<u32>,
 }
@@ -31,7 +31,7 @@ pub struct StreamState {
     text: Option<String>,
     reasoning: Option<String>,
     tool_calls: IndexMap<u32, ToolCallState>,
-    finish_reason: Option<FinishReason>,
+    finish_reason: Option<ChatFinishReason>,
     start_moment: Instant,
     first_token_moment: Option<Instant>,
     tokens_input: Option<u32>,
@@ -113,7 +113,7 @@ impl StreamState {
         }
     }
 
-    fn stats(&self) -> Stats {
+    fn stats(&self) -> ChatStats {
         let duration = self.start_moment.elapsed().as_secs_f64();
         let time_to_first_token =
             self.first_token_moment.map(|first| first.duration_since(self.start_moment).as_secs_f64());
@@ -131,7 +131,7 @@ impl StreamState {
             },
             _ => None,
         };
-        Stats {
+        ChatStats {
             duration,
             time_to_first_token,
             prefill_tokens_per_second,

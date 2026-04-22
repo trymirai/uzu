@@ -8,7 +8,7 @@ use fancy_regex::Regex;
 use serde::Deserialize;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Accessibility, Entity, EntityType, Model as ShojiModel, Specialization},
+    types::model::{Entity, EntityType, Model as ShojiModel, ModelAccessibility, ModelSpecialization},
 };
 
 #[derive(Debug, Deserialize)]
@@ -109,10 +109,10 @@ impl RegistryTrait for Registry {
                             family_entity.clone(),
                             variant_entity,
                         ],
-                        specializations: vec![Specialization::Chat],
+                        specializations: vec![ModelSpecialization::Chat],
                         number_of_parameters: None,
                         quantization: None,
-                        accessibility: Accessibility::Remote {
+                        accessibility: ModelAccessibility::Remote {
                             repository: None,
                         },
                     };

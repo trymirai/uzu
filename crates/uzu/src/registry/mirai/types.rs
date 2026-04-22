@@ -1,15 +1,15 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::model::{Accessibility, Entity, Model, Quantization, Specialization};
+use shoji::types::model::{Entity, Model, ModelAccessibility, ModelQuantization, ModelSpecialization};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct ResponseModel {
     pub identifier: String,
     pub entity_identifiers: Vec<String>,
-    pub specializations: Vec<Specialization>,
+    pub specializations: Vec<ModelSpecialization>,
     pub number_of_parameters: Option<i64>,
-    pub quantization: Option<Quantization>,
-    pub accessibility: Accessibility,
+    pub quantization: Option<ModelQuantization>,
+    pub accessibility: ModelAccessibility,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

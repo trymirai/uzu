@@ -4,7 +4,7 @@ use crate::types::session::chat::Feature;
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SpeculationPreset {
+pub enum ChatSpeculationPreset {
     GeneralChat {},
     Summarization {},
     Classification {

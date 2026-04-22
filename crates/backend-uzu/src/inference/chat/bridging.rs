@@ -8,9 +8,10 @@ use shoji::{
             SamplingSeed as ShojiSamplingSeed,
         },
         session::chat::{
-            Config as ShojiChatConfig, ContextLength as ShojiContextLength, FinishReason as ShojiFinishReason,
-            Grammar as ShojiGrammar, Message as ShojiMessage, MessageList, ReasoningEffort, Role as ShojiRole,
-            SpeculationPreset as ShojiSpeculationPreset, Stats as ShojiStats, StreamConfig,
+            ChatConfig as ShojiChatConfig, ChatContextLength as ShojiContextLength,
+            ChatFinishReason as ShojiFinishReason, ChatMessage as ShojiMessage, ChatReasoningEffort,
+            ChatRole as ShojiRole, ChatSpeculationPreset as ShojiSpeculationPreset, ChatStats as ShojiStats,
+            ChatStreamConfig, Grammar as ShojiGrammar, MessageList,
         },
     },
 };
@@ -85,7 +86,7 @@ pub fn build_decoding_config(
 
 pub fn build_input_and_run_config(
     messages: &Vec<ShojiMessage>,
-    config: &StreamConfig,
+    config: &ChatStreamConfig,
 ) -> (Input, RunConfig) {
     let input_messages = messages.iter().filter_map(build_message).collect();
     let input = Input::Messages(input_messages);
@@ -130,13 +131,13 @@ fn build_message(message: &ShojiMessage) -> Option<Message> {
 
 fn build_run_config(
     messages: &Vec<ShojiMessage>,
-    config: &StreamConfig,
+    config: &ChatStreamConfig,
 ) -> RunConfig {
     let sampling_policy = build_sampling_policy(&config.sampling_policy);
     let grammar_config = build_grammar(&config.grammar);
     let tokens_limit = config.token_limit.map(|value| value as u64).unwrap_or(2048);
     let enable_thinking =
-        messages.reasoning_effort().map(|effort| !matches!(effort, ReasoningEffort::Disabled)).unwrap_or(true);
+        messages.reasoning_effort().map(|effort| !matches!(effort, ChatReasoningEffort::Disabled)).unwrap_or(true);
     RunConfig::new(tokens_limit, enable_thinking, sampling_policy, grammar_config)
 }
 

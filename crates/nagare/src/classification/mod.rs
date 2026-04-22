@@ -8,7 +8,7 @@ use shoji::{
     traits::{Backend, State as StateTrait, backend::classification::Instance},
     types::{
         basic::CancellationToken,
-        model::{Model, Specialization},
+        model::{Model, ModelSpecialization},
         session::classification::{Message, Output},
     },
 };
@@ -36,7 +36,7 @@ impl Session {
         model: Model,
         path: Option<String>,
     ) -> Result<Self, Error> {
-        if !model.specializations.contains(&Specialization::Classification) {
+        if !model.specializations.contains(&ModelSpecialization::Classification) {
             return Err(Error::UnsupportedModel);
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());

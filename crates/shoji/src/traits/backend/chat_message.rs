@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
-    types::session::chat::{Config, FinishReason, Message, Stats, StreamConfig, ToolCall},
+    types::session::chat::{ChatConfig, ChatFinishReason, ChatMessage, ChatStats, ChatStreamConfig, ToolCall},
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,27 +19,27 @@ pub struct Output {
     pub reasoning: Option<String>,
     pub text: Option<String>,
     pub tool_calls: Vec<ToolCallState>,
-    pub finish_reason: Option<FinishReason>,
-    pub stats: Stats,
+    pub finish_reason: Option<ChatFinishReason>,
+    pub stats: ChatStats,
 }
 
-pub type StreamInput = Vec<Message>;
+pub type StreamInput = Vec<ChatMessage>;
 pub type StreamOutput = Output;
 
 pub trait Backend: Send + Sync {
     fn instance(
         &self,
         reference: String,
-        config: Config,
+        config: ChatConfig,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Instance>, Error>> + Send + '_>>;
 }
 
 pub trait Instance:
-    InstanceTrait<StreamConfig = StreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    InstanceTrait<StreamConfig = ChatStreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
 {
 }
 
 impl<T> Instance for T where
-    T: InstanceTrait<StreamConfig = StreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    T: InstanceTrait<StreamConfig = ChatStreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
 {
 }

@@ -3,7 +3,7 @@
 use uzu::{
     engine::{Config, Engine},
     types::session::{
-        chat::{Config as ChatConfig, Message as ChatMessage, StreamConfig as ChatStreamConfig},
+        chat::{ChatConfig, ChatMessage, ChatStreamConfig},
         classification::Message as ClassificationMessage,
     },
 };

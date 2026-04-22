@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shoji::types::session::chat::ContentBlockType;
+use shoji::types::session::chat::ChatContentBlockType;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Field {
@@ -17,14 +17,14 @@ pub struct Field {
 #[serde(untagged)]
 pub enum FieldConfig {
     Unique {
-        block: ContentBlockType,
+        block: ChatContentBlockType,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mapping: Option<IndexMap<String, Option<Value>>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         allowed_values: Option<Vec<Value>>,
     },
     Collected {
-        blocks: Vec<ContentBlockType>,
+        blocks: Vec<ChatContentBlockType>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<usize>,
     },

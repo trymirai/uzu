@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::model::{Accessibility, Entity, EntityType, Quantization, Reference, Specialization};
+use crate::types::model::{
+    Entity, EntityType, ModelAccessibility, ModelQuantization, ModelReference, ModelSpecialization,
+};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -8,10 +10,10 @@ use crate::types::model::{Accessibility, Entity, EntityType, Quantization, Refer
 pub struct Model {
     pub identifier: String,
     pub entities: Vec<Entity>,
-    pub specializations: Vec<Specialization>,
+    pub specializations: Vec<ModelSpecialization>,
     pub number_of_parameters: Option<i64>,
-    pub quantization: Option<Quantization>,
-    pub accessibility: Accessibility,
+    pub quantization: Option<ModelQuantization>,
+    pub accessibility: ModelAccessibility,
 }
 
 impl Model {
@@ -24,29 +26,29 @@ impl Model {
     }
 
     pub fn is_local(&self) -> bool {
-        matches!(self.accessibility, Accessibility::Local { .. })
+        matches!(self.accessibility, ModelAccessibility::Local { .. })
     }
 
     pub fn is_remote(&self) -> bool {
-        matches!(self.accessibility, Accessibility::Remote { .. })
+        matches!(self.accessibility, ModelAccessibility::Remote { .. })
     }
 
     pub fn is_downloadable(&self) -> bool {
         matches!(
             self.accessibility,
-            Accessibility::Local {
-                reference: Reference::Mirai { .. } | Reference::HuggingFace { .. }
+            ModelAccessibility::Local {
+                reference: ModelReference::Mirai { .. } | ModelReference::HuggingFace { .. }
             }
         )
     }
 
     pub fn repo_ids(&self) -> Vec<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     repository,
                     source_repository,
                     ..
@@ -60,14 +62,14 @@ impl Model {
                     }
                     result
                 },
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     repository,
                 } => vec![repository.identifier.clone()],
-                Reference::Local {
+                ModelReference::Local {
                     ..
                 } => vec![],
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 repository,
                 ..
             } => {
@@ -82,21 +84,21 @@ impl Model {
 
     pub fn local_external_path(&self) -> Option<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     ..
                 } => None,
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     ..
                 } => None,
-                Reference::Local {
+                ModelReference::Local {
                     path,
                 } => Some(path.clone()),
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
             } => None,
         }
@@ -104,11 +106,11 @@ impl Model {
 
     pub fn reference_name(&self) -> Option<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => Some(reference.name()),
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
             } => None,
         }
@@ -116,22 +118,22 @@ impl Model {
 
     pub fn checkpoint_version(&self) -> Option<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     toolchain_version,
                     ..
                 } => Some(toolchain_version.clone()),
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     repository,
                 } => Some(repository.commit_hash.clone()),
-                Reference::Local {
+                ModelReference::Local {
                     ..
                 } => None,
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
             } => None,
         }

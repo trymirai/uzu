@@ -1,9 +1,9 @@
+use crate::extensions::PcmBatchError;
+
 #[bindings::export(Error)]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error {
-    #[error("Unable to save as wav: {message}")]
-    UnableToSaveAsWav {
-        message: String,
-    },
+pub enum ExtensionsError {
+    #[error(transparent)]
+    PcmBatch(#[from] PcmBatchError),
 }

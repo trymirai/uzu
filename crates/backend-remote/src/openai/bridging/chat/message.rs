@@ -5,7 +5,7 @@ use async_openai::types::chat::{
     ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
     FunctionCall,
 };
-use shoji::types::session::chat::{Message, Role};
+use shoji::types::session::chat::{ChatMessage, ChatRole};
 
 use crate::openai::Error;
 
@@ -16,12 +16,12 @@ enum ResolvedRole {
     Tool,
 }
 
-pub fn build(message: &Message) -> Result<ChatCompletionRequestMessage, Error> {
+pub fn build(message: &ChatMessage) -> Result<ChatCompletionRequestMessage, Error> {
     let (role, content, tool_calls, tool_call_id) = match message.role {
-        Role::System {} => (ResolvedRole::System, message.text(), None, None),
-        Role::User {} => (ResolvedRole::User, message.text(), None, None),
-        Role::Assistant {} => (ResolvedRole::Assistant, message.text(), Some(message.tool_calls()), None),
-        Role::Tool {} => {
+        ChatRole::System {} => (ResolvedRole::System, message.text(), None, None),
+        ChatRole::User {} => (ResolvedRole::User, message.text(), None, None),
+        ChatRole::Assistant {} => (ResolvedRole::Assistant, message.text(), Some(message.tool_calls()), None),
+        ChatRole::Tool {} => {
             let tool_call_results = message.tool_call_results();
             if tool_call_results.len() != 1 {
                 return Err(Error::ToolCallResultRequired);
@@ -32,8 +32,8 @@ pub fn build(message: &Message) -> Result<ChatCompletionRequestMessage, Error> {
             })?;
             (ResolvedRole::Tool, Some(content), None, tool_call_id.clone())
         },
-        Role::Developer {}
-        | Role::Custom {
+        ChatRole::Developer {}
+        | ChatRole::Custom {
             ..
         } => return Err(Error::UnsupportedRole),
     };
