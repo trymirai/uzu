@@ -20,14 +20,12 @@ use tokio::sync::{Mutex, mpsc};
 
 #[bindings::export(Class)]
 pub struct TextToSpeechSessionStream {
-    receiver: mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>,
+    receiver: Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>,
 }
 
-#[bindings::export(Implementation)]
 impl TextToSpeechSessionStream {
-    #[bindings::export(Method)]
-    pub async fn next(&mut self) -> Option<Result<PcmBatch, TextToSpeechSessionError>> {
-        self.receiver.recv().await
+    pub async fn next(&self) -> Option<Result<PcmBatch, TextToSpeechSessionError>> {
+        self.receiver.lock().await.recv().await
     }
 }
 
@@ -35,10 +33,10 @@ impl FuturesStream for TextToSpeechSessionStream {
     type Item = Result<PcmBatch, TextToSpeechSessionError>;
 
     fn poll_next(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        self.receiver.poll_recv(context)
+        self.get_mut().receiver.get_mut().poll_recv(context)
     }
 }
 
@@ -60,7 +58,6 @@ pub struct TextToSpeechSession {
     state: Arc<Mutex<TextToSpeechSessionState>>,
 }
 
-#[bindings::export(Implementation)]
 impl TextToSpeechSession {
     pub async fn new(
         backend: &dyn Backend,
@@ -89,7 +86,10 @@ impl TextToSpeechSession {
             state: Arc::new(Mutex::new(TextToSpeechSessionState::Idle)),
         })
     }
+}
 
+#[bindings::export(Implementation)]
+impl TextToSpeechSession {
     #[bindings::export(Method)]
     pub async fn state(&self) -> TextToSpeechSessionState {
         *self.state.lock().await
@@ -100,7 +100,7 @@ impl TextToSpeechSession {
         &self,
         input: String,
     ) -> Result<PcmBatch, TextToSpeechSessionError> {
-        let (mut stream, _) = self.synthesize_stream(input);
+        let (stream, _) = self.synthesize_stream(input);
         let mut batches: Vec<PcmBatch> = Vec::new();
         while let Some(event) = stream.next().await {
             match event {
@@ -113,7 +113,9 @@ impl TextToSpeechSession {
         }
         Err(TextToSpeechSessionError::NoResponse)
     }
+}
 
+impl TextToSpeechSession {
     fn synthesize_stream(
         &self,
         input: String,
@@ -162,7 +164,7 @@ impl TextToSpeechSession {
 
         (
             TextToSpeechSessionStream {
-                receiver,
+                receiver: Mutex::new(receiver),
             },
             cancel_token_to_return,
         )

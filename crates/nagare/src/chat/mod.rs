@@ -27,12 +27,12 @@ use tokio::sync::{Mutex, mpsc};
 
 #[bindings::export(Class)]
 pub struct ChatSessionStream {
-    receiver: mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>,
+    receiver: Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>,
 }
 
 impl ChatSessionStream {
-    pub async fn next(&mut self) -> Option<Result<Vec<ChatReply>, ChatSessionError>> {
-        self.receiver.recv().await
+    pub async fn next(&self) -> Option<Result<Vec<ChatReply>, ChatSessionError>> {
+        self.receiver.lock().await.recv().await
     }
 }
 
@@ -40,10 +40,10 @@ impl FuturesStream for ChatSessionStream {
     type Item = Result<Vec<ChatReply>, ChatSessionError>;
 
     fn poll_next(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        self.receiver.poll_recv(context)
+        self.get_mut().receiver.get_mut().poll_recv(context)
     }
 }
 
@@ -68,7 +68,6 @@ pub struct ChatSession {
     messages: Arc<Mutex<Vec<ChatMessage>>>,
 }
 
-#[bindings::export(Implementation)]
 impl ChatSession {
     pub async fn new(
         backend: &dyn Backend,
@@ -95,7 +94,10 @@ impl ChatSession {
             messages: Arc::new(Mutex::new(Vec::new())),
         })
     }
+}
 
+#[bindings::export(Implementation)]
+impl ChatSession {
     #[bindings::export(Method)]
     pub async fn state(&self) -> ChatSessionState {
         *self.state.lock().await
@@ -140,7 +142,7 @@ impl ChatSession {
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
     ) -> Result<Vec<ChatReply>, ChatSessionError> {
-        let (mut stream, _) = self.reply_with_stream(input, config);
+        let (stream, _) = self.reply_with_stream(input, config);
         let mut outputs: Option<Vec<ChatReply>> = None;
         while let Some(progress) = stream.next().await {
             match progress {
@@ -237,7 +239,7 @@ impl ChatSession {
 
         (
             ChatSessionStream {
-                receiver,
+                receiver: Mutex::new(receiver),
             },
             cancel_token_to_return,
         )

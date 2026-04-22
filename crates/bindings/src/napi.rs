@@ -43,5 +43,13 @@ pub fn error_implementation(type_name: &Ident) -> proc_macro2::TokenStream {
                 napi::Error::from_reason(error.to_string())
             }
         }
+
+        #[cfg(feature = "bindings-napi")]
+        impl From<#type_name> for napi::JsError {
+            fn from(error: #type_name) -> Self {
+                let napi_error: napi::Error = error.into();
+                napi::JsError::from(napi_error)
+            }
+        }
     }
 }
