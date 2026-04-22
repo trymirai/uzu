@@ -16,7 +16,7 @@ async fn test_storage_comprehensive_state_fresh_download_to_completion() -> Resu
 
     tracing::info!("\n[SCENARIO_1] Fresh download to completion");
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     let state = model.state().await;
     assert!(matches!(state.phase, DownloadPhase::NotDownloaded {}), "Fresh model should be NotDownloaded");
 
@@ -37,7 +37,7 @@ async fn test_storage_comprehensive_state_fresh_download_to_completion() -> Resu
 
     let monitor = tokio::spawn(async move {
         while let Ok(Some(Ok((id, state)))) = tokio::time::timeout(Duration::from_secs(120), updates.next()).await {
-            if id == test_storage.model(0).identifier() {
+            if id == test_storage.model(0).identifier.clone() {
                 pb_clone.set_position(state.downloaded_bytes as u64);
                 if matches!(state.phase, DownloadPhase::Downloaded {}) {
                     pb_clone.finish_with_message("✓ Downloaded");
@@ -73,23 +73,23 @@ async fn test_storage_comprehensive_state_pause_and_resume() -> Result<(), Box<d
     let base_path = temp_dir.path().to_path_buf();
 
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.download().await?;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.pause().await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     let state = model.state().await;
     assert!(matches!(state.phase, DownloadPhase::Paused {}), "Should be Paused after pause command");
     let paused_progress = state.progress();
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.download().await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     let state = model.state().await;
     assert!(matches!(state.phase, DownloadPhase::Downloading {}), "Should be Downloading after resume");
     assert!(state.progress() >= paused_progress, "Progress should not decrease after resume");
@@ -105,13 +105,13 @@ async fn test_storage_comprehensive_state_pause_quit_relaunch_resume() -> Result
 
         let test_storage = TestStorage::new_with_base_path(base_path.clone()).await?;
         let storage = &test_storage.storage;
-        let model = storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model = storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         model.download().await?;
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-        let model = storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model = storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         model.pause().await?;
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let model = storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model = storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         let state = model.state().await;
         let paused_progress = state.progress();
         let model_dir = test_storage.config.clone().cache_model_path(&test_storage.model(0)).unwrap();
@@ -136,7 +136,7 @@ async fn test_storage_comprehensive_state_pause_quit_relaunch_resume() -> Result
         let test_storage_2 = TestStorage::new_with_base_path(base_path).await?;
         let storage_2 = &test_storage_2.storage;
         let model =
-            storage_2.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found after relaunch")?;
+            storage_2.get(&test_storage_2.model(0).identifier.clone()).await.ok_or("Model not found after relaunch")?;
         let state = model.state().await;
         assert!(matches!(state.phase, DownloadPhase::Paused {}), "Model should remain Paused after relaunch");
         assert!(state.progress() >= paused_progress, "Progress should not decrease after relaunch");
@@ -160,10 +160,10 @@ async fn test_storage_comprehensive_state_pause_quit_relaunch_resume() -> Result
                 );
             }
         }
-        let model = storage_2.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found")?;
+        let model = storage_2.get(&test_storage_2.model(0).identifier.clone()).await.ok_or("Model not found")?;
         model.download().await?;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let model = storage_2.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found")?;
+        let model = storage_2.get(&test_storage_2.model(0).identifier.clone()).await.ok_or("Model not found")?;
         let state = model.state().await;
         assert!(matches!(state.phase, DownloadPhase::Downloading {}), "Should be Downloading after resume");
     }
@@ -177,18 +177,18 @@ async fn test_storage_comprehensive_state_delete_from_various_states() -> Result
     let base_path = temp_dir.path().to_path_buf();
 
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.download().await?;
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.pause().await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     let state = model.state().await;
     assert!(matches!(state.phase, DownloadPhase::Paused {}), "Should be Paused");
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.cancel().await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -218,15 +218,17 @@ async fn test_storage_comprehensive_state_multiple_pause_resume_cycles() -> Resu
     let base_path = temp_dir.path().to_path_buf();
 
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.download().await?;
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     for cycle in 1..=3 {
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         model.pause().await?;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         let state = model.state().await;
         let paused_progress = state.progress();
         assert!(
@@ -238,11 +240,13 @@ async fn test_storage_comprehensive_state_multiple_pause_resume_cycles() -> Resu
             cycle,
             state.phase
         );
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
         model.download().await?;
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         let state = model.state().await;
         assert!(state.progress() >= paused_progress, "Progress should not decrease in cycle {}", cycle);
     }
@@ -258,7 +262,8 @@ async fn test_storage_comprehensive_state_completed_files_preserved_on_relaunch(
         let base_path = temp_dir.path().to_path_buf();
 
         let test_storage = TestStorage::new_with_base_path(base_path.clone()).await?;
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         model.download().await?;
         for _ in 0..30 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -290,7 +295,8 @@ async fn test_storage_comprehensive_state_completed_files_preserved_on_relaunch(
                 }
             }
         }
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         model.pause().await?;
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let model_dir = test_storage.config.cache_model_path(&test_storage.model(0)).unwrap();
@@ -330,7 +336,8 @@ async fn test_storage_comprehensive_state_completed_files_preserved_on_relaunch(
                 name
             );
         }
-        let model = test_storage_2.storage.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage_2.storage.get(&test_storage_2.model(0).identifier.clone()).await.ok_or("Model not found")?;
         let state = model.state().await;
         assert!(matches!(state.phase, DownloadPhase::Paused {}), "Model should be Paused after relaunch");
     }
@@ -344,22 +351,22 @@ async fn test_storage_comprehensive_state_idempotent_pause() -> Result<(), Box<d
     let base_path = temp_dir.path().to_path_buf();
 
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.download().await?;
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.pause().await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     let state = model.state().await;
     let progress_after_first_pause = state.progress();
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
 
     model.pause().await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     let state = model.state().await;
     assert!(matches!(state.phase, DownloadPhase::Paused {}), "Should remain Paused after second pause");
     assert_eq!(state.progress(), progress_after_first_pause, "Progress should not change on idempotent pause");
@@ -372,7 +379,7 @@ async fn test_storage_comprehensive_state_crc_validation_on_init() -> Result<(),
     let base_path = temp_dir.path().to_path_buf();
 
     let test_storage = TestStorage::new_with_base_path(base_path.clone()).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     model.download().await?;
     for _ in 0..60 {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -392,11 +399,12 @@ async fn test_storage_comprehensive_state_crc_validation_on_init() -> Result<(),
         }
     }
     // Check if download completed before we can pause
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await;
     if let Some(m) = model {
         let state = m.state().await;
         if !matches!(state.phase, DownloadPhase::Downloaded {}) {
-            let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+            let model =
+                test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
             model.pause().await?;
         }
     }
@@ -413,7 +421,8 @@ async fn test_storage_comprehensive_state_crc_validation_on_init() -> Result<(),
         assert!(tokenizer_path.exists(), "tokenizer.json should exist after relaunch");
         assert!(!config_resume.exists(), "config.json.resume_data should be deleted for complete file");
         assert!(!tokenizer_resume.exists(), "tokenizer.json.resume_data should be deleted for complete file");
-        let model = test_storage_2.storage.get(&test_storage_2.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage_2.storage.get(&test_storage_2.model(0).identifier.clone()).await.ok_or("Model not found")?;
         let state = model.state().await;
         assert!(
             matches!(
@@ -436,7 +445,8 @@ async fn test_storage_comprehensive_state_progress_calculation_with_mixed_files(
 
         let test_storage = TestStorage::new_with_base_path(base_path).await?;
         let expected_config_bytes = 2907;
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+        let model =
+            test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
         model.download().await?;
         let mut config_completed = false;
         for _ in 0..30 {
@@ -451,10 +461,12 @@ async fn test_storage_comprehensive_state_progress_calculation_with_mixed_files(
             }
         }
         if config_completed {
-            let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+            let model =
+                test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
             model.pause().await?;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+            let model =
+                test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
             let state = model.state().await;
             let downloaded_bytes = state.downloaded_bytes;
             assert!(

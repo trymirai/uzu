@@ -15,6 +15,7 @@ pub(crate) enum BindingKind {
     Enum,
     Struct,
     Class,
+    ClassCloneable,
     Alias,
     Implementation,
     Method,
@@ -44,6 +45,7 @@ impl Parse for ExportArguments {
             "Enum" => BindingKind::Enum,
             "Struct" => BindingKind::Struct,
             "Class" => BindingKind::Class,
+            "ClassCloneable" => BindingKind::ClassCloneable,
             "Alias" => BindingKind::Alias,
             "Implementation" => BindingKind::Implementation,
             "Method" => BindingKind::Method,
@@ -75,18 +77,36 @@ pub fn export(
     } = parse_macro_input!(arguments as ExportArguments);
 
     match kind {
-        BindingKind::Enum | BindingKind::Struct | BindingKind::Class => {
+        BindingKind::Enum | BindingKind::Struct | BindingKind::Class | BindingKind::ClassCloneable => {
             let item = parse_macro_input!(item as syn::Item);
+            let type_name = match &item {
+                syn::Item::Struct(item_struct) => Some(&item_struct.ident),
+                syn::Item::Enum(item_enum) => Some(&item_enum.ident),
+                _ => None,
+            };
+            let enum_has_data_variants = match &item {
+                syn::Item::Enum(item_enum) => {
+                    item_enum.variants.iter().any(|variant| !matches!(variant.fields, syn::Fields::Unit))
+                },
+                _ => false,
+            };
             let napi = napi::attributes(&kind);
             let uniffi = uniffi::attributes(&kind);
             let pyo3 = pyo3::attributes(&kind);
             let wasm = wasm::attributes(&kind);
+            let napi_value = match (&kind, type_name) {
+                (BindingKind::Struct, Some(ident)) => napi::struct_value_implementations(ident),
+                (BindingKind::Enum, Some(ident)) if enum_has_data_variants => napi::struct_value_implementations(ident),
+                (BindingKind::ClassCloneable, Some(ident)) => napi::class_value_implementations(ident),
+                _ => quote! {},
+            };
             quote! {
                 #napi
                 #uniffi
                 #pyo3
                 #wasm
                 #item
+                #napi_value
             }
             .into()
         },
@@ -147,15 +167,15 @@ pub fn export(
                 },
             };
             let uniffi = uniffi::error_attribute();
-            let napi_impl = napi::error_implementation(type_name);
-            let pyo3_impl = pyo3::error_implementation(type_name);
-            let wasm_impl = wasm::error_implementation(type_name);
+            let napi_implementations = napi::error_implementations(type_name);
+            let pyo3_implementations = pyo3::error_implementations(type_name);
+            let wasm_implementations = wasm::error_implementations(type_name);
             quote! {
                 #uniffi
                 #item
-                #napi_impl
-                #pyo3_impl
-                #wasm_impl
+                #napi_implementations
+                #pyo3_implementations
+                #wasm_implementations
             }
             .into()
         },

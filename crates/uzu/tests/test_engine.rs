@@ -18,7 +18,7 @@ async fn test_engine_chat() {
 
     let models = engine.models().await.unwrap();
     for model in models {
-        let identifier = model.identifier();
+        let identifier = model.identifier.clone();
         let registry_identifier = model.registry_entity().map(|entity| entity.identifier);
         let download_phase = engine.downloader(&model).state().await.map_or(None, |state| Some(state.phase));
         println!("{:?}, {}, {:?}, {:?}", registry_identifier, identifier, download_phase, model.specializations);

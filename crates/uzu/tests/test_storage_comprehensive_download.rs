@@ -19,7 +19,7 @@ async fn test_storage_comprehensive_download() -> Result<(), Box<dyn std::error:
 
     tracing::info!("[TEST] Initializing storage...");
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model_identifier = test_storage.model(0).identifier();
+    let model_identifier = test_storage.model(0).identifier.clone();
     let storage = &test_storage.storage;
     tokio::time::sleep(Duration::from_millis(200)).await;
 

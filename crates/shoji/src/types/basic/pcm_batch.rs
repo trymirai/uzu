@@ -11,7 +11,7 @@ pub enum PcmBatchError {
     },
 }
 
-#[bindings::export(Class)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PcmBatch {
     pub samples: Vec<f64>,

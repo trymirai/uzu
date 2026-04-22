@@ -15,7 +15,7 @@ async fn test_stall_detection_no_progress() -> Result<(), Box<dyn std::error::Er
     let temp_dir = tempfile::tempdir()?;
     let base_path = temp_dir.path().to_path_buf();
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     tracing::info!("[STALL_TEST] Starting download...");
     model.download().await?;
 
@@ -33,7 +33,7 @@ async fn test_stall_detection_no_progress() -> Result<(), Box<dyn std::error::Er
         loop {
             tokio::select! {
                 Some(Ok((id, state))) = progress_stream.next() => {
-                    if id == test_storage.model(0).identifier() {
+                    if id == test_storage.model(0).identifier.clone() {
                         let current_bytes = state.downloaded_bytes;
                         if current_bytes > last_bytes as i64 {
                             let elapsed = last_progress_time.elapsed();
@@ -113,7 +113,7 @@ async fn test_stall_detection_broadcast_liveness() -> Result<(), Box<dyn std::er
     let temp_dir = tempfile::tempdir()?;
     let base_path = temp_dir.path().to_path_buf();
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     tracing::info!("[BROADCAST_TEST] Starting download...");
     model.download().await?;
 
@@ -127,7 +127,7 @@ async fn test_stall_detection_broadcast_liveness() -> Result<(), Box<dyn std::er
 
     let broadcast_check = tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(Ok((id, state))) = progress_stream.next().await {
-            if id == test_storage.model(0).identifier() {
+            if id == test_storage.model(0).identifier.clone() {
                 let gap = last_update_time.elapsed();
                 update_count += 1;
 

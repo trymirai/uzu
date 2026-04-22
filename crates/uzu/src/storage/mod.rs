@@ -79,7 +79,7 @@ impl Storage {
         models: Vec<Model>,
     ) -> Result<(), StorageError> {
         let models = models.into_iter().filter(|model| model.is_downloadable()).collect::<Vec<_>>();
-        let actual_model_identifiers: HashSet<String> = models.iter().map(|model| model.identifier()).collect();
+        let actual_model_identifiers: HashSet<String> = models.iter().map(|model| model.identifier.clone()).collect();
 
         let download_manager = { self.download_manager.lock().await.clone() };
 
@@ -110,7 +110,7 @@ impl Storage {
         }
 
         for model in models {
-            let identifier = model.identifier();
+            let identifier = model.identifier.clone();
             if items.contains_key(&identifier) {
                 continue;
             }
@@ -266,18 +266,18 @@ impl Storage {
                 ModelReference::HuggingFace {
                     ..
                 } => Err(StorageError::UnsupportedItem {
-                    identifier: model.identifier(),
+                    identifier: model.identifier.clone(),
                 }),
                 ModelReference::Local {
                     ..
                 } => Err(StorageError::UnsupportedItem {
-                    identifier: model.identifier(),
+                    identifier: model.identifier.clone(),
                 }),
             },
             ModelAccessibility::Remote {
                 ..
             } => Err(StorageError::UnsupportedItem {
-                identifier: model.identifier(),
+                identifier: model.identifier.clone(),
             }),
         }
     }

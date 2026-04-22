@@ -245,7 +245,7 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Downloader {
-        Downloader::new(model.identifier(), self.storage.clone())
+        Downloader::new(model.identifier.clone(), self.storage.clone())
     }
 
     pub async fn model_path(
@@ -257,7 +257,7 @@ impl Engine {
                 Some(local_external_path.clone())
             } else {
                 let storage = self.storage.lock().await;
-                let state = storage.state(&model.identifier()).await?;
+                let state = storage.state(&model.identifier.clone()).await?;
                 match state.phase {
                     DownloadPhase::Downloaded {} => {
                         storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())

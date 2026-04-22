@@ -14,6 +14,9 @@ pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
         BindingKind::Class => quote! {
             #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Object))]
         },
+        BindingKind::ClassCloneable => quote! {
+            #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Record))]
+        },
         BindingKind::Implementation => quote! {
             #[cfg_attr(feature = "bindings-uniffi", uniffi::export)]
         },
@@ -37,6 +40,6 @@ pub fn error_attribute() -> proc_macro2::TokenStream {
 }
 
 #[allow(dead_code)]
-pub fn error_implementation(_type_name: &Ident) -> proc_macro2::TokenStream {
+pub fn error_implementations(_type_name: &Ident) -> proc_macro2::TokenStream {
     quote! {}
 }

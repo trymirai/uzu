@@ -30,13 +30,13 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
         // Get the test model and create instances
         tracing::info!("[CONCURRENT_TEST] Fetching test model {}...", i);
         let model = test_storage.model(i).clone();
-        let item = test_storage.storage.get(&model.identifier()).await.ok_or("Model not found")?;
+        let item = test_storage.storage.get(&model.identifier.clone()).await.ok_or("Model not found")?;
 
         // Cancel first to ensure it's not already downloaded
         tracing::info!("[CONCURRENT_TEST] Canceling model {} to ensure fresh download...", i);
         item.cancel().await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
-        models.push((model.identifier(), item.clone()));
+        models.push((model.identifier.clone(), item.clone()));
     }
 
     tracing::info!("[CONCURRENT_TEST] ✓ Created {} model instances", models.len());

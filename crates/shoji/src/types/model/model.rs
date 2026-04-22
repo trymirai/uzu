@@ -4,7 +4,7 @@ use crate::types::model::{
     ModelAccessibility, ModelEntity, ModelEntityType, ModelQuantization, ModelReference, ModelSpecialization,
 };
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Model {
@@ -18,11 +18,6 @@ pub struct Model {
 
 #[bindings::export(Implementation)]
 impl Model {
-    #[bindings::export(Getter)]
-    pub fn identifier(&self) -> String {
-        self.identifier.clone()
-    }
-
     #[bindings::export(Getter)]
     pub fn cache_identifier(&self) -> String {
         self.identifier.replace(":", "-").replace("/", "-")
