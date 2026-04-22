@@ -5,10 +5,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-use crate::types::{
-    basic::Value,
-    session::chat::{ChatReasoningEffort, ToolCall, ToolNamespace, TranslationInput},
-};
+use crate::types::basic::{ReasoningEffort, ToolCall, ToolNamespace, TranslationPayload, Value};
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -111,7 +108,7 @@ pub enum ChatContentBlock {
         value: String,
     },
     ReasoningEffort {
-        value: ChatReasoningEffort,
+        value: ReasoningEffort,
     },
     ConversationStartDate {
         value: String,
@@ -157,7 +154,7 @@ pub enum ChatContentBlock {
     },
     Translation {
         #[serde(flatten)]
-        input: TranslationInput,
+        payload: TranslationPayload,
         source_language_code: String,
         target_language_code: String,
     },

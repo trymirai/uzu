@@ -9,7 +9,7 @@ use shoji::{
     types::{
         basic::CancellationToken,
         model::{Model, ModelSpecialization},
-        session::classification::{Message, Output},
+        session::classification::{ClassificationMessage, ClassificationOutput},
     },
 };
 use tokio::sync::{Mutex, mpsc};
@@ -62,10 +62,10 @@ impl Session {
 
     pub async fn classify(
         &self,
-        input: Vec<Message>,
-    ) -> Result<Output, Error> {
+        input: Vec<ClassificationMessage>,
+    ) -> Result<ClassificationOutput, Error> {
         let cancel_token_to_return = CancellationToken::new();
-        let (sender, mut receiver) = mpsc::unbounded_channel::<Result<Output, Error>>();
+        let (sender, mut receiver) = mpsc::unbounded_channel::<Result<ClassificationOutput, Error>>();
 
         let holder = self.holder.clone();
         let state = self.state.clone();

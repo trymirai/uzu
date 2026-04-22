@@ -1,12 +1,12 @@
 use async_openai::types::chat::ReasoningEffort as OpenAIReasoningEffort;
-use shoji::types::session::chat::ChatReasoningEffort;
+use shoji::types::basic::ReasoningEffort;
 
-pub fn build(effort: ChatReasoningEffort) -> OpenAIReasoningEffort {
+pub fn build(effort: ReasoningEffort) -> OpenAIReasoningEffort {
     match effort {
-        ChatReasoningEffort::Disabled => OpenAIReasoningEffort::None,
-        ChatReasoningEffort::Default => OpenAIReasoningEffort::Medium,
-        ChatReasoningEffort::Low => OpenAIReasoningEffort::Low,
-        ChatReasoningEffort::Medium => OpenAIReasoningEffort::Medium,
-        ChatReasoningEffort::High => OpenAIReasoningEffort::High,
+        ReasoningEffort::Disabled => OpenAIReasoningEffort::None,
+        ReasoningEffort::Default => OpenAIReasoningEffort::Medium,
+        ReasoningEffort::Low => OpenAIReasoningEffort::Low,
+        ReasoningEffort::Medium => OpenAIReasoningEffort::Medium,
+        ReasoningEffort::High => OpenAIReasoningEffort::High,
     }
 }

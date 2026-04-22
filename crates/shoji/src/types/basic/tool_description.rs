@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::chat::ToolFunction;
+use crate::types::basic::ToolFunction;
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

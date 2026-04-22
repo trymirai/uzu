@@ -5,7 +5,10 @@ mod role;
 mod tool_namespace;
 
 pub use message::{bridge_messages_from_harmony, bridge_messages_to_harmony};
-use shoji::types::session::chat::{ChatContentBlockType, ChatReasoningEffort, ChatRole};
+use shoji::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatContentBlockType, ChatRole},
+};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -16,7 +19,7 @@ pub enum Error {
     },
     #[error("Reasoning effort '{reasoning_effort}' is not supported")]
     UnsupportedReasoningEffort {
-        reasoning_effort: ChatReasoningEffort,
+        reasoning_effort: ReasoningEffort,
     },
     #[error("Builtin tool '{name}' is not supported")]
     UnsupportedBuiltinTool {

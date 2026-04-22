@@ -1,5 +1,6 @@
 use shoji::types::session::classification::{
-    Message as ShojiMessage, Output as ShojiOutput, Role as ShojiRole, Stats as ShojiStats,
+    ClassificationMessage as ShojiMessage, ClassificationOutput as ShojiOutput, ClassificationRole as ShojiRole,
+    ClassificationStats as ShojiStats,
 };
 
 use crate::{

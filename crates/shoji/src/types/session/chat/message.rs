@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    basic::Value,
-    session::chat::{ChatContentBlock, ChatReasoningEffort, ChatRole, ToolCall, ToolNamespace},
+    basic::{ReasoningEffort, ToolCall, ToolNamespace, Value},
+    session::chat::{ChatContentBlock, ChatRole},
 };
 
 #[bindings::export(Struct)]
@@ -61,7 +61,7 @@ impl ChatMessage {
 
     pub fn with_reasoning_effort(
         self,
-        reasoning_effort: ChatReasoningEffort,
+        reasoning_effort: ReasoningEffort,
     ) -> Self {
         self.with_block(ChatContentBlock::ReasoningEffort {
             value: reasoning_effort,
@@ -126,7 +126,7 @@ macro_rules! blocks_by_type {
 }
 
 impl ChatMessage {
-    pub fn reasoning_effort(&self) -> Option<ChatReasoningEffort> {
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
         blocks_by_type!(self, ReasoningEffort, value).next()
     }
 
@@ -167,13 +167,13 @@ impl ChatMessage {
     }
 }
 
-pub trait MessageList {
-    fn reasoning_effort(&self) -> Option<ChatReasoningEffort>;
+pub trait ChatMessageList {
+    fn reasoning_effort(&self) -> Option<ReasoningEffort>;
     fn tool_namespaces(&self) -> Vec<ToolNamespace>;
 }
 
-impl MessageList for Vec<ChatMessage> {
-    fn reasoning_effort(&self) -> Option<ChatReasoningEffort> {
+impl ChatMessageList for Vec<ChatMessage> {
+    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
         self.iter().find_map(|message| message.reasoning_effort())
     }
 

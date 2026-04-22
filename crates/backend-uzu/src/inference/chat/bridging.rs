@@ -4,14 +4,14 @@ use shoji::{
     traits::backend::chat_message::Output as ChatMessageOutput,
     types::{
         basic::{
+            ContextLength as ShojiContextLength, Grammar as ShojiGrammar, ReasoningEffort,
             SamplingMethod as ShojiSamplingMethod, SamplingPolicy as ShojiSamplingPolicy,
             SamplingSeed as ShojiSamplingSeed,
         },
         session::chat::{
-            ChatConfig as ShojiChatConfig, ChatContextLength as ShojiContextLength,
-            ChatFinishReason as ShojiFinishReason, ChatMessage as ShojiMessage, ChatReasoningEffort,
-            ChatRole as ShojiRole, ChatSpeculationPreset as ShojiSpeculationPreset, ChatStats as ShojiStats,
-            ChatStreamConfig, Grammar as ShojiGrammar, MessageList,
+            ChatConfig as ShojiChatConfig, ChatMessage as ShojiMessage, ChatMessageList, ChatReplyConfig,
+            ChatReplyFinishReason as ShojiFinishReason, ChatReplyStats as ShojiStats, ChatRole as ShojiRole,
+            ChatSpeculationPreset as ShojiSpeculationPreset,
         },
     },
 };
@@ -86,7 +86,7 @@ pub fn build_decoding_config(
 
 pub fn build_input_and_run_config(
     messages: &Vec<ShojiMessage>,
-    config: &ChatStreamConfig,
+    config: &ChatReplyConfig,
 ) -> (Input, RunConfig) {
     let input_messages = messages.iter().filter_map(build_message).collect();
     let input = Input::Messages(input_messages);
@@ -131,13 +131,13 @@ fn build_message(message: &ShojiMessage) -> Option<Message> {
 
 fn build_run_config(
     messages: &Vec<ShojiMessage>,
-    config: &ChatStreamConfig,
+    config: &ChatReplyConfig,
 ) -> RunConfig {
     let sampling_policy = build_sampling_policy(&config.sampling_policy);
     let grammar_config = build_grammar(&config.grammar);
     let tokens_limit = config.token_limit.map(|value| value as u64).unwrap_or(2048);
     let enable_thinking =
-        messages.reasoning_effort().map(|effort| !matches!(effort, ChatReasoningEffort::Disabled)).unwrap_or(true);
+        messages.reasoning_effort().map(|effort| !matches!(effort, ReasoningEffort::Disabled)).unwrap_or(true);
     RunConfig::new(tokens_limit, enable_thinking, sampling_policy, grammar_config)
 }
 

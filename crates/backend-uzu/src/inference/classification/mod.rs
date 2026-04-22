@@ -16,7 +16,7 @@ use shoji::{
             classification::{StreamInput, StreamOutput},
         },
     },
-    types::session::classification::Output as ShojiOutput,
+    types::session::classification::ClassificationOutput as ShojiOutput,
 };
 use state::State;
 use tokio_util::sync::CancellationToken;

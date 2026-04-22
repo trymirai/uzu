@@ -5,7 +5,7 @@ use std::{fs, future::Future, path::Path, pin::Pin};
 pub use config::Config;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Entity, EntityType, Model, ModelAccessibility, ModelReference, ModelSpecialization},
+    types::model::{Model, ModelAccessibility, ModelEntity, ModelEntityType, ModelReference, ModelSpecialization},
 };
 
 use crate::registry::Error;
@@ -80,11 +80,11 @@ impl Registry {
         Model {
             identifier: identifier.clone(),
             entities: vec![
-                self.entity(EntityType::Registry, &self.config.identifier, &self.config.name),
-                self.entity(EntityType::Backend, &self.config.backend_identifier, &self.config.backend_identifier),
-                self.entity(EntityType::Vendor, &self.config.identifier, &self.config.name),
-                self.entity(EntityType::Family, &self.config.identifier, &self.config.name),
-                self.entity(EntityType::Variant, &identifier, &identifier),
+                self.entity(ModelEntityType::Registry, &self.config.identifier, &self.config.name),
+                self.entity(ModelEntityType::Backend, &self.config.backend_identifier, &self.config.backend_identifier),
+                self.entity(ModelEntityType::Vendor, &self.config.identifier, &self.config.name),
+                self.entity(ModelEntityType::Family, &self.config.identifier, &self.config.name),
+                self.entity(ModelEntityType::Variant, &identifier, &identifier),
             ],
             specializations: vec![ModelSpecialization::Chat],
             number_of_parameters: None,
@@ -99,11 +99,11 @@ impl Registry {
 
     fn entity(
         &self,
-        r#type: EntityType,
+        r#type: ModelEntityType,
         identifier: &str,
         name: &str,
-    ) -> Entity {
-        Entity {
+    ) -> ModelEntity {
+        ModelEntity {
             r#type,
             identifier: identifier.to_string(),
             parent_identifier: None,

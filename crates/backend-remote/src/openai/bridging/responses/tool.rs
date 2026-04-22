@@ -1,5 +1,5 @@
 use async_openai::types::responses::{FunctionTool, Tool};
-use shoji::types::session::chat::ToolDescription;
+use shoji::types::basic::ToolDescription;
 
 use crate::openai::Error;
 

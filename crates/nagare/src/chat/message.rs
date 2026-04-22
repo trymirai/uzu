@@ -6,7 +6,7 @@ use shoji::{
         State,
         backend::chat_message::{Backend, Instance, Output},
     },
-    types::session::chat::{ChatConfig, ChatMessage, ChatStreamConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -45,7 +45,7 @@ impl Session {
     pub fn stream<'a>(
         &'a mut self,
         input: &'a Vec<ChatMessage>,
-        config: ChatStreamConfig,
+        config: ChatReplyConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, Error>> + Send + 'a>> {
         self.instance

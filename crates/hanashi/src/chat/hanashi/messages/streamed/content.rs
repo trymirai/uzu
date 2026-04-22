@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shoji::types::session::chat::{ChatContentBlock, ChatRole, ToolCall};
+use shoji::types::{
+    basic::ToolCall,
+    session::chat::{ChatContentBlock, ChatRole},
+};
 
 use crate::chat::hanashi::messages::streamed::Section;
 

@@ -1,18 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::classification::Role;
+use crate::types::session::classification::ClassificationRole;
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct Message {
-    pub role: Role,
+pub struct ClassificationMessage {
+    pub role: ClassificationRole,
     pub content: String,
 }
 
-impl Message {
+impl ClassificationMessage {
     pub fn new(
-        role: Role,
+        role: ClassificationRole,
         content: String,
     ) -> Self {
         Self {
@@ -22,10 +22,10 @@ impl Message {
     }
 
     pub fn user(content: String) -> Self {
-        Self::new(Role::User, content)
+        Self::new(ClassificationRole::User, content)
     }
 
     pub fn assistant(content: String) -> Self {
-        Self::new(Role::Assistant, content)
+        Self::new(ClassificationRole::Assistant, content)
     }
 }

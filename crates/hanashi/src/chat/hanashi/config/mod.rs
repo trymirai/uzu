@@ -2,7 +2,10 @@ mod bundled;
 mod tokens;
 
 use serde::{Deserialize, Serialize};
-use shoji::types::session::chat::{ChatCapabilities, ChatContentBlockType, ChatReasoningEffort};
+use shoji::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatContentBlockType, ChatModelCapabilities},
+};
 use token_stream_parser::token_stream::TokenStreamParserConfig;
 pub use tokens::TokensConfig;
 
@@ -86,7 +89,7 @@ pub enum Config {
 }
 
 impl Config {
-    pub fn capabilities(&self) -> Result<ChatCapabilities, Error> {
+    pub fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
         let resolved = self.clone().resolve()?;
         let rendering = &resolved.rendering;
 
@@ -107,7 +110,7 @@ impl Config {
                 FieldConfig::Unique {
                     mapping: Some(mapping),
                     ..
-                } => mapping.contains_key(ChatReasoningEffort::Disabled.to_string().as_str()),
+                } => mapping.contains_key(ReasoningEffort::Disabled.to_string().as_str()),
                 _ => false,
             });
 
@@ -117,7 +120,7 @@ impl Config {
             .map(|(role, field)| field.required && !resolved.ordering.is_role_avoidable(role))
             .unwrap_or(false);
 
-        Ok(ChatCapabilities {
+        Ok(ChatModelCapabilities {
             supports_reasoning: rendering
                 .get_rendering_field_for_block_type(&ChatContentBlockType::Reasoning)
                 .is_some(),

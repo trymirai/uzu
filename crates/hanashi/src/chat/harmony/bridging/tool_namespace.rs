@@ -1,10 +1,7 @@
 use openai_harmony::chat::{
     ToolDescription as ExternalToolDescription, ToolNamespaceConfig as ExternalToolNamespaceConfig,
 };
-use shoji::types::{
-    basic::Value,
-    session::chat::{ToolDescription, ToolFunction, ToolNamespace},
-};
+use shoji::types::basic::{ToolDescription, ToolFunction, ToolNamespace, Value};
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
 

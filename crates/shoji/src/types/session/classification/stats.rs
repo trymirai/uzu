@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Stats {
+pub struct ClassificationStats {
     pub preprocessing_duration: f64,
     pub forward_pass_duration: f64,
     pub postprocessing_duration: f64,

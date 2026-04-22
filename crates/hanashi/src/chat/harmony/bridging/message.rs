@@ -5,8 +5,8 @@ use openai_harmony::chat::{
     Message as ExternalMessage, Role as ExternalRole, SystemContent as ExternalSystemContent, TextContent,
 };
 use shoji::types::{
-    basic::Value,
-    session::chat::{ChatContentBlock, ChatMessage, ChatReasoningEffort, ChatRole, ToolCall, ToolNamespace},
+    basic::{ReasoningEffort, ToolCall, ToolNamespace, Value},
+    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
 };
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
@@ -314,7 +314,7 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                             }
                             if let Some(effort) = &system_content.reasoning_effort {
                                 content.push(ChatContentBlock::ReasoningEffort {
-                                    value: ChatReasoningEffort::from_harmony(*effort),
+                                    value: ReasoningEffort::from_harmony(*effort),
                                 });
                             }
                             if let Some(date) = &system_content.conversation_start_date {

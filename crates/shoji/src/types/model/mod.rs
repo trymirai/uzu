@@ -1,21 +1,13 @@
 mod accessibility;
 mod entity;
-mod file;
-mod hash;
-mod image;
 mod model;
 mod quantization;
 mod reference;
-mod repository;
 mod specialization;
 
 pub use accessibility::ModelAccessibility;
-pub use entity::{Entity, EntityType};
-pub use file::File;
-pub use hash::{Hash, HashMethod};
-pub use image::{Image, ImageFormat, ImageTheme};
+pub use entity::{ModelEntity, ModelEntityType};
 pub use model::Model;
 pub use quantization::ModelQuantization;
 pub use reference::ModelReference;
-pub use repository::Repository;
 pub use specialization::ModelSpecialization;

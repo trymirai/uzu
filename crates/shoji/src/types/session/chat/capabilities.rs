@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChatCapabilities {
+pub struct ChatModelCapabilities {
     pub supports_reasoning: bool,
     pub supports_disable_reasoning: bool,
     pub supports_tools: bool,

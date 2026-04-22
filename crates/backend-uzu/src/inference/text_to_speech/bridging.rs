@@ -1,4 +1,4 @@
-use shoji::types::session::text_to_speech::PcmBatch as ShojiPcmBatch;
+use shoji::types::basic::PcmBatch as ShojiPcmBatch;
 
 use crate::{audio::AudioPcmBatch, session::types::Input};
 

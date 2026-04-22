@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::model::{ModelReference, Repository};
+use crate::types::{basic::Repository, model::ModelReference};
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

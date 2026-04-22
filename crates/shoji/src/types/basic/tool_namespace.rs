@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::chat::ToolDescription;
+use crate::types::basic::ToolDescription;
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

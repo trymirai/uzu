@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Label {
+pub struct ClassificationLabel {
     pub index: i64,
     pub label: String,
     pub title: String,

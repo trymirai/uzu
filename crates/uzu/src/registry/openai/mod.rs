@@ -8,7 +8,7 @@ use fancy_regex::Regex;
 use serde::Deserialize;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Entity, EntityType, Model as ShojiModel, ModelAccessibility, ModelSpecialization},
+    types::model::{Model as ShojiModel, ModelAccessibility, ModelEntity, ModelEntityType, ModelSpecialization},
 };
 
 #[derive(Debug, Deserialize)]
@@ -80,10 +80,10 @@ impl RegistryTrait for Registry {
             let mut identifiers = response.data.into_iter().map(|model| model.id).collect::<Vec<_>>();
             identifiers.sort();
 
-            let registry_entity = self.create_entity(EntityType::Registry);
-            let backend_entity = self.create_entity(EntityType::Backend);
-            let vendor_entity = self.create_entity(EntityType::Vendor);
-            let family_entity = self.create_entity(EntityType::Family);
+            let registry_entity = self.create_entity(ModelEntityType::Registry);
+            let backend_entity = self.create_entity(ModelEntityType::Backend);
+            let vendor_entity = self.create_entity(ModelEntityType::Vendor);
+            let family_entity = self.create_entity(ModelEntityType::Family);
 
             let models = identifiers
                 .into_iter()
@@ -91,8 +91,8 @@ impl RegistryTrait for Registry {
                     self.model_filter.as_ref().is_none_or(|regex| regex.is_match(identifier).unwrap_or(false))
                 })
                 .map(|identifier| {
-                    let variant_entity = Entity {
-                        r#type: EntityType::Variant,
+                    let variant_entity = ModelEntity {
+                        r#type: ModelEntityType::Variant,
                         identifier: identifier.clone(),
                         parent_identifier: None,
                         name: identifier.clone(),
@@ -128,9 +128,9 @@ impl RegistryTrait for Registry {
 impl Registry {
     fn create_entity(
         &self,
-        r#type: EntityType,
-    ) -> Entity {
-        Entity {
+        r#type: ModelEntityType,
+    ) -> ModelEntity {
+        ModelEntity {
             r#type,
             identifier: self.config.identifier.clone(),
             parent_identifier: None,

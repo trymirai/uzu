@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use shoji::types::model::{Entity, EntityType, File, Hash, HashMethod, Model, ModelAccessibility, ModelReference};
+use shoji::types::{
+    basic::{File, Hash, HashMethod},
+    model::{Model, ModelAccessibility, ModelEntity, ModelEntityType, ModelReference},
+};
 use tokio::runtime::Handle;
 use uzu::{
     device::Device,
@@ -49,8 +52,8 @@ impl TestStorage {
 }
 
 fn test_model(index: usize) -> Model {
-    let registry_entity = Entity {
-        r#type: EntityType::Registry,
+    let registry_entity = ModelEntity {
+        r#type: ModelEntityType::Registry,
         identifier: "test-registry".to_string(),
         parent_identifier: None,
         version: None,
@@ -59,8 +62,8 @@ fn test_model(index: usize) -> Model {
         icons: vec![],
     };
 
-    let backend_entity = Entity {
-        r#type: EntityType::Backend,
+    let backend_entity = ModelEntity {
+        r#type: ModelEntityType::Backend,
         identifier: "test-backend".to_string(),
         parent_identifier: None,
         version: None,
@@ -69,8 +72,8 @@ fn test_model(index: usize) -> Model {
         icons: vec![],
     };
 
-    let vendor_entity = Entity {
-        r#type: EntityType::Vendor,
+    let vendor_entity = ModelEntity {
+        r#type: ModelEntityType::Vendor,
         identifier: "test-vendor".to_string(),
         parent_identifier: None,
         version: None,
@@ -79,8 +82,8 @@ fn test_model(index: usize) -> Model {
         icons: vec![],
     };
 
-    let family_entity = Entity {
-        r#type: EntityType::Family,
+    let family_entity = ModelEntity {
+        r#type: ModelEntityType::Family,
         identifier: "test-family".to_string(),
         parent_identifier: None,
         version: None,
@@ -89,8 +92,8 @@ fn test_model(index: usize) -> Model {
         icons: vec![],
     };
 
-    let model_entity = Entity {
-        r#type: EntityType::Variant,
+    let model_entity = ModelEntity {
+        r#type: ModelEntityType::Variant,
         identifier: format!("test-model-{}", index),
         parent_identifier: None,
         version: None,

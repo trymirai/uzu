@@ -3,8 +3,9 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use serde::Deserialize;
-use shoji::types::session::chat::{
-    ChatContentBlock, ChatMessage, ChatReasoningEffort, ChatRole, ToolDescription, ToolNamespace, TranslationInput,
+use shoji::types::{
+    basic::{ReasoningEffort, ToolDescription, ToolNamespace, TranslationPayload},
+    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
 };
 use tokenizers::Tokenizer;
 
@@ -89,18 +90,18 @@ pub fn load_tokenizer(model_name: &str) -> Tokenizer {
         .unwrap_or_else(|error| panic!("Failed to load tokenizer {}: {error}", path.display()))
 }
 
-fn resolve_reasoning_effort(context: &HashMap<String, serde_json::Value>) -> Option<ChatReasoningEffort> {
+fn resolve_reasoning_effort(context: &HashMap<String, serde_json::Value>) -> Option<ReasoningEffort> {
     let value = context.get("enable_thinking")?;
     match value.as_bool() {
-        Some(true) => Some(ChatReasoningEffort::Default),
-        Some(false) => Some(ChatReasoningEffort::Disabled),
+        Some(true) => Some(ReasoningEffort::Default),
+        Some(false) => Some(ReasoningEffort::Disabled),
         _ => None,
     }
 }
 
 fn build_system_message(
     raw_messages: &[serde_json::Value],
-    reasoning_effort: Option<ChatReasoningEffort>,
+    reasoning_effort: Option<ReasoningEffort>,
 ) -> Option<ChatMessage> {
     let system_raw = raw_messages.iter().find(|raw| raw["role"].as_str() == Some("system"));
 
@@ -157,14 +158,14 @@ fn build_user_content(raw: &serde_json::Value) -> Vec<ChatContentBlock> {
                 let content_type = item["type"].as_str().unwrap();
                 match content_type {
                     "text" => ChatContentBlock::Translation {
-                        input: TranslationInput::Text {
+                        payload: TranslationPayload::Text {
                             text: item["text"].as_str().unwrap().to_string(),
                         },
                         source_language_code: item["source_lang_code"].as_str().unwrap().to_string(),
                         target_language_code: item["target_lang_code"].as_str().unwrap().to_string(),
                     },
                     "image" => ChatContentBlock::Translation {
-                        input: TranslationInput::Image {
+                        payload: TranslationPayload::Image {
                             url: item["url"].as_str().unwrap().to_string(),
                         },
                         source_language_code: item["source_lang_code"].as_str().unwrap().to_string(),

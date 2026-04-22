@@ -13,7 +13,10 @@ use download_manager::{
     FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
 };
 pub use error::Error;
-use shoji::types::model::{File, Model, ModelAccessibility, ModelReference};
+use shoji::types::{
+    basic::File,
+    model::{Model, ModelAccessibility, ModelReference},
+};
 use tokio::{
     runtime::Handle,
     sync::broadcast::{Sender, channel},

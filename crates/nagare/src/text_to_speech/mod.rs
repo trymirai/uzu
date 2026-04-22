@@ -11,9 +11,8 @@ use futures::{Stream as FuturesStream, StreamExt};
 use shoji::{
     traits::{Backend, State as StateTrait, backend::text_to_speech::Instance},
     types::{
-        basic::CancellationToken,
+        basic::{CancellationToken, PcmBatch},
         model::{Model, ModelSpecialization},
-        session::text_to_speech::PcmBatch,
     },
 };
 use tokio::sync::{Mutex, mpsc};

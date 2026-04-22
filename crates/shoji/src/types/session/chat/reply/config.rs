@@ -1,19 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{
-    basic::{SamplingMethod, SamplingPolicy},
-    session::chat::Grammar,
-};
+use crate::types::basic::{Grammar, SamplingMethod, SamplingPolicy};
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChatStreamConfig {
+pub struct ChatReplyConfig {
     pub token_limit: Option<u32>,
     pub sampling_policy: SamplingPolicy,
     pub grammar: Option<Grammar>,
 }
 
-impl Default for ChatStreamConfig {
+impl Default for ChatReplyConfig {
     fn default() -> Self {
         Self {
             token_limit: None,
@@ -23,7 +20,7 @@ impl Default for ChatStreamConfig {
     }
 }
 
-impl ChatStreamConfig {
+impl ChatReplyConfig {
     pub fn with_token_limit(
         self,
         token_limit: Option<u32>,

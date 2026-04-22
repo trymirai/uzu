@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::model::{Entity, Model, ModelAccessibility, ModelQuantization, ModelSpecialization};
+use shoji::types::model::{Model, ModelAccessibility, ModelEntity, ModelQuantization, ModelSpecialization};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,7 +16,7 @@ struct ResponseModel {
 #[serde(rename_all = "snake_case")]
 pub struct Response {
     models: Vec<ResponseModel>,
-    entities: Vec<Entity>,
+    entities: Vec<ModelEntity>,
 }
 
 impl Response {

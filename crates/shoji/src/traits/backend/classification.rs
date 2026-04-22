@@ -2,13 +2,13 @@ use std::pin::Pin;
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
-    types::session::classification::{Message, Output},
+    types::session::classification::{ClassificationMessage, ClassificationOutput},
 };
 
 pub type Config = ();
 pub type StreamConfig = ();
-pub type StreamInput = Vec<Message>;
-pub type StreamOutput = Output;
+pub type StreamInput = Vec<ClassificationMessage>;
+pub type StreamOutput = ClassificationOutput;
 
 pub trait Backend: Send + Sync {
     fn instance(

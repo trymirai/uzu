@@ -14,7 +14,10 @@ use helpers::{
     build_messages, load_registry, load_response_test_data, load_tokenizer, normalize_pattern, response_path,
     tokenizer_directory,
 };
-use shoji::types::session::chat::{ChatContentBlock, ChatMessage, ChatReasoningEffort, ChatRole};
+use shoji::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
+};
 
 fn print_warning(message: &str) {
     println!("\x1b[33m{}\x1b[0m", message);
@@ -163,7 +166,7 @@ fn test_encoding_gpt_oss() {
                 role: ChatRole::System {},
                 content: vec![
                     ChatContentBlock::ReasoningEffort {
-                        value: ChatReasoningEffort::Medium,
+                        value: ReasoningEffort::Medium,
                     },
                     ChatContentBlock::ConversationStartDate {
                         value: conversation_date,

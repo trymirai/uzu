@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::model::{
-    Entity, EntityType, ModelAccessibility, ModelQuantization, ModelReference, ModelSpecialization,
+    ModelAccessibility, ModelEntity, ModelEntityType, ModelQuantization, ModelReference, ModelSpecialization,
 };
 
 #[bindings::export(Struct)]
@@ -9,7 +9,7 @@ use crate::types::model::{
 #[serde(rename_all = "snake_case")]
 pub struct Model {
     pub identifier: String,
-    pub entities: Vec<Entity>,
+    pub entities: Vec<ModelEntity>,
     pub specializations: Vec<ModelSpecialization>,
     pub number_of_parameters: Option<i64>,
     pub quantization: Option<ModelQuantization>,
@@ -141,30 +141,30 @@ impl Model {
 }
 
 impl Model {
-    pub fn registry_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Registry)
+    pub fn registry_entity(&self) -> Option<ModelEntity> {
+        self.entity(ModelEntityType::Registry)
     }
 
-    pub fn backend_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Backend)
+    pub fn backend_entity(&self) -> Option<ModelEntity> {
+        self.entity(ModelEntityType::Backend)
     }
 
-    pub fn vendor_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Vendor)
+    pub fn vendor_entity(&self) -> Option<ModelEntity> {
+        self.entity(ModelEntityType::Vendor)
     }
 
-    pub fn family_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Family)
+    pub fn family_entity(&self) -> Option<ModelEntity> {
+        self.entity(ModelEntityType::Family)
     }
 
-    pub fn variant_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Variant)
+    pub fn variant_entity(&self) -> Option<ModelEntity> {
+        self.entity(ModelEntityType::Variant)
     }
 
     fn entity(
         &self,
-        r#type: EntityType,
-    ) -> Option<Entity> {
+        r#type: ModelEntityType,
+    ) -> Option<ModelEntity> {
         self.entities.iter().find(|entity| entity.r#type == r#type).map(|entity| entity.clone())
     }
 }

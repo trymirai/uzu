@@ -1,12 +1,12 @@
 use async_openai::types::chat::FinishReason as OpenAiFinishReason;
-use shoji::types::session::chat::ChatFinishReason;
+use shoji::types::session::chat::ChatReplyFinishReason;
 
-pub fn build(reason: OpenAiFinishReason) -> ChatFinishReason {
+pub fn build(reason: OpenAiFinishReason) -> ChatReplyFinishReason {
     match reason {
-        OpenAiFinishReason::Stop => ChatFinishReason::Stop,
-        OpenAiFinishReason::Length => ChatFinishReason::Length,
-        OpenAiFinishReason::ToolCalls => ChatFinishReason::ToolCalls,
-        OpenAiFinishReason::ContentFilter => ChatFinishReason::Rejected,
-        OpenAiFinishReason::FunctionCall => ChatFinishReason::ToolCalls,
+        OpenAiFinishReason::Stop => ChatReplyFinishReason::Stop,
+        OpenAiFinishReason::Length => ChatReplyFinishReason::Length,
+        OpenAiFinishReason::ToolCalls => ChatReplyFinishReason::ToolCalls,
+        OpenAiFinishReason::ContentFilter => ChatReplyFinishReason::Rejected,
+        OpenAiFinishReason::FunctionCall => ChatReplyFinishReason::ToolCalls,
     }
 }

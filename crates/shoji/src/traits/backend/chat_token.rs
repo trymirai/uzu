@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
-    types::session::chat::{ChatConfig, ChatStreamConfig},
+    types::session::chat::{ChatConfig, ChatReplyConfig},
 };
 
 pub type StreamInput = Vec<u64>;
@@ -17,11 +17,11 @@ pub trait Backend: Send + Sync {
 }
 
 pub trait Instance:
-    InstanceTrait<StreamConfig = ChatStreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
 {
 }
 
 impl<T> Instance for T where
-    T: InstanceTrait<StreamConfig = ChatStreamConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
+    T: InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
 {
 }

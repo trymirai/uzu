@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use serde_json::Value;
-use shoji::types::session::chat::{
-    ChatContentBlock as OriginalContentBlock, ChatContentBlockType, ChatMessage as OriginalMessage, ChatRole,
-    TranslationInput,
+use shoji::types::{
+    basic::TranslationPayload,
+    session::chat::{
+        ChatContentBlock as OriginalContentBlock, ChatContentBlockType, ChatMessage as OriginalMessage, ChatRole,
+    },
 };
 
 use crate::chat::hanashi::messages::{
@@ -133,7 +135,7 @@ impl Message {
                 value,
             } => serde_json::to_value(value.clone()),
             OriginalContentBlock::Translation {
-                input,
+                payload: input,
                 source_language_code,
                 target_language_code,
             } => {
@@ -149,13 +151,13 @@ impl Message {
                     .unwrap_or_else(|| "target_language_code".to_string());
                 let mut map = IndexMap::new();
                 match input {
-                    TranslationInput::Text {
+                    TranslationPayload::Text {
                         text,
                     } => {
                         map.insert(config.type_key.clone(), Value::String(config.text_key.clone()));
                         map.insert(config.text_key.clone(), Value::String(text.clone()));
                     },
-                    TranslationInput::Image {
+                    TranslationPayload::Image {
                         url,
                     } => {
                         let url_key = config.url_key.as_ref().ok_or_else(|| Error::SerializationFailed {

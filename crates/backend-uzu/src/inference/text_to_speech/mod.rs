@@ -24,7 +24,7 @@ use shoji::traits::{
     },
 };
 #[cfg(metal_backend)]
-use shoji::types::session::text_to_speech::PcmBatch as ShojiPcmBatch;
+use shoji::types::basic::PcmBatch as ShojiPcmBatch;
 use state::State;
 use tokio_util::sync::CancellationToken;
 

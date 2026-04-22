@@ -3,8 +3,8 @@
 use uzu::{
     engine::{Config, Engine},
     types::session::{
-        chat::{ChatConfig, ChatMessage, ChatStreamConfig},
-        classification::Message as ClassificationMessage,
+        chat::{ChatConfig, ChatMessage, ChatReplyConfig},
+        classification::ClassificationMessage,
     },
 };
 
@@ -42,7 +42,7 @@ async fn test_engine_chat() {
         ChatMessage::system().with_text("You are a helpful assistant.".to_string()),
         ChatMessage::user().with_text("My name is John Doe".to_string()),
     ];
-    let (mut stream, _) = session.reply_with_stream(messages, ChatStreamConfig::default());
+    let (mut stream, _) = session.reply_with_stream(messages, ChatReplyConfig::default());
     while let Some(progress) = stream.next().await {
         match progress {
             Ok(outputs) => {
@@ -65,7 +65,7 @@ async fn test_engine_chat() {
     }
 
     let messages = vec![ChatMessage::user().with_text("What is my name?".to_string())];
-    let _ = session.reply(messages, ChatStreamConfig::default()).await.unwrap();
+    let _ = session.reply(messages, ChatReplyConfig::default()).await.unwrap();
 
     let messages = session.messages().await;
     for message in messages {

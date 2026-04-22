@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::classification::Stats;
+use crate::types::session::classification::ClassificationStats;
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Output {
+pub struct ClassificationOutput {
     pub logits: Vec<f64>,
     pub probabilities: HashMap<String, f64>,
-    pub stats: Stats,
+    pub stats: ClassificationStats,
 }
