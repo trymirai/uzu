@@ -129,7 +129,11 @@ base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 jsonschema = "0.46.0"
 uniffi = "0.31.0"
-napi = { version = "3.8.3", features = ["napi10", "object_indexmap"] }
+napi = { version = "3.8.3", features = [
+    "napi10",
+    "object_indexmap",
+    "tokio_rt",
+] }
 napi-derive = "3.5.2"
 napi-build = "2.3.1"
 pyo3 = { version = "0.28.2", features = [
