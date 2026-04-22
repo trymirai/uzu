@@ -24,11 +24,6 @@ struct PointerElementTypeImpl<const device T*> {
 };
 
 template <typename T>
-struct PointerElementTypeImpl<threadgroup T*> {
-  using type = T;
-};
-
-template <typename T>
 using PointerElementType = typename PointerElementTypeImpl<T>::type;
 
 template <typename OutputType, typename InputType>

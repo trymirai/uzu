@@ -1,6 +1,7 @@
 #pragma once
 
-#include "mxu_matmul.h"
+#include "fragment.h"
+#include "mxu_fragment.h"
 #include "../../generated/matmul.h"
 
 using namespace metal;

@@ -244,7 +244,7 @@ struct SimdgroupFragmentOps {
         const ushort column_serpentine = (row % 2) ? (tile_n - 1 - col) : col;
         METAL_PRAGMA_UNROLL
         for (ushort k = 0; k < tile_k; ++k) {
-          OutputTile::FragmentOpsType::multiply_accumulate(
+          multiply_accumulate(
               output.fragment_at(row, column_serpentine),
               left.fragment_at(row, k),
               right.fragment_at(k, column_serpentine),

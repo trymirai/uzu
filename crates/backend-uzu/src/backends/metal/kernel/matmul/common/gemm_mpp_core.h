@@ -3,7 +3,8 @@
 #include "../../common/defines.h"
 #include "../../common/integral_constant.h"
 using namespace uzu;
-#include "mxu_matmul.h"
+#include "fragment.h"
+#include "mxu_fragment.h"
 #include "mxu_gemm_loop.h"
 #include "../../generated/matmul.h"
 
