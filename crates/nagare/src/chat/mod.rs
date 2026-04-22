@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-pub use error::Error;
+pub use error::ChatSessionError;
 use futures::{Stream as FuturesStream, StreamExt};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -26,18 +26,18 @@ use shoji::{
 use tokio::sync::{Mutex, mpsc};
 
 #[bindings::export(Class)]
-pub struct Stream {
-    receiver: mpsc::UnboundedReceiver<Result<Vec<ChatReply>, Error>>,
+pub struct ChatSessionStream {
+    receiver: mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>,
 }
 
-impl Stream {
-    pub async fn next(&mut self) -> Option<Result<Vec<ChatReply>, Error>> {
+impl ChatSessionStream {
+    pub async fn next(&mut self) -> Option<Result<Vec<ChatReply>, ChatSessionError>> {
         self.receiver.recv().await
     }
 }
 
-impl FuturesStream for Stream {
-    type Item = Result<Vec<ChatReply>, Error>;
+impl FuturesStream for ChatSessionStream {
+    type Item = Result<Vec<ChatReply>, ChatSessionError>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -49,7 +49,7 @@ impl FuturesStream for Stream {
 
 #[bindings::export(Enum)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum State {
+pub enum ChatSessionState {
     Idle,
     Generation,
     ToolCalling,
@@ -62,22 +62,22 @@ enum Instance {
 }
 
 #[bindings::export(Class)]
-pub struct Session {
+pub struct ChatSession {
     instance: Arc<Mutex<Instance>>,
-    state: Arc<Mutex<State>>,
+    state: Arc<Mutex<ChatSessionState>>,
     messages: Arc<Mutex<Vec<ChatMessage>>>,
 }
 
 #[bindings::export(Implementation)]
-impl Session {
+impl ChatSession {
     pub async fn new(
         backend: &dyn Backend,
         config: ChatConfig,
         model: Model,
         path: Option<String>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, ChatSessionError> {
         if !model.specializations.contains(&ModelSpecialization::Chat) {
-            return Err(Error::UnsupportedModel);
+            return Err(ChatSessionError::UnsupportedModel);
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
@@ -86,18 +86,18 @@ impl Session {
         } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
             Instance::Message(message::Session::new(message_backend, config, reference).await?)
         } else {
-            return Err(Error::UnsupportedModel);
+            return Err(ChatSessionError::UnsupportedModel);
         };
 
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
-            state: Arc::new(Mutex::new(State::Idle)),
+            state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
     #[bindings::export(Method)]
-    pub async fn state(&self) -> State {
+    pub async fn state(&self) -> ChatSessionState {
         *self.state.lock().await
     }
 
@@ -107,15 +107,15 @@ impl Session {
     }
 
     #[bindings::export(Method)]
-    pub async fn reset(&self) -> Result<(), Error> {
+    pub async fn reset(&self) -> Result<(), ChatSessionError> {
         {
             let mut state = self.state.lock().await;
             match *state {
-                State::Idle | State::ToolCalling => {
-                    *state = State::Resetting;
+                ChatSessionState::Idle | ChatSessionState::ToolCalling => {
+                    *state = ChatSessionState::Resetting;
                 },
-                State::Generation | State::Resetting => {
-                    return Err(Error::UnableToPerformOperationInCurrentState);
+                ChatSessionState::Generation | ChatSessionState::Resetting => {
+                    return Err(ChatSessionError::UnableToPerformOperationInCurrentState);
                 },
             }
         }
@@ -129,7 +129,7 @@ impl Session {
         };
 
         self.messages.lock().await.clear();
-        *self.state.lock().await = State::Idle;
+        *self.state.lock().await = ChatSessionState::Idle;
 
         result
     }
@@ -139,7 +139,7 @@ impl Session {
         &self,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
-    ) -> Result<Vec<ChatReply>, Error> {
+    ) -> Result<Vec<ChatReply>, ChatSessionError> {
         let (mut stream, _) = self.reply_with_stream(input, config);
         let mut outputs: Option<Vec<ChatReply>> = None;
         while let Some(progress) = stream.next().await {
@@ -148,7 +148,7 @@ impl Session {
                 Err(error) => return Err(error),
             }
         }
-        outputs.ok_or(Error::NoResponse)
+        outputs.ok_or(ChatSessionError::NoResponse)
     }
 
     #[bindings::export(Method)]
@@ -156,9 +156,9 @@ impl Session {
         &self,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
-    ) -> (Stream, CancellationToken) {
+    ) -> (ChatSessionStream, CancellationToken) {
         let cancel_token_to_return = CancellationToken::new();
-        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, Error>>();
+        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
 
         let instance = self.instance.clone();
         let state = self.state.clone();
@@ -169,11 +169,11 @@ impl Session {
             {
                 let mut state = state.lock().await;
                 match *state {
-                    State::Idle => {
-                        *state = State::Generation;
+                    ChatSessionState::Idle => {
+                        *state = ChatSessionState::Generation;
                     },
-                    State::Generation | State::Resetting | State::ToolCalling => {
-                        let _ = sender.send(Err(Error::UnableToPerformOperationInCurrentState));
+                    ChatSessionState::Generation | ChatSessionState::Resetting | ChatSessionState::ToolCalling => {
+                        let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState));
                         return;
                     },
                 }
@@ -231,12 +231,12 @@ impl Session {
 
             {
                 let mut state = state.lock().await;
-                *state = State::Idle;
+                *state = ChatSessionState::Idle;
             }
         });
 
         (
-            Stream {
+            ChatSessionStream {
                 receiver,
             },
             cancel_token_to_return,

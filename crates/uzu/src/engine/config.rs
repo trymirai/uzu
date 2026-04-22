@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[bindings::export(Class)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct Config {
+pub struct EngineConfig {
     pub mirai_api_key: Option<String>,
     pub lalamo_path: Option<String>,
     pub huggingface_api_key: Option<String>,
@@ -20,14 +20,14 @@ pub struct Config {
 }
 
 #[bindings::export(Implementation)]
-impl Config {
+impl EngineConfig {
     #[bindings::export(Constructor)]
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl Default for Config {
+impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             mirai_api_key: env::var("MIRAI_API_KEY").ok(),
@@ -46,7 +46,7 @@ impl Default for Config {
 }
 
 #[bindings::export(Implementation)]
-impl Config {
+impl EngineConfig {
     #[bindings::export(Method)]
     pub fn with_mirai_api_key(
         &self,

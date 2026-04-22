@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
-    engine::Error,
+    engine::EngineError,
     helpers::SharedAccess,
     storage::{
-        Error as StorageError, Storage,
+        Storage, StorageError,
         types::{DownloadPhase, DownloadState},
     },
 };
@@ -33,7 +33,8 @@ impl Downloader {
         self.storage.lock().await.state(&self.identifier).await
     }
 
-    pub async fn resume(&self) -> Result<(), Error> {
+    #[bindings::export(Method)]
+    pub async fn resume(&self) -> Result<(), EngineError> {
         let state = self.state().await.ok_or(StorageError::ItemNotFound {
             identifier: self.identifier.clone(),
         })?;
@@ -54,17 +55,17 @@ impl Downloader {
     }
 
     #[bindings::export(Method)]
-    pub async fn pause(&self) -> Result<(), Error> {
+    pub async fn pause(&self) -> Result<(), EngineError> {
         Ok(self.storage.lock().await.pause(&self.identifier).await?)
     }
 
     #[bindings::export(Method)]
-    pub async fn delete(&self) -> Result<(), Error> {
+    pub async fn delete(&self) -> Result<(), EngineError> {
         Ok(self.storage.lock().await.delete(&self.identifier).await?)
     }
 
     #[bindings::export(Method)]
-    pub async fn progress(&self) -> Option<Stream> {
+    pub async fn progress(&self) -> Option<DownloaderStream> {
         let identifier = self.identifier.clone();
         let Some(state) = self.state().await else {
             return None;
@@ -73,18 +74,18 @@ impl Downloader {
             return None;
         }
         let stream = self.storage.lock().await.subscribe();
-        Some(Stream::new(identifier, stream))
+        Some(DownloaderStream::new(identifier, stream))
     }
 }
 
 #[bindings::export(Class)]
-pub struct Stream {
+pub struct DownloaderStream {
     identifier: String,
     stream: SharedAccess<Option<BroadcastStream<(String, DownloadState)>>>,
 }
 
 #[bindings::export(Implementation)]
-impl Stream {
+impl DownloaderStream {
     pub(crate) fn new(
         identifier: String,
         stream: BroadcastStream<(String, DownloadState)>,
@@ -96,13 +97,13 @@ impl Stream {
     }
 
     #[bindings::export(Method)]
-    pub async fn next(&self) -> Option<Update> {
+    pub async fn next(&self) -> Option<DownloaderStreamUpdate> {
         let mut stream_guard = self.stream.lock().await;
         let stream = stream_guard.as_mut()?;
         while let Some(result) = stream.next().await {
             if let Ok((identifier, state)) = result {
                 if identifier == self.identifier {
-                    let update = Update {
+                    let update = DownloaderStreamUpdate {
                         bytes_total: state.total_bytes,
                         bytes_downloaded: state.downloaded_bytes,
                     };
@@ -127,12 +128,14 @@ impl Stream {
 
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Update {
+pub struct DownloaderStreamUpdate {
     pub bytes_total: i64,
     pub bytes_downloaded: i64,
 }
 
-impl Update {
+#[bindings::export(Implementation)]
+impl DownloaderStreamUpdate {
+    #[bindings::export(Method)]
     pub fn progress(&self) -> f32 {
         if self.bytes_total == 0 {
             0.0

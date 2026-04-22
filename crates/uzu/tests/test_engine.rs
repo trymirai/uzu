@@ -1,7 +1,7 @@
 #![cfg(not(target_family = "wasm"))]
 
 use uzu::{
-    engine::{Config, Engine},
+    engine::{Engine, EngineConfig},
     types::session::{
         chat::{ChatConfig, ChatMessage, ChatReplyConfig},
         classification::ClassificationMessage,
@@ -13,7 +13,7 @@ use uzu::{
 async fn test_engine_chat() {
     dotenvy::dotenv().ok();
 
-    let config = Config::default();
+    let config = EngineConfig::default();
     let engine = Engine::new(config).await.unwrap();
 
     let models = engine.models().await.unwrap();
@@ -78,7 +78,7 @@ async fn test_engine_chat() {
 async fn test_engine_classification() {
     dotenvy::dotenv().ok();
 
-    let config = Config::default();
+    let config = EngineConfig::default();
     let engine = Engine::new(config).await.unwrap();
     let model = engine.model("ModernBERT-Chat-Moderation".to_string()).await.unwrap().unwrap();
     let session = engine.classification(model).await.unwrap();
@@ -93,7 +93,7 @@ async fn test_engine_classification() {
 async fn test_engine_text_to_speech() {
     dotenvy::dotenv().ok();
 
-    let config = Config::default();
+    let config = EngineConfig::default();
     let engine = Engine::new(config).await.unwrap();
     let model = engine.model("s1-mini".to_string()).await.unwrap().unwrap();
     let session = engine.text_to_speech(model).await.unwrap();

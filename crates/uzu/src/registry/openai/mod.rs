@@ -21,7 +21,7 @@ struct ListModelsResponse {
     data: Vec<Model>,
 }
 
-use crate::registry::Error;
+use crate::registry::RegistryError;
 
 pub struct Registry {
     config: Config,
@@ -30,19 +30,20 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn new(config: Config) -> Result<Self, Error> {
+    pub fn new(config: Config) -> Result<Self, RegistryError> {
         let mut openai_config = OpenAIConfig::new().with_api_base(&config.api_endpoint);
         if let Some(api_key) = config.api_key.as_ref() {
             openai_config = openai_config.with_api_key(api_key);
         }
         if let Some(headers) = config.headers.as_ref() {
             for (key, value) in headers {
-                let name =
-                    reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|error| Error::UnableToCreate {
+                let name = reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|error| {
+                    RegistryError::UnableToCreate {
                         message: error.to_string(),
-                    })?;
+                    }
+                })?;
                 openai_config =
-                    openai_config.with_header(name, value.as_str()).map_err(|error| Error::UnableToCreate {
+                    openai_config.with_header(name, value.as_str()).map_err(|error| RegistryError::UnableToCreate {
                         message: error.to_string(),
                     })?;
             }
@@ -51,7 +52,7 @@ impl Registry {
         let client = Client::with_config(openai_config);
 
         let model_filter = config.model_filter_pattern.as_deref().map(Regex::new).transpose().map_err(|error| {
-            Error::UnableToCreate {
+            RegistryError::UnableToCreate {
                 message: error.to_string(),
             }
         })?;
@@ -65,16 +66,16 @@ impl Registry {
 }
 
 impl RegistryTrait for Registry {
-    type Error = Error;
+    type Error = RegistryError;
 
     fn indentifier(&self) -> String {
         self.config.identifier.clone()
     }
 
-    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ShojiModel>, Error>> + Send + '_>> {
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ShojiModel>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             let response: ListModelsResponse =
-                self.client.models().list_byot().await.map_err(|error| Error::UnableToGetModels {
+                self.client.models().list_byot().await.map_err(|error| RegistryError::UnableToGetModels {
                     message: error.to_string(),
                 })?;
             let mut identifiers = response.data.into_iter().map(|model| model.id).collect::<Vec<_>>();

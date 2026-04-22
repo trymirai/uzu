@@ -6,8 +6,9 @@ use std::{
     task::{Context, Poll},
 };
 
-pub use error::Error;
+pub use error::TextToSpeechSessionError;
 use futures::{Stream as FuturesStream, StreamExt};
+use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{Backend, State as StateTrait, backend::text_to_speech::Instance},
     types::{
@@ -17,18 +18,21 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
-pub struct Stream {
-    receiver: mpsc::UnboundedReceiver<Result<PcmBatch, Error>>,
+#[bindings::export(Class)]
+pub struct TextToSpeechSessionStream {
+    receiver: mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>,
 }
 
-impl Stream {
-    pub async fn next(&mut self) -> Option<Result<PcmBatch, Error>> {
+#[bindings::export(Implementation)]
+impl TextToSpeechSessionStream {
+    #[bindings::export(Method)]
+    pub async fn next(&mut self) -> Option<Result<PcmBatch, TextToSpeechSessionError>> {
         self.receiver.recv().await
     }
 }
 
-impl FuturesStream for Stream {
-    type Item = Result<PcmBatch, Error>;
+impl FuturesStream for TextToSpeechSessionStream {
+    type Item = Result<PcmBatch, TextToSpeechSessionError>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -38,8 +42,9 @@ impl FuturesStream for Stream {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum State {
+#[bindings::export(Enum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TextToSpeechSessionState {
     Idle,
     Synthesizing,
 }
@@ -49,26 +54,31 @@ struct InstanceHolder {
     state: Box<dyn StateTrait>,
 }
 
-pub struct Session {
+#[bindings::export(Class)]
+pub struct TextToSpeechSession {
     holder: Arc<Mutex<InstanceHolder>>,
-    state: Arc<Mutex<State>>,
+    state: Arc<Mutex<TextToSpeechSessionState>>,
 }
 
-impl Session {
+#[bindings::export(Implementation)]
+impl TextToSpeechSession {
     pub async fn new(
         backend: &dyn Backend,
         model: Model,
         path: Option<String>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, TextToSpeechSessionError> {
         if !model.specializations.contains(&ModelSpecialization::TextToSpeech) {
-            return Err(Error::UnsupportedModel);
+            return Err(TextToSpeechSessionError::UnsupportedModel);
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
-        let text_to_speech_backend = backend.as_text_to_speech_capable().ok_or(Error::UnsupportedModel)?;
-        let instance = text_to_speech_backend.instance(reference, ()).await.map_err(|error| Error::Backend {
-            message: error.to_string(),
+        let text_to_speech_backend =
+            backend.as_text_to_speech_capable().ok_or(TextToSpeechSessionError::UnsupportedModel)?;
+        let instance = text_to_speech_backend.instance(reference, ()).await.map_err(|error| {
+            TextToSpeechSessionError::Backend {
+                message: error.to_string(),
+            }
         })?;
-        let instance_state = instance.state().await.map_err(|error| Error::Backend {
+        let instance_state = instance.state().await.map_err(|error| TextToSpeechSessionError::Backend {
             message: error.to_string(),
         })?;
         Ok(Self {
@@ -76,18 +86,20 @@ impl Session {
                 instance,
                 state: instance_state,
             })),
-            state: Arc::new(Mutex::new(State::Idle)),
+            state: Arc::new(Mutex::new(TextToSpeechSessionState::Idle)),
         })
     }
 
-    pub async fn state(&self) -> State {
+    #[bindings::export(Method)]
+    pub async fn state(&self) -> TextToSpeechSessionState {
         *self.state.lock().await
     }
 
+    #[bindings::export(Method)]
     pub async fn synthesize(
         &self,
         input: String,
-    ) -> Result<PcmBatch, Error> {
+    ) -> Result<PcmBatch, TextToSpeechSessionError> {
         let (mut stream, _) = self.synthesize_stream(input);
         let mut batches: Vec<PcmBatch> = Vec::new();
         while let Some(event) = stream.next().await {
@@ -99,15 +111,15 @@ impl Session {
         if let Some(batch) = batches.last() {
             return Ok(batch.clone());
         }
-        Err(Error::NoResponse)
+        Err(TextToSpeechSessionError::NoResponse)
     }
 
     fn synthesize_stream(
         &self,
         input: String,
-    ) -> (Stream, CancellationToken) {
+    ) -> (TextToSpeechSessionStream, CancellationToken) {
         let cancel_token_to_return = CancellationToken::new();
-        let (sender, receiver) = mpsc::unbounded_channel::<Result<PcmBatch, Error>>();
+        let (sender, receiver) = mpsc::unbounded_channel::<Result<PcmBatch, TextToSpeechSessionError>>();
 
         let holder = self.holder.clone();
         let state = self.state.clone();
@@ -117,11 +129,11 @@ impl Session {
             {
                 let mut state = state.lock().await;
                 match *state {
-                    State::Idle => {
-                        *state = State::Synthesizing;
+                    TextToSpeechSessionState::Idle => {
+                        *state = TextToSpeechSessionState::Synthesizing;
                     },
-                    State::Synthesizing => {
-                        let _ = sender.send(Err(Error::UnableToPerformOperationInCurrentState));
+                    TextToSpeechSessionState::Synthesizing => {
+                        let _ = sender.send(Err(TextToSpeechSessionError::UnableToPerformOperationInCurrentState));
                         return;
                     },
                 }
@@ -136,7 +148,7 @@ impl Session {
 
                 let mut stream = instance.stream(&input, backend_state.as_mut(), (), cancel_token);
                 while let Some(event) = stream.next().await {
-                    let item = event.map_err(|error| Error::Backend {
+                    let item = event.map_err(|error| TextToSpeechSessionError::Backend {
                         message: error.to_string(),
                     });
                     if sender.send(item).is_err() {
@@ -145,11 +157,11 @@ impl Session {
                 }
             }
 
-            *state.lock().await = State::Idle;
+            *state.lock().await = TextToSpeechSessionState::Idle;
         });
 
         (
-            Stream {
+            TextToSpeechSessionStream {
                 receiver,
             },
             cancel_token_to_return,

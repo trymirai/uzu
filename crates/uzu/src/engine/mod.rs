@@ -6,13 +6,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
-pub use config::Config;
+pub use config::EngineConfig;
 pub use downloader::Downloader;
-pub use error::Error;
-use nagare::{
-    chat::Session as ChatSession, classification::Session as ClassificationSession,
-    text_to_speech::Session as TextToSpeechSession,
-};
+pub use error::EngineError;
+use nagare::{chat::ChatSession, classification::ClassificationSession, text_to_speech::TextToSpeechSession};
 use shoji::{
     traits::{Backend, Registry},
     types::{model::Model, session::chat::ChatConfig},
@@ -25,7 +22,7 @@ use crate::{
     helpers::{SharedAccess, is_endpoint_reachable},
     logs,
     registry::{
-        CachedRegistry, Error as RegistryError, MergedRegistry,
+        CachedRegistry, MergedRegistry, RegistryError,
         local::{Config as LocalRegistryConfig, Registry as LocalRegistry},
         mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
@@ -44,8 +41,8 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub async fn new(config: Config) -> Result<Self, Error> {
-        let tokio_handle = Handle::try_current().map_err(|error| Error::TokioError {
+    pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
+        let tokio_handle = Handle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
         })?;
 
@@ -124,7 +121,7 @@ impl Engine {
         }
         for config in openai_configs {
             let registry = OpenAIRegistry::new(config.clone())?;
-            let backend = OpenAIBackend::new(config.into()).map_err(|_| Error::UnableToCreateBackend)?;
+            let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend)?;
             engine.add_registry(Box::new(registry)).await?;
             engine.add_backend(Arc::new(backend) as Arc<dyn Backend>);
         }
@@ -136,7 +133,7 @@ impl Engine {
 #[bindings::export(Implementation)]
 impl Engine {
     #[bindings::export(Factory)]
-    pub async fn create(config: &Config) -> Result<Self, Error> {
+    pub async fn create(config: &EngineConfig) -> Result<Self, EngineError> {
         Self::new(config.clone()).await
     }
 }
@@ -145,7 +142,7 @@ impl Engine {
     pub async fn add_registry(
         &self,
         registry: Box<dyn Registry<Error = RegistryError>>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), EngineError> {
         self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
         self.handle_registry_resfresh().await?;
         Ok(())
@@ -154,7 +151,7 @@ impl Engine {
     pub async fn remove_registry(
         &self,
         registry_identifier: &str,
-    ) -> Result<(), Error> {
+    ) -> Result<(), EngineError> {
         self.registry.lock().await.remove(registry_identifier)?;
         self.handle_registry_resfresh().await?;
         Ok(())
@@ -180,15 +177,15 @@ impl Engine {
 #[bindings::export(Implementation)]
 impl Engine {
     #[bindings::export(Method)]
-    pub async fn models(&self) -> Result<Vec<Model>, Error> {
-        self.registry.lock().await.models().await.map_err(Error::from)
+    pub async fn models(&self) -> Result<Vec<Model>, EngineError> {
+        self.registry.lock().await.models().await.map_err(EngineError::from)
     }
 
     #[bindings::export(Method)]
     pub async fn model(
         &self,
         identifier: String,
-    ) -> Result<Option<Model>, Error> {
+    ) -> Result<Option<Model>, EngineError> {
         if let Some(model) = self.model_by_identifier(identifier.clone()).await? {
             return Ok(Some(model));
         }
@@ -202,23 +199,23 @@ impl Engine {
     pub async fn model_by_identifier(
         &self,
         identifier: String,
-    ) -> Result<Option<Model>, Error> {
-        self.registry.lock().await.model_by_identifier(&identifier).await.map_err(Error::from)
+    ) -> Result<Option<Model>, EngineError> {
+        self.registry.lock().await.model_by_identifier(&identifier).await.map_err(EngineError::from)
     }
 
     #[bindings::export(Method)]
     pub async fn model_by_repo_id(
         &self,
         repo_id: String,
-    ) -> Result<Option<Model>, Error> {
-        self.registry.lock().await.model_by_repo_id(&repo_id).await.map_err(Error::from)
+    ) -> Result<Option<Model>, EngineError> {
+        self.registry.lock().await.model_by_repo_id(&repo_id).await.map_err(EngineError::from)
     }
 
     #[bindings::export(Method)]
     pub async fn model_by_path(
         &self,
         path: String,
-    ) -> Result<Option<Model>, Error> {
+    ) -> Result<Option<Model>, EngineError> {
         let models = self.models().await?;
         for model in models {
             if let Some(model_path) = self.model_path(&model).await {
@@ -231,7 +228,9 @@ impl Engine {
     }
 }
 
+#[bindings::export(Implementation)]
 impl Engine {
+    #[bindings::export(Method)]
     pub fn downloader(
         &self,
         model: &Model,
@@ -243,6 +242,7 @@ impl Engine {
         self.storage.lock().await.subscribe()
     }
 
+    #[bindings::export(Method)]
     pub async fn model_path(
         &self,
         model: &Model,
@@ -272,54 +272,58 @@ impl Engine {
         path
     }
 
-    async fn handle_registry_resfresh(&self) -> Result<(), Error> {
+    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
         self.storage.lock().await.refresh(models).await?;
         Ok(())
     }
 }
 
+#[bindings::export(Implementation)]
 impl Engine {
+    #[bindings::export(Method)]
     pub async fn chat(
         &self,
         model: Model,
         config: ChatConfig,
-    ) -> Result<ChatSession, Error> {
+    ) -> Result<ChatSession, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend_entity) = model.backend_entity() {
-            let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::BackendNotFound)?;
+            let backend = self.backends.get(&backend_entity.identifier).ok_or(EngineError::BackendNotFound)?;
             let session = ChatSession::new(backend.as_ref(), config, model, path).await?;
             Ok(session)
         } else {
-            return Err(Error::BackendNotFound);
+            return Err(EngineError::BackendNotFound);
         }
     }
 
+    #[bindings::export(Method)]
     pub async fn classification(
         &self,
         model: Model,
-    ) -> Result<ClassificationSession, Error> {
+    ) -> Result<ClassificationSession, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend_entity) = model.backend_entity() {
-            let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::BackendNotFound)?;
+            let backend = self.backends.get(&backend_entity.identifier).ok_or(EngineError::BackendNotFound)?;
             let session = ClassificationSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {
-            return Err(Error::BackendNotFound);
+            return Err(EngineError::BackendNotFound);
         }
     }
 
+    #[bindings::export(Method)]
     pub async fn text_to_speech(
         &self,
         model: Model,
-    ) -> Result<TextToSpeechSession, Error> {
+    ) -> Result<TextToSpeechSession, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend_entity) = model.backend_entity() {
-            let backend = self.backends.get(&backend_entity.identifier).ok_or(Error::BackendNotFound)?;
+            let backend = self.backends.get(&backend_entity.identifier).ok_or(EngineError::BackendNotFound)?;
             let session = TextToSpeechSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {
-            return Err(Error::BackendNotFound);
+            return Err(EngineError::BackendNotFound);
         }
     }
 }

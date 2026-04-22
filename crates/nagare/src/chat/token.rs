@@ -13,7 +13,7 @@ use shoji::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::Error;
+use super::ChatSessionError;
 
 pub struct Session {
     _instance: Box<dyn Instance>,
@@ -25,11 +25,11 @@ impl Session {
         backend: &dyn Backend,
         config: ChatConfig,
         reference: String,
-    ) -> Result<Self, Error> {
-        let instance = backend.instance(reference, config).await.map_err(|error| Error::Backend {
+    ) -> Result<Self, ChatSessionError> {
+        let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
-        let state = instance.state().await.map_err(|error| Error::Backend {
+        let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
         Ok(Self {
@@ -38,8 +38,8 @@ impl Session {
         })
     }
 
-    pub async fn reset(&mut self) -> Result<(), Error> {
-        Err(Error::Backend {
+    pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
+        Err(ChatSessionError::Backend {
             message: "token chat session reset not implemented".to_string(),
         })
     }
@@ -49,9 +49,9 @@ impl Session {
         _input: &'a Vec<ChatMessage>,
         _config: ChatReplyConfig,
         _cancel_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = Result<Output, Error>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         Box::pin(stream::once(async {
-            Err(Error::Backend {
+            Err(ChatSessionError::Backend {
                 message: "Token chat session stream not implemented".to_string(),
             })
         }))

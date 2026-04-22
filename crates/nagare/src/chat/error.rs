@@ -1,7 +1,7 @@
 #[bindings::export(Error)]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error {
+pub enum ChatSessionError {
     #[error("Backend error: {message}")]
     Backend {
         message: String,

@@ -1,5 +1,5 @@
 use uzu::{
-    engine::{Config as EngineConfig, Engine},
+    engine::{Engine, EngineConfig},
     types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 

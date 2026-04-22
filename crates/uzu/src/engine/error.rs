@@ -1,29 +1,25 @@
-use nagare::{
-    chat::Error as ChatError, classification::Error as ClassificationError, text_to_speech::Error as TextToSpeechError,
-};
-
 #[bindings::export(Error)]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error {
+pub enum EngineError {
     #[error("Tokio error: {message}")]
     TokioError {
         message: String,
     },
     #[error(transparent)]
-    Device(#[from] crate::device::Error),
+    Device(#[from] crate::device::DeviceError),
     #[error(transparent)]
-    Storage(#[from] crate::storage::Error),
+    Storage(#[from] crate::storage::StorageError),
     #[error(transparent)]
-    Registry(#[from] crate::registry::Error),
+    Registry(#[from] crate::registry::RegistryError),
     #[error("Unable to create backend")]
     UnableToCreateBackend,
     #[error("Backend not found")]
     BackendNotFound,
     #[error(transparent)]
-    Chat(#[from] ChatError),
+    ChatSession(#[from] nagare::chat::ChatSessionError),
     #[error(transparent)]
-    Classification(#[from] ClassificationError),
+    ClassificationSession(#[from] nagare::classification::ClassificationSessionError),
     #[error(transparent)]
-    TextToSpeech(#[from] TextToSpeechError),
+    TextToSpeechSession(#[from] nagare::text_to_speech::TextToSpeechSessionError),
 }

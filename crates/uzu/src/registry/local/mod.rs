@@ -8,14 +8,14 @@ use shoji::{
     types::model::{Model, ModelAccessibility, ModelEntity, ModelEntityType, ModelReference, ModelSpecialization},
 };
 
-use crate::registry::Error;
+use crate::registry::RegistryError;
 
 pub struct Registry {
     config: Config,
 }
 
 impl Registry {
-    pub fn new(config: Config) -> Result<Self, Error> {
+    pub fn new(config: Config) -> Result<Self, RegistryError> {
         Ok(Self {
             config,
         })
@@ -23,22 +23,22 @@ impl Registry {
 }
 
 impl RegistryTrait for Registry {
-    type Error = Error;
+    type Error = RegistryError;
 
     fn indentifier(&self) -> String {
         self.config.identifier.clone()
     }
 
-    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Error>> + Send + '_>> {
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             let path = Path::new(&self.config.path);
             if !path.exists() {
-                Err(Error::UnableToGetModels {
+                Err(RegistryError::UnableToGetModels {
                     message: format!("Path not found: {}", path.display()),
                 })?;
             }
 
-            let entries = fs::read_dir(path).map_err(|error| Error::UnableToGetModels {
+            let entries = fs::read_dir(path).map_err(|error| RegistryError::UnableToGetModels {
                 message: error.to_string(),
             })?;
 

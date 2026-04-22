@@ -3,7 +3,7 @@ mod os;
 
 use std::path::PathBuf;
 
-pub use error::Error;
+pub use error::DeviceError;
 use os::{home_path, is_environment_sandboxed};
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
@@ -19,14 +19,14 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new() -> Result<Self, DeviceError> {
         let mut system_info = System::new_all();
         system_info.refresh_all();
 
         let os_name = System::long_os_version();
         let cpu_name = system_info.cpus().first().map(|cpu| cpu.brand().to_string());
         let memory_total = system_info.total_memory();
-        let home_path = home_path().ok_or(Error::UnsupportedDevice)?;
+        let home_path = home_path().ok_or(DeviceError::UnsupportedDevice)?;
         let is_environment_sandboxed = is_environment_sandboxed();
 
         Ok(Self {

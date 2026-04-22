@@ -11,6 +11,7 @@ pub struct DownloadState {
     pub phase: DownloadPhase,
 }
 
+#[bindings::export(Implementation)]
 impl DownloadState {
     pub fn not_downloaded(total_bytes: i64) -> Self {
         Self {
@@ -71,6 +72,7 @@ impl DownloadState {
         }
     }
 
+    #[bindings::export(Method)]
     pub fn progress(&self) -> f32 {
         if self.total_bytes == 0 {
             0.0
@@ -79,14 +81,17 @@ impl DownloadState {
         }
     }
 
+    #[bindings::export(Method)]
     pub fn is_in_progress(&self) -> bool {
         self.phase.is_in_progress()
     }
 
+    #[bindings::export(Method)]
     pub fn can_pause(&self) -> bool {
         self.phase.can_pause()
     }
 
+    #[bindings::export(Method)]
     pub fn can_delete(&self) -> bool {
         self.phase.can_delete()
     }

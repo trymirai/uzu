@@ -2,8 +2,9 @@ mod error;
 
 use std::sync::Arc;
 
-pub use error::Error;
+pub use error::ClassificationSessionError;
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{Backend, State as StateTrait, backend::classification::Instance},
     types::{
@@ -14,8 +15,9 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum State {
+#[bindings::export(Enum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ClassificationSessionState {
     Idle,
     Classifying,
 }
@@ -25,26 +27,31 @@ struct InstanceHolder {
     state: Box<dyn StateTrait>,
 }
 
-pub struct Session {
+#[bindings::export(Class)]
+pub struct ClassificationSession {
     holder: Arc<Mutex<InstanceHolder>>,
-    state: Arc<Mutex<State>>,
+    state: Arc<Mutex<ClassificationSessionState>>,
 }
 
-impl Session {
+#[bindings::export(Implementation)]
+impl ClassificationSession {
     pub async fn new(
         backend: &dyn Backend,
         model: Model,
         path: Option<String>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, ClassificationSessionError> {
         if !model.specializations.contains(&ModelSpecialization::Classification) {
-            return Err(Error::UnsupportedModel);
+            return Err(ClassificationSessionError::UnsupportedModel);
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
-        let classification_backend = backend.as_classification_capable().ok_or(Error::UnsupportedModel)?;
-        let instance = classification_backend.instance(reference, ()).await.map_err(|error| Error::Backend {
-            message: error.to_string(),
+        let classification_backend =
+            backend.as_classification_capable().ok_or(ClassificationSessionError::UnsupportedModel)?;
+        let instance = classification_backend.instance(reference, ()).await.map_err(|error| {
+            ClassificationSessionError::Backend {
+                message: error.to_string(),
+            }
         })?;
-        let instance_state = instance.state().await.map_err(|error| Error::Backend {
+        let instance_state = instance.state().await.map_err(|error| ClassificationSessionError::Backend {
             message: error.to_string(),
         })?;
         Ok(Self {
@@ -52,20 +59,23 @@ impl Session {
                 instance,
                 state: instance_state,
             })),
-            state: Arc::new(Mutex::new(State::Idle)),
+            state: Arc::new(Mutex::new(ClassificationSessionState::Idle)),
         })
     }
 
-    pub async fn state(&self) -> State {
+    #[bindings::export(Method)]
+    pub async fn state(&self) -> ClassificationSessionState {
         *self.state.lock().await
     }
 
+    #[bindings::export(Method)]
     pub async fn classify(
         &self,
         input: Vec<ClassificationMessage>,
-    ) -> Result<ClassificationOutput, Error> {
+    ) -> Result<ClassificationOutput, ClassificationSessionError> {
         let cancel_token_to_return = CancellationToken::new();
-        let (sender, mut receiver) = mpsc::unbounded_channel::<Result<ClassificationOutput, Error>>();
+        let (sender, mut receiver) =
+            mpsc::unbounded_channel::<Result<ClassificationOutput, ClassificationSessionError>>();
 
         let holder = self.holder.clone();
         let state = self.state.clone();
@@ -75,11 +85,11 @@ impl Session {
             {
                 let mut state = state.lock().await;
                 match *state {
-                    State::Idle => {
-                        *state = State::Classifying;
+                    ClassificationSessionState::Idle => {
+                        *state = ClassificationSessionState::Classifying;
                     },
-                    State::Classifying => {
-                        let _ = sender.send(Err(Error::UnableToPerformOperationInCurrentState));
+                    ClassificationSessionState::Classifying => {
+                        let _ = sender.send(Err(ClassificationSessionError::UnableToPerformOperationInCurrentState));
                         return;
                     },
                 }
@@ -98,17 +108,17 @@ impl Session {
 
                 match output {
                     Some(Ok(output)) => Ok(output),
-                    Some(Err(error)) => Err(Error::Backend {
+                    Some(Err(error)) => Err(ClassificationSessionError::Backend {
                         message: error.to_string(),
                     }),
-                    None => Err(Error::NoResponse),
+                    None => Err(ClassificationSessionError::NoResponse),
                 }
             };
             let _ = sender.send(result);
 
-            *state.lock().await = State::Idle;
+            *state.lock().await = ClassificationSessionState::Idle;
         });
 
-        receiver.recv().await.unwrap_or(Err(Error::NoResponse))
+        receiver.recv().await.unwrap_or(Err(ClassificationSessionError::NoResponse))
     }
 }

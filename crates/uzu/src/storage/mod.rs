@@ -12,7 +12,7 @@ pub use config::Config;
 use download_manager::{
     FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
 };
-pub use error::Error;
+pub use error::StorageError;
 use shoji::types::{
     basic::File,
     model::{Model, ModelAccessibility, ModelReference},
@@ -41,8 +41,8 @@ impl Storage {
     pub async fn new(
         tokio_handle: Handle,
         config: Config,
-    ) -> Result<Self, Error> {
-        create_dir_all(config.cache_path()).map_err(|_| Error::UnableToCreateDirectory {
+    ) -> Result<Self, StorageError> {
+        create_dir_all(config.cache_path()).map_err(|_| StorageError::UnableToCreateDirectory {
             path: config.cache_path().to_string_lossy().to_string(),
         })?;
 
@@ -53,7 +53,7 @@ impl Storage {
                 tokio_handle.clone(),
             )
             .await
-            .map_err(|error| Error::DownloadManager {
+            .map_err(|error| StorageError::DownloadManager {
                 message: error.to_string(),
             })?,
         ));
@@ -77,14 +77,14 @@ impl Storage {
     pub async fn refresh(
         &self,
         models: Vec<Model>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StorageError> {
         let models = models.into_iter().filter(|model| model.is_downloadable()).collect::<Vec<_>>();
         let actual_model_identifiers: HashSet<String> = models.iter().map(|model| model.identifier()).collect();
 
         let download_manager = { self.download_manager.lock().await.clone() };
 
         let existing_file_tasks =
-            download_manager.get_all_file_tasks().await.map_err(|error| Error::DownloadManager {
+            download_manager.get_all_file_tasks().await.map_err(|error| StorageError::DownloadManager {
                 message: error.to_string(),
             })?;
         let mut active_file_tasks = Vec::with_capacity(existing_file_tasks.len());
@@ -118,7 +118,7 @@ impl Storage {
             let files = self.resolve_model_files(&model)?;
             let total_bytes: u64 = files.iter().map(|file| file.size as u64).sum();
 
-            let cache_path = self.config.cache_model_path(&model).ok_or(Error::UnsupportedItem {
+            let cache_path = self.config.cache_model_path(&model).ok_or(StorageError::UnsupportedItem {
                 identifier: identifier.clone(),
             })?;
 
@@ -132,7 +132,7 @@ impl Storage {
                 let mut file_tasks = Vec::new();
                 for file in &files {
                     let file_path = cache_path.join(&file.name);
-                    let file_check = FileCheck::CRC(file.crc32c().ok_or(Error::HashNotFound {
+                    let file_check = FileCheck::CRC(file.crc32c().ok_or(StorageError::HashNotFound {
                         identifier: identifier.clone(),
                         name: file.name.clone(),
                     })?);
@@ -140,7 +140,7 @@ impl Storage {
                     let file_task = download_manager
                         .file_download_task(&file.url, &file_path, file_check, Some(file.size as u64))
                         .await
-                        .map_err(|error| Error::DownloadManager {
+                        .map_err(|error| StorageError::DownloadManager {
                             message: error.to_string(),
                         })?;
 
@@ -221,8 +221,8 @@ impl Storage {
     pub async fn download(
         &self,
         model_identifier: &String,
-    ) -> Result<(), Error> {
-        let item = self.get(model_identifier).await.ok_or_else(|| Error::ItemNotFound {
+    ) -> Result<(), StorageError> {
+        let item = self.get(model_identifier).await.ok_or_else(|| StorageError::ItemNotFound {
             identifier: model_identifier.clone(),
         })?;
         item.download().await
@@ -231,8 +231,8 @@ impl Storage {
     pub async fn pause(
         &self,
         model_identifier: &String,
-    ) -> Result<(), Error> {
-        let item = self.get(model_identifier).await.ok_or_else(|| Error::ItemNotFound {
+    ) -> Result<(), StorageError> {
+        let item = self.get(model_identifier).await.ok_or_else(|| StorageError::ItemNotFound {
             identifier: model_identifier.clone(),
         })?;
         item.pause().await
@@ -241,8 +241,8 @@ impl Storage {
     pub async fn delete(
         &self,
         model_identifier: &String,
-    ) -> Result<(), Error> {
-        let item = self.get(model_identifier).await.ok_or_else(|| Error::ItemNotFound {
+    ) -> Result<(), StorageError> {
+        let item = self.get(model_identifier).await.ok_or_else(|| StorageError::ItemNotFound {
             identifier: model_identifier.clone(),
         })?;
         item.cancel().await
@@ -253,7 +253,7 @@ impl Storage {
     fn resolve_model_files(
         &self,
         model: &Model,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<Vec<File>, StorageError> {
         match &model.accessibility {
             ModelAccessibility::Local {
                 reference,
@@ -265,18 +265,18 @@ impl Storage {
                 } => Ok(files.clone()),
                 ModelReference::HuggingFace {
                     ..
-                } => Err(Error::UnsupportedItem {
+                } => Err(StorageError::UnsupportedItem {
                     identifier: model.identifier(),
                 }),
                 ModelReference::Local {
                     ..
-                } => Err(Error::UnsupportedItem {
+                } => Err(StorageError::UnsupportedItem {
                     identifier: model.identifier(),
                 }),
             },
             ModelAccessibility::Remote {
                 ..
-            } => Err(Error::UnsupportedItem {
+            } => Err(StorageError::UnsupportedItem {
                 identifier: model.identifier(),
             }),
         }
