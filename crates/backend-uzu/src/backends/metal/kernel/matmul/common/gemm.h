@@ -163,9 +163,9 @@ struct ThreadgroupGemm {
     const uint simd_group_id = thread_context.threadgroup_index;
 
     const int swizzle_stride = pow2(params.swizzle_log);
-    const int swizzled_row_id =
-        tid.y * swizzle_stride + (tid.x % swizzle_stride);
-    const int swizzled_col_id = tid.x / swizzle_stride;
+    const int swizzled_row_id = threadgroup_position.y * swizzle_stride +
+                                (threadgroup_position.x % swizzle_stride);
+    const int swizzled_col_id = threadgroup_position.x / swizzle_stride;
 
     if (params.threadgroups_per_row <= swizzled_col_id ||
         params.threadgroups_per_column <= swizzled_row_id) {
@@ -207,12 +207,10 @@ struct ThreadgroupGemm {
         is_accumulate ? 1.0f : 0.0f
     );
 
-    int gemm_k_iterations = params.aligned_inner_iterations;
-
     ///////////////////////////////////////////////////////////////////////////
     // MNK aligned loop
     if (MN_aligned) {
-      for (int k = 0; k < params->aligned_inner_iterations; k++) {
+      for (int k = 0; k < params.aligned_inner_iterations; k++) {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         loader_a.load_unsafe();
         loader_b.load_unsafe();
@@ -253,11 +251,11 @@ struct ThreadgroupGemm {
     ///////////////////////////////////////////////////////////////////////////
     // MN unaligned loop
     else {
-      short threadgroup_block_rows =
+      ushort threadgroup_block_rows =
           min(BLOCK_ROWS, ((int)params.M) - output_row);
-      short threadgroup_block_cols =
+      ushort threadgroup_block_cols =
           min(BLOCK_COLS, ((int)params.N) - output_col);
-      short leftover_block_depth =
+      ushort leftover_block_depth =
           params.K - params.aligned_inner_iterations * BLOCK_DEPTH;
 
       if (threadgroup_block_rows == BLOCK_ROWS &&
@@ -265,7 +263,7 @@ struct ThreadgroupGemm {
         gemm_loop<true, true, K_aligned>(
             a_shared,
             b_shared,
-            params->aligned_inner_iterations,
+            params.aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -283,7 +281,7 @@ struct ThreadgroupGemm {
         gemm_loop<false, true, K_aligned>(
             a_shared,
             b_shared,
-            params->aligned_inner_iterations,
+            params.aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -310,7 +308,7 @@ struct ThreadgroupGemm {
         gemm_loop<true, false, K_aligned>(
             a_shared,
             b_shared,
-            params->aligned_inner_iterations,
+            params.aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -337,7 +335,7 @@ struct ThreadgroupGemm {
         gemm_loop<false, false, K_aligned>(
             a_shared,
             b_shared,
-            params->aligned_inner_iterations,
+            params.aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
