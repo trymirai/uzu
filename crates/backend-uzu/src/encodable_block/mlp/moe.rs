@@ -58,6 +58,8 @@ pub enum MoeBlockError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
+    #[error("MoE num_active_routed_experts must be greater than 0")]
+    InvalidActiveExpertCount,
 }
 
 impl<B: Backend> MoeBlock<B> {
@@ -68,6 +70,9 @@ impl<B: Backend> MoeBlock<B> {
         hidden_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, MoeBlockError<B>> {
+        if moe_config.num_active_routed_experts == 0 {
+            return Err(MoeBlockError::InvalidActiveExpertCount);
+        }
         let data_type: DataType = moe_config.expert_config.linear_config.activation_precision().into();
 
         let router_data_type: DataType = moe_config.router_config.activation_precision().into();
@@ -196,11 +201,14 @@ impl<B: Backend> MoeBlock<B> {
 impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
-        input: &mut Allocation<B>,
+        input: Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let suffix_length = batch_dim;
+        if suffix_length == 0 {
+            return Ok(input);
+        }
 
         let e = self.moe_config.num_routed_experts;
         let k = self.moe_config.num_active_routed_experts;
@@ -224,12 +232,12 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut topk_probs = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], self.data_type))?;
 
         if suffix_length > 0 && k > 0 {
-            encoder.encode_fill_allocation(&topk_ids, 0xFF);
+            encoder.encode_fill(&mut topk_ids, 0xFF);
         }
 
         if suffix_length > 0 && e > 0 && k > 0 {
             self.router_topk_kernel.encode(
-                input,
+                &input,
                 &self.router.weights,
                 &self.router.biases,
                 &mut topk_ids,
@@ -265,7 +273,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
 
         if suffix_length > 0 && k > 0 {
-            encoder.encode_fill_allocation(&tok2row, 0xFF);
+            encoder.encode_fill(&mut tok2row, 0xFF);
         }
 
         self.scatter_bases_kernel.encode(
@@ -297,14 +305,14 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 
         let mut x_perm = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
         if suffix_length > 0 && k > 0 {
-            encoder.encode_fill_allocation(&x_perm, 0);
+            encoder.encode_fill(&mut x_perm, 0);
         }
 
         self.gather_kernels.encode(
             encoder,
             self.data_type,
             MoeGatherArguments {
-                x: input,
+                x: &input,
                 bucketed_ids: &bucketed_ids,
                 x_perm: &mut x_perm,
                 sumk: &sumk,
@@ -326,8 +334,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut y_partial = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
 
         if suffix_length > 0 && k > 0 {
-            encoder.encode_fill_allocation(&hidden, 0);
-            encoder.encode_fill_allocation(&y_partial, 0);
+            encoder.encode_fill(&mut hidden, 0);
+            encoder.encode_fill(&mut y_partial, 0);
         }
 
         let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;

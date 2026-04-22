@@ -66,12 +66,12 @@ impl<B: Backend> RHTLinearWrapper<B> {
 impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode(
         &self,
-        input: &mut Allocation<B>,
+        mut input: Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         self.input_hadamard_kernel.encode(
-            input,
+            &mut input,
             &self.input_factors,
             self.input_dimension as u32,
             batch_dim as u32,

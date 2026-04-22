@@ -2,11 +2,10 @@ use std::rc::Rc;
 
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
     config::TransformerLayerConfig,
     encodable_block::{
         Attention, AttentionArguments, EncodingParameters, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope,
-        TensorAddSwap,
     },
     forward_pass::state::RopeType,
     parameters::ParameterTree,
@@ -20,11 +19,11 @@ pub struct ClassifierLayer<B: Backend> {
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
-    mixer_residual_add: TensorAddSwap<B>,
+    mixer_residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
     pre_mlp_norm: Normalization<B>,
     mlp: Box<dyn Mlp<B>>,
     post_mlp_norm: Option<Normalization<B>>,
-    mlp_residual_add: TensorAddSwap<B>,
+    mlp_residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
     model_dim: usize,
     num_heads: usize,
     num_groups: usize,
@@ -117,7 +116,8 @@ impl<B: Backend> ClassifierLayer<B> {
             None
         };
 
-        let mixer_residual_add = TensorAddSwap::<B>::new(ctx, intermediate_data_type).unwrap();
+        let mixer_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(ctx, intermediate_data_type)
+            .expect("Failed to create mixer residual add kernel");
 
         let pre_mlp_norm = Normalization::new(
             ctx,
@@ -163,7 +163,8 @@ impl<B: Backend> ClassifierLayer<B> {
         )
         .expect("Failed to create attention kernel");
 
-        let mlp_residual_add = TensorAddSwap::<B>::new(ctx, intermediate_data_type).unwrap();
+        let mlp_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(ctx, intermediate_data_type)
+            .expect("Failed to create mlp residual add kernel");
 
         Self {
             pre_attention_norm,
@@ -187,7 +188,7 @@ impl<B: Backend> ClassifierLayer<B> {
 
     pub fn encode(
         &self,
-        args: LayerArguments<'_, B>,
+        args: LayerArguments<B>,
         parameters: &EncodingParameters,
         main: Allocation<B>,
         shortcut: &mut Allocation<B>,
@@ -207,16 +208,16 @@ impl<B: Backend> ClassifierLayer<B> {
             ..
         } = args;
         #[cfg(feature = "tracing")]
-        let layer_traces = trace;
+        let mut layer_traces = trace;
         let layer_len = batch_dim * self.model_dim;
 
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            encoder.encode_copy_allocation(&main, &layer_traces.inputs);
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.inputs, ..);
         }
 
         debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
-        encoder.encode_copy_allocation(&main, shortcut);
+        encoder.encode_copy(&main, .., shortcut, ..);
 
         let mut main = if let Some(ref pre_attn_norm) = self.pre_attention_norm {
             pre_attn_norm.encode(&main, 0, batch_dim, encoder)?
@@ -224,11 +225,11 @@ impl<B: Backend> ClassifierLayer<B> {
             main
         };
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            encoder.encode_copy_allocation(&main, &layer_traces.pre_attention_norm);
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.pre_attention_norm, ..);
         }
 
-        let mut qkv = self.qkv_projection.encode(&mut main, batch_dim, encoder)?;
+        let mut qkv = self.qkv_projection.encode(main, batch_dim, encoder)?;
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(&mut qkv, batch_dim, encoder)?;
         }
@@ -247,7 +248,7 @@ impl<B: Backend> ClassifierLayer<B> {
             rope_dim,
             encoder,
         )?;
-        let mut attention_output = self.attention.encode(
+        let attention_output = self.attention.encode(
             AttentionArguments {
                 projection_step: parameters.projection_step.unwrap_or(0),
                 token_subtrie_ranges,
@@ -264,53 +265,53 @@ impl<B: Backend> ClassifierLayer<B> {
             self.head_dim,
             encoder,
         )?;
-        main = self.out_projection.encode(&mut attention_output, batch_dim, encoder)?;
+        main = self.out_projection.encode(attention_output, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            encoder.encode_copy_allocation(&main, &layer_traces.attention);
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.attention, ..);
         }
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
             main = post_attn_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                encoder.encode_copy_allocation(&main, &layer_traces.post_attention_norm);
+            if let Some(layer_traces) = layer_traces.as_deref_mut() {
+                encoder.encode_copy(&main, .., &mut layer_traces.post_attention_norm, ..);
             }
         }
 
-        self.mixer_residual_add.encode(shortcut, &mut main, layer_len, encoder)?;
+        self.mixer_residual_add.encode(&mut *shortcut, &mut main, layer_len as u32, encoder);
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            encoder.encode_copy_allocation(&main, &layer_traces.mlp_inputs);
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.mlp_inputs, ..);
         }
 
         debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
-        encoder.encode_copy_allocation(&main, shortcut);
+        encoder.encode_copy(&main, .., shortcut, ..);
 
         main = self.pre_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            encoder.encode_copy_allocation(&main, &layer_traces.pre_mlp_norm);
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.pre_mlp_norm, ..);
         }
 
-        main = self.mlp.encode(&mut main, batch_dim, encoder)?;
+        main = self.mlp.encode(main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            encoder.encode_copy_allocation(&main, &layer_traces.mlp);
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.mlp, ..);
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
             main = post_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                encoder.encode_copy_allocation(&main, &layer_traces.post_mlp_norm);
+            if let Some(layer_traces) = layer_traces.as_deref_mut() {
+                encoder.encode_copy(&main, .., &mut layer_traces.post_mlp_norm, ..);
             }
         }
 
-        self.mlp_residual_add.encode(shortcut, &mut main, layer_len, encoder)?;
+        self.mlp_residual_add.encode(shortcut, &mut main, layer_len as u32, encoder);
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            encoder.encode_copy_allocation(&main, &layer_traces.outputs);
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.outputs, ..);
         }
 
         Ok(main)

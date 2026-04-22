@@ -6,7 +6,7 @@ use ndarray::{Array4, s};
 use test_tag::tag;
 
 use crate::{
-    DataType, allocation_from_slice, allocation_to_vec,
+    DataType, allocation_to_vec,
     backends::{
         common::{
             Allocation, AllocationType, Backend, Context, Encoder, Kernels,
@@ -19,12 +19,24 @@ use crate::{
     },
 };
 
+fn alloc_allocation_with_data<T: crate::ArrayElement>(
+    context: &<Metal as Backend>::Context,
+    data: &[T],
+) -> Allocation<Metal> {
+    let allocation = context
+        .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    crate::allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    allocation
+}
+
 fn alloc_allocation<B: Backend, T>(
     context: &B::Context,
     elements_count: usize,
 ) -> Allocation<B> {
-    let byte_len = (elements_count * size_of::<T>()).max(1);
-    context.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation")
+    context
+        .create_allocation(elements_count * size_of::<T>(), crate::backends::common::AllocationType::Global)
+        .expect("Failed to create allocation")
 }
 
 fn submit_encoder<B: Backend>(encoder: Encoder<B>) {
@@ -171,7 +183,7 @@ fn create_query_allocation(
         }
     }
 
-    allocation_from_slice(context, &values)
+    alloc_allocation_with_data(context, &values)
 }
 
 fn create_attention_cache_allocation(
@@ -191,14 +203,14 @@ fn create_attention_cache_allocation(
         }
     }
 
-    allocation_from_slice(context, &cache)
+    alloc_allocation_with_data(context, &cache)
 }
 
 fn create_sinks_allocation(
     sinks: &[f32],
     context: &<Metal as Backend>::Context,
 ) -> Allocation<Metal> {
-    allocation_from_slice(context, sinks)
+    alloc_allocation_with_data(context, sinks)
 }
 
 fn convert_kernel_output(

@@ -121,67 +121,67 @@ pub trait AudioKernelRuntime<B: Backend> {
     fn encode_fsq_decode(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioFsqDecodeArguments<'_, B>,
+        arguments: AudioFsqDecodeArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_fsq_encode(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioFsqEncodeArguments<'_, B>,
+        arguments: AudioFsqEncodeArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_conv1d(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioConv1dArguments<'_, B>,
+        arguments: AudioConv1dArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv1d(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioCausalConv1dArguments<'_, B>,
+        arguments: AudioCausalConv1dArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_causal_conv_transpose1d(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioCausalConvTranspose1dArguments<'_, B>,
+        arguments: AudioCausalConvTranspose1dArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_half_snake(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioHalfSnakeArguments<'_, B>,
+        arguments: AudioHalfSnakeArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_leaky_relu(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioElementwiseArguments<'_, B>,
+        arguments: AudioElementwiseArguments<B>,
         negative_slope: f32,
     ) -> Result<(), B::Error>;
 
     fn encode_tanh(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioElementwiseArguments<'_, B>,
+        arguments: AudioElementwiseArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_add(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioAddArguments<'_, B>,
+        arguments: AudioAddArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_scale(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioScaleArguments<'_, B>,
+        arguments: AudioScaleArguments<B>,
     ) -> Result<(), B::Error>;
 
     fn encode_clamp(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: AudioClampArguments<'_, B>,
+        arguments: AudioClampArguments<B>,
     ) -> Result<(), B::Error>;
 }

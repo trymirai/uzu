@@ -308,8 +308,8 @@ impl<B: Backend> DeltaNetMixer<B> {
 
     pub(crate) fn encode(
         &self,
-        args: DeltaNetArguments<'_, B>,
-        input: &mut Allocation<B>,
+        args: DeltaNetArguments<B>,
+        input: Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let DeltaNetArguments {
@@ -354,6 +354,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             );
         }
 
-        self.out_projection.encode(&mut delta_output, active_row_count, encoder)
+        self.out_projection.encode(delta_output, active_row_count, encoder)
     }
 }

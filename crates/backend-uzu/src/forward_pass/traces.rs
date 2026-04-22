@@ -104,11 +104,11 @@ impl<B: Backend> ActivationTrace<B> {
         }
     }
 
-    pub fn embedding_norm(&self) -> &Allocation<B> {
-        self.embedding_norm.as_ref().expect("embedding_norm is only available for classifier traces")
+    pub fn embedding_norm_mut(&mut self) -> &mut Allocation<B> {
+        self.embedding_norm.as_mut().expect("embedding_norm is only available for classifier traces")
     }
 
-    pub fn output_pooling(&self) -> &Allocation<B> {
-        self.output_pooling.as_ref().expect("output_pooling is only available for classifier traces")
+    pub fn output_pooling_mut(&mut self) -> &mut Allocation<B> {
+        self.output_pooling.as_mut().expect("output_pooling is only available for classifier traces")
     }
 }

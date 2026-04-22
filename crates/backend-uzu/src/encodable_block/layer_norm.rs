@@ -82,11 +82,11 @@ impl<B: Backend> LayerNorm<B> {
             0u32
         };
         let row_size = self.element_count * self.input_data_type.size_in_bytes();
-        let input = input.view_at_offset(row_offset * row_size, row_count * row_size);
+        let input_offset = row_offset * row_size;
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.output_data_type))?;
         self.kernel.encode(
-            Some(&input),
+            Some((input, input_offset)),
             &self.scales,
             &mut output,
             row_count as u32,

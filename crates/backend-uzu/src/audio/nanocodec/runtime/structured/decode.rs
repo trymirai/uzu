@@ -91,17 +91,12 @@ impl StructuredAudioCodecGraph {
                         .ok_or(AudioError::Runtime("structured audio length scaling overflow".to_string()))
                 })
                 .collect::<AudioResult<Vec<_>>>()?;
-            let context = resources.context().clone();
-            let output = context.create_array_zeros(&[0], DataType::F32, "structured_audio_empty_output");
-            return Ok(SubmittedDecodedPaddedAudio {
-                output: output.into_allocation(),
-                data_type: DataType::F32,
+            return Ok(SubmittedDecodedPaddedAudio::Ready(DecodedPaddedAudio {
+                samples: Vec::new(),
                 channels: 1,
                 frames: out_lengths.iter().copied().max().unwrap_or(0),
                 lengths: out_lengths,
-                final_command_buffer: None,
-                completion_notification: None,
-            });
+            }));
         }
 
         let mut lengths_i32 = lengths
@@ -363,7 +358,7 @@ impl StructuredAudioCodecGraph {
                 let _ = completion_sender.send(());
             }
         });
-        let final_command_buffer = Some(encoder.end_encoding().submit());
+        let final_command_buffer = encoder.end_encoding().submit();
         let out_lengths = lengths_i32
             .into_iter()
             .map(|length| {
@@ -372,14 +367,14 @@ impl StructuredAudioCodecGraph {
                 })
             })
             .collect::<AudioResult<Vec<_>>>()?;
-        Ok(SubmittedDecodedPaddedAudio {
+        Ok(SubmittedDecodedPaddedAudio::Pending {
             output: x.into_allocation(),
             data_type: self.vocoder_data_type,
             channels: vocoder_graph.final_conv.cout,
             frames: current_frames,
             lengths: out_lengths,
             final_command_buffer,
-            completion_notification: Some(completion_notification),
+            completion_notification,
         })
     }
 

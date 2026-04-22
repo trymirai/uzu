@@ -17,11 +17,11 @@ use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
-    array::{Array, ArrayContextExt, allocation_as_slice},
+    array::{Array, ArrayContextExt},
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
-    encodable_block::{EncodingParameters, Sampling},
+    encodable_block::{DecoderDecodeInput, EncodingParameters, Sampling},
     forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
@@ -33,6 +33,7 @@ use crate::{
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
         types::Error,
     },
+    try_allocation_to_vec,
 };
 
 // ============================================================================
@@ -252,7 +253,7 @@ impl<B: Backend> TraceValidator<B> {
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
         );
-        let traces = ActivationTrace::new_llm(ctx.context.as_ref(), &ctx.model_shape, token_ids.len());
+        let mut traces = ActivationTrace::new_llm(ctx.context.as_ref(), &ctx.model_shape, token_ids.len());
 
         let mut encoder =
             Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
@@ -274,10 +275,16 @@ impl<B: Backend> TraceValidator<B> {
                 /*sampling_start=*/ 0,
                 /*sampling_length=*/ token_ids.len(),
                 #[cfg(feature = "tracing")]
-                Some(&traces),
+                Some(&mut traces),
             );
             ctx.executables
-                .encode_decode(decoder_arguments, logits, &EncodingParameters::new(), &mut encoder)
+                .encode_decode(
+                    decoder_arguments,
+                    DecoderDecodeInput::TokenIds,
+                    logits,
+                    &EncodingParameters::new(),
+                    &mut encoder,
+                )
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
         let pending = encoder.end_encoding().submit();
@@ -342,10 +349,10 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_allocation(
+                        metrics: Self::validate_optional_allocation(
                             data_type,
                             &expected,
-                            &ssm.conv_state,
+                            ssm.conv_state.as_ref(),
                             &ssm.conv_shape,
                             Some(ArrayTransform::SsmConvState),
                         ),
@@ -647,17 +654,51 @@ impl<B: Backend> TraceValidator<B> {
         }
     }
 
+    fn validate_optional_allocation(
+        data_type: DataType,
+        expected_array: &Array<B>,
+        produced_allocation: Option<&Allocation<B>>,
+        produced_shape: &[usize],
+        transform: Option<ArrayTransform>,
+    ) -> TracerValidationMetrics {
+        match produced_allocation {
+            Some(produced_allocation) => {
+                Self::validate_allocation(data_type, expected_array, produced_allocation, produced_shape, transform)
+            },
+            None => match data_type {
+                DataType::F16 => {
+                    Self::validate_allocation_data_of_type::<f16>(expected_array, &[], produced_shape, transform)
+                },
+                DataType::BF16 => {
+                    Self::validate_allocation_data_of_type::<bf16>(expected_array, &[], produced_shape, transform)
+                },
+                DataType::F32 => {
+                    Self::validate_allocation_data_of_type::<f32>(expected_array, &[], produced_shape, transform)
+                },
+                _ => panic!("Unsupported data type: {:?}", data_type),
+            },
+        }
+    }
+
     fn validate_allocation_of_type<Precision: ArrayElement>(
         expected_array: &Array<B>,
         produced_allocation: &Allocation<B>,
         produced_shape: &[usize],
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
+        let produced =
+            try_allocation_to_vec::<B, Precision>(produced_allocation).expect("Failed to read produced allocation");
+        Self::validate_allocation_data_of_type(expected_array, &produced, produced_shape, transform)
+    }
+
+    fn validate_allocation_data_of_type<Precision: ArrayElement>(
+        expected_array: &Array<B>,
+        produced_slice: &[Precision],
+        produced_shape: &[usize],
+        transform: Option<ArrayTransform>,
+    ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
-        let produced_slice = allocation_as_slice::<Precision, B>(produced_allocation)
-            .expect("Failed to read produced allocation")
-            .to_vec();
-        let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), &produced_slice)
+        let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), produced_slice)
             .expect("Failed to reshape allocation");
 
         let (mut expected_data, mut produced_data) = match transform {
@@ -751,6 +792,28 @@ impl<B: Backend> TraceValidator<B> {
         fraction_of_allowed_violations: f32,
     ) -> TracerValidationMetrics {
         assert_eq!(result.len(), reference.len());
+        if reference.is_empty() {
+            return TracerValidationMetrics {
+                atol,
+                rtol,
+                fraction_of_allowed_violations,
+                reference_shape,
+                result_shape,
+                num_violations: 0,
+                max_allowed_violations: 0,
+                max_err_idx: 0,
+                max_err: 0.0,
+                max_err_rel: 0.0,
+                max_err_reference_value: 0.0,
+                rms_diff: 0.0,
+                rms_result: 0.0,
+                rms_reference: 0.0,
+                rel_rms_reference: 0.0,
+                diff_max: 0.0,
+                diff_avg: 0.0,
+                result_nan: false,
+            };
+        }
 
         let mut num_violations = 0;
         let mut max_err = 0.0f32;
@@ -928,7 +991,7 @@ impl<B: Backend> TraceValidator<B> {
         shape: &[usize],
     ) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
-        let logits = allocation_as_slice::<Precision, B>(logits).expect("Failed to read logits allocation").to_vec();
+        let logits = try_allocation_to_vec::<B, Precision>(logits).expect("Failed to read logits allocation");
         let logits = ArrayView::from_shape(IxDyn(shape), &logits).expect("invalid logits trace shape");
         sampler.sample(logits)
     }

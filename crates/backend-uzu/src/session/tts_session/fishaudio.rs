@@ -4,7 +4,7 @@ use regex::Regex;
 
 use super::*;
 use crate::{
-    array::{Array, ArrayContextExt},
+    array::ArrayContextExt,
     backends::common::{Allocation, Buffer},
     config::TtsMessageProcessorConfig,
     encodable_block::SamplingInputs,
@@ -38,7 +38,7 @@ struct FishAudioSemanticBridge<B: Backend> {
     embedding_rows_sum: <B::Kernels as Kernels>::EmbeddingRowsSumKernel,
     projection: <B::Kernels as ManualKernels>::MatmulKernel,
     codebook_embeddings: Allocation<B>,
-    codebook_token_indices: Array<B>,
+    codebook_token_indices: Allocation<B>,
     projection_weights: Option<Allocation<B>>,
     num_codebooks: usize,
     codebook_size: usize,
@@ -99,7 +99,8 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
             .map_err(unable_to_create_context)?;
         let projection = <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
             .map_err(unable_to_create_context)?;
-        let codebook_token_indices = context.create_array_zeros(&[num_codebooks], DataType::U32, "codebook_token_ids");
+        let codebook_token_indices =
+            context.create_array_zeros(&[num_codebooks], DataType::U32, "codebook_token_ids").into_allocation();
 
         Ok(Self {
             embedding_rows_sum,
@@ -532,7 +533,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         }
 
         debug_assert_eq!(slow_hidden_capture.as_buffer_range().1.len(), output_embedding.as_buffer_range().1.len());
-        encoder.encode_copy_allocation(slow_hidden_capture, output_embedding);
+        encoder.encode_copy(slow_hidden_capture, .., output_embedding, ..);
         Ok(())
     }
 
@@ -546,7 +547,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         semantic_bridge: &mut FishAudioSemanticBridge<B>,
         slow_sum_embedding: &mut Allocation<B>,
         first_code: u32,
-        source_runner: &TokenDecoderRunner<B>,
+        source_runner: &mut TokenDecoderRunner<B>,
         source_slot: usize,
         num_codebooks: usize,
         codebook_size: usize,
@@ -573,9 +574,13 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let residual_count = num_codebooks.saturating_sub(1);
         if residual_count > 0 {
             let dst_byte_offset = std::mem::size_of::<u32>(); // skip slot 0
-            let token_indices =
-                semantic_bridge.codebook_token_indices.view_at_offset(dst_byte_offset, &[residual_count]);
-            source_runner.copy_async_chain_results_to_on(encoder, source_slot, &token_indices, residual_count)?;
+            source_runner.copy_async_chain_results_to_on(
+                encoder,
+                source_slot,
+                &mut semantic_bridge.codebook_token_indices,
+                dst_byte_offset,
+                residual_count,
+            )?;
         }
 
         let total_vocab = num_codebooks.checked_mul(codebook_size).ok_or(Error::GenerateFailed)?;
@@ -584,7 +589,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         let slow_model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
         let codebook_size_u32 = u32::try_from(codebook_size).map_err(|_| Error::GenerateFailed)?;
 
-        let codebook_token_indices = semantic_bridge.codebook_token_indices.allocation();
+        let codebook_token_indices = &semantic_bridge.codebook_token_indices;
         let codebook_embeddings = &semantic_bridge.codebook_embeddings;
         if semantic_bridge.num_codebooks != num_codebooks
             || semantic_bridge.codebook_size != codebook_size

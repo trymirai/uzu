@@ -84,7 +84,7 @@ impl<B: Backend> Sampling<B> {
 
     pub fn encode(
         &self,
-        args: SamplingArguments<'_, B>,
+        args: SamplingArguments<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), SamplingError<B>> {
         self.kernel.encode(

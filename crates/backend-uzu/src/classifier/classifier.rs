@@ -5,12 +5,12 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext, ClassifierError};
 use crate::{
     DataType,
-    array::allocation_as_slice,
     backends::common::{Allocation, Backend, Encoder},
     config::ModelMetadata,
     encodable_block::{EncodingParameters, LayerArguments},
     forward_pass::token_inputs::TokenInputs,
     session::types::Error,
+    try_allocation_to_vec,
 };
 
 pub struct Classifier<B: Backend> {
@@ -83,13 +83,13 @@ impl<B: Backend> Classifier<B> {
         token_positions: &[usize],
     ) -> Result<(Box<[f32]>, ActivationTrace<B>), Error> {
         let num_labels = self.context.model_config.model_config.num_labels;
-        let traces = ActivationTrace::new_classifier(
+        let mut traces = ActivationTrace::new_classifier(
             self.context.context.as_ref(),
             &self.context.model_shape,
             token_ids.len(),
             num_labels,
         );
-        let logits = self.forward_pass_impl(token_ids, token_positions, Some(&traces))?;
+        let logits = self.forward_pass_impl(token_ids, token_positions, Some(&mut traces))?;
         Ok((logits, traces))
     }
 
@@ -106,12 +106,14 @@ impl<B: Backend> Classifier<B> {
         &mut self,
         token_ids: &[u64],
         token_positions: &[usize],
-        #[cfg(feature = "tracing")] trace: Option<&ActivationTrace<B>>,
+        #[cfg(feature = "tracing")] trace: Option<&mut ActivationTrace<B>>,
     ) -> Result<Box<[f32]>, Error> {
         let batch_dim = token_ids.len();
         let token_inputs = TokenInputs::new_classifier(self.context.context.as_ref(), token_ids, token_positions);
         let encoding_params = EncodingParameters::new();
 
+        #[cfg(feature = "tracing")]
+        let mut trace = trace;
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
@@ -131,8 +133,9 @@ impl<B: Backend> Classifier<B> {
             .encode(&main, 0, batch_dim, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = trace {
-            encoder.encode_copy_allocation(&main, trace.embedding_norm());
+        if let Some(trace) = trace.as_deref_mut() {
+            let embedding_norm = trace.embedding_norm_mut();
+            encoder.encode_copy(&main, .., embedding_norm, ..);
         }
 
         let mut shortcut =
@@ -155,7 +158,7 @@ impl<B: Backend> Classifier<B> {
                         sampling_length: batch_dim,
                         cache_layer: None,
                         #[cfg(feature = "tracing")]
-                        trace: trace.and_then(|traces| traces.layer_results.get(layer_index)),
+                        trace: trace.as_deref_mut().map(|traces| &mut traces.layer_results[layer_index]),
                     },
                     &encoding_params,
                     main,
@@ -170,8 +173,8 @@ impl<B: Backend> Classifier<B> {
             .encode(&main, 0, batch_dim, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = trace {
-            encoder.encode_copy_allocation(&main, &trace.output_norm);
+        if let Some(trace) = trace.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut trace.output_norm, ..);
         }
         let pooling = self
             .context
@@ -179,14 +182,15 @@ impl<B: Backend> Classifier<B> {
             .encode(batch_dim, &main, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = trace {
-            encoder.encode_copy_allocation(&pooling, trace.output_pooling());
+        if let Some(trace) = trace.as_deref_mut() {
+            let output_pooling = trace.output_pooling_mut();
+            encoder.encode_copy(&pooling, .., output_pooling, ..);
         }
         let logits =
             self.context.prediction_head.encode(pooling, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = trace {
-            encoder.encode_copy_allocation(&logits, &trace.logits);
+        if let Some(trace) = trace.as_deref_mut() {
+            encoder.encode_copy(&logits, .., &mut trace.logits, ..);
         }
 
         encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
@@ -217,19 +221,18 @@ impl<B: Backend> Classifier<B> {
         };
 
         match logits_data_type {
-            DataType::F32 => Ok(allocation_as_slice::<f32, B>(logits)
+            DataType::F32 => Ok(try_allocation_to_vec::<B, f32>(logits)
                 .map_err(allocation_read_error)?
-                .iter()
-                .copied()
+                .into_iter()
                 .take(num_labels)
                 .collect()),
-            DataType::F16 => Ok(allocation_as_slice::<half::f16, B>(logits)
+            DataType::F16 => Ok(try_allocation_to_vec::<B, half::f16>(logits)
                 .map_err(allocation_read_error)?
                 .into_iter()
                 .take(num_labels)
                 .map(|x| x.to_f32())
                 .collect::<Box<[_]>>()),
-            DataType::BF16 => Ok(allocation_as_slice::<half::bf16, B>(logits)
+            DataType::BF16 => Ok(try_allocation_to_vec::<B, half::bf16>(logits)
                 .map_err(allocation_read_error)?
                 .into_iter()
                 .take(num_labels)

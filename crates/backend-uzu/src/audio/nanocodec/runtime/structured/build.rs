@@ -4,7 +4,7 @@ use crate::array::{Array, ArrayContextExt};
 pub(super) type BackendParameterTree<'loader, B> = crate::parameters::ParameterTree<'loader, <B as Backend>::Context>;
 
 pub(super) fn read_float_allocation<B: Backend, const RANK: usize>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     name: &str,
     expected_data_type: DataType,
 ) -> AudioResult<([usize; RANK], Array<B>)> {
@@ -27,7 +27,7 @@ pub(super) fn read_float_allocation<B: Backend, const RANK: usize>(
 }
 
 pub(super) fn read_float_vector_exact<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     name: &str,
     expected_len: usize,
     expected_data_type: DataType,
@@ -43,7 +43,7 @@ pub(super) fn read_float_vector_exact<B: Backend>(
 }
 
 pub(super) fn read_float_matrix_exact<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     name: &str,
     expected_rows: usize,
     expected_cols: usize,
@@ -73,7 +73,7 @@ pub(super) fn outer_axis_view<B: Backend>(
 }
 
 pub(super) fn read_conv1d_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     dilation: usize,
     groups: usize,
@@ -101,7 +101,7 @@ pub(super) fn read_conv1d_layer<B: Backend>(
 }
 
 pub(super) fn read_conv_transpose1d_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     stride: usize,
     groups: usize,
@@ -140,7 +140,7 @@ pub(super) fn read_conv_transpose1d_layer<B: Backend>(
 }
 
 pub(super) fn read_pointwise_conv_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     expected_out_dim: usize,
     expected_in_dim: usize,
@@ -157,7 +157,7 @@ pub(super) fn read_pointwise_conv_layer<B: Backend>(
 
 pub(super) fn read_norm_layer<B: Backend>(
     context: &Rc<B::Context>,
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     channels: usize,
     epsilon: f32,
@@ -180,7 +180,7 @@ pub(super) fn read_norm_layer<B: Backend>(
 
 pub(super) fn read_convnext_layer<B: Backend>(
     context: &Rc<B::Context>,
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     norm_config: &DescriptAudioConvNeXtNormConfig,
 ) -> AudioResult<StructuredAudioConvNeXt<B>> {
@@ -238,7 +238,7 @@ pub(super) fn read_convnext_layer<B: Backend>(
 }
 
 pub(super) fn read_residual_unit_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     dilation: usize,
 ) -> AudioResult<StructuredAudioResidualUnit<B>> {
@@ -273,7 +273,7 @@ pub(super) fn read_residual_unit_layer<B: Backend>(
 
 pub(super) fn build_vocoder_graph_from_tree<B: Backend>(
     context: &Rc<B::Context>,
-    root: &BackendParameterTree<'_, B>,
+    root: &BackendParameterTree<B>,
     config: &DescriptAudioCodecConfig,
     data_type: DataType,
 ) -> AudioResult<StructuredAudioDecoderGraph<B>> {

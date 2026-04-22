@@ -2,7 +2,7 @@ use super::{decoder_support::*, *};
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{Allocation, Buffer},
-    encodable_block::{DecoderArguments, SamplingInputs},
+    encodable_block::{DecoderArguments, DecoderDecodeInput, SamplingInputs},
     forward_pass::token_inputs::TokenInputs,
     session::types::TtsModelConfigError,
 };
@@ -73,7 +73,7 @@ struct TokenDecoderContext<B: Backend> {
     token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
     async_chain_positions: Array<B>,
     async_chain_seeds: Array<B>,
-    async_chain_results: Array<B>,
+    async_chain_results: Allocation<B>,
     async_chain_capacity: usize,
 }
 
@@ -159,12 +159,13 @@ impl<B: Backend> TokenDecoderContext<B> {
     fn build_async_chain_buffers(
         context: &Rc<B::Context>,
         async_chain_capacity: usize,
-    ) -> Result<(Array<B>, Array<B>, Array<B>), Error> {
+    ) -> Result<(Array<B>, Array<B>, Allocation<B>), Error> {
         let positions =
             context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::I32, "async_positions");
         let seeds = context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::U64, "async_seeds");
-        let results =
-            context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::U32, "async_results");
+        let results = context
+            .create_array_uninitialized(&[async_chain_capacity], crate::DataType::U32, "async_results")
+            .into_allocation();
         Ok((positions, seeds, results))
     }
 }
@@ -324,13 +325,19 @@ impl<B: Backend> TokenDecoderRunner<B> {
     }
 
     fn copy_sampling_output_to_async_result_on(
-        &self,
+        &mut self,
         encoder: &mut Encoder<B>,
         sampling_output: &Allocation<B>,
         result_slot: usize,
     ) {
-        let results_slot = self.ctx.async_chain_results.view_at_offset(result_slot * std::mem::size_of::<u32>(), &[1]);
-        encoder.encode_copy_allocation(sampling_output, results_slot.allocation());
+        let copy_size = std::mem::size_of::<u32>();
+        let result_offset = result_slot * copy_size;
+        encoder.encode_copy(
+            sampling_output,
+            0..copy_size,
+            &mut self.ctx.async_chain_results,
+            result_offset..result_offset + copy_size,
+        );
     }
 
     pub(super) fn prefill_without_sampling(
@@ -392,7 +399,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         encoder: &mut Encoder<B>,
         initial_token_ids: &[u64],
         initial_embedding_injection: EmbeddingInjection,
-        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<B>>,
         followup_count: usize,
         vocab_limit: Option<usize>,
         sampling: &mut TextSamplingState,
@@ -569,11 +576,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         .executables
                         .encode_decode(
                             self.decoder_arguments(&token_inputs, 1, 0, 1, &mut *cache_layers),
+                            DecoderDecodeInput::TokenIds,
                             decoder_logits,
                             &encoding_parameters,
                             encoder,
                         )
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?
+                        .0
                 };
                 let mut sampling_output = self.create_sampling_output(1);
                 self.encode_sampling_on(
@@ -700,7 +709,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         sampling: &mut TextSamplingState,
         token_bitmask: Option<&[u32]>,
         capture_hidden: bool,
-        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+        mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<B>>,
         preconsumed_seed: Option<u64>,
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
     ) -> Result<Allocation<B>, Error> {
@@ -790,7 +799,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let mut cache_layers = self.ctx.cache_layers.borrow_mut();
             self.ctx
                 .executables
-                .encode_decode_from_embeddings(
+                .encode_decode(
                     self.decoder_arguments(
                         &token_inputs,
                         token_count,
@@ -798,7 +807,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         sampling_length,
                         &mut *cache_layers,
                     ),
-                    main,
+                    DecoderDecodeInput::Embeddings(main),
                     decoder_logits,
                     &encoding_parameters,
                     encoder,
@@ -879,7 +888,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         sampling: &mut TextSamplingState,
         precomputed_token_bitmask: Option<&[u32]>,
         capture_hidden: bool,
-        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<B>>,
     ) -> Result<u64, Error> {
         objc2::rc::autoreleasepool(|_| {
             if token_ids.is_empty() {
@@ -977,7 +986,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
     }
 
     fn encode_capture_last_hidden_into_single_buffer_on(
-        &self,
+        &mut self,
         encoder: &mut Encoder<B>,
         shortcut: &Allocation<B>,
         token_count: usize,
@@ -994,9 +1003,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 token_count,
                 model_dim,
             })?;
-        let source = shortcut.view_at_offset(row_offset, model_dim * bytes_per_element);
-        let destination = self.single_hidden_capture.view_at_offset(0, model_dim * bytes_per_element);
-        encoder.encode_copy_allocation(&source, &destination);
+        let byte_len = model_dim * bytes_per_element;
+        encoder.encode_copy(shortcut, row_offset..row_offset + byte_len, &mut self.single_hidden_capture, 0..byte_len);
         Ok(())
     }
 
@@ -1012,9 +1020,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 model_dim,
             },
         )?;
-        let source = override_embedding.view_at_offset(0, model_dim_bytes);
-        let destination = main.view_at_offset(0, model_dim_bytes);
-        encoder.encode_copy_allocation(&source, &destination);
+        encoder.encode_copy(override_embedding, 0..model_dim_bytes, main, 0..model_dim_bytes);
         Ok(())
     }
 
@@ -1042,7 +1048,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             })?;
         let mut output = encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(unable_to_create_context)?;
         self.tensor_add_scale.encode(
-            main,
+            &*main,
             &self.single_override_embedding,
             &mut output,
             model_dim_u32,
@@ -1069,7 +1075,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         sampling: &mut TextSamplingState,
         precomputed_token_bitmask: Option<&[u32]>,
         capture_hidden: bool,
-        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<'_, B>>,
+        pre_injection_encode: Option<&mut PreInjectionEncodeCallback<B>>,
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
     ) -> Result<(), Error> {
         let token_count = token_ids.len();
@@ -1112,10 +1118,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
     }
 
     pub(super) fn copy_async_chain_results_to_on(
-        &self,
+        &mut self,
         encoder: &mut Encoder<B>,
         src_slot: usize,
-        dst: &Array<B>,
+        dst: &mut Allocation<B>,
+        dst_offset: usize,
         count: usize,
     ) -> Result<(), Error> {
         let src_offset = src_slot.checked_mul(std::mem::size_of::<u32>()).ok_or(
@@ -1123,11 +1130,16 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 src_slot,
             },
         )?;
-        count.checked_mul(std::mem::size_of::<u32>()).ok_or(TtsModelConfigError::AsyncChainCopySizeOverflow {
-            count,
-        })?;
-        let source = self.ctx.async_chain_results.view_at_offset(src_offset, &[count]);
-        encoder.encode_copy_allocation(source.allocation(), dst.allocation());
+        let byte_len =
+            count.checked_mul(std::mem::size_of::<u32>()).ok_or(TtsModelConfigError::AsyncChainCopySizeOverflow {
+                count,
+            })?;
+        encoder.encode_copy(
+            &self.ctx.async_chain_results,
+            src_offset..src_offset + byte_len,
+            dst,
+            dst_offset..dst_offset + byte_len,
+        );
         Ok(())
     }
 
@@ -1143,7 +1155,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
             .into());
         }
-        Ok(self.ctx.async_chain_results.as_slice::<u32>()[slot])
+        let (buffer, range) = self.ctx.async_chain_results.as_buffer_range();
+        Ok(unsafe {
+            *((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start + slot * std::mem::size_of::<u32>())
+                as *const u32)
+        })
     }
 
     pub(super) fn take_instrumentation(&mut self) -> RunnerInstrumentation {

@@ -51,9 +51,8 @@ impl<B: Backend> AttentionGemmBlock<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        args: AttentionGemmArguments<'_, B>,
+        args: AttentionGemmArguments<B>,
     ) -> Result<(), B::Error> {
-        let context = encoder.context();
         let bk: usize = if args.head_dim < 128 {
             32
         } else {
@@ -84,7 +83,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let kernel = <B::Kernels as Kernels>::AttentionGemmKernel::new(
-                    context,
+                    encoder.context(),
                     self.data_type,
                     bk as u32,
                     head_dim as u32,

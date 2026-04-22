@@ -123,14 +123,14 @@ impl<B: Backend> FullPrecisionLinear<B> {
 impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
     fn encode(
         &self,
-        input: &mut Allocation<B>,
+        input: Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.precision))?;
         self.kernel.borrow_mut().encode(
             MatmulArguments {
-                a: input,
+                a: &input,
                 b: &self.weights,
                 ab_scale: 1.0,
                 c: match self.bias.as_ref() {

@@ -14,7 +14,7 @@ use crate::{
         Allocation, Backend, Buffer, CommandBuffer, Context, Encoder, Pending, kernel::TokenCopySampledKernel,
     },
     config::ModelMetadata,
-    encodable_block::{EncodingParameters, SamplingArguments, SamplingInputs},
+    encodable_block::{DecoderDecodeInput, EncodingParameters, SamplingArguments, SamplingInputs},
     forward_pass::{
         cache_layers::{CacheLayer, CacheLayersSlice},
         kv_cache_layer::{INVALID_POSITION, KVCacheLayerState},
@@ -520,7 +520,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         )?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
-        // and sampling_output → results[slot] (for callback)
         let token_ids_shape = [1];
         let token_ids_data_type = crate::DataType::U64;
         let mut async_token_ids_allocation = self
@@ -528,6 +527,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             .context
             .create_array_uninitialized(&token_ids_shape, token_ids_data_type, "async_token_id")
             .into_allocation();
+        let (async_token_ids_buffer, async_token_ids_range) = async_token_ids_allocation.as_buffer_range();
+        let async_token_ptr = SendPtr(unsafe {
+            (async_token_ids_buffer.cpu_ptr().as_ptr() as *const u64)
+                .add(async_token_ids_range.start / std::mem::size_of::<u64>())
+        });
         self.context.token_copy_sampled.encode(
             encoded_forward_pass.sampling_output.as_ref().expect("Sampling output must exist"),
             &mut async_token_ids_allocation,
@@ -536,11 +540,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.async_token_ids = Some(unsafe {
             Array::from_allocation(async_token_ids_allocation, 0, &token_ids_shape, token_ids_data_type)
         });
-        let results_slot = self.context.async_buffers.results.get(slot).expect("async result slot must exist");
-        encoded_forward_pass.encoder.encode_copy_allocation(
-            encoded_forward_pass.sampling_output.as_ref().expect("Sampling output must exist"),
-            results_slot.allocation(),
-        );
 
         // Scatter + register for all transformer layers
         self.context.cache_layers.borrow_mut().update_after_acceptance(
@@ -557,15 +556,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
-        let (results_buffer_raw, results_range) =
-            self.context.async_buffers.results[slot].allocation().as_buffer_range();
-        let results_buffer_ptr = SendPtr(unsafe {
-            (results_buffer_raw.cpu_ptr().as_ptr() as *const u32).add(results_range.start / std::mem::size_of::<u32>())
-        });
-
         let handler = move |result: Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>| {
             result.expect("async decoding forward pass completed with error");
-            let token = { unsafe { *results_buffer_ptr.as_ptr() as u64 } };
+            let token = unsafe { *async_token_ptr.as_ptr() };
             on_complete(token);
         };
 
@@ -685,12 +678,18 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                     }
                 },
                 (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
-                    encoder.encode_copy_allocation(&src.conv_state, &dst.conv_state);
-                    encoder.encode_copy_allocation(&src.ssm_state, &dst.ssm_state);
+                    match (src.conv_state.as_ref(), dst.conv_state.as_mut()) {
+                        (Some(src), Some(dst)) => {
+                            encoder.encode_copy(src, .., dst, ..);
+                        },
+                        (None, None) => {},
+                        _ => panic!("state-space conv state presence mismatch when reconfiguring cache"),
+                    }
+                    encoder.encode_copy(&src.ssm_state, .., &mut dst.ssm_state, ..);
                 },
                 (CacheLayer::DeltaNet(src), CacheLayer::DeltaNet(dst)) => {
-                    encoder.encode_copy_allocation(&src.conv_state, &dst.conv_state);
-                    encoder.encode_copy_allocation(&src.ssm_state, &dst.ssm_state);
+                    encoder.encode_copy(&src.conv_state, .., &mut dst.conv_state, ..);
+                    encoder.encode_copy(&src.ssm_state, .., &mut dst.ssm_state, ..);
                 },
                 _ => {},
             }
@@ -844,8 +843,15 @@ impl<B: Backend> LanguageModelGenerator<B> {
             );
             let mut retained_logits = context
                 .executables
-                .encode_decode(decoder_arguments, decoder_logits, parameters, &mut encoder)
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+                .encode_decode(
+                    decoder_arguments,
+                    DecoderDecodeInput::TokenIds,
+                    decoder_logits,
+                    parameters,
+                    &mut encoder,
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?
+                .0;
 
             let sampling_inputs = sampling_inputs.as_ref().expect("Sampling requires sampling inputs");
             let sampling_result = context.gpu_sampler.encode(

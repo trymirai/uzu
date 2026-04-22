@@ -162,7 +162,7 @@ impl<B: Backend> Attention<B> {
 
     pub fn encode(
         &self,
-        mut args: AttentionArguments<'_, B>,
+        mut args: AttentionArguments<B>,
         qkv: &Allocation<B>,
         queries: &Allocation<B>,
         mut rotated_keys: Allocation<B>,

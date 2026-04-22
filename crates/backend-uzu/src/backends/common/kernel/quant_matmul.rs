@@ -207,7 +207,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        arguments: QuantizedMatmulArguments<'_, B>,
+        arguments: QuantizedMatmulArguments<B>,
     ) {
         let QuantizedMatmulArguments {
             a,
@@ -227,11 +227,11 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         macro_rules! encode_kernel {
             ($kernel:expr $(, $hadamard:expr)?) => {
                 $kernel.encode(
-                    &b,
-                    &scales,
+                    b,
+                    scales,
                     zero_points,
                     biases,
-                    &a,
+                    a,
                     output,
                     $($hadamard,)?
                     self.input_dim as u32,

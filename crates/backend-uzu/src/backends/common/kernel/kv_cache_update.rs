@@ -55,7 +55,7 @@ impl<B: Backend> KVCacheUpdate<B> {
     /// Encode the KV cache update operation using a provided command buffer
     pub fn encode(
         &self,
-        in_place_data: &mut [KVLayerData<'_, B>],
+        in_place_data: &mut [KVLayerData<B>],
         source_indices: &[usize],
         destination_indices: &[usize],
         encoder: &mut Encoder<B>,

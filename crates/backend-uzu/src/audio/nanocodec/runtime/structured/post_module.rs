@@ -409,16 +409,9 @@ impl StructuredAudioCodecGraph {
             return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
         }
 
-        let mut output = unsafe {
-            Array::from_allocation(
-                encoder.allocate_scratch(expected_size).map_err(|err| {
-                    AudioError::Runtime(format!("failed to allocate structured audio post_module output: {err}"))
-                })?,
-                0,
-                &[batch_size, frames, self.input_dim],
-                self.vocoder_data_type,
-            )
-        };
+        let mut output = encoder.allocate_scratch(expected_size).map_err(|err| {
+            AudioError::Runtime(format!("failed to allocate structured audio post_module output: {err}"))
+        })?;
         let mut batch_indices_by_length = BTreeMap::<usize, Vec<usize>>::new();
         for (batch_index, &active_len) in lengths.iter().enumerate() {
             if active_len == 0 {
@@ -434,11 +427,19 @@ impl StructuredAudioCodecGraph {
         }
 
         if batch_indices_by_length.is_empty() {
-            output.copy_from_array(&latent_nsc);
-            return Ok(output);
+            encoder.encode_copy(
+                latent_nsc.allocation(),
+                latent_nsc.offset()..latent_nsc.offset() + latent_nsc.size(),
+                &mut output,
+                0..latent_nsc.size(),
+            );
+            return Ok(unsafe {
+                Array::from_allocation(output, 0, &[batch_size, frames, self.input_dim], self.vocoder_data_type)
+            });
         }
 
         let full_copy_bytes = latent_nsc.size();
+        let batch_stride_bytes = size_for_shape(&[frames, self.input_dim], self.vocoder_data_type);
         let mut copied_output_prefix = false;
         for (active_len, batch_indices) in batch_indices_by_length {
             let runtime = self.post_module_runtime(resources, active_len.max(1))?;
@@ -463,9 +464,12 @@ impl StructuredAudioCodecGraph {
 
             for &batch_index in &batch_indices {
                 if !copied_output_prefix {
-                    let source = latent_nsc.allocation().view_at_offset(0, full_copy_bytes);
-                    let destination = output.allocation().view_at_offset(0, full_copy_bytes);
-                    encoder.encode_copy_allocation(&source, &destination);
+                    encoder.encode_copy(
+                        latent_nsc.allocation(),
+                        latent_nsc.offset()..latent_nsc.offset() + full_copy_bytes,
+                        &mut output,
+                        0..full_copy_bytes,
+                    );
                     copied_output_prefix = true;
                 }
                 let source = array_batch_view(&latent_nsc, batch_index, frames, self.input_dim, active_len)?;
@@ -474,19 +478,25 @@ impl StructuredAudioCodecGraph {
                     &[active_len, self.input_dim],
                     self.vocoder_data_type,
                 );
-                encoder.encode_copy_allocation(source.allocation(), main_array.allocation());
-                let main = Self::encode_post_module_layers(
-                    &runtime,
-                    &token_inputs,
-                    active_len,
-                    main_array.into_allocation(),
-                    encoder,
-                )?;
-                let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
-                encoder.encode_copy_allocation(&main, destination.allocation());
+                let mut main = main_array.into_allocation();
+                encoder.encode_copy(
+                    source.allocation(),
+                    source.offset()..source.offset() + source.size(),
+                    &mut main,
+                    0..source.size(),
+                );
+                let main = Self::encode_post_module_layers(&runtime, &token_inputs, active_len, main, encoder)?;
+                let destination_offset = batch_index * batch_stride_bytes;
+                let active_bytes = active_len * self.input_dim * self.vocoder_data_type.size_in_bytes();
+                encoder.encode_copy(
+                    &main,
+                    0..active_bytes,
+                    &mut output,
+                    destination_offset..destination_offset + active_bytes,
+                );
             }
         }
 
-        Ok(output)
+        Ok(unsafe { Array::from_allocation(output, 0, &[batch_size, frames, self.input_dim], self.vocoder_data_type) })
     }
 }

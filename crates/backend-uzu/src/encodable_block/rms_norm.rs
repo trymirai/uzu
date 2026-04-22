@@ -87,16 +87,15 @@ impl<B: Backend> RMSNorm<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let row_size = self.element_count * self.input_data_type.size_in_bytes();
-        let input = input.view_at_offset(row_offset * row_size, row_count * row_size);
-        let mut shortcut =
-            shortcut.map(|shortcut| shortcut.view_at_offset(row_offset * row_size, row_count * row_size));
+        let row_offset_bytes = row_offset * row_size;
+        let shortcut = shortcut.map(|shortcut| (shortcut, row_offset_bytes));
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.output_data_type))?;
         self.kernel.encode(
-            Some(&input),
+            Some((input, row_offset_bytes)),
             &self.scales,
             &mut output,
-            shortcut.as_mut(),
+            shortcut,
             self.hadamard_factors.as_ref(),
             row_count as u32,
             self.element_count as u32,

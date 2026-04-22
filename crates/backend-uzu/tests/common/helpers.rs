@@ -1,7 +1,7 @@
 use std::{mem::size_of, rc::Rc};
 
 use backend_uzu::{
-    ArrayElement, allocation_copy_from_slice, allocation_from_slice,
+    ArrayElement, allocation_copy_from_slice,
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder,
         kernel::{
@@ -14,22 +14,27 @@ use backend_uzu::{
 use num_traits::Float;
 
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
-    (elements_count * size_of::<T>()).max(1)
+    elements_count * size_of::<T>()
 }
 
 pub fn alloc_allocation<B: Backend, T>(
     context: &B::Context,
     elements_count: usize,
 ) -> Allocation<B> {
-    let byte_len = allocation_size_bytes::<T>(elements_count);
-    context.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation")
+    context
+        .create_allocation(allocation_size_bytes::<T>(elements_count), AllocationType::Global)
+        .expect("Failed to create allocation")
 }
 
 pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {
-    allocation_from_slice(context, data)
+    let allocation = context
+        .create_allocation(allocation_size_bytes::<T>(data.len()), AllocationType::Global)
+        .expect("Failed to create allocation");
+    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    allocation
 }
 
 pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
@@ -229,14 +234,14 @@ pub fn run_attention_gemm<T: ArrayElement + Float, B: Backend>(
         },
         OutputStorage::ScratchCopy => {
             {
-                let dirty_scratch =
+                let mut dirty_scratch =
                     encoder.allocate_scratch(output_size_bytes).expect("Failed to allocate dirty scratch");
-                encoder.encode_fill_allocation(&dirty_scratch, 0x7f);
+                encoder.encode_fill(&mut dirty_scratch, 0x7f);
             }
 
             let mut scratch_output =
                 encoder.allocate_scratch(output_size_bytes).expect("Failed to allocate pooled output");
-            let output = alloc_allocation::<B, T>(context.as_ref(), output_elements);
+            let mut output = alloc_allocation::<B, T>(context.as_ref(), output_elements);
 
             encode_attention_gemm(
                 input,
@@ -248,7 +253,7 @@ pub fn run_attention_gemm<T: ArrayElement + Float, B: Backend>(
                 &mut encoder,
             );
 
-            encoder.encode_copy_allocation(&scratch_output, &output);
+            encoder.encode_copy(&scratch_output, .., &mut output, ..);
 
             drop(scratch_output);
             submit_encoder(encoder);
@@ -282,10 +287,10 @@ where
         .expect("Failed to create matmul");
 
     {
-        let dirty_scratch = encoder
+        let mut dirty_scratch = encoder
             .allocate_scratch(allocation_size_bytes::<T>(attention_output_elements))
             .expect("Failed to allocate dirty scratch");
-        encoder.encode_fill_allocation(&dirty_scratch, 0x5a);
+        encoder.encode_fill(&mut dirty_scratch, 0x5a);
     }
 
     let mut attention_output = encoder

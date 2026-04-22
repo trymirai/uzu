@@ -129,20 +129,15 @@ impl<B: Backend> CacheLayers<B> {
                             prefix_len: 0,
                         }
                     };
+                    let kv_bytes = size_for_shape(&shape, model_shape.kv_cache_data_type());
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
                         keys: context
-                            .create_allocation(
-                                size_for_shape(&shape, model_shape.kv_cache_data_type()).max(1),
-                                AllocationType::Global,
-                            )
+                            .create_allocation(kv_bytes, AllocationType::Global)
                             .expect("Failed to create kv keys allocation"),
                         values: context
-                            .create_allocation(
-                                size_for_shape(&shape, model_shape.kv_cache_data_type()).max(1),
-                                AllocationType::Global,
-                            )
+                            .create_allocation(kv_bytes, AllocationType::Global)
                             .expect("Failed to create kv values allocation"),
                         shape,
                         data_type: model_shape.kv_cache_data_type(),
@@ -159,14 +154,18 @@ impl<B: Backend> CacheLayers<B> {
                     let conv_shape = [*conv_dim, kernel_size.saturating_sub(1)];
                     let ssm_shape = [*num_heads, *head_dim, *state_dim];
                     let dtype = model_shape.activation_data_type();
+                    let conv_bytes = size_for_shape(&conv_shape, dtype);
+                    let ssm_bytes = size_for_shape(&ssm_shape, dtype);
 
                     CacheLayer::StateSpace(SSMLayer {
-                        conv_state: context
-                            .create_allocation(size_for_shape(&conv_shape, dtype).max(1), AllocationType::Global)
-                            .expect("Failed to create ssm conv allocation"),
+                        conv_state: (conv_bytes > 0).then(|| {
+                            context
+                                .create_allocation(conv_bytes, AllocationType::Global)
+                                .expect("Failed to create ssm conv allocation")
+                        }),
                         conv_shape,
                         ssm_state: context
-                            .create_allocation(size_for_shape(&ssm_shape, dtype).max(1), AllocationType::Global)
+                            .create_allocation(ssm_bytes, AllocationType::Global)
                             .expect("Failed to create ssm state allocation"),
                         ssm_shape,
                         data_type: dtype,
@@ -175,21 +174,20 @@ impl<B: Backend> CacheLayers<B> {
                 DecoderLayerType::ShortConv {
                     kernel_size,
                 } => {
-                    let conv_shape = [model_shape.model_dim(), kernel_size.saturating_sub(1)];
-                    let suffix_state_shape =
-                        [max_suffix_length, model_shape.model_dim(), kernel_size.saturating_sub(1)];
+                    assert!(*kernel_size >= 2, "ShortConv kernel_size must be >= 2, got {}", kernel_size);
+                    let conv_shape = [model_shape.model_dim(), kernel_size - 1];
+                    let suffix_state_shape = [max_suffix_length, model_shape.model_dim(), kernel_size - 1];
                     let dtype = model_shape.activation_data_type();
+                    let conv_bytes = size_for_shape(&conv_shape, dtype);
+                    let suffix_bytes = size_for_shape(&suffix_state_shape, dtype);
 
                     CacheLayer::ShortConv(ShortConvLayer {
                         conv_state: context
-                            .create_allocation(size_for_shape(&conv_shape, dtype).max(1), AllocationType::Global)
+                            .create_allocation(conv_bytes, AllocationType::Global)
                             .expect("Failed to create short conv allocation"),
                         conv_shape,
                         suffix_state: context
-                            .create_allocation(
-                                size_for_shape(&suffix_state_shape, dtype).max(1),
-                                AllocationType::Global,
-                            )
+                            .create_allocation(suffix_bytes, AllocationType::Global)
                             .expect("Failed to create short conv suffix allocation"),
                         suffix_shape: suffix_state_shape,
                         data_type: dtype,
@@ -208,14 +206,16 @@ impl<B: Backend> CacheLayers<B> {
                     let conv_shape = [*conv_dim, kernel_size.saturating_sub(1)];
                     let ssm_shape = [*num_heads, *value_head_dim, *head_dim];
                     let dtype = model_shape.activation_data_type();
+                    let conv_bytes = size_for_shape(&conv_shape, dtype);
+                    let ssm_bytes = size_for_shape(&ssm_shape, dtype);
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
                         conv_state: context
-                            .create_allocation(size_for_shape(&conv_shape, dtype).max(1), AllocationType::Global)
+                            .create_allocation(conv_bytes, AllocationType::Global)
                             .expect("Failed to create delta net conv allocation"),
                         conv_shape,
                         ssm_state: context
-                            .create_allocation(size_for_shape(&ssm_shape, dtype).max(1), AllocationType::Global)
+                            .create_allocation(ssm_bytes, AllocationType::Global)
                             .expect("Failed to create delta net ssm allocation"),
                         ssm_shape,
                         data_type: dtype,
@@ -224,24 +224,26 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
-        let mut encoder = Encoder::new(context).expect("Failed to create cache initialization encoder");
+        let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
         for layer in data.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
-                    encoder.encode_fill_allocation(&layer.keys, 0);
-                    encoder.encode_fill_allocation(&layer.values, 0);
+                    encoder.encode_fill(&mut layer.keys, 0);
+                    encoder.encode_fill(&mut layer.values, 0);
                 },
                 CacheLayer::StateSpace(layer) => {
-                    encoder.encode_fill_allocation(&layer.conv_state, 0);
-                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                    if let Some(conv_state) = layer.conv_state.as_mut() {
+                        encoder.encode_fill(conv_state, 0);
+                    }
+                    encoder.encode_fill(&mut layer.ssm_state, 0);
                 },
                 CacheLayer::ShortConv(layer) => {
-                    encoder.encode_fill_allocation(&layer.conv_state, 0);
-                    encoder.encode_fill_allocation(&layer.suffix_state, 0);
+                    encoder.encode_fill(&mut layer.conv_state, 0);
+                    encoder.encode_fill(&mut layer.suffix_state, 0);
                 },
                 CacheLayer::DeltaNet(layer) => {
-                    encoder.encode_fill_allocation(&layer.conv_state, 0);
-                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                    encoder.encode_fill(&mut layer.conv_state, 0);
+                    encoder.encode_fill(&mut layer.ssm_state, 0);
                 },
             }
         }
@@ -258,7 +260,7 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         context: &B::Context,
     ) {
-        let mut encoder = None;
+        let mut encoder: Option<Encoder<B>> = None;
         for layer in self.data.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => match &mut layer.state {
@@ -279,21 +281,23 @@ impl<B: Backend> CacheLayers<B> {
                 CacheLayer::StateSpace(layer) => {
                     let encoder = encoder
                         .get_or_insert_with(|| Encoder::new(context).expect("Failed to create cache clear encoder"));
-                    encoder.encode_fill_allocation(&layer.conv_state, 0);
-                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                    if let Some(conv_state) = layer.conv_state.as_mut() {
+                        encoder.encode_fill(conv_state, 0);
+                    }
+                    encoder.encode_fill(&mut layer.ssm_state, 0);
                 },
                 CacheLayer::ShortConv(layer) => {
                     let encoder = encoder
                         .get_or_insert_with(|| Encoder::new(context).expect("Failed to create cache clear encoder"));
-                    encoder.encode_fill_allocation(&layer.conv_state, 0);
-                    encoder.encode_fill_allocation(&layer.suffix_state, 0);
+                    encoder.encode_fill(&mut layer.conv_state, 0);
+                    encoder.encode_fill(&mut layer.suffix_state, 0);
                     layer.clear_suffix_state_valid_range();
                 },
                 CacheLayer::DeltaNet(layer) => {
                     let encoder = encoder
                         .get_or_insert_with(|| Encoder::new(context).expect("Failed to create cache clear encoder"));
-                    encoder.encode_fill_allocation(&layer.conv_state, 0);
-                    encoder.encode_fill_allocation(&layer.ssm_state, 0);
+                    encoder.encode_fill(&mut layer.conv_state, 0);
+                    encoder.encode_fill(&mut layer.ssm_state, 0);
                 },
             }
         }
@@ -401,11 +405,12 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [num_groups, new_total_len, head_dim];
+                    let new_bytes = size_for_shape(&new_shape, dtype);
                     let new_keys = context
-                        .create_allocation(size_for_shape(&new_shape, dtype).max(1), AllocationType::Global)
+                        .create_allocation(new_bytes, AllocationType::Global)
                         .expect("Failed to create kv keys clone allocation");
                     let new_values = context
-                        .create_allocation(size_for_shape(&new_shape, dtype).max(1), AllocationType::Global)
+                        .create_allocation(new_bytes, AllocationType::Global)
                         .expect("Failed to create kv values clone allocation");
 
                     CacheLayer::Transformer(KVCacheLayer {
@@ -417,17 +422,15 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
-                    let new_conv = context
-                        .create_allocation(
-                            size_for_shape(&layer.conv_shape, layer.data_type).max(1),
-                            AllocationType::Global,
-                        )
-                        .expect("Failed to create ssm conv clone allocation");
+                    let conv_bytes = size_for_shape(&layer.conv_shape, layer.data_type);
+                    let ssm_bytes = size_for_shape(&layer.ssm_shape, layer.data_type);
+                    let new_conv = (conv_bytes > 0).then(|| {
+                        context
+                            .create_allocation(conv_bytes, AllocationType::Global)
+                            .expect("Failed to create ssm conv clone allocation")
+                    });
                     let new_ssm = context
-                        .create_allocation(
-                            size_for_shape(&layer.ssm_shape, layer.data_type).max(1),
-                            AllocationType::Global,
-                        )
+                        .create_allocation(ssm_bytes, AllocationType::Global)
                         .expect("Failed to create ssm state clone allocation");
 
                     CacheLayer::StateSpace(SSMLayer {
@@ -439,17 +442,13 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 CacheLayer::ShortConv(layer) => {
+                    let conv_bytes = size_for_shape(&layer.conv_shape, layer.data_type);
+                    let suffix_bytes = size_for_shape(&layer.suffix_shape, layer.data_type);
                     let new_conv = context
-                        .create_allocation(
-                            size_for_shape(&layer.conv_shape, layer.data_type).max(1),
-                            AllocationType::Global,
-                        )
+                        .create_allocation(conv_bytes, AllocationType::Global)
                         .expect("Failed to create short conv clone allocation");
                     let new_suffix = context
-                        .create_allocation(
-                            size_for_shape(&layer.suffix_shape, layer.data_type).max(1),
-                            AllocationType::Global,
-                        )
+                        .create_allocation(suffix_bytes, AllocationType::Global)
                         .expect("Failed to create short conv suffix clone allocation");
 
                     CacheLayer::ShortConv(ShortConvLayer {
@@ -463,17 +462,13 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 CacheLayer::DeltaNet(layer) => {
+                    let conv_bytes = size_for_shape(&layer.conv_shape, layer.data_type);
+                    let ssm_bytes = size_for_shape(&layer.ssm_shape, layer.data_type);
                     let new_conv = context
-                        .create_allocation(
-                            size_for_shape(&layer.conv_shape, layer.data_type).max(1),
-                            AllocationType::Global,
-                        )
+                        .create_allocation(conv_bytes, AllocationType::Global)
                         .expect("Failed to create delta net conv clone allocation");
                     let new_ssm = context
-                        .create_allocation(
-                            size_for_shape(&layer.ssm_shape, layer.data_type).max(1),
-                            AllocationType::Global,
-                        )
+                        .create_allocation(ssm_bytes, AllocationType::Global)
                         .expect("Failed to create delta net ssm clone allocation");
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
@@ -487,15 +482,15 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
-        let mut zero_encoder = Encoder::new(context).expect("Failed to create cache clone zero encoder");
+        let mut zero_encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache clone zero encoder");
         for layer in data.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
-                    zero_encoder.encode_fill_allocation(&layer.keys, 0);
-                    zero_encoder.encode_fill_allocation(&layer.values, 0);
+                    zero_encoder.encode_fill(&mut layer.keys, 0);
+                    zero_encoder.encode_fill(&mut layer.values, 0);
                 },
                 CacheLayer::ShortConv(layer) => {
-                    zero_encoder.encode_fill_allocation(&layer.suffix_state, 0);
+                    zero_encoder.encode_fill(&mut layer.suffix_state, 0);
                 },
                 _ => {},
             }
@@ -523,15 +518,21 @@ impl<B: Backend> CacheLayers<B> {
                     }
                 },
                 (CacheLayer::StateSpace(source), CacheLayer::StateSpace(destination)) => {
-                    encoder.encode_copy_allocation(&source.conv_state, &destination.conv_state);
-                    encoder.encode_copy_allocation(&source.ssm_state, &destination.ssm_state);
+                    match (source.conv_state.as_ref(), destination.conv_state.as_mut()) {
+                        (Some(source_conv_state), Some(destination_conv_state)) => {
+                            encoder.encode_copy(source_conv_state, .., destination_conv_state, ..);
+                        },
+                        (None, None) => {},
+                        _ => panic!("state-space conv_state presence mismatch"),
+                    }
+                    encoder.encode_copy(&source.ssm_state, .., &mut destination.ssm_state, ..);
                 },
                 (CacheLayer::ShortConv(source), CacheLayer::ShortConv(destination)) => {
-                    encoder.encode_copy_allocation(&source.conv_state, &destination.conv_state);
+                    encoder.encode_copy(&source.conv_state, .., &mut destination.conv_state, ..);
                 },
                 (CacheLayer::DeltaNet(source), CacheLayer::DeltaNet(destination)) => {
-                    encoder.encode_copy_allocation(&source.conv_state, &destination.conv_state);
-                    encoder.encode_copy_allocation(&source.ssm_state, &destination.ssm_state);
+                    encoder.encode_copy(&source.conv_state, .., &mut destination.conv_state, ..);
+                    encoder.encode_copy(&source.ssm_state, .., &mut destination.ssm_state, ..);
                 },
                 _ => {},
             }

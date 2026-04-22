@@ -1,13 +1,24 @@
 #![cfg(metal_backend)]
 
 use crate::{
-    DataType, allocation_copy_from_slice, allocation_from_slice, allocation_to_vec,
+    DataType, allocation_copy_from_slice, allocation_to_vec,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+        common::{Allocation, AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
+
+fn alloc_allocation_with_data<T: crate::ArrayElement>(
+    context: &<Metal as Backend>::Context,
+    data: &[T],
+) -> Allocation<Metal> {
+    let allocation = context
+        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    allocation
+}
 
 #[derive(Debug)]
 struct Scenario {
@@ -42,8 +53,8 @@ fn make_test_layer(
     let shape = [1, total_len.max(1), 1];
 
     let zeroes = vec![0.0_f32; shape.iter().product()];
-    let keys = allocation_from_slice(context, &zeroes);
-    let values = allocation_from_slice(context, &zeroes);
+    let keys = alloc_allocation_with_data(context, &zeroes);
+    let values = alloc_allocation_with_data(context, &zeroes);
 
     KVCacheLayer {
         state,

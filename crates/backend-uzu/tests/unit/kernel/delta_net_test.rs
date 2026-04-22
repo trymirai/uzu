@@ -652,7 +652,7 @@ fn bench_delta_net_prefill() {
 
     let prefill_result = run_perf_with_warmup("prep+prefill+norm_gate", 5, 50, || {
         let mut encoder = Encoder::new(context.as_ref()).expect("encoder");
-        encoder.encode_fill_allocation(&state_array, 0);
+        encoder.encode_fill(&mut state_array, 0);
         prep_k.encode(
             in_proj_array.allocation(),
             a_log_array.allocation(),

@@ -45,6 +45,11 @@ impl<B: Backend> ShortConvMixer<B> {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
         }
+        assert!(
+            short_conv_config.kernel_size >= 2,
+            "ShortConv kernel_size must be >= 2, got {}",
+            short_conv_config.kernel_size
+        );
 
         let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
         let conv_tree = resolve_subtree(&mixer_tree, &["conv"]);
@@ -134,7 +139,7 @@ impl<B: Backend> ShortConvMixer<B> {
         self.clear_suffix_state_valid_range(layer);
 
         if active_row_count == 1 {
-            self.run_decode_conv(layer, in_proj, out, encoder, 1);
+            self.run_decode_conv(layer, in_proj, out, encoder, 1)?;
             return Ok(());
         }
 
@@ -150,7 +155,7 @@ impl<B: Backend> ShortConvMixer<B> {
 
         if sampling_start > 0 {
             if sampling_start == 1 {
-                self.run_decode_conv(layer, in_proj, out, encoder, 1);
+                self.run_decode_conv(layer, in_proj, out, encoder, 1)?;
             } else {
                 self.run_prefill_conv(layer, in_proj, out, encoder, sampling_start)?;
             }
@@ -179,7 +184,7 @@ impl<B: Backend> ShortConvMixer<B> {
         let padded_rows = state_stride + suffix_length;
         let mut padded = encoder.allocate_scratch(size_for_shape(&[padded_rows, self.model_dim], self.data_type))?;
         self.short_conv_pack.encode(
-            &layer.conv_state,
+            (&layer.conv_state, 0),
             in_proj,
             &mut padded,
             state_stride as u32,
@@ -222,28 +227,20 @@ impl<B: Backend> ShortConvMixer<B> {
         let elem_bytes = DataType::from(self.config.in_projection_config.activation_precision()).size_in_bytes();
 
         let kernel_size = self.config.kernel_size;
-        let state_stride = kernel_size.saturating_sub(1);
+        let state_stride = kernel_size - 1;
         let in_proj_stride = self.model_dim * 3;
 
-        let in_proj_view = in_proj
-            .view_at_offset(sampling_start * in_proj_stride * elem_bytes, trie_len * in_proj_stride * elem_bytes);
-        let parents_view = token_parents
-            .view_at_offset(sampling_start * std::mem::size_of::<i32>(), trie_len * std::mem::size_of::<i32>());
-        let mut out_view =
-            out.view_at_offset(sampling_start * self.model_dim * elem_bytes, trie_len * self.model_dim * elem_bytes);
-        let mut suffix_state_view = layer.suffix_state.view_at_offset(
-            sampling_start * self.model_dim * state_stride * elem_bytes,
-            trie_len * self.model_dim * state_stride * elem_bytes,
-        );
-
+        let in_proj_view = (in_proj, sampling_start * in_proj_stride * elem_bytes);
+        let parents_view = (token_parents, sampling_start * std::mem::size_of::<i32>());
+        let out_view = (&mut *out, sampling_start * self.model_dim * elem_bytes);
         self.short_conv_trie.encode(
-            &in_proj_view,
+            in_proj_view,
             &self.conv_weight,
             self.conv_bias.as_ref(),
-            &layer.conv_state,
-            &parents_view,
-            &mut out_view,
-            &mut suffix_state_view,
+            (&layer.conv_state, 0),
+            parents_view,
+            out_view,
+            (&mut layer.suffix_state, sampling_start * self.model_dim * state_stride * elem_bytes),
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -261,9 +258,9 @@ impl<B: Backend> ShortConvMixer<B> {
         out: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.model_dim == 0 || suffix_length == 0 {
-            return;
+            return Ok(());
         }
 
         let kernel_size = self.config.kernel_size;
@@ -282,13 +279,14 @@ impl<B: Backend> ShortConvMixer<B> {
             state_stride as u32,
             self.model_dim as u32,
             encoder,
-        )
+        );
+        Ok(())
     }
 
     pub fn encode(
         &self,
-        args: ShortConvArguments<'_, B>,
-        input: &mut Allocation<B>,
+        args: ShortConvArguments<B>,
+        input: Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let ShortConvArguments {
@@ -315,6 +313,6 @@ impl<B: Backend> ShortConvMixer<B> {
             active_row_count,
         )?;
 
-        self.out_projection.encode(&mut conv_output, active_row_count, encoder)
+        self.out_projection.encode(conv_output, active_row_count, encoder)
     }
 }

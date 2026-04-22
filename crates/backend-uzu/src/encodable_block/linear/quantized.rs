@@ -244,7 +244,7 @@ impl<B: Backend> QuantizedLinear<B> {
 impl<B: Backend> Linear<B> for QuantizedLinear<B> {
     fn encode(
         &self,
-        input: &mut Allocation<B>,
+        input: Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
@@ -254,7 +254,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
         self.kernel.encode(
             encoder,
             QuantizedMatmulArguments {
-                a: input,
+                a: &input,
                 b: &self.weights,
                 scales: &self.scales,
                 zero_points_or_biases: &self.zero_points_or_biases,

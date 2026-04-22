@@ -1,6 +1,5 @@
-use std::{fmt, ops::Range, os::raw::c_void, ptr::NonNull};
+use std::{fmt, ops::Range, os::raw::c_void, ptr::NonNull, rc::Rc};
 
-use bytemuck::PodCastError;
 use ndarray::{ArrayView, Dimension, IxDyn};
 use thiserror::Error;
 
@@ -10,7 +9,7 @@ use crate::{
 };
 
 pub struct Array<B: Backend> {
-    allocation: Allocation<B>,
+    allocation: Option<Rc<Allocation<B>>>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
@@ -18,17 +17,12 @@ pub struct Array<B: Backend> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AllocationAccessError {
-    #[error("allocation CPU address {address:#x} is not aligned for element size {element_size}")]
-    MisalignedAddress {
-        address: usize,
-        element_size: usize,
-    },
-    #[error("allocation range length {byte_len} is not divisible by element size {element_size}")]
+    #[error("allocation length {byte_len} is not divisible by element size {element_size}")]
     LengthNotMultiple {
         byte_len: usize,
         element_size: usize,
     },
-    #[error("allocation write of {write_len} bytes exceeds range of {range_len} bytes")]
+    #[error("allocation write length {write_len} exceeds allocation length {range_len}")]
     WriteExceedsRange {
         write_len: usize,
         range_len: usize,
@@ -36,6 +30,14 @@ pub enum AllocationAccessError {
 }
 
 impl<B: Backend> Array<B> {
+    fn assert_offset_alignment(
+        offset: usize,
+        data_type: DataType,
+    ) {
+        let alignment = data_type.size_in_bytes();
+        assert!(offset % alignment == 0, "Array offset {} is not aligned to element size {}", offset, alignment);
+    }
+
     // Constructors
     pub unsafe fn from_allocation(
         allocation: Allocation<B>,
@@ -45,6 +47,7 @@ impl<B: Backend> Array<B> {
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
         let allocation_len = allocation.as_buffer_range().1.len();
+        Self::assert_offset_alignment(offset, data_type);
         assert!(
             offset + required_bytes <= allocation_len,
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but allocation length is {} bytes",
@@ -55,7 +58,7 @@ impl<B: Backend> Array<B> {
             allocation_len
         );
         Self {
-            allocation: allocation.view_at_offset(offset, required_bytes),
+            allocation: Some(Rc::new(allocation)),
             offset,
             shape: shape.into(),
             data_type,
@@ -76,18 +79,19 @@ impl<B: Backend> Array<B> {
     ) -> Self {
         let required_bytes = size_for_shape(shape, self.data_type);
         let offset = self.offset + byte_offset;
-        let allocation_len = self.allocation.as_buffer_range().1.len();
+        let view_end = self.offset + self.size();
+        Self::assert_offset_alignment(offset, self.data_type);
         assert!(
-            byte_offset + required_bytes <= allocation_len,
+            offset + required_bytes <= view_end,
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but allocation length is {} bytes",
             shape,
             self.data_type,
             offset,
             offset + required_bytes,
-            allocation_len
+            view_end
         );
         Self {
-            allocation: self.allocation.view_at_offset(byte_offset, required_bytes),
+            allocation: self.allocation.clone(),
             offset,
             shape: shape.into(),
             data_type: self.data_type,
@@ -108,19 +112,32 @@ impl<B: Backend> Array<B> {
     }
 
     pub fn allocation(&self) -> &Allocation<B> {
-        &self.allocation
+        self.allocation.as_deref().expect("Empty Array has no backing allocation")
     }
 
     pub fn into_allocation(self) -> Allocation<B> {
-        self.allocation
+        assert_eq!(self.offset, 0, "Array view cannot be converted into Allocation");
+        let allocation = self.allocation.expect("Empty Array has no backing allocation");
+        let allocation = Rc::try_unwrap(allocation).unwrap_or_else(|_| panic!("Array allocation is shared"));
+        assert_eq!(
+            size_for_shape(&self.shape, self.data_type),
+            allocation.as_buffer_range().1.len(),
+            "Partial Array view cannot be converted into Allocation",
+        );
+        allocation
     }
 
     pub fn as_buffer_range(&self) -> (&B::Buffer, Range<usize>) {
-        self.allocation.as_buffer_range()
+        let (buffer, allocation_range) = self.allocation().as_buffer_range();
+        let start = allocation_range.start + self.offset;
+        (buffer, start..start + self.size())
     }
 
     // Utility
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
+        if self.size() == 0 {
+            return NonNull::new(self.data_type.size_in_bytes() as *mut c_void).expect("dtype-aligned empty pointer");
+        }
         let (buffer, range) = self.as_buffer_range();
         unsafe { buffer.cpu_ptr().add(range.start) }
     }
@@ -244,40 +261,6 @@ impl<B: Backend> Array<B> {
     }
 }
 
-fn map_slice_cast_error<T: ArrayElement, B: Backend>(
-    allocation: &Allocation<B>,
-    error: PodCastError,
-) -> AllocationAccessError {
-    let element_size = size_of::<T>();
-    match error {
-        PodCastError::TargetAlignmentGreaterAndInputNotAligned | PodCastError::AlignmentMismatch => {
-            let (buffer, range) = allocation.as_buffer_range();
-            AllocationAccessError::MisalignedAddress {
-                address: buffer.cpu_ptr().as_ptr() as usize + range.start,
-                element_size,
-            }
-        },
-        PodCastError::OutputSliceWouldHaveSlop | PodCastError::SizeMismatch => {
-            AllocationAccessError::LengthNotMultiple {
-                byte_len: allocation.as_buffer_range().1.len(),
-                element_size,
-            }
-        },
-    }
-}
-
-pub fn allocation_as_slice<T: ArrayElement, B: Backend>(
-    allocation: &Allocation<B>
-) -> Result<&[T], AllocationAccessError> {
-    let (buffer, range) = allocation.as_buffer_range();
-    if range.is_empty() {
-        return Ok(&[]);
-    }
-    let bytes =
-        unsafe { std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len()) };
-    bytemuck::try_cast_slice(bytes).map_err(|error| map_slice_cast_error::<T, B>(allocation, error))
-}
-
 pub fn allocation_copy_from_slice<B: Backend, T: ArrayElement>(
     allocation: &Allocation<B>,
     data: &[T],
@@ -299,18 +282,35 @@ pub fn allocation_copy_from_slice<B: Backend, T: ArrayElement>(
     Ok(())
 }
 
-pub fn allocation_from_slice<B: Backend, T: ArrayElement>(
-    context: &B::Context,
-    data: &[T],
-) -> Allocation<B> {
-    let byte_len = data.len() * size_of::<T>();
-    let allocation = context.create_allocation(byte_len, AllocationType::Global).expect("Failed to create allocation");
-    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation from slice");
-    allocation
+pub fn allocation_as_bytes<B: Backend>(allocation: &Allocation<B>) -> &[u8] {
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe { std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len()) }
+}
+
+pub fn allocation_as_bytes_mut<B: Backend>(allocation: &mut Allocation<B>) -> &mut [u8] {
+    let (buffer, range) = allocation.as_buffer_range();
+    unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len()) }
+}
+
+pub fn try_allocation_to_vec<B: Backend, T: ArrayElement>(
+    allocation: &Allocation<B>
+) -> Result<Vec<T>, AllocationAccessError> {
+    let element_size = size_of::<T>();
+    let allocation_bytes = allocation_as_bytes(allocation);
+    if allocation_bytes.len() % element_size != 0 {
+        return Err(AllocationAccessError::LengthNotMultiple {
+            byte_len: allocation_bytes.len(),
+            element_size,
+        });
+    }
+
+    let base = allocation_bytes.as_ptr() as *const T;
+    let element_count = allocation_bytes.len() / element_size;
+    Ok((0..element_count).map(|index| unsafe { base.add(index).read_unaligned() }).collect())
 }
 
 pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
-    allocation_as_slice::<T, B>(allocation).expect("Failed to read allocation as slice").to_vec()
+    try_allocation_to_vec(allocation).expect("Failed to read allocation")
 }
 
 impl<B: Backend> Clone for Array<B> {
@@ -406,9 +406,16 @@ impl<C: Context> ArrayContextExt for C {
         data_type: DataType,
         _label: &str,
     ) -> Array<Self::Backend> {
-        let allocation = self
-            .create_allocation(size_for_shape(shape, data_type), AllocationType::Global)
-            .expect("Failed to create allocation");
+        let size = size_for_shape(shape, data_type);
+        if size == 0 {
+            return Array {
+                allocation: None,
+                offset: 0,
+                shape: shape.into(),
+                data_type,
+            };
+        }
+        let allocation = self.create_allocation(size, AllocationType::Global).expect("Failed to create allocation");
         unsafe { Array::from_allocation(allocation, 0, shape, data_type) }
     }
 }

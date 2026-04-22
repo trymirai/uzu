@@ -18,7 +18,7 @@ use crate::{
 pub trait Linear<B: Backend> {
     fn encode(
         &self,
-        input: &mut Allocation<B>,
+        input: Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;

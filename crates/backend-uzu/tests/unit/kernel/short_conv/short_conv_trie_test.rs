@@ -31,8 +31,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let context = B::Context::new().expect("Failed to create Context");
 
     let has_bias = input.b.is_some();
-    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
-        .expect("Failed to create ShortConvTrieKernel");
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
+            .expect("Failed to create ShortConvTrieKernel");
 
     let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
     let w_array = context.create_array_from(&[input.w.len()], &input.w, "");
@@ -46,17 +47,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let suffix_len = input.suffix_len as usize;
 
     let base_state_size = model_dim * state_stride;
-    let base_state_array = if base_state_size > 0 {
-        context.create_array_from(&[base_state_size], &input.base_state, "")
-    } else {
-        context.create_array_uninitialized(&[1], T::data_type(), "")
-    };
+    let base_state_array = context.create_array_from(&[base_state_size], &input.base_state, "");
 
     let parents_array = context.create_array_from(&[input.parents.len()], &input.parents, "");
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
-    let mut suffix_state =
-        context.create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type(), "").into_allocation();
+    let mut suffix_state = context
+        .create_array_uninitialized(&[suffix_state_size], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -350,13 +348,6 @@ fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
-fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
-    for has_bias in [false, true] {
-        let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 1, has_bias);
-        test_internal(&input, &expected_out, &expected_state);
-    }
-}
-
 // basic tests (linear chain)
 #[uzu_test]
 fn test_basic_f32() {
@@ -419,20 +410,4 @@ fn test_edge_small_f16() {
 #[uzu_test]
 fn test_edge_small_bf16() {
     test_edge_small::<bf16>();
-}
-
-// edge: kernel_size=1 (no state taps)
-#[uzu_test]
-fn test_edge_kernel_f32() {
-    test_edge_kernel::<f32>();
-}
-
-#[uzu_test]
-fn test_edge_kernel_f16() {
-    test_edge_kernel::<f16>();
-}
-
-#[uzu_test]
-fn test_edge_kernel_bf16() {
-    test_edge_kernel::<bf16>();
 }

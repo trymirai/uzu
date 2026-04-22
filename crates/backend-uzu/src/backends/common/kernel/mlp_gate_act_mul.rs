@@ -50,8 +50,4 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         );
         Ok(())
     }
-
-    pub fn hidden_dim(&self) -> usize {
-        self.hidden_dim
-    }
 }

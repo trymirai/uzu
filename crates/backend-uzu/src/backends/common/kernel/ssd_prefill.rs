@@ -56,7 +56,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        args: SSDPrefillArguments<'_, B>,
+        args: SSDPrefillArguments<B>,
         mode: SSDPrefillMode,
     ) {
         let x_strides: [u32; 3] = args.x_strides.map(|x| x as u32);

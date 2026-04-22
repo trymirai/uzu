@@ -53,7 +53,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             return;
         }
 
-        encoder.encode_fill_allocation(args.hidden, 0);
+        encoder.encode_fill(args.hidden, 0);
 
         self.tile_map.encode_counts(
             encoder,

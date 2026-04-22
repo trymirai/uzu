@@ -82,7 +82,7 @@ impl<B: Backend> TokenInputs<B> {
         batch_dim: usize,
         sampling_start: usize,
         sampling_length: usize,
-        #[cfg(feature = "tracing")] trace: Option<&'a ActivationTrace<B>>,
+        #[cfg(feature = "tracing")] trace: Option<&'a mut ActivationTrace<B>>,
     ) -> DecoderArguments<'a, B> {
         DecoderArguments {
             activation_data_type: model_shape.activation_data_type(),

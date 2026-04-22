@@ -17,12 +17,11 @@ mod rms_norm;
 mod rope;
 mod sampling;
 mod short_conv_mixer;
-mod tensor_add_swap;
 
 pub use activation::Activation;
 pub use attention::{Attention, AttentionArguments};
 pub use classifier_layer::ClassifierLayer;
-pub use decoder::{Decoder, DecoderArguments};
+pub use decoder::{Decoder, DecoderArguments, DecoderDecodeInput};
 pub(crate) use delta_net_mixer::{DeltaNetArguments, DeltaNetMixer};
 pub use embedding::Embedding;
 pub use layer::{LayerArguments, LayerExecutables};
@@ -40,7 +39,6 @@ pub(crate) use sampling::SamplingInputs;
 pub use sampling::{Sampling, SamplingArguments};
 pub(crate) use short_conv_mixer::ShortConvArguments;
 pub use short_conv_mixer::ShortConvMixer;
-pub use tensor_add_swap::TensorAddSwap;
 
 #[derive(Clone)]
 pub struct EncodingParameters {

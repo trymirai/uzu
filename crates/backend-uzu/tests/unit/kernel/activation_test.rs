@@ -43,7 +43,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     if input.in_place {
         let mut output_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-        kernel.encode(None, &mut output_allocation, n as u32, input.act_type, &mut encoder);
+        kernel.encode(
+            None::<&backend_uzu::backends::common::Allocation<B>>,
+            &mut output_allocation,
+            n as u32,
+            input.act_type,
+            &mut encoder,
+        );
         encoder.end_encoding().submit().wait_until_completed().unwrap();
         allocation_to_vec::<B, T>(&output_allocation)
     } else {

@@ -1,56 +1,76 @@
 use std::sync::mpsc::Receiver;
 
 use super::*;
-use crate::{array::allocation_as_slice, backends::common::Allocation};
+use crate::{backends::common::Allocation, try_allocation_to_vec};
 
-pub struct SubmittedDecodedPaddedAudio<B: Backend> {
-    pub(in crate::audio::nanocodec::runtime) output: Allocation<B>,
-    pub(in crate::audio::nanocodec::runtime) data_type: DataType,
-    pub(in crate::audio::nanocodec::runtime) channels: usize,
-    pub(in crate::audio::nanocodec::runtime) frames: usize,
-    pub(in crate::audio::nanocodec::runtime) lengths: Vec<usize>,
-    pub(in crate::audio::nanocodec::runtime) final_command_buffer: Option<Pending<B>>,
-    pub(in crate::audio::nanocodec::runtime) completion_notification: Option<Receiver<()>>,
+pub enum SubmittedDecodedPaddedAudio<B: Backend> {
+    Ready(DecodedPaddedAudio),
+    Pending {
+        output: Allocation<B>,
+        data_type: DataType,
+        channels: usize,
+        frames: usize,
+        lengths: Vec<usize>,
+        final_command_buffer: Pending<B>,
+        completion_notification: Receiver<()>,
+    },
 }
 
 impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
     pub(crate) fn is_complete(&self) -> bool {
         use std::sync::mpsc::TryRecvError;
 
-        self.completion_notification.as_ref().is_none_or(|notification| match notification.try_recv() {
-            Ok(()) | Err(TryRecvError::Disconnected) => true,
-            Err(TryRecvError::Empty) => false,
-        })
+        match self {
+            Self::Ready(_) => true,
+            Self::Pending {
+                completion_notification,
+                ..
+            } => match completion_notification.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => true,
+                Err(TryRecvError::Empty) => false,
+            },
+        }
     }
 
-    pub(in crate::audio::nanocodec::runtime) fn resolve(mut self) -> AudioResult<DecodedPaddedAudio> {
-        if let Some(command_buffer) = self.final_command_buffer.take() {
-            command_buffer.wait_until_completed().map_err(|err| {
-                AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
-            })?;
+    pub(in crate::audio::nanocodec::runtime) fn resolve(self) -> AudioResult<DecodedPaddedAudio> {
+        match self {
+            Self::Ready(decoded) => Ok(decoded),
+            Self::Pending {
+                output,
+                data_type,
+                channels,
+                frames,
+                lengths,
+                final_command_buffer,
+                completion_notification: _,
+            } => {
+                final_command_buffer.wait_until_completed().map_err(|err| {
+                    AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
+                })?;
+                let allocation_read_error =
+                    |err| AudioError::Runtime(format!("failed to read FishAudio decoder output allocation: {err}"));
+                let samples: Vec<f32> = match data_type {
+                    DataType::F32 => try_allocation_to_vec::<B, f32>(&output).map_err(allocation_read_error)?,
+                    DataType::F16 => try_allocation_to_vec::<B, half::f16>(&output)
+                        .map_err(allocation_read_error)?
+                        .iter()
+                        .map(|&v| f32::from(v))
+                        .collect(),
+                    DataType::BF16 => try_allocation_to_vec::<B, half::bf16>(&output)
+                        .map_err(allocation_read_error)?
+                        .iter()
+                        .map(|&v| f32::from(v))
+                        .collect(),
+                    dt => return Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
+                };
+                Ok(DecodedPaddedAudio {
+                    samples,
+                    channels,
+                    frames,
+                    lengths,
+                })
+            },
         }
-        let allocation_read_error =
-            |err| AudioError::Runtime(format!("failed to read FishAudio decoder output allocation: {err}"));
-        let samples: Vec<f32> = match self.data_type {
-            DataType::F32 => allocation_as_slice::<f32, B>(&self.output).map_err(allocation_read_error)?.to_vec(),
-            DataType::F16 => allocation_as_slice::<half::f16, B>(&self.output)
-                .map_err(allocation_read_error)?
-                .iter()
-                .map(|&v| f32::from(v))
-                .collect(),
-            DataType::BF16 => allocation_as_slice::<half::bf16, B>(&self.output)
-                .map_err(allocation_read_error)?
-                .iter()
-                .map(|&v| f32::from(v))
-                .collect(),
-            dt => return Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
-        };
-        Ok(DecodedPaddedAudio {
-            samples,
-            channels: self.channels,
-            frames: self.frames,
-            lengths: self.lengths,
-        })
     }
 }
 

@@ -176,7 +176,7 @@ impl<B: Backend> MambaMixer<B> {
         mut padded: Option<&mut Allocation<B>>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
+    ) -> Result<(), B::Error> {
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let proj_dim = self.config.num_groups * self.config.state_dim;
@@ -184,6 +184,7 @@ impl<B: Backend> MambaMixer<B> {
 
         if suffix_length == 1 {
             if conv_dim > 0 && self.config.kernel_size > 0 {
+                let next_state = layer.conv_state.as_mut().unwrap_or(&mut layer.ssm_state);
                 self.conv_decode.encode(
                     conv_inputs,
                     &self.conv_weight,
@@ -192,7 +193,7 @@ impl<B: Backend> MambaMixer<B> {
                     x,
                     b,
                     c,
-                    &mut layer.conv_state,
+                    next_state,
                     self.config.kernel_size as u32,
                     conv_dim as u32,
                     state_stride as u32,
@@ -206,8 +207,9 @@ impl<B: Backend> MambaMixer<B> {
             }
         } else {
             if let Some(padded) = padded.as_mut() {
+                let state_in = layer.conv_state.as_ref().unwrap_or(conv_inputs);
                 self.conv_pack.encode(
-                    &layer.conv_state,
+                    state_in,
                     conv_inputs,
                     &mut **padded,
                     state_stride as u32,
@@ -220,6 +222,7 @@ impl<B: Backend> MambaMixer<B> {
 
             if conv_dim > 0 && self.config.kernel_size > 0 {
                 let conv_source = padded.as_deref().unwrap_or(conv_inputs);
+                let next_state = layer.conv_state.as_mut().unwrap_or(&mut layer.ssm_state);
                 self.conv_scan.encode(
                     conv_source,
                     &self.conv_weight,
@@ -227,7 +230,7 @@ impl<B: Backend> MambaMixer<B> {
                     x,
                     b,
                     c,
-                    &mut layer.conv_state,
+                    next_state,
                     suffix_length as u32,
                     self.config.kernel_size as u32,
                     conv_dim as u32,
@@ -240,6 +243,7 @@ impl<B: Backend> MambaMixer<B> {
                 );
             }
         }
+        Ok(())
     }
 
     fn run_prefill_ssm(
@@ -328,8 +332,8 @@ impl<B: Backend> MambaMixer<B> {
 
     pub(crate) fn encode(
         &self,
-        args: MambaArguments<'_, B>,
-        input: &mut Allocation<B>,
+        args: MambaArguments<B>,
+        input: Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let MambaArguments {
@@ -365,7 +369,7 @@ impl<B: Backend> MambaMixer<B> {
                 ))
             })
             .transpose()?;
-        self.run_conv_scan(layer, &conv_inputs, &mut x, &mut b, &mut c, padded.as_mut(), encoder, active_row_count);
+        self.run_conv_scan(layer, &conv_inputs, &mut x, &mut b, &mut c, padded.as_mut(), encoder, active_row_count)?;
 
         let mut ssm_output =
             encoder.allocate_scratch(size_for_shape(&[active_row_count, self.config.inner_dim()], self.data_type))?;
@@ -375,6 +379,6 @@ impl<B: Backend> MambaMixer<B> {
             self.run_prefill_ssm(layer, &x, &b, &c, &dt, &z, &mut ssm_output, encoder, active_row_count);
         }
 
-        self.out_projection.encode(&mut ssm_output, active_row_count, encoder)
+        self.out_projection.encode(ssm_output, active_row_count, encoder)
     }
 }
