@@ -7,4 +7,4 @@ OUTPUT_PATH="$3"
 
 cd $TS_NAPI_PATH
 pnpm i --no-frozen-lockfile
-pnpm exec napi build --release --features napi --manifest-path $MANIFEST_PATH --output-dir $OUTPUT_PATH
+pnpm exec napi build --release --features bindings-napi --manifest-path $MANIFEST_PATH --output-dir $OUTPUT_PATH

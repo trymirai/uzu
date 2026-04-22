@@ -36,7 +36,7 @@ impl Environment {
     }
 
     pub fn workspace_path(&self) -> PathBuf {
-        self.root_path.join("workspace")
+        self.root_path.join("workspace").join("release")
     }
 }
 

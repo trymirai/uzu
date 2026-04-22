@@ -64,6 +64,26 @@ fn uniffi_name_attribute(name: &Option<LitStr>) -> proc_macro2::TokenStream {
     }
 }
 
+fn napi_attribute(
+    name: &Option<LitStr>,
+    object: bool,
+) -> proc_macro2::TokenStream {
+    match (name, object) {
+        (Some(name), true) => quote! {
+            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object, js_name = #name))]
+        },
+        (Some(name), false) => quote! {
+            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(js_name = #name))]
+        },
+        (None, true) => quote! {
+            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object))]
+        },
+        (None, false) => quote! {
+            #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
+        },
+    }
+}
+
 #[proc_macro_attribute]
 pub fn export(
     arguments: TokenStream,
@@ -77,28 +97,37 @@ pub fn export(
     let uniffi_name = uniffi_name_attribute(&name);
 
     let attributes = match kind {
-        BindingKind::Enum => quote! {
-            #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Enum))]
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
-            #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass(eq, from_py_object))]
-            #[cfg_attr(feature = "bindings-wasm", derive(tsify::Tsify))]
-            #[cfg_attr(feature = "bindings-wasm", tsify(into_wasm_abi, from_wasm_abi))]
-            #uniffi_name
+        BindingKind::Enum => {
+            let napi = napi_attribute(&name, false);
+            quote! {
+                #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Enum))]
+                #napi
+                #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass(eq, from_py_object))]
+                #[cfg_attr(feature = "bindings-wasm", derive(tsify::Tsify))]
+                #[cfg_attr(feature = "bindings-wasm", tsify(into_wasm_abi, from_wasm_abi))]
+                #uniffi_name
+            }
         },
-        BindingKind::Struct => quote! {
-            #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Record))]
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object))]
-            #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass(get_all, from_py_object))]
-            #[cfg_attr(feature = "bindings-wasm", derive(tsify::Tsify))]
-            #[cfg_attr(feature = "bindings-wasm", tsify(into_wasm_abi, from_wasm_abi))]
-            #uniffi_name
+        BindingKind::Struct => {
+            let napi = napi_attribute(&name, true);
+            quote! {
+                #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Record))]
+                #napi
+                #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass(get_all, from_py_object))]
+                #[cfg_attr(feature = "bindings-wasm", derive(tsify::Tsify))]
+                #[cfg_attr(feature = "bindings-wasm", tsify(into_wasm_abi, from_wasm_abi))]
+                #uniffi_name
+            }
         },
-        BindingKind::Class => quote! {
-            #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Object))]
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
-            #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass)]
-            #[cfg_attr(feature = "bindings-wasm", wasm_bindgen::prelude::wasm_bindgen)]
-            #uniffi_name
+        BindingKind::Class => {
+            let napi = napi_attribute(&name, false);
+            quote! {
+                #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Object))]
+                #napi
+                #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass)]
+                #[cfg_attr(feature = "bindings-wasm", wasm_bindgen::prelude::wasm_bindgen)]
+                #uniffi_name
+            }
         },
         BindingKind::Impl => quote! {
             #[cfg_attr(feature = "bindings-uniffi", uniffi::export)]
