@@ -22,7 +22,7 @@ KERNEL(MatmulGemm)(
     const device T* a,
     const device T* b,
     device T* d,
-    const constant uzu::matmul::GemmParams* params,
+    const constant uzu::matmul::GemmParams& params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const constant float& ab_scale,

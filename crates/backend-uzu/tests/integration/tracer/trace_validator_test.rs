@@ -33,13 +33,7 @@ fn test_tracer_internal<B: Backend>() {
 #[test]
 fn test_tracer() {
     let traces_path = get_traces_path();
-
-    // TODO: when api will return `traces.safetensor` remove `if` and uncomment `assert`
-    if !traces_path.exists() {
-        println!("Skipping tracer test: traces file missing at {:?}", traces_path);
-        return;
-    }
-    // assert!(traces_path.exists(), "Traces file missing at {:?}", traces_path);
+    assert!(traces_path.exists(), "Traces file missing at {:?}", traces_path);
 
     for_each_non_cpu_backend!(|B| {
         test_tracer_internal::<B>();

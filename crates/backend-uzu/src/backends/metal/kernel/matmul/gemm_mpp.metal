@@ -20,7 +20,7 @@ KERNEL(MatmulGemmMpp)(
     const device T* left_matrix,
     const device T* right_matrix,
     device T* output_matrix,
-    const constant uzu::matmul::GemmParams* params,
+    const constant uzu::matmul::GemmParams& params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const constant float& ab_scale,
