@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{AttentionConfig, MLPConfig, MixerConfig, NormalizationConfig};
+use super::{AttentionConfig, MLPConfig, MixerConfig, NormalizationConfig, RoPEConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerLayerConfig {
@@ -12,6 +12,13 @@ pub struct TransformerLayerConfig {
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+    /// Per-layer RoPE config. Some lalamo exports (e.g. openai/privacy-filter)
+    /// emit the YaRN rope config at the layer level instead of the shared
+    /// `TransformerConfig.global_rope_config` slot. Consumers that want a
+    /// single global rope config should promote `layer_configs[0].rope_config`
+    /// when the transformer-level slots are `None`.
+    #[serde(default)]
+    pub rope_config: Option<RoPEConfig>,
 }
 
 impl TransformerLayerConfig {

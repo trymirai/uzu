@@ -266,6 +266,7 @@ impl<B: Backend> ForwardPassState<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_classifier(
         context: Rc<B::Context>,
+        decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
         scratch: &ScratchBuffers<B>,
         shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -288,6 +289,12 @@ impl<B: Backend> ForwardPassState<B> {
         let classifier_state =
             Self::init_classifier_buffers(context.as_ref(), model_shape, model_dim, num_labels, suffix_length);
 
+        // Classifier layers may include MoE / SSM ops; the aux buffers for
+        // those live in `LanguageModelGeneratorAuxBuffers`. The name is
+        // misleading: the buffers themselves are mode-agnostic.
+        let llm_aux =
+            Some(LanguageModelGeneratorAuxBuffers::new(scratch, decoder_config, model_shape, suffix_length));
+
         let mode = ForwardPassMode::Classifier(classifier_state);
 
         Self {
@@ -299,7 +306,7 @@ impl<B: Backend> ForwardPassState<B> {
             token_bitmask: None,
             shared_buffers,
             common_aux,
-            llm_aux: None,
+            llm_aux,
             mode,
         }
     }
@@ -315,21 +322,22 @@ impl<B: Backend> ForwardPassState<B> {
         let data_type = model_shape.activation_data_type();
         let batch_dim = 1;
 
-        let create_buffer = |size: usize| -> Array<B> {
+        let create_buffer = |dims: &[usize]| -> Array<B> {
+            let size: usize = dims.iter().product();
             let buffer_size = size * data_type.size_in_bytes();
             let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_dim, size / batch_dim], data_type) }
+            unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, dims, data_type) }
         };
 
+        // Per-token classifiers (`PoolingType::None`) need `suffix_length` rows
+        // of intermediates + logits; pooled classifiers only write row 0 but
+        // the extra bytes cost ~nothing.
+        let rows = suffix_length.max(1);
         ClassifierModeState {
-            pooling: create_buffer(batch_dim * model_dim),
-            dense: create_buffer(batch_dim * model_dim),
-            norm: create_buffer(batch_dim * model_dim),
-            classifier_logits: {
-                let buffer_size = batch_dim * num_labels * data_type.size_in_bytes();
-                let buffer = context.create_buffer(buffer_size).expect("Failed to create buffer");
-                unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, &[batch_dim, num_labels], data_type) }
-            },
+            pooling: create_buffer(&[batch_dim, model_dim]),
+            dense: create_buffer(&[rows, model_dim]),
+            norm: create_buffer(&[rows, model_dim]),
+            classifier_logits: create_buffer(&[rows, num_labels]),
             active_row_count: suffix_length,
             traces: Rc::new(RefCell::new(ActivationTrace::new_classifier(
                 context,
@@ -358,11 +366,15 @@ impl<B: Backend> ForwardPassState<B> {
             unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, dims, data_type) }
         };
 
+        // Per-token classifiers (`PoolingType::None`) need `suffix_length` rows
+        // of intermediates + logits; pooled classifiers only write row 0 but
+        // the extra bytes cost ~nothing.
+        let rows = suffix_length.max(1);
         ClassifierModeState {
             pooling: create_buffer(&[batch_dim, model_dim]),
-            dense: create_buffer(&[batch_dim, model_dim]),
-            norm: create_buffer(&[batch_dim, model_dim]),
-            classifier_logits: create_buffer(&[batch_dim, num_labels]),
+            dense: create_buffer(&[rows, model_dim]),
+            norm: create_buffer(&[rows, model_dim]),
+            classifier_logits: create_buffer(&[rows, num_labels]),
             active_row_count: suffix_length,
         }
     }

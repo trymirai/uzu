@@ -1,5 +1,5 @@
 use clap::{CommandFactory, Parser, Subcommand};
-use cli::handlers::{handle_bench, handle_run, handle_serve};
+use cli::handlers::{handle_bench, handle_classify, handle_run, handle_serve};
 
 #[derive(Parser)]
 struct Cli {
@@ -43,6 +43,18 @@ enum Commands {
         /// Path to the output file
         output_path: String,
     },
+    /// Classify a message with a classifier model
+    Classify {
+        /// Folder with model's files (e.g. openai/privacy-filter)
+        model_path: String,
+        /// Input text to classify
+        #[arg(long, short)]
+        message: String,
+        /// For pooled classifiers, print top-K labels (default 5).
+        /// Ignored for per-token classifiers.
+        #[arg(long, default_value_t = 5)]
+        top_k: usize,
+    },
 }
 
 fn main() {
@@ -71,6 +83,13 @@ fn main() {
             output_path,
         }) => {
             let _ = handle_bench(model_path, task_path, output_path);
+        },
+        Some(Commands::Classify {
+            model_path,
+            message,
+            top_k,
+        }) => {
+            handle_classify(model_path, message, top_k);
         },
         None => {
             let mut cmd = Cli::command();

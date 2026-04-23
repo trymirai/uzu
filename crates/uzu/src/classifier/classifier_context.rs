@@ -4,7 +4,7 @@ use crate::{
     DataType,
     backends::common::{Backend, Context},
     classifier::ClassifierError,
-    config::{ClassifierModelConfig, ModelMetadata},
+    config::{ClassifierModelConfig, DecoderConfig, ModelMetadata, PoolingType},
     encodable_block::{
         Activation, ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope,
     },
@@ -24,10 +24,14 @@ pub struct ClassifierContext<B: Backend> {
     pub scratch_buffers: ScratchBuffers<B>,
 
     pub model_config: ClassifierModelConfig,
+    pub decoder_config: Rc<DecoderConfig>,
     pub model_shape: ModelShape,
 
     pub embed: Embedding<B>,
-    pub embedding_norm: Normalization<B>,
+    /// Pre-transformer normalization. `None` for token classifiers that feed
+    /// the raw embedding straight into the transformer (e.g.
+    /// openai/privacy-filter — `embedding_norm_config: null` in lalamo).
+    pub embedding_norm: Option<Normalization<B>>,
     pub layers: Box<[ClassifierLayer<B>]>,
     pub output_norm: Normalization<B>,
 
@@ -163,19 +167,46 @@ impl<B: Backend> ClassifierContext<B> {
         let context_length = classifier_model_config.model_config.context_length;
         let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, context_length);
 
-        let embedding_norm_tree = root_loader_view
-            .subtree("embedding_norm")
-            .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("embedding_norm".to_string())))?;
-        let embedding_norm = Normalization::new(
+        // --- Optional embedding pre-norm -------------------------------------------------
+        let embedding_norm = if let Some(embedding_norm_cfg) =
+            classifier_model_config.model_config.embedding_norm_config.clone()
+        {
+            let embedding_norm_tree = root_loader_view
+                .subtree("embedding_norm")
+                .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("embedding_norm".to_string())))?;
+            let n = Normalization::new(
+                context.as_ref(),
+                data_type,
+                embedding_norm_cfg,
+                ArrayId::Main,
+                ArrayId::Main,
+                &embedding_norm_tree,
+            )
+            .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("embedding norm: {:?}", e))))?;
+            Some(n)
+        } else {
+            None
+        };
+
+        // --- Pooling (may be None for per-token classifiers) -----------------------------
+        let pooling = Pooling::<B>::new(
             context.as_ref(),
             data_type,
-            classifier_model_config.model_config.embedding_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
-            &embedding_norm_tree,
+            classifier_model_config.model_config.classifier_pooling.clone(),
+            classifier_model_config.model_config.model_dim,
         )
-        .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("embedding norm: {:?}", e))))?;
+        .map_err(|e| {
+            eprintln!("Failed to create pooling: {:?}", e);
+            Error::UnableToCreateContext(e.into())
+        })?;
 
+        // --- Prediction head -----------------------------------------------------------
+        //
+        // The head is a chain `maybe(dense) → maybe(activation) → maybe(norm) → readout`.
+        // We thread ArrayIds so that each step reads from whatever the previous
+        // step wrote, starting from either:
+        //   - ClassifierPooling  (if pooling actually pools into row 0), or
+        //   - Main               (per-token path, pooling=None).
         let model_dim = classifier_model_config.model_config.model_dim;
         let num_labels = classifier_model_config.model_config.num_labels;
         let prediction_head_config = &classifier_model_config.model_config.prediction_head_config;
@@ -183,80 +214,107 @@ impl<B: Backend> ClassifierContext<B> {
             .subtree("prediction_head")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head".to_string())))?;
 
-        let prediction_head_data_type: DataType = prediction_head_config.dense_config.activation_precision().into();
-
-        let prediction_head_dense_tree = prediction_head_tree.subtree("dense").map_err(|_| {
-            Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.dense".to_string()))
-        })?;
-        let prediction_head_dense = <dyn Linear<B>>::new::<1>(
-            &prediction_head_config.dense_config,
-            prediction_head_config.use_dense_bias,
-            model_dim,
-            [model_dim],
-            context.as_ref(),
-            &prediction_head_dense_tree,
-            ArrayId::ClassifierPooling,
-            ArrayId::ClassifierPredictionHeadDense,
+        let per_token = matches!(
+            classifier_model_config.model_config.classifier_pooling,
+            PoolingType::None
         );
+        let mut current_array: ArrayId = if per_token { ArrayId::Main } else { ArrayId::ClassifierPooling };
 
-        let prediction_head_activation = Activation::<B>::new(
-            &context,
-            prediction_head_data_type,
-            prediction_head_config.activation.clone(),
-            ArrayId::ClassifierPredictionHeadDense,
-            ArrayId::ClassifierPredictionHeadDense,
-        )
-        .map_err(|e| {
-            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head activation: {:?}", e)))
-        })?;
+        // dense (optional)
+        let prediction_head_dense = if let Some(dense_cfg) = &prediction_head_config.dense_config {
+            let prediction_head_dense_tree = prediction_head_tree.subtree("dense").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.dense".to_string()))
+            })?;
+            let out_id = ArrayId::ClassifierPredictionHeadDense;
+            let l = <dyn Linear<B>>::new::<1>(
+                dense_cfg,
+                prediction_head_config.use_dense_bias,
+                model_dim,
+                [model_dim],
+                context.as_ref(),
+                &prediction_head_dense_tree,
+                current_array,
+                out_id,
+            )
+            .map_err(|e| {
+                Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
+            })?;
+            current_array = out_id;
+            Some(l)
+        } else {
+            None
+        };
 
-        let prediction_head_norm_tree = prediction_head_tree.subtree("norm").map_err(|_| {
-            Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.norm".to_string()))
-        })?;
-        let prediction_head_norm = Normalization::new(
-            context.as_ref(),
-            prediction_head_data_type,
-            prediction_head_config.normalization_config.clone(),
-            ArrayId::ClassifierPredictionHeadDense,
-            ArrayId::ClassifierPredictionHeadNorm,
-            &prediction_head_norm_tree,
-        )
-        .map_err(|e| {
-            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head norm: {:?}", e)))
-        })?;
+        // activation (optional; in-place on current_array)
+        let prediction_head_data_type: DataType = prediction_head_config
+            .dense_config
+            .as_ref()
+            .map(|c| c.activation_precision())
+            .unwrap_or_else(|| prediction_head_config.readout_config.activation_precision())
+            .into();
 
+        let prediction_head_activation = if let Some(activation_cfg) = prediction_head_config.activation.clone() {
+            let a = Activation::<B>::new(
+                &context,
+                prediction_head_data_type,
+                activation_cfg,
+                current_array,
+                current_array,
+            )
+            .map_err(|e| {
+                Error::Classifier(ClassifierError::KernelCreationFailed(format!(
+                    "prediction head activation: {:?}",
+                    e
+                )))
+            })?;
+            Some(a)
+        } else {
+            None
+        };
+
+        // normalization (optional)
+        let prediction_head_norm = if let Some(norm_cfg) = prediction_head_config.normalization_config.clone() {
+            let prediction_head_norm_tree = prediction_head_tree.subtree("norm").map_err(|_| {
+                Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.norm".to_string()))
+            })?;
+            let out_id = ArrayId::ClassifierPredictionHeadNorm;
+            let n = Normalization::new(
+                context.as_ref(),
+                prediction_head_data_type,
+                norm_cfg,
+                current_array,
+                out_id,
+                &prediction_head_norm_tree,
+            )
+            .map_err(|e| {
+                Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head norm: {:?}", e)))
+            })?;
+            current_array = out_id;
+            Some(n)
+        } else {
+            None
+        };
+
+        // readout (required)
         let prediction_head_readout_tree = prediction_head_tree.subtree("readout").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.readout".to_string()))
         })?;
         let prediction_head_final_linear = <dyn Linear<B>>::new::<1>(
             &prediction_head_config.readout_config,
-            true,
+            prediction_head_config.readout_has_biases,
             model_dim,
             [num_labels],
             context.as_ref(),
             &prediction_head_readout_tree,
-            ArrayId::ClassifierPredictionHeadNorm,
+            current_array,
             ArrayId::ClassifierPredictionHeadLogits,
         )
         .map_err(|e| {
             Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head readout: {:?}", e)))
         })?;
 
-        let pooling = Pooling::<B>::new(
-            context.as_ref(),
-            data_type,
-            classifier_model_config.model_config.classifier_pooling.clone(),
-            model_dim,
-        )
-        .map_err(|e| {
-            eprintln!("Failed to create pooling: {:?}", e);
-            Error::UnableToCreateContext(e.into())
-        })?;
-
         let prediction_head = ClassifierPredictionHead::new(
-            prediction_head_dense.map_err(|e| {
-                Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
-            })?,
+            prediction_head_dense,
             prediction_head_activation,
             prediction_head_norm,
             prediction_head_final_linear,
@@ -268,6 +326,7 @@ impl<B: Backend> ClassifierContext<B> {
             shared_buffers,
             scratch_buffers,
             model_config: classifier_model_config.clone(),
+            decoder_config,
             model_shape,
             embed,
             embedding_norm,

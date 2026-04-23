@@ -15,6 +15,8 @@ use crate::{
 enum PoolingKernel<B: Backend> {
     Cls(<B::Kernels as Kernels>::PoolingClsKernel),
     Mean(<B::Kernels as Kernels>::PoolingMeanKernel),
+    /// No-op passthrough: the prediction head runs on every token.
+    None,
 }
 
 impl<B: Backend> PoolingKernel<B> {
@@ -30,6 +32,11 @@ impl<B: Backend> PoolingKernel<B> {
         match self {
             Self::Cls(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_dim, encoder),
             Self::Mean(kernel) => kernel.encode(input, output, seq_len, hidden_dim, batch_dim, encoder),
+            Self::None => {
+                // Per-token classifier: nothing to do. Consumers read directly
+                // from ArrayId::Main (wired at ClassifierContext::new time).
+                let _ = (input, output, seq_len, hidden_dim, batch_dim, encoder);
+            },
         }
     }
 }
@@ -37,6 +44,7 @@ impl<B: Backend> PoolingKernel<B> {
 pub struct Pooling<B: Backend> {
     pooling_kernel: PoolingKernel<B>,
     model_dim: usize,
+    pooling_type: PoolingType,
 }
 
 impl<B: Backend> Pooling<B> {
@@ -51,11 +59,20 @@ impl<B: Backend> Pooling<B> {
             PoolingType::Mean => {
                 PoolingKernel::Mean(<B::Kernels as Kernels>::PoolingMeanKernel::new(context, data_type)?)
             },
+            PoolingType::None => PoolingKernel::None,
         };
         Ok(Self {
             pooling_kernel,
             model_dim,
+            pooling_type,
         })
+    }
+
+    /// Whether this pooling layer collapses the sequence down to a single row.
+    /// `None` keeps the full sequence (per-token classification).
+    #[allow(dead_code)]
+    pub fn collapses_sequence(&self) -> bool {
+        !matches!(self.pooling_type, PoolingType::None)
     }
 
     pub fn encode(
@@ -63,6 +80,12 @@ impl<B: Backend> Pooling<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
+        if matches!(self.pooling_type, PoolingType::None) {
+            // Per-token path: leave Main alone, leave active_row_count at
+            // suffix_length so downstream Linear kernels process every token.
+            return Ok(());
+        }
+
         let batch_dim = 1;
         let seq_len = state.aux_buffers_suffix_length();
 

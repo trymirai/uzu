@@ -10,6 +10,7 @@ pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
 
 pub(super) struct StructuredAudioPostModuleRuntime<B: Backend> {
     pub(super) context: Rc<B::Context>,
+    pub(super) decoder_config: Rc<crate::config::DecoderConfig>,
     pub(super) model_shape: ModelShape,
     pub(super) scratch_buffers: ScratchBuffers<B>,
     pub(super) shared_buffers: Rc<RefCell<SharedBuffers<B>>>,

@@ -126,6 +126,7 @@ impl StructuredAudioCodecGraph {
 
         Ok(StructuredAudioPostModuleRuntime {
             context,
+            decoder_config,
             model_shape,
             scratch_buffers,
             shared_buffers,
@@ -338,6 +339,7 @@ impl StructuredAudioCodecGraph {
         let token_positions = (0..frames).collect::<Vec<_>>();
         let mut state = ForwardPassState::new_classifier(
             runtime.context.clone(),
+            runtime.decoder_config.as_ref(),
             &runtime.model_shape,
             &runtime.scratch_buffers,
             runtime.shared_buffers.clone(),
@@ -446,6 +448,7 @@ impl StructuredAudioCodecGraph {
             let token_positions = (0..active_len).collect::<Vec<_>>();
             let mut state = ForwardPassState::new_classifier(
                 runtime.context.clone(),
+                runtime.decoder_config.as_ref(),
                 &runtime.model_shape,
                 &runtime.scratch_buffers,
                 runtime.shared_buffers.clone(),

@@ -9,7 +9,11 @@ use crate::config::{
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct ClassifierConfig {
     pub embedding_config: EmbeddingConfig,
-    pub embedding_norm_config: NormalizationConfig,
+    /// Optional pre-transformer normalization. ModernBERT / BERT-style
+    /// encoders have one; some token classifiers (e.g. openai/privacy-filter)
+    /// explicitly feed the embedding into the transformer without normalizing.
+    #[serde(default)]
+    pub embedding_norm_config: Option<NormalizationConfig>,
     pub transformer_config: TransformerConfig,
     pub prediction_head_config: PredictionHeadConfig,
     pub readout_config: LinearConfig,
@@ -63,9 +67,20 @@ impl ClassifierConfig {
             .or(first_mixer.head_dim())
             .ok_or_else(|| ConfigError::MissingField("head_dim".to_string()))?;
 
+        // Some lalamo exports (e.g. openai/privacy-filter) omit the
+        // transformer-level rope slots and stash the YaRN config on
+        // `layer_configs[0].rope_config` instead. Fall back to that when
+        // `global_rope_config` is absent so uzu still allocates the shared
+        // rope buffers.
+        let global_rope_config = self
+            .transformer_config
+            .global_rope_config
+            .clone()
+            .or_else(|| first_layer.rope_config.clone());
+
         Ok(DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: self.transformer_config.global_rope_config.clone(),
+            global_rope_config,
             local_rope_config: self.transformer_config.local_rope_config.clone(),
             layer_config,
             output_norm_config: self.transformer_config.output_norm_config.clone(),

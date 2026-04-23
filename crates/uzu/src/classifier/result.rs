@@ -2,8 +2,18 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct ClassificationOutput {
+    /// Row-major flat logits. `len() == num_rows * num_labels`.
     pub logits: Box<[f32]>,
+    /// `1` for pooled classifiers (BERT/ModernBERT with CLS or mean pooling);
+    /// `suffix_length` for per-token classifiers (e.g. openai/privacy-filter).
+    pub num_rows: usize,
+    pub num_labels: usize,
+    /// Sigmoid(logit) per label, only populated for pooled classifiers.
     pub probabilities: HashMap<String, f32>,
+    /// Per-token argmax + softmax confidence, only populated when
+    /// `num_rows > 1` (per-token classifiers). Aligned with the input token
+    /// sequence.
+    pub per_token_top1: Option<Vec<(String, f32)>>,
     pub stats: ClassificationStats,
 }
 

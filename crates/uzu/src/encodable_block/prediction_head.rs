@@ -1,4 +1,8 @@
 //! Prediction head encodable for classification output.
+//!
+//! The head is a chain `maybe(dense) → maybe(activation) → maybe(norm) → readout`.
+//! Pooled classifiers (BERT-style) wire all four steps; bare linear per-token
+//! taggers (e.g. openai/privacy-filter) only set `readout`.
 
 #[cfg(feature = "tracing")]
 use crate::forward_pass::state::ArrayId;
@@ -9,9 +13,9 @@ use crate::{
 };
 
 pub struct ClassifierPredictionHead<B: Backend> {
-    dense: Box<dyn Linear<B>>,
-    activation: Activation<B>,
-    norm: Normalization<B>,
+    dense: Option<Box<dyn Linear<B>>>,
+    activation: Option<Activation<B>>,
+    norm: Option<Normalization<B>>,
     readout: Box<dyn Linear<B>>,
     #[allow(dead_code)]
     num_labels: usize,
@@ -19,9 +23,9 @@ pub struct ClassifierPredictionHead<B: Backend> {
 
 impl<B: Backend> ClassifierPredictionHead<B> {
     pub fn new(
-        dense: Box<dyn Linear<B>>,
-        activation: Activation<B>,
-        norm: Normalization<B>,
+        dense: Option<Box<dyn Linear<B>>>,
+        activation: Option<Activation<B>>,
+        norm: Option<Normalization<B>>,
         readout: Box<dyn Linear<B>>,
         num_labels: usize,
     ) -> Self {
@@ -39,9 +43,15 @@ impl<B: Backend> ClassifierPredictionHead<B> {
         state: &mut ForwardPassState<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        self.dense.encode(state, encoder)?;
-        self.activation.encode(state, encoder)?;
-        self.norm.encode(state, encoder)?;
+        if let Some(dense) = self.dense.as_ref() {
+            dense.encode(state, encoder)?;
+        }
+        if let Some(activation) = self.activation.as_ref() {
+            activation.encode(state, encoder)?;
+        }
+        if let Some(norm) = self.norm.as_ref() {
+            norm.encode(state, encoder)?;
+        }
         self.readout.encode(state, encoder)?;
 
         #[cfg(feature = "tracing")]
