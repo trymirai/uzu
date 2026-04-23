@@ -17,7 +17,7 @@ use shoji::{
     types::{model::Model, session::chat::ChatConfig},
 };
 use tokio::runtime::Handle;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
     device::Device,
@@ -62,6 +62,7 @@ impl Engine {
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
         };
+        engine.spawn_storage_listener().await;
 
         {
             let uzu_backend = UzuBackend::new();
@@ -448,5 +449,20 @@ impl Engine {
         let models = self.registry.lock().await.models().await?;
         self.storage.lock().await.refresh(models).await?;
         Ok(())
+    }
+
+    async fn spawn_storage_listener(&self) {
+        let mut stream = self.storage_subscribe().await;
+        let callback = self.callback.clone();
+        tokio::spawn(async move {
+            while let Some(update) = stream.next().await {
+                if update.is_err() {
+                    continue;
+                }
+                if let Some(callback) = callback.lock().await.as_ref().cloned() {
+                    callback.on_event();
+                };
+            }
+        });
     }
 }
