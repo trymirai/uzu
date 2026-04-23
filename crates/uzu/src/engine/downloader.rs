@@ -96,6 +96,13 @@ impl DownloaderStream {
             stream: SharedAccess::new(Some(stream)),
         }
     }
+
+    pub(crate) fn empty(identifier: String) -> Self {
+        Self {
+            identifier,
+            stream: SharedAccess::new(None),
+        }
+    }
 }
 
 #[bindings::export(Implementation)]
@@ -139,7 +146,7 @@ pub struct DownloaderStreamUpdate {
 
 #[bindings::export(Implementation)]
 impl DownloaderStreamUpdate {
-    #[bindings::export(Method)]
+    #[bindings::export(Getter)]
     pub fn progress(&self) -> f32 {
         if self.bytes_total == 0 {
             0.0

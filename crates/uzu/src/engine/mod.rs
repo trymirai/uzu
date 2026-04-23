@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
 pub use config::EngineConfig;
-pub use downloader::Downloader;
+pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use nagare::{chat::ChatSession, classification::ClassificationSession, text_to_speech::TextToSpeechSession};
 use shoji::{
@@ -37,7 +37,7 @@ use crate::{
 pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
-    backends: HashMap<String, Arc<dyn Backend>>,
+    backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
 }
 
 impl Engine {
@@ -53,10 +53,10 @@ impl Engine {
 
         let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);
 
-        let mut engine = Self {
+        let engine = Self {
             storage,
             registry,
-            backends: HashMap::new(),
+            backends: SharedAccess::new(HashMap::new()),
         };
 
         {
@@ -75,7 +75,7 @@ impl Engine {
             };
             let mirai_registry = Box::new(MiraiRegistry::new(mirai_registry_config)?);
 
-            engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>);
+            engine.add_backend(Arc::new(uzu_backend) as Arc<dyn Backend>).await;
             engine.add_registry(mirai_registry).await?;
 
             if let Some(lalamo_path) = config.lalamo_path {
@@ -123,7 +123,7 @@ impl Engine {
             let registry = OpenAIRegistry::new(config.clone())?;
             let backend = OpenAIBackend::new(config.into()).map_err(|_| EngineError::UnableToCreateBackend {})?;
             engine.add_registry(Box::new(registry)).await?;
-            engine.add_backend(Arc::new(backend) as Arc<dyn Backend>);
+            engine.add_backend(Arc::new(backend) as Arc<dyn Backend>).await;
         }
 
         Ok(engine)
@@ -153,39 +153,113 @@ impl Engine {
         Ok(())
     }
 
-    pub async fn remove_registry(
+    pub async fn add_backend(
         &self,
-        registry_identifier: &str,
-    ) -> Result<(), EngineError> {
-        self.registry.lock().await.remove(registry_identifier)?;
-        self.handle_registry_resfresh().await?;
-        Ok(())
-    }
-}
-
-impl Engine {
-    pub fn add_backend(
-        &mut self,
         backend: Arc<dyn Backend>,
     ) {
-        self.backends.insert(backend.identifier(), backend);
-    }
-
-    pub fn remove_backend(
-        &mut self,
-        identifier: &str,
-    ) {
-        self.backends.remove(identifier);
+        self.backends.lock().await.insert(backend.identifier(), backend);
     }
 }
 
 #[bindings::export(Implementation)]
 impl Engine {
     #[bindings::export(Method)]
+    pub async fn remove_registry(
+        &self,
+        registry_identifier: String,
+    ) -> Result<(), EngineError> {
+        self.registry.lock().await.remove(&registry_identifier)?;
+        self.handle_registry_resfresh().await?;
+        Ok(())
+    }
+
+    #[bindings::export(Method)]
+    pub async fn remove_backend(
+        &self,
+        identifier: String,
+    ) {
+        self.backends.lock().await.remove(&identifier);
+    }
+}
+
+#[bindings::export(Implementation)]
+impl Engine {
+    #[bindings::export(Getter)]
     pub async fn models(&self) -> Result<Vec<Model>, EngineError> {
         self.registry.lock().await.models().await.map_err(EngineError::from)
     }
 
+    #[bindings::export(Getter)]
+    pub async fn models_local(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_local()).collect())
+    }
+
+    #[bindings::export(Getter)]
+    pub async fn models_remote(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_remote()).collect())
+    }
+
+    #[bindings::export(Getter)]
+    pub async fn models_downloadable(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_downloadable()).collect())
+    }
+
+    #[bindings::export(Getter)]
+    pub async fn models_for_chat(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_chat_capable()).collect())
+    }
+
+    #[bindings::export(Getter)]
+    pub async fn models_for_classification(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_classification_capable()).collect())
+    }
+
+    #[bindings::export(Getter)]
+    pub async fn models_for_text_to_speech(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_text_to_speech_capable()).collect())
+    }
+
+    #[bindings::export(Getter)]
+    pub async fn models_for_translation(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_translation_capable()).collect())
+    }
+
+    #[bindings::export(Getter)]
+    pub async fn models_for_speculation(&self) -> Result<Vec<Model>, EngineError> {
+        Ok(self.models().await?.into_iter().filter(|model| model.is_speculation_capable()).collect())
+    }
+
+    #[bindings::export(Method)]
+    pub async fn models_by_vendor(
+        &self,
+        vendor_identifier: String,
+    ) -> Result<Vec<Model>, EngineError> {
+        Ok(self
+            .models()
+            .await?
+            .into_iter()
+            .filter(|model| {
+                model.family.as_ref().map(|family| family.vendor.identifier == vendor_identifier).unwrap_or(false)
+            })
+            .collect())
+    }
+
+    #[bindings::export(Method)]
+    pub async fn models_by_family(
+        &self,
+        family_identifier: String,
+    ) -> Result<Vec<Model>, EngineError> {
+        Ok(self
+            .models()
+            .await?
+            .into_iter()
+            .filter(|model| model.family.as_ref().map(|family| family.identifier == family_identifier).unwrap_or(false))
+            .collect())
+    }
+}
+
+#[bindings::export(Implementation)]
+impl Engine {
     #[bindings::export(Method)]
     pub async fn model(
         &self,
@@ -233,28 +307,8 @@ impl Engine {
     }
 }
 
-impl Engine {
-    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
-        self.storage.lock().await.subscribe()
-    }
-
-    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
-        let models = self.registry.lock().await.models().await?;
-        self.storage.lock().await.refresh(models).await?;
-        Ok(())
-    }
-}
-
 #[bindings::export(Implementation)]
 impl Engine {
-    #[bindings::export(Method)]
-    pub fn downloader(
-        &self,
-        model: &Model,
-    ) -> Downloader {
-        Downloader::new(model.identifier.clone(), self.storage.clone())
-    }
-
     #[bindings::export(Method)]
     pub async fn model_path(
         &self,
@@ -284,6 +338,42 @@ impl Engine {
         };
         path
     }
+
+    #[bindings::export(Method)]
+    pub fn downloader(
+        &self,
+        model: &Model,
+    ) -> Downloader {
+        Downloader::new(model.identifier.clone(), self.storage.clone())
+    }
+
+    #[bindings::export(Method)]
+    pub async fn download(
+        &self,
+        model: &Model,
+    ) -> Result<DownloaderStream, EngineError> {
+        if !model.is_downloadable() {
+            return Ok(DownloaderStream::empty(model.identifier.clone()));
+        }
+
+        let downloader = self.downloader(model);
+        let Some(state) = downloader.state().await else {
+            return Err(EngineError::UnableToGetDownloaderProgressStream {});
+        };
+        if matches!(state.phase, DownloadPhase::Downloaded {}) {
+            return Ok(DownloaderStream::empty(model.identifier.clone()));
+        }
+        downloader.resume().await?;
+        Ok(downloader.progress().await?)
+    }
+
+    #[bindings::export(Method)]
+    pub async fn download_state(
+        &self,
+        model: &Model,
+    ) -> Option<DownloadState> {
+        self.downloader(model).state().await
+    }
 }
 
 #[bindings::export(Implementation)]
@@ -296,7 +386,8 @@ impl Engine {
     ) -> Result<ChatSession, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend) = model.backends.first() {
-            let backend = self.backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
+            let backends = self.backends.lock().await;
+            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
             let session = ChatSession::new(backend.as_ref(), config, model, path).await?;
             Ok(session)
         } else {
@@ -311,7 +402,8 @@ impl Engine {
     ) -> Result<ClassificationSession, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend) = model.backends.first() {
-            let backend = self.backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
+            let backends = self.backends.lock().await;
+            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
             let session = ClassificationSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {
@@ -326,11 +418,24 @@ impl Engine {
     ) -> Result<TextToSpeechSession, EngineError> {
         let path = self.model_path(&model).await;
         if let Some(backend) = model.backends.first() {
-            let backend = self.backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
+            let backends = self.backends.lock().await;
+            let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
             let session = TextToSpeechSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {
             return Err(EngineError::BackendNotFound {});
         }
+    }
+}
+
+impl Engine {
+    pub async fn storage_subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
+        self.storage.lock().await.subscribe()
+    }
+
+    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
+        let models = self.registry.lock().await.models().await?;
+        self.storage.lock().await.refresh(models).await?;
+        Ok(())
     }
 }
