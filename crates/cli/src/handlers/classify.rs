@@ -17,6 +17,10 @@ pub fn handle_classify(
     message: String,
     top_k: usize,
 ) {
+    // Hidden debug hook: set UZU_DUMP_LOGITS=/path/to/file.bin to dump the raw
+    // logits tensor as little-endian f32 bytes (row-major [num_rows, num_labels]).
+    // Used for numerics-parity comparisons against the lalamo reference.
+    let dump_path = std::env::var("UZU_DUMP_LOGITS").ok();
     let style_bold = Style::new().bold();
 
     let model_path_buf = PathBuf::from(&model_path);
@@ -49,6 +53,20 @@ pub fn handle_classify(
         stats.tokens_per_second,
     );
     println!("rows: {}  labels: {}", output.num_rows, output.num_labels);
+
+    if let Some(path) = dump_path {
+        let bytes: Vec<u8> =
+            output.logits.iter().flat_map(|v| v.to_le_bytes()).collect();
+        match std::fs::write(&path, &bytes) {
+            Ok(_) => eprintln!(
+                "dumped {} f32s ({} bytes) to {}",
+                output.logits.len(),
+                bytes.len(),
+                path
+            ),
+            Err(e) => eprintln!("failed to dump logits to {}: {}", path, e),
+        }
+    }
 
     if let Some(per_token) = output.per_token_top1.as_ref() {
         println!("\nper-token top-1:");
