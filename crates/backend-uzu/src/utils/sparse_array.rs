@@ -1,10 +1,21 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
+use backend_uzu::ArrayElement;
+use thiserror::Error;
+
 use crate::{
     DataType,
     array::size_for_shape,
     backends::common::{Backend, Buffer, Context, Encoder, SparseBuffer},
 };
+
+#[derive(Debug, Error)]
+pub enum SparseArrayError<B: Backend> {
+    #[error("Failed to create SparseBuffer: {0}")]
+    CreateBufferError(B::Error),
+    #[error("Failed to create Encoder: {0}")]
+    CreateEncoderError(B::Error),
+}
 
 #[derive(Debug)]
 pub struct SparseArray<B: Backend> {
@@ -18,14 +29,14 @@ impl<B: Backend> SparseArray<B> {
         context: &B::Context,
         data_type: DataType,
         shape: &[usize],
-    ) -> Self {
+    ) -> Result<Self, SparseArrayError<B>> {
         let size = size_for_shape(shape, data_type);
-        let buffer = context.create_sparse_buffer(size).expect("Failed to create sparse buffer");
-        Self {
+        let buffer = context.create_sparse_buffer(size).map_err(|e| SparseArrayError::CreateBufferError(e))?;
+        Ok(Self {
             buffer: Rc::new(RefCell::new(buffer)),
             data_type,
             shape: shape.into(),
-        }
+        })
     }
 
     pub fn data_type(&self) -> DataType {
@@ -141,6 +152,84 @@ impl<B: Backend> SparseArray<B> {
     pub fn sparse_buffer(&self) -> Rc<RefCell<B::SparseBuffer>> {
         self.buffer.clone()
     }
+
+    pub fn read_bytes(
+        &self,
+        context: &B::Context,
+        range: Range<usize>,
+    ) -> Result<&mut [u8], SparseArrayError<B>> {
+        assert!(range.end <= self.sparse_buffer().borrow().length());
+
+        let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+
+        let mut dst_buffer =
+            context.create_buffer(range.len()).map_err(|err| SparseArrayError::CreateBufferError(err))?;
+        let dst_range = Range {
+            start: 0,
+            end: range.len(),
+        };
+        encoder.encode_copy(self.buffer.borrow().buffer(), range, &mut dst_buffer, dst_range);
+        encoder.end_encoding();
+
+        let bytes =
+            unsafe { std::slice::from_raw_parts_mut(dst_buffer.cpu_ptr().as_ptr() as *mut u8, dst_buffer.length()) };
+        Ok(bytes)
+    }
+
+    pub fn read_slice<T: ArrayElement>(
+        &self,
+        context: &B::Context,
+        range: Range<usize>,
+    ) -> Result<&mut [T], SparseArrayError<B>> {
+        let bytes_range = Range {
+            start: range.start * T::data_type().size_in_bytes(),
+            end: range.start + range.len() * T::data_type().size_in_bytes(),
+        };
+        let bytes = self.read_bytes(context, bytes_range)?;
+        Ok(bytemuck::cast_slice_mut(bytes))
+    }
+
+    pub fn write_bytes(
+        &mut self,
+        context: &B::Context,
+        bytes: &[u8],
+        offset: usize,
+    ) -> Result<(), SparseArrayError<B>> {
+        let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+
+        let src_buffer = context.create_buffer(bytes.len()).map_err(|err| SparseArrayError::CreateBufferError(err))?;
+        let src_slice =
+            unsafe { std::slice::from_raw_parts_mut(src_buffer.cpu_ptr().as_ptr() as *mut u8, src_buffer.length()) };
+        src_slice.copy_from_slice(bytes);
+        let src_range = Range {
+            start: 0,
+            end: offset + bytes.len(),
+        };
+
+        let sparse_buffer_rc = self.sparse_buffer();
+        let mut sparse_buffer = sparse_buffer_rc.borrow_mut();
+        let mut dst_buffer = sparse_buffer.buffer_mut();
+        let dst_range = Range {
+            start: offset,
+            end: offset + bytes.len(),
+        };
+        encoder.encode_copy(&src_buffer, src_range, &mut dst_buffer, dst_range);
+
+        encoder.end_encoding();
+        Ok(())
+    }
+
+    pub fn write_slice<T: ArrayElement>(
+        &mut self,
+        context: &B::Context,
+        slice: &[T],
+        offset: usize,
+    ) -> Result<(), SparseArrayError<B>> {
+        let bytes_offset = offset * T::data_type().size_in_bytes();
+        let bytes_slice: &[u8] = bytemuck::cast_slice(slice);
+        self.write_bytes(context, bytes_slice, bytes_offset)?;
+        Ok(())
+    }
 }
 
 impl<B: Backend> Clone for SparseArray<B> {
@@ -173,7 +262,8 @@ impl<C: Context> SparseArrayContext for C {
         data_type: DataType,
         label: &str,
     ) -> SparseArray<Self::Backend> {
-        let array: SparseArray<Self::Backend> = SparseArray::new(self, data_type, shape);
+        let array: SparseArray<Self::Backend> =
+            SparseArray::new(self, data_type, shape).expect("Failed to create SparseArray");
         let sparse_buffer_rc = array.sparse_buffer();
         let mut sparse_buffer_ref_mut = sparse_buffer_rc.borrow_mut();
         let sparse_buffer = sparse_buffer_ref_mut.buffer_mut();
