@@ -9,7 +9,7 @@ mod speculation_preset;
 pub use capabilities::ChatModelCapabilities;
 pub use config::ChatConfig;
 pub use content_block::{ChatContentBlock, ChatContentBlockType};
-pub use message::{ChatMessage, ChatMessageList};
+pub use message::{ChatMessage, ChatMessageList, ChatMessageMetadata};
 pub use reply::{ChatReply, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats};
 pub use role::ChatRole;
 pub use speculation_preset::ChatSpeculationPreset;

@@ -6,7 +6,7 @@ use std::{collections::HashMap, str::FromStr};
 pub use content::Content;
 pub use section::Section;
 use serde::{Deserialize, Deserializer};
-use shoji::types::session::chat::{ChatMessage as CommonMessage, ChatRole};
+use shoji::types::session::chat::{ChatMessage as CommonMessage, ChatMessageMetadata, ChatRole};
 
 #[derive(Deserialize)]
 pub struct Message {
@@ -28,7 +28,9 @@ impl From<Message> for CommonMessage {
                 None => Vec::new(),
             },
             role: message.role,
-            metadata: HashMap::new(),
+            metadata: ChatMessageMetadata {
+                values: HashMap::new(),
+            },
         }
     }
 }

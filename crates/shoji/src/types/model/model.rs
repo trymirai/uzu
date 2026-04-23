@@ -171,7 +171,9 @@ impl Model {
     pub fn variant_entity(&self) -> Option<ModelEntity> {
         self.entity(ModelEntityType::Variant)
     }
+}
 
+impl Model {
     fn entity(
         &self,
         r#type: ModelEntityType,

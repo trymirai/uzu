@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::basic::{Grammar, SamplingMethod, SamplingPolicy};
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatReplyConfig {
     pub token_limit: Option<u32>,
@@ -20,46 +20,59 @@ impl Default for ChatReplyConfig {
     }
 }
 
+#[bindings::export(Implementation)]
 impl ChatReplyConfig {
+    #[bindings::export(Factory)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[bindings::export(Implementation)]
+impl ChatReplyConfig {
+    #[bindings::export(Method)]
     pub fn with_token_limit(
-        self,
+        &self,
         token_limit: Option<u32>,
     ) -> Self {
         Self {
             token_limit,
-            ..self
+            ..self.clone()
         }
     }
 
+    #[bindings::export(Method)]
     pub fn with_sampling_policy(
-        self,
+        &self,
         sampling_policy: SamplingPolicy,
     ) -> Self {
         Self {
             sampling_policy,
-            ..self
+            ..self.clone()
         }
     }
 
+    #[bindings::export(Method)]
     pub fn with_sampling_method(
-        self,
+        &self,
         sampling_method: SamplingMethod,
     ) -> Self {
         Self {
             sampling_policy: SamplingPolicy::Custom {
                 method: sampling_method,
             },
-            ..self
+            ..self.clone()
         }
     }
 
+    #[bindings::export(Method)]
     pub fn with_grammar(
-        self,
+        &self,
         grammar: Option<Grammar>,
     ) -> Self {
         Self {
             grammar,
-            ..self
+            ..self.clone()
         }
     }
 }

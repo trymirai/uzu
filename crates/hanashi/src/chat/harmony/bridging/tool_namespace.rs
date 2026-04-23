@@ -58,7 +58,7 @@ impl FromHarmony for ToolDescription {
                 name: input.name,
                 description: input.description,
                 parameters: input.parameters.map(Value::from),
-                r#return: None,
+                return_definition: None,
             },
         }
     }

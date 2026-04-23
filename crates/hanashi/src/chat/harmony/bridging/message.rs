@@ -6,7 +6,7 @@ use openai_harmony::chat::{
 };
 use shoji::types::{
     basic::{ReasoningEffort, ToolCall, ToolNamespace, Value},
-    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
+    session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
@@ -352,7 +352,9 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                 result.push(ChatMessage {
                     role: ChatRole::System {},
                     content,
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },
@@ -393,7 +395,9 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                 result.push(ChatMessage {
                     role: ChatRole::Developer {},
                     content,
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },
@@ -405,7 +409,9 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                     content: vec![ChatContentBlock::Text {
                         value: text,
                     }],
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },
@@ -459,7 +465,9 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                 result.push(ChatMessage {
                     role: ChatRole::Assistant {},
                     content,
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
             },
             ExternalRole::Tool => {
@@ -480,7 +488,9 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                         name: Some(name.to_string()),
                         value,
                     }],
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },

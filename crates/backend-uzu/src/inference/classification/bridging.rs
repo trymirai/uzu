@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use shoji::types::session::classification::{
-    ClassificationMessage as ShojiMessage, ClassificationOutput as ShojiOutput, ClassificationRole as ShojiRole,
+    ClassificationMessage as ShojiMessage, ClassificationOutput as ShojiOutput,
+    ClassificationOutputProbabilities as ShojiOutputProbabilities, ClassificationRole as ShojiRole,
     ClassificationStats as ShojiStats,
 };
 
@@ -28,7 +31,11 @@ pub fn build_input(messages: &[ShojiMessage]) -> Input {
 
 pub fn build_output(output: &ClassificationOutput) -> ShojiOutput {
     let logits = output.logits.iter().map(|value| *value as f64).collect();
-    let probabilities = output.probabilities.iter().map(|(label, value)| (label.clone(), *value as f64)).collect();
+    let probabilities: HashMap<String, f64> =
+        output.probabilities.iter().map(|(label, value)| (label.clone(), *value as f64)).collect();
+    let probabilities = ShojiOutputProbabilities {
+        values: probabilities,
+    };
     let stats = ShojiStats {
         preprocessing_duration: output.stats.preprocessing_duration,
         forward_pass_duration: output.stats.forward_pass_duration,

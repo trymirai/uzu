@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextToSpeechStats {
     pub text_length: u32,

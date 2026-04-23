@@ -10,57 +10,84 @@ use crate::types::{
 #[bindings::export(Struct)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub struct ChatMessageMetadata {
+    pub values: HashMap<String, Value>,
+}
+
+impl From<HashMap<String, Value>> for ChatMessageMetadata {
+    fn from(values: HashMap<String, Value>) -> Self {
+        Self {
+            values,
+        }
+    }
+}
+
+#[bindings::export(ClassCloneable)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: Vec<ChatContentBlock>,
-    pub metadata: HashMap<String, Value>,
+    pub metadata: ChatMessageMetadata,
 }
 
+#[bindings::export(Implementation)]
 impl ChatMessage {
+    #[bindings::export(Factory)]
     pub fn for_role(role: ChatRole) -> Self {
         Self {
             role,
             content: vec![],
-            metadata: HashMap::new(),
+            metadata: ChatMessageMetadata {
+                values: HashMap::new(),
+            },
         }
     }
 
+    #[bindings::export(Factory)]
     pub fn system() -> Self {
         Self::for_role(ChatRole::System {})
     }
 
+    #[bindings::export(Factory)]
     pub fn developer() -> Self {
         Self::for_role(ChatRole::Developer {})
     }
 
+    #[bindings::export(Factory)]
     pub fn user() -> Self {
         Self::for_role(ChatRole::User {})
     }
 
+    #[bindings::export(Factory)]
     pub fn assistant() -> Self {
         Self::for_role(ChatRole::Assistant {})
     }
 
+    #[bindings::export(Factory)]
     pub fn tool() -> Self {
         Self::for_role(ChatRole::Tool {})
     }
 }
 
+#[bindings::export(Implementation)]
 impl ChatMessage {
-    fn with_block(
-        self,
+    #[bindings::export(Method)]
+    pub fn with_block(
+        &self,
         block: ChatContentBlock,
     ) -> Self {
-        let mut content = self.content;
+        let mut content = self.content.clone();
         content.push(block);
         Self {
             content,
-            ..self
+            ..self.clone()
         }
     }
 
+    #[bindings::export(Method)]
     pub fn with_reasoning_effort(
-        self,
+        &self,
         reasoning_effort: ReasoningEffort,
     ) -> Self {
         self.with_block(ChatContentBlock::ReasoningEffort {
@@ -68,8 +95,9 @@ impl ChatMessage {
         })
     }
 
+    #[bindings::export(Method)]
     pub fn with_tool_namespaces(
-        self,
+        &self,
         tool_namespaces: Vec<ToolNamespace>,
     ) -> Self {
         self.with_block(ChatContentBlock::Tools {
@@ -77,8 +105,9 @@ impl ChatMessage {
         })
     }
 
+    #[bindings::export(Method)]
     pub fn with_text(
-        self,
+        &self,
         text: String,
     ) -> Self {
         self.with_block(ChatContentBlock::Text {
@@ -86,8 +115,9 @@ impl ChatMessage {
         })
     }
 
+    #[bindings::export(Method)]
     pub fn with_reasoning(
-        self,
+        &self,
         reasoning: String,
     ) -> Self {
         self.with_block(ChatContentBlock::Reasoning {
@@ -95,8 +125,9 @@ impl ChatMessage {
         })
     }
 
+    #[bindings::export(Method)]
     pub fn with_tool_call(
-        self,
+        &self,
         tool_call: ToolCall,
     ) -> Self {
         self.with_block(ChatContentBlock::ToolCall {
@@ -104,8 +135,9 @@ impl ChatMessage {
         })
     }
 
+    #[bindings::export(Method)]
     pub fn with_tool_call_candidate(
-        self,
+        &self,
         value: Value,
     ) -> Self {
         self.with_block(ChatContentBlock::ToolCallCandidate {
@@ -125,11 +157,14 @@ macro_rules! blocks_by_type {
     };
 }
 
+#[bindings::export(Implementation)]
 impl ChatMessage {
+    #[bindings::export(Getter)]
     pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
         blocks_by_type!(self, ReasoningEffort, value).next()
     }
 
+    #[bindings::export(Getter)]
     pub fn text(&self) -> Option<String> {
         blocks_by_type!(self, Text, value).reduce(|mut text, value| {
             text.push_str(&value);
@@ -137,6 +172,7 @@ impl ChatMessage {
         })
     }
 
+    #[bindings::export(Getter)]
     pub fn reasoning(&self) -> Option<String> {
         blocks_by_type!(self, Reasoning, value).reduce(|mut reasoning, value| {
             reasoning.push_str(&value);
@@ -144,14 +180,18 @@ impl ChatMessage {
         })
     }
 
+    #[bindings::export(Getter)]
     pub fn tool_namespaces(&self) -> Vec<ToolNamespace> {
         blocks_by_type!(self, Tools, namespaces).flatten().collect()
     }
 
+    #[bindings::export(Getter)]
     pub fn tool_calls(&self) -> Vec<ToolCall> {
         blocks_by_type!(self, ToolCall, value).collect()
     }
+}
 
+impl ChatMessage {
     pub fn tool_call_results(&self) -> Vec<(Option<String>, Option<String>, Value)> {
         self.content
             .iter()

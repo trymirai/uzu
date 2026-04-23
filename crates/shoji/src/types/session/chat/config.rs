@@ -5,7 +5,7 @@ use crate::types::{
     session::chat::ChatSpeculationPreset,
 };
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatConfig {
     pub context_length: ContextLength,
@@ -23,38 +23,46 @@ impl Default for ChatConfig {
     }
 }
 
+#[bindings::export(Implementation)]
 impl ChatConfig {
+    #[bindings::export(Factory)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[bindings::export(Implementation)]
+impl ChatConfig {
+    #[bindings::export(Method)]
     pub fn with_context_length(
-        self,
+        &self,
         context_length: ContextLength,
     ) -> Self {
         Self {
             context_length,
-            ..self
+            ..self.clone()
         }
     }
-}
 
-impl ChatConfig {
+    #[bindings::export(Method)]
     pub fn with_sampling_seed(
-        self,
+        &self,
         sampling_seed: SamplingSeed,
     ) -> Self {
         Self {
             sampling_seed,
-            ..self
+            ..self.clone()
         }
     }
-}
 
-impl ChatConfig {
+    #[bindings::export(Method)]
     pub fn with_speculation_preset(
-        self,
+        &self,
         speculation_preset: Option<ChatSpeculationPreset>,
     ) -> Self {
         Self {
             speculation_preset,
-            ..self
+            ..self.clone()
         }
     }
 }

@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Clone, PartialEq)]
 pub struct Value {
     pub json: String,

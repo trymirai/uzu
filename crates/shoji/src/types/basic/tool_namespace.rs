@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::basic::ToolDescription;
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ToolNamespace {

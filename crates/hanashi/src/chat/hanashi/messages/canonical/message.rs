@@ -42,6 +42,7 @@ impl Message {
             content,
             metadata: message
                 .metadata
+                .values
                 .iter()
                 .map(|(key, value)| {
                     let json_value: Value =

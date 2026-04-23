@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ModelQuantization {

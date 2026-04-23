@@ -9,7 +9,7 @@ pub use stats::ChatReplyStats;
 
 use crate::types::session::chat::ChatMessage;
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatReply {
     pub message: ChatMessage,
