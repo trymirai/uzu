@@ -1,3 +1,4 @@
+mod callback;
 mod config;
 mod downloader;
 mod error;
@@ -6,6 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
+pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
@@ -20,7 +22,6 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::{
     device::Device,
     helpers::{SharedAccess, is_endpoint_reachable},
-    keyring::Keyring,
     logs,
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
@@ -39,6 +40,7 @@ pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
+    callback: SharedAccess<Option<Arc<EngineCallback>>>,
 }
 
 impl Engine {
@@ -58,6 +60,7 @@ impl Engine {
             storage,
             registry,
             backends: SharedAccess::new(HashMap::new()),
+            callback: SharedAccess::new(None),
         };
 
         {
@@ -137,15 +140,17 @@ impl Engine {
     pub async fn create(config: EngineConfig) -> Result<Self, EngineError> {
         Self::new(config).await
     }
+}
 
-    #[bindings::export(Getter)]
-    pub fn device(&self) -> Option<Device> {
-        Device::new().ok()
-    }
-
-    #[bindings::export(Getter)]
-    pub fn keyring(&self) -> Result<Keyring, EngineError> {
-        Ok(Keyring::new()?)
+#[bindings::export(Implementation)]
+impl Engine {
+    #[bindings::export(Method)]
+    pub async fn register_callback(
+        &self,
+        callback: &EngineCallback,
+    ) -> Result<(), EngineError> {
+        self.callback.lock().await.replace(Arc::new(callback.clone()));
+        Ok(())
     }
 }
 

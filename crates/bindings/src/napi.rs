@@ -320,6 +320,37 @@ pub fn enum_variant_classes(
     }
 }
 
+pub fn factory_with_callback(
+    self_type: &syn::Type,
+    method: &syn::ImplItemFn,
+) -> proc_macro2::TokenStream {
+    let method_ident = &method.sig.ident;
+    let body = &method.block;
+    quote! {
+        #[cfg(feature = "bindings-napi")]
+        #[napi_derive::napi]
+        impl #self_type {
+            #[napi(factory)]
+            pub fn #method_ident(
+                callback: napi::bindgen_prelude::Function<'static, (), ()>,
+            ) -> napi::Result<Self> {
+                let threadsafe_function = callback
+                    .build_threadsafe_function()
+                    .callee_handled::<false>()
+                    .build()
+                    .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+                let callback: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+                    let _ = threadsafe_function.call(
+                        (),
+                        napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                    );
+                });
+                Ok(#body)
+            }
+        }
+    }
+}
+
 pub fn error_implementations(type_name: &Ident) -> proc_macro2::TokenStream {
     quote! {
         #[cfg(feature = "bindings-napi")]

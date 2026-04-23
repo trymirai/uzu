@@ -54,6 +54,11 @@ impl Keyring {
 
 #[bindings::export(Implementation)]
 impl Keyring {
+    #[bindings::export(Factory)]
+    pub fn create() -> Result<Self, KeyringError> {
+        Self::new()
+    }
+
     #[bindings::export(Method)]
     pub fn store(
         &self,

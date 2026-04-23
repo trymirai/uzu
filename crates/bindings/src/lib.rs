@@ -21,6 +21,7 @@ pub(crate) enum BindingKind {
     Method,
     Constructor,
     Factory,
+    FactoryWithCallback,
     Getter,
     Setter,
     Error,
@@ -51,6 +52,7 @@ impl Parse for ExportArguments {
             "Method" => BindingKind::Method,
             "Constructor" => BindingKind::Constructor,
             "Factory" => BindingKind::Factory,
+            "FactoryWithCallback" => BindingKind::FactoryWithCallback,
             "Getter" => BindingKind::Getter,
             "Setter" => BindingKind::Setter,
             "Error" => BindingKind::Error,
@@ -185,11 +187,35 @@ pub fn export(
                 Ok(item_implementation) => item_implementation,
                 Err(error) => return error.to_compile_error().into(),
             };
+            let self_type = item_implementation.self_ty.clone();
+
+            let mut callback_factories: Vec<syn::ImplItemFn> = Vec::new();
+            item_implementation.items.retain(|item| match item {
+                ImplItem::Fn(method) if method_has_factory_with_callback(method) => {
+                    callback_factories.push(method.clone());
+                    false
+                },
+                _ => true,
+            });
+
             for item in &mut item_implementation.items {
                 if let ImplItem::Fn(method) = item {
                     rewrite_method_attributes(&mut method.attrs);
                 }
             }
+
+            let callback_expansions: Vec<proc_macro2::TokenStream> = callback_factories
+                .iter()
+                .map(|method| {
+                    let napi_expansion = napi::factory_with_callback(&self_type, method);
+                    let uniffi_expansion = uniffi::factory_with_callback(&self_type, method);
+                    quote! {
+                        #napi_expansion
+                        #uniffi_expansion
+                    }
+                })
+                .collect();
+
             let napi = napi::attributes(&kind);
             let uniffi = uniffi::attributes(&kind);
             let pyo3 = pyo3::attributes(&kind);
@@ -200,12 +226,14 @@ pub fn export(
                 #pyo3
                 #wasm
                 #item_implementation
+                #( #callback_expansions )*
             }
             .into()
         },
         BindingKind::Method
         | BindingKind::Constructor
         | BindingKind::Factory
+        | BindingKind::FactoryWithCallback
         | BindingKind::Getter
         | BindingKind::Setter => {
             let tokens = proc_macro2::TokenStream::from(item);
@@ -288,6 +316,18 @@ fn method_flavor(attribute: &Attribute) -> Option<MethodFlavor> {
         BindingKind::Setter => Some(MethodFlavor::Setter),
         _ => None,
     }
+}
+
+fn method_has_factory_with_callback(method: &syn::ImplItemFn) -> bool {
+    method.attrs.iter().any(|attribute| {
+        if !is_exportable_attribute(attribute) {
+            return false;
+        }
+        let Ok(arguments): syn::Result<ExportArguments> = attribute.parse_args() else {
+            return false;
+        };
+        matches!(arguments.kind, BindingKind::FactoryWithCallback)
+    })
 }
 
 fn is_exportable_attribute(attribute: &Attribute) -> bool {
