@@ -1,0 +1,34 @@
+Loading pf_uzu ...
+
+forward: 0.121s  post: 0.000s  total: 0.121s  tokens: 28  t/s: 232.06
+rows: 28  labels: 33
+
+per-token top-1:
+  [   0] O                        0.9998
+  [   1] O                        1.0000
+  [   2] O                        1.0000
+  [   3] O                        1.0000
+  [   4] O                        1.0000
+  [   5] O                        1.0000
+  [   6] O                        1.0000
+  [   7] O                        1.0000
+  [   8] O                        1.0000
+  [   9] O                        0.7585
+  [  10] I-account_number         0.4806
+  [  11] B-account_number         0.9397
+  [  12] I-account_number         1.0000
+  [  13] I-account_number         1.0000
+  [  14] I-account_number         1.0000
+  [  15] I-account_number         0.9999
+  [  16] I-account_number         1.0000
+  [  17] I-account_number         1.0000
+  [  18] I-account_number         1.0000
+  [  19] I-account_number         1.0000
+  [  20] I-account_number         1.0000
+  [  21] I-account_number         1.0000
+  [  22] I-account_number         1.0000
+  [  23] E-account_number         0.9240
+  [  24] O                        0.9778
+  [  25] O                        0.9107
+  [  26] O                        0.9991
+  [  27] O                        1.0000

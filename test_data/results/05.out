@@ -1,0 +1,24 @@
+Loading pf_uzu ...
+
+forward: 0.120s  post: 0.000s  total: 0.120s  tokens: 18  t/s: 149.59
+rows: 18  labels: 33
+
+per-token top-1:
+  [   0] O                        1.0000
+  [   1] O                        1.0000
+  [   2] O                        1.0000
+  [   3] O                        1.0000
+  [   4] B-private_address        0.9998
+  [   5] I-private_address        1.0000
+  [   6] I-private_address        1.0000
+  [   7] I-private_address        0.9994
+  [   8] I-private_address        0.9998
+  [   9] I-private_address        0.9987
+  [  10] I-private_address        0.9997
+  [  11] I-private_address        0.9887
+  [  12] I-private_address        0.9862
+  [  13] I-private_address        0.5455
+  [  14] E-private_address        0.7130
+  [  15] O                        1.0000
+  [  16] O                        0.9999
+  [  17] O                        0.9998

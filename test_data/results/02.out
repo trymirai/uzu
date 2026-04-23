@@ -1,0 +1,21 @@
+Loading pf_uzu ...
+
+forward: 0.113s  post: 0.000s  total: 0.113s  tokens: 15  t/s: 133.28
+rows: 15  labels: 33
+
+per-token top-1:
+  [   0] O                        1.0000
+  [   1] O                        1.0000
+  [   2] O                        1.0000
+  [   3] O                        1.0000
+  [   4] B-private_date           1.0000
+  [   5] I-private_date           1.0000
+  [   6] I-private_date           1.0000
+  [   7] I-private_date           1.0000
+  [   8] I-private_date           1.0000
+  [   9] I-private_date           1.0000
+  [  10] E-private_date           1.0000
+  [  11] O                        1.0000
+  [  12] O                        1.0000
+  [  13] O                        1.0000
+  [  14] O                        1.0000

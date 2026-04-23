@@ -1,0 +1,27 @@
+Loading pf_uzu ...
+
+forward: 0.123s  post: 0.000s  total: 0.123s  tokens: 21  t/s: 170.74
+rows: 21  labels: 33
+
+per-token top-1:
+  [   0] O                        1.0000
+  [   1] S-private_person         1.0000
+  [   2] O                        1.0000
+  [   3] O                        1.0000
+  [   4] B-private_phone          1.0000
+  [   5] I-private_phone          1.0000
+  [   6] I-private_phone          1.0000
+  [   7] I-private_phone          1.0000
+  [   8] I-private_phone          1.0000
+  [   9] E-private_phone          1.0000
+  [  10] O                        1.0000
+  [  11] S-private_person         0.9996
+  [  12] O                        1.0000
+  [  13] B-private_email          1.0000
+  [  14] I-private_email          1.0000
+  [  15] I-private_email          1.0000
+  [  16] I-private_email          1.0000
+  [  17] E-private_email          0.9890
+  [  18] O                        0.9990
+  [  19] O                        0.9994
+  [  20] O                        1.0000

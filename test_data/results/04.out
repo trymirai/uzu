@@ -1,0 +1,20 @@
+Loading pf_uzu ...
+
+forward: 0.115s  post: 0.000s  total: 0.115s  tokens: 14  t/s: 121.47
+rows: 14  labels: 33
+
+per-token top-1:
+  [   0] I-private_person         0.9627
+  [   1] I-private_person         0.9943
+  [   2] I-private_person         0.9195
+  [   3] E-private_person         0.9999
+  [   4] O                        1.0000
+  [   5] O                        1.0000
+  [   6] O                        1.0000
+  [   7] O                        1.0000
+  [   8] O                        1.0000
+  [   9] O                        0.9999
+  [  10] O                        0.9999
+  [  11] O                        0.9999
+  [  12] O                        0.9999
+  [  13] O                        1.0000

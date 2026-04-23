@@ -1,0 +1,24 @@
+Loading pf_uzu ...
+
+forward: 0.125s  post: 0.000s  total: 0.125s  tokens: 18  t/s: 144.17
+rows: 18  labels: 33
+
+per-token top-1:
+  [   0] O                        0.9931
+  [   1] O                        0.8720
+  [   2] O                        0.4837
+  [   3] I-account_number         0.7546
+  [   4] B-account_number         0.5156
+  [   5] I-account_number         0.9999
+  [   6] I-account_number         1.0000
+  [   7] I-account_number         1.0000
+  [   8] I-account_number         1.0000
+  [   9] E-account_number         1.0000
+  [  10] O                        1.0000
+  [  11] O                        1.0000
+  [  12] O                        1.0000
+  [  13] O                        1.0000
+  [  14] O                        1.0000
+  [  15] O                        1.0000
+  [  16] O                        1.0000
+  [  17] O                        1.0000
