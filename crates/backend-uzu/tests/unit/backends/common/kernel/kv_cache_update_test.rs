@@ -1,7 +1,5 @@
 #![cfg(metal_backend)]
 
-use std::{cell::RefCell, rc::Rc};
-
 use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array, Array3, s};
@@ -79,33 +77,29 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     let device = &context.device;
 
-    let key_buffer = Rc::new(RefCell::new(
-        device
-            .new_buffer_with_data(
-                bytemuck::cast_slice(key_data.as_slice().unwrap()),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
-            .expect("Failed to create buffer"),
-    ));
+    let mut key_buffer = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(key_data.as_slice().unwrap()),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
-    let value_buffer = Rc::new(RefCell::new(
-        device
-            .new_buffer_with_data(
-                bytemuck::cast_slice(value_data.as_slice().unwrap()),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
-            .expect("Failed to create buffer"),
-    ));
+    let mut value_buffer = device
+        .new_buffer_with_data(
+            bytemuck::cast_slice(value_data.as_slice().unwrap()),
+            MTLResourceOptions::STORAGE_MODE_SHARED,
+        )
+        .expect("Failed to create buffer");
 
     let kv_layer_data = KVLayerData::<Metal> {
-        key_buffer: key_buffer.clone(),
+        key_buffer: &mut key_buffer,
         key_shape: [num_heads, seq_len, head_dim],
-        value_buffer: value_buffer.clone(),
+        value_buffer: &mut value_buffer,
         value_shape: [num_heads, seq_len, head_dim],
     };
 
     let mut encoder = Encoder::new(context).unwrap();
-    match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &mut encoder) {
+    match kv_cache_update.encode(&mut [kv_layer_data], &source_indices, &destination_indices, &mut encoder) {
         Ok(_) => {},
         Err(e) => {
             println!("Warning: Failed to encode KV cache update: {:?}. Skipping test.", e);
@@ -115,8 +109,8 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let key_result_ptr = key_buffer.borrow().contents().as_ptr() as *const f32;
-    let value_result_ptr = value_buffer.borrow().contents().as_ptr() as *const f32;
+    let key_result_ptr = key_buffer.contents().as_ptr() as *const f32;
+    let value_result_ptr = value_buffer.contents().as_ptr() as *const f32;
 
     let total_elems = num_heads * seq_len * head_dim;
 
