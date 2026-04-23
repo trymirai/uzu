@@ -12,6 +12,8 @@ pub mod engine;
 #[cfg(not(target_family = "wasm"))]
 pub mod helpers;
 #[cfg(not(target_family = "wasm"))]
+pub mod keyring;
+#[cfg(not(target_family = "wasm"))]
 pub mod logs;
 #[cfg(not(target_family = "wasm"))]
 pub mod registry;

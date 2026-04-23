@@ -160,6 +160,12 @@ async-openai = { version = "0.35.0", features = [
 hound = "3.5.1"
 ignore = "0.4.25"
 heck = "0.5.0"
+keyring = { version = "3.6.3", features = [
+    "apple-native",
+    "windows-native",
+    "linux-native-sync-persistent",
+    "crypto-rust",
+] }
 
 [profile.dev.build-override]
 opt-level = 3

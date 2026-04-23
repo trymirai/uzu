@@ -20,6 +20,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::{
     device::Device,
     helpers::{SharedAccess, is_endpoint_reachable},
+    keyring::Keyring,
     logs,
     registry::{
         CachedRegistry, MergedRegistry, RegistryError,
@@ -140,6 +141,11 @@ impl Engine {
     #[bindings::export(Getter)]
     pub fn device(&self) -> Option<Device> {
         Device::new().ok()
+    }
+
+    #[bindings::export(Getter)]
+    pub fn keyring(&self) -> Keyring {
+        Keyring::new()
     }
 }
 
