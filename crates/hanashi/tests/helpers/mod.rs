@@ -5,7 +5,7 @@ use std::{collections::HashMap, path::PathBuf};
 use serde::Deserialize;
 use shoji::types::{
     basic::{ReasoningEffort, ToolDescription, ToolNamespace, TranslationPayload},
-    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
+    session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 use tokenizers::Tokenizer;
 
@@ -123,7 +123,9 @@ fn build_system_message(
     Some(ChatMessage {
         role: ChatRole::System {},
         content,
-        metadata: HashMap::new(),
+        metadata: ChatMessageMetadata {
+            values: HashMap::new(),
+        },
     })
 }
 
@@ -141,7 +143,9 @@ fn build_developer_message(tools: &Option<Vec<serde_json::Value>>) -> Option<Cha
                 tools: tool_descriptions,
             }],
         }],
-        metadata: HashMap::new(),
+        metadata: ChatMessageMetadata {
+            values: HashMap::new(),
+        },
     })
 }
 
@@ -188,7 +192,9 @@ fn build_user_messages(raw_messages: &[serde_json::Value]) -> Vec<ChatMessage> {
         .map(|raw| ChatMessage {
             role: ChatRole::User {},
             content: build_user_content(raw),
-            metadata: HashMap::new(),
+            metadata: ChatMessageMetadata {
+                values: HashMap::new(),
+            },
         })
         .collect()
 }

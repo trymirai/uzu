@@ -16,7 +16,7 @@ use helpers::{
 };
 use shoji::types::{
     basic::ReasoningEffort,
-    session::chat::{ChatContentBlock, ChatMessage, ChatRole},
+    session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
 fn print_warning(message: &str) {
@@ -172,12 +172,16 @@ fn test_encoding_gpt_oss() {
                         value: conversation_date,
                     },
                 ],
-                metadata: HashMap::new(),
+                metadata: ChatMessageMetadata {
+                    values: HashMap::new(),
+                },
             };
             let mut developer_message = ChatMessage {
                 role: ChatRole::Developer {},
                 content: vec![],
-                metadata: HashMap::new(),
+                metadata: ChatMessageMetadata {
+                    values: HashMap::new(),
+                },
             };
             if let Some(original_developer_message) = original_developer_message {
                 for block in original_developer_message.content {
