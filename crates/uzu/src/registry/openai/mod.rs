@@ -8,7 +8,7 @@ use fancy_regex::Regex;
 use serde::Deserialize;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Model as ShojiModel, ModelAccessibility, ModelEntity, ModelEntityType, ModelSpecialization},
+    types::model::{Model as ShojiModel, ModelAccessibility, ModelSpecialization},
 };
 
 #[derive(Debug, Deserialize)]
@@ -81,64 +81,29 @@ impl RegistryTrait for Registry {
             let mut identifiers = response.data.into_iter().map(|model| model.id).collect::<Vec<_>>();
             identifiers.sort();
 
-            let registry_entity = self.create_entity(ModelEntityType::Registry);
-            let backend_entity = self.create_entity(ModelEntityType::Backend);
-            let vendor_entity = self.create_entity(ModelEntityType::Vendor);
-            let family_entity = self.create_entity(ModelEntityType::Family);
-
             let models = identifiers
                 .into_iter()
                 .filter(|identifier| {
                     self.model_filter.as_ref().is_none_or(|regex| regex.is_match(identifier).unwrap_or(false))
                 })
                 .map(|identifier| {
-                    let variant_entity = ModelEntity {
-                        r#type: ModelEntityType::Variant,
-                        identifier: identifier.clone(),
-                        parent_identifier: None,
-                        name: identifier.clone(),
-                        description: None,
-                        version: None,
-                        icons: vec![],
-                    };
-                    let model = ShojiModel {
-                        identifier: identifier.clone(),
-                        entities: vec![
-                            registry_entity.clone(),
-                            backend_entity.clone(),
-                            vendor_entity.clone(),
-                            family_entity.clone(),
-                            variant_entity,
-                        ],
-                        specializations: vec![ModelSpecialization::Chat],
-                        number_of_parameters: None,
-                        quantization: None,
-                        accessibility: ModelAccessibility::Remote {
+                    let model = ShojiModel::external(
+                        identifier.clone(),
+                        self.config.identifier.clone(),
+                        self.config.name.clone(),
+                        self.config.identifier.clone(),
+                        self.config.name.clone(),
+                        "default".to_string(),
+                        vec![ModelSpecialization::Chat],
+                        ModelAccessibility::Remote {
                             repository: None,
                         },
-                    };
+                    );
                     model
                 })
                 .collect();
 
             Ok(models)
         })
-    }
-}
-
-impl Registry {
-    fn create_entity(
-        &self,
-        r#type: ModelEntityType,
-    ) -> ModelEntity {
-        ModelEntity {
-            r#type,
-            identifier: self.config.identifier.clone(),
-            parent_identifier: None,
-            name: self.config.name.clone(),
-            description: None,
-            version: None,
-            icons: vec![],
-        }
     }
 }

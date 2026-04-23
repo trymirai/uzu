@@ -8,7 +8,7 @@ pub struct CancellationToken {
 
 #[bindings::export(Implementation)]
 impl CancellationToken {
-    #[bindings::export(Constructor)]
+    #[bindings::export(Factory)]
     pub fn new() -> Self {
         Self {
             inner: TokioCancellationToken::new(),

@@ -1,13 +1,21 @@
 mod accessibility;
-mod entity;
+mod backend;
+mod family;
 mod model;
+mod properties;
 mod quantization;
 mod reference;
+mod registry;
 mod specialization;
+mod vendor;
 
 pub use accessibility::ModelAccessibility;
-pub use entity::{ModelEntity, ModelEntityType};
+pub use backend::ModelBackend;
+pub use family::ModelFamily;
 pub use model::Model;
+pub use properties::ModelProperties;
 pub use quantization::ModelQuantization;
 pub use reference::ModelReference;
+pub use registry::ModelRegistry;
 pub use specialization::ModelSpecialization;
+pub use vendor::ModelVendor;

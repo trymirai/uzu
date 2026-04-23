@@ -40,7 +40,9 @@ pub struct Engine {
     backends: HashMap<String, Arc<dyn Backend>>,
 }
 
+#[bindings::export(Implementation)]
 impl Engine {
+    #[bindings::export(Factory)]
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
         let tokio_handle = Handle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
@@ -127,14 +129,6 @@ impl Engine {
         }
 
         Ok(engine)
-    }
-}
-
-#[bindings::export(Implementation)]
-impl Engine {
-    #[bindings::export(Factory)]
-    pub async fn create(config: &EngineConfig) -> Result<Self, EngineError> {
-        Self::new(config.clone()).await
     }
 }
 
@@ -287,8 +281,8 @@ impl Engine {
         config: ChatConfig,
     ) -> Result<ChatSession, EngineError> {
         let path = self.model_path(&model).await;
-        if let Some(backend_entity) = model.backend_entity() {
-            let backend = self.backends.get(&backend_entity.identifier).ok_or(EngineError::BackendNotFound)?;
+        if let Some(backend) = model.backends.first() {
+            let backend = self.backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound)?;
             let session = ChatSession::new(backend.as_ref(), config, model, path).await?;
             Ok(session)
         } else {
@@ -302,8 +296,8 @@ impl Engine {
         model: Model,
     ) -> Result<ClassificationSession, EngineError> {
         let path = self.model_path(&model).await;
-        if let Some(backend_entity) = model.backend_entity() {
-            let backend = self.backends.get(&backend_entity.identifier).ok_or(EngineError::BackendNotFound)?;
+        if let Some(backend) = model.backends.first() {
+            let backend = self.backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound)?;
             let session = ClassificationSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {
@@ -317,8 +311,8 @@ impl Engine {
         model: Model,
     ) -> Result<TextToSpeechSession, EngineError> {
         let path = self.model_path(&model).await;
-        if let Some(backend_entity) = model.backend_entity() {
-            let backend = self.backends.get(&backend_entity.identifier).ok_or(EngineError::BackendNotFound)?;
+        if let Some(backend) = model.backends.first() {
+            let backend = self.backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound)?;
             let session = TextToSpeechSession::new(backend.as_ref(), model, path).await?;
             Ok(session)
         } else {

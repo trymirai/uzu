@@ -5,11 +5,9 @@ use crate::types::{basic::Metadata, model::ModelVendor};
 #[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct ModelQuantization {
+pub struct ModelFamily {
     #[serde(rename = "id")]
     pub identifier: String,
-    pub method: String,
-    pub bits_per_weight: u32,
     pub vendor: ModelVendor,
     pub metadata: Metadata,
 }

@@ -2,7 +2,7 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(Class)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct EngineConfig {
@@ -21,7 +21,7 @@ pub struct EngineConfig {
 
 #[bindings::export(Implementation)]
 impl EngineConfig {
-    #[bindings::export(Constructor)]
+    #[bindings::export(Factory)]
     pub fn new() -> Self {
         Self::default()
     }

@@ -5,7 +5,7 @@ use std::{fs, future::Future, path::Path, pin::Pin};
 pub use config::Config;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Model, ModelAccessibility, ModelEntity, ModelEntityType, ModelReference, ModelSpecialization},
+    types::model::{Model, ModelAccessibility, ModelReference, ModelSpecialization},
 };
 
 use crate::registry::RegistryError;
@@ -77,40 +77,19 @@ impl Registry {
     ) -> Model {
         let path = Path::new(&self.config.path).join(name);
         let identifier = name.to_string();
-        Model {
-            identifier: identifier.clone(),
-            entities: vec![
-                self.entity(ModelEntityType::Registry, &self.config.identifier, &self.config.name),
-                self.entity(ModelEntityType::Backend, &self.config.backend_identifier, &self.config.backend_identifier),
-                self.entity(ModelEntityType::Vendor, &self.config.identifier, &self.config.name),
-                self.entity(ModelEntityType::Family, &self.config.identifier, &self.config.name),
-                self.entity(ModelEntityType::Variant, &identifier, &identifier),
-            ],
-            specializations: vec![ModelSpecialization::Chat],
-            number_of_parameters: None,
-            quantization: None,
-            accessibility: ModelAccessibility::Local {
+        Model::external(
+            identifier.clone(),
+            self.config.identifier.clone(),
+            self.config.name.clone(),
+            self.config.backend_identifier.clone(),
+            self.config.backend_identifier.clone(),
+            self.config.backend_version.clone(),
+            vec![ModelSpecialization::Chat],
+            ModelAccessibility::Local {
                 reference: ModelReference::Local {
                     path: path.to_string_lossy().to_string(),
                 },
             },
-        }
-    }
-
-    fn entity(
-        &self,
-        r#type: ModelEntityType,
-        identifier: &str,
-        name: &str,
-    ) -> ModelEntity {
-        ModelEntity {
-            r#type,
-            identifier: identifier.to_string(),
-            parent_identifier: None,
-            name: name.to_string(),
-            description: None,
-            version: None,
-            icons: vec![],
-        }
+        )
     }
 }

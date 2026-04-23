@@ -16,15 +16,35 @@ async fn test_engine_chat() {
     let config = EngineConfig::default();
     let engine = Engine::new(config).await.unwrap();
 
+    println!("-------------------------");
     let models = engine.models().await.unwrap();
     for model in models {
         let identifier = model.identifier.clone();
-        let registry_identifier = model.registry_entity().map(|entity| entity.identifier);
+        let repo_ids = model.repo_ids();
+        let registry_identifier = model.registry.identifier.clone();
+        let backend_identifiers = model.backends.iter().map(|backend| backend.identifier.clone()).collect::<Vec<_>>();
+        let family_vendor_identifier = model.family.as_ref().map(|family| family.vendor.identifier.clone());
+        let family_identifier = model.family.as_ref().map(|family| family.identifier.clone());
+        let properties_identifier = model.properties.as_ref().map(|properties| properties.identifier.clone());
+        let quantization_vendor_identifier =
+            model.quantization.as_ref().map(|quantization| quantization.vendor.identifier.clone());
+        let quantization_identifier = model.quantization.as_ref().map(|quantization| quantization.identifier.clone());
         let download_phase = engine.downloader(&model).state().await.map_or(None, |state| Some(state.phase));
-        println!("{:?}, {}, {:?}, {:?}", registry_identifier, identifier, download_phase, model.specializations);
+        println!("identifier: {}", identifier);
+        println!("repo_ids: {:?}", repo_ids);
+        println!("registry_identifier: {}", registry_identifier);
+        println!("backend_identifiers: {:?}", backend_identifiers);
+        println!("family_vendor_identifier: {:?}", family_vendor_identifier);
+        println!("family_identifier: {:?}", family_identifier);
+        println!("properties_identifier: {:?}", properties_identifier);
+        println!("quantization_vendor_identifier: {:?}", quantization_vendor_identifier);
+        println!("quantization_identifier: {:?}", quantization_identifier);
+        println!("download_phase: {:?}", download_phase);
+        println!("specializations: {:?}", model.specializations);
+        println!("-------------------------");
     }
 
-    let model = engine.model("alibaba:qwen3:0.6b".to_string()).await.unwrap().unwrap();
+    let model = engine.model("alibaba:qwen3:4b".to_string()).await.unwrap().unwrap();
     if model.is_downloadable() {
         let downloader = engine.downloader(&model);
         downloader.resume().await.unwrap();

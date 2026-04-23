@@ -1,18 +1,25 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::model::{
-    ModelAccessibility, ModelEntity, ModelEntityType, ModelQuantization, ModelReference, ModelSpecialization,
+use crate::types::{
+    basic::Metadata,
+    model::{
+        ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelReference,
+        ModelRegistry, ModelSpecialization,
+    },
 };
 
 #[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Model {
+    #[serde(rename = "id")]
     pub identifier: String,
-    pub entities: Vec<ModelEntity>,
-    pub specializations: Vec<ModelSpecialization>,
-    pub number_of_parameters: Option<i64>,
+    pub registry: ModelRegistry,
+    pub backends: Vec<ModelBackend>,
+    pub family: Option<ModelFamily>,
+    pub properties: Option<ModelProperties>,
     pub quantization: Option<ModelQuantization>,
+    pub specializations: Vec<ModelSpecialization>,
     pub accessibility: ModelAccessibility,
 }
 
@@ -147,37 +154,35 @@ impl Model {
 
 #[bindings::export(Implementation)]
 impl Model {
-    #[bindings::export(Getter)]
-    pub fn registry_entity(&self) -> Option<ModelEntity> {
-        self.entity(ModelEntityType::Registry)
-    }
-
-    #[bindings::export(Getter)]
-    pub fn backend_entity(&self) -> Option<ModelEntity> {
-        self.entity(ModelEntityType::Backend)
-    }
-
-    #[bindings::export(Getter)]
-    pub fn vendor_entity(&self) -> Option<ModelEntity> {
-        self.entity(ModelEntityType::Vendor)
-    }
-
-    #[bindings::export(Getter)]
-    pub fn family_entity(&self) -> Option<ModelEntity> {
-        self.entity(ModelEntityType::Family)
-    }
-
-    #[bindings::export(Getter)]
-    pub fn variant_entity(&self) -> Option<ModelEntity> {
-        self.entity(ModelEntityType::Variant)
-    }
-}
-
-impl Model {
-    fn entity(
-        &self,
-        r#type: ModelEntityType,
-    ) -> Option<ModelEntity> {
-        self.entities.iter().find(|entity| entity.r#type == r#type).map(|entity| entity.clone())
+    #[bindings::export(Factory)]
+    pub fn external(
+        identifier: String,
+        registry_identifier: String,
+        registry_name: String,
+        backend_identifier: String,
+        backend_name: String,
+        backend_version: String,
+        specializations: Vec<ModelSpecialization>,
+        accessibility: ModelAccessibility,
+    ) -> Self {
+        let registry = ModelRegistry {
+            identifier: registry_identifier,
+            metadata: Metadata::external(registry_name),
+        };
+        let backend = ModelBackend {
+            identifier: backend_identifier.clone(),
+            version: backend_version,
+            metadata: Metadata::external(backend_name),
+        };
+        Self {
+            identifier,
+            registry,
+            backends: vec![backend],
+            family: None,
+            properties: None,
+            quantization: None,
+            specializations,
+            accessibility,
+        }
     }
 }
