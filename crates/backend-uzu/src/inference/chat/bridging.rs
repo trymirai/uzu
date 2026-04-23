@@ -64,15 +64,12 @@ pub fn build_decoding_config(
                 .values
                 .iter()
                 .map(|value| {
-                    tokenizer
-                        .encode(value.clone().as_str(), false)
-                        .unwrap()
-                        .get_ids()
-                        .iter()
-                        .map(|&id| id as u64)
-                        .collect()
+                    let encoding = tokenizer.encode(value.as_str(), false).map_err(|error| Error::Runtime {
+                        message: error.to_string(),
+                    })?;
+                    Ok(encoding.get_ids().iter().map(|&id| id as u64).collect::<Vec<_>>())
                 })
-                .collect();
+                .collect::<Result<Vec<Vec<u64>>, Error>>()?;
             let speculator = FixedTokensSpeculator::new(proposals);
             SpeculatorConfig::new(speculator.max_trie_nodes(), Arc::new(speculator))
         },

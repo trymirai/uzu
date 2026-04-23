@@ -19,6 +19,7 @@ pub mod logs;
 pub mod registry;
 #[cfg(not(target_family = "wasm"))]
 pub mod storage;
-
+#[cfg(not(target_family = "wasm"))]
 pub use nagare as session;
+#[cfg(not(target_family = "wasm"))]
 pub use shoji::*;
