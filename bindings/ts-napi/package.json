@@ -1,0 +1,28 @@
+{
+  "name": "@trymirai/uzu-napi",
+  "version": "0.0.0",
+  "private": false,
+  "main": "uzu.node",
+  "types": "uzu.d.ts",
+  "packageManager": "pnpm@10.14.0",
+  "devDependencies": {
+    "@napi-rs/cli": "3.1.2",
+    "@types/node": "24.2.0",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.2"
+  },
+  "napi": {
+    "binaryName": "uzu"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "uzu.node",
+    "uzu.d.ts",
+    "package.json"
+  ]
+}

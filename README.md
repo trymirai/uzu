@@ -103,27 +103,29 @@ uzu = { git = "https://github.com/trymirai/uzu", branch = "main", package = "uzu
 Then, create an inference `Session` with a specific model and configuration:
 
 ```rust
-use std::path::PathBuf;
-
-use uzu::session::{
-    Session,
-    config::{DecodingConfig, RunConfig},
-    types::{Input, Output},
+use uzu::{
+    engine::{Engine, EngineConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = PathBuf::from("MODEL_PATH");
-    let mut session = Session::new(model_path, DecodingConfig::default())?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = EngineConfig::default();
+    let engine = Engine::new(config).await?;
 
-    let input = Input::Text(String::from("Tell about London"));
-    let output = session.run(
-        input,
-        RunConfig::default().tokens_limit(128),
-        Some(|_: Output| {
-            return true;
-        }),
-    )?;
-    println!("{}", output.text.original);
+    let model = engine.model("alibaba:qwen3:0.6b".to_string()).await?.ok_or("Model not found")?;
+    while let Some(update) = engine.download(&model).await?.next().await {
+        println!("Downloading: {}", update.progress());
+    }
+
+    let session = engine.chat(model, ChatConfig::default()).await?;
+    let outputs = session
+        .reply(vec![ChatMessage::user().with_text("Tell about London".to_string())], ChatReplyConfig::default())
+        .await?;
+    for output in outputs {
+        println!("{}", output.message.text().unwrap_or_default());
+    }
+
     Ok(())
 }
 ```

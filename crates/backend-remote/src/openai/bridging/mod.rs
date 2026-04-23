@@ -8,7 +8,7 @@ use async_openai::{Client, config::OpenAIConfig};
 use futures::Stream;
 use shoji::{
     traits::backend::{Error as BackendError, chat_message::Output},
-    types::{encoding::Message, session::chat::StreamConfig},
+    types::session::chat::{ChatMessage, ChatReplyConfig},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -17,8 +17,8 @@ pub trait ApiStream: Send + Sync {
         &self,
         client: Arc<Client<OpenAIConfig>>,
         model: String,
-        config: StreamConfig,
-        messages: Vec<Message>,
+        config: ChatReplyConfig,
+        messages: Vec<ChatMessage>,
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Output, BackendError>> + Send>>;
 }

@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use shoji::types::model::{Accessibility, Entity, EntityType, File, Hash, HashMethod, Model, Reference};
+use shoji::types::{
+    basic::{File, Hash, HashMethod, Metadata},
+    model::{Model, ModelAccessibility, ModelBackend, ModelReference, ModelRegistry},
+};
 use tokio::runtime::Handle;
 use uzu::{
     device::Device,
@@ -49,54 +52,15 @@ impl TestStorage {
 }
 
 fn test_model(index: usize) -> Model {
-    let registry_entity = Entity {
-        r#type: EntityType::Registry,
+    let registry = ModelRegistry {
         identifier: "test-registry".to_string(),
-        parent_identifier: None,
-        version: None,
-        name: "Test Registry".to_string(),
-        description: None,
-        icons: vec![],
+        metadata: Metadata::external("test-registry-metadata".to_string()),
     };
 
-    let backend_entity = Entity {
-        r#type: EntityType::Backend,
+    let backend = ModelBackend {
         identifier: "test-backend".to_string(),
-        parent_identifier: None,
-        version: None,
-        name: "Test Backend".to_string(),
-        description: None,
-        icons: vec![],
-    };
-
-    let vendor_entity = Entity {
-        r#type: EntityType::Vendor,
-        identifier: "test-vendor".to_string(),
-        parent_identifier: None,
-        version: None,
-        name: "Test Vendor".to_string(),
-        description: None,
-        icons: vec![],
-    };
-
-    let family_entity = Entity {
-        r#type: EntityType::Family,
-        identifier: "test-family".to_string(),
-        parent_identifier: None,
-        version: None,
-        name: "Test Family".to_string(),
-        description: None,
-        icons: vec![],
-    };
-
-    let model_entity = Entity {
-        r#type: EntityType::Variant,
-        identifier: format!("test-model-{}", index),
-        parent_identifier: None,
-        version: None,
-        name: format!("Test Model {}", index),
-        description: None,
-        icons: vec![],
+        version: "1.0".to_string(),
+        metadata: Metadata::external("test-backend-metadata".to_string()),
     };
 
     let files_1 = vec![
@@ -161,12 +125,14 @@ fn test_model(index: usize) -> Model {
 
     Model {
         identifier: format!("test-model-{}", index),
-        entities: vec![registry_entity, backend_entity, vendor_entity, family_entity, model_entity],
-        specializations: vec![],
-        number_of_parameters: None,
+        registry: registry,
+        backends: vec![backend],
+        family: None,
+        properties: None,
         quantization: None,
-        accessibility: Accessibility::Local {
-            reference: Reference::Mirai {
+        specializations: vec![],
+        accessibility: ModelAccessibility::Local {
+            reference: ModelReference::Mirai {
                 toolchain_version: "1.0".to_string(),
                 repository: None,
                 source_repository: None,

@@ -3,14 +3,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use console::Style;
-use indicatif::{ProgressBar, ProgressStyle};
-use inquire::Text;
-use uzu::session::{
+use backend_uzu::session::{
     config::RunConfig,
     parameter::SamplingPolicy,
     types::{Input, Output},
 };
+use console::Style;
+use indicatif::{ProgressBar, ProgressStyle};
+use inquire::Text;
 
 use crate::server::load_session;
 

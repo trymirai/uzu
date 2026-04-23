@@ -20,13 +20,13 @@ async fn test_storage_debug_file_preservation_complete_app_relaunch_resume() -> 
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
                 let test_storage = TestStorage::new_with_base_path(base_path_clone).await.unwrap();
-                let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
-                tracing::info!("[S1] Starting download for {}", test_storage.model(0).identifier());
+                let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
+                tracing::info!("[S1] Starting download for {}", test_storage.model(0).identifier.clone());
                 model.download().await.unwrap();
                 let mut reached_target = false;
                 for i in 0..180 {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+                    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
                     tracing::info!("[S1] Iteration {}: pausing model", i);
                     model.pause().await.unwrap();
                     let state = model.state().await;
@@ -47,11 +47,11 @@ async fn test_storage_debug_file_preservation_complete_app_relaunch_resume() -> 
                     model.download().await.unwrap();
                 }
                 assert!(reached_target, "Failed to reach target progress");
-                let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+                let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
                 tracing::info!("[S1] Pausing before shutdown");
                 model.pause().await.unwrap();
                 tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+                let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
                 let state = model.state().await;
                 let progress = state.progress();
                 let bytes = state.downloaded_bytes;
@@ -108,7 +108,7 @@ async fn test_storage_debug_file_preservation_complete_app_relaunch_resume() -> 
                     );
                 }
 
-                let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+                let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
                 let state = model.state().await;
                 let progress_session2 = state.progress();
                 let bytes_session2 = state.downloaded_bytes;
@@ -129,7 +129,7 @@ async fn test_storage_debug_file_preservation_complete_app_relaunch_resume() -> 
                 tracing::info!("[S2] Resuming download after relaunch");
                 model.download().await.unwrap();
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+                let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
                 let state = model.state().await;
                 let progress_after_resume = state.progress();
                 let bytes_after_resume = state.downloaded_bytes;
@@ -163,12 +163,12 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
     let (progress_at_pause, bytes_at_pause, _total_bytes);
     {
         let test_storage = TestStorage::new_with_base_path(base_path_clone).await.unwrap();
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         model.download().await.unwrap();
         let mut reached_target = false;
         for i in 0..180 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+            let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
             let state = model.state().await;
             let progress = state.progress();
             let _downloaded = state.downloaded_bytes;
@@ -182,23 +182,23 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
         if !reached_target {
             return Err("Failed to reach target progress range in time".into());
         }
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         model.pause().await?;
         for i in 0..20 {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+            let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
             let state = model.state().await;
-            if matches!(state.phase, DownloadPhase::Paused) {
+            if matches!(state.phase, DownloadPhase::Paused {}) {
                 break;
             }
             if i == 19 {}
         }
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         let state = model.state().await;
         progress_at_pause = state.progress();
         bytes_at_pause = state.downloaded_bytes;
         _total_bytes = state.total_bytes;
-        if !matches!(state.phase, DownloadPhase::Paused) {}
+        if !matches!(state.phase, DownloadPhase::Paused {}) {}
         let model_dir = test_storage.config.cache_model_path(&test_storage.model(0)).unwrap();
         let mut resume_files = Vec::new();
         if model_dir.exists() {
@@ -240,11 +240,11 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
                 let _meta = entry.metadata().await?;
             }
         }
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         let state = model.state().await;
         let progress_after_relaunch = state.progress();
         let bytes_after_relaunch = state.downloaded_bytes;
-        assert!(matches!(state.phase, DownloadPhase::Paused), "Model should be Paused after relaunch");
+        assert!(matches!(state.phase, DownloadPhase::Paused {}), "Model should be Paused after relaunch");
         let progress_diff = (progress_at_pause - progress_after_relaunch).abs();
         let _bytes_diff = (bytes_at_pause as i64 - bytes_after_relaunch as i64).abs();
         assert!(
@@ -273,10 +273,10 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
                 }
             }
         }
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         model.download().await?;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let model_immediate = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model_immediate = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         let state = model_immediate.state().await;
         let progress_immediate = state.progress();
         let bytes_immediate = state.downloaded_bytes;
@@ -294,10 +294,10 @@ async fn test_storage_debug_file_preservation_resume_from_20_percent() -> Result
             );
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         model.pause().await?;
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         let state = model.state().await;
         let progress_after_resume = state.progress();
         let bytes_after_resume = state.downloaded_bytes;
@@ -328,7 +328,7 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
     let (_progress_after_pause, downloaded_bytes_after_pause);
     {
         let test_storage = TestStorage::new_with_base_path(base_dir_clone).await.unwrap();
-        let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         model.download().await?;
         let mut config_done = false;
         let mut tokenizer_done = false;
@@ -357,16 +357,16 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
         }
 
         // Check if download is already complete before trying to pause
-        let model_before_pause = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model_before_pause = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
 
         let state = model_before_pause.state().await;
-        if !matches!(state.phase, DownloadPhase::Downloaded) {
-            let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        if !matches!(state.phase, DownloadPhase::Downloaded {}) {
+            let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
             model.pause().await?;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
 
-        let model_paused = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model_paused = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         let state = model_paused.state().await;
         _progress_after_pause = state.progress();
         downloaded_bytes_after_pause = state.downloaded_bytes;
@@ -383,12 +383,12 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
                 let _meta = entry.metadata().await?;
             }
         }
-        let model_relaunched = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model_relaunched = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         let state = model_relaunched.state().await;
         let _progress_after_relaunch = state.progress();
         let downloaded_bytes_after_relaunch = state.downloaded_bytes;
         assert!(
-            matches!(state.phase, DownloadPhase::Paused | DownloadPhase::Downloaded),
+            matches!(state.phase, DownloadPhase::Paused {} | DownloadPhase::Downloaded {}),
             "Model should be Paused or Downloaded after relaunch, got: {:?}",
             state.phase
         );
@@ -411,18 +411,21 @@ async fn test_storage_debug_file_preservation_completed_file_detection() -> Resu
 
         // Only try to resume if not already downloaded
         let state = model_relaunched.state().await;
-        if !matches!(state.phase, DownloadPhase::Downloaded) {
-            let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        if !matches!(state.phase, DownloadPhase::Downloaded {}) {
+            let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
             model.download().await?;
             tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         }
 
-        let model_resumed = test_storage.storage.get(&test_storage.model(0).identifier()).await.unwrap();
+        let model_resumed = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.unwrap();
         let state = model_resumed.state().await;
         let _progress_after_resume = state.progress();
         let downloaded_bytes_after_resume = state.downloaded_bytes;
         assert!(
-            matches!(state.phase, DownloadPhase::Downloading | DownloadPhase::Paused | DownloadPhase::Downloaded),
+            matches!(
+                state.phase,
+                DownloadPhase::Downloading {} | DownloadPhase::Paused {} | DownloadPhase::Downloaded {}
+            ),
             "Model should be Downloading, Paused, or Downloaded after resume, got: {:?}",
             state.phase
         );

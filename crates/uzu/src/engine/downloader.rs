@@ -1,14 +1,16 @@
+use serde::{Deserialize, Serialize};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
-    engine::Error,
+    engine::EngineError,
     helpers::SharedAccess,
     storage::{
-        Error as StorageError, Storage,
+        Storage, StorageError,
         types::{DownloadPhase, DownloadState},
     },
 };
 
+#[bindings::export(Class)]
 pub struct Downloader {
     identifier: String,
     storage: SharedAccess<Storage>,
@@ -24,21 +26,28 @@ impl Downloader {
             storage,
         }
     }
+}
 
+#[bindings::export(Implementation)]
+impl Downloader {
+    #[bindings::export(Getter)]
     pub async fn state(&self) -> Option<DownloadState> {
         self.storage.lock().await.state(&self.identifier).await
     }
 
-    pub async fn resume(&self) -> Result<(), Error> {
+    #[bindings::export(Method)]
+    pub async fn resume(&self) -> Result<(), EngineError> {
         let state = self.state().await.ok_or(StorageError::ItemNotFound {
             identifier: self.identifier.clone(),
         })?;
         let result = match state.phase {
-            DownloadPhase::Downloading | DownloadPhase::Downloaded => Ok(()),
-            DownloadPhase::NotDownloaded | DownloadPhase::Paused | DownloadPhase::Locked => {
+            DownloadPhase::Downloading {} | DownloadPhase::Downloaded {} => Ok(()),
+            DownloadPhase::NotDownloaded {} | DownloadPhase::Paused {} | DownloadPhase::Locked {} => {
                 Ok(self.storage.lock().await.download(&self.identifier).await?)
             },
-            DownloadPhase::Error(_) => {
+            DownloadPhase::Error {
+                ..
+            } => {
                 let storage = self.storage.lock().await;
                 storage.delete(&self.identifier).await?;
                 Ok(storage.download(&self.identifier).await?)
@@ -47,33 +56,37 @@ impl Downloader {
         result
     }
 
-    pub async fn pause(&self) -> Result<(), Error> {
+    #[bindings::export(Method)]
+    pub async fn pause(&self) -> Result<(), EngineError> {
         Ok(self.storage.lock().await.pause(&self.identifier).await?)
     }
 
-    pub async fn delete(&self) -> Result<(), Error> {
+    #[bindings::export(Method)]
+    pub async fn delete(&self) -> Result<(), EngineError> {
         Ok(self.storage.lock().await.delete(&self.identifier).await?)
     }
 
-    pub async fn progress(&self) -> Option<Stream> {
+    #[bindings::export(Method)]
+    pub async fn progress(&self) -> Result<DownloaderStream, EngineError> {
         let identifier = self.identifier.clone();
         let Some(state) = self.state().await else {
-            return None;
+            return Err(EngineError::UnableToGetDownloaderProgressStream {});
         };
-        if matches!(state.phase, DownloadPhase::Downloaded) {
-            return None;
+        if matches!(state.phase, DownloadPhase::Downloaded {}) {
+            return Err(EngineError::UnableToGetDownloaderProgressStream {});
         }
         let stream = self.storage.lock().await.subscribe();
-        Some(Stream::new(identifier, stream))
+        Ok(DownloaderStream::new(identifier, stream))
     }
 }
 
-pub struct Stream {
+#[bindings::export(Class)]
+pub struct DownloaderStream {
     identifier: String,
     stream: SharedAccess<Option<BroadcastStream<(String, DownloadState)>>>,
 }
 
-impl Stream {
+impl DownloaderStream {
     pub(crate) fn new(
         identifier: String,
         stream: BroadcastStream<(String, DownloadState)>,
@@ -84,22 +97,35 @@ impl Stream {
         }
     }
 
-    pub async fn next(&self) -> Option<Update> {
+    pub(crate) fn empty(identifier: String) -> Self {
+        Self {
+            identifier,
+            stream: SharedAccess::new(None),
+        }
+    }
+}
+
+#[bindings::export(Implementation)]
+impl DownloaderStream {
+    #[bindings::export(Method)]
+    pub async fn next(&self) -> Option<DownloaderStreamUpdate> {
         let mut stream_guard = self.stream.lock().await;
         let stream = stream_guard.as_mut()?;
         while let Some(result) = stream.next().await {
             if let Ok((identifier, state)) = result {
                 if identifier == self.identifier {
-                    let update = Update {
+                    let update = DownloaderStreamUpdate {
                         bytes_total: state.total_bytes,
                         bytes_downloaded: state.downloaded_bytes,
                     };
                     match state.phase {
-                        DownloadPhase::Downloading | DownloadPhase::Locked => {},
-                        DownloadPhase::NotDownloaded
-                        | DownloadPhase::Downloaded
-                        | DownloadPhase::Error(_)
-                        | DownloadPhase::Paused => {
+                        DownloadPhase::Downloading {} | DownloadPhase::Locked {} => {},
+                        DownloadPhase::NotDownloaded {}
+                        | DownloadPhase::Downloaded {}
+                        | DownloadPhase::Error {
+                            ..
+                        }
+                        | DownloadPhase::Paused {} => {
                             *stream_guard = None;
                         },
                     }
@@ -111,12 +137,16 @@ impl Stream {
     }
 }
 
-pub struct Update {
-    pub bytes_total: u64,
-    pub bytes_downloaded: u64,
+#[bindings::export(ClassCloneable)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DownloaderStreamUpdate {
+    pub bytes_total: i64,
+    pub bytes_downloaded: i64,
 }
 
-impl Update {
+#[bindings::export(Implementation)]
+impl DownloaderStreamUpdate {
+    #[bindings::export(Getter)]
     pub fn progress(&self) -> f32 {
         if self.bytes_total == 0 {
             0.0

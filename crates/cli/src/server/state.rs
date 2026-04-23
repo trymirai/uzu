@@ -3,9 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use console::Style;
-use indicatif::{ProgressBar, ProgressStyle};
-use uzu::{
+use backend_uzu::{
     prelude::{NGramSpeculator, SamplingSeed, SpeculatorConfig},
     session::{
         Session,
@@ -14,6 +12,8 @@ use uzu::{
         types::{Error, Input, Output},
     },
 };
+use console::Style;
+use indicatif::{ProgressBar, ProgressStyle};
 
 pub trait RunSession {
     fn run(

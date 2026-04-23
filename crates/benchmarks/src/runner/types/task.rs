@@ -1,5 +1,5 @@
+use backend_uzu::session::types::Message;
 use serde::{Deserialize, Serialize};
-use uzu::session::types::Message;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {

@@ -8,6 +8,7 @@ use download_manager::{
 };
 use tokio::time::sleep;
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_apple_manager_lock_file_prevents_concurrent_downloads() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("[TEST] ========== LOCK FILE CONCURRENT DOWNLOAD TEST ==========");

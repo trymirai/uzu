@@ -27,7 +27,7 @@ impl Config {
     }
 
     pub fn cache_path(&self) -> PathBuf {
-        self.base_path.clone().unwrap_or(self.device.home_path.clone()).join(".cache").join(&self.name)
+        self.base_path.clone().unwrap_or(PathBuf::from(self.device.home_path.clone())).join(".cache").join(&self.name)
     }
 
     pub fn cache_models_path(&self) -> PathBuf {

@@ -3,15 +3,15 @@ use std::{future::Future, pin::Pin};
 use shoji::{traits::Registry, types::model::Model};
 use tokio::sync::Mutex;
 
-use crate::registry::Error;
+use crate::registry::RegistryError;
 
 pub struct CachedRegistry {
-    registry: Box<dyn Registry<Error = Error>>,
+    registry: Box<dyn Registry<Error = RegistryError>>,
     models: Mutex<Option<Vec<Model>>>,
 }
 
 impl CachedRegistry {
-    pub fn new(registry: Box<dyn Registry<Error = Error>>) -> Self {
+    pub fn new(registry: Box<dyn Registry<Error = RegistryError>>) -> Self {
         Self {
             registry,
             models: Mutex::new(None),
@@ -25,13 +25,13 @@ impl CachedRegistry {
 }
 
 impl Registry for CachedRegistry {
-    type Error = Error;
+    type Error = RegistryError;
 
     fn indentifier(&self) -> String {
         self.registry.indentifier()
     }
 
-    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Error>> + Send + '_>> {
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             let mut cached_models = self.models.lock().await;
             if let Some(cached_models) = cached_models.as_ref() {

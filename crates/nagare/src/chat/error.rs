@@ -1,12 +1,17 @@
-#[derive(Debug, thiserror::Error)]
+use serde::{Deserialize, Serialize};
+
+#[bindings::export(Error)]
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error {
+pub enum ChatSessionError {
     #[error("Backend error: {message}")]
     Backend {
         message: String,
     },
     #[error("Unsupported model")]
-    UnsupportedModel,
+    UnsupportedModel {},
     #[error("Unable to perform operation in current state")]
-    UnableToPerformOperationInCurrentState,
+    UnableToPerformOperationInCurrentState {},
+    #[error("No response")]
+    NoResponse {},
 }

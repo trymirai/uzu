@@ -11,7 +11,7 @@ pub use config::Config;
 pub use error::Error;
 use shoji::types::{
     basic::{Token, TokenId},
-    encoding::{ContentBlock, Message},
+    session::chat::{ChatContentBlock, ChatMessage},
 };
 use token_stream_parser::{Parser as _, token_stream::TokenStreamParser};
 use tokenizers::{Tokenizer, step_decode_stream};
@@ -43,7 +43,7 @@ pub struct Encoding {
 impl EncodingTrait for Encoding {
     type Config = Config;
     type Context = Context;
-    type Input = Vec<Message>;
+    type Input = Vec<ChatMessage>;
     type Output = Vec<TokenId>;
     type State = State;
     type Error = Error;
@@ -138,8 +138,8 @@ impl EncodingTrait for Encoding {
 impl Encoding {
     fn fill_default_content(
         &self,
-        messages: &[Message],
-    ) -> Result<Vec<Message>, Error> {
+        messages: &[ChatMessage],
+    ) -> Result<Vec<ChatMessage>, Error> {
         let mut modified_messages = Vec::new();
         for message in messages {
             let mut modified_message = message.clone();
@@ -168,7 +168,7 @@ impl Encoding {
                                 {
                                     modified_message.content.insert(
                                         0,
-                                        ContentBlock::Text {
+                                        ChatContentBlock::Text {
                                             value: expected_value,
                                         },
                                     );
@@ -187,12 +187,12 @@ impl Encoding {
     fn update_messages_from_parser_state(&mut self) -> Result<(), Error> {
         let value = self.parser.state().value.clone();
         let rendering_config = &self.config.rendering;
-        let streamed_messages: Vec<Message> = serde_json::from_value::<Vec<StreamedMessage>>(value)
+        let streamed_messages: Vec<ChatMessage> = serde_json::from_value::<Vec<StreamedMessage>>(value)
             .map_err(|_| Error::InvalidStreamedContent)?
             .into_iter()
             .map(|streamed_message| {
                 let role = rendering_config.get_role_by_name(&streamed_message.role.to_string());
-                let mut message = Message::from(streamed_message);
+                let mut message = ChatMessage::from(streamed_message);
                 message.role = role;
                 message
             })

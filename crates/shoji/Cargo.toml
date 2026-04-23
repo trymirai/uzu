@@ -36,6 +36,7 @@ thiserror.workspace = true
 indexmap.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
+hound.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
