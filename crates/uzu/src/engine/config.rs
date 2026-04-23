@@ -41,17 +41,17 @@ impl EngineConfig {
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        process_env_to_keyring();
+        let keyring = process_env_to_keyring();
         Self {
-            mirai_api_key: retrieve_keyring_or_env_value(KEY_MIRAI_API_KEY),
-            lalamo_path: retrieve_keyring_or_env_value(KEY_LALAMO_PATH),
-            huggingface_api_key: retrieve_keyring_or_env_value(KEY_HF_TOKEN),
-            openai_api_key: retrieve_keyring_or_env_value(KEY_OPENAI_API_KEY),
-            anthropic_api_key: retrieve_keyring_or_env_value(KEY_ANTHROPIC_API_KEY),
-            gemini_api_key: retrieve_keyring_or_env_value(KEY_GEMINI_API_KEY),
-            xai_api_key: retrieve_keyring_or_env_value(KEY_XAI_API_KEY),
-            baseten_api_key: retrieve_keyring_or_env_value(KEY_BASETEN_API_KEY),
-            openrouter_api_key: retrieve_keyring_or_env_value(KEY_OPENROUTER_API_KEY),
+            mirai_api_key: retrieve_keyring_or_env_value(&keyring, KEY_MIRAI_API_KEY),
+            lalamo_path: retrieve_keyring_or_env_value(&keyring, KEY_LALAMO_PATH),
+            huggingface_api_key: retrieve_keyring_or_env_value(&keyring, KEY_HF_TOKEN),
+            openai_api_key: retrieve_keyring_or_env_value(&keyring, KEY_OPENAI_API_KEY),
+            anthropic_api_key: retrieve_keyring_or_env_value(&keyring, KEY_ANTHROPIC_API_KEY),
+            gemini_api_key: retrieve_keyring_or_env_value(&keyring, KEY_GEMINI_API_KEY),
+            xai_api_key: retrieve_keyring_or_env_value(&keyring, KEY_XAI_API_KEY),
+            baseten_api_key: retrieve_keyring_or_env_value(&keyring, KEY_BASETEN_API_KEY),
+            openrouter_api_key: retrieve_keyring_or_env_value(&keyring, KEY_OPENROUTER_API_KEY),
             allow_ollama_usage: true,
             allow_lmstudio_usage: true,
         }
@@ -191,7 +191,7 @@ impl EngineConfig {
     }
 }
 
-fn process_env_to_keyring() {
+fn process_env_to_keyring() -> Option<Keyring> {
     let keys = vec![
         KEY_MIRAI_API_KEY,
         KEY_LALAMO_PATH,
@@ -204,23 +204,29 @@ fn process_env_to_keyring() {
         KEY_OPENROUTER_API_KEY,
     ];
 
-    let keyring = Keyring::new();
+    let keyring = Keyring::new().ok()?;
     for key in keys {
         if let Ok(env_value) = env::var(key) {
             keyring.store(key.to_string(), env_value).ok();
         }
     }
+    Some(keyring)
 }
 
-fn retrieve_keyring_or_env_value(key: &str) -> Option<String> {
-    let keyring = Keyring::new();
-    keyring.retrieve(key.to_string()).ok().or_else(|| env::var(key).ok())
+fn retrieve_keyring_or_env_value(
+    keyring: &Option<Keyring>,
+    key: &str,
+) -> Option<String> {
+    keyring.as_ref().and_then(|keyring| keyring.retrieve(key.to_string())).or_else(|| env::var(key).ok())
 }
 
 fn store_keyring_pair(
     key: &str,
     value: &str,
 ) -> bool {
-    let keyring = Keyring::new();
-    keyring.store(key.to_string(), value.to_string()).is_ok()
+    if let Ok(keyring) = Keyring::new() {
+        keyring.store(key.to_string(), value.to_string()).is_ok()
+    } else {
+        false
+    }
 }

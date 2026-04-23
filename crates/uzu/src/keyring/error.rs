@@ -6,4 +6,6 @@ pub enum KeyringError {
     BackendError {
         message: String,
     },
+    #[error(transparent)]
+    Device(#[from] crate::device::DeviceError),
 }

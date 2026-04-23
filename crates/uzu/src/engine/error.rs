@@ -9,6 +9,8 @@ pub enum EngineError {
     #[error(transparent)]
     Device(#[from] crate::device::DeviceError),
     #[error(transparent)]
+    Keyring(#[from] crate::keyring::KeyringError),
+    #[error(transparent)]
     Storage(#[from] crate::storage::StorageError),
     #[error(transparent)]
     Registry(#[from] crate::registry::RegistryError),

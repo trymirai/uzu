@@ -144,8 +144,8 @@ impl Engine {
     }
 
     #[bindings::export(Getter)]
-    pub fn keyring(&self) -> Keyring {
-        Keyring::new()
+    pub fn keyring(&self) -> Result<Keyring, EngineError> {
+        Ok(Keyring::new()?)
     }
 }
 
