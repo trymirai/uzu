@@ -20,9 +20,7 @@ impl<B: Backend> SparseArray<B> {
         shape: &[usize],
     ) -> Self {
         let size = size_for_shape(shape, data_type);
-        let mut buffer = context.create_sparse_buffer(size).expect("Failed to create sparse buffer");
-        // TODO: remove
-        buffer.extend(size);
+        let buffer = context.create_sparse_buffer(size).expect("Failed to create sparse buffer");
         Self {
             buffer: Rc::new(RefCell::new(buffer)),
             data_type,
@@ -36,6 +34,36 @@ impl<B: Backend> SparseArray<B> {
 
     pub fn shape(&self) -> &[usize] {
         &self.shape
+    }
+
+    /// Bytes needed for `rows` leading entries along axis 0.
+    fn row_bytes(&self) -> usize {
+        self.shape.iter().skip(1).product::<usize>() * self.data_type.size_in_bytes()
+    }
+
+    /// Ensure the underlying sparse buffer is backed for at least `rows`
+    /// entries along axis 0. Grows on demand; never shrinks.
+    pub fn ensure_rows(
+        &self,
+        rows: usize,
+    ) {
+        let required = rows * self.row_bytes();
+        let mut buffer = self.buffer.borrow_mut();
+        if buffer.length() < required {
+            let add = required - buffer.length();
+            buffer.extend(add);
+        }
+    }
+
+    /// Ensure the buffer is fully backed up to its logical shape.
+    /// Needed when writes happen on a non-leading axis.
+    pub fn ensure_full(&self) {
+        let required = size_for_shape(&self.shape, self.data_type);
+        let mut buffer = self.buffer.borrow_mut();
+        if buffer.length() < required {
+            let add = required - buffer.length();
+            buffer.extend(add);
+        }
     }
 
     pub fn copy_slice(
@@ -73,6 +101,16 @@ impl<B: Backend> SparseArray<B> {
         let rows_to_copy = src_range.end - src_range.start;
         assert!(dst_offset + rows_to_copy <= self.shape()[axis]);
         assert!(src_range.end <= source.shape()[axis]);
+
+        // On-demand extend: make sure both source and destination sparse buffers
+        // are backed for the byte ranges about to be read/written.
+        if axis == 0 {
+            source.ensure_rows(src_range.end);
+            self.ensure_rows(dst_offset + rows_to_copy);
+        } else {
+            source.ensure_full();
+            self.ensure_full();
+        }
 
         let src_sparse_buffer_rc = source.sparse_buffer();
         let src_sparse_buffer = src_sparse_buffer_rc.borrow();

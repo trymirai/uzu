@@ -51,7 +51,7 @@ impl MetalSparseBuffer {
 
         let heap_desc = MTLHeapDescriptor::new();
         heap_desc.set_type(MTLHeapType::Placement);
-        heap_desc.set_storage_mode(MTLStorageMode::Shared);
+        heap_desc.set_storage_mode(MTLStorageMode::Private);
         heap_desc.set_size(aligned_capacity);
         heap_desc.set_max_compatible_placement_sparse_page_size(page_size);
         let Some(heap) = context.device.new_heap_with_descriptor(&heap_desc) else {

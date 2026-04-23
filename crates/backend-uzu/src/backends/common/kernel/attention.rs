@@ -104,8 +104,9 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let q_head_stride = (args.suffix_length * head_dim) as i64;
         let q_seq_stride = head_dim as i64;
 
-        let kv_head_stride = (args.max_sequence_length * head_dim) as i64;
-        let kv_seq_stride = head_dim as i64;
+        // KV cache layout: [max_sequence_length, num_groups, head_dim]
+        let kv_head_stride = head_dim as i64;
+        let kv_seq_stride = (args.num_groups * head_dim) as i64;
 
         let o_head_stride = head_dim as i64;
         let o_seq_stride = (args.num_heads * head_dim) as i64;

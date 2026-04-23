@@ -25,23 +25,24 @@ PUBLIC KERNEL(AttentionUpdateKVCache)(
 
   const uint cacheTokenIndex = prefix_segment_length + token_index;
 
-  // Copy rotated key to cache
+  // keys_in_place=true: destination shares rotated_keys' group-major layout.
+  // Otherwise, KV cache is token-major: [max_sequence_length, num_groups, head_dim].
+  const uint cacheOffset =
+      keys_in_place
+          ? ((group_index * max_sequence_length + cacheTokenIndex) * head_dim +
+             dim_index)
+          : ((cacheTokenIndex * num_groups + group_index) * head_dim +
+             dim_index);
+
   const uint rotatedKeyOffset =
       (group_index * suffix_length + token_index) * head_dim + dim_index;
-  const uint keyCacheOffset =
-      (group_index * max_sequence_length + cacheTokenIndex) * head_dim +
-      dim_index;
-  key_cache[keyCacheOffset] = rotated_keys[rotatedKeyOffset];
+  key_cache[cacheOffset] = rotated_keys[rotatedKeyOffset];
 
-  // Copy value to cache
   // qkv layout: [suffix_length, (num_heads + 2*num_groups) * head_dim]
   // Values start at offset: (num_heads * head_dim) + (num_groups * head_dim)
   const uint qkvStride = (num_heads + 2 * num_groups) * head_dim;
   const uint valueBaseOffset = (num_heads + num_groups) * head_dim;
   const uint valueOffset = token_index * qkvStride + valueBaseOffset +
                            group_index * head_dim + dim_index;
-  const uint valueCacheOffset =
-      (group_index * max_sequence_length + cacheTokenIndex) * head_dim +
-      dim_index;
-  value_cache[valueCacheOffset] = qkv[valueOffset];
+  value_cache[cacheOffset] = qkv[valueOffset];
 }

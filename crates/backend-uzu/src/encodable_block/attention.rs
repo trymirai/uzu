@@ -212,7 +212,7 @@ impl<B: Backend> Attention<B> {
             };
 
         let is_kv_cache_ring = ring_params.is_some();
-        let max_sequence_length = key_cache_sparse_array.as_ref().map_or(suffix_length, |array| array.shape()[1]);
+        let max_sequence_length = key_cache_sparse_array.as_ref().map_or(suffix_length, |array| array.shape()[0]);
         let sequence_length = segment_prefix_length + suffix_length;
         let gqa_factor = num_heads / num_groups;
         let scale = self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
@@ -239,6 +239,15 @@ impl<B: Backend> Attention<B> {
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
+
+        // Token-major layout [max_sequence_length, num_groups, head_dim]: grow the
+        // sparse buffers on demand to fit the rows (tokens) about to be written/read.
+        // Must be done before borrowing the underlying sparse buffers below.
+        if has_kv_cache {
+            let required_rows = segment_prefix_length + suffix_length;
+            key_cache_sparse_array.as_ref().unwrap().ensure_rows(required_rows);
+            value_cache_sparse_array.as_ref().unwrap().ensure_rows(required_rows);
+        }
 
         let key_cache_sparse_buffer_rc = key_cache_sparse_array.as_ref().map(|array| array.sparse_buffer());
         let mut key_cache_sparse_buffer_ref = key_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
@@ -319,10 +328,19 @@ impl<B: Backend> Attention<B> {
             extracted_values_buf_borrow.as_ref().unwrap().deref()
         };
 
-        let k_head_stride = (max_sequence_length * head_dim) as i32;
-        let k_seq_stride = head_dim as i32;
-        let v_head_stride = (max_sequence_length * head_dim) as i32;
-        let v_seq_stride = head_dim as i32;
+        // KV cache layout: [max_sequence_length, num_groups, head_dim] (token-major)
+        // For classifier mode (no KV cache) keys/values still come in group-major layout
+        // [num_groups, suffix_length, head_dim].
+        let (k_head_stride, k_seq_stride, v_head_stride, v_seq_stride) = if has_kv_cache {
+            (head_dim as i32, (num_groups * head_dim) as i32, head_dim as i32, (num_groups * head_dim) as i32)
+        } else {
+            (
+                (max_sequence_length * head_dim) as i32,
+                head_dim as i32,
+                (max_sequence_length * head_dim) as i32,
+                head_dim as i32,
+            )
+        };
 
         let kernel_key = KernelKey {
             head_dim: head_dim as u32,
