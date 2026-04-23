@@ -1,7 +1,6 @@
 #pragma once
 
-#include "fragment.h"
-#include "alu_fragment_ops.h"
+#include "simdgroup_fragment.h"
 
 using namespace metal;
 
@@ -28,7 +27,10 @@ template <
     typename Epilogue = TransformNone<U, AccumulatorType>>
 struct ThreadgroupTile {
   METAL_CONST ushort SIMDGROUP_BLOCK_SIZE = 8;
-  using AluFragmentOpsType = AluFragmentOps<AccumulatorType>;
+  using SimdgroupMultiplyAccumulateType = SimdgroupMultiplyAccumulate<
+      AccumulatorType,
+      SIMDGROUP_BLOCK_SIZE,
+      SIMDGROUP_BLOCK_SIZE>;
 
   METAL_CONST ushort TILE_ROW_STRIDE =
       SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
@@ -53,28 +55,53 @@ struct ThreadgroupTile {
   METAL_CONST ushort TILE_STRIDE_A = SIMDGROUP_BLOCK_SIZE * A_STRIDE_INNER;
   METAL_CONST ushort TILE_STRIDE_B = SIMDGROUP_BLOCK_SIZE * B_STRIDE_INNER;
 
-  Fragment<AccumulatorType, TILE_ROWS, 1, AluFragmentOpsType> a_fragment;
-  Fragment<AccumulatorType, 1, TILE_COLS, AluFragmentOpsType> b_fragment;
-  Fragment<AccumulatorType, TILE_ROWS, TILE_COLS, AluFragmentOpsType>
+  SimdgroupFragment<
+      AccumulatorType,
+      TILE_ROWS,
+      1,
+      SimdgroupMultiplyAccumulateType>
+      a_fragment;
+  SimdgroupFragment<
+      AccumulatorType,
+      1,
+      TILE_COLS,
+      SimdgroupMultiplyAccumulateType>
+      b_fragment;
+  SimdgroupFragment<
+      AccumulatorType,
+      TILE_ROWS,
+      TILE_COLS,
+      SimdgroupMultiplyAccumulateType>
       c_fragment;
 
-  ushort tile_row_offset;
-  ushort tile_col_offset;
+  ushort simdgroup_row_offset;
+  ushort simdgroup_col_offset;
 
   ushort a_shared_offset;
   ushort b_shared_offset;
 
-  METAL_FUNC ThreadgroupTile(const thread ThreadContext& thread_context)
-      : a_fragment(thread_context), b_fragment(thread_context),
-        c_fragment(thread_context) {
-    const ushort simd_group_id = ushort(thread_context.threadgroup_index);
-    tile_row_offset =
+  METAL_FUNC ThreadgroupTile(
+      ushort simd_group_id [[simdgroup_index_in_threadgroup]],
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
+  ) {
+    ushort tile_row_base =
         SIMDGROUP_BLOCK_SIZE * (simd_group_id / SIMDGROUPS_PER_COLUMN);
-    tile_col_offset =
+    ushort tile_col_base =
         SIMDGROUP_BLOCK_SIZE * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
-    a_shared_offset = tile_row_offset * A_STRIDE_ROW;
-    b_shared_offset = tile_col_offset * B_STRIDE_COL;
+    const ushort2 simdgroup_coordinates = ushort2(
+        SimdgroupMultiplyAccumulateType::get_lane_coordinates(simd_lane_id)
+    );
+    simdgroup_row_offset = simdgroup_coordinates.y;
+    simdgroup_col_offset = simdgroup_coordinates.x;
+
+    a_shared_offset = (tile_row_base + simdgroup_row_offset) * A_STRIDE_ROW +
+                      (simdgroup_col_offset)*A_STRIDE_INNER;
+    b_shared_offset = (simdgroup_row_offset)*B_STRIDE_INNER +
+                      (tile_col_base + simdgroup_col_offset) * B_STRIDE_COL;
+
+    simdgroup_row_offset += tile_row_base;
+    simdgroup_col_offset += tile_col_base;
   }
 
   METAL_FUNC void multiply_accumulate(
@@ -89,114 +116,137 @@ struct ThreadgroupTile {
          k_block_index += SIMDGROUP_BLOCK_SIZE) {
       simdgroup_barrier(mem_flags::mem_none);
 
-      a_fragment
-          .load(a_shared, A_STRIDE_ROW, A_STRIDE_INNER, SIMDGROUPS_PER_ROW, 1);
-
-      simdgroup_barrier(mem_flags::mem_none);
-
-      b_fragment.load(
-          b_shared,
-          B_STRIDE_INNER,
-          B_STRIDE_COL,
+      a_fragment.template load<
+          T,
+          SIMDGROUPS_PER_ROW,
           1,
-          SIMDGROUPS_PER_COLUMN
-      );
+          A_STRIDE_ROW,
+          A_STRIDE_INNER>(a_shared);
 
       simdgroup_barrier(mem_flags::mem_none);
 
-      AluFragmentOpsType::tile_matmul(c_fragment, a_fragment, b_fragment);
+      b_fragment.template load<
+          T,
+          1,
+          SIMDGROUPS_PER_COLUMN,
+          B_STRIDE_INNER,
+          B_STRIDE_COL>(b_shared);
+
+      simdgroup_barrier(mem_flags::mem_none);
+
+      tile_multiply_accumulate(c_fragment, a_fragment, b_fragment, c_fragment);
 
       a_shared += TILE_STRIDE_A;
       b_shared += TILE_STRIDE_B;
     }
   }
 
-  template <bool SAFE>
-  METAL_FUNC void store_result(
-      device U* D,
-      const int leading_dimension_d,
-      short2 destination_tile_dimensions = {}
-  ) {
+  METAL_FUNC void store_result(device U* D, const int leading_dimension_d) {
     METAL_PRAGMA_UNROLL
-    for (ushort index = 0; index < decltype(c_fragment)::ELEMENTS_PER_TILE;
-         index++) {
-      c_fragment.elements()[index] =
-          Epilogue::apply(c_fragment.elements()[index]);
+    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_FRAGMENT; i++) {
+      c_fragment.elements()[i] = Epilogue::apply(c_fragment.elements()[i]);
     }
 
-    D += tile_row_offset * leading_dimension_d + tile_col_offset;
+    D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
 
-    if constexpr (SAFE) {
-      destination_tile_dimensions -= short2(tile_col_offset, tile_row_offset);
-      if (destination_tile_dimensions.x <= 0 ||
-          destination_tile_dimensions.y <= 0) {
-        return;
-      }
-      c_fragment.store_safe(
-          D,
-          leading_dimension_d,
-          destination_tile_dimensions,
-          SIMDGROUPS_PER_ROW,
-          SIMDGROUPS_PER_COLUMN
-      );
-    } else {
-      c_fragment.store(
-          D,
-          leading_dimension_d,
-          Int<1>{},
-          SIMDGROUPS_PER_ROW,
-          SIMDGROUPS_PER_COLUMN
-      );
-    }
+    c_fragment.template store<U, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(
+        D,
+        leading_dimension_d
+    );
   }
 
-  template <bool SAFE, typename EpilogueOp>
+  METAL_FUNC void store_result_safe(
+      device U* D,
+      const int leading_dimension_d,
+      short2 destination_tile_dimensions
+  ) {
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_FRAGMENT; i++) {
+      c_fragment.elements()[i] = Epilogue::apply(c_fragment.elements()[i]);
+    }
+
+    D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
+    destination_tile_dimensions -=
+        short2(simdgroup_col_offset, simdgroup_row_offset);
+
+    if (destination_tile_dimensions.x <= 0 ||
+        destination_tile_dimensions.y <= 0)
+      return;
+
+    c_fragment
+        .template store_safe<U, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(
+            D,
+            leading_dimension_d,
+            destination_tile_dimensions
+        );
+  }
+
+  template <typename EpilogueOp>
   METAL_FUNC void apply_epilogue(
       const device U* C,
       const int leading_dimension_c,
       const int column_stride_c,
-      thread const EpilogueOp& epilogue_operation,
-      short2 tile_dimensions = {}
+      thread const EpilogueOp& epilogue_operation
   ) {
-    const device U* c_pointer = C + tile_row_offset * leading_dimension_c +
-                                tile_col_offset * column_stride_c;
-    if constexpr (SAFE) {
-      tile_dimensions -= short2(tile_col_offset, tile_row_offset);
-    }
-    const short2 position = c_fragment.get_position();
+    const device U* c_pointer = C + simdgroup_row_offset * leading_dimension_c +
+                                simdgroup_col_offset * column_stride_c;
 
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < TILE_ROWS; i++) {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < TILE_COLS; j++) {
-        thread auto& block_data = c_fragment.fragment_at(i, j);
-        const ushort row_base =
-            i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW + ushort(position.y);
-        const ushort col_base =
-            j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN +
-            ushort(position.x);
+        thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
         METAL_PRAGMA_UNROLL
-        for (ushort row_offset = 0;
-             row_offset < AluFragmentOpsType::THREAD_ELEMENT_ROWS;
-             row_offset++) {
-          METAL_PRAGMA_UNROLL
-          for (ushort col_offset = 0;
-               col_offset < AluFragmentOpsType::THREAD_ELEMENT_COLS;
-               col_offset++) {
-            if constexpr (SAFE) {
-              if (!((row_base + row_offset) < tile_dimensions.y &&
-                    (col_base + col_offset) < tile_dimensions.x)) {
-                continue;
-              }
-            }
-            const ushort element_index =
-                row_offset * AluFragmentOpsType::THREAD_ELEMENT_COLS +
-                col_offset;
-            const U c_value = c_pointer
-                [(row_base + row_offset) * leading_dimension_c +
-                 (col_base + col_offset) * column_stride_c];
-            block_data[element_index] = epilogue_operation.apply(
-                block_data[element_index],
+        for (ushort k = 0;
+             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
+             k++) {
+          const ushort row_offset =
+              i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
+          const ushort col_offset =
+              j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+          U c_value = c_pointer
+              [row_offset * leading_dimension_c + col_offset * column_stride_c +
+               k];
+          block_data[k] = epilogue_operation.apply(
+              block_data[k],
+              static_cast<AccumulatorType>(c_value)
+          );
+        }
+      }
+    }
+  }
+
+  template <typename EpilogueOp>
+  METAL_FUNC void apply_epilogue_safe(
+      const device U* C,
+      const int leading_dimension_c,
+      const int column_stride_c,
+      short2 tile_dimensions,
+      thread const EpilogueOp& epilogue_operation
+  ) {
+    const device U* c_pointer = C + simdgroup_row_offset * leading_dimension_c +
+                                simdgroup_col_offset * column_stride_c;
+    tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
+
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < TILE_ROWS; i++) {
+      METAL_PRAGMA_UNROLL
+      for (ushort j = 0; j < TILE_COLS; j++) {
+        thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
+        const ushort row_offset = i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
+        const ushort col_offset =
+            j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+        METAL_PRAGMA_UNROLL
+        for (ushort k = 0;
+             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
+             k++) {
+          if (row_offset < tile_dimensions.y &&
+              col_offset + k < tile_dimensions.x) {
+            U c_value = c_pointer
+                [row_offset * leading_dimension_c +
+                 col_offset * column_stride_c + k];
+            block_data[k] = epilogue_operation.apply(
+                block_data[k],
                 static_cast<AccumulatorType>(c_value)
             );
           }

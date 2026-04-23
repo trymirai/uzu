@@ -10,6 +10,13 @@ namespace uzu {
 namespace matmul {
 
 ///////////////////////////////////////////////////////////////////////////////
+// Loop Alignment Helper
+///////////////////////////////////////////////////////////////////////////////
+
+template <bool M_aligned, bool N_aligned, bool K_aligned>
+struct LoopAlignment {};
+
+///////////////////////////////////////////////////////////////////////////////
 // ThreadgroupGemm Kernel
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -85,8 +92,11 @@ struct ThreadgroupGemm {
       thread ThreadgroupTileType& threadgroup_tile,
       thread const ushort& threadgroup_block_rows,
       thread const ushort& threadgroup_block_cols,
-      thread const ushort& leftover_block_depth
+      thread const ushort& leftover_block_depth,
+      LoopAlignment<M_aligned, N_aligned, K_aligned_> alignment = {}
   ) {
+    (void)alignment;
+
     short2 tile_dimensions_a =
         transpose_a ? short2(threadgroup_block_rows, BLOCK_DEPTH)
                     : short2(BLOCK_DEPTH, threadgroup_block_rows);
@@ -139,26 +149,25 @@ struct ThreadgroupGemm {
       const device T* a,
       const device T* b,
       device U* d,
-      const constant GemmParams& params,
+      const constant GemmParams* params,
       const constant float& ab_scale,
       const bool is_accumulate,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
-      const thread ThreadContext& thread_context,
-      uint2 threadgroup_position,
-      uint3 thread_position
+      uint simd_lane_id [[thread_index_in_simdgroup]],
+      uint simd_group_id [[simdgroup_index_in_threadgroup]],
+      uint2 threadgroup_position [[threadgroup_position_in_grid]],
+      uint3 thread_position [[thread_position_in_threadgroup]]
   ) {
     (void)thread_position;
-    const uint simd_lane_id = thread_context.simdgroup_index;
-    const uint simd_group_id = thread_context.threadgroup_index;
 
-    const int swizzle_stride = pow2(params.swizzle_log);
+    const int swizzle_stride = pow2(params->swizzle_log);
     const int swizzled_row_id = threadgroup_position.y * swizzle_stride +
                                 (threadgroup_position.x % swizzle_stride);
     const int swizzled_col_id = threadgroup_position.x / swizzle_stride;
 
-    if (params.threadgroups_per_row <= swizzled_col_id ||
-        params.threadgroups_per_column <= swizzled_row_id) {
+    if (params->threadgroups_per_row <= swizzled_col_id ||
+        params->threadgroups_per_column <= swizzled_row_id) {
       return;
     }
 
@@ -170,27 +179,27 @@ struct ThreadgroupGemm {
     const size_t output_col_long = size_t(output_col);
 
     a += transpose_a ? output_row_long
-                     : output_row_long * params.leading_dimension_a;
-    b += transpose_b ? output_col_long * params.leading_dimension_b
+                     : output_row_long * params->leading_dimension_a;
+    b += transpose_b ? output_col_long * params->leading_dimension_b
                      : output_col_long;
-    d += output_row_long * params.leading_dimension_d + output_col_long;
+    d += output_row_long * params->leading_dimension_d + output_col_long;
 
     thread LoaderAType loader_a(
         a,
-        params.leading_dimension_a,
+        params->leading_dimension_a,
         a_shared,
         simd_group_id,
         simd_lane_id
     );
     thread LoaderBType loader_b(
         b,
-        params.leading_dimension_b,
+        params->leading_dimension_b,
         b_shared,
         simd_group_id,
         simd_lane_id
     );
 
-    thread ThreadgroupTileType threadgroup_tile(thread_context);
+    thread ThreadgroupTileType threadgroup_tile(simd_group_id, simd_lane_id);
 
     TransformScaleAccumulate<AccumulatorType, AccumulatorType> epilogue(
         ab_scale,
@@ -200,7 +209,7 @@ struct ThreadgroupGemm {
     ///////////////////////////////////////////////////////////////////////////
     // MNK aligned loop
     if (MN_aligned) {
-      for (int k = 0; k < params.aligned_inner_iterations; k++) {
+      for (int k = 0; k < params->aligned_inner_iterations; k++) {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         loader_a.load_unsafe();
         loader_b.load_unsafe();
@@ -217,7 +226,7 @@ struct ThreadgroupGemm {
 
       if (!K_aligned) {
         int leftover_block_depth =
-            params.K - params.aligned_inner_iterations * BLOCK_DEPTH;
+            params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
         short2 tile_dimensions_a =
             transpose_a ? short2(BLOCK_ROWS, leftover_block_depth)
                         : short2(leftover_block_depth, BLOCK_ROWS);
@@ -233,34 +242,27 @@ struct ThreadgroupGemm {
         threadgroup_tile.multiply_accumulate(a_shared, b_shared);
       }
 
-      threadgroup_tile.template apply_epilogue<false>(
-          d,
-          params.leading_dimension_d,
-          1,
-          epilogue
-      );
-      threadgroup_tile.template store_result<false>(
-          d,
-          params.leading_dimension_d
-      );
+      threadgroup_tile
+          .apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
+      threadgroup_tile.store_result(d, params->leading_dimension_d);
       return;
     }
     ///////////////////////////////////////////////////////////////////////////
     // MN unaligned loop
     else {
       ushort threadgroup_block_rows =
-          min(BLOCK_ROWS, ((int)params.M) - output_row);
+          min(BLOCK_ROWS, ((int)params->M) - output_row);
       ushort threadgroup_block_cols =
-          min(BLOCK_COLS, ((int)params.N) - output_col);
+          min(BLOCK_COLS, ((int)params->N) - output_col);
       ushort leftover_block_depth =
-          params.K - params.aligned_inner_iterations * BLOCK_DEPTH;
+          params->K - params->aligned_inner_iterations * BLOCK_DEPTH;
 
       if (threadgroup_block_rows == BLOCK_ROWS &&
           threadgroup_block_cols == BLOCK_COLS) {
         gemm_loop<true, true, K_aligned>(
             a_shared,
             b_shared,
-            params.aligned_inner_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -269,23 +271,16 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.template apply_epilogue<false>(
-            d,
-            params.leading_dimension_d,
-            1,
-            epilogue
-        );
-        threadgroup_tile.template store_result<false>(
-            d,
-            params.leading_dimension_d
-        );
+        threadgroup_tile
+            .apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
+        threadgroup_tile.store_result(d, params->leading_dimension_d);
         return;
 
       } else if (threadgroup_block_cols == BLOCK_COLS) {
         gemm_loop<false, true, K_aligned>(
             a_shared,
             b_shared,
-            params.aligned_inner_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -294,16 +289,16 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.template apply_epilogue<true>(
+        threadgroup_tile.apply_epilogue_safe(
             d,
-            params.leading_dimension_d,
+            params->leading_dimension_d,
             1,
-            epilogue,
-            short2(threadgroup_block_cols, threadgroup_block_rows)
+            short2(threadgroup_block_cols, threadgroup_block_rows),
+            epilogue
         );
-        threadgroup_tile.template store_result<true>(
+        threadgroup_tile.store_result_safe(
             d,
-            params.leading_dimension_d,
+            params->leading_dimension_d,
             short2(threadgroup_block_cols, threadgroup_block_rows)
         );
         return;
@@ -312,7 +307,7 @@ struct ThreadgroupGemm {
         gemm_loop<true, false, K_aligned>(
             a_shared,
             b_shared,
-            params.aligned_inner_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -321,16 +316,16 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.template apply_epilogue<true>(
+        threadgroup_tile.apply_epilogue_safe(
             d,
-            params.leading_dimension_d,
+            params->leading_dimension_d,
             1,
-            epilogue,
-            short2(threadgroup_block_cols, threadgroup_block_rows)
+            short2(threadgroup_block_cols, threadgroup_block_rows),
+            epilogue
         );
-        threadgroup_tile.template store_result<true>(
+        threadgroup_tile.store_result_safe(
             d,
-            params.leading_dimension_d,
+            params->leading_dimension_d,
             short2(threadgroup_block_cols, threadgroup_block_rows)
         );
         return;
@@ -339,7 +334,7 @@ struct ThreadgroupGemm {
         gemm_loop<false, false, K_aligned>(
             a_shared,
             b_shared,
-            params.aligned_inner_iterations,
+            params->aligned_inner_iterations,
             loader_a,
             loader_b,
             threadgroup_tile,
@@ -348,16 +343,16 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile.template apply_epilogue<true>(
+        threadgroup_tile.apply_epilogue_safe(
             d,
-            params.leading_dimension_d,
+            params->leading_dimension_d,
             1,
-            epilogue,
-            short2(threadgroup_block_cols, threadgroup_block_rows)
+            short2(threadgroup_block_cols, threadgroup_block_rows),
+            epilogue
         );
-        threadgroup_tile.template store_result<true>(
+        threadgroup_tile.store_result_safe(
             d,
-            params.leading_dimension_d,
+            params->leading_dimension_d,
             short2(threadgroup_block_cols, threadgroup_block_rows)
         );
         return;

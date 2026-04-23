@@ -39,7 +39,7 @@ struct GemmMppCore {
       const device T* left_matrix,
       const device T* right_matrix,
       device T* output_matrix,
-      const constant GemmParams& params,
+      const constant GemmParams* params,
       const bool align_m,
       const bool align_n,
       const bool align_k,
@@ -49,7 +49,7 @@ struct GemmMppCore {
       const thread ThreadContext& thread_context
   ) {
     uint tile_id_x, tile_id_y;
-    if (params.use_morton) {
+    if (params->use_morton) {
       uint linear_id = threadgroup_position.x;
       uint morton_x = linear_id;
       uint morton_y = linear_id >> 1;
@@ -70,8 +70,8 @@ struct GemmMppCore {
       tile_id_y = threadgroup_position.y;
     }
 
-    if (tile_id_x >= params.threadgroups_per_row ||
-        tile_id_y >= params.threadgroups_per_column) {
+    if (tile_id_x >= params->threadgroups_per_row ||
+        tile_id_y >= params->threadgroups_per_column) {
       return;
     }
 
@@ -81,9 +81,9 @@ struct GemmMppCore {
     const size_t block_col_start_long = size_t(block_col_start);
 
     const device T* left_block_ptr =
-        left_matrix + block_row_start_long * params.leading_dimension_a;
+        left_matrix + block_row_start_long * params->leading_dimension_a;
     const device T* right_block_ptr =
-        right_matrix + block_col_start_long * params.leading_dimension_b;
+        right_matrix + block_col_start_long * params->leading_dimension_b;
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
@@ -91,8 +91,8 @@ struct GemmMppCore {
         SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
     device T* output_ptr =
-        output_matrix + block_row_start_long * params.leading_dimension_d +
-        block_col_start_long + tile_row_offset * params.leading_dimension_d +
+        output_matrix + block_row_start_long * params->leading_dimension_d +
+        block_col_start_long + tile_row_offset * params->leading_dimension_d +
         tile_col_offset;
 
     const short simdgroup_limit_m =
@@ -100,23 +100,23 @@ struct GemmMppCore {
             ? SIMDGROUP_BLOCK_M
             : short(
                   min(int(SIMDGROUP_BLOCK_M),
-                      int(params.M) - int(block_row_start + tile_row_offset))
+                      int(params->M) - int(block_row_start + tile_row_offset))
               );
     const short simdgroup_limit_n =
         align_n
             ? SIMDGROUP_BLOCK_N
             : short(
                   min(int(SIMDGROUP_BLOCK_N),
-                      int(params.N) - int(block_col_start + tile_col_offset))
+                      int(params->N) - int(block_col_start + tile_col_offset))
               );
 
     const device T* left_simdgroup_ptr =
-        left_block_ptr + size_t(tile_row_offset) * params.leading_dimension_a;
+        left_block_ptr + size_t(tile_row_offset) * params->leading_dimension_a;
     const device T* right_simdgroup_ptr =
         right_block_ptr +
-        size_t(tile_col_offset) * int(params.leading_dimension_b);
+        size_t(tile_col_offset) * int(params->leading_dimension_b);
 
-    const int aligned_k_iterations = int(params.K) / int(BLOCK_K);
+    const int aligned_k_iterations = int(params->K) / int(BLOCK_K);
 
     dispatch_bool(align_k, [&](auto aligned_k) {
       dispatch_bool(
@@ -139,9 +139,9 @@ struct GemmMppCore {
                       AccumulatorType>(
                       left_simdgroup_ptr,
                       right_simdgroup_ptr,
-                      int(params.leading_dimension_a),
-                      int(params.leading_dimension_b),
-                      int(params.K),
+                      int(params->leading_dimension_a),
+                      int(params->leading_dimension_b),
+                      int(params->K),
                       aligned_k_iterations,
                       simdgroup_limit_m,
                       simdgroup_limit_n,
@@ -163,12 +163,12 @@ struct GemmMppCore {
                     if constexpr (aligned_m.value && aligned_n.value) {
                       existing_output.load(
                           output_ptr,
-                          int(params.leading_dimension_d)
+                          int(params->leading_dimension_d)
                       );
                     } else {
                       existing_output.load_safe(
                           output_ptr,
-                          int(params.leading_dimension_d),
+                          int(params->leading_dimension_d),
                           short2(simdgroup_limit_n, simdgroup_limit_m)
                       );
                     }
@@ -183,12 +183,12 @@ struct GemmMppCore {
                   if constexpr (aligned_m.value && aligned_n.value) {
                     accumulator_tile.store(
                         output_ptr,
-                        int(params.leading_dimension_d)
+                        int(params->leading_dimension_d)
                     );
                   } else {
                     accumulator_tile.store_safe(
                         output_ptr,
-                        int(params.leading_dimension_d),
+                        int(params->leading_dimension_d),
                         short2(simdgroup_limit_n, simdgroup_limit_m)
                     );
                   }

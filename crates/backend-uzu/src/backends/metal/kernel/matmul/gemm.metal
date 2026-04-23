@@ -22,7 +22,7 @@ KERNEL(MatmulGemm)(
     const device T* a,
     const device T* b,
     device T* d,
-    const constant uzu::matmul::GemmParams& params,
+    const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const constant float& ab_scale,
@@ -57,7 +57,8 @@ KERNEL(MatmulGemm)(
           is_accumulate,
           a_shared,
           b_shared,
-          thread_context,
+          thread_context.simdgroup_index,
+          thread_context.threadgroup_index,
           uint2(group_x, group_y),
           uint3(thread_x, thread_y, thread_z));
 }
