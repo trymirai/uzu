@@ -26,7 +26,7 @@ impl Default for ChatConfig {
 #[bindings::export(Implementation)]
 impl ChatConfig {
     #[bindings::export(Factory)]
-    pub fn new() -> Self {
+    pub fn create() -> Self {
         Self::default()
     }
 }

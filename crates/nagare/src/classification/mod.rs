@@ -40,11 +40,11 @@ impl ClassificationSession {
         path: Option<String>,
     ) -> Result<Self, ClassificationSessionError> {
         if !model.specializations.contains(&ModelSpecialization::Classification) {
-            return Err(ClassificationSessionError::UnsupportedModel);
+            return Err(ClassificationSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
         let classification_backend =
-            backend.as_classification_capable().ok_or(ClassificationSessionError::UnsupportedModel)?;
+            backend.as_classification_capable().ok_or(ClassificationSessionError::UnsupportedModel {})?;
         let instance = classification_backend.instance(reference, ()).await.map_err(|error| {
             ClassificationSessionError::Backend {
                 message: error.to_string(),
@@ -91,7 +91,7 @@ impl ClassificationSession {
                         *state = ClassificationSessionState::Classifying;
                     },
                     ClassificationSessionState::Classifying => {
-                        let _ = sender.send(Err(ClassificationSessionError::UnableToPerformOperationInCurrentState));
+                        let _ = sender.send(Err(ClassificationSessionError::UnableToPerformOperationInCurrentState {}));
                         return;
                     },
                 }
@@ -113,7 +113,7 @@ impl ClassificationSession {
                     Some(Err(error)) => Err(ClassificationSessionError::Backend {
                         message: error.to_string(),
                     }),
-                    None => Err(ClassificationSessionError::NoResponse),
+                    None => Err(ClassificationSessionError::NoResponse {}),
                 }
             };
             let _ = sender.send(result);
@@ -121,6 +121,6 @@ impl ClassificationSession {
             *state.lock().await = ClassificationSessionState::Idle;
         });
 
-        receiver.recv().await.unwrap_or(Err(ClassificationSessionError::NoResponse))
+        receiver.recv().await.unwrap_or(Err(ClassificationSessionError::NoResponse {}))
     }
 }

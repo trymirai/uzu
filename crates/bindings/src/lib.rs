@@ -213,21 +213,40 @@ pub fn export(
         },
         BindingKind::Error => {
             let item = parse_macro_input!(item as syn::Item);
-            let type_name = match &item {
-                syn::Item::Enum(item_enum) => &item_enum.ident,
+            let item_enum = match &item {
+                syn::Item::Enum(item_enum) => item_enum,
                 _ => {
                     return syn::Error::new_spanned(&item, "Error can only be applied to enums")
                         .to_compile_error()
                         .into();
                 },
             };
+            let type_name = &item_enum.ident;
+            let all_unit_variants =
+                item_enum.variants.iter().all(|variant| matches!(variant.fields, syn::Fields::Unit));
+            let napi_attribute = if all_unit_variants {
+                quote! {
+                    #[cfg_attr(feature = "bindings-napi", napi_derive::napi(string_enum))]
+                }
+            } else {
+                quote! {
+                    #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
+                }
+            };
+            let napi_value = if all_unit_variants {
+                quote! {}
+            } else {
+                napi::struct_value_implementations(type_name)
+            };
             let uniffi = uniffi::error_attribute();
             let napi_implementations = napi::error_implementations(type_name);
             let pyo3_implementations = pyo3::error_implementations(type_name);
             let wasm_implementations = wasm::error_implementations(type_name);
             quote! {
+                #napi_attribute
                 #uniffi
                 #item
+                #napi_value
                 #napi_implementations
                 #pyo3_implementations
                 #wasm_implementations

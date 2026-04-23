@@ -25,17 +25,39 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
+#[bindings::export(Enum)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ChatSessionStreamChunk {
+    Replies {
+        replies: Vec<ChatReply>,
+    },
+    Error {
+        error: ChatSessionError,
+    },
+}
+
 #[bindings::export(Class)]
 pub struct ChatSessionStream {
     receiver: Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>,
     cancel_token: CancellationToken,
 }
 
+#[bindings::export(Implementation)]
 impl ChatSessionStream {
-    pub async fn next(&self) -> Option<Result<Vec<ChatReply>, ChatSessionError>> {
-        self.receiver.lock().await.recv().await
+    #[bindings::export(Method)]
+    pub async fn next(&self) -> Option<ChatSessionStreamChunk> {
+        match self.receiver.lock().await.recv().await {
+            Some(Ok(replies)) => Some(ChatSessionStreamChunk::Replies {
+                replies,
+            }),
+            Some(Err(error)) => Some(ChatSessionStreamChunk::Error {
+                error,
+            }),
+            None => None,
+        }
     }
 
+    #[bindings::export(Getter)]
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel_token.clone()
     }
@@ -81,7 +103,7 @@ impl ChatSession {
         path: Option<String>,
     ) -> Result<Self, ChatSessionError> {
         if !model.specializations.contains(&ModelSpecialization::Chat) {
-            return Err(ChatSessionError::UnsupportedModel);
+            return Err(ChatSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
@@ -90,7 +112,7 @@ impl ChatSession {
         } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
             Instance::Message(message::Session::new(message_backend, config, reference).await?)
         } else {
-            return Err(ChatSessionError::UnsupportedModel);
+            return Err(ChatSessionError::UnsupportedModel {});
         };
 
         Ok(Self {
@@ -122,7 +144,7 @@ impl ChatSession {
                     *state = ChatSessionState::Resetting;
                 },
                 ChatSessionState::Generation | ChatSessionState::Resetting => {
-                    return Err(ChatSessionError::UnableToPerformOperationInCurrentState);
+                    return Err(ChatSessionError::UnableToPerformOperationInCurrentState {});
                 },
             }
         }
@@ -151,11 +173,15 @@ impl ChatSession {
         let mut outputs: Option<Vec<ChatReply>> = None;
         while let Some(progress) = stream.next().await {
             match progress {
-                Ok(current_outputs) => outputs = Some(current_outputs.clone()),
-                Err(error) => return Err(error),
+                ChatSessionStreamChunk::Replies {
+                    replies,
+                } => outputs = Some(replies.clone()),
+                ChatSessionStreamChunk::Error {
+                    error,
+                } => return Err(error),
             }
         }
-        outputs.ok_or(ChatSessionError::NoResponse)
+        outputs.ok_or(ChatSessionError::NoResponse {})
     }
 
     #[bindings::export(Method)]
@@ -180,7 +206,7 @@ impl ChatSession {
                         *state = ChatSessionState::Generation;
                     },
                     ChatSessionState::Generation | ChatSessionState::Resetting | ChatSessionState::ToolCalling => {
-                        let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState));
+                        let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState {}));
                         return;
                     },
                 }

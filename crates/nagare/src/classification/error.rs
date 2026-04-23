@@ -1,5 +1,5 @@
 #[bindings::export(Error)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClassificationSessionError {
     #[error("Backend error: {message}")]
@@ -7,9 +7,9 @@ pub enum ClassificationSessionError {
         message: String,
     },
     #[error("Unsupported model")]
-    UnsupportedModel,
+    UnsupportedModel {},
     #[error("Unable to perform operation in current state")]
-    UnableToPerformOperationInCurrentState,
+    UnableToPerformOperationInCurrentState {},
     #[error("No response")]
-    NoResponse,
+    NoResponse {},
 }

@@ -23,7 +23,7 @@ impl Default for ChatReplyConfig {
 #[bindings::export(Implementation)]
 impl ChatReplyConfig {
     #[bindings::export(Factory)]
-    pub fn new() -> Self {
+    pub fn create() -> Self {
         Self::default()
     }
 }

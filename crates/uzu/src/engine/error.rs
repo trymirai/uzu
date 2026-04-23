@@ -1,5 +1,5 @@
 #[bindings::export(Error)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum EngineError {
     #[error("Tokio error: {message}")]
@@ -13,9 +13,9 @@ pub enum EngineError {
     #[error(transparent)]
     Registry(#[from] crate::registry::RegistryError),
     #[error("Unable to create backend")]
-    UnableToCreateBackend,
+    UnableToCreateBackend {},
     #[error("Backend not found")]
-    BackendNotFound,
+    BackendNotFound {},
     #[error(transparent)]
     ChatSession(#[from] nagare::chat::ChatSessionError),
     #[error(transparent)]

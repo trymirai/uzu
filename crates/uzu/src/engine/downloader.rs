@@ -131,7 +131,7 @@ impl DownloaderStream {
     }
 }
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DownloaderStreamUpdate {
     pub bytes_total: i64,

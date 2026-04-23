@@ -1,5 +1,6 @@
 #![cfg(not(target_family = "wasm"))]
 
+use nagare::chat::ChatSessionStreamChunk;
 use uzu::{
     engine::{Engine, EngineConfig},
     types::session::{
@@ -44,7 +45,7 @@ async fn test_engine_chat() {
         println!("-------------------------");
     }
 
-    let model = engine.model("alibaba:qwen3:4b".to_string()).await.unwrap().unwrap();
+    let model = engine.model("alibaba:qwen3:0.6b".to_string()).await.unwrap().unwrap();
     if model.is_downloadable() {
         let downloader = engine.downloader(&model);
         downloader.resume().await.unwrap();
@@ -65,22 +66,26 @@ async fn test_engine_chat() {
     let stream = session.reply_with_stream(messages, ChatReplyConfig::default());
     while let Some(progress) = stream.next().await {
         match progress {
-            Ok(outputs) => {
+            ChatSessionStreamChunk::Replies {
+                replies,
+            } => {
                 let state = session.state().await;
                 let messages = session.messages().await;
                 let roles = messages.iter().map(|message| message.role.clone()).collect::<Vec<_>>();
                 println!("State: {state:?}");
                 println!("Roles: {roles:?}");
-                for output in outputs {
-                    let duration = output.stats.duration;
-                    let finish_reason = output.finish_reason;
-                    let text_length = output.message.text().unwrap_or_default().len();
+                for reply in replies {
+                    let duration = reply.stats.duration;
+                    let finish_reason = reply.finish_reason;
+                    let text_length = reply.message.text().unwrap_or_default().len();
                     println!(
                         "\tDuration: {duration}\n\tFinish reason: {finish_reason:?}\n\tText length: {text_length}"
                     );
                 }
             },
-            Err(error) => eprintln!("Stream error: {error}"),
+            ChatSessionStreamChunk::Error {
+                error,
+            } => eprintln!("Stream error: {error}"),
         }
     }
 

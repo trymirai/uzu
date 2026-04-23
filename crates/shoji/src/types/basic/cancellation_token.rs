@@ -6,13 +6,19 @@ pub struct CancellationToken {
     inner: TokioCancellationToken,
 }
 
-#[bindings::export(Implementation)]
 impl CancellationToken {
-    #[bindings::export(Factory)]
     pub fn new() -> Self {
         Self {
             inner: TokioCancellationToken::new(),
         }
+    }
+}
+
+#[bindings::export(Implementation)]
+impl CancellationToken {
+    #[bindings::export(Factory)]
+    pub fn create() -> Self {
+        Self::new()
     }
 
     #[bindings::export(Method)]

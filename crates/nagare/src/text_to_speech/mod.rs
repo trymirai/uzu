@@ -18,17 +18,39 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
+#[bindings::export(Enum)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TextToSpeechSessionStreamChunk {
+    PcmBatch {
+        batch: PcmBatch,
+    },
+    Error {
+        error: TextToSpeechSessionError,
+    },
+}
+
 #[bindings::export(Class)]
 pub struct TextToSpeechSessionStream {
     receiver: Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>,
     cancel_token: CancellationToken,
 }
 
+#[bindings::export(Implementation)]
 impl TextToSpeechSessionStream {
-    pub async fn next(&self) -> Option<Result<PcmBatch, TextToSpeechSessionError>> {
-        self.receiver.lock().await.recv().await
+    #[bindings::export(Method)]
+    pub async fn next(&self) -> Option<TextToSpeechSessionStreamChunk> {
+        match self.receiver.lock().await.recv().await {
+            Some(Ok(batch)) => Some(TextToSpeechSessionStreamChunk::PcmBatch {
+                batch,
+            }),
+            Some(Err(error)) => Some(TextToSpeechSessionStreamChunk::Error {
+                error,
+            }),
+            None => None,
+        }
     }
 
+    #[bindings::export(Getter)]
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel_token.clone()
     }
@@ -70,11 +92,11 @@ impl TextToSpeechSession {
         path: Option<String>,
     ) -> Result<Self, TextToSpeechSessionError> {
         if !model.specializations.contains(&ModelSpecialization::TextToSpeech) {
-            return Err(TextToSpeechSessionError::UnsupportedModel);
+            return Err(TextToSpeechSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
         let text_to_speech_backend =
-            backend.as_text_to_speech_capable().ok_or(TextToSpeechSessionError::UnsupportedModel)?;
+            backend.as_text_to_speech_capable().ok_or(TextToSpeechSessionError::UnsupportedModel {})?;
         let instance = text_to_speech_backend.instance(reference, ()).await.map_err(|error| {
             TextToSpeechSessionError::Backend {
                 message: error.to_string(),
@@ -109,14 +131,18 @@ impl TextToSpeechSession {
         let mut batches: Vec<PcmBatch> = Vec::new();
         while let Some(event) = stream.next().await {
             match event {
-                Ok(batch) => batches.push(batch),
-                Err(error) => return Err(error),
+                TextToSpeechSessionStreamChunk::PcmBatch {
+                    batch,
+                } => batches.push(batch.clone()),
+                TextToSpeechSessionStreamChunk::Error {
+                    error,
+                } => return Err(error),
             }
         }
         if let Some(batch) = batches.last() {
             return Ok(batch.clone());
         }
-        Err(TextToSpeechSessionError::NoResponse)
+        Err(TextToSpeechSessionError::NoResponse {})
     }
 }
 
@@ -140,7 +166,7 @@ impl TextToSpeechSession {
                         *state = TextToSpeechSessionState::Synthesizing;
                     },
                     TextToSpeechSessionState::Synthesizing => {
-                        let _ = sender.send(Err(TextToSpeechSessionError::UnableToPerformOperationInCurrentState));
+                        let _ = sender.send(Err(TextToSpeechSessionError::UnableToPerformOperationInCurrentState {}));
                         return;
                     },
                 }

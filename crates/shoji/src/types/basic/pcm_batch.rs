@@ -2,7 +2,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 
 #[bindings::export(Error)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum PcmBatchError {
     #[error("Unable to save as wav: {message}")]

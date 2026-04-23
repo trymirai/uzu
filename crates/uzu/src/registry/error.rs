@@ -1,5 +1,5 @@
 #[bindings::export(Error)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum RegistryError {
     #[error("Unable to create: {message}")]

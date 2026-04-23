@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 #[bindings::export(Error)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 #[non_exhaustive]
 pub enum TextToSpeechSessionError {
     #[error("Backend error: {message}")]
@@ -7,9 +9,9 @@ pub enum TextToSpeechSessionError {
         message: String,
     },
     #[error("Unsupported model")]
-    UnsupportedModel,
+    UnsupportedModel {},
     #[error("Unable to perform operation in current state")]
-    UnableToPerformOperationInCurrentState,
+    UnableToPerformOperationInCurrentState {},
     #[error("No response")]
-    NoResponse,
+    NoResponse {},
 }
