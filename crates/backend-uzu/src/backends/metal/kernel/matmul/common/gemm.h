@@ -233,12 +233,15 @@ struct ThreadgroupGemm {
         threadgroup_tile.multiply_accumulate(a_shared, b_shared);
       }
 
-      threadgroup_tile
-          .template apply_epilogue<false>(
-              d, params.leading_dimension_d, 1, epilogue
-          );
+      threadgroup_tile.template apply_epilogue<false>(
+          d,
+          params.leading_dimension_d,
+          1,
+          epilogue
+      );
       threadgroup_tile.template store_result<false>(
-          d, params.leading_dimension_d
+          d,
+          params.leading_dimension_d
       );
       return;
     }
@@ -266,12 +269,15 @@ struct ThreadgroupGemm {
             leftover_block_depth
         );
 
-        threadgroup_tile
-            .template apply_epilogue<false>(
-                d, params.leading_dimension_d, 1, epilogue
-            );
+        threadgroup_tile.template apply_epilogue<false>(
+            d,
+            params.leading_dimension_d,
+            1,
+            epilogue
+        );
         threadgroup_tile.template store_result<false>(
-            d, params.leading_dimension_d
+            d,
+            params.leading_dimension_d
         );
         return;
 

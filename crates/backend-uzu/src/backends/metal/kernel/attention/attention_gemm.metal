@@ -189,21 +189,16 @@ PUBLIC KERNEL(AttentionGemm)(
 
   static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
 
-  Fragment<AccumType, QUERY_GRID_ROWS, 1, AluFragmentOpsType>
-      query_fragment(thread_context);
+  Fragment<AccumType, QUERY_GRID_ROWS, 1, AluFragmentOpsType> query_fragment(
+      thread_context
+  );
   Fragment<AccumType, 1, KEY_GRID_COLS, AluFragmentOpsType> key_fragment(
       thread_context
   );
   Fragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, AluFragmentOpsType>
       score_fragment(thread_context);
-  Fragment<AccumType, 1, 1, AluFragmentOpsType> value_fragment(
-      thread_context
-  );
-  Fragment<
-      AccumType,
-      QUERY_GRID_ROWS,
-      HEAD_DIM_GRID_COLS,
-      AluFragmentOpsType>
+  Fragment<AccumType, 1, 1, AluFragmentOpsType> value_fragment(thread_context);
+  Fragment<AccumType, QUERY_GRID_ROWS, HEAD_DIM_GRID_COLS, AluFragmentOpsType>
       output_fragment(thread_context);
 
   output_fragment.clear();

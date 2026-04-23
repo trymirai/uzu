@@ -104,11 +104,7 @@ struct ThreadgroupTile {
 
       simdgroup_barrier(mem_flags::mem_none);
 
-      AluFragmentOpsType::tile_matmul(
-          c_fragment,
-          a_fragment,
-          b_fragment
-      );
+      AluFragmentOpsType::tile_matmul(c_fragment, a_fragment, b_fragment);
 
       a_shared += TILE_STRIDE_A;
       b_shared += TILE_STRIDE_B;

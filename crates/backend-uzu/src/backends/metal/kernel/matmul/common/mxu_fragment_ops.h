@@ -200,8 +200,7 @@ struct MxuFragmentOps {
         for (ushort col = 0; col < tile_n; ++col) {
           METAL_PRAGMA_UNROLL
           for (ushort k = 0; k < tile_k; ++k) {
-            mma<
-                typename OutputTile::ElementType,
+            mma<typename OutputTile::ElementType,
                 typename LeftTile::ElementType,
                 typename RightTile::ElementType,
                 transpose_a,
@@ -224,8 +223,7 @@ struct MxuFragmentOps {
         for (ushort col = 0; col < tile_n; col += 2) {
           METAL_PRAGMA_UNROLL
           for (ushort k = 0; k < tile_k; ++k) {
-            mma<
-                typename OutputTile::ElementType,
+            mma<typename OutputTile::ElementType,
                 typename LeftTile::ElementType,
                 typename RightTile::ElementType,
                 transpose_a,

@@ -103,10 +103,11 @@ struct Fragment {
     return reinterpret_cast<thread ElementType*>(fragment_data);
   }
 
-  // Unsafe load: copy a (TILE_ROWS * FRAGMENT_ROWS) x (TILE_COLS * FRAGMENT_COLS)
-  // block from device memory into fragment registers. ColStride defaults to the
-  // compile-time constant 1 so that the row-major fast path triggers when the
-  // caller omits it. Tile strides control the gap between sub-tiles.
+  // Unsafe load: copy a (TILE_ROWS * FRAGMENT_ROWS) x (TILE_COLS *
+  // FRAGMENT_COLS) block from device memory into fragment registers. ColStride
+  // defaults to the compile-time constant 1 so that the row-major fast path
+  // triggers when the caller omits it. Tile strides control the gap between
+  // sub-tiles.
   template <
       class Ptr,
       class RowStride,
@@ -132,7 +133,10 @@ struct Fragment {
   }
 
   // Safe load: col_stride is implicitly 1; out-of-bounds elements become T(0).
-  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
+  template <
+      class Ptr,
+      class TileRowStride = Int<1>,
+      class TileColStride = Int<1>>
   METAL_FUNC void load_safe(
       Ptr source,
       const int leading_dimension,
@@ -177,7 +181,10 @@ struct Fragment {
   }
 
   // Safe store: col_stride is implicitly 1; out-of-bounds elements are skipped.
-  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
+  template <
+      class Ptr,
+      class TileRowStride = Int<1>,
+      class TileColStride = Int<1>>
   METAL_FUNC void store_safe(
       Ptr destination,
       const int leading_dimension,
@@ -214,7 +221,8 @@ private:
   // Unified memory transfer between device memory and fragment registers.
   //
   // IS_LOAD  - true to read into fragment_data, false to write back.
-  // IS_SAFE  - true to bounds-check each element against (row_limit, col_limit);
+  // IS_SAFE  - true to bounds-check each element against (row_limit,
+  // col_limit);
   //            on load, out-of-bounds elements become T(0); on store, skipped.
   //
   // When ColStride is a compile-time 1, the column-stride multiplication is
@@ -259,8 +267,8 @@ private:
           const ushort element_index = i * Ops::THREAD_ELEMENT_COLS + j;
           const auto col = col_base + j;
           const auto offset = col_stride_is_one
-              ? (row * row_stride + col)
-              : (row * row_stride + col * col_stride);
+                                  ? (row * row_stride + col)
+                                  : (row * row_stride + col * col_stride);
 
           if constexpr (IS_LOAD) {
             if constexpr (IS_SAFE) {
