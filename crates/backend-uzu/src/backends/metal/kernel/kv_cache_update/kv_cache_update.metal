@@ -25,7 +25,8 @@ PUBLIC KERNEL(KVCacheUpdate) (
 ) {
   for (uint i = 0; i < swap_count; ++i) {
     // Token-major layout: [max_sequence_length, num_heads, head_dim]
-    // Offset = token_idx * num_heads * head_dim + head_idx * head_dim + channel_idx
+    // Offset = token_idx * num_heads * head_dim +
+    //          head_idx * head_dim + channel_idx
     const uint head_offset = head_idx * head_dim;
     const uint sourceIdx =
         swaps[i].source * num_heads * head_dim + head_offset + channel_idx;

@@ -38,7 +38,7 @@ impl MetalSparseBuffer {
         capacity: usize,
     ) -> Result<MetalSparseBuffer, MetalError> {
         let page_size = MTLSparsePageSize::KB16;
-        let page_size_bytes = Self::get_page_size_bytes(page_size);
+        let page_size_bytes = get_page_size_bytes(page_size);
         let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
 
         let Some(buffer) = context.device.new_buffer_with_length_options_placement_sparse_page_size(
@@ -70,7 +70,7 @@ impl MetalSparseBuffer {
         })
     }
 
-    fn execute_operations(
+    fn execute(
         &mut self,
         operations: &[MTL4UpdateSparseBufferMappingOperation],
     ) {
@@ -83,14 +83,6 @@ impl MetalSparseBuffer {
         );
         self.queue.signal_event_value(self.sync_event.as_ref(), value);
         self.sync_event.wait_until_signaled_value_timeout_ms(value, u64::MAX);
-    }
-
-    fn get_page_size_bytes(size: MTLSparsePageSize) -> usize {
-        match size {
-            MTLSparsePageSize::KB16 => 16 * 1024,
-            MTLSparsePageSize::KB64 => 64 * 1024,
-            MTLSparsePageSize::KB256 => 256 * 1024,
-        }
     }
 }
 
@@ -113,7 +105,7 @@ impl SparseBuffer for MetalSparseBuffer {
         &mut self,
         add_length: usize,
     ) {
-        let page_size_bytes = Self::get_page_size_bytes(self.page_size);
+        let page_size_bytes = get_page_size_bytes(self.page_size);
         let mapped_pages = self.length.div_ceil(page_size_bytes);
         let new_length = self.length + add_length;
         let new_mapped_pages = new_length.div_ceil(page_size_bytes);
@@ -129,10 +121,18 @@ impl SparseBuffer for MetalSparseBuffer {
             buffer_range: NSRange::new(mapped_pages, new_pages_count),
             heap_offset: mapped_pages,
         };
-        self.execute_operations(&[operation]);
+        self.execute(&[operation]);
     }
 
     fn length(&self) -> usize {
         self.length
+    }
+}
+
+fn get_page_size_bytes(size: MTLSparsePageSize) -> usize {
+    match size {
+        MTLSparsePageSize::KB16 => 16 * 1024,
+        MTLSparsePageSize::KB64 => 64 * 1024,
+        MTLSparsePageSize::KB256 => 256 * 1024,
     }
 }

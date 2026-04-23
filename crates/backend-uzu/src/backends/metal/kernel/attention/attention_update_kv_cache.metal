@@ -26,7 +26,8 @@ PUBLIC KERNEL(AttentionUpdateKVCache)(
   const uint cacheTokenIndex = prefix_segment_length + token_index;
 
   // keys_in_place=true: destination shares rotated_keys' group-major layout.
-  // Otherwise, KV cache is token-major: [max_sequence_length, num_groups, head_dim].
+  // Otherwise, KV cache is token-major:
+  // [max_sequence_length, num_groups, head_dim].
   const uint cacheOffset =
       keys_in_place
           ? ((group_index * max_sequence_length + cacheTokenIndex) * head_dim +
