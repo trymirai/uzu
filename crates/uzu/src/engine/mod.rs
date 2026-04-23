@@ -448,6 +448,9 @@ impl Engine {
     async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
         self.storage.lock().await.refresh(models).await?;
+        if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
+            callback.on_event();
+        };
         Ok(())
     }
 

@@ -1,8 +1,8 @@
 #![cfg(not(target_family = "wasm"))]
 
-use nagare::chat::ChatSessionStreamChunk;
 use uzu::{
     engine::{Engine, EngineConfig},
+    session::chat::ChatSessionStreamChunk,
     types::session::{
         chat::{ChatConfig, ChatMessage, ChatReplyConfig},
         classification::ClassificationMessage,

@@ -20,4 +20,5 @@ pub mod registry;
 #[cfg(not(target_family = "wasm"))]
 pub mod storage;
 
+pub use nagare as session;
 pub use shoji::*;

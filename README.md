@@ -104,8 +104,8 @@ Then, create an inference `Session` with a specific model and configuration:
 
 ```rust
 use uzu::{
-    engine::{Config as EngineConfig, Engine},
-    types::session::chat::{Config, Message, StreamConfig},
+    engine::{Engine, EngineConfig},
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 
 #[tokio::main]
@@ -113,19 +113,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = EngineConfig::default();
     let engine = Engine::new(config).await?;
 
-    let model = engine.model("alibaba:qwen3:0.6b").await?.ok_or("Model not found")?;
-
-    let downloader = engine.downloader(&model);
-    downloader.resume().await?;
-    if let Some(stream) = downloader.progress().await {
-        while let Some(update) = stream.next().await {
-            println!("Downloading: {}", update.progress());
-        }
+    let model = engine.model("alibaba:qwen3:0.6b".to_string()).await?.ok_or("Model not found")?;
+    while let Some(update) = engine.download(&model).await?.next().await {
+        println!("Downloading: {}", update.progress());
     }
 
-    let session = engine.chat(model, Config::default()).await?;
+    let session = engine.chat(model, ChatConfig::default()).await?;
     let outputs = session
-        .reply(vec![Message::user().with_text("Tell about London".to_string())], StreamConfig::default())
+        .reply(vec![ChatMessage::user().with_text("Tell about London".to_string())], ChatReplyConfig::default())
         .await?;
     for output in outputs {
         println!("{}", output.message.text().unwrap_or_default());
