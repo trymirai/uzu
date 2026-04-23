@@ -302,14 +302,13 @@ impl<B: Backend> CacheLayers<B> {
     pub fn slice(
         &self,
         context: &B::Context,
-        encoder: &mut Encoder<B>,
         range: std::ops::Range<usize>,
     ) -> Option<CacheLayersSlice<B>> {
         let mut layers = Vec::with_capacity(self.data.len());
         for layer in self.data.iter() {
             match layer {
                 CacheLayer::Transformer(kv) => {
-                    let Some(slice) = kv.slice(context, encoder, range.clone()) else {
+                    let Some(slice) = kv.slice(context, range.clone()) else {
                         return None;
                     };
                     layers.push(CacheLayerSlice::Transformer(slice));

@@ -638,9 +638,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         &self,
         range: Range<usize>,
     ) -> Option<Box<dyn Any>> {
-        let mut encoder = Encoder::<B>::new(self.context.context.as_ref()).expect("Failed to create encoder");
-        let cache_layer_slice = self.context.cache_layers.borrow().slice(&self.context.context, &mut encoder, range);
-        encoder.end_encoding();
+        let cache_layer_slice = self.context.cache_layers.borrow().slice(&self.context.context, range);
         cache_layer_slice.map(|s| Box::new(s) as Box<dyn Any>)
     }
     fn apply_slice(

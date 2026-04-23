@@ -179,6 +179,19 @@ impl<B: Backend> SparseArray<B> {
     pub fn read_slice<T: ArrayElement>(
         &self,
         context: &B::Context,
+    ) -> Result<&mut [T], SparseArrayError<B>> {
+        let data_type_size = T::data_type().size_in_bytes();
+        let slice_size = self.sparse_buffer().borrow().length() / data_type_size;
+        let range = Range {
+            start: 0,
+            end: slice_size,
+        };
+        Ok(self.read_slice_range(context, range)?)
+    }
+
+    pub fn read_slice_range<T: ArrayElement>(
+        &self,
+        context: &B::Context,
         range: Range<usize>,
     ) -> Result<&mut [T], SparseArrayError<B>> {
         let bytes_range = Range {

@@ -28,19 +28,6 @@ fn apply_swaps_3d<T: Clone>(
     }
 }
 
-#[test]
-fn test_kv_cache_update_kernel() {
-    let metal_context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Failed to create MetalContext: {:?}. Skipping test.", e);
-            return;
-        },
-    };
-
-    test_random_pattern(&metal_context);
-}
-
 fn test_random_pattern(context: &<Metal as Backend>::Context) {
     println!("Testing with random pattern...");
 
@@ -133,6 +120,19 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     assert_eq!(key_result, expected_keys);
     assert_eq!(value_result, expected_values);
+}
+
+#[test]
+fn test_kv_cache_update_kernel() {
+    let metal_context = match <Metal as Backend>::Context::new() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            println!("Failed to create MetalContext: {:?}. Skipping test.", e);
+            return;
+        },
+    };
+
+    test_random_pattern(&metal_context);
 }
 
 #[test]

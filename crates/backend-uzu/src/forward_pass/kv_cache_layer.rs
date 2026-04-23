@@ -191,7 +191,6 @@ impl<B: Backend> KVCacheLayer<B> {
     pub fn slice(
         &self,
         context: &B::Context,
-        encoder: &mut Encoder<B>,
         range: std::ops::Range<usize>,
     ) -> Option<KVSlice<B>> {
         match self.state {
@@ -230,10 +229,12 @@ impl<B: Backend> KVCacheLayer<B> {
                     })
                     .collect();
 
+                let mut encoder = Encoder::<B>::new(context).expect("Failed to create encoder");
                 for (i, &slot) in slots.iter().enumerate() {
-                    slice_keys.copy_slice(&self.keys, 0, slot..slot + 1, i, encoder);
-                    slice_values.copy_slice(&self.values, 0, slot..slot + 1, i, encoder);
+                    slice_keys.copy_slice(&self.keys, 0, slot..slot + 1, i, &mut encoder);
+                    slice_values.copy_slice(&self.values, 0, slot..slot + 1, i, &mut encoder);
                 }
+                encoder.end_encoding();
 
                 Some(KVSlice::Window {
                     window_length,
