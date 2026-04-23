@@ -3,6 +3,7 @@
 use nagare::chat::ChatSessionStreamChunk;
 use uzu::{
     engine::{Engine, EngineConfig},
+    storage::types::DownloadPhase,
     types::session::{
         chat::{ChatConfig, ChatMessage, ChatReplyConfig},
         classification::ClassificationMessage,
@@ -21,6 +22,7 @@ async fn test_engine_chat() {
     let models = engine.models().await.unwrap();
     for model in models {
         let identifier = model.identifier.clone();
+        let name = model.name();
         let repo_ids = model.repo_ids();
         let registry_identifier = model.registry.identifier.clone();
         let backend_identifiers = model.backends.iter().map(|backend| backend.identifier.clone()).collect::<Vec<_>>();
@@ -32,6 +34,7 @@ async fn test_engine_chat() {
         let quantization_identifier = model.quantization.as_ref().map(|quantization| quantization.identifier.clone());
         let download_phase = engine.downloader(&model).state().await.map_or(None, |state| Some(state.phase));
         println!("identifier: {}", identifier);
+        println!("name: {}", name);
         println!("repo_ids: {:?}", repo_ids);
         println!("registry_identifier: {}", registry_identifier);
         println!("backend_identifiers: {:?}", backend_identifiers);
@@ -48,8 +51,10 @@ async fn test_engine_chat() {
     let model = engine.model("alibaba:qwen3:0.6b".to_string()).await.unwrap().unwrap();
     if model.is_downloadable() {
         let downloader = engine.downloader(&model);
-        downloader.resume().await.unwrap();
-        if let Some(stream) = downloader.progress().await {
+        let state = downloader.state().await.unwrap();
+        if !matches!(state.phase, DownloadPhase::Downloaded {}) {
+            downloader.resume().await.unwrap();
+            let stream = downloader.progress().await.unwrap();
             while let Some(update) = stream.next().await {
                 println!("Downloading: {}", update.progress());
             }

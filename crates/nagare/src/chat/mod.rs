@@ -102,7 +102,7 @@ impl ChatSession {
         model: Model,
         path: Option<String>,
     ) -> Result<Self, ChatSessionError> {
-        if !model.specializations.contains(&ModelSpecialization::Chat) {
+        if !model.specializations.contains(&ModelSpecialization::Chat {}) {
             return Err(ChatSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());

@@ -1,5 +1,6 @@
 use uzu::{
     engine::{Engine, EngineConfig},
+    storage::types::DownloadPhase,
     types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 
@@ -11,8 +12,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = engine.model("alibaba:qwen3:0.6b".to_string()).await?.ok_or("Model not found")?;
 
     let downloader = engine.downloader(&model);
-    downloader.resume().await?;
-    if let Some(stream) = downloader.progress().await {
+    let state = downloader.state().await.ok_or("Unable to get download state")?;
+    if !matches!(state.phase, DownloadPhase::Downloaded {}) {
+        downloader.resume().await?;
+        let stream = downloader.progress().await?;
         while let Some(update) = stream.next().await {
             println!("Downloading: {}", update.progress());
         }

@@ -91,7 +91,7 @@ impl TextToSpeechSession {
         model: Model,
         path: Option<String>,
     ) -> Result<Self, TextToSpeechSessionError> {
-        if !model.specializations.contains(&ModelSpecialization::TextToSpeech) {
+        if !model.specializations.contains(&ModelSpecialization::TextToSpeech {}) {
             return Err(TextToSpeechSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());

@@ -94,7 +94,7 @@ impl RegistryTrait for Registry {
                         self.config.identifier.clone(),
                         self.config.name.clone(),
                         "default".to_string(),
-                        vec![ModelSpecialization::Chat],
+                        vec![ModelSpecialization::Chat {}],
                         ModelAccessibility::Remote {
                             repository: None,
                         },

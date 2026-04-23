@@ -11,3 +11,11 @@ pub struct ModelFamily {
     pub vendor: ModelVendor,
     pub metadata: Metadata,
 }
+
+#[bindings::export(Implementation)]
+impl ModelFamily {
+    #[bindings::export(Getter)]
+    pub fn name(&self) -> String {
+        self.metadata.name.clone()
+    }
+}

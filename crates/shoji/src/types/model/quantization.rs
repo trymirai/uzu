@@ -13,3 +13,11 @@ pub struct ModelQuantization {
     pub vendor: ModelVendor,
     pub metadata: Metadata,
 }
+
+#[bindings::export(Implementation)]
+impl ModelQuantization {
+    #[bindings::export(Getter)]
+    pub fn name(&self) -> String {
+        self.metadata.name.clone()
+    }
+}

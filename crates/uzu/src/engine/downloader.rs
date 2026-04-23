@@ -65,19 +65,18 @@ impl Downloader {
     pub async fn delete(&self) -> Result<(), EngineError> {
         Ok(self.storage.lock().await.delete(&self.identifier).await?)
     }
-}
 
-impl Downloader {
-    pub async fn progress(&self) -> Option<DownloaderStream> {
+    #[bindings::export(Method)]
+    pub async fn progress(&self) -> Result<DownloaderStream, EngineError> {
         let identifier = self.identifier.clone();
         let Some(state) = self.state().await else {
-            return None;
+            return Err(EngineError::UnableToGetDownloaderProgressStream {});
         };
         if matches!(state.phase, DownloadPhase::Downloaded {}) {
-            return None;
+            return Err(EngineError::UnableToGetDownloaderProgressStream {});
         }
         let stream = self.storage.lock().await.subscribe();
-        Some(DownloaderStream::new(identifier, stream))
+        Ok(DownloaderStream::new(identifier, stream))
     }
 }
 

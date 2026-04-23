@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ModelSpecialization {
-    Chat,
-    Classification,
-    TextToSpeech,
-    Translation,
-    Speculation,
+    Chat {},
+    Classification {},
+    TextToSpeech {},
+    Translation {},
+    Speculation {},
 }

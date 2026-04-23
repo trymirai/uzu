@@ -5,6 +5,6 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub struct Repository {
     pub identifier: String,
-    pub commit_hash: String,
+    pub commit_hash: Option<String>,
     pub paths: Option<Vec<String>>,
 }

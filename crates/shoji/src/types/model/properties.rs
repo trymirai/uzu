@@ -12,3 +12,11 @@ pub struct ModelProperties {
     pub version: Option<String>,
     pub metadata: Metadata,
 }
+
+#[bindings::export(Implementation)]
+impl ModelProperties {
+    #[bindings::export(Getter)]
+    pub fn name(&self) -> String {
+        self.metadata.name.clone()
+    }
+}

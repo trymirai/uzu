@@ -14,9 +14,9 @@ pub fn resolve_model_metadata(model_path: &Path) -> Option<ModelMetadata> {
     let file = File::open(&config_path).ok()?;
     let metadata: InnerModelMetadata = serde_json::from_reader(BufReader::new(file)).ok()?;
     let specialization = match metadata.model_type {
-        ModelType::LanguageModel => ModelSpecialization::Chat,
-        ModelType::ClassifierModel => ModelSpecialization::Classification,
-        ModelType::TtsModel => ModelSpecialization::TextToSpeech,
+        ModelType::LanguageModel => ModelSpecialization::Chat {},
+        ModelType::ClassifierModel => ModelSpecialization::Classification {},
+        ModelType::TtsModel => ModelSpecialization::TextToSpeech {},
     };
     Some(ModelMetadata {
         toolchain_version: metadata.toolchain_version,

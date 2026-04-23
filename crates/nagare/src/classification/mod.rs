@@ -39,7 +39,7 @@ impl ClassificationSession {
         model: Model,
         path: Option<String>,
     ) -> Result<Self, ClassificationSessionError> {
-        if !model.specializations.contains(&ModelSpecialization::Classification) {
+        if !model.specializations.contains(&ModelSpecialization::Classification {}) {
             return Err(ClassificationSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());

@@ -11,3 +11,11 @@ pub struct ModelBackend {
     pub version: String,
     pub metadata: Metadata,
 }
+
+#[bindings::export(Implementation)]
+impl ModelBackend {
+    #[bindings::export(Getter)]
+    pub fn name(&self) -> String {
+        self.metadata.name.clone()
+    }
+}

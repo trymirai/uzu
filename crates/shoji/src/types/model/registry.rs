@@ -10,3 +10,11 @@ pub struct ModelRegistry {
     pub identifier: String,
     pub metadata: Metadata,
 }
+
+#[bindings::export(Implementation)]
+impl ModelRegistry {
+    #[bindings::export(Getter)]
+    pub fn name(&self) -> String {
+        self.metadata.name.clone()
+    }
+}

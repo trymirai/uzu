@@ -84,7 +84,7 @@ impl Registry {
             self.config.backend_identifier.clone(),
             self.config.backend_identifier.clone(),
             self.config.backend_version.clone(),
-            vec![ModelSpecialization::Chat],
+            vec![ModelSpecialization::Chat {}],
             ModelAccessibility::Local {
                 reference: ModelReference::Local {
                     path: path.to_string_lossy().to_string(),

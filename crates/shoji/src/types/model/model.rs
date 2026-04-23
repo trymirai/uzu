@@ -26,8 +26,18 @@ pub struct Model {
 #[bindings::export(Implementation)]
 impl Model {
     #[bindings::export(Getter)]
-    pub fn cache_identifier(&self) -> String {
-        self.identifier.replace(":", "-").replace("/", "-")
+    pub fn name(&self) -> String {
+        let parts: Vec<Option<String>> = vec![
+            self.family.as_ref().map(|family| family.name()),
+            self.properties.as_ref().map(|properties| properties.name()),
+            self.quantization.as_ref().map(|quantization| quantization.name()),
+        ];
+        let name = parts.iter().filter_map(|part| part.clone()).collect::<Vec<_>>().join(" ");
+        if name.is_empty() {
+            self.identifier.clone()
+        } else {
+            name
+        }
     }
 
     #[bindings::export(Getter)]
@@ -48,6 +58,16 @@ impl Model {
                 reference: ModelReference::Mirai { .. } | ModelReference::HuggingFace { .. }
             }
         )
+    }
+
+    #[bindings::export(Getter)]
+    pub fn is_quantized(&self) -> bool {
+        self.quantization.is_some()
+    }
+
+    #[bindings::export(Getter)]
+    pub fn cache_identifier(&self) -> String {
+        self.identifier.replace(":", "-").replace("/", "-")
     }
 
     #[bindings::export(Getter)]
@@ -140,7 +160,7 @@ impl Model {
                 } => Some(toolchain_version.clone()),
                 ModelReference::HuggingFace {
                     repository,
-                } => Some(repository.commit_hash.clone()),
+                } => repository.commit_hash.clone(),
                 ModelReference::Local {
                     ..
                 } => None,
@@ -184,5 +204,33 @@ impl Model {
             specializations,
             accessibility,
         }
+    }
+}
+
+#[bindings::export(Implementation)]
+impl Model {
+    #[bindings::export(Getter)]
+    pub fn is_chat_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Chat {})
+    }
+
+    #[bindings::export(Getter)]
+    pub fn is_classification_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Classification {})
+    }
+
+    #[bindings::export(Getter)]
+    pub fn is_text_to_speech_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::TextToSpeech {})
+    }
+
+    #[bindings::export(Getter)]
+    pub fn is_translation_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Translation {})
+    }
+
+    #[bindings::export(Getter)]
+    pub fn is_speculation_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Speculation {})
     }
 }
