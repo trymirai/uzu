@@ -10,13 +10,6 @@ namespace uzu {
 namespace matmul {
 
 ///////////////////////////////////////////////////////////////////////////////
-// Loop Alignment Helper
-///////////////////////////////////////////////////////////////////////////////
-
-template <bool M_aligned, bool N_aligned, bool K_aligned>
-struct LoopAlignment {};
-
-///////////////////////////////////////////////////////////////////////////////
 // ThreadgroupGemm Kernel
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -92,11 +85,8 @@ struct ThreadgroupGemm {
       thread ThreadgroupTileType& threadgroup_tile,
       thread const ushort& threadgroup_block_rows,
       thread const ushort& threadgroup_block_cols,
-      thread const ushort& leftover_block_depth,
-      LoopAlignment<M_aligned, N_aligned, K_aligned_> alignment = {}
+      thread const ushort& leftover_block_depth
   ) {
-    (void)alignment;
-
     short2 tile_dimensions_a =
         transpose_a ? short2(threadgroup_block_rows, BLOCK_DEPTH)
                     : short2(BLOCK_DEPTH, threadgroup_block_rows);

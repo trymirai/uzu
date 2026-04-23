@@ -209,9 +209,9 @@ struct MxuFragmentOps {
                 output.fragment_at(row + 1, col),
                 left.fragment_at(row, k, transpose_left),
                 left.fragment_at(row + 1, k, transpose_left),
-                metal::bool_constant<transpose_a>{},
+                transpose_left,
                 right.fragment_at(k, col, transpose_right),
-                metal::bool_constant<transpose_b>{}
+                transpose_right
             );
           }
         }
@@ -231,10 +231,10 @@ struct MxuFragmentOps {
                 output.fragment_at(row, col),
                 output.fragment_at(row, col + 1),
                 left.fragment_at(row, k, transpose_left),
-                metal::bool_constant<transpose_a>{},
+                transpose_left,
                 right.fragment_at(k, col, transpose_right),
                 right.fragment_at(k, col + 1, transpose_right),
-                metal::bool_constant<transpose_b>{}
+                transpose_right
             );
           }
         }
