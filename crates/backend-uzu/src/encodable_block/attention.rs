@@ -341,6 +341,8 @@ impl<B: Backend> Attention<B> {
                 head_dim as i32,
             )
         };
+        let (k_head_stride64, k_seq_stride64, v_head_stride64, v_seq_stride64) =
+            (k_head_stride as i64, k_seq_stride as i64, v_head_stride as i64, v_seq_stride as i64);
 
         let kernel_key = KernelKey {
             head_dim: head_dim as u32,
@@ -368,6 +370,10 @@ impl<B: Backend> Attention<B> {
                     is_causal: self.is_causal,
                     sliding_window_size: self.sliding_window_size,
                     scale,
+                    k_head_stride: k_head_stride64,
+                    k_seq_stride: k_seq_stride64,
+                    v_head_stride: v_head_stride64,
+                    v_seq_stride: v_seq_stride64,
                 };
                 self.gemm_block.encode(state.context(), encoder, args).expect("Failed to encode AttentionGemmBlock");
             },

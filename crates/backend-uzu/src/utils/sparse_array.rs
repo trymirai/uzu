@@ -159,19 +159,24 @@ impl<B: Backend> SparseArray<B> {
     ) -> Result<Array<B>, SparseArrayError<B>> {
         let sparse_buffer = self.buffer.borrow();
         let src_buffer = sparse_buffer.buffer();
-        let length = size_for_shape(&self.shape(), self.data_type);
+        let logical_length = size_for_shape(&self.shape(), self.data_type);
+        // Only copy the bytes that are actually mapped in the sparse buffer.
+        // Reading past `sparse_buffer.length()` can hit unmapped pages.
+        let length = logical_length.min(sparse_buffer.length());
 
         let array = context.create_array_uninitialized(self.shape(), self.data_type, "");
         let array_buffer = array.buffer();
         let mut dst_buffer = array_buffer.borrow_mut();
 
-        let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
-        encoder.encode_copy(&src_buffer, 0..length, &mut dst_buffer, 0..length);
-        encoder
-            .end_encoding()
-            .submit()
-            .wait_until_completed()
-            .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        if length > 0 {
+            let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+            encoder.encode_copy(&src_buffer, 0..length, &mut dst_buffer, 0..length);
+            encoder
+                .end_encoding()
+                .submit()
+                .wait_until_completed()
+                .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        }
 
         Ok(array)
     }

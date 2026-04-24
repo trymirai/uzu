@@ -401,6 +401,10 @@ fn run_gemm_attention(
         sliding_window_size: None,
         is_causal,
         scale,
+        k_head_stride: head_dim as i64,
+        k_seq_stride: (num_kv_heads * head_dim) as i64,
+        v_head_stride: head_dim as i64,
+        v_seq_stride: (num_kv_heads * head_dim) as i64,
     };
 
     kernel.encode(context, &mut encoder, args)?;

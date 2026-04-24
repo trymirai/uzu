@@ -683,7 +683,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 _ => panic!("Layer type mismatch when reconfiguring language model generator cache"),
             }
         }
-        encoder.end_encoding();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(llm_state);
 
         self.tokens = ctx.tokens.clone();
