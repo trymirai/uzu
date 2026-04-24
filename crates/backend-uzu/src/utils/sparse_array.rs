@@ -170,8 +170,10 @@ impl<B: Backend> SparseArray<B> {
 
         if logical_length > 0 {
             let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
-            if length > 0 {
+            if length < logical_length {
                 encoder.encode_fill(&mut dst_buffer, length..logical_length, 0);
+            }
+            if length > 0 {
                 encoder.encode_copy(&src_buffer, 0..length, &mut dst_buffer, 0..length);
             }
             encoder.end_submit_wait().map_err(|err| SparseArrayError::CreateEncoderError(err))?;
