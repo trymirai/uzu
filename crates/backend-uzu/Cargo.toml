@@ -35,6 +35,10 @@ rustix.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 
+# webgpu requires wgpu and pollster
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+
 # metal on macos requires objc2, bytesize, metal
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
@@ -82,6 +86,12 @@ itertools.workspace = true
 cbindgen.workspace = true
 rhai.workspace = true
 
+# webgpu requires slang for dsl build, regex for type specialization and naga for shader validation
+shader-slang = { workspace = true, optional = true }
+shader-slang-sys = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+naga = { workspace = true, optional = true, features = ["wgsl-in"] }
+
 # metal on macos requires clang-ast for dsl build
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.build-dependencies]
 clang-ast = { workspace = true, optional = true }
@@ -96,7 +106,18 @@ metal = [
     "dep:bytesize",
     "dep:metal",
 ]
+
+webgpu = [
+    "dep:shader-slang",
+    "dep:shader-slang-sys",
+    "dep:regex",
+    "dep:naga",
+    "dep:wgpu",
+    "dep:pollster"
+]
+
 grammar = ["dep:xgrammar"]
+
 tracing = []
 
 [[test]]

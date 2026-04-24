@@ -82,7 +82,6 @@ fn kernel_wrappers(
         Vec::new()
     };
 
-    let engine = rhai::Engine::new();
     for type_variant in if let Some(variants) = &kernel.variants {
         variants
             .iter()
@@ -102,7 +101,7 @@ fn kernel_wrappers(
         vec![None]
     } {
         if let Some(ref tv) = type_variant {
-            if !crate::common::constraints::satisfied(&engine, tv, &kernel.constraints) {
+            if !crate::common::constraints::satisfied(tv, &kernel.constraints) {
                 continue;
             }
         }
