@@ -876,7 +876,10 @@ export declare class Engine {
   get modelsForTextToSpeech(): Promise<Array<Model>>
   get modelsForTranslation(): Promise<Array<Model>>
   get modelsForSpeculation(): Promise<Array<Model>>
+  get modelRegistries(): Promise<Array<ModelRegistry>>
+  get modelVendors(): Promise<Array<ModelVendor>>
   modelsByVendor(vendorIdentifier: string): Promise<Array<Model>>
+  get modelFamilies(): Promise<Array<ModelFamily>>
   modelsByFamily(familyIdentifier: string): Promise<Array<Model>>
   model(identifier: string): Promise<Model | null>
   modelByIdentifier(identifier: string): Promise<Model | null>

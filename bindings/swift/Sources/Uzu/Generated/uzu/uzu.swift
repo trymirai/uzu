@@ -870,7 +870,13 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func modelByRepoId(repoId: String) async throws  -> Model?
     
+    func modelFamilies() async throws  -> [ModelFamily]
+    
     func modelPath(model: Model) async  -> String?
+    
+    func modelRegistries() async throws  -> [ModelRegistry]
+    
+    func modelVendors() async throws  -> [ModelVendor]
     
     func models() async throws  -> [Model]
     
@@ -1102,6 +1108,23 @@ open func modelByRepoId(repoId: String)async throws  -> Model?  {
         )
 }
     
+open func modelFamilies()async throws  -> [ModelFamily]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_model_families(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
+            completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
+            freeFunc: ffi_uzu_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeModelFamily.lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
 open func modelPath(model: Model)async  -> String?  {
     return
         try!  await uniffiRustCallAsync(
@@ -1117,6 +1140,40 @@ open func modelPath(model: Model)async  -> String?  {
             liftFunc: FfiConverterOptionString.lift,
             errorHandler: nil
             
+        )
+}
+    
+open func modelRegistries()async throws  -> [ModelRegistry]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_model_registries(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
+            completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
+            freeFunc: ffi_uzu_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeModelRegistry.lift,
+            errorHandler: FfiConverterTypeEngineError_lift
+        )
+}
+    
+open func modelVendors()async throws  -> [ModelVendor]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_model_vendors(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
+            completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
+            freeFunc: ffi_uzu_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeModelVendor.lift,
+            errorHandler: FfiConverterTypeEngineError_lift
         )
 }
     
@@ -2998,6 +3055,81 @@ fileprivate struct FfiConverterSequenceTypeModel: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeModelFamily: FfiConverterRustBuffer {
+    typealias SwiftType = [ModelFamily]
+
+    public static func write(_ value: [ModelFamily], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeModelFamily.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ModelFamily] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ModelFamily]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeModelFamily.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeModelRegistry: FfiConverterRustBuffer {
+    typealias SwiftType = [ModelRegistry]
+
+    public static func write(_ value: [ModelRegistry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeModelRegistry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ModelRegistry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ModelRegistry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeModelRegistry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeModelVendor: FfiConverterRustBuffer {
+    typealias SwiftType = [ModelVendor]
+
+    public static func write(_ value: [ModelVendor], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeModelVendor.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ModelVendor] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ModelVendor]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeModelVendor.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -3133,7 +3265,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_uzu_checksum_method_engine_model_by_repo_id() != 34455) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_uzu_checksum_method_engine_model_families() != 8277) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_uzu_checksum_method_engine_model_path() != 49820) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_engine_model_registries() != 31153) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_engine_model_vendors() != 11354) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_models() != 12021) {
