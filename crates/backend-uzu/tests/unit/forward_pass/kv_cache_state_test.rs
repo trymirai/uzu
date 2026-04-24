@@ -146,7 +146,7 @@ fn run_scenario(
         &kv_cache_update,
     );
 
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_submit_wait().unwrap();
 
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
@@ -294,7 +294,7 @@ fn kv_cache_slice_apply_contiguous_window() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_submit_wait().unwrap();
 
     let keys_after = layer.keys.read_typed::<f32>(context.as_ref()).unwrap().to_vec();
     let values_after = layer.values.read_typed::<f32>(context.as_ref()).unwrap().to_vec();
@@ -329,7 +329,7 @@ fn kv_cache_slice_apply_wrap_window() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_submit_wait().unwrap();
 
     let keys_after = layer.keys.read_typed::<f32>(&context).unwrap().to_vec();
     let values_after = layer.values.read_typed::<f32>(&context).unwrap().to_vec();
@@ -364,7 +364,7 @@ fn kv_cache_slice_apply_full_restores_metadata() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_submit_wait().unwrap();
 
     if let KVCacheLayerState::Full {
         prefix_len,

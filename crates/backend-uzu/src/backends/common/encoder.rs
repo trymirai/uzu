@@ -133,6 +133,10 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
             allocation_pool: self.allocation_pool,
         }
     }
+
+    pub fn end_submit_wait(self) -> Result<Completed<B>, B::Error> {
+        self.end_encoding().submit().wait_until_completed()
+    }
 }
 
 pub struct Executable<B: Backend> {

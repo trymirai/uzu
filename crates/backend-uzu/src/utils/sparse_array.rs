@@ -168,14 +168,13 @@ impl<B: Backend> SparseArray<B> {
         let array_buffer = array.buffer();
         let mut dst_buffer = array_buffer.borrow_mut();
 
-        if length > 0 {
+        if logical_length > 0 {
             let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
-            encoder.encode_copy(&src_buffer, 0..length, &mut dst_buffer, 0..length);
-            encoder
-                .end_encoding()
-                .submit()
-                .wait_until_completed()
-                .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+            if length > 0 {
+                encoder.encode_fill(&mut dst_buffer, length..logical_length, 0);
+                encoder.encode_copy(&src_buffer, 0..length, &mut dst_buffer, 0..length);
+            }
+            encoder.end_submit_wait().map_err(|err| SparseArrayError::CreateEncoderError(err))?;
         }
 
         Ok(array)
@@ -197,11 +196,7 @@ impl<B: Backend> SparseArray<B> {
 
         let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
         encoder.encode_copy(self.buffer.borrow().buffer(), range, &mut dst_buffer, 0..length);
-        encoder
-            .end_encoding()
-            .submit()
-            .wait_until_completed()
-            .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        encoder.end_submit_wait().map_err(|err| SparseArrayError::CreateEncoderError(err))?;
 
         let bytes = unsafe { std::slice::from_raw_parts(dst_buffer.cpu_ptr().as_ptr() as *const u8, length) };
         Ok(bytes.to_vec())
@@ -268,11 +263,7 @@ impl<B: Backend> SparseArray<B> {
 
         let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
         encoder.encode_copy(&src_buffer, src_range, &mut dst_buffer, dst_range);
-        encoder
-            .end_encoding()
-            .submit()
-            .wait_until_completed()
-            .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        encoder.end_submit_wait().map_err(|err| SparseArrayError::CreateEncoderError(err))?;
         Ok(())
     }
 

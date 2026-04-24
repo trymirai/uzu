@@ -16,8 +16,8 @@ pub enum KVSlice<B: Backend> {
         base_ring_offset: usize,
         base_ring_length: usize,
         slots: Vec<usize>,
-        keys: SparseArray<B>,   // [num_groups, slots.len(), head_dim]
-        values: SparseArray<B>, // [num_groups, slots.len(), head_dim]
+        keys: SparseArray<B>,
+        values: SparseArray<B>,
     },
 }
 
@@ -42,9 +42,7 @@ pub const INVALID_POSITION: usize = i32::MAX as usize;
 #[derive(Debug)]
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
-    /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
     pub keys: SparseArray<B>,
-    /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
     pub values: SparseArray<B>,
 }
 
@@ -234,7 +232,7 @@ impl<B: Backend> KVCacheLayer<B> {
                     slice_keys.copy_slice(&self.keys, 0, slot..slot + 1, i, &mut encoder);
                     slice_values.copy_slice(&self.values, 0, slot..slot + 1, i, &mut encoder);
                 }
-                encoder.end_encoding().submit().wait_until_completed().expect("Failed to execute slice copy");
+                encoder.end_submit_wait().expect("Failed to execute slice copy");
 
                 Some(KVSlice::Window {
                     window_length,

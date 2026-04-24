@@ -304,7 +304,6 @@ impl<B: Backend> TraceValidator<B> {
                 .expect("Attention kernel values expects transformer layer state");
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
-                // let keys_buffer =
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
                     metrics: Self::validate_array(data_type, &expected, &keys, Some(ArrayTransform::KVCacheSlice)),
