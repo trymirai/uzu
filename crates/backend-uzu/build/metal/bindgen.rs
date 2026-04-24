@@ -300,14 +300,12 @@ pub fn bindgen(
                     Some((
                         None,
                         None,
-                        Some(quote! { 'indirect_dispatch_buffer }),
-                        quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                        Some(quote! { '__dsl_indirect_dispatch_buffer }),
+                        quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> },
                         Some(quote! { let __dsl_indirect_dispatch_buffer = __dsl_indirect_dispatch_buffer.into_parts(); }),
                         Some(quote! {
                             Some(crate::backends::common::Access {
-                                range: __dsl_indirect_dispatch_buffer.0.gpu_address_subrange(
-                                    (__dsl_indirect_dispatch_buffer.1)..(__dsl_indirect_dispatch_buffer.1 + 12)
-                                ),
+                                range: __dsl_indirect_dispatch_buffer.0.gpu_address_subrange((__dsl_indirect_dispatch_buffer.1)..(__dsl_indirect_dispatch_buffer.1+12)),
                                 flags: crate::backends::common::AccessFlags::compute_read(),
                             })
                         }),

@@ -85,8 +85,6 @@ impl<B: Backend> TokenInputs<B> {
         #[cfg(feature = "tracing")] trace: Option<&'a mut ActivationTrace<B>>,
     ) -> DecoderArguments<'a, B> {
         DecoderArguments {
-            activation_data_type: model_shape.activation_data_type(),
-            token_ids: self.token_ids(),
             token_positions: self.token_positions(),
             token_parents: self.token_parents(),
             token_subtrie_ranges: self.token_subtrie_ranges(),

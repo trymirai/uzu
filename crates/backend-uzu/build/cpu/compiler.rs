@@ -47,7 +47,7 @@ impl FunctionArgument {
                     format!(
                         "&[{}; {}]",
                         ty.to_token_stream().to_string().replace(" :: ", "::"),
-                        size.to_token_stream()
+                        size.to_token_stream().to_string(),
                     )
                     .into_boxed_str(),
                 ),
@@ -563,7 +563,7 @@ impl CpuCompiler {
                     })
                 }
 
-                fn encode<#(#encode_generics, )* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu>) {
+                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu>) {
                     #(#argument_copies)*
                     #encode_body
                 }

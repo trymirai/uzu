@@ -1,6 +1,6 @@
 use std::{ops::Range, time::Duration};
 
-use super::Backend;
+use super::{Allocation, Backend};
 
 pub trait CommandBuffer {
     type Backend: Backend<CommandBuffer = Self>;
@@ -11,6 +11,8 @@ pub trait CommandBuffer {
     type Pending: CommandBufferPending<CommandBuffer = Self>;
     type Completed: CommandBufferCompleted<CommandBuffer = Self>;
 }
+
+type CommandBufferBackend<C> = <C as CommandBuffer>::Backend;
 
 pub trait CommandBufferInitial {
     type CommandBuffer: CommandBuffer<Initial = Self>;
@@ -72,15 +74,15 @@ pub trait CommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        src: &Allocation<CommandBufferBackend<Self::CommandBuffer>>,
         src_range: Range<usize>,
-        dst: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        dst: &mut Allocation<CommandBufferBackend<Self::CommandBuffer>>,
         dst_range: Range<usize>,
     );
 
     fn encode_fill(
         &mut self,
-        dst: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        dst: &mut Allocation<CommandBufferBackend<Self::CommandBuffer>>,
         range: Range<usize>,
         value: u8,
     );

@@ -109,22 +109,6 @@ impl<B: Backend> ShortConvMixer<B> {
         )
     }
 
-    fn clear_suffix_state_valid_range(
-        &self,
-        layer: &ShortConvLayer<B>,
-    ) {
-        layer.clear_suffix_state_valid_range();
-    }
-
-    fn set_suffix_state_valid_range(
-        &self,
-        layer: &ShortConvLayer<B>,
-        start: usize,
-        len: usize,
-    ) {
-        layer.set_suffix_state_valid_range(start, len);
-    }
-
     fn run_conv(
         &self,
         layer: &mut ShortConvLayer<B>,
@@ -136,7 +120,7 @@ impl<B: Backend> ShortConvMixer<B> {
         encoder: &mut Encoder<B>,
         active_row_count: usize,
     ) -> Result<(), B::Error> {
-        self.clear_suffix_state_valid_range(layer);
+        layer.clear_suffix_state_valid_range();
 
         if active_row_count == 1 {
             self.run_decode_conv(layer, in_proj, out, encoder, 1)?;
@@ -162,7 +146,7 @@ impl<B: Backend> ShortConvMixer<B> {
         }
 
         self.run_trie_conv(layer, token_parents, in_proj, out, encoder, sampling_start, trie_len)?;
-        self.set_suffix_state_valid_range(layer, sampling_start, trie_len);
+        layer.set_suffix_state_valid_range(sampling_start, trie_len);
         Ok(())
     }
 
@@ -179,7 +163,7 @@ impl<B: Backend> ShortConvMixer<B> {
         }
 
         let kernel_size = self.config.kernel_size;
-        let state_stride = kernel_size.saturating_sub(1);
+        let state_stride = kernel_size - 1;
 
         let padded_rows = state_stride + suffix_length;
         let mut padded = encoder.allocate_scratch(size_for_shape(&[padded_rows, self.model_dim], self.data_type))?;
@@ -264,7 +248,7 @@ impl<B: Backend> ShortConvMixer<B> {
         }
 
         let kernel_size = self.config.kernel_size;
-        let state_stride = kernel_size.saturating_sub(1);
+        let state_stride = kernel_size - 1;
 
         self.short_conv_decode.encode(
             in_proj,

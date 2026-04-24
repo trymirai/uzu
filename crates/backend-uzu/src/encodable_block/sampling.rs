@@ -73,10 +73,8 @@ impl<B: Backend> Sampling<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
     ) -> Result<Self, SamplingError<B>> {
-        let kernel = SamplingKernel::new(context, data_type, max_batch_size, max_vocab_size)?;
+        let kernel = SamplingKernel::new(context, data_type)?;
         Ok(Self {
             kernel,
         })

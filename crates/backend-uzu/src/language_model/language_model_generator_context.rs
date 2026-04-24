@@ -163,8 +163,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         );
 
         let gpu_sampler =
-            Sampling::<B>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
-                .map_err(|e| Error::UnableToCreateContext(e.into()))?;
+            Sampling::<B>::new(&context, intermediate_data_type).map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
             .map_err(|e| Error::UnableToCreateContext(e.into()))?;

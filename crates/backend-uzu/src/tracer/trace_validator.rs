@@ -17,7 +17,7 @@ use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
-    array::{Array, ArrayContextExt},
+    array::Array,
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
@@ -257,14 +257,6 @@ impl<B: Backend> TraceValidator<B> {
 
         let mut encoder =
             Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-        let logits = ctx
-            .context
-            .create_array_uninitialized(
-                &ctx.model_shape.logits_shape(token_ids.len()),
-                ctx.model_shape.activation_data_type(),
-                "trace_logits",
-            )
-            .into_allocation();
         {
             let mut cache_layers = ctx.cache_layers.borrow_mut();
             let decoder_arguments = token_inputs.decoder_arguments(
@@ -280,8 +272,7 @@ impl<B: Backend> TraceValidator<B> {
             ctx.executables
                 .encode_decode(
                     decoder_arguments,
-                    DecoderDecodeInput::TokenIds,
-                    logits,
+                    DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
                     None,
                     &EncodingParameters::new(),
                     &mut encoder,
@@ -950,13 +941,8 @@ impl<B: Backend> TraceValidator<B> {
                 .expect("Failed to create KV cache update kernel"),
         );
 
-        context.gpu_sampler = Sampling::new(
-            context.context.as_ref(),
-            intermediate_dtype,
-            desired_suffix_length,
-            decoder_config.vocab_size,
-        )
-        .expect("Failed to create sampling kernel");
+        context.gpu_sampler =
+            Sampling::new(context.context.as_ref(), intermediate_dtype).expect("Failed to create sampling kernel");
     }
 
     fn get_tokens_from_logits(logits: &Array<B>) -> Vec<u64> {

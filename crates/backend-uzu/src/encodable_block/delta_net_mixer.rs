@@ -223,16 +223,18 @@ impl<B: Backend> DeltaNetMixer<B> {
         &self,
         layer: &mut DeltaNetLayer<B>,
         in_proj: &Allocation<B>,
-        out: &mut Allocation<B>,
+        active_row_count: usize,
         encoder: &mut Encoder<B>,
-    ) {
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut out =
+            encoder.allocate_scratch(size_for_shape(&[active_row_count, self.config.value_dim()], self.data_type))?;
         self.delta_net_update.encode(
             in_proj,
             &self.a_log,
             &self.dt_bias,
             &self.norm_weight,
             &mut layer.ssm_state,
-            out,
+            &mut out,
             self.config.num_heads as u32,
             self.config.num_groups as u32,
             self.config.value_head_dim as u32,
@@ -241,30 +243,36 @@ impl<B: Backend> DeltaNetMixer<B> {
             self.config.norm_config.epsilon,
             encoder,
         );
+        Ok(out)
     }
 
     fn run_delta_rule_prefill(
         &self,
         layer: &mut DeltaNetLayer<B>,
         in_proj: &Allocation<B>,
-        out: &mut Allocation<B>,
-        prep_q_norm: &mut Allocation<B>,
-        prep_k_norm: &mut Allocation<B>,
-        prep_beta: &mut Allocation<B>,
-        prep_decay: &mut Allocation<B>,
-        encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
         let num_dv_groups = ((self.config.value_head_dim + 7) / 8) as u32;
+        let mut prep_q_norm =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length * self.config.key_dim()], DataType::F32))?;
+        let mut prep_k_norm =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length * self.config.key_dim()], DataType::F32))?;
+        let mut prep_beta =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length * self.config.num_heads], DataType::F32))?;
+        let mut prep_decay =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length * self.config.num_heads], DataType::F32))?;
+        let mut out =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.config.value_dim()], self.data_type))?;
 
         self.prefill_prep.encode(
             in_proj,
             &self.a_log,
             &self.dt_bias,
-            &mut *prep_q_norm,
-            &mut *prep_k_norm,
-            &mut *prep_beta,
-            &mut *prep_decay,
+            &mut prep_q_norm,
+            &mut prep_k_norm,
+            &mut prep_beta,
+            &mut prep_decay,
             self.config.num_heads as u32,
             self.config.num_groups as u32,
             self.config.key_dim() as u32,
@@ -274,13 +282,13 @@ impl<B: Backend> DeltaNetMixer<B> {
         );
 
         self.delta_net_prefill.encode(
-            &*prep_q_norm,
-            &*prep_k_norm,
-            &*prep_beta,
-            &*prep_decay,
+            &prep_q_norm,
+            &prep_k_norm,
+            &prep_beta,
+            &prep_decay,
             in_proj,
             &mut layer.ssm_state,
-            &mut *out,
+            &mut out,
             self.config.num_heads as u32,
             self.config.num_groups as u32,
             self.config.value_head_dim as u32,
@@ -292,7 +300,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         );
 
         self.norm_gate.encode(
-            out,
+            &mut out,
             in_proj,
             &self.norm_weight,
             self.config.num_heads as u32,
@@ -304,6 +312,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             suffix_length as u32,
             encoder,
         );
+        Ok(out)
     }
 
     pub(crate) fn encode(
@@ -319,12 +328,10 @@ impl<B: Backend> DeltaNetMixer<B> {
         assert!(active_row_count > 0, "DeltaNet mixer requires at least one active row");
 
         let mut in_proj = self.in_projection.encode(input, active_row_count, encoder)?;
-        let mut delta_output =
-            encoder.allocate_scratch(size_for_shape(&[active_row_count, self.config.value_dim()], self.data_type))?;
 
-        if active_row_count == 1 {
+        let delta_output = if active_row_count == 1 {
             self.run_conv_update(layer, &mut in_proj, encoder);
-            self.run_delta_rule(layer, &in_proj, &mut delta_output, encoder);
+            self.run_delta_rule(layer, &in_proj, active_row_count, encoder)?
         } else {
             let state_stride = self.config.kernel_size.saturating_sub(1);
             let mut padded = encoder.allocate_scratch(size_for_shape(
@@ -332,27 +339,8 @@ impl<B: Backend> DeltaNetMixer<B> {
                 self.data_type,
             ))?;
             self.run_conv_scan(layer, &mut in_proj, &mut padded, encoder, active_row_count);
-
-            let mut prep_q_norm =
-                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.key_dim()], DataType::F32))?;
-            let mut prep_k_norm =
-                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.key_dim()], DataType::F32))?;
-            let mut prep_beta =
-                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.num_heads], DataType::F32))?;
-            let mut prep_decay =
-                encoder.allocate_scratch(size_for_shape(&[active_row_count * self.config.num_heads], DataType::F32))?;
-            self.run_delta_rule_prefill(
-                layer,
-                &in_proj,
-                &mut delta_output,
-                &mut prep_q_norm,
-                &mut prep_k_norm,
-                &mut prep_beta,
-                &mut prep_decay,
-                encoder,
-                active_row_count,
-            );
-        }
+            self.run_delta_rule_prefill(layer, &in_proj, active_row_count, encoder)?
+        };
 
         self.out_projection.encode(delta_output, active_row_count, encoder)
     }

@@ -5,9 +5,7 @@ use crate::{
     backends::common::{Backend, Context},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope,
-    },
+    encodable_block::{ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope},
     forward_pass::{
         model_shape::ModelShape,
         state::{RopeType, SharedBuffers},
@@ -188,15 +186,6 @@ impl<B: Backend> ClassifierContext<B> {
             Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
         })?;
 
-        let prediction_head_activation =
-            Activation::<B>::new(&context, prediction_head_data_type, prediction_head_config.activation.clone())
-                .map_err(|e| {
-                    Error::Classifier(ClassifierError::KernelCreationFailed(format!(
-                        "prediction head activation: {:?}",
-                        e
-                    )))
-                })?;
-
         let prediction_head_norm_tree = prediction_head_tree.subtree("norm").map_err(|_| {
             Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head.norm".to_string()))
         })?;
@@ -236,12 +225,17 @@ impl<B: Backend> ClassifierContext<B> {
         })?;
 
         let prediction_head = ClassifierPredictionHead::new(
+            context.as_ref(),
             prediction_head_dense,
-            prediction_head_activation,
+            prediction_head_config.activation.clone(),
+            prediction_head_data_type,
             prediction_head_norm,
             prediction_head_final_linear,
             model_dim,
-        );
+        )
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head activation: {:?}", e)))
+        })?;
 
         Ok(Self {
             context,

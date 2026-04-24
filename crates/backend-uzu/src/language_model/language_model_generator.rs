@@ -60,8 +60,8 @@ struct RetainedForwardPass<B: Backend> {
 }
 
 struct InFlightForwardPass<B: Backend> {
-    _retained: RetainedForwardPass<B>,
-    _pending: Pending<B>,
+    retained: RetainedForwardPass<B>,
+    pending: Pending<B>,
 }
 
 pub struct LanguageModelGenerator<B: Backend> {
@@ -567,13 +567,15 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let (retained, pending) = encoded_forward_pass.submit();
 
         if should_capture {
-            pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+            let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+            drop(retained);
+            drop(completed);
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         } else {
             assert!(self.async_in_flight[slot].is_none(), "async slot {slot} still holds an in-flight state");
             self.async_in_flight[slot] = Some(InFlightForwardPass {
-                _retained: retained,
-                _pending: pending,
+                retained,
+                pending,
             });
         }
 
@@ -585,7 +587,13 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         pass_idx: usize,
     ) {
         let slot = pass_idx % self.context.async_buffers.batch_size;
-        self.async_in_flight[slot] = None;
+        if let Some(in_flight) = self.async_in_flight[slot].take() {
+            let InFlightForwardPass {
+                retained,
+                pending,
+            } = in_flight;
+            drop((retained, pending));
+        }
     }
 
     fn clear_cache(&mut self) {}
@@ -759,17 +767,16 @@ impl<B: Backend> LanguageModelGenerator<B> {
             None,
         )?;
 
-        let (
-            RetainedForwardPass {
-                token_inputs: _token_inputs,
-                logits: _logits,
-                sampling_output,
-                sampling_inputs: _sampling_inputs,
-            },
-            pending,
-        ) = encoded_forward_pass.submit();
+        let (retained, pending) = encoded_forward_pass.submit();
 
         let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let RetainedForwardPass {
+            token_inputs,
+            logits,
+            sampling_output,
+            sampling_inputs,
+        } = retained;
+        drop((token_inputs, logits, sampling_inputs));
         drop(completed);
 
         let run_time = run_start.elapsed().as_secs_f64();
@@ -820,17 +827,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
             );
             context
                 .executables
-                .encode_prefill(decoder_arguments, parameters, &mut encoder)
+                .encode_prefill(decoder_arguments, token_inputs.token_ids(), parameters, &mut encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         } else {
-            let decoder_logits = context
-                .context
-                .create_array_uninitialized(
-                    &context.model_shape.logits_shape(sampling_length),
-                    context.model_shape.activation_data_type(),
-                    "decoder_logits",
-                )
-                .into_allocation();
             let mut cache_layers = context.cache_layers.borrow_mut();
             let decoder_arguments = token_inputs.decoder_arguments(
                 &context.model_shape,
@@ -846,8 +845,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 .executables
                 .encode_decode(
                     decoder_arguments,
-                    DecoderDecodeInput::TokenIds,
-                    decoder_logits,
+                    DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
                     None,
                     parameters,
                     &mut encoder,

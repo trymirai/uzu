@@ -94,6 +94,7 @@ enum EmbeddingTying<B: Backend> {
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
+    activation_data_type: DataType,
     vocab_size: u32,
     model_dim: u32,
 }
@@ -147,6 +148,31 @@ fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
 }
 
 impl<B: Backend> Embedding<B> {
+    fn activation_data_type(config: &EmbeddingConfig) -> DataType {
+        match config {
+            EmbeddingConfig::Tied {
+                precision,
+                ..
+            }
+            | EmbeddingConfig::Untied {
+                precision,
+                ..
+            } => (*precision).into(),
+            EmbeddingConfig::MLXQuantizedTied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXQuantizedUntied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXSemiQuantizedUntied {
+                activation_precision,
+                ..
+            } => (*activation_precision).into(),
+        }
+    }
+
     pub fn new(
         context: &B::Context,
         vocab_size: u32,
@@ -469,6 +495,7 @@ impl<B: Backend> Embedding<B> {
         };
 
         let input_scale = common.input_scale.unwrap_or(1.0);
+        let activation_data_type = Self::activation_data_type(config);
 
         if let Some(logit_soft_cap) = common.logit_soft_cap {
             return Err(EmbeddingError::UnsupportedConfiguration(format!("logit_soft_cap={logit_soft_cap:?}")));
@@ -477,6 +504,7 @@ impl<B: Backend> Embedding<B> {
         Ok(Self {
             tying,
             input_scale,
+            activation_data_type,
             vocab_size,
             model_dim,
         })
@@ -486,11 +514,13 @@ impl<B: Backend> Embedding<B> {
         &self,
         token_ids: &Allocation<B>,
         batch_dim: usize,
-        activation_data_type: DataType,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, EmbeddingError<B>> {
         let mut output = encoder
-            .allocate_scratch(crate::array::size_for_shape(&[batch_dim, self.model_dim as usize], activation_data_type))
+            .allocate_scratch(crate::array::size_for_shape(
+                &[batch_dim, self.model_dim as usize],
+                self.activation_data_type,
+            ))
             .map_err(EmbeddingError::BackendError)?;
         let batch_dim = batch_dim as u32;
 
@@ -561,14 +591,16 @@ impl<B: Backend> Embedding<B> {
     pub fn encode_readout(
         &self,
         batch_dim: usize,
-        input_offset: usize,
         input_allocation: &Allocation<B>,
-        output_allocation: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), EmbeddingError<B>> {
-        if batch_dim == 0 {
-            return Ok(());
-        }
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        let mut output_allocation = encoder
+            .allocate_scratch(crate::array::size_for_shape(
+                &[batch_dim, self.vocab_size as usize],
+                self.activation_data_type,
+            ))
+            .map_err(EmbeddingError::BackendError)?;
 
         match &self.tying {
             EmbeddingTying::Tied {
@@ -592,11 +624,11 @@ impl<B: Backend> Embedding<B> {
                 readout.borrow_mut().encode(
                     MatmulArguments {
                         a: input_allocation,
-                        a_offset: input_offset,
+                        a_offset: 0,
                         b: weights,
                         ab_scale: 1.0,
                         c: MatmulArgumentC::None,
-                        d: output_allocation,
+                        d: &mut output_allocation,
                         batch_dim: batch_dim as u32,
                         input_dim: input_dim as u32,
                         output_dim: output_dim as u32,
@@ -628,11 +660,11 @@ impl<B: Backend> Embedding<B> {
                     encoder,
                     QuantizedMatmulArguments {
                         a: input_allocation,
-                        a_offset: input_offset,
+                        a_offset: 0,
                         b: weights,
                         scales,
                         zero_points_or_biases: biases,
-                        output: output_allocation,
+                        output: &mut output_allocation,
                         hadamard_factors: None,
                         batch_dim,
                     },
@@ -640,6 +672,6 @@ impl<B: Backend> Embedding<B> {
             },
         };
 
-        Ok(())
+        Ok(output_allocation)
     }
 }

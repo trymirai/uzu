@@ -2,6 +2,7 @@ use std::cell::Cell;
 
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{Allocation, Backend, Encoder},
 };
 
@@ -57,9 +58,8 @@ impl<B: Backend> ShortConvLayer<B> {
         assert_eq!(suffix_stride, state_stride, "ShortConv suffix_state stride mismatch");
         assert!(commit_index < suffix_length, "ShortConv commit_index {} out of range {}", commit_index, suffix_length);
 
-        let elem_bytes = self.data_type.size_in_bytes();
-        let bytes_per_token = model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
-        let src_start = commit_index.saturating_mul(bytes_per_token);
+        let bytes_per_token = size_for_shape(&[model_dim, state_stride], self.data_type);
+        let src_start = commit_index * bytes_per_token;
         encoder.encode_copy(
             &self.suffix_state,
             src_start..src_start + bytes_per_token,

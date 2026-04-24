@@ -10,6 +10,26 @@ use crate::backends::common::{
     hazard_tracker::{Access, HazardTracker},
 };
 
+fn resolve_copy_range(
+    range: impl RangeBounds<usize>,
+    allocation_len: usize,
+    label: &str,
+) -> Range<usize> {
+    let start = match range.start_bound() {
+        Bound::Included(&value) => value,
+        Bound::Excluded(&value) => value.checked_add(1).expect("copy range start overflow"),
+        Bound::Unbounded => 0,
+    };
+    let end = match range.end_bound() {
+        Bound::Included(&value) => value.checked_add(1).expect("copy range end overflow"),
+        Bound::Excluded(&value) => value,
+        Bound::Unbounded => allocation_len,
+    };
+    assert!(start <= end, "{label} copy range start exceeds end");
+    assert!(end <= allocation_len, "{label} copy range exceeds allocation");
+    start..end
+}
+
 pub struct Encoder<'encoding, B: Backend> {
     context: &'encoding B::Context,
     command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
@@ -18,27 +38,6 @@ pub struct Encoder<'encoding, B: Backend> {
 }
 
 impl<'encoding, B: Backend> Encoder<'encoding, B> {
-    fn resolve_copy_range(
-        allocation_range: Range<usize>,
-        range: impl RangeBounds<usize>,
-        label: &str,
-    ) -> Range<usize> {
-        let allocation_len = allocation_range.len();
-        let start = match range.start_bound() {
-            Bound::Included(&value) => value,
-            Bound::Excluded(&value) => value.checked_add(1).expect("copy range start overflow"),
-            Bound::Unbounded => 0,
-        };
-        let end = match range.end_bound() {
-            Bound::Included(&value) => value.checked_add(1).expect("copy range end overflow"),
-            Bound::Excluded(&value) => value,
-            Bound::Unbounded => allocation_len,
-        };
-        assert!(start <= end, "{label} copy range start exceeds end");
-        assert!(end <= allocation_len, "{label} copy range exceeds allocation");
-        allocation_range.start + start..allocation_range.start + end
-    }
-
     pub fn new(context: &'encoding B::Context) -> Result<Self, B::Error> {
         let command_buffer = context.create_command_buffer()?.start_encoding();
         let allocation_pool = context.create_allocation_pool(false);
@@ -80,41 +79,33 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         )
     }
 
-    pub fn encode_copy<SrcRange, DstRange>(
+    pub fn encode_copy(
         &mut self,
         src: &Allocation<B>,
-        src_range: SrcRange,
+        src_range: impl RangeBounds<usize>,
         dst: &mut Allocation<B>,
-        dst_range: DstRange,
-    ) where
-        SrcRange: RangeBounds<usize>,
-        DstRange: RangeBounds<usize>,
-    {
+        dst_range: impl RangeBounds<usize>,
+    ) {
         let (src_buffer, src_allocation_range) = src.as_buffer_range();
         let (dst_buffer, dst_allocation_range) = dst.as_buffer_range();
-        let src_range = Self::resolve_copy_range(src_allocation_range, src_range, "source");
-        let dst_range = Self::resolve_copy_range(dst_allocation_range, dst_range, "destination");
+        let src_range = resolve_copy_range(src_range, src_allocation_range.len(), "source");
+        let dst_range = resolve_copy_range(dst_range, dst_allocation_range.len(), "destination");
         let byte_len = src_range.len();
         assert_eq!(byte_len, dst_range.len(), "copy range lengths must match");
-        if byte_len == 0 {
-            return;
-        }
-        let overlaps = src_range.start < dst_range.end && dst_range.start < src_range.end;
-        assert!(
-            !std::ptr::eq(src_buffer, dst_buffer) || !overlaps,
-            "overlapping copies within one allocation are not supported"
-        );
+        assert!(byte_len > 0, "zero-sized copies are not allowed");
+        let src_access_range = src_allocation_range.start + src_range.start..src_allocation_range.start + src_range.end;
+        let dst_access_range = dst_allocation_range.start + dst_range.start..dst_allocation_range.start + dst_range.end;
         self.access(&[
             Access {
-                range: src_buffer.gpu_address_subrange(src_range.clone()),
+                range: src_buffer.gpu_address_subrange(src_access_range),
                 flags: AccessFlags::copy_read(),
             },
             Access {
-                range: dst_buffer.gpu_address_subrange(dst_range.clone()),
+                range: dst_buffer.gpu_address_subrange(dst_access_range),
                 flags: AccessFlags::copy_write(),
             },
         ]);
-        self.command_buffer.encode_copy(src_buffer, src_range, dst_buffer, dst_range);
+        self.command_buffer.encode_copy(src, src_range, dst, dst_range);
     }
 
     pub fn encode_fill(
@@ -122,15 +113,13 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         dst: &mut Allocation<B>,
         value: u8,
     ) {
-        let (dst, range) = dst.as_buffer_range();
-        if range.is_empty() {
-            return;
-        }
+        let (dst_buffer, range) = dst.as_buffer_range();
+        assert!(!range.is_empty(), "zero-sized fills are not allowed");
         self.access(&[Access {
-            range: dst.gpu_address_subrange(range.clone()),
+            range: dst_buffer.gpu_address_subrange(range.clone()),
             flags: AccessFlags::copy_write(),
         }]);
-        self.command_buffer.encode_fill(dst, range, value);
+        self.command_buffer.encode_fill(dst, 0..range.len(), value);
     }
 
     pub fn access(

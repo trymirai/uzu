@@ -13,7 +13,6 @@ pub enum MatmulError<B: Backend> {
     BackendError(#[source] B::Error),
 }
 
-#[derive(Clone)]
 pub enum MatmulArgumentC<'a, B: Backend> {
     None,
     /// Accumulate: [M, N]

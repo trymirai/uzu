@@ -37,8 +37,6 @@ pub struct Decoder<B: Backend> {
 }
 
 pub struct DecoderArguments<'a, B: Backend> {
-    pub activation_data_type: DataType,
-    pub token_ids: &'a Allocation<B>,
     pub token_positions: &'a Allocation<B>,
     pub token_parents: &'a Allocation<B>,
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
@@ -53,8 +51,9 @@ pub struct DecoderArguments<'a, B: Backend> {
     pub trace: Option<&'a mut ActivationTrace<B>>,
 }
 
-pub enum DecoderDecodeInput<B: Backend> {
-    TokenIds,
+pub enum DecoderDecodeInput<'a, B: Backend> {
+    TokenIds(&'a Allocation<B>),
+    #[cfg(metal_backend)]
     Embeddings(Allocation<B>),
 }
 
@@ -250,8 +249,6 @@ impl<B: Backend> Decoder<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
         let DecoderArguments {
-            activation_data_type: _,
-            token_ids: _,
             token_positions,
             token_parents,
             token_subtrie_ranges,
@@ -312,19 +309,19 @@ impl<B: Backend> Decoder<B> {
     pub fn encode_prefill(
         &self,
         args: DecoderArguments<B>,
+        token_ids: &Allocation<B>,
         parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
-        let main = self.embed.encode_lookup(args.token_ids, args.batch_dim, args.activation_data_type, encoder)?;
+        let main = self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?;
         let (main, _) = self.run_layers(args, main, parameters, encoder)?;
         Ok(main)
     }
 
-    pub fn encode_decode(
+    pub fn encode_decode<'input>(
         &self,
         args: DecoderArguments<B>,
-        input: DecoderDecodeInput<B>,
-        logits: Allocation<B>,
+        input: DecoderDecodeInput<'input, B>,
         hidden_capture: Option<&mut Allocation<B>>,
         parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
@@ -335,15 +332,12 @@ impl<B: Backend> Decoder<B> {
         #[cfg(feature = "tracing")]
         let mut trace = args.trace;
         let main = match input {
-            DecoderDecodeInput::TokenIds => {
-                self.embed.encode_lookup(args.token_ids, args.batch_dim, args.activation_data_type, encoder)?
-            },
+            DecoderDecodeInput::TokenIds(token_ids) => self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?,
+            #[cfg(metal_backend)]
             DecoderDecodeInput::Embeddings(main) => main,
         };
         let (main, mut shortcut) = self.run_layers(
             DecoderArguments {
-                activation_data_type: args.activation_data_type,
-                token_ids: args.token_ids,
                 token_positions: args.token_positions,
                 token_parents: args.token_parents,
                 token_subtrie_ranges: args.token_subtrie_ranges,
@@ -376,8 +370,7 @@ impl<B: Backend> Decoder<B> {
             encoder.encode_copy(&output_norm, .., &mut trace.output_norm, ..);
         }
 
-        let mut logits = logits;
-        self.embed.encode_readout(sampling_length, 0, &output_norm, &mut logits, encoder)?;
+        let logits = self.embed.encode_readout(sampling_length, &output_norm, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
             encoder.encode_copy(&logits, .., &mut trace.logits, ..);

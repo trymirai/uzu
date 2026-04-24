@@ -70,7 +70,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let batch_size = 2;
     let vocab_size = 4;
 
-    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, batch_size, vocab_size, strategy)
+    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, strategy)
         .expect("Failed to create argmax kernel");
 
     // Create test data: batch_size=2, vocab_size=4
@@ -144,7 +144,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     const VOCAB: usize = 128000; // 128K
 
     // ---- Kernel ----
-    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, BATCH, VOCAB, strategy)
+    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, strategy)
         .expect("Failed to create Argmax kernel");
 
     // ---- Build random logits ----
@@ -241,8 +241,7 @@ fn test_categorical_sampling() {
     let batch_size = 2;
     let vocab_size = 4;
 
-    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32, batch_size, vocab_size)
-        .expect("Failed to create sampling kernel");
+    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
     // Create test data with different probability distributions
     // First batch: [1.0, 2.0, 1.5, 0.5] -> softmax: [0.134, 0.366, 0.201, 0.082]
@@ -349,8 +348,7 @@ fn test_categorical_sampling_statistical() {
     const NUM_SAMPLES: usize = 5000;
     const TOLERANCE: f32 = 0.05; // 5% tolerance
 
-    let kernel =
-        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB).expect("Failed to create sampling kernel");
+    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
     // Generate random logits
     let mut rng = StdRng::seed_from_u64(42);
@@ -462,8 +460,7 @@ fn perf_categorical_128k_vocab() {
     const BATCH: usize = 8;
     const VOCAB: usize = 128000; // 128K
 
-    let kernel =
-        SamplingKernel::<Metal>::new(&context, DataType::F32, BATCH, VOCAB).expect("Failed to create sampling kernel");
+    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
     // Build random logits
     let mut rng = StdRng::seed_from_u64(123);
@@ -631,8 +628,7 @@ fn test_minp_sampling_exact_match(
         },
     };
 
-    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32, batch_size, vocab_size)
-        .expect("Failed to create sampling kernel");
+    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
     // Build logits where some tokens have high probability and others have low
     // For min_p filtering, tokens with probability < min_p * max_prob are masked

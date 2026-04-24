@@ -120,12 +120,7 @@ impl<B: Backend> Classifier<B> {
         let mut main = self
             .context
             .embed
-            .encode_lookup(
-                token_inputs.token_ids(),
-                batch_dim,
-                self.context.model_shape.activation_data_type(),
-                &mut encoder,
-            )
+            .encode_lookup(token_inputs.token_ids(), batch_dim, &mut encoder)
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         main = self
             .context
@@ -193,9 +188,14 @@ impl<B: Backend> Classifier<B> {
             encoder.encode_copy(&logits, .., &mut trace.logits, ..);
         }
 
-        encoder.end_encoding().submit().wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let completed = encoder
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
         let logits = self.copy_logits_from_allocation(&logits)?;
+        drop(completed);
 
         Ok(logits)
     }

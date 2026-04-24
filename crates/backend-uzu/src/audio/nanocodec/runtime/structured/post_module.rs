@@ -405,13 +405,6 @@ impl StructuredAudioCodecGraph {
                 actual_tokens: latent_nsc.size(),
             });
         }
-        if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
-        }
-
-        let mut output = encoder.allocate_scratch(expected_size).map_err(|err| {
-            AudioError::Runtime(format!("failed to allocate structured audio post_module output: {err}"))
-        })?;
         let mut batch_indices_by_length = BTreeMap::<usize, Vec<usize>>::new();
         for (batch_index, &active_len) in lengths.iter().enumerate() {
             if active_len == 0 {
@@ -425,7 +418,16 @@ impl StructuredAudioCodecGraph {
             }
             batch_indices_by_length.entry(active_len).or_default().push(batch_index);
         }
+        if frames == 0 {
+            return Ok(latent_nsc);
+        }
+        if batch_size == 1 && lengths.first().copied() == Some(frames) {
+            return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
+        }
 
+        let mut output = encoder.allocate_scratch(expected_size).map_err(|err| {
+            AudioError::Runtime(format!("failed to allocate structured audio post_module output: {err}"))
+        })?;
         if batch_indices_by_length.is_empty() {
             encoder.encode_copy(
                 latent_nsc.allocation(),

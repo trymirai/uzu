@@ -134,7 +134,6 @@ impl MatmulMetalKernel {
 
     fn encode_gemv(
         &mut self,
-        context: &MetalContext,
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
@@ -159,7 +158,7 @@ impl MatmulMetalKernel {
         let specialization =
             gemv::GemvSpecialization::select(input_dim, output_dim, is_accumulate, output_bias.is_some());
 
-        self.get_or_create_gemv(context, specialization)?.encode(
+        self.get_or_create_gemv(encoder.context(), specialization)?.encode(
             b,
             (a, a_offset),
             output_bias,
@@ -178,7 +177,6 @@ impl MatmulMetalKernel {
 
     fn encode_gemm(
         &mut self,
-        context: &MetalContext,
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
@@ -195,7 +193,7 @@ impl MatmulMetalKernel {
         } = arguments;
 
         let specialization =
-            gemm::GemmSpecialization::select(context, self.data_type, batch_dim, input_dim, output_dim, &c);
+            gemm::GemmSpecialization::select(encoder.context(), self.data_type, batch_dim, input_dim, output_dim, &c);
 
         let threadgroups_per_row = output_dim.div_ceil(specialization.block_cols);
         let threadgroups_per_column = batch_dim.div_ceil(specialization.block_rows);
@@ -214,7 +212,7 @@ impl MatmulMetalKernel {
             use_morton: false,
         };
 
-        let kernel = self.get_or_create_gemm(context, specialization)?;
+        let kernel = self.get_or_create_gemm(encoder.context(), specialization)?;
 
         kernel.encode(
             (a, a_offset),
@@ -236,7 +234,6 @@ impl MatmulMetalKernel {
 
     fn encode_gemm_mpp(
         &mut self,
-        context: &MetalContext,
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
@@ -286,7 +283,7 @@ impl MatmulMetalKernel {
             (threadgroups_per_row, threadgroups_per_column)
         };
 
-        let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
+        let kernel = self.get_or_create_gemm_mpp(encoder.context(), specialization)?;
         kernel.encode((a, a_offset), b, &mut *d, params, group_count_x, group_count_y, ab_scale, encoder);
 
         if let MatmulArgumentC::Bias(bias) = c {
@@ -315,15 +312,9 @@ impl MatmulMetalKernel {
     ) {
         match path {
             MatmulDispatchPath::Auto => self.encode(arguments, encoder),
-            MatmulDispatchPath::Gemv => {
-                self.encode_gemv(encoder.context(), encoder, arguments).expect("Failed to encode GEMV")
-            },
-            MatmulDispatchPath::Gemm => {
-                self.encode_gemm(encoder.context(), encoder, arguments).expect("Failed to encode GEMM")
-            },
-            MatmulDispatchPath::GemmMpp => {
-                self.encode_gemm_mpp(encoder.context(), encoder, arguments).expect("Failed to encode GEMM MPP")
-            },
+            MatmulDispatchPath::Gemv => self.encode_gemv(encoder, arguments).expect("Failed to encode GEMV"),
+            MatmulDispatchPath::Gemm => self.encode_gemm(encoder, arguments).expect("Failed to encode GEMM"),
+            MatmulDispatchPath::GemmMpp => self.encode_gemm_mpp(encoder, arguments).expect("Failed to encode GEMM MPP"),
         }
     }
 }
@@ -370,11 +361,11 @@ impl MatmulKernel for MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
     ) {
         if arguments.batch_dim <= max_gemv_batch_threshold() {
-            self.encode_gemv(encoder.context(), encoder, arguments).expect("Failed to encode GEMV kernel");
+            self.encode_gemv(encoder, arguments).expect("Failed to encode GEMV kernel");
         } else if self.is_mpp_eligible(encoder.context()) {
-            self.encode_gemm_mpp(encoder.context(), encoder, arguments).expect("Failed to encode GEMM MPP kernel");
+            self.encode_gemm_mpp(encoder, arguments).expect("Failed to encode GEMM MPP kernel");
         } else {
-            self.encode_gemm(encoder.context(), encoder, arguments).expect("Failed to encode GEMM kernel");
+            self.encode_gemm(encoder, arguments).expect("Failed to encode GEMM kernel");
         }
     }
 }

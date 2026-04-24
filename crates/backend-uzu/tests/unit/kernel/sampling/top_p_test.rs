@@ -237,8 +237,7 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
 
     let p = (k as f32) * 0.1;
 
-    let kernel = SamplingKernel::<B>::new(&context, DataType::F32, batch_size, vocab_size)
-        .expect("Failed to create sampling kernel");
+    let kernel = SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
     // Build probability table
     let low_prob = (1.0 - p) / (vocab_size - k) as f32;
@@ -359,7 +358,7 @@ fn test_topp_sampling_statistical_large() {
         let context = <B as Backend>::Context::new().expect("Failed to create Context");
 
         let kernel =
-            SamplingKernel::<B>::new(&context, DataType::F32, BATCH, VOCAB).expect("Failed to create sampling kernel");
+            SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
         let mut rng = StdRng::seed_from_u64(42);
         let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -447,7 +446,7 @@ fn perf_topp_128k_vocab() {
         let context = <B as Backend>::Context::new().expect("Failed to create Context");
 
         let kernel =
-            SamplingKernel::<B>::new(&context, DataType::F32, BATCH, VOCAB).expect("Failed to create sampling kernel");
+            SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
         let mut rng = StdRng::seed_from_u64(123);
         let mut logits = vec![0.0f32; BATCH * VOCAB];

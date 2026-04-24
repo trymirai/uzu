@@ -28,7 +28,6 @@ enum ArgmaxImplementation<B: Backend> {
     TwoPass {
         main_kernel: <B::Kernels as Kernels>::ArgmaxMainKernel,
         final_kernel: <B::Kernels as Kernels>::ArgmaxFinalKernel,
-        max_partial_results: usize,
     },
 }
 
@@ -40,8 +39,6 @@ pub struct SamplingKernel<B: Backend> {
     minp: <B::Kernels as Kernels>::MinPKernel,
     gumbel: <B::Kernels as Kernels>::GumbelKernel,
     argmax_implementation: ArgmaxImplementation<B>,
-    max_batch_size: usize,
-    max_vocab_size: usize,
 }
 
 #[derive(Debug, Error)]
@@ -50,27 +47,23 @@ pub enum SamplingError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
-    #[error("Batch size {0} exceeds maximum {1}")]
-    BatchSizeExceeded(usize, usize),
-    #[error("Vocab size {0} exceeds maximum {1}")]
-    VocabSizeExceeded(usize, usize),
+    #[error("batch size must be greater than 0")]
+    EmptyBatch,
+    #[error("vocab size must be greater than 0")]
+    EmptyVocab,
 }
 
 impl<B: Backend> SamplingKernel<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
     ) -> Result<Self, SamplingError<B>> {
-        Self::new_with_strategy(context, data_type, max_batch_size, max_vocab_size, ArgmaxStrategy::TwoPass)
+        Self::new_with_strategy(context, data_type, ArgmaxStrategy::TwoPass)
     }
 
     pub fn new_with_strategy(
         context: &B::Context,
         data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError<B>> {
         let bitmask = <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type, true)
@@ -101,17 +94,9 @@ impl<B: Backend> SamplingKernel<B> {
                 let final_kernel =
                     <B::Kernels as Kernels>::ArgmaxFinalKernel::new(context).map_err(SamplingError::BackendError)?;
 
-                let block_size = 1024;
-                let grain_size = 4;
-
-                let elements_per_group = block_size * grain_size;
-                let max_vocab_groups_per_batch = (max_vocab_size + elements_per_group - 1) / elements_per_group;
-                let max_partial_results = max_batch_size * max_vocab_groups_per_batch;
-
                 ArgmaxImplementation::TwoPass {
                     main_kernel,
                     final_kernel,
-                    max_partial_results,
                 }
             },
         };
@@ -124,8 +109,6 @@ impl<B: Backend> SamplingKernel<B> {
             minp,
             gumbel,
             argmax_implementation,
-            max_batch_size,
-            max_vocab_size,
         })
     }
 
@@ -140,11 +123,11 @@ impl<B: Backend> SamplingKernel<B> {
         vocab_size: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), SamplingError<B>> {
-        if batch_size > self.max_batch_size {
-            return Err(SamplingError::BatchSizeExceeded(batch_size, self.max_batch_size));
+        if batch_size == 0 {
+            return Err(SamplingError::EmptyBatch);
         }
-        if vocab_size > self.max_vocab_size {
-            return Err(SamplingError::VocabSizeExceeded(vocab_size, self.max_vocab_size));
+        if vocab_size == 0 {
+            return Err(SamplingError::EmptyVocab);
         }
 
         if let Some(bitmask_buffer) = bitmask_buffer {
@@ -242,10 +225,14 @@ impl<B: Backend> SamplingKernel<B> {
             ArgmaxImplementation::TwoPass {
                 main_kernel,
                 final_kernel,
-                max_partial_results,
             } => {
+                let block_size = 1024;
+                let grain_size = 4;
+                let elements_per_group = block_size * grain_size;
+                let vocab_groups_per_batch = vocab_size.div_ceil(elements_per_group);
+                let partial_results_count = batch_size * vocab_groups_per_batch;
                 let mut partial_results = encoder
-                    .allocate_scratch(max_partial_results * size_of::<ArgmaxPair>())
+                    .allocate_scratch(partial_results_count * size_of::<ArgmaxPair>())
                     .map_err(SamplingError::BackendError)?;
                 main_kernel.encode(
                     &*logits_buffer,

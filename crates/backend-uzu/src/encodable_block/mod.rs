@@ -1,4 +1,3 @@
-mod activation;
 mod attention;
 mod classifier_layer;
 mod decoder;
@@ -18,7 +17,6 @@ mod rope;
 mod sampling;
 mod short_conv_mixer;
 
-pub use activation::Activation;
 pub use attention::{Attention, AttentionArguments};
 pub use classifier_layer::ClassifierLayer;
 pub use decoder::{Decoder, DecoderArguments, DecoderDecodeInput};

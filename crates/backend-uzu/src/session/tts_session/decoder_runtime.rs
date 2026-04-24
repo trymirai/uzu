@@ -23,7 +23,6 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         transformer_subtree: &str,
         embedding_subtree: &str,
         readout_subtree: &str,
-        max_suffix_length: usize,
     ) -> Result<Self, Error> {
         let weights_path = model_path.join("model.safetensors");
         let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
@@ -46,9 +45,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
             readout_subtree,
         );
         let logits_data_type = model_shape.activation_data_type();
-        let sampler =
-            GpuSampling::new(context.as_ref(), logits_data_type, max_suffix_length, decoder_config.vocab_size)
-                .map_err(unable_to_create_context)?;
+        let sampler = GpuSampling::new(context.as_ref(), logits_data_type).map_err(unable_to_create_context)?;
         let token_copy_sampled =
             <B::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref()).map_err(unable_to_create_context)?;
 
@@ -103,7 +100,6 @@ impl<B: Backend> TokenDecoderContext<B> {
             transformer_subtree,
             embedding_subtree,
             readout_subtree,
-            max_suffix_length,
         )?;
         let async_chain_capacity = max_suffix_length.max(1);
         let (async_chain_positions, async_chain_seeds, async_chain_results) =
@@ -278,8 +274,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         cache_layers: &'a mut CacheLayers<B>,
     ) -> DecoderArguments<'a, B> {
         DecoderArguments {
-            activation_data_type: self.ctx.model_shape.activation_data_type(),
-            token_ids: token_inputs.token_ids(),
             token_positions: token_inputs.token_positions(),
             token_parents: token_inputs.token_parents(),
             token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
@@ -364,6 +358,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 .executables
                 .encode_prefill(
                     self.decoder_arguments(&token_inputs, token_count, 0, 0, &mut *cache_layers),
+                    token_inputs.token_ids(),
                     &encoding_parameters,
                     &mut encoder,
                 )
@@ -543,9 +538,10 @@ impl<B: Backend> TokenDecoderRunner<B> {
     ) -> Result<(), Error> {
         let encoding_parameters = EncodingParameters::new();
         let cache_layers_rc = self.ctx.cache_layers.clone();
-        let token_bitmask = vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit));
-        let bitmask_row_len = token_bitmask.map(|_| self.ctx.decoder_config.vocab_size.div_ceil(32));
-        let token_bitmask_array = token_bitmask.zip(bitmask_row_len).map(|(mask, row_len)| {
+        let token_bitmask =
+            vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit)).map(Box::<[u32]>::from);
+        let bitmask_row_len = token_bitmask.as_ref().map(|_| self.ctx.decoder_config.vocab_size.div_ceil(32));
+        let token_bitmask_array = token_bitmask.as_deref().zip(bitmask_row_len).map(|(mask, row_len)| {
             SamplingInputs::bitmask_array_from_slice(self.ctx.context.as_ref(), 1, mask, row_len)
         });
         let mut next_token_ids = first_token_ids;
@@ -569,15 +565,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
             );
 
             {
-                let decoder_logits = self.create_decoder_logits(1);
                 let mut logits = {
                     let mut cache_layers = cache_layers_rc.borrow_mut();
                     self.ctx
                         .executables
                         .encode_decode(
                             self.decoder_arguments(&token_inputs, 1, 0, 1, &mut *cache_layers),
-                            DecoderDecodeInput::TokenIds,
-                            decoder_logits,
+                            DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
                             None,
                             &encoding_parameters,
                             encoder,
@@ -677,20 +671,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         self.two_token_vocab_masks.get(&vocab_limit).map(|mask| mask.as_ref())
     }
 
-    fn create_decoder_logits(
-        &self,
-        row_count: usize,
-    ) -> Allocation<B> {
-        self.ctx
-            .context
-            .create_array_uninitialized(
-                &self.ctx.model_shape.logits_shape(row_count),
-                self.ctx.model_shape.activation_data_type(),
-                "tts_decoder_logits",
-            )
-            .into_allocation()
-    }
-
     fn create_sampling_output(
         &self,
         sampling_length: usize,
@@ -778,7 +758,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             .ctx
             .executables
             .embed
-            .encode_lookup(token_inputs.token_ids(), token_count, self.ctx.model_shape.activation_data_type(), encoder)
+            .encode_lookup(token_inputs.token_ids(), token_count, encoder)
             .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         if let Some(pre_encode) = pre_injection_encode.as_mut() {
             pre_encode(self, encoder)?;
@@ -794,12 +774,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 self.encode_override_first_row_from_device_on(encoder, &mut main, &self.single_override_embedding)?;
             },
         }
-        let decoder_logits = self.create_decoder_logits(sampling_length);
         let mut logits = {
             let mut cache_layers = self.ctx.cache_layers.borrow_mut();
             let decoder_arguments = DecoderArguments {
-                activation_data_type: self.ctx.model_shape.activation_data_type(),
-                token_ids: token_inputs.token_ids(),
                 token_positions: token_inputs.token_positions(),
                 token_parents: token_inputs.token_parents(),
                 token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
@@ -819,7 +796,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 .encode_decode(
                     decoder_arguments,
                     DecoderDecodeInput::Embeddings(main),
-                    decoder_logits,
                     hidden_capture,
                     &encoding_parameters,
                     encoder,

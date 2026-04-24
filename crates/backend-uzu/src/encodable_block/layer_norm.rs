@@ -43,8 +43,6 @@ impl<B: Backend> LayerNorm<B> {
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
-        let full_layer = config.upcast_mode == UpcastMode::FullLayer;
-
         let kernel = <B::Kernels as Kernels>::LayerNormKernel::new(
             context,
             intermediate_data_type,
@@ -61,11 +59,7 @@ impl<B: Backend> LayerNorm<B> {
             scales,
             element_count,
             input_data_type: intermediate_data_type,
-            output_data_type: if full_layer {
-                scale_data_type
-            } else {
-                scale_data_type
-            },
+            output_data_type: scale_data_type,
         })
     }
 
