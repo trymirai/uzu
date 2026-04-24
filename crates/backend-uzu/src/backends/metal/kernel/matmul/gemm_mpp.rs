@@ -122,7 +122,7 @@ impl GemmMppSpecialization {
             simdgroups_per_column,
             align_m: (m % block_rows) == 0,
             align_n: (n % block_cols) == 0,
-            align_k: (k % 256) == 0,
+            align_k: (k % 128) == 0,
             apply_ab_scale,
             is_accumulate,
         }
