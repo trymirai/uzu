@@ -32,7 +32,7 @@ dependencies: [
 Run the snippet below:
 
 ```swift
-// include:Sources/Example/Snippets.swift#quick-start
+// include:Sources/Examples/Snippets.swift#quick-start
 ```
 
 Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
@@ -56,7 +56,7 @@ swift run examples text-to-speech
 In this example, we will download a model and get a reply to a specific list of messages:
 
 ```swift
-// include:Sources/Example/Chat.swift
+// include:Sources/Examples/Chat.swift
 ```
 
 Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend adding the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) entitlement to ensure your app can allocate the required memory.
@@ -66,7 +66,7 @@ Once loaded, the same `ChatSession` can be reused for multiple requests until yo
 In this example, we will use the `summarization` preset to generate a summary of the input text:
 
 ```swift
-// include:Sources/Example/Summarization.swift
+// include:Sources/Examples/Summarization.swift
 ```
 
 You will notice that the model’s run count is lower than the actual number of generated tokens due to speculative decoding, which significantly improves generation speed.
@@ -76,7 +76,7 @@ You will notice that the model’s run count is lower than the actual number of 
 In this example, we will use the `classification` preset to determine the sentiment of the user's input:
 
 ```swift
-// include:Sources/Example/Classification.swift
+// include:Sources/Examples/Classification.swift
 ```
 
 You can view the stats to see that the answer will be ready immediately after the prefill step, and actual generation won’t even start due to speculative decoding, which significantly improves generation speed.
@@ -86,7 +86,7 @@ You can view the stats to see that the answer will be ready immediately after th
 Sometimes you want to create a complex pipeline where some requests are processed on-device and the more complex ones are handled in the cloud using a larger model. With `uzu`, you can do this easily: just choose the cloud model you want to use and perform all requests through the same API:
 
 ```swift
-// include:Sources/Example/Cloud.swift
+// include:Sources/Examples/Cloud.swift
 ```
 
 ### Structured Output
@@ -94,7 +94,7 @@ Sometimes you want to create a complex pipeline where some requests are processe
 Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema, or use a struct annotated with `@Generable` from Apple’s FoundationModels framework.
 
 ```swift
-// include:Sources/Example/StructuredOutput.swift
+// include:Sources/Examples/StructuredOutput.swift
 ```
 
 ## Troubleshooting
