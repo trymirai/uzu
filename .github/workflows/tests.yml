@@ -102,13 +102,28 @@ jobs:
           cargo +stable nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
             ${{ matrix.target == 'wasm32-wasip1-threads' && '-p backend-uzu --lib --test kernel' || '' }}
 
+  validate-bindings:
+    name: validate-bindings
+    runs-on: [ self-hosted, macos, mac, arm64 ]
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          metal: true
+          node: true
+
+      - name: Prepare bindings
+        run: cargo run -p cli-release prepare-bindings
+
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [ linters, tests ]
+    needs: [ linters, tests, validate-bindings ]
     if: ${{ always() }}
 
     steps:
       - run: |
           [ "${{ needs.linters.result }}" = success ]
           [ "${{ needs.tests.result }}" = success ]
+          [ "${{ needs.validate-bindings.result }}" = success ]
