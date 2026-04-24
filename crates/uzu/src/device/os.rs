@@ -32,6 +32,25 @@ pub fn is_environment_sandboxed() -> bool {
 }
 
 #[allow(unreachable_code)]
+pub fn application_identifier() -> String {
+    #[cfg(target_vendor = "apple")]
+    {
+        use objc2_foundation::NSBundle;
+
+        let bundle = NSBundle::mainBundle();
+        if let Some(identifier) = bundle.bundleIdentifier() {
+            return identifier.to_string();
+        }
+    }
+    if let Ok(path) = std::env::current_exe() {
+        if let Some(name) = path.file_name() {
+            return name.to_string_lossy().into_owned();
+        }
+    }
+    "default".to_string()
+}
+
+#[allow(unreachable_code)]
 pub fn is_keyring_available() -> bool {
     #[cfg(target_vendor = "apple")]
     {

@@ -1,8 +1,4 @@
 #[cfg(feature = "bindings-uniffi")]
-shoji::uniffi_reexport_scaffolding!();
-#[cfg(feature = "bindings-uniffi")]
-nagare::uniffi_reexport_scaffolding!();
-#[cfg(feature = "bindings-uniffi")]
 uniffi::setup_scaffolding!();
 
 #[cfg(not(target_family = "wasm"))]

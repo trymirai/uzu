@@ -202,6 +202,17 @@ pub fn export(
                 _ => true,
             });
 
+            let mut factories: Vec<syn::ImplItemFn> = Vec::new();
+            item_implementation.items.retain(|item| match item {
+                ImplItem::Fn(method) if method_has_factory(method) => {
+                    let mut stripped = method.clone();
+                    strip_bindings_export_attrs(&mut stripped.attrs);
+                    factories.push(stripped);
+                    false
+                },
+                _ => true,
+            });
+
             let mut stream_next_methods: Vec<syn::ImplItemFn> = Vec::new();
             for item in &item_implementation.items {
                 if let ImplItem::Fn(method) = item {
@@ -232,8 +243,32 @@ pub fn export(
             let stream_expansions: Vec<proc_macro2::TokenStream> =
                 stream_next_methods.iter().map(|method| napi::stream_next_generator(&self_type, method)).collect();
 
+            let factory_expansions: Vec<proc_macro2::TokenStream> = factories
+                .iter()
+                .map(|method| {
+                    let plain_impl = quote! {
+                        impl #self_type {
+                            #method
+                        }
+                    };
+                    let napi_expansion = napi::factory(&self_type, method);
+                    let uniffi_expansion = uniffi::factory(&self_type, method);
+                    let pyo3_expansion = pyo3::factory(&self_type, method);
+                    quote! {
+                        #plain_impl
+                        #napi_expansion
+                        #uniffi_expansion
+                        #pyo3_expansion
+                    }
+                })
+                .collect();
+
+            let has_async_methods = item_implementation
+                .items
+                .iter()
+                .any(|item| matches!(item, ImplItem::Fn(method) if method.sig.asyncness.is_some()));
             let napi = napi::attributes(&kind);
-            let uniffi = uniffi::attributes(&kind);
+            let uniffi = uniffi::implementation_attribute(has_async_methods);
             let pyo3 = pyo3::attributes(&kind);
             let wasm = wasm::attributes(&kind);
             quote! {
@@ -244,6 +279,7 @@ pub fn export(
                 #item_implementation
                 #( #callback_expansions )*
                 #( #stream_expansions )*
+                #( #factory_expansions )*
             }
             .into()
         },
@@ -335,6 +371,22 @@ fn method_flavor(attribute: &Attribute) -> Option<MethodFlavor> {
         BindingKind::StreamNext => Some(MethodFlavor::Plain),
         _ => None,
     }
+}
+
+fn method_has_factory(method: &syn::ImplItemFn) -> bool {
+    method.attrs.iter().any(|attribute| {
+        if !is_exportable_attribute(attribute) {
+            return false;
+        }
+        let Ok(arguments): syn::Result<ExportArguments> = attribute.parse_args() else {
+            return false;
+        };
+        matches!(arguments.kind, BindingKind::Factory)
+    })
+}
+
+fn strip_bindings_export_attrs(attrs: &mut Vec<Attribute>) {
+    attrs.retain(|attribute| !is_exportable_attribute(attribute));
 }
 
 fn method_has_stream_next(method: &syn::ImplItemFn) -> bool {

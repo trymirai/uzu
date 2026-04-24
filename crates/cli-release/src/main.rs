@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_release::{
     handlers::{
-        SyncSource, /*prepare_bindings_swift,*/ prepare_bindings_ts, /*prepare_workspace_swift,*/
-        /*prepare_workspace_swift_spm,*/ prepare_workspace_ts, prepare_workspace_ts_napi, sync_into_repo,
+        SyncSource, prepare_bindings_swift, prepare_bindings_ts, prepare_workspace_swift, prepare_workspace_swift_spm,
+        prepare_workspace_ts, prepare_workspace_ts_napi, sync_into_repo,
     },
     types::{Environment, Error},
 };
@@ -36,7 +36,7 @@ enum Commands {
 fn prepare_bindings(environment: &Environment) -> Result<(), Error> {
     prepare_workspace_ts_napi(environment)?;
     prepare_bindings_ts(environment)?;
-    //prepare_bindings_swift(environment)?;
+    prepare_bindings_swift(environment)?;
     Ok(())
 }
 
@@ -46,8 +46,8 @@ fn prepare_workspace(
 ) -> Result<(), Error> {
     prepare_bindings(&environment)?;
     prepare_workspace_ts(environment, version.clone())?;
-    //let swift_spm_checksum = prepare_workspace_swift_spm(environment, version.clone())?;
-    //prepare_workspace_swift(environment, version.clone(), swift_spm_checksum)?;
+    let swift_spm_checksum = prepare_workspace_swift_spm(environment, version.clone())?;
+    prepare_workspace_swift(environment, version.clone(), swift_spm_checksum)?;
     Ok(())
 }
 
