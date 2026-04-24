@@ -18,8 +18,7 @@ use crate::{
             Metal,
             context::MetalContext,
             kernel::{
-                MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemmMppUniversalMetalKernel,
-                MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
+                MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
             },
             metal_extensions::DeviceExt,
         },
@@ -28,7 +27,6 @@ use crate::{
 
 mod gemm;
 mod gemm_mpp;
-mod gemm_mpp_universal;
 mod gemv;
 
 pub struct MatmulMetalKernel {
@@ -36,8 +34,6 @@ pub struct MatmulMetalKernel {
     gemv_kernels: HashMap<gemv::GemvSpecialization, MatmulGemvMetalKernel>,
     gemm_kernels: HashMap<gemm::GemmSpecialization, MatmulGemmMetalKernel>,
     gemm_mpp_kernels: HashMap<gemm_mpp::GemmMppSpecialization, MatmulGemmMppMetalKernel>,
-    gemm_mpp_universal_kernels:
-        HashMap<gemm_mpp_universal::GemmMppUniversalSpecialization, MatmulGemmMppUniversalMetalKernel>,
     bias_add: TensorAddBiasMetalKernel,
 }
 
@@ -129,26 +125,6 @@ impl MatmulMetalKernel {
                     specialization.align_m,
                     specialization.align_n,
                     specialization.align_k,
-                    specialization.apply_ab_scale,
-                    specialization.is_accumulate,
-                )
-                .map_err(MatmulError::BackendError)?;
-                Ok(entry.insert(kernel))
-            },
-        }
-    }
-
-    fn get_or_create_gemm_mpp_universal(
-        &mut self,
-        context: &MetalContext,
-        specialization: gemm_mpp_universal::GemmMppUniversalSpecialization,
-    ) -> Result<&MatmulGemmMppUniversalMetalKernel, MatmulError<Metal>> {
-        match self.gemm_mpp_universal_kernels.entry(specialization) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                let kernel = MatmulGemmMppUniversalMetalKernel::new(
-                    context,
-                    self.data_type,
                     specialization.apply_ab_scale,
                     specialization.is_accumulate,
                 )
@@ -318,59 +294,6 @@ impl MatmulMetalKernel {
 
         Ok(())
     }
-
-    fn encode_gemm_mpp_universal(
-        &mut self,
-        context: &MetalContext,
-        encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
-        let specialization = gemm_mpp_universal::GemmMppUniversalSpecialization::select(
-            arguments.ab_scale != 1.0,
-            matches!(arguments.c, MatmulArgumentC::Accumulate),
-        );
-
-        let threadgroups_per_row = arguments.output_dim.div_ceil(32);
-        let threadgroups_per_column = arguments.batch_dim.div_ceil(32);
-        let params = GemmParams {
-            M: arguments.batch_dim,
-            N: arguments.output_dim,
-            K: arguments.input_dim,
-            leading_dimension_a: arguments.input_dim,
-            leading_dimension_b: arguments.input_dim,
-            leading_dimension_d: arguments.output_dim,
-            threadgroups_per_row,
-            threadgroups_per_column,
-            swizzle_log: 0,
-            aligned_inner_iterations: 0,
-            use_morton: false,
-        };
-
-        let kernel = self.get_or_create_gemm_mpp_universal(context, specialization)?;
-        kernel.encode(
-            (arguments.a, arguments.a_offset as usize),
-            arguments.b,
-            &mut *arguments.d,
-            std::slice::from_ref(&params),
-            threadgroups_per_row,
-            threadgroups_per_column,
-            arguments.ab_scale,
-            encoder,
-        );
-
-        if let MatmulArgumentC::Bias(bias) = arguments.c {
-            self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
-                bias,
-                arguments.d,
-                arguments.output_dim,
-                arguments.batch_dim * arguments.output_dim,
-                encoder,
-            );
-        }
-
-        Ok(())
-    }
 }
 
 /// Explicit dispatch paths for testing individual kernels independent of production routing.
@@ -380,7 +303,6 @@ pub enum MatmulDispatchPath {
     Gemv,
     Gemm,
     GemmMpp,
-    GemmMppUniversal,
 }
 
 impl MatmulMetalKernel {
@@ -398,9 +320,6 @@ impl MatmulMetalKernel {
             MatmulDispatchPath::GemmMpp => {
                 self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP")
             },
-            MatmulDispatchPath::GemmMppUniversal => self
-                .encode_gemm_mpp_universal(context, encoder, arguments)
-                .expect("Failed to encode universal GEMM MPP"),
         }
     }
 }
@@ -423,7 +342,6 @@ impl MatmulKernel for MatmulMetalKernel {
             gemv_kernels: HashMap::new(),
             gemm_kernels: HashMap::new(),
             gemm_mpp_kernels: HashMap::new(),
-            gemm_mpp_universal_kernels: HashMap::new(),
             bias_add,
         };
 
