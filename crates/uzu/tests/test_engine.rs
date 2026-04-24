@@ -59,7 +59,7 @@ async fn test_engine_chat() {
         ChatMessage::system().with_text("You are a helpful assistant.".to_string()),
         ChatMessage::user().with_text("My name is John Doe".to_string()),
     ];
-    let stream = session.reply_with_stream(messages, ChatReplyConfig::default());
+    let stream = session.reply_with_stream(messages, ChatReplyConfig::default()).await;
     while let Some(progress) = stream.next().await {
         match progress {
             ChatSessionStreamChunk::Replies {

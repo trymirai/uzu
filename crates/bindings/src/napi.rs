@@ -14,6 +14,9 @@ pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
         BindingKind::ClassCloneable => quote! {
             #[cfg_attr(feature = "bindings-napi", napi_derive::napi(constructor))]
         },
+        BindingKind::Stream => quote! {
+            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(async_iterator))]
+        },
         BindingKind::Struct => quote! {
             #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object))]
         },
@@ -36,7 +39,7 @@ pub fn method_attribute(flavor: &MethodFlavor) -> Attribute {
             #[cfg_attr(feature = "bindings-napi", napi(constructor))]
         },
         MethodFlavor::Factory => parse_quote! {
-            #[cfg_attr(feature = "bindings-napi", napi(factory))]
+            #[cfg_attr(feature = "bindings-napi", napi)]
         },
         MethodFlavor::Getter => parse_quote! {
             #[cfg_attr(feature = "bindings-napi", napi(getter))]
@@ -184,9 +187,8 @@ pub fn enum_variant_classes(
         });
 
         from_napi_try_branches.push(quote! {
-            if let Ok(instance) =
-                ClassInstance::<#variant_class_ident>::from_napi_value(env, val)
-            {
+            if <&#variant_class_ident as napi::bindgen_prelude::ValidateNapiValue>::validate(env, val).is_ok() {
+                let instance = ClassInstance::<#variant_class_ident>::from_napi_value(env, val)?;
                 let inner: &#variant_class_ident =
                     <ClassInstance<#variant_class_ident> as ::core::ops::Deref>::deref(&instance);
                 return Ok(#enum_ident::#variant_ident {
@@ -320,6 +322,68 @@ pub fn enum_variant_classes(
     }
 }
 
+pub fn stream_next_generator(
+    self_type: &syn::Type,
+    method: &syn::ImplItemFn,
+) -> proc_macro2::TokenStream {
+    let method_ident = &method.sig.ident;
+    let yield_type = match extract_option_inner_type(&method.sig.output) {
+        Some(ty) => ty,
+        None => {
+            return syn::Error::new_spanned(
+                &method.sig,
+                "bindings::export(StreamNext) requires return type `Option<T>`",
+            )
+            .to_compile_error();
+        },
+    };
+
+    quote! {
+        #[cfg(feature = "bindings-napi")]
+        #[napi_derive::napi]
+        impl napi::bindgen_prelude::AsyncGenerator for #self_type {
+            type Yield = #yield_type;
+            type Next = ();
+            type Return = ();
+
+            fn next(
+                &mut self,
+                _value: Option<Self::Next>,
+            ) -> impl ::core::future::Future<Output = napi::Result<Option<Self::Yield>>>
+                + Send
+                + 'static {
+                let this: Self = ::core::clone::Clone::clone(self);
+                async move { Ok(this.#method_ident().await) }
+            }
+        }
+    }
+}
+
+fn extract_option_inner_type(output: &syn::ReturnType) -> Option<syn::Type> {
+    let return_type = match output {
+        syn::ReturnType::Type(_, return_type) => return_type.as_ref(),
+        syn::ReturnType::Default => return None,
+    };
+    let type_path = match return_type {
+        syn::Type::Path(type_path) => type_path,
+        _ => return None,
+    };
+    let last_segment = type_path.path.segments.last()?;
+    if last_segment.ident != "Option" {
+        return None;
+    }
+    let generic_arguments = match &last_segment.arguments {
+        syn::PathArguments::AngleBracketed(angle_bracketed) => &angle_bracketed.args,
+        _ => return None,
+    };
+    for argument in generic_arguments {
+        if let syn::GenericArgument::Type(inner_type) = argument {
+            return Some(inner_type.clone());
+        }
+    }
+    None
+}
+
 pub fn factory_with_callback(
     self_type: &syn::Type,
     method: &syn::ImplItemFn,
@@ -337,6 +401,7 @@ pub fn factory_with_callback(
                 let threadsafe_function = callback
                     .build_threadsafe_function()
                     .callee_handled::<false>()
+                    .weak::<true>()
                     .build()
                     .map_err(|error| napi::Error::from_reason(error.to_string()))?;
                 let callback: Box<dyn Fn() + Send + Sync> = Box::new(move || {

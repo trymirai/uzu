@@ -16,6 +16,7 @@ pub(crate) enum BindingKind {
     Struct,
     Class,
     ClassCloneable,
+    Stream,
     Alias,
     Implementation,
     Method,
@@ -24,6 +25,7 @@ pub(crate) enum BindingKind {
     FactoryWithCallback,
     Getter,
     Setter,
+    StreamNext,
     Error,
 }
 
@@ -47,6 +49,7 @@ impl Parse for ExportArguments {
             "Struct" => BindingKind::Struct,
             "Class" => BindingKind::Class,
             "ClassCloneable" => BindingKind::ClassCloneable,
+            "Stream" => BindingKind::Stream,
             "Alias" => BindingKind::Alias,
             "Implementation" => BindingKind::Implementation,
             "Method" => BindingKind::Method,
@@ -55,6 +58,7 @@ impl Parse for ExportArguments {
             "FactoryWithCallback" => BindingKind::FactoryWithCallback,
             "Getter" => BindingKind::Getter,
             "Setter" => BindingKind::Setter,
+            "StreamNext" => BindingKind::StreamNext,
             "Error" => BindingKind::Error,
             other => {
                 return Err(syn::Error::new(identifier.span(), format!("Unknown binding kind: {other}")));
@@ -142,7 +146,7 @@ pub fn export(
                 .into()
             }
         },
-        BindingKind::Struct | BindingKind::Class | BindingKind::ClassCloneable => {
+        BindingKind::Struct | BindingKind::Class | BindingKind::ClassCloneable | BindingKind::Stream => {
             let item = parse_macro_input!(item as syn::Item);
             let type_name = match &item {
                 syn::Item::Struct(item_struct) => Some(&item_struct.ident),
@@ -198,6 +202,15 @@ pub fn export(
                 _ => true,
             });
 
+            let mut stream_next_methods: Vec<syn::ImplItemFn> = Vec::new();
+            for item in &item_implementation.items {
+                if let ImplItem::Fn(method) = item {
+                    if method_has_stream_next(method) {
+                        stream_next_methods.push(method.clone());
+                    }
+                }
+            }
+
             for item in &mut item_implementation.items {
                 if let ImplItem::Fn(method) = item {
                     rewrite_method_attributes(&mut method.attrs);
@@ -216,6 +229,9 @@ pub fn export(
                 })
                 .collect();
 
+            let stream_expansions: Vec<proc_macro2::TokenStream> =
+                stream_next_methods.iter().map(|method| napi::stream_next_generator(&self_type, method)).collect();
+
             let napi = napi::attributes(&kind);
             let uniffi = uniffi::attributes(&kind);
             let pyo3 = pyo3::attributes(&kind);
@@ -227,6 +243,7 @@ pub fn export(
                 #wasm
                 #item_implementation
                 #( #callback_expansions )*
+                #( #stream_expansions )*
             }
             .into()
         },
@@ -235,7 +252,8 @@ pub fn export(
         | BindingKind::Factory
         | BindingKind::FactoryWithCallback
         | BindingKind::Getter
-        | BindingKind::Setter => {
+        | BindingKind::Setter
+        | BindingKind::StreamNext => {
             let tokens = proc_macro2::TokenStream::from(item);
             quote! { #tokens }.into()
         },
@@ -314,8 +332,21 @@ fn method_flavor(attribute: &Attribute) -> Option<MethodFlavor> {
         BindingKind::Factory => Some(MethodFlavor::Factory),
         BindingKind::Getter => Some(MethodFlavor::Getter),
         BindingKind::Setter => Some(MethodFlavor::Setter),
+        BindingKind::StreamNext => Some(MethodFlavor::Plain),
         _ => None,
     }
+}
+
+fn method_has_stream_next(method: &syn::ImplItemFn) -> bool {
+    method.attrs.iter().any(|attribute| {
+        if !is_exportable_attribute(attribute) {
+            return false;
+        }
+        let Ok(arguments): syn::Result<ExportArguments> = attribute.parse_args() else {
+            return false;
+        };
+        matches!(arguments.kind, BindingKind::StreamNext)
+    })
 }
 
 fn method_has_factory_with_callback(method: &syn::ImplItemFn) -> bool {
