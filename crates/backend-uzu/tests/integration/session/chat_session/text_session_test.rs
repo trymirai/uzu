@@ -11,7 +11,7 @@ use backend_uzu::{
         types::{Input, Message, Output},
     },
 };
-use shoji::types::session::chat::Feature;
+use shoji::types::basic::Feature;
 use test_tag::tag;
 use tokenizers::Tokenizer;
 

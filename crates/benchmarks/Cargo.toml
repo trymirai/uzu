@@ -8,7 +8,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-uzu.workspace = true
+backend-uzu.workspace = true
 serde.workspace = true
 sysinfo.workspace = true
 
@@ -18,4 +18,4 @@ mach2.workspace = true
 [features]
 default = ["metal"]
 
-metal = ["uzu/metal"]
+metal = ["backend-uzu/metal"]

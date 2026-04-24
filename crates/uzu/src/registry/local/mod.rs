@@ -5,17 +5,17 @@ use std::{fs, future::Future, path::Path, pin::Pin};
 pub use config::Config;
 use shoji::{
     traits::Registry as RegistryTrait,
-    types::model::{Accessibility, Entity, EntityType, Model, Reference, Specialization},
+    types::model::{Model, ModelAccessibility, ModelReference, ModelSpecialization},
 };
 
-use crate::registry::Error;
+use crate::registry::RegistryError;
 
 pub struct Registry {
     config: Config,
 }
 
 impl Registry {
-    pub fn new(config: Config) -> Result<Self, Error> {
+    pub fn new(config: Config) -> Result<Self, RegistryError> {
         Ok(Self {
             config,
         })
@@ -23,22 +23,22 @@ impl Registry {
 }
 
 impl RegistryTrait for Registry {
-    type Error = Error;
+    type Error = RegistryError;
 
     fn indentifier(&self) -> String {
         self.config.identifier.clone()
     }
 
-    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Error>> + Send + '_>> {
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             let path = Path::new(&self.config.path);
             if !path.exists() {
-                Err(Error::UnableToGetModels {
+                Err(RegistryError::UnableToGetModels {
                     message: format!("Path not found: {}", path.display()),
                 })?;
             }
 
-            let entries = fs::read_dir(path).map_err(|error| Error::UnableToGetModels {
+            let entries = fs::read_dir(path).map_err(|error| RegistryError::UnableToGetModels {
                 message: error.to_string(),
             })?;
 
@@ -54,7 +54,15 @@ impl RegistryTrait for Registry {
                 let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                     continue;
                 };
-                models.push(self.model(name));
+
+                let model = self.model(name);
+                let model = match self.config.resolver.as_ref() {
+                    Some(resolver) => resolver(model),
+                    None => Some(model),
+                };
+                if let Some(model) = model {
+                    models.push(model);
+                }
             }
 
             Ok(models)
@@ -69,40 +77,19 @@ impl Registry {
     ) -> Model {
         let path = Path::new(&self.config.path).join(name);
         let identifier = name.to_string();
-        Model {
-            identifier: identifier.clone(),
-            entities: vec![
-                self.entity(EntityType::Registry, &self.config.identifier, &self.config.name),
-                self.entity(EntityType::Backend, &self.config.backend_identifier, &self.config.backend_identifier),
-                self.entity(EntityType::Vendor, &self.config.identifier, &self.config.name),
-                self.entity(EntityType::Family, &self.config.identifier, &self.config.name),
-                self.entity(EntityType::Variant, &identifier, &identifier),
-            ],
-            specializations: vec![Specialization::Chat],
-            number_of_parameters: None,
-            quantization: None,
-            accessibility: Accessibility::Local {
-                reference: Reference::Local {
+        Model::external(
+            identifier.clone(),
+            self.config.identifier.clone(),
+            self.config.name.clone(),
+            self.config.backend_identifier.clone(),
+            self.config.backend_identifier.clone(),
+            self.config.backend_version.clone(),
+            vec![ModelSpecialization::Chat {}],
+            ModelAccessibility::Local {
+                reference: ModelReference::Local {
                     path: path.to_string_lossy().to_string(),
                 },
             },
-        }
-    }
-
-    fn entity(
-        &self,
-        r#type: EntityType,
-        identifier: &str,
-        name: &str,
-    ) -> Entity {
-        Entity {
-            r#type,
-            identifier: identifier.to_string(),
-            parent_identifier: None,
-            name: name.to_string(),
-            description: None,
-            version: None,
-            icons: vec![],
-        }
+        )
     }
 }

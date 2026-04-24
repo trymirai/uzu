@@ -37,11 +37,14 @@ impl Section {
     /// Determine which section a model belongs to based on its state
     pub fn for_model(model_with_state: &ModelWithState) -> Self {
         match model_with_state.state.phase {
-            DownloadPhase::Downloaded => Section::Installed,
-            DownloadPhase::Downloading | DownloadPhase::Paused | DownloadPhase::Locked | DownloadPhase::Error(_) => {
-                Section::Downloading
-            },
-            DownloadPhase::NotDownloaded => Section::Available,
+            DownloadPhase::Downloaded {} => Section::Installed,
+            DownloadPhase::Downloading {}
+            | DownloadPhase::Paused {}
+            | DownloadPhase::Locked {}
+            | DownloadPhase::Error {
+                ..
+            } => Section::Downloading,
+            DownloadPhase::NotDownloaded {} => Section::Available,
         }
     }
 

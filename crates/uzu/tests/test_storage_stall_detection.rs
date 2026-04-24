@@ -15,7 +15,7 @@ async fn test_stall_detection_no_progress() -> Result<(), Box<dyn std::error::Er
     let temp_dir = tempfile::tempdir()?;
     let base_path = temp_dir.path().to_path_buf();
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     tracing::info!("[STALL_TEST] Starting download...");
     model.download().await?;
 
@@ -33,21 +33,21 @@ async fn test_stall_detection_no_progress() -> Result<(), Box<dyn std::error::Er
         loop {
             tokio::select! {
                 Some(Ok((id, state))) = progress_stream.next() => {
-                    if id == test_storage.model(0).identifier() {
+                    if id == test_storage.model(0).identifier.clone() {
                         let current_bytes = state.downloaded_bytes;
-                        if current_bytes > last_bytes {
+                        if current_bytes > last_bytes as i64 {
                             let elapsed = last_progress_time.elapsed();
                             tracing::info!(
                                 "[STALL_TEST] Progress: {} bytes (delta: {}, time_since_last: {:?})",
                                 current_bytes,
-                                current_bytes - last_bytes,
+                                current_bytes - last_bytes as i64,
                                 elapsed
                             );
-                            last_bytes = current_bytes;
+                            last_bytes = current_bytes as u64;
                             last_progress_time = std::time::Instant::now();
                         }
 
-                        if matches!(state.phase, DownloadPhase::Downloaded) {
+                        if matches!(state.phase, DownloadPhase::Downloaded {}) {
                             tracing::info!("[STALL_TEST] ✓ Download completed");
                             return Ok::<_, String>(());
                         }
@@ -113,7 +113,7 @@ async fn test_stall_detection_broadcast_liveness() -> Result<(), Box<dyn std::er
     let temp_dir = tempfile::tempdir()?;
     let base_path = temp_dir.path().to_path_buf();
     let test_storage = TestStorage::new_with_base_path(base_path).await?;
-    let model = test_storage.storage.get(&test_storage.model(0).identifier()).await.ok_or("Model not found")?;
+    let model = test_storage.storage.get(&test_storage.model(0).identifier.clone()).await.ok_or("Model not found")?;
     tracing::info!("[BROADCAST_TEST] Starting download...");
     model.download().await?;
 
@@ -127,7 +127,7 @@ async fn test_stall_detection_broadcast_liveness() -> Result<(), Box<dyn std::er
 
     let broadcast_check = tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(Ok((id, state))) = progress_stream.next().await {
-            if id == test_storage.model(0).identifier() {
+            if id == test_storage.model(0).identifier.clone() {
                 let gap = last_update_time.elapsed();
                 update_count += 1;
 
@@ -153,7 +153,7 @@ async fn test_stall_detection_broadcast_liveness() -> Result<(), Box<dyn std::er
                 last_update_time = std::time::Instant::now();
 
                 // Stop after 100 updates or completion
-                if update_count >= 100 || matches!(state.phase, DownloadPhase::Downloaded) {
+                if update_count >= 100 || matches!(state.phase, DownloadPhase::Downloaded {}) {
                     return Ok::<_, String>(update_count);
                 }
             }

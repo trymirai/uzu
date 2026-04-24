@@ -3,7 +3,7 @@ use std::{future::Future, pin::Pin};
 use shoji::{traits::Registry, types::model::Model};
 use tokio::sync::Mutex;
 
-use crate::registry::Error;
+use crate::registry::RegistryError;
 
 pub struct FixedRegistry {
     identifier: String,
@@ -23,13 +23,13 @@ impl FixedRegistry {
 }
 
 impl Registry for FixedRegistry {
-    type Error = Error;
+    type Error = RegistryError;
 
     fn indentifier(&self) -> String {
         self.identifier.clone()
     }
 
-    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Error>> + Send + '_>> {
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             return Ok(self.models.lock().await.clone());
         })

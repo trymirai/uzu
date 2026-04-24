@@ -13,7 +13,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use uzu::engine::{Config as EngineConfig, Engine};
+use uzu::engine::{Engine, EngineConfig};
 
 use crate::{app::App, events::EventHandler};
 

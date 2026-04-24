@@ -62,8 +62,8 @@ fn render_section(
     let items: Vec<ListItem> = section_models
         .iter()
         .map(|(id, model_with_state)| match &model_with_state.state.phase {
-            uzu::storage::types::DownloadPhase::Downloaded => ListItem::new(format!("✓ {}", id)),
-            uzu::storage::types::DownloadPhase::NotDownloaded => {
+            uzu::storage::types::DownloadPhase::Downloaded {} => ListItem::new(format!("✓ {}", id)),
+            uzu::storage::types::DownloadPhase::NotDownloaded {} => {
                 let size_mb = model_with_state.state.total_bytes as f64 / 1_000_000.0;
                 ListItem::new(format!("{} ({:.1} MB)", id, size_mb))
             },
@@ -178,7 +178,7 @@ fn render_downloading_model(
     let available_width = area.width.saturating_sub(2) as usize;
 
     let (base_label, gauge_color, border_color) = match &model_with_state.state.phase {
-        uzu::storage::types::DownloadPhase::Downloading => {
+        uzu::storage::types::DownloadPhase::Downloading {} => {
             let progress_info = format!(" ({:.1}/{:.1} MB - {:.1}%)", downloaded_mb, total_mb, progress * 100.0);
             let name = truncate_name_for_label(id, &progress_info, available_width, is_selected);
             (
@@ -191,7 +191,7 @@ fn render_downloading_model(
                 },
             )
         },
-        uzu::storage::types::DownloadPhase::Paused => {
+        uzu::storage::types::DownloadPhase::Paused {} => {
             let progress_info =
                 format!(" [PAUSED] ({:.1}/{:.1} MB - {:.1}%)", downloaded_mb, total_mb, progress * 100.0);
             let name = truncate_name_for_label(id, &progress_info, available_width, is_selected);
@@ -205,7 +205,9 @@ fn render_downloading_model(
                 },
             )
         },
-        uzu::storage::types::DownloadPhase::Error(err) => {
+        uzu::storage::types::DownloadPhase::Error {
+            message: err,
+        } => {
             let error_info = format!(" [ERROR: {}]", err);
             let name = truncate_name_for_label(id, &error_info, available_width, is_selected);
             (

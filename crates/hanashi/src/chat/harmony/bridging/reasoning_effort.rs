@@ -1,5 +1,5 @@
 use openai_harmony::chat::ReasoningEffort as ExternalReasoningEffort;
-use shoji::types::encoding::ReasoningEffort;
+use shoji::types::basic::ReasoningEffort;
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
 

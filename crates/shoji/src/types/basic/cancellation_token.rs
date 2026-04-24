@@ -1,5 +1,6 @@
 use tokio_util::sync::CancellationToken as TokioCancellationToken;
 
+#[bindings::export(Class)]
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
     inner: TokioCancellationToken,
@@ -11,19 +12,23 @@ impl CancellationToken {
             inner: TokioCancellationToken::new(),
         }
     }
+}
 
+#[bindings::export(Implementation)]
+impl CancellationToken {
+    #[bindings::export(Factory)]
+    pub fn create() -> Self {
+        Self::new()
+    }
+
+    #[bindings::export(Method)]
     pub fn cancel(&self) {
         self.inner.cancel();
     }
 
+    #[bindings::export(Getter)]
     pub fn is_cancelled(&self) -> bool {
         self.inner.is_cancelled()
-    }
-
-    pub fn child(&self) -> Self {
-        Self {
-            inner: self.inner.child_token(),
-        }
     }
 }
 

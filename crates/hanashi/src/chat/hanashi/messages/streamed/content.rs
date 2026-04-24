@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shoji::types::encoding::{ContentBlock, Role, ToolCall};
+use shoji::types::{
+    basic::ToolCall,
+    session::chat::{ChatContentBlock, ChatRole},
+};
 
 use crate::chat::hanashi::messages::streamed::Section;
 
@@ -15,26 +18,26 @@ pub enum Content {
 impl Content {
     pub fn blocks(
         self,
-        role: &Role,
-    ) -> Vec<ContentBlock> {
+        role: &ChatRole,
+    ) -> Vec<ChatContentBlock> {
         match self {
-            Content::Text(text) => vec![ContentBlock::Text {
+            Content::Text(text) => vec![ChatContentBlock::Text {
                 value: text,
             }],
             Content::Value(value) => match role {
-                Role::Tool {} => vec![ContentBlock::ToolCallResult {
+                ChatRole::Tool {} => vec![ChatContentBlock::ToolCallResult {
                     identifier: None,
                     name: None,
                     value: value.into(),
                 }],
-                _ => vec![ContentBlock::Custom {
+                _ => vec![ChatContentBlock::Custom {
                     value: value.into(),
                 }],
             },
             Content::Sections(sections) => {
                 let mut reasoning_parts: Vec<String> = Vec::new();
                 let mut text_parts: Vec<String> = Vec::new();
-                let mut tool_calls: Vec<ContentBlock> = Vec::new();
+                let mut tool_calls: Vec<ChatContentBlock> = Vec::new();
 
                 for section in sections {
                     match section {
@@ -48,10 +51,10 @@ impl Content {
                             value: Some(value),
                         } => {
                             let block = match serde_json::from_value::<ToolCall>(value.clone()) {
-                                Ok(tool_call) => ContentBlock::ToolCall {
+                                Ok(tool_call) => ChatContentBlock::ToolCall {
                                     value: tool_call,
                                 },
-                                Err(_) => ContentBlock::ToolCallCandidate {
+                                Err(_) => ChatContentBlock::ToolCallCandidate {
                                     value: value.into(),
                                 },
                             };
@@ -60,7 +63,7 @@ impl Content {
                         Section::ToolCall {
                             value: None,
                         } => {
-                            tool_calls.push(ContentBlock::ToolCallCandidate {
+                            tool_calls.push(ChatContentBlock::ToolCallCandidate {
                                 value: Value::Null.into(),
                             });
                         },
@@ -72,12 +75,12 @@ impl Content {
                 let text = text_parts.concat().trim().to_string();
                 let mut blocks = Vec::new();
                 if !reasoning.is_empty() {
-                    blocks.push(ContentBlock::Reasoning {
+                    blocks.push(ChatContentBlock::Reasoning {
                         value: reasoning,
                     });
                 }
                 if !text.is_empty() {
-                    blocks.push(ContentBlock::Text {
+                    blocks.push(ChatContentBlock::Text {
                         value: text,
                     });
                 }

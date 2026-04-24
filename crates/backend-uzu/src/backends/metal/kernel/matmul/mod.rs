@@ -124,6 +124,8 @@ impl MatmulMetalKernel {
                     specialization.simdgroups_per_column,
                     specialization.align_m,
                     specialization.align_n,
+                    specialization.align_k,
+                    specialization.apply_ab_scale,
                     specialization.is_accumulate,
                 )
                 .map_err(MatmulError::BackendError)?;
@@ -249,7 +251,8 @@ impl MatmulMetalKernel {
             output_dim,
         } = arguments;
         let is_accumulate = matches!(c, MatmulArgumentC::Accumulate);
-        let specialization = gemm_mpp::GemmMppSpecialization::select(batch_dim, output_dim, is_accumulate);
+        let specialization =
+            gemm_mpp::GemmMppSpecialization::select(batch_dim, output_dim, input_dim, is_accumulate, ab_scale != 1.0);
 
         let threadgroups_per_row = output_dim.div_ceil(specialization.block_cols);
         let threadgroups_per_column = batch_dim.div_ceil(specialization.block_rows);

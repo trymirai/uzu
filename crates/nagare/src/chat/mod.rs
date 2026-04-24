@@ -2,28 +2,67 @@ mod error;
 pub mod message;
 pub mod token;
 
-use std::{pin::Pin, sync::Arc};
+use std::sync::Arc;
 
-pub use error::Error;
-use futures::{Stream, StreamExt};
+pub use error::ChatSessionError;
+use futures::StreamExt;
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{
         Backend,
         backend::chat_message::{Output as BackendOutput, ToolCallState},
     },
     types::{
-        basic::{CancellationToken, Value},
-        encoding::{Message, ToolCall},
-        model::{Model, Specialization},
-        session::chat::{Config, Output, StreamConfig},
+        basic::{CancellationToken, ToolCall, Value},
+        model::{Model, ModelSpecialization},
+        session::chat::{ChatConfig, ChatMessage, ChatReply, ChatReplyConfig},
     },
 };
 use tokio::sync::{Mutex, mpsc};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum State {
+#[bindings::export(Enum)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ChatSessionStreamChunk {
+    Replies {
+        replies: Vec<ChatReply>,
+    },
+    Error {
+        error: ChatSessionError,
+    },
+}
+
+#[bindings::export(Stream)]
+#[derive(Clone)]
+pub struct ChatSessionStream {
+    receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>>,
+    cancel_token: CancellationToken,
+}
+
+#[bindings::export(Implementation)]
+impl ChatSessionStream {
+    #[bindings::export(StreamNext)]
+    pub async fn next(&self) -> Option<ChatSessionStreamChunk> {
+        match self.receiver.lock().await.recv().await {
+            Some(Ok(replies)) => Some(ChatSessionStreamChunk::Replies {
+                replies,
+            }),
+            Some(Err(error)) => Some(ChatSessionStreamChunk::Error {
+                error,
+            }),
+            None => None,
+        }
+    }
+
+    #[bindings::export(Getter)]
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
+}
+
+#[bindings::export(Enum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ChatSessionState {
     Idle,
     Generation,
     ToolCalling,
@@ -35,21 +74,22 @@ enum Instance {
     Message(message::Session),
 }
 
-pub struct Session {
+#[bindings::export(Class)]
+pub struct ChatSession {
     instance: Arc<Mutex<Instance>>,
-    state: Arc<Mutex<State>>,
-    messages: Arc<Mutex<Vec<Message>>>,
+    state: Arc<Mutex<ChatSessionState>>,
+    messages: Arc<Mutex<Vec<ChatMessage>>>,
 }
 
-impl Session {
+impl ChatSession {
     pub async fn new(
         backend: &dyn Backend,
-        config: Config,
+        config: ChatConfig,
         model: Model,
         path: Option<String>,
-    ) -> Result<Self, Error> {
-        if !model.specializations.contains(&Specialization::Chat) {
-            return Err(Error::UnsupportedModel);
+    ) -> Result<Self, ChatSessionError> {
+        if !model.specializations.contains(&ModelSpecialization::Chat {}) {
+            return Err(ChatSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
@@ -58,33 +98,39 @@ impl Session {
         } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
             Instance::Message(message::Session::new(message_backend, config, reference).await?)
         } else {
-            return Err(Error::UnsupportedModel);
+            return Err(ChatSessionError::UnsupportedModel {});
         };
 
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
-            state: Arc::new(Mutex::new(State::Idle)),
+            state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),
         })
     }
+}
 
-    pub async fn state(&self) -> State {
+#[bindings::export(Implementation)]
+impl ChatSession {
+    #[bindings::export(Getter)]
+    pub async fn state(&self) -> ChatSessionState {
         *self.state.lock().await
     }
 
-    pub async fn messages(&self) -> Vec<Message> {
+    #[bindings::export(Getter)]
+    pub async fn messages(&self) -> Vec<ChatMessage> {
         self.messages.lock().await.clone()
     }
 
-    pub async fn reset(&self) -> Result<(), Error> {
+    #[bindings::export(Method)]
+    pub async fn reset(&self) -> Result<(), ChatSessionError> {
         {
             let mut state = self.state.lock().await;
             match *state {
-                State::Idle | State::ToolCalling => {
-                    *state = State::Resetting;
+                ChatSessionState::Idle | ChatSessionState::ToolCalling => {
+                    *state = ChatSessionState::Resetting;
                 },
-                State::Generation | State::Resetting => {
-                    return Err(Error::UnableToPerformOperationInCurrentState);
+                ChatSessionState::Generation | ChatSessionState::Resetting => {
+                    return Err(ChatSessionError::UnableToPerformOperationInCurrentState {});
                 },
             }
         }
@@ -98,18 +144,40 @@ impl Session {
         };
 
         self.messages.lock().await.clear();
-        *self.state.lock().await = State::Idle;
+        *self.state.lock().await = ChatSessionState::Idle;
 
         result
     }
 
-    pub fn stream(
+    #[bindings::export(Method)]
+    pub async fn reply(
         &self,
-        input: Vec<Message>,
-        config: StreamConfig,
-    ) -> (Pin<Box<dyn Stream<Item = Result<Vec<Output>, Error>> + Send>>, CancellationToken) {
+        input: Vec<ChatMessage>,
+        config: ChatReplyConfig,
+    ) -> Result<Vec<ChatReply>, ChatSessionError> {
+        let stream = self.reply_with_stream(input, config).await;
+        let mut outputs: Option<Vec<ChatReply>> = None;
+        while let Some(progress) = stream.next().await {
+            match progress {
+                ChatSessionStreamChunk::Replies {
+                    replies,
+                } => outputs = Some(replies.clone()),
+                ChatSessionStreamChunk::Error {
+                    error,
+                } => return Err(error),
+            }
+        }
+        outputs.ok_or(ChatSessionError::NoResponse {})
+    }
+
+    #[bindings::export(Method)]
+    pub async fn reply_with_stream(
+        &self,
+        input: Vec<ChatMessage>,
+        config: ChatReplyConfig,
+    ) -> ChatSessionStream {
         let cancel_token_to_return = CancellationToken::new();
-        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<Output>, Error>>();
+        let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
 
         let instance = self.instance.clone();
         let state = self.state.clone();
@@ -120,11 +188,11 @@ impl Session {
             {
                 let mut state = state.lock().await;
                 match *state {
-                    State::Idle => {
-                        *state = State::Generation;
+                    ChatSessionState::Idle => {
+                        *state = ChatSessionState::Generation;
                     },
-                    State::Generation | State::Resetting | State::ToolCalling => {
-                        let _ = sender.send(Err(Error::UnableToPerformOperationInCurrentState));
+                    ChatSessionState::Generation | ChatSessionState::Resetting | ChatSessionState::ToolCalling => {
+                        let _ = sender.send(Err(ChatSessionError::UnableToPerformOperationInCurrentState {}));
                         return;
                     },
                 }
@@ -137,7 +205,7 @@ impl Session {
                 messages.clone()
             };
 
-            let mut outputs: IndexMap<u32, Output> = IndexMap::new();
+            let mut outputs: IndexMap<u32, ChatReply> = IndexMap::new();
 
             let mut instance = instance.lock().await;
             let mut stream = match &mut *instance {
@@ -150,7 +218,7 @@ impl Session {
                 match partial_output {
                     Ok(backend_output) => {
                         let message = build_message(&backend_output);
-                        let output = Output {
+                        let output = ChatReply {
                             message: message.clone(),
                             stats: backend_output.stats.clone(),
                             finish_reason: backend_output.finish_reason.clone(),
@@ -182,16 +250,19 @@ impl Session {
 
             {
                 let mut state = state.lock().await;
-                *state = State::Idle;
+                *state = ChatSessionState::Idle;
             }
         });
 
-        (Box::pin(UnboundedReceiverStream::new(receiver)), cancel_token_to_return)
+        ChatSessionStream {
+            receiver: Arc::new(Mutex::new(receiver)),
+            cancel_token: cancel_token_to_return,
+        }
     }
 }
 
-fn build_message(output: &BackendOutput) -> Message {
-    let mut message = Message::assistant();
+fn build_message(output: &BackendOutput) -> ChatMessage {
+    let mut message = ChatMessage::assistant();
     if let Some(reasoning) = &output.reasoning {
         message = message.with_reasoning(reasoning.clone());
     }

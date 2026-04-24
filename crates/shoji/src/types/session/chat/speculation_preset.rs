@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::session::chat::Feature;
+use crate::types::basic::Feature;
 
-#[bindings::export(Enum, name = "ChatSpeculationPreset")]
+#[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SpeculationPreset {
+pub enum ChatSpeculationPreset {
     GeneralChat {},
     Summarization {},
     Classification {

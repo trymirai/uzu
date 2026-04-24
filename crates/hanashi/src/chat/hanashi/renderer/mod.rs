@@ -8,7 +8,7 @@ use functions::{raise_exception, strftime_now, to_json};
 use indexmap::IndexMap;
 use minijinja::Environment;
 use minijinja_contrib::pycompat::unknown_method_callback;
-use shoji::types::{basic::Token, encoding::Message};
+use shoji::types::{basic::Token, session::chat::ChatMessage};
 
 use crate::chat::hanashi::messages::rendered::Message as RenderedMessage;
 
@@ -27,7 +27,7 @@ impl Renderer {
 
     pub fn render(
         &self,
-        messages: &[Message],
+        messages: &[ChatMessage],
         should_add_preamble: bool,
         bos_token: Option<Token>,
         eos_token: Option<Token>,

@@ -1,0 +1,10 @@
+{
+    "name": "@trymirai/uzu",
+    "version": "0.0.0",
+    "exports": {
+        ".": "./index.ts"
+    },
+    "publish": {
+        "exclude": ["!."]
+    }
+}

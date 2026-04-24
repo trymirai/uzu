@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-uzu.workspace = true
+backend-uzu.workspace = true
 benchmarks.workspace = true
 ctrlc.workspace = true
 indicatif.workspace = true
@@ -29,4 +29,4 @@ comfy-table.workspace = true
 [features]
 default = ["metal"]
 
-metal = ["benchmarks/metal", "uzu/metal"]
+metal = ["benchmarks/metal", "backend-uzu/metal"]
