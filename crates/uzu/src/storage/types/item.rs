@@ -6,7 +6,7 @@ use std::{
 
 use download_manager::{FileDownloadManager, FileDownloadState, FileDownloadTask};
 use futures_util::future::join_all;
-use shoji::types::model::File;
+use shoji::types::basic::File;
 use tokio::{
     runtime::Handle,
     sync::broadcast::{Sender, channel},
@@ -17,7 +17,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::{
     helpers::SharedAccess,
     storage::{
-        Error,
+        StorageError,
         types::{CrcSnapshot, DownloadPhase, DownloadState, reduce_file_download_states},
     },
 };
@@ -241,7 +241,7 @@ impl Item {
         file_tasks_guard.iter().find(|task| task.download_id() == download_id).cloned()
     }
 
-    pub async fn reconcile(&self) -> Result<(), Error> {
+    pub async fn reconcile(&self) -> Result<(), StorageError> {
         // Reconciliation is now handled by FileDownloadTask
         // Just update our broadcast with current state
         let calculated_state = self.reduce_state().await;
@@ -249,7 +249,7 @@ impl Item {
         Ok(())
     }
 
-    async fn ensure_file_tasks(&self) -> Result<bool, Error> {
+    async fn ensure_file_tasks(&self) -> Result<bool, StorageError> {
         let mut file_tasks_guard = self.file_download_tasks.lock().await;
 
         // If file tasks already exist, skip creation
@@ -261,16 +261,17 @@ impl Item {
         let mut new_file_tasks = Vec::new();
         for file_info in self.files.iter() {
             let file_path = self.cache_path.join(&file_info.name);
-            let file_check = download_manager::FileCheck::CRC(file_info.crc32c().ok_or(Error::HashNotFound {
-                identifier: self.identifier.clone(),
-                name: file_info.name.clone(),
-            })?);
+            let file_check =
+                download_manager::FileCheck::CRC(file_info.crc32c().ok_or(StorageError::HashNotFound {
+                    identifier: self.identifier.clone(),
+                    name: file_info.name.clone(),
+                })?);
 
             let file_task = self
                 .file_download_manager
                 .file_download_task(&file_info.url, &file_path, file_check, Some(file_info.size as u64))
                 .await
-                .map_err(|error| Error::DownloadManager {
+                .map_err(|error| StorageError::DownloadManager {
                     message: error.to_string(),
                 })?;
 
@@ -284,7 +285,7 @@ impl Item {
         Ok(true)
     }
 
-    pub async fn download(&self) -> Result<(), Error> {
+    pub async fn download(&self) -> Result<(), StorageError> {
         tracing::debug!("[MODEL] download() called for model: {}", self.identifier);
 
         // Ensure file tasks are initialized
@@ -308,9 +309,9 @@ impl Item {
         );
 
         if !Self::can_transition_to_downloading(&current_state.phase) {
-            return Err(Error::InvalidStateTransition {
+            return Err(StorageError::InvalidStateTransition {
                 from: current_state.phase.clone(),
-                to: DownloadPhase::Downloading,
+                to: DownloadPhase::Downloading {},
             });
         }
 
@@ -323,7 +324,7 @@ impl Item {
         result
     }
 
-    pub async fn pause(&self) -> Result<(), Error> {
+    pub async fn pause(&self) -> Result<(), StorageError> {
         tracing::debug!("[MODEL] pause() called for model: {}", self.identifier);
 
         // Ensure file tasks are initialized
@@ -341,9 +342,9 @@ impl Item {
         self.update_state_and_broadcast(current_state.clone()).await;
 
         if !current_state.can_pause() {
-            return Err(Error::InvalidStateTransition {
+            return Err(StorageError::InvalidStateTransition {
                 from: current_state.phase.clone(),
-                to: DownloadPhase::Paused,
+                to: DownloadPhase::Paused {},
             });
         }
 
@@ -356,7 +357,7 @@ impl Item {
         result
     }
 
-    pub async fn cancel(&self) -> Result<(), Error> {
+    pub async fn cancel(&self) -> Result<(), StorageError> {
         // Ensure file tasks are initialized
         let tasks_were_created = self.ensure_file_tasks().await?;
 
@@ -396,12 +397,12 @@ impl Item {
         }
 
         let total_bytes: u64 = self.files.iter().map(|f| f.size as u64).sum();
-        let not_downloaded_state = DownloadState::not_downloaded(total_bytes);
+        let not_downloaded_state = DownloadState::not_downloaded(total_bytes as i64);
         self.update_state_and_broadcast(not_downloaded_state).await;
         Ok(())
     }
 
-    pub async fn progress(&self) -> Result<BroadcastStream<DownloadState>, Error> {
+    pub async fn progress(&self) -> Result<BroadcastStream<DownloadState>, StorageError> {
         Ok(BroadcastStream::new(self.broadcast_sender.subscribe()))
     }
 
@@ -423,10 +424,10 @@ impl Item {
         self.update_state_and_broadcast(new_state).await;
     }
 
-    async fn ensure_downloading(&self) -> Result<(), Error> {
+    async fn ensure_downloading(&self) -> Result<(), StorageError> {
         tracing::debug!("[MODEL] ensure_downloading: model={}", self.identifier);
 
-        create_dir_all(&self.cache_path).map_err(|error| Error::IO {
+        create_dir_all(&self.cache_path).map_err(|error| StorageError::IO {
             message: error.to_string(),
         })?;
 
@@ -443,7 +444,7 @@ impl Item {
         Ok(())
     }
 
-    async fn ensure_paused(&self) -> Result<(), Error> {
+    async fn ensure_paused(&self) -> Result<(), StorageError> {
         tracing::debug!("[MODEL] ensure_paused: model={}", self.identifier);
         let file_tasks_guard = self.file_download_tasks.lock().await;
         let pause_futures = file_tasks_guard.iter().map(|file_task| {
@@ -459,11 +460,11 @@ impl Item {
     }
 
     #[allow(dead_code)]
-    async fn cleanup_empty_directory(&self) -> Result<(), Error> {
+    async fn cleanup_empty_directory(&self) -> Result<(), StorageError> {
         if !self.cache_path.exists() {
             return Ok(());
         }
-        let entries = read_dir(&self.cache_path).map_err(|error| Error::IO {
+        let entries = read_dir(&self.cache_path).map_err(|error| StorageError::IO {
             message: error.to_string(),
         })?;
         let mut has_real_files = false;
@@ -637,7 +638,10 @@ impl Item {
     fn can_transition_to_downloading(from: &DownloadPhase) -> bool {
         matches!(
             from,
-            DownloadPhase::NotDownloaded | DownloadPhase::Downloading | DownloadPhase::Paused | DownloadPhase::Error(_)
+            DownloadPhase::NotDownloaded {}
+                | DownloadPhase::Downloading {}
+                | DownloadPhase::Paused {}
+                | DownloadPhase::Error { .. }
         )
     }
 }

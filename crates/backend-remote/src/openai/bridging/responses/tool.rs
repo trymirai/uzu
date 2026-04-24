@@ -1,11 +1,11 @@
 use async_openai::types::responses::{FunctionTool, Tool};
-use shoji::types::encoding::ToolDescription;
+use shoji::types::basic::ToolDescription;
 
 use crate::openai::Error;
 
 pub fn build(description: ToolDescription) -> Result<Tool, Error> {
     let ToolDescription::Function {
-        function,
+        tool_function: function,
     } = description;
     let parameters = match function.parameters {
         Some(value) => {

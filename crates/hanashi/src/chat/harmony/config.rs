@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::encoding::Capabilities;
+use shoji::types::session::chat::ChatModelCapabilities;
 
 use crate::chat::harmony::EncodingName;
 
@@ -10,9 +10,9 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn capabilities(&self) -> Capabilities {
+    pub fn capabilities(&self) -> ChatModelCapabilities {
         match self.encoding_name {
-            EncodingName::GptOss => Capabilities {
+            EncodingName::GptOss => ChatModelCapabilities {
                 supports_reasoning: true,
                 supports_disable_reasoning: false,
                 supports_tools: true,

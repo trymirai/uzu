@@ -16,7 +16,7 @@ use shoji::{
         Backend as BackendTrait,
         backend::{Error as BackendError, chat_message},
     },
-    types::session::chat::Config as ChatConfig,
+    types::session::chat::ChatConfig,
 };
 
 pub struct Backend {

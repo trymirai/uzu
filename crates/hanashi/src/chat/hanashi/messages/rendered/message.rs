@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
-use shoji::types::encoding::{ContentBlockType, Message as OriginalMessage, Role};
+use shoji::types::session::chat::{ChatContentBlockType, ChatMessage as OriginalMessage, ChatRole};
 
 use crate::chat::hanashi::messages::{
     Error,
@@ -20,7 +20,7 @@ impl Message {
     pub fn from_message(
         original_message: &OriginalMessage,
         canonical_config: &CanonicalConfig,
-        rendered_configs: &IndexMap<Role, Config>,
+        rendered_configs: &IndexMap<ChatRole, Config>,
     ) -> Result<Self, Error> {
         let role = &original_message.role;
 
@@ -29,7 +29,7 @@ impl Message {
         })?;
 
         // Validate no duplicate block types across fields
-        let mut seen_block_types: IndexMap<ContentBlockType, String> = IndexMap::new();
+        let mut seen_block_types: IndexMap<ChatContentBlockType, String> = IndexMap::new();
         for (field_name, field) in config.message.iter().chain(config.context.iter()) {
             let block_types = match &field.config {
                 FieldConfig::Unique {
@@ -55,7 +55,7 @@ impl Message {
         }
 
         // Determine which block types should get raw canonical serialization
-        let mut raw_types: Vec<ContentBlockType> = Vec::new();
+        let mut raw_types: Vec<ChatContentBlockType> = Vec::new();
         for (_, field) in config.message.iter().chain(config.context.iter()) {
             if field.disable_raw {
                 continue;
@@ -142,7 +142,7 @@ impl Message {
 
 fn find_field_for_block<'a>(
     fields: &'a IndexMap<String, Field>,
-    block_type: &ContentBlockType,
+    block_type: &ChatContentBlockType,
 ) -> Option<(String, &'a Field)> {
     fields.iter().find_map(|(name, field)| {
         let matches = match &field.config {
@@ -169,8 +169,8 @@ fn apply_field_value(
     config: &FieldConfig,
     value: &Value,
     raw: bool,
-    role: &Role,
-    block_type: &ContentBlockType,
+    role: &ChatRole,
+    block_type: &ChatContentBlockType,
 ) -> Result<(), Error> {
     match config {
         FieldConfig::Unique {

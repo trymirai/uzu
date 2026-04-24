@@ -1,10 +1,7 @@
 use openai_harmony::chat::{
     ToolDescription as ExternalToolDescription, ToolNamespaceConfig as ExternalToolNamespaceConfig,
 };
-use shoji::types::{
-    basic::Value,
-    encoding::{ToolDescription, ToolFunction, ToolNamespace},
-};
+use shoji::types::basic::{ToolDescription, ToolFunction, ToolNamespace, Value};
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
 
@@ -38,7 +35,7 @@ impl ToHarmony for ToolDescription {
     fn to_harmony(self) -> Result<Self::Output, Error> {
         match self {
             ToolDescription::Function {
-                function,
+                tool_function: function,
             } => {
                 let parameters = function.parameters.map(serde_json::Value::try_from).transpose().map_err(|error| {
                     Error::SerializationFailed {
@@ -57,11 +54,11 @@ impl FromHarmony for ToolDescription {
 
     fn from_harmony(input: Self::Input) -> Self {
         ToolDescription::Function {
-            function: ToolFunction {
+            tool_function: ToolFunction {
                 name: input.name,
                 description: input.description,
                 parameters: input.parameters.map(Value::from),
-                r#return: None,
+                return_definition: None,
             },
         }
     }

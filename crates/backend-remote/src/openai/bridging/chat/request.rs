@@ -3,8 +3,7 @@ use async_openai::types::chat::{
 };
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
-    encoding::{Message, MessageList},
-    session::chat::StreamConfig,
+    session::chat::{ChatMessage, ChatMessageList, ChatReplyConfig},
 };
 
 use crate::openai::{
@@ -14,8 +13,8 @@ use crate::openai::{
 
 pub fn build(
     model: &str,
-    config: &StreamConfig,
-    messages: Vec<Message>,
+    config: &ChatReplyConfig,
+    messages: Vec<ChatMessage>,
 ) -> Result<CreateChatCompletionRequest, Error> {
     let completion_messages = messages.iter().map(chat::message::build).collect::<Result<Vec<_>, _>>()?;
 

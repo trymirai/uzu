@@ -2,10 +2,13 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+#[bindings::export(Alias)]
 pub type TokenId = u32;
+
+#[bindings::export(Alias)]
 pub type TokenValue = String;
 
-#[bindings::export(Struct, name = "Token")]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Token {

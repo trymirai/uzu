@@ -5,14 +5,17 @@ mod role;
 mod tool_namespace;
 
 pub use message::{bridge_messages_from_harmony, bridge_messages_to_harmony};
-use shoji::types::encoding::{ContentBlockType, ReasoningEffort, Role};
+use shoji::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatContentBlockType, ChatRole},
+};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     #[error("Role '{role}' is not supported")]
     UnsupportedRole {
-        role: Role,
+        role: ChatRole,
     },
     #[error("Reasoning effort '{reasoning_effort}' is not supported")]
     UnsupportedReasoningEffort {
@@ -24,8 +27,8 @@ pub enum Error {
     },
     #[error("Content block '{block_type}' is not supported for role '{role}'")]
     UnsupportedContentBlock {
-        block_type: ContentBlockType,
-        role: Role,
+        block_type: ChatContentBlockType,
+        role: ChatRole,
     },
     #[error("Multiple tool calls are not supported")]
     MultipleToolCalls,
@@ -33,7 +36,7 @@ pub enum Error {
     MultipleContentBlocks,
     #[error("Content is required for role '{role}'")]
     ContentRequired {
-        role: Role,
+        role: ChatRole,
     },
     #[error("Tool call result is missing a name")]
     MissingToolCallResultName,
