@@ -4,7 +4,7 @@ use backend_uzu::ArrayElement;
 use thiserror::Error;
 
 use crate::{
-    DataType,
+    Array, ArrayContextExt, DataType,
     array::size_for_shape,
     backends::common::{Backend, Buffer, Context, Encoder, SparseBuffer},
 };
@@ -153,6 +153,29 @@ impl<B: Backend> SparseArray<B> {
         self.buffer.clone()
     }
 
+    pub fn to_array(
+        &self,
+        context: &B::Context,
+    ) -> Result<Array<B>, SparseArrayError<B>> {
+        let sparse_buffer = self.buffer.borrow();
+        let src_buffer = sparse_buffer.buffer();
+        let length = size_for_shape(&self.shape(), self.data_type);
+
+        let array = context.create_array_uninitialized(self.shape(), self.data_type, "");
+        let array_buffer = array.buffer();
+        let mut dst_buffer = array_buffer.borrow_mut();
+
+        let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        encoder.encode_copy(&src_buffer, 0..length, &mut dst_buffer, 0..length);
+        encoder
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+
+        Ok(array)
+    }
+
     pub fn read_bytes(
         &self,
         context: &B::Context,
@@ -179,16 +202,16 @@ impl<B: Backend> SparseArray<B> {
         Ok(bytes.to_vec())
     }
 
-    pub fn read_slice<T: ArrayElement>(
+    pub fn read_typed<T: ArrayElement>(
         &self,
         context: &B::Context,
     ) -> Result<Vec<T>, SparseArrayError<B>> {
         let data_type_size = T::data_type().size_in_bytes();
         let slice_size = self.sparse_buffer().borrow().length() / data_type_size;
-        Ok(self.read_slice_range(context, 0..slice_size)?)
+        Ok(self.read_typed_range(context, 0..slice_size)?)
     }
 
-    pub fn read_slice_range<T: ArrayElement>(
+    pub fn read_typed_range<T: ArrayElement>(
         &self,
         context: &B::Context,
         range: Range<usize>,
@@ -248,7 +271,7 @@ impl<B: Backend> SparseArray<B> {
         Ok(())
     }
 
-    pub fn write_slice<T: ArrayElement>(
+    pub fn write_typed<T: ArrayElement>(
         &mut self,
         context: &B::Context,
         slice: &[T],

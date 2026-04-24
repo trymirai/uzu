@@ -60,8 +60,8 @@ fn fill_arrays(
     let initial_keys: Vec<f32> = (0..element_count).map(|idx| 1_000.0 + idx as f32).collect();
     let initial_values: Vec<f32> = (0..element_count).map(|idx| 2_000.0 + idx as f32).collect();
 
-    layer.keys.write_slice(context, &initial_keys, 0).unwrap();
-    layer.values.write_slice(context, &initial_values, 0).unwrap();
+    layer.keys.write_typed(context, &initial_keys, 0).unwrap();
+    layer.values.write_typed(context, &initial_values, 0).unwrap();
 
     (initial_keys, initial_values)
 }
@@ -150,10 +150,10 @@ fn run_scenario(
 
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
-    let actual_keys = layer.keys.read_slice::<f32>(context).unwrap().to_vec();
+    let actual_keys = layer.keys.read_typed::<f32>(context).unwrap().to_vec();
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
-    let actual_values = layer.values.read_slice::<f32>(context).unwrap().to_vec();
+    let actual_values = layer.values.read_typed::<f32>(context).unwrap().to_vec();
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
 
     match &layer.state {
@@ -288,16 +288,16 @@ fn kv_cache_slice_apply_contiguous_window() {
     // Mutate the captured slots.
 
     {
-        layer.keys.write_slice(context.as_ref(), &[-1.0f32, -2.0f32], 0).unwrap();
-        layer.values.write_slice(context.as_ref(), &[-3.0f32, -4.0f32], 0).unwrap();
+        layer.keys.write_typed(context.as_ref(), &[-1.0f32, -2.0f32], 0).unwrap();
+        layer.values.write_typed(context.as_ref(), &[-3.0f32, -4.0f32], 0).unwrap();
     }
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let keys_after = layer.keys.read_slice::<f32>(context.as_ref()).unwrap().to_vec();
-    let values_after = layer.values.read_slice::<f32>(context.as_ref()).unwrap().to_vec();
+    let keys_after = layer.keys.read_typed::<f32>(context.as_ref()).unwrap().to_vec();
+    let values_after = layer.values.read_typed::<f32>(context.as_ref()).unwrap().to_vec();
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for contiguous slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
@@ -323,16 +323,16 @@ fn kv_cache_slice_apply_wrap_window() {
     let slice = layer.slice(&context, 2..4).expect("slice should exist");
     // Captured slots are expected to wrap; mutate them.
     {
-        layer.keys.write_slice(context.as_ref(), &[-11.0f32, -12.0f32], 2).unwrap();
-        layer.values.write_slice(context.as_ref(), &[-13.0f32, -14.0f32], 2).unwrap();
+        layer.keys.write_typed(context.as_ref(), &[-11.0f32, -12.0f32], 2).unwrap();
+        layer.values.write_typed(context.as_ref(), &[-13.0f32, -14.0f32], 2).unwrap();
     }
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let keys_after = layer.keys.read_slice::<f32>(&context).unwrap().to_vec();
-    let values_after = layer.values.read_slice::<f32>(&context).unwrap().to_vec();
+    let keys_after = layer.keys.read_typed::<f32>(&context).unwrap().to_vec();
+    let values_after = layer.values.read_typed::<f32>(&context).unwrap().to_vec();
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for wrapped slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }
