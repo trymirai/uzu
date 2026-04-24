@@ -125,14 +125,7 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
 #[test]
 fn test_kv_cache_update_kernel() {
-    let metal_context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Failed to create MetalContext: {:?}. Skipping test.", e);
-            return;
-        },
-    };
-
+    let metal_context = <Metal as Backend>::Context::new().unwrap();
     test_random_pattern(&metal_context);
 }
 
