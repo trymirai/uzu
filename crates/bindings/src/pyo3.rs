@@ -11,7 +11,7 @@ pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
         BindingKind::Struct => quote! {
             #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass(get_all, from_py_object))]
         },
-        BindingKind::Class | BindingKind::ClassCloneable => quote! {
+        BindingKind::Class | BindingKind::ClassCloneable | BindingKind::Stream => quote! {
             #[cfg_attr(feature = "bindings-pyo3", pyo3::pyclass)]
         },
         BindingKind::Implementation => quote! {

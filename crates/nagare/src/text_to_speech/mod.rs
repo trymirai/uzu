@@ -1,13 +1,9 @@
 mod error;
 
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::sync::Arc;
 
 pub use error::TextToSpeechSessionError;
-use futures::{Stream as FuturesStream, StreamExt};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{Backend, State as StateTrait, backend::text_to_speech::Instance},
@@ -29,15 +25,16 @@ pub enum TextToSpeechSessionStreamChunk {
     },
 }
 
-#[bindings::export(Class)]
+#[bindings::export(Stream)]
+#[derive(Clone)]
 pub struct TextToSpeechSessionStream {
-    receiver: Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>,
+    receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>>,
     cancel_token: CancellationToken,
 }
 
 #[bindings::export(Implementation)]
 impl TextToSpeechSessionStream {
-    #[bindings::export(Method)]
+    #[bindings::export(StreamNext)]
     pub async fn next(&self) -> Option<TextToSpeechSessionStreamChunk> {
         match self.receiver.lock().await.recv().await {
             Some(Ok(batch)) => Some(TextToSpeechSessionStreamChunk::PcmBatch {
@@ -53,17 +50,6 @@ impl TextToSpeechSessionStream {
     #[bindings::export(Getter)]
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel_token.clone()
-    }
-}
-
-impl FuturesStream for TextToSpeechSessionStream {
-    type Item = Result<PcmBatch, TextToSpeechSessionError>;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        self.get_mut().receiver.get_mut().poll_recv(context)
     }
 }
 
@@ -127,7 +113,7 @@ impl TextToSpeechSession {
         &self,
         input: String,
     ) -> Result<PcmBatch, TextToSpeechSessionError> {
-        let stream = self.synthesize_stream(input);
+        let stream = self.synthesize_stream(input).await;
         let mut batches: Vec<PcmBatch> = Vec::new();
         while let Some(event) = stream.next().await {
             match event {
@@ -147,7 +133,7 @@ impl TextToSpeechSession {
 }
 
 impl TextToSpeechSession {
-    fn synthesize_stream(
+    async fn synthesize_stream(
         &self,
         input: String,
     ) -> TextToSpeechSessionStream {
@@ -194,7 +180,7 @@ impl TextToSpeechSession {
         });
 
         TextToSpeechSessionStream {
-            receiver: Mutex::new(receiver),
+            receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,
         }
     }

@@ -80,7 +80,8 @@ impl Downloader {
     }
 }
 
-#[bindings::export(Class)]
+#[bindings::export(Stream)]
+#[derive(Clone)]
 pub struct DownloaderStream {
     identifier: String,
     stream: SharedAccess<Option<BroadcastStream<(String, DownloadState)>>>,
@@ -107,7 +108,7 @@ impl DownloaderStream {
 
 #[bindings::export(Implementation)]
 impl DownloaderStream {
-    #[bindings::export(Method)]
+    #[bindings::export(StreamNext)]
     pub async fn next(&self) -> Option<DownloaderStreamUpdate> {
         let mut stream_guard = self.stream.lock().await;
         let stream = stream_guard.as_mut()?;

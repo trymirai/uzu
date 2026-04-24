@@ -34,7 +34,7 @@ pub struct EngineConfig {
 #[bindings::export(Implementation)]
 impl EngineConfig {
     #[bindings::export(Factory)]
-    pub fn new() -> Self {
+    pub fn create() -> Self {
         Self::default()
     }
 }

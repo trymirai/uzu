@@ -11,7 +11,7 @@ pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
         BindingKind::Struct => quote! {
             #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Record))]
         },
-        BindingKind::Class => quote! {
+        BindingKind::Class | BindingKind::Stream => quote! {
             #[cfg_attr(feature = "bindings-uniffi", derive(uniffi::Object))]
         },
         BindingKind::ClassCloneable => quote! {

@@ -2,14 +2,10 @@ mod error;
 pub mod message;
 pub mod token;
 
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::sync::Arc;
 
 pub use error::ChatSessionError;
-use futures::{Stream as FuturesStream, StreamExt};
+use futures::StreamExt;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use shoji::{
@@ -36,15 +32,16 @@ pub enum ChatSessionStreamChunk {
     },
 }
 
-#[bindings::export(Class)]
+#[bindings::export(Stream)]
+#[derive(Clone)]
 pub struct ChatSessionStream {
-    receiver: Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>,
+    receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>>,
     cancel_token: CancellationToken,
 }
 
 #[bindings::export(Implementation)]
 impl ChatSessionStream {
-    #[bindings::export(Method)]
+    #[bindings::export(StreamNext)]
     pub async fn next(&self) -> Option<ChatSessionStreamChunk> {
         match self.receiver.lock().await.recv().await {
             Some(Ok(replies)) => Some(ChatSessionStreamChunk::Replies {
@@ -60,17 +57,6 @@ impl ChatSessionStream {
     #[bindings::export(Getter)]
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel_token.clone()
-    }
-}
-
-impl FuturesStream for ChatSessionStream {
-    type Item = Result<Vec<ChatReply>, ChatSessionError>;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        self.get_mut().receiver.get_mut().poll_recv(context)
     }
 }
 
@@ -169,7 +155,7 @@ impl ChatSession {
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
     ) -> Result<Vec<ChatReply>, ChatSessionError> {
-        let stream = self.reply_with_stream(input, config);
+        let stream = self.reply_with_stream(input, config).await;
         let mut outputs: Option<Vec<ChatReply>> = None;
         while let Some(progress) = stream.next().await {
             match progress {
@@ -185,7 +171,7 @@ impl ChatSession {
     }
 
     #[bindings::export(Method)]
-    pub fn reply_with_stream(
+    pub async fn reply_with_stream(
         &self,
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
@@ -269,7 +255,7 @@ impl ChatSession {
         });
 
         ChatSessionStream {
-            receiver: Mutex::new(receiver),
+            receiver: Arc::new(Mutex::new(receiver)),
             cancel_token: cancel_token_to_return,
         }
     }

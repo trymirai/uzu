@@ -9,8 +9,10 @@ pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
             #[cfg_attr(feature = "bindings-wasm", derive(tsify::Tsify))]
             #[cfg_attr(feature = "bindings-wasm", tsify(into_wasm_abi, from_wasm_abi))]
         },
-        BindingKind::Class | BindingKind::ClassCloneable | BindingKind::Implementation => quote! {
-            #[cfg_attr(feature = "bindings-wasm", wasm_bindgen::prelude::wasm_bindgen)]
+        BindingKind::Class | BindingKind::ClassCloneable | BindingKind::Stream | BindingKind::Implementation => {
+            quote! {
+                #[cfg_attr(feature = "bindings-wasm", wasm_bindgen::prelude::wasm_bindgen)]
+            }
         },
         _ => quote! {},
     }

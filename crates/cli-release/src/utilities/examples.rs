@@ -5,17 +5,14 @@ use crate::{
     utilities::{kebab_filename, relative_path},
 };
 
-const EXPORTED_EXAMPLE_NAMES: [&str; 12] = [
+const EXPORTED_EXAMPLE_NAMES: [&str; 9] = [
     "quick-start",
     "chat",
     "summarization",
     "classification",
     "cloud",
-    "chat-static-context",
-    "chat-dynamic-context",
     "ssm",
     "structured-output",
-    "chat-with-speculator",
     "classifier",
     "text-to-speech",
 ];
