@@ -464,7 +464,7 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
-        encoder.end_encoding();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         Self {
             max_suffix_length: self.max_suffix_length,

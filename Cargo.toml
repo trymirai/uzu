@@ -167,6 +167,13 @@ keyring = { version = "3.6.3", features = [
     "crypto-rust",
 ] }
 
+[workspace.metadata.dinghy]
+forward-cfgs = ["metal_backend", "grammar_xgrammar"]
+
+[workspace.metadata.dinghy.test-attribute-aliases]
+uzu_test = "dinghy_apple_runner_macros::test_case"
+uzu_bench = "dinghy_apple_runner_macros::bench_case"
+
 [profile.dev.build-override]
 opt-level = 3
 

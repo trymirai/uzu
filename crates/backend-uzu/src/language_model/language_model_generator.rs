@@ -649,7 +649,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let slice = slice.downcast_ref::<CacheLayersSlice<B>>().unwrap();
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref()).expect("Failed to create encoder");
         self.context.cache_layers.borrow_mut().apply_slice(&mut encoder, slice, Some(range));
-        encoder.end_encoding();
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     fn build_llm_context(&self) -> Box<dyn Any> {

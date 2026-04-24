@@ -107,14 +107,13 @@ impl SparseBuffer for MetalSparseBuffer {
     ) {
         let page_size_bytes = get_page_size_bytes(self.page_size);
         let mapped_pages = self.length.div_ceil(page_size_bytes);
-        let new_length = self.length + add_length;
-        let new_mapped_pages = new_length.div_ceil(page_size_bytes);
+        self.length += add_length;
+
+        let new_mapped_pages = self.length.div_ceil(page_size_bytes);
         let new_pages_count = new_mapped_pages - mapped_pages;
         if new_pages_count == 0 {
             return;
         }
-
-        self.length += add_length;
 
         let operation = MTL4UpdateSparseBufferMappingOperation {
             mode: MTLSparseTextureMappingMode::Map,
