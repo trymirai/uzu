@@ -60,9 +60,9 @@ impl<B: Backend> SparseArray<B> {
     ) {
         let required = rows * self.row_bytes();
         let mut buffer = self.buffer.borrow_mut();
-        if buffer.length() < required {
-            let add = required - buffer.length();
-            buffer.extend(add);
+        let current = buffer.length();
+        if current < required {
+            buffer.extend(required - current);
         }
     }
 
@@ -71,9 +71,9 @@ impl<B: Backend> SparseArray<B> {
     pub fn ensure_full(&self) {
         let required = size_for_shape(&self.shape, self.data_type);
         let mut buffer = self.buffer.borrow_mut();
-        if buffer.length() < required {
-            let add = required - buffer.length();
-            buffer.extend(add);
+        let current = buffer.length();
+        if current < required {
+            buffer.extend(required - current);
         }
     }
 
@@ -157,49 +157,49 @@ impl<B: Backend> SparseArray<B> {
         &self,
         context: &B::Context,
         range: Range<usize>,
-    ) -> Result<&mut [u8], SparseArrayError<B>> {
+    ) -> Result<Vec<u8>, SparseArrayError<B>> {
         assert!(range.end <= self.sparse_buffer().borrow().length());
 
+        let length = range.len();
+        if length == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut dst_buffer = context.create_buffer(length).map_err(|err| SparseArrayError::CreateBufferError(err))?;
+
         let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        encoder.encode_copy(self.buffer.borrow().buffer(), range, &mut dst_buffer, 0..length);
+        encoder
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
 
-        let mut dst_buffer =
-            context.create_buffer(range.len()).map_err(|err| SparseArrayError::CreateBufferError(err))?;
-        let dst_range = Range {
-            start: 0,
-            end: range.len(),
-        };
-        encoder.encode_copy(self.buffer.borrow().buffer(), range, &mut dst_buffer, dst_range);
-        encoder.end_encoding();
-
-        let bytes =
-            unsafe { std::slice::from_raw_parts_mut(dst_buffer.cpu_ptr().as_ptr() as *mut u8, dst_buffer.length()) };
-        Ok(bytes)
+        let bytes = unsafe { std::slice::from_raw_parts(dst_buffer.cpu_ptr().as_ptr() as *const u8, length) };
+        Ok(bytes.to_vec())
     }
 
     pub fn read_slice<T: ArrayElement>(
         &self,
         context: &B::Context,
-    ) -> Result<&mut [T], SparseArrayError<B>> {
+    ) -> Result<Vec<T>, SparseArrayError<B>> {
         let data_type_size = T::data_type().size_in_bytes();
         let slice_size = self.sparse_buffer().borrow().length() / data_type_size;
-        let range = Range {
-            start: 0,
-            end: slice_size,
-        };
-        Ok(self.read_slice_range(context, range)?)
+        Ok(self.read_slice_range(context, 0..slice_size)?)
     }
 
     pub fn read_slice_range<T: ArrayElement>(
         &self,
         context: &B::Context,
         range: Range<usize>,
-    ) -> Result<&mut [T], SparseArrayError<B>> {
+    ) -> Result<Vec<T>, SparseArrayError<B>> {
+        let elem_size = T::data_type().size_in_bytes();
         let bytes_range = Range {
-            start: range.start * T::data_type().size_in_bytes(),
-            end: range.start + range.len() * T::data_type().size_in_bytes(),
+            start: range.start * elem_size,
+            end: range.end * elem_size,
         };
         let bytes = self.read_bytes(context, bytes_range)?;
-        Ok(bytemuck::cast_slice_mut(bytes))
+        Ok(bytemuck::cast_slice(&bytes).to_vec())
     }
 
     pub fn write_bytes(
@@ -208,15 +208,26 @@ impl<B: Backend> SparseArray<B> {
         bytes: &[u8],
         offset: usize,
     ) -> Result<(), SparseArrayError<B>> {
-        let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        {
+            let mut sparse_buffer = self.buffer.borrow_mut();
+            let required = offset + bytes.len();
+            let current_length = sparse_buffer.length();
+            if current_length < required {
+                sparse_buffer.extend(required - current_length);
+            }
+        }
 
         let src_buffer = context.create_buffer(bytes.len()).map_err(|err| SparseArrayError::CreateBufferError(err))?;
         let src_slice =
-            unsafe { std::slice::from_raw_parts_mut(src_buffer.cpu_ptr().as_ptr() as *mut u8, src_buffer.length()) };
+            unsafe { std::slice::from_raw_parts_mut(src_buffer.cpu_ptr().as_ptr() as *mut u8, bytes.len()) };
         src_slice.copy_from_slice(bytes);
         let src_range = Range {
             start: 0,
-            end: offset + bytes.len(),
+            end: bytes.len(),
         };
 
         let sparse_buffer_rc = self.sparse_buffer();
@@ -226,9 +237,14 @@ impl<B: Backend> SparseArray<B> {
             start: offset,
             end: offset + bytes.len(),
         };
-        encoder.encode_copy(&src_buffer, src_range, &mut dst_buffer, dst_range);
 
-        encoder.end_encoding();
+        let mut encoder = Encoder::<B>::new(context).map_err(|err| SparseArrayError::CreateEncoderError(err))?;
+        encoder.encode_copy(&src_buffer, src_range, &mut dst_buffer, dst_range);
+        encoder
+            .end_encoding()
+            .submit()
+            .wait_until_completed()
+            .map_err(|err| SparseArrayError::CreateEncoderError(err))?;
         Ok(())
     }
 

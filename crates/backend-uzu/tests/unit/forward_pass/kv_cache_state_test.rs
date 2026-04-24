@@ -41,7 +41,7 @@ fn make_test_layer(
             ..
         } => window_length + suffix_capacity,
     };
-    let shape = [1, total_len.max(1), 1];
+    let shape = [total_len.max(1), 1, 1];
 
     let keys = context.create_sparse_array(&shape, DataType::F32, "kv_cache_keys");
     let values = context.create_sparse_array(&shape, DataType::F32, "kv_cache_values");
@@ -56,21 +56,12 @@ fn fill_arrays(
     context: &MetalContext,
     layer: &mut KVCacheLayer<Metal>,
 ) -> (Vec<f32>, Vec<f32>) {
-    let initial_keys = {
-        let slice = layer.keys.read_slice::<f32>(context).unwrap();
-        for (idx, value) in slice.iter_mut().enumerate() {
-            *value = 1_000.0 + idx as f32;
-        }
-        slice.to_vec()
-    };
+    let element_count = layer.keys.shape().iter().product::<usize>();
+    let initial_keys: Vec<f32> = (0..element_count).map(|idx| 1_000.0 + idx as f32).collect();
+    let initial_values: Vec<f32> = (0..element_count).map(|idx| 2_000.0 + idx as f32).collect();
 
-    let initial_values = {
-        let slice = layer.values.read_slice::<f32>(context).unwrap();
-        for (idx, value) in slice.iter_mut().enumerate() {
-            *value = 2_000.0 + idx as f32;
-        }
-        slice.to_vec()
-    };
+    layer.keys.write_slice(context, &initial_keys, 0).unwrap();
+    layer.values.write_slice(context, &initial_values, 0).unwrap();
 
     (initial_keys, initial_values)
 }
@@ -303,7 +294,7 @@ fn kv_cache_slice_apply_contiguous_window() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
-    encoder.end_encoding();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let keys_after = layer.keys.read_slice::<f32>(context.as_ref()).unwrap().to_vec();
     let values_after = layer.values.read_slice::<f32>(context.as_ref()).unwrap().to_vec();
@@ -338,7 +329,7 @@ fn kv_cache_slice_apply_wrap_window() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
-    encoder.end_encoding();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let keys_after = layer.keys.read_slice::<f32>(&context).unwrap().to_vec();
     let values_after = layer.values.read_slice::<f32>(&context).unwrap().to_vec();
@@ -373,7 +364,7 @@ fn kv_cache_slice_apply_full_restores_metadata() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
     layer.apply_slice(&mut encoder, &slice, None);
-    encoder.end_encoding();
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     if let KVCacheLayerState::Full {
         prefix_len,

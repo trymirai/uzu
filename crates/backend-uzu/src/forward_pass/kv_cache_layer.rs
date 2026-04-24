@@ -234,7 +234,7 @@ impl<B: Backend> KVCacheLayer<B> {
                     slice_keys.copy_slice(&self.keys, 0, slot..slot + 1, i, &mut encoder);
                     slice_values.copy_slice(&self.values, 0, slot..slot + 1, i, &mut encoder);
                 }
-                encoder.end_encoding();
+                encoder.end_encoding().submit().wait_until_completed().expect("Failed to execute slice copy");
 
                 Some(KVSlice::Window {
                     window_length,

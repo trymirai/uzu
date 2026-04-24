@@ -172,13 +172,13 @@ fn create_key_cache_buffer(
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = keys.dim();
 
-    // Our kernel expects key cache layout: [num_kv_heads, max_seq_len, head_dim]
-    let mut key_cache_data = vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
+    // Our kernel expects key cache layout: [max_seq_len, num_kv_heads, head_dim]
+    let mut key_cache_data = vec![0.0f32; max_seq_len * num_kv_heads * head_dim];
 
-    for h in 0..num_kv_heads {
-        for t in 0..seq_len {
+    for t in 0..seq_len {
+        for h in 0..num_kv_heads {
             for d in 0..head_dim {
-                let idx = h * max_seq_len * head_dim + t * head_dim + d;
+                let idx = t * num_kv_heads * head_dim + h * head_dim + d;
                 key_cache_data[idx] = keys[[0, h, t, d]];
             }
         }
@@ -197,13 +197,13 @@ fn create_value_cache_buffer(
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let (_batch_size, num_kv_heads, seq_len, head_dim) = values.dim();
 
-    // Our kernel expects value cache layout: [num_kv_heads, max_seq_len, head_dim]
-    let mut value_cache_data = vec![0.0f32; num_kv_heads * max_seq_len * head_dim];
+    // Our kernel expects value cache layout: [max_seq_len, num_kv_heads, head_dim]
+    let mut value_cache_data = vec![0.0f32; max_seq_len * num_kv_heads * head_dim];
 
-    for h in 0..num_kv_heads {
-        for t in 0..seq_len {
+    for t in 0..seq_len {
+        for h in 0..num_kv_heads {
             for d in 0..head_dim {
-                let idx = h * max_seq_len * head_dim + t * head_dim + d;
+                let idx = t * num_kv_heads * head_dim + h * head_dim + d;
                 value_cache_data[idx] = values[[0, h, t, d]];
             }
         }
@@ -278,10 +278,10 @@ fn run_single_pass_attention(
         &mut output_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
-        (seq_len * head_dim) as u32,
         head_dim as u32,
-        (seq_len * head_dim) as u32,
+        (num_kv_heads * head_dim) as u32,
         head_dim as u32,
+        (num_kv_heads * head_dim) as u32,
         None,
         scale,
         None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
@@ -334,10 +334,10 @@ fn run_single_pass_attention_with_is_causal(
         &mut output_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
-        (seq_len * head_dim) as u32,
         head_dim as u32,
-        (seq_len * head_dim) as u32,
+        (num_kv_heads * head_dim) as u32,
         head_dim as u32,
+        (num_kv_heads * head_dim) as u32,
         None,
         scale,
         None::<&Retained<ProtocolObject<dyn MTLBuffer>>>,
@@ -808,10 +808,10 @@ fn run_two_pass_attention(
         &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
-        (seq_len * head_dim) as u32,
         head_dim as u32,
-        (seq_len * head_dim) as u32,
+        (num_kv_heads * head_dim) as u32,
         head_dim as u32,
+        (num_kv_heads * head_dim) as u32,
         None,
         scale,
         num_heads as u32,
@@ -1020,10 +1020,10 @@ fn perf_two_pass_attention() {
         &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
-        (seq_len * head_dim) as u32,
         head_dim as u32,
-        (seq_len * head_dim) as u32,
+        (num_kv_heads * head_dim) as u32,
         head_dim as u32,
+        (num_kv_heads * head_dim) as u32,
         None,
         scale,
         num_heads as u32,
