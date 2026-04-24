@@ -8,7 +8,7 @@ mod config;
 mod data_type;
 mod encodable_block;
 mod forward_pass;
-pub mod inference_backend;
+pub mod inference;
 mod language_model;
 mod parameters;
 mod speculators;

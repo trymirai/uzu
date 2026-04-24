@@ -1,6 +1,6 @@
 use std::{fs::remove_file, path::Path};
 
-use crate::storage::Error;
+use crate::storage::StorageError;
 
 pub struct CrcSnapshot;
 
@@ -15,10 +15,10 @@ impl CrcSnapshot {
     pub fn remove_crc(
         model_dir: &Path,
         filename: &str,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StorageError> {
         let crc_path = Self::crc_file_path(model_dir, filename);
         if crc_path.exists() {
-            remove_file(&crc_path).map_err(|error| Error::IO {
+            remove_file(&crc_path).map_err(|error| StorageError::IO {
                 message: error.to_string(),
             })?;
         }

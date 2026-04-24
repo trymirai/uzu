@@ -1,61 +1,63 @@
 use download_manager::{FileDownloadPhase, FileDownloadState};
+use serde::{Deserialize, Serialize};
 
 use crate::storage::types::DownloadPhase;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[bindings::export(ClassCloneable)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DownloadState {
-    pub total_bytes: u64,
-    pub downloaded_bytes: u64,
+    pub total_bytes: i64,
+    pub downloaded_bytes: i64,
     pub phase: DownloadPhase,
 }
 
 impl DownloadState {
-    pub fn not_downloaded(total_bytes: u64) -> Self {
+    pub fn not_downloaded(total_bytes: i64) -> Self {
         Self {
             total_bytes,
             downloaded_bytes: 0,
-            phase: DownloadPhase::NotDownloaded,
+            phase: DownloadPhase::NotDownloaded {},
         }
     }
 
     pub fn downloading(
-        downloaded_bytes: u64,
-        total_bytes: u64,
+        downloaded_bytes: i64,
+        total_bytes: i64,
     ) -> Self {
         Self {
             total_bytes,
             downloaded_bytes,
-            phase: DownloadPhase::Downloading,
+            phase: DownloadPhase::Downloading {},
         }
     }
 
     pub fn paused(
-        downloaded_bytes: u64,
-        total_bytes: u64,
+        downloaded_bytes: i64,
+        total_bytes: i64,
     ) -> Self {
         Self {
             total_bytes,
             downloaded_bytes,
-            phase: DownloadPhase::Paused,
+            phase: DownloadPhase::Paused {},
         }
     }
 
-    pub fn downloaded(total_bytes: u64) -> Self {
+    pub fn downloaded(total_bytes: i64) -> Self {
         Self {
             total_bytes,
             downloaded_bytes: total_bytes,
-            phase: DownloadPhase::Downloaded,
+            phase: DownloadPhase::Downloaded {},
         }
     }
 
     pub fn locked(
-        downloaded_bytes: u64,
-        total_bytes: u64,
+        downloaded_bytes: i64,
+        total_bytes: i64,
     ) -> Self {
         Self {
             total_bytes,
             downloaded_bytes,
-            phase: DownloadPhase::Locked,
+            phase: DownloadPhase::Locked {},
         }
     }
 
@@ -63,10 +65,16 @@ impl DownloadState {
         Self {
             total_bytes: 0,
             downloaded_bytes: 0,
-            phase: DownloadPhase::Error(error_message),
+            phase: DownloadPhase::Error {
+                message: error_message,
+            },
         }
     }
+}
 
+#[bindings::export(Implementation)]
+impl DownloadState {
+    #[bindings::export(Getter)]
     pub fn progress(&self) -> f32 {
         if self.total_bytes == 0 {
             0.0
@@ -75,14 +83,17 @@ impl DownloadState {
         }
     }
 
+    #[bindings::export(Getter)]
     pub fn is_in_progress(&self) -> bool {
         self.phase.is_in_progress()
     }
 
+    #[bindings::export(Getter)]
     pub fn can_pause(&self) -> bool {
         self.phase.can_pause()
     }
 
+    #[bindings::export(Getter)]
     pub fn can_delete(&self) -> bool {
         self.phase.can_delete()
     }
@@ -104,20 +115,20 @@ pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> Downloa
     let any_locked = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::LockedByOther(_)));
 
     if all_downloaded {
-        return DownloadState::downloaded(total_bytes);
+        return DownloadState::downloaded(total_bytes as i64);
     }
 
     // Locked takes precedence over other in-progress states
     if any_locked {
-        return DownloadState::locked(downloaded_bytes, total_bytes);
+        return DownloadState::locked(downloaded_bytes as i64, total_bytes as i64);
     }
 
     if any_downloading {
-        return DownloadState::downloading(downloaded_bytes, total_bytes);
+        return DownloadState::downloading(downloaded_bytes as i64, total_bytes as i64);
     }
 
     if any_paused {
-        return DownloadState::paused(downloaded_bytes, total_bytes);
+        return DownloadState::paused(downloaded_bytes as i64, total_bytes as i64);
     }
 
     if any_error {
@@ -131,8 +142,8 @@ pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> Downloa
     // If some files are downloaded but not all, and nothing is actively
     // downloading, treat as paused (partial progress, can resume)
     if any_downloaded && downloaded_bytes > 0 {
-        return DownloadState::paused(downloaded_bytes, total_bytes);
+        return DownloadState::paused(downloaded_bytes as i64, total_bytes as i64);
     }
 
-    DownloadState::not_downloaded(total_bytes)
+    DownloadState::not_downloaded(total_bytes as i64)
 }

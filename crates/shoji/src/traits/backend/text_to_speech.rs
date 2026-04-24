@@ -2,12 +2,12 @@ use std::pin::Pin;
 
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
-    types::{encoding::Message, session::text_to_speech::PcmBatch},
+    types::basic::PcmBatch,
 };
 
 pub type Config = ();
 pub type StreamConfig = ();
-pub type StreamInput = Vec<Message>;
+pub type StreamInput = String;
 pub type StreamOutput = PcmBatch;
 
 pub trait Backend: Send + Sync {

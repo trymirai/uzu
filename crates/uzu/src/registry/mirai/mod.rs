@@ -12,7 +12,7 @@ use reqwest::header::AUTHORIZATION;
 use shoji::{traits::Registry as RegistryTrait, types::model::Model};
 pub use types::Response;
 
-use crate::registry::Error;
+use crate::registry::RegistryError;
 
 pub struct Registry {
     config: Config,
@@ -20,7 +20,7 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn new(config: Config) -> Result<Self, Error> {
+    pub fn new(config: Config) -> Result<Self, RegistryError> {
         let mut headers: IndexMap<String, String> = IndexMap::new();
         if let Some(api_key) = config.api_key.clone() {
             headers.insert(AUTHORIZATION.to_string(), format!("Bearer {}", api_key));
@@ -28,7 +28,7 @@ impl Registry {
 
         let client_config =
             ClientConfig::new("https://sdk.trymirai.com/api/v1".to_string(), Duration::from_secs(10), headers);
-        let client = Client::new(client_config).map_err(|error| Error::UnableToCreate {
+        let client = Client::new(client_config).map_err(|error| RegistryError::UnableToCreate {
             message: error.to_string(),
         })?;
 
@@ -39,13 +39,13 @@ impl Registry {
     }
 }
 impl RegistryTrait for Registry {
-    type Error = Error;
+    type Error = RegistryError;
 
     fn indentifier(&self) -> String {
         "mirai".to_string()
     }
 
-    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, Error>> + Send + '_>> {
+    fn models(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Model>, RegistryError>> + Send + '_>> {
         Box::pin(async {
             let response: Response = self
                 .client
@@ -55,10 +55,10 @@ impl RegistryTrait for Registry {
                     include_traces: self.config.include_traces,
                 })
                 .await
-                .map_err(|error| Error::UnableToGetModels {
+                .map_err(|error| RegistryError::UnableToGetModels {
                     message: error.to_string(),
                 })?;
-            let models = response.models().ok_or(Error::UnableToGetModels {
+            let models = response.models().ok_or(RegistryError::UnableToGetModels {
                 message: "Unable to extract from response".to_string(),
             })?;
             Ok(models)

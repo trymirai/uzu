@@ -30,13 +30,13 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
         // Get the test model and create instances
         tracing::info!("[CONCURRENT_TEST] Fetching test model {}...", i);
         let model = test_storage.model(i).clone();
-        let item = test_storage.storage.get(&model.identifier()).await.ok_or("Model not found")?;
+        let item = test_storage.storage.get(&model.identifier.clone()).await.ok_or("Model not found")?;
 
         // Cancel first to ensure it's not already downloaded
         tracing::info!("[CONCURRENT_TEST] Canceling model {} to ensure fresh download...", i);
         item.cancel().await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
-        models.push((model.identifier(), item.clone()));
+        models.push((model.identifier.clone(), item.clone()));
     }
 
     tracing::info!("[CONCURRENT_TEST] ✓ Created {} model instances", models.len());
@@ -69,7 +69,7 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
 
     let progress_check = tokio::time::timeout(Duration::from_secs(10), async {
         while let Some(Ok((id, state))) = progress_stream.next().await {
-            if matches!(state.phase, DownloadPhase::Downloading | DownloadPhase::Downloaded) {
+            if matches!(state.phase, DownloadPhase::Downloading {} | DownloadPhase::Downloaded {}) {
                 progress_count += 1;
                 if progress_count <= 5 || progress_count % 10 == 0 {
                     tracing::info!(
@@ -103,7 +103,7 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
             state.total_bytes
         );
         assert!(
-            matches!(state.phase, DownloadPhase::Downloading | DownloadPhase::Downloaded),
+            matches!(state.phase, DownloadPhase::Downloading {} | DownloadPhase::Downloaded {}),
             "Model {} should be downloading or downloaded, got {:?}",
             id,
             state.phase
@@ -139,7 +139,7 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
             let mut paused_count = 0;
             for (_, model) in &models {
                 let state = model.state().await;
-                if matches!(state.phase, DownloadPhase::Paused | DownloadPhase::Downloaded) {
+                if matches!(state.phase, DownloadPhase::Paused {} | DownloadPhase::Downloaded {}) {
                     paused_count += 1;
                 }
             }
@@ -165,7 +165,7 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
             state.total_bytes
         );
         assert!(
-            matches!(state.phase, DownloadPhase::Paused | DownloadPhase::Downloaded),
+            matches!(state.phase, DownloadPhase::Paused {} | DownloadPhase::Downloaded {}),
             "Model {} should be paused or downloaded after pause, got {:?}",
             id,
             state.phase
@@ -239,7 +239,7 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
             for (idx, (_, model)) in models.iter().enumerate() {
                 if idx < cancel_count {
                     let state = model.state().await;
-                    if matches!(state.phase, DownloadPhase::NotDownloaded) {
+                    if matches!(state.phase, DownloadPhase::NotDownloaded {}) {
                         cancelled_count += 1;
                     }
                 }
@@ -261,7 +261,7 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
         if idx < cancel_count {
             tracing::info!("[CONCURRENT_TEST] Cancelled model {} state: phase={:?}", id, state.phase);
             assert!(
-                matches!(state.phase, DownloadPhase::NotDownloaded),
+                matches!(state.phase, DownloadPhase::NotDownloaded {}),
                 "Cancelled model {} should be NotDownloaded, got {:?}",
                 id,
                 state.phase
@@ -301,7 +301,7 @@ async fn test_storage_concurrent_multi_model_download() -> Result<(), Box<dyn st
                         state.downloaded_bytes,
                         state.total_bytes
                     );
-                    if update_count >= 5 || matches!(state.phase, DownloadPhase::Downloaded) {
+                    if update_count >= 5 || matches!(state.phase, DownloadPhase::Downloaded {}) {
                         break;
                     }
                 }

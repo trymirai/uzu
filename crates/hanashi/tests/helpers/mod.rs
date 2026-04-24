@@ -3,8 +3,9 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use serde::Deserialize;
-use shoji::types::encoding::{
-    ContentBlock, Message, ReasoningEffort, Role, ToolDescription, ToolNamespace, TranslationInput,
+use shoji::types::{
+    basic::{ReasoningEffort, ToolDescription, ToolNamespace, TranslationPayload},
+    session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 use tokenizers::Tokenizer;
 
@@ -101,17 +102,17 @@ fn resolve_reasoning_effort(context: &HashMap<String, serde_json::Value>) -> Opt
 fn build_system_message(
     raw_messages: &[serde_json::Value],
     reasoning_effort: Option<ReasoningEffort>,
-) -> Option<Message> {
+) -> Option<ChatMessage> {
     let system_raw = raw_messages.iter().find(|raw| raw["role"].as_str() == Some("system"));
 
     let mut content = Vec::new();
     if let Some(raw) = system_raw {
-        content.push(ContentBlock::Text {
+        content.push(ChatContentBlock::Text {
             value: raw["content"].as_str().unwrap().to_string(),
         });
     }
     if let Some(effort) = reasoning_effort {
-        content.push(ContentBlock::ReasoningEffort {
+        content.push(ChatContentBlock::ReasoningEffort {
             value: effort,
         });
     }
@@ -119,34 +120,38 @@ fn build_system_message(
         return None;
     }
 
-    Some(Message {
-        role: Role::System {},
+    Some(ChatMessage {
+        role: ChatRole::System {},
         content,
-        metadata: HashMap::new(),
+        metadata: ChatMessageMetadata {
+            values: HashMap::new(),
+        },
     })
 }
 
-fn build_developer_message(tools: &Option<Vec<serde_json::Value>>) -> Option<Message> {
+fn build_developer_message(tools: &Option<Vec<serde_json::Value>>) -> Option<ChatMessage> {
     let tools = tools.as_ref()?;
     let tool_descriptions: Vec<ToolDescription> =
         tools.iter().filter_map(|tool| serde_json::from_value(tool.clone()).ok()).collect();
 
-    Some(Message {
-        role: Role::Developer {},
-        content: vec![ContentBlock::Tools {
+    Some(ChatMessage {
+        role: ChatRole::Developer {},
+        content: vec![ChatContentBlock::Tools {
             namespaces: vec![ToolNamespace {
                 name: "functions".to_string(),
                 description: None,
                 tools: tool_descriptions,
             }],
         }],
-        metadata: HashMap::new(),
+        metadata: ChatMessageMetadata {
+            values: HashMap::new(),
+        },
     })
 }
 
-fn build_user_content(raw: &serde_json::Value) -> Vec<ContentBlock> {
+fn build_user_content(raw: &serde_json::Value) -> Vec<ChatContentBlock> {
     if let Some(text) = raw["content"].as_str() {
-        return vec![ContentBlock::Text {
+        return vec![ChatContentBlock::Text {
             value: text.to_string(),
         }];
     }
@@ -156,15 +161,15 @@ fn build_user_content(raw: &serde_json::Value) -> Vec<ContentBlock> {
             .map(|item| {
                 let content_type = item["type"].as_str().unwrap();
                 match content_type {
-                    "text" => ContentBlock::Translation {
-                        input: TranslationInput::Text {
+                    "text" => ChatContentBlock::Translation {
+                        payload: TranslationPayload::Text {
                             text: item["text"].as_str().unwrap().to_string(),
                         },
                         source_language_code: item["source_lang_code"].as_str().unwrap().to_string(),
                         target_language_code: item["target_lang_code"].as_str().unwrap().to_string(),
                     },
-                    "image" => ContentBlock::Translation {
-                        input: TranslationInput::Image {
+                    "image" => ChatContentBlock::Translation {
+                        payload: TranslationPayload::Image {
                             url: item["url"].as_str().unwrap().to_string(),
                         },
                         source_language_code: item["source_lang_code"].as_str().unwrap().to_string(),
@@ -180,19 +185,21 @@ fn build_user_content(raw: &serde_json::Value) -> Vec<ContentBlock> {
     panic!("User content must be a string or array");
 }
 
-fn build_user_messages(raw_messages: &[serde_json::Value]) -> Vec<Message> {
+fn build_user_messages(raw_messages: &[serde_json::Value]) -> Vec<ChatMessage> {
     raw_messages
         .iter()
         .filter(|raw| raw["role"].as_str() == Some("user"))
-        .map(|raw| Message {
-            role: Role::User {},
+        .map(|raw| ChatMessage {
+            role: ChatRole::User {},
             content: build_user_content(raw),
-            metadata: HashMap::new(),
+            metadata: ChatMessageMetadata {
+                values: HashMap::new(),
+            },
         })
         .collect()
 }
 
-pub fn build_messages(data: &ResponseTestData) -> Vec<Message> {
+pub fn build_messages(data: &ResponseTestData) -> Vec<ChatMessage> {
     let raw_messages = &data.parameters.messages;
     let reasoning_effort = resolve_reasoning_effort(&data.parameters.context);
 

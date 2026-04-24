@@ -14,6 +14,7 @@ members = [
     "crates/benchmarks",
     "crates/cli",
     "crates/cli-storage",
+    "crates/cli-release",
 ]
 resolver = "3"
 
@@ -128,10 +129,19 @@ base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 jsonschema = "0.46.0"
 uniffi = "0.31.0"
-napi = { version = "3.8.3", features = ["napi10", "object_indexmap"] }
+napi = { version = "3.8.3", features = [
+    "napi10",
+    "object_indexmap",
+    "tokio_rt",
+] }
 napi-derive = "3.5.2"
 napi-build = "2.3.1"
-pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.28.2", features = [
+    "extension-module",
+    "abi3-py38",
+    "experimental-async",
+    "multiple-pymethods",
+] }
 wasm-bindgen = { version = "0.2.114", features = ["serde-serialize"] }
 serde-wasm-bindgen = "0.6.5"
 wasm-bindgen-futures = "0.4.64"
@@ -141,7 +151,21 @@ dirs = "6.0.0"
 dotenvy = "0.15.7"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
-async-openai = { version = "0.35.0", features = ["chat-completion", "model", "byot", "responses"] }
+async-openai = { version = "0.35.0", features = [
+    "chat-completion",
+    "model",
+    "byot",
+    "responses",
+] }
+hound = "3.5.1"
+ignore = "0.4.25"
+heck = "0.5.0"
+keyring = { version = "3.6.3", features = [
+    "apple-native",
+    "windows-native",
+    "linux-native-sync-persistent",
+    "crypto-rust",
+] }
 
 [workspace.metadata.dinghy]
 forward-cfgs = ["metal_backend", "grammar_xgrammar"]

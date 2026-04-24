@@ -1,19 +1,19 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    basic::SamplingSeed,
-    session::chat::{ContextLength, SpeculationPreset},
+    basic::{ContextLength, SamplingSeed},
+    session::chat::ChatSpeculationPreset,
 };
 
-#[bindings::export(Struct, name = "ChatConfig")]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Config {
+pub struct ChatConfig {
     pub context_length: ContextLength,
     pub sampling_seed: SamplingSeed,
-    pub speculation_preset: Option<SpeculationPreset>,
+    pub speculation_preset: Option<ChatSpeculationPreset>,
 }
 
-impl Default for Config {
+impl Default for ChatConfig {
     fn default() -> Self {
         Self {
             context_length: ContextLength::default(),
@@ -23,38 +23,46 @@ impl Default for Config {
     }
 }
 
-impl Config {
+#[bindings::export(Implementation)]
+impl ChatConfig {
+    #[bindings::export(Factory)]
+    pub fn create() -> Self {
+        Self::default()
+    }
+}
+
+#[bindings::export(Implementation)]
+impl ChatConfig {
+    #[bindings::export(Method)]
     pub fn with_context_length(
-        self,
+        &self,
         context_length: ContextLength,
     ) -> Self {
         Self {
             context_length,
-            ..self
+            ..self.clone()
         }
     }
-}
 
-impl Config {
+    #[bindings::export(Method)]
     pub fn with_sampling_seed(
-        self,
+        &self,
         sampling_seed: SamplingSeed,
     ) -> Self {
         Self {
             sampling_seed,
-            ..self
+            ..self.clone()
         }
     }
-}
 
-impl Config {
+    #[bindings::export(Method)]
     pub fn with_speculation_preset(
-        self,
-        speculation_preset: Option<SpeculationPreset>,
+        &self,
+        speculation_preset: Option<ChatSpeculationPreset>,
     ) -> Self {
         Self {
             speculation_preset,
-            ..self
+            ..self.clone()
         }
     }
 }

@@ -1,52 +1,83 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::model::{Accessibility, Entity, EntityType, Quantization, Reference, Specialization};
+use crate::types::{
+    basic::Metadata,
+    model::{
+        ModelAccessibility, ModelBackend, ModelFamily, ModelProperties, ModelQuantization, ModelReference,
+        ModelRegistry, ModelSpecialization,
+    },
+};
 
-#[bindings::export(Struct)]
+#[bindings::export(ClassCloneable)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Model {
+    #[serde(rename = "id")]
     pub identifier: String,
-    pub entities: Vec<Entity>,
-    pub specializations: Vec<Specialization>,
-    pub number_of_parameters: Option<i64>,
-    pub quantization: Option<Quantization>,
-    pub accessibility: Accessibility,
+    pub registry: ModelRegistry,
+    pub backends: Vec<ModelBackend>,
+    pub family: Option<ModelFamily>,
+    pub properties: Option<ModelProperties>,
+    pub quantization: Option<ModelQuantization>,
+    pub specializations: Vec<ModelSpecialization>,
+    pub accessibility: ModelAccessibility,
 }
 
+#[bindings::export(Implementation)]
 impl Model {
-    pub fn identifier(&self) -> String {
-        self.identifier.clone()
+    #[bindings::export(Getter)]
+    pub fn name(&self) -> String {
+        let parts: Vec<Option<String>> = vec![
+            self.family.as_ref().map(|family| family.name()),
+            self.properties.as_ref().map(|properties| properties.name()),
+            self.quantization.as_ref().map(|quantization| quantization.name()),
+        ];
+        let name = parts.iter().filter_map(|part| part.clone()).collect::<Vec<_>>().join(" ");
+        if name.is_empty() {
+            self.identifier.clone()
+        } else {
+            name
+        }
     }
 
-    pub fn cache_identifier(&self) -> String {
-        self.identifier.replace(":", "-").replace("/", "-")
-    }
-
+    #[bindings::export(Getter)]
     pub fn is_local(&self) -> bool {
-        matches!(self.accessibility, Accessibility::Local { .. })
+        matches!(self.accessibility, ModelAccessibility::Local { .. })
     }
 
+    #[bindings::export(Getter)]
     pub fn is_remote(&self) -> bool {
-        matches!(self.accessibility, Accessibility::Remote { .. })
+        matches!(self.accessibility, ModelAccessibility::Remote { .. })
     }
 
+    #[bindings::export(Getter)]
     pub fn is_downloadable(&self) -> bool {
         matches!(
             self.accessibility,
-            Accessibility::Local {
-                reference: Reference::Mirai { .. } | Reference::HuggingFace { .. }
+            ModelAccessibility::Local {
+                reference: ModelReference::Mirai { .. } | ModelReference::HuggingFace { .. }
             }
         )
     }
 
+    #[bindings::export(Getter)]
+    pub fn is_quantized(&self) -> bool {
+        self.quantization.is_some()
+    }
+
+    #[bindings::export(Getter)]
+    pub fn cache_identifier(&self) -> String {
+        self.identifier.replace(":", "-").replace("/", "-")
+    }
+
+    #[bindings::export(Getter)]
     pub fn repo_ids(&self) -> Vec<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     repository,
                     source_repository,
                     ..
@@ -60,14 +91,14 @@ impl Model {
                     }
                     result
                 },
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     repository,
                 } => vec![repository.identifier.clone()],
-                Reference::Local {
+                ModelReference::Local {
                     ..
                 } => vec![],
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 repository,
                 ..
             } => {
@@ -80,89 +111,126 @@ impl Model {
         }
     }
 
+    #[bindings::export(Getter)]
     pub fn local_external_path(&self) -> Option<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     ..
                 } => None,
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     ..
                 } => None,
-                Reference::Local {
+                ModelReference::Local {
                     path,
                 } => Some(path.clone()),
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
             } => None,
         }
     }
 
+    #[bindings::export(Getter)]
     pub fn reference_name(&self) -> Option<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => Some(reference.name()),
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
             } => None,
         }
     }
 
+    #[bindings::export(Getter)]
     pub fn checkpoint_version(&self) -> Option<String> {
         match &self.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     toolchain_version,
                     ..
                 } => Some(toolchain_version.clone()),
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     repository,
-                } => Some(repository.commit_hash.clone()),
-                Reference::Local {
+                } => repository.commit_hash.clone(),
+                ModelReference::Local {
                     ..
                 } => None,
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
             } => None,
         }
     }
 }
 
+#[bindings::export(Implementation)]
 impl Model {
-    pub fn registry_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Registry)
+    #[bindings::export(Factory)]
+    pub fn external(
+        identifier: String,
+        registry_identifier: String,
+        registry_name: String,
+        backend_identifier: String,
+        backend_name: String,
+        backend_version: String,
+        specializations: Vec<ModelSpecialization>,
+        accessibility: ModelAccessibility,
+    ) -> Self {
+        let registry = ModelRegistry {
+            identifier: registry_identifier,
+            metadata: Metadata::external(registry_name),
+        };
+        let backend = ModelBackend {
+            identifier: backend_identifier.clone(),
+            version: backend_version,
+            metadata: Metadata::external(backend_name),
+        };
+        Self {
+            identifier,
+            registry,
+            backends: vec![backend],
+            family: None,
+            properties: None,
+            quantization: None,
+            specializations,
+            accessibility,
+        }
+    }
+}
+
+#[bindings::export(Implementation)]
+impl Model {
+    #[bindings::export(Getter)]
+    pub fn is_chat_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Chat {})
     }
 
-    pub fn backend_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Backend)
+    #[bindings::export(Getter)]
+    pub fn is_classification_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Classification {})
     }
 
-    pub fn vendor_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Vendor)
+    #[bindings::export(Getter)]
+    pub fn is_text_to_speech_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::TextToSpeech {})
     }
 
-    pub fn family_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Family)
+    #[bindings::export(Getter)]
+    pub fn is_translation_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Translation {})
     }
 
-    pub fn variant_entity(&self) -> Option<Entity> {
-        self.entity(EntityType::Variant)
-    }
-
-    fn entity(
-        &self,
-        r#type: EntityType,
-    ) -> Option<Entity> {
-        self.entities.iter().find(|entity| entity.r#type == r#type).map(|entity| entity.clone())
+    #[bindings::export(Getter)]
+    pub fn is_speculation_capable(&self) -> bool {
+        self.specializations.contains(&ModelSpecialization::Speculation {})
     }
 }

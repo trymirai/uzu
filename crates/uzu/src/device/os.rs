@@ -30,3 +30,24 @@ pub fn is_environment_sandboxed() -> bool {
     }
     false
 }
+
+#[allow(unreachable_code)]
+pub fn is_keyring_available() -> bool {
+    #[cfg(target_vendor = "apple")]
+    {
+        use objc2_security::SecTask;
+
+        const CS_VALID: u32 = 0x0000_0001;
+        const CS_ADHOC: u32 = 0x0000_0002;
+        const CS_LINKER_SIGNED: u32 = 0x0002_0000;
+
+        unsafe {
+            let Some(task) = SecTask::from_self(None) else {
+                return false;
+            };
+            let status = task.code_sign_status();
+            return (status & CS_VALID) != 0 && (status & CS_ADHOC) == 0 && (status & CS_LINKER_SIGNED) == 0;
+        }
+    }
+    true
+}

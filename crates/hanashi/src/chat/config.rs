@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shoji::types::encoding::Capabilities;
+use shoji::types::session::chat::ChatModelCapabilities;
 
 use crate::chat::{Error, hanashi::Config as HanashiConfig, harmony::Config as HarmonyConfig};
 
@@ -11,7 +11,7 @@ pub enum Config {
 }
 
 impl Config {
-    pub fn capabilities(&self) -> Result<Capabilities, Error> {
+    pub fn capabilities(&self) -> Result<ChatModelCapabilities, Error> {
         match self {
             Config::Hanashi(config) => config.capabilities().map_err(Error::from),
             Config::Harmony(config) => Ok(config.capabilities()),
