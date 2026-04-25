@@ -33,7 +33,12 @@ bindings-napi = [
     "dep:napi-derive",
     "dep:napi-build",
 ]
-bindings-pyo3 = ["shoji/bindings-pyo3", "nagare/bindings-pyo3", "dep:pyo3"]
+bindings-pyo3 = [
+    "shoji/bindings-pyo3",
+    "nagare/bindings-pyo3",
+    "dep:pyo3",
+    "dep:pyo3-build-config",
+]
 bindings-wasm = [
     "shoji/bindings-wasm",
     "nagare/bindings-wasm",
@@ -94,3 +99,4 @@ dotenvy.workspace = true
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
+pyo3-build-config = { workspace = true, optional = true }

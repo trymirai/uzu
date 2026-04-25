@@ -20,7 +20,7 @@ bindings = [
 ]
 bindings-uniffi = ["dep:uniffi"]
 bindings-napi = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
-bindings-pyo3 = ["dep:pyo3"]
+bindings-pyo3 = ["dep:pyo3", "dep:pyo3-build-config"]
 bindings-wasm = [
     "dep:wasm-bindgen",
     "dep:serde-wasm-bindgen",
@@ -48,3 +48,4 @@ tsify = { workspace = true, optional = true }
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
+pyo3-build-config = { workspace = true, optional = true }
