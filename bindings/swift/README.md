@@ -43,8 +43,8 @@ Run it using one of the following commands:
 
 ```bash
 swift run examples chat
-swift run examples summarization
-swift run examples classification
+swift run examples chat-for-summarization
+swift run examples chat-for-classification
 swift run examples cloud
 swift run examples structured-output
 swift run examples classifier
@@ -66,7 +66,7 @@ Once loaded, the same `ChatSession` can be reused for multiple requests until yo
 In this example, we will use the `summarization` preset to generate a summary of the input text:
 
 ```swift
-// include:Sources/Examples/Summarization.swift
+// include:Sources/Examples/ChatForSummarization.swift
 ```
 
 You will notice that the model’s run count is lower than the actual number of generated tokens due to speculative decoding, which significantly improves generation speed.
@@ -76,7 +76,7 @@ You will notice that the model’s run count is lower than the actual number of 
 In this example, we will use the `classification` preset to determine the sentiment of the user's input:
 
 ```swift
-// include:Sources/Examples/Classification.swift
+// include:Sources/Examples/ChatForClassification.swift
 ```
 
 You can view the stats to see that the answer will be ready immediately after the prefill step, and actual generation won’t even start due to speculative decoding, which significantly improves generation speed.
