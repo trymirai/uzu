@@ -11,6 +11,7 @@ use crate::{
 };
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct Downloader {
     identifier: String,
     storage: SharedAccess<Storage>,

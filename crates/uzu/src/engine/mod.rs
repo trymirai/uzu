@@ -42,6 +42,7 @@ use crate::{
 };
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct Engine {
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,

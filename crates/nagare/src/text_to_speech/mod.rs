@@ -66,6 +66,7 @@ struct InstanceHolder {
 }
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct TextToSpeechSession {
     holder: Arc<Mutex<InstanceHolder>>,
     state: Arc<Mutex<TextToSpeechSessionState>>,

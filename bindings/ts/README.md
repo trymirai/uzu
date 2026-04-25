@@ -38,6 +38,12 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
+Install dependencies:
+
+```bash
+pnpm i
+```
+
 Run it using one of the following commands:
 
 ```bash

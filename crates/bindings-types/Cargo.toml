@@ -1,5 +1,5 @@
 [package]
-name = "nagare"
+name = "bindings-types"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,21 +18,9 @@ bindings = [
     "bindings-pyo3",
     "bindings-wasm",
 ]
-bindings-uniffi = [
-    "bindings-types/bindings-uniffi",
-    "shoji/bindings-uniffi",
-    "dep:uniffi",
-]
-bindings-napi = [
-    "bindings-types/bindings-napi",
-    "shoji/bindings-napi",
-    "dep:napi",
-    "dep:napi-derive",
-    "dep:napi-build",
-]
+bindings-uniffi = ["dep:uniffi"]
+bindings-napi = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
 bindings-pyo3 = [
-    "bindings-types/bindings-pyo3",
-    "shoji/bindings-pyo3",
     "dep:pyo3",
     "dep:pyo3-build-config",
     "dep:pyo3-async-runtimes",
@@ -40,8 +28,6 @@ bindings-pyo3 = [
     "dep:inventory",
 ]
 bindings-wasm = [
-    "bindings-types/bindings-wasm",
-    "shoji/bindings-wasm",
     "dep:wasm-bindgen",
     "dep:serde-wasm-bindgen",
     "dep:wasm-bindgen-futures",
@@ -49,19 +35,6 @@ bindings-wasm = [
 ]
 
 [dependencies]
-bindings-types.workspace = true
-bindings.workspace = true
-shoji.workspace = true
-hanashi.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-indexmap.workspace = true
-reqwest.workspace = true
-futures.workspace = true
-tokio-util.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }

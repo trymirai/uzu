@@ -28,6 +28,7 @@ struct InstanceHolder {
 }
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct ClassificationSession {
     holder: Arc<Mutex<InstanceHolder>>,
     state: Arc<Mutex<ClassificationSessionState>>,

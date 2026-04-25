@@ -30,6 +30,8 @@ pub enum Error {
     UnableToPrepareBindingsSwift,
     #[error("Unable to prepare bindings/ts")]
     UnableToPrepareBindingsTS,
+    #[error("Unable to prepare bindings/python")]
+    UnableToPrepareBindingsPython,
     #[error("Unable to prepare workspace/ts")]
     UnableToPrepareWorkspaceTS,
     #[error("Unable to prepare workspace/ts-npm")]

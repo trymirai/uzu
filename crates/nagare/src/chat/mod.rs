@@ -75,6 +75,7 @@ enum Instance {
 }
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct ChatSession {
     instance: Arc<Mutex<Instance>>,
     state: Arc<Mutex<ChatSessionState>>,

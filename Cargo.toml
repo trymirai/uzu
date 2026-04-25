@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/dsl",
+    "crates/bindings-types",
     "crates/bindings",
     "crates/shoji",
     "crates/backend-uzu",
@@ -28,6 +29,7 @@ repository = "https://github.com/trymirai/uzu"
 
 [workspace.dependencies]
 dsl = { path = "crates/dsl" }
+bindings-types = { path = "crates/bindings-types", default-features = false }
 bindings = { path = "crates/bindings", default-features = false }
 shoji = { path = "crates/shoji", default-features = false }
 backend-uzu = { path = "crates/backend-uzu", default-features = false }
@@ -145,6 +147,9 @@ pyo3 = { version = "0.28.3", features = [
     "multiple-pymethods",
 ] }
 pyo3-build-config = "0.28.3"
+pyo3-async-runtimes = { version = "0.28.0", features = ["tokio-runtime"] }
+pyo3-stub-gen = "0.22.1"
+inventory = "0.3.24"
 wasm-bindgen = { version = "0.2.114", features = ["serde-serialize"] }
 serde-wasm-bindgen = "0.6.5"
 wasm-bindgen-futures = "0.4.64"

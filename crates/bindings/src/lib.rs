@@ -122,16 +122,20 @@ pub fn export(
             let enum_is_data = has_named_fields;
             let uniffi = uniffi::attributes(&kind);
             let pyo3 = pyo3::attributes(&kind);
+            let pyo3_stub_gen = pyo3::enum_stub_gen_attribute(enum_is_data);
+            let pyo3_registration = pyo3::registration(&item_enum.ident);
             let wasm = wasm::attributes(&kind);
 
             if enum_is_data {
                 let variant_classes = napi::enum_variant_classes(&item_enum.ident, &item_enum.variants);
                 quote! {
                     #uniffi
+                    #pyo3_stub_gen
                     #pyo3
                     #wasm
                     #item
                     #variant_classes
+                    #pyo3_registration
                 }
                 .into()
             } else {
@@ -139,19 +143,22 @@ pub fn export(
                 quote! {
                     #napi
                     #uniffi
+                    #pyo3_stub_gen
                     #pyo3
                     #wasm
                     #item
+                    #pyo3_registration
                 }
                 .into()
             }
         },
         BindingKind::Struct | BindingKind::Class | BindingKind::ClassCloneable | BindingKind::Stream => {
             let item = parse_macro_input!(item as syn::Item);
-            let type_name = match &item {
-                syn::Item::Struct(item_struct) => Some(&item_struct.ident),
+            let item_struct = match &item {
+                syn::Item::Struct(item_struct) => Some(item_struct),
                 _ => None,
             };
+            let type_name = item_struct.map(|s| &s.ident);
             let napi = napi::attributes(&kind);
             let uniffi = uniffi::attributes(&kind);
             let pyo3 = pyo3::attributes(&kind);
@@ -161,6 +168,14 @@ pub fn export(
                 (BindingKind::ClassCloneable, Some(ident)) => napi::class_value_implementations(ident),
                 _ => quote! {},
             };
+            let pyo3_registration = match type_name {
+                Some(ident) => pyo3::registration(ident),
+                None => quote! {},
+            };
+            let pyo3_constructor = match item_struct {
+                Some(item_struct) => pyo3::struct_constructor(item_struct, &kind),
+                None => quote! {},
+            };
             quote! {
                 #napi
                 #uniffi
@@ -168,6 +183,8 @@ pub fn export(
                 #wasm
                 #item
                 #napi_value
+                #pyo3_registration
+                #pyo3_constructor
             }
             .into()
         },
@@ -222,6 +239,22 @@ pub fn export(
                 }
             }
 
+            // Capture method flavors before rewriting strips the `bindings::export(...)` attrs.
+            let pyo3_methods: Vec<(syn::ImplItemFn, MethodFlavor, bool)> = item_implementation
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ImplItem::Fn(method) => {
+                        let flavor = method.attrs.iter().find_map(method_flavor).unwrap_or(MethodFlavor::Plain);
+                        let is_stream_next = method_has_stream_next(method);
+                        let mut cleaned = method.clone();
+                        strip_bindings_export_attrs(&mut cleaned.attrs);
+                        Some((cleaned, flavor, is_stream_next))
+                    },
+                    _ => None,
+                })
+                .collect();
+
             for item in &mut item_implementation.items {
                 if let ImplItem::Fn(method) = item {
                     rewrite_method_attributes(&mut method.attrs);
@@ -269,17 +302,14 @@ pub fn export(
                 .any(|item| matches!(item, ImplItem::Fn(method) if method.sig.asyncness.is_some()));
             let napi = napi::attributes(&kind);
             let uniffi = uniffi::implementation_attribute(has_async_methods);
-            let pyo3 = pyo3::attributes(&kind);
             let wasm = wasm::attributes(&kind);
+            let pyo3_impl = pyo3::implementation_expansion(&self_type, &pyo3_methods);
             quote! {
-                #[cfg(feature = "bindings-pyo3")]
-                #[allow(unused_imports)]
-                use ::pyo3::prelude::*;
                 #napi
                 #uniffi
-                #pyo3
                 #wasm
                 #item_implementation
+                #pyo3_impl
                 #( #callback_expansions )*
                 #( #stream_expansions )*
                 #( #factory_expansions )*
