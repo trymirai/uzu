@@ -34,6 +34,7 @@ runs:
       run: |
         rustup self update >/dev/null
         rustup target remove "${{ inputs.target }}" 2>/dev/null || true
+        rm -rf "$(rustc --print sysroot)/lib/rustlib/${{ inputs.target }}"
       shell: bash
 
     - uses: dtolnay/rust-toolchain@stable
