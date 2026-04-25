@@ -36,6 +36,10 @@ runs:
   steps:
     - if: inputs.target != ''
       run: |
+        if ! command -v rustup >/dev/null 2>&1; then
+          echo "rustup not installed, skipping target reset"
+          exit 0
+        fi
         rustup self update >/dev/null
         rustup target remove "${{ inputs.target }}" 2>/dev/null || true
         rm -rf "$(rustc --print sysroot)/lib/rustlib/${{ inputs.target }}"
