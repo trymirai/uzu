@@ -14,7 +14,7 @@ use shoji::{
         backend::chat_message::{Output as BackendOutput, ToolCallState},
     },
     types::{
-        basic::{CancellationToken, ToolCall, Value},
+        basic::{CancelToken, ToolCall, Value},
         model::{Model, ModelSpecialization},
         session::chat::{ChatConfig, ChatMessage, ChatReply, ChatReplyConfig},
     },
@@ -36,7 +36,7 @@ pub enum ChatSessionStreamChunk {
 #[derive(Clone)]
 pub struct ChatSessionStream {
     receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>>,
-    cancel_token: CancellationToken,
+    cancel_token: CancelToken,
 }
 
 #[bindings::export(Implementation)]
@@ -55,7 +55,7 @@ impl ChatSessionStream {
     }
 
     #[bindings::export(Getter)]
-    pub fn cancel_token(&self) -> CancellationToken {
+    pub fn cancel_token(&self) -> CancelToken {
         self.cancel_token.clone()
     }
 }
@@ -176,7 +176,7 @@ impl ChatSession {
         input: Vec<ChatMessage>,
         config: ChatReplyConfig,
     ) -> ChatSessionStream {
-        let cancel_token_to_return = CancellationToken::new();
+        let cancel_token_to_return = CancelToken::new();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<Vec<ChatReply>, ChatSessionError>>();
 
         let instance = self.instance.clone();

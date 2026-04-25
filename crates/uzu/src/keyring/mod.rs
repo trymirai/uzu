@@ -7,29 +7,33 @@ use keyring::{Entry, Error as BackendError};
 
 use crate::device::Device;
 
-const SERVICE_NAME: &str = "com.trymirai.keyring";
+const SERVICE_PREFIX: &str = "com.trymirai.keyring";
 const BASE_KEY: &str = "keys";
 
 #[bindings::export(Class)]
 pub struct Keyring {
     device: Device,
+    service_name: String,
 }
 
 impl Keyring {
     pub fn new() -> Result<Self, KeyringError> {
+        let device = Device::new()?;
+        let service_name = format!("{SERVICE_PREFIX}.{}", device.application_identifier);
         Ok(Self {
-            device: Device::new()?,
+            device,
+            service_name,
         })
     }
 
-    fn entry() -> Result<Entry, KeyringError> {
-        Entry::new(SERVICE_NAME, BASE_KEY).map_err(|error| KeyringError::BackendError {
+    fn entry(&self) -> Result<Entry, KeyringError> {
+        Entry::new(&self.service_name, BASE_KEY).map_err(|error| KeyringError::BackendError {
             message: error.to_string(),
         })
     }
 
-    fn load() -> Result<HashMap<String, String>, KeyringError> {
-        let entry = Self::entry()?;
+    fn load(&self) -> Result<HashMap<String, String>, KeyringError> {
+        let entry = self.entry()?;
         match entry.get_password() {
             Ok(value) => serde_json::from_str(&value).map_err(|error| KeyringError::BackendError {
                 message: error.to_string(),
@@ -41,8 +45,11 @@ impl Keyring {
         }
     }
 
-    fn save(entries: &HashMap<String, String>) -> Result<(), KeyringError> {
-        let entry = Self::entry()?;
+    fn save(
+        &self,
+        entries: &HashMap<String, String>,
+    ) -> Result<(), KeyringError> {
+        let entry = self.entry()?;
         let value = serde_json::to_string(entries).map_err(|error| KeyringError::BackendError {
             message: error.to_string(),
         })?;
@@ -68,9 +75,9 @@ impl Keyring {
         if !self.device.is_keyring_available {
             return Ok(());
         }
-        let mut entries = Self::load()?;
+        let mut entries = self.load()?;
         entries.insert(key, value);
-        Self::save(&entries)
+        self.save(&entries)
     }
 
     #[bindings::export(Method)]
@@ -81,7 +88,7 @@ impl Keyring {
         if !self.device.is_keyring_available {
             return None;
         }
-        Self::load().ok()?.get(&key).cloned()
+        self.load().ok()?.get(&key).cloned()
     }
 
     #[bindings::export(Method)]
@@ -92,9 +99,9 @@ impl Keyring {
         if !self.device.is_keyring_available {
             return Ok(());
         }
-        let mut entries = Self::load()?;
+        let mut entries = self.load()?;
         if entries.remove(&key).is_some() {
-            Self::save(&entries)?;
+            self.save(&entries)?;
         }
         Ok(())
     }

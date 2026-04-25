@@ -28,7 +28,7 @@ Add the `uzu` dependency to your project's `package.json`:
 }
 ```
 
-Set up your project through [Platform](https://platform.trymirai.com) and obtain an `API_KEY`. Then, choose the model you want from the [library](https://platform.trymirai.com/models) and run it with the following snippet using the corresponding identifier:
+Run the snippet below:
 
 ```ts
 // include:examples/snippets.ts#quick-start
@@ -38,7 +38,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-Place the `API_KEY` you obtained earlier in the corresponding example file, and then run it using one of the following commands:
+Run it using one of the following commands:
 
 ```bash
 pnpm run tsn examples/chat.ts
@@ -88,7 +88,7 @@ Sometimes you want to create a complex pipeline where some requests are processe
 
 ### Structured Output
 
-Sometimes you want the generated output to be valid JSON with predefined fields. You can use `GrammarConfig` to manually specify a JSON schema, or define the schema using [Zod](https://github.com/colinhacks/zod).
+Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema, or define the schema using [Zod](https://github.com/colinhacks/zod).
 
 ```ts
 // include:examples/structuredOutput.ts

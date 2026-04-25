@@ -32,7 +32,7 @@ pub fn prepare_workspace_swift(
     let package_swift_path = workspace_swift_path.join("Package.swift");
     update_package_swift(package_swift_path.clone(), version.clone(), checksum.clone())?;
 
-    let examples_path = workspace_swift_path.join("Sources").join("Example");
+    let examples_path = workspace_swift_path.join("Sources").join("Examples");
     let snippets = extract_snippets(examples_path.clone())?;
     let examples = extract_examples(examples_path.clone(), workspace_swift_path.clone())?;
 

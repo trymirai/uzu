@@ -20,9 +20,6 @@
 .cursor
 .claude/settings.local.json
 
-# Models
-/models/
-
 # Local-only dev tools
 .env
 .DS_Store

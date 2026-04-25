@@ -1,6 +1,9 @@
 use std::process::{Command, Stdio};
 
-use crate::types::{Environment, Error};
+use crate::{
+    handlers::generate_swift_extensions,
+    types::{Environment, Error},
+};
 
 pub fn prepare_bindings_swift(environment: &Environment) -> Result<(), Error> {
     let scripts_build_path = environment.bindings().swift_build_script_path();
@@ -21,6 +24,8 @@ pub fn prepare_bindings_swift(environment: &Environment) -> Result<(), Error> {
     if !status.success() {
         return Err(Error::UnableToPrepareBindingsSwift);
     }
+
+    generate_swift_extensions(environment)?;
 
     Ok(())
 }

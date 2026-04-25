@@ -18,3 +18,4 @@ ignore.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 heck.workspace = true
+syn.workspace = true

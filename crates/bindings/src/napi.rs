@@ -384,19 +384,73 @@ fn extract_option_inner_type(output: &syn::ReturnType) -> Option<syn::Type> {
     None
 }
 
+pub fn factory(
+    self_type: &syn::Type,
+    method: &syn::ImplItemFn,
+) -> proc_macro2::TokenStream {
+    let method_ident = &method.sig.ident;
+    let method_name = method_ident.to_string();
+    let wrapper_ident = format_ident!("{}_bindings_napi", method_ident);
+    let inputs = &method.sig.inputs;
+    let output = &method.sig.output;
+    let asyncness = &method.sig.asyncness;
+    let arg_idents = factory_arg_idents(inputs);
+    let forward_await = asyncness.as_ref().map(|_| quote! { .await });
+
+    quote! {
+        #[cfg(feature = "bindings-napi")]
+        #[napi_derive::napi]
+        impl #self_type {
+            #[napi(js_name = #method_name)]
+            pub #asyncness fn #wrapper_ident( #inputs ) #output {
+                <#self_type>::#method_ident( #( #arg_idents ),* )#forward_await
+            }
+        }
+    }
+}
+
+fn factory_arg_idents(inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::Token![,]>) -> Vec<syn::Ident> {
+    inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(pat_type) => match pat_type.pat.as_ref() {
+                syn::Pat::Ident(pat_ident) => Some(pat_ident.ident.clone()),
+                _ => None,
+            },
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect()
+}
+
 pub fn factory_with_callback(
     self_type: &syn::Type,
     method: &syn::ImplItemFn,
 ) -> proc_macro2::TokenStream {
     let method_ident = &method.sig.ident;
     let body = &method.block;
+    let callback_inputs = match extract_callback_inputs(method) {
+        Some(inputs) => inputs,
+        None => {
+            return syn::Error::new_spanned(
+                &method.sig,
+                "bindings::export(FactoryWithCallback) requires a parameter of type \
+                 `Box<dyn Fn(..) + Send + Sync>` (return type must be `()`)",
+            )
+            .to_compile_error();
+        },
+    };
+    let synthetic_idents: Vec<syn::Ident> =
+        (0..callback_inputs.len()).map(|index| format_ident!("arg{index}")).collect();
+    let napi_args_type = napi_args_tuple(&callback_inputs);
+    let napi_call_value = napi_call_tuple(&synthetic_idents);
+
     quote! {
         #[cfg(feature = "bindings-napi")]
         #[napi_derive::napi]
         impl #self_type {
             #[napi(factory)]
             pub fn #method_ident(
-                callback: napi::bindgen_prelude::Function<'static, (), ()>,
+                callback: napi::bindgen_prelude::Function<'static, #napi_args_type, ()>,
             ) -> napi::Result<Self> {
                 let threadsafe_function = callback
                     .build_threadsafe_function()
@@ -404,16 +458,101 @@ pub fn factory_with_callback(
                     .weak::<true>()
                     .build()
                     .map_err(|error| napi::Error::from_reason(error.to_string()))?;
-                let callback: Box<dyn Fn() + Send + Sync> = Box::new(move || {
-                    let _ = threadsafe_function.call(
-                        (),
-                        napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
-                    );
-                });
+                let callback: Box<dyn Fn( #( #callback_inputs ),* ) + Send + Sync> =
+                    Box::new(move | #( #synthetic_idents: #callback_inputs ),* | {
+                        let _ = threadsafe_function.call(
+                            #napi_call_value,
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                    });
                 Ok(#body)
             }
         }
     }
+}
+
+fn napi_args_tuple(inputs: &[syn::Type]) -> proc_macro2::TokenStream {
+    match inputs.len() {
+        0 => quote! { () },
+        1 => {
+            let single = &inputs[0];
+            quote! { #single }
+        },
+        _ => quote! { ( #( #inputs ),* ) },
+    }
+}
+
+fn napi_call_tuple(idents: &[syn::Ident]) -> proc_macro2::TokenStream {
+    match idents.len() {
+        0 => quote! { () },
+        1 => {
+            let single = &idents[0];
+            quote! { #single }
+        },
+        _ => quote! { ( #( #idents ),* ) },
+    }
+}
+
+pub(crate) fn extract_callback_inputs(method: &syn::ImplItemFn) -> Option<Vec<syn::Type>> {
+    for input in &method.sig.inputs {
+        let syn::FnArg::Typed(pat_type) = input else {
+            continue;
+        };
+        if let Some(inputs) = extract_void_fn_inputs(&pat_type.ty) {
+            return Some(inputs);
+        }
+    }
+    None
+}
+
+fn extract_void_fn_inputs(ty: &syn::Type) -> Option<Vec<syn::Type>> {
+    let inner = extract_box_inner(ty)?;
+    let syn::Type::TraitObject(trait_object) = inner else {
+        return None;
+    };
+    for bound in &trait_object.bounds {
+        let syn::TypeParamBound::Trait(trait_bound) = bound else {
+            continue;
+        };
+        let segment = trait_bound.path.segments.last()?;
+        if segment.ident != "Fn" && segment.ident != "FnMut" && segment.ident != "FnOnce" {
+            continue;
+        }
+        let syn::PathArguments::Parenthesized(paren) = &segment.arguments else {
+            continue;
+        };
+        let returns_unit = match &paren.output {
+            syn::ReturnType::Default => true,
+            syn::ReturnType::Type(_, ty) => match ty.as_ref() {
+                syn::Type::Tuple(tuple) => tuple.elems.is_empty(),
+                _ => false,
+            },
+        };
+        if !returns_unit {
+            return None;
+        }
+        return Some(paren.inputs.iter().cloned().collect());
+    }
+    None
+}
+
+fn extract_box_inner(ty: &syn::Type) -> Option<&syn::Type> {
+    let syn::Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Box" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    for argument in &args.args {
+        if let syn::GenericArgument::Type(inner) = argument {
+            return Some(inner);
+        }
+    }
+    None
 }
 
 pub fn error_implementations(type_name: &Ident) -> proc_macro2::TokenStream {
