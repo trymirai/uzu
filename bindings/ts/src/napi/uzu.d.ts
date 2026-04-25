@@ -889,6 +889,7 @@ export declare class Engine {
   downloader(model: Model): Downloader
   download(model: Model): Promise<DownloaderStream>
   downloadState(model: Model): Promise<DownloadState | null>
+  get downloadStates(): Promise<Record<string, DownloadState>>
   chat(model: Model, config: ChatConfig): Promise<ChatSession>
   classification(model: Model): Promise<ClassificationSession>
   textToSpeech(model: Model): Promise<TextToSpeechSession>

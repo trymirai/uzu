@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use cli_release::{
     handlers::{
         SyncSource, prepare_bindings_swift, prepare_bindings_ts, prepare_workspace_swift, prepare_workspace_swift_spm,
@@ -18,7 +18,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Prepare bindings
-    PrepareBindings,
+    PrepareBindings {
+        /// Optional language filter (prepare only that language)
+        #[arg(value_enum)]
+        language: Option<BindingLanguage>,
+    },
     /// Prepare workspace
     PrepareWorkspace {
         /// Package version
@@ -33,10 +37,28 @@ enum Commands {
     },
 }
 
-fn prepare_bindings(environment: &Environment) -> Result<(), Error> {
-    prepare_workspace_ts_napi(environment)?;
-    prepare_bindings_ts(environment)?;
-    prepare_bindings_swift(environment)?;
+#[derive(ValueEnum, Clone, Copy)]
+enum BindingLanguage {
+    Swift,
+    Ts,
+}
+
+fn prepare_bindings(
+    environment: &Environment,
+    language: Option<BindingLanguage>,
+) -> Result<(), Error> {
+    match language {
+        Some(BindingLanguage::Swift) => prepare_bindings_swift(environment)?,
+        Some(BindingLanguage::Ts) => {
+            prepare_workspace_ts_napi(environment)?;
+            prepare_bindings_ts(environment)?;
+        },
+        None => {
+            prepare_workspace_ts_napi(environment)?;
+            prepare_bindings_ts(environment)?;
+            prepare_bindings_swift(environment)?;
+        },
+    }
     Ok(())
 }
 
@@ -44,7 +66,7 @@ fn prepare_workspace(
     environment: &Environment,
     version: String,
 ) -> Result<(), Error> {
-    prepare_bindings(&environment)?;
+    prepare_bindings(&environment, None)?;
     prepare_workspace_ts(environment, version.clone())?;
     let swift_spm_checksum = prepare_workspace_swift_spm(environment, version.clone())?;
     prepare_workspace_swift(environment, version.clone(), swift_spm_checksum)?;
@@ -56,8 +78,10 @@ fn main() -> Result<(), Error> {
     let environment = Environment::new()?;
 
     match cli.command {
-        Some(Commands::PrepareBindings) => {
-            prepare_bindings(&environment)?;
+        Some(Commands::PrepareBindings {
+            language,
+        }) => {
+            prepare_bindings(&environment, language)?;
         },
         Some(Commands::PrepareWorkspace {
             version,

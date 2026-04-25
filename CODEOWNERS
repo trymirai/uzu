@@ -1,4 +1,5 @@
 /.github @uuuvn
+/apps/playground @alexxale
 /crates/backend-remote @alexxale
 /crates/backend-uzu/build @uuuvn
 /crates/backend-uzu/src/backends/cpu @uuuvn

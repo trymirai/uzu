@@ -860,6 +860,8 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func downloadState(model: Model) async  -> DownloadState?
     
+    func downloadStates() async  -> [String: DownloadState]
+    
     func downloader(model: Model)  -> Downloader
     
     func model(identifier: String) async throws  -> Model?
@@ -1026,6 +1028,24 @@ open func downloadState(model: Model)async  -> DownloadState?  {
             completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
             freeFunc: ffi_uzu_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeDownloadState.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+open func downloadStates()async  -> [String: DownloadState]  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_method_engine_download_states(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_rust_buffer,
+            completeFunc: ffi_uzu_rust_future_complete_rust_buffer,
+            freeFunc: ffi_uzu_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterDictionaryStringTypeDownloadState.lift,
             errorHandler: nil
             
         )
@@ -3130,6 +3150,32 @@ fileprivate struct FfiConverterSequenceTypeModelVendor: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringTypeDownloadState: FfiConverterRustBuffer {
+    public static func write(_ value: [String: DownloadState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterTypeDownloadState.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: DownloadState] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: DownloadState]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterTypeDownloadState.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -3248,6 +3294,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_download_state() != 15736) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_engine_download_states() != 7129) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_downloader() != 59345) {

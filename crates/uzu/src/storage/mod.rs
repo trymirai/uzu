@@ -13,6 +13,7 @@ use download_manager::{
     FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
 };
 pub use error::StorageError;
+use futures_util::future::join_all;
 use shoji::types::{
     basic::File,
     model::{Model, ModelAccessibility, ModelReference},
@@ -216,6 +217,15 @@ impl Storage {
         let item = self.get(model_identifier).await?;
         let state = item.state().await;
         Some(state)
+    }
+
+    pub async fn states(&self) -> HashMap<String, DownloadState> {
+        let items = self.items.lock().await;
+        let state_futures = items.iter().map(|(identifier, item)| {
+            let identifier = identifier.clone();
+            async move { (identifier, item.state().await) }
+        });
+        join_all(state_futures).await.into_iter().collect()
     }
 
     pub async fn download(

@@ -434,6 +434,11 @@ impl Engine {
     ) -> Option<DownloadState> {
         self.downloader(model).state().await
     }
+
+    #[bindings::export(Getter)]
+    pub async fn download_states(&self) -> HashMap<String, DownloadState> {
+        self.storage.lock().await.states().await
+    }
 }
 
 #[bindings::export(Implementation)]
