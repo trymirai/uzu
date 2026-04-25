@@ -1,3 +1,4 @@
+mod generate_swift_extensions;
 mod prepare_bindings_swift;
 mod prepare_bindings_ts;
 mod prepare_docs;
@@ -8,6 +9,7 @@ mod prepare_workspace_ts;
 mod prepare_workspace_ts_napi;
 mod sync_into_repo;
 
+pub use generate_swift_extensions::generate_swift_extensions;
 pub use prepare_bindings_swift::prepare_bindings_swift;
 pub use prepare_bindings_ts::prepare_bindings_ts;
 pub use prepare_docs::prepare_docs;

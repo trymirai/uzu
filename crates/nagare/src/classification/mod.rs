@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{Backend, State as StateTrait, backend::classification::Instance},
     types::{
-        basic::CancellationToken,
+        basic::CancelToken,
         model::{Model, ModelSpecialization},
         session::classification::{ClassificationMessage, ClassificationOutput},
     },
@@ -75,7 +75,7 @@ impl ClassificationSession {
         &self,
         input: Vec<ClassificationMessage>,
     ) -> Result<ClassificationOutput, ClassificationSessionError> {
-        let cancel_token_to_return = CancellationToken::new();
+        let cancel_token_to_return = CancelToken::new();
         let (sender, mut receiver) =
             mpsc::unbounded_channel::<Result<ClassificationOutput, ClassificationSessionError>>();
 

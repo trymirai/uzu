@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use shoji::{
     traits::{Backend, State as StateTrait, backend::text_to_speech::Instance},
     types::{
-        basic::{CancellationToken, PcmBatch},
+        basic::{CancelToken, PcmBatch},
         model::{Model, ModelSpecialization},
     },
 };
@@ -29,7 +29,7 @@ pub enum TextToSpeechSessionStreamChunk {
 #[derive(Clone)]
 pub struct TextToSpeechSessionStream {
     receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>>,
-    cancel_token: CancellationToken,
+    cancel_token: CancelToken,
 }
 
 #[bindings::export(Implementation)]
@@ -48,7 +48,7 @@ impl TextToSpeechSessionStream {
     }
 
     #[bindings::export(Getter)]
-    pub fn cancel_token(&self) -> CancellationToken {
+    pub fn cancel_token(&self) -> CancelToken {
         self.cancel_token.clone()
     }
 }
@@ -137,7 +137,7 @@ impl TextToSpeechSession {
         &self,
         input: String,
     ) -> TextToSpeechSessionStream {
-        let cancel_token_to_return = CancellationToken::new();
+        let cancel_token_to_return = CancelToken::new();
         let (sender, receiver) = mpsc::unbounded_channel::<Result<PcmBatch, TextToSpeechSessionError>>();
 
         let holder = self.holder.clone();
