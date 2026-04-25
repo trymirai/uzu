@@ -272,6 +272,9 @@ pub fn export(
             let pyo3 = pyo3::attributes(&kind);
             let wasm = wasm::attributes(&kind);
             quote! {
+                #[cfg(feature = "bindings-pyo3")]
+                #[allow(unused_imports)]
+                use ::pyo3::prelude::*;
                 #napi
                 #uniffi
                 #pyo3

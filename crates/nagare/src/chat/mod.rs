@@ -22,7 +22,7 @@ use shoji::{
 use tokio::sync::{Mutex, mpsc};
 
 #[bindings::export(Enum)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChatSessionStreamChunk {
     Replies {
         replies: Vec<ChatReply>,

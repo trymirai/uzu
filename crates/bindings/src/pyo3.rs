@@ -76,11 +76,33 @@ fn factory_arg_idents(inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::Toke
 }
 
 pub fn error_implementations(type_name: &Ident) -> proc_macro2::TokenStream {
+    let from_py_message = format!("{} cannot be received from Python", type_name);
     quote! {
         #[cfg(feature = "bindings-pyo3")]
-        impl From<#type_name> for pyo3::PyErr {
+        impl From<#type_name> for ::pyo3::PyErr {
             fn from(error: #type_name) -> Self {
-                pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
+                ::pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
+            }
+        }
+
+        #[cfg(feature = "bindings-pyo3")]
+        impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for #type_name {
+            type Error = ::pyo3::PyErr;
+            fn extract(_obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::std::result::Result<Self, Self::Error> {
+                ::std::result::Result::Err(
+                    ::pyo3::exceptions::PyTypeError::new_err(#from_py_message),
+                )
+            }
+        }
+
+        #[cfg(feature = "bindings-pyo3")]
+        impl<'py> ::pyo3::IntoPyObject<'py> for #type_name {
+            type Target = ::pyo3::types::PyString;
+            type Output = ::pyo3::Bound<'py, ::pyo3::types::PyString>;
+            type Error = ::std::convert::Infallible;
+
+            fn into_pyobject(self, py: ::pyo3::Python<'py>) -> ::std::result::Result<Self::Output, Self::Error> {
+                ::std::result::Result::Ok(::pyo3::types::PyString::new(py, &self.to_string()))
             }
         }
     }

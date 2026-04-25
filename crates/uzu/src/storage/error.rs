@@ -1,7 +1,7 @@
 use crate::{registry::RegistryError, storage::types::DownloadPhase};
 
 #[bindings::export(Error)]
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum StorageError {
     #[error("Unable to create directory: {path}")]
