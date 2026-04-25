@@ -26,6 +26,7 @@ struct ModelRowView: View, Equatable {
                     Text(modelNameOnly)
                         .font(.monoHeading14)
                         .foregroundColor(MiraiAsset.primary.swiftUIColor)
+                        .lineLimit(2)
 
                     HStack(spacing: 4) {
                         if let vendor = vendor {
@@ -35,8 +36,8 @@ struct ModelRowView: View, Equatable {
                             badge(text: qlabel)
                         }
                     }
-                    .fixedSize()
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer()
 
