@@ -112,6 +112,7 @@ jobs:
         with:
           metal: true
           node: true
+          swift: true
 
       - name: Prepare bindings
         run: cargo run -p cli-release prepare-bindings

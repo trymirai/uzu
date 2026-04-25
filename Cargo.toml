@@ -128,6 +128,8 @@ crc32c = "0.6.8"
 base64 = "0.22.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 jsonschema = "0.46.0"
+# Please make sure to use compatible versions of the cargo-swift / uniffi pair.
+# See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
 uniffi = { version = "0.31.1", features = ["tokio"] }
 napi = { version = "3.8.3", features = [
     "napi10",
