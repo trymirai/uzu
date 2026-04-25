@@ -30,6 +30,12 @@ inputs:
 runs:
   using: composite
   steps:
+    - if: inputs.target != ''
+      run: |
+        rustup self update >/dev/null
+        rustup target remove "${{ inputs.target }}" 2>/dev/null || true
+      shell: bash
+
     - uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ inputs.target }}
