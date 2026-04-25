@@ -15,7 +15,6 @@ pub fn mlp_gate_act_mul<T: ArrayElement + Float>(
     act_type: crate::backends::common::gpu_types::activation_type::ActivationType,
     #[specialize] use_hadamard: bool,
 ) {
-    let _ = hadamard_factors;
     if use_hadamard {
         unimplemented!("not supported yet");
     }

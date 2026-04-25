@@ -7,17 +7,16 @@ use crate::ArrayElement;
 #[kernel(AudioFsqEncode)]
 #[variants(T, f32, f16, bf16)]
 pub fn audio_fsq_encode<T: ArrayElement + Float>(
-    input: *const T,
-    tokens: *mut i32,
-    lengths: *const i32,
-    num_groups: i32,
-    seq_len: i32,
-    codebook_dim: i32,
-    num_levels: &[i32],
-    dim_base_index: &[i32],
-    eps: f32,
-    batch_size: i32,
+    #[allow(unused)] input: *const T,
+    #[allow(unused)] tokens: *mut i32,
+    #[allow(unused)] lengths: *const i32,
+    #[allow(unused)] num_groups: i32,
+    #[allow(unused)] seq_len: i32,
+    #[allow(unused)] codebook_dim: i32,
+    #[allow(unused)] num_levels: &[i32],
+    #[allow(unused)] dim_base_index: &[i32],
+    #[allow(unused)] eps: f32,
+    #[allow(unused)] batch_size: i32,
 ) {
-    let _ = (input, tokens, lengths, num_groups, seq_len, codebook_dim, num_levels, dim_base_index, eps, batch_size);
     todo!()
 }

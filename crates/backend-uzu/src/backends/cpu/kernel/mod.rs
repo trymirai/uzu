@@ -1,3 +1,4 @@
+#![allow(unused)]
 mod activation;
 mod attention;
 mod audio;

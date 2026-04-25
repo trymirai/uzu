@@ -43,11 +43,11 @@ impl FunctionArgument {
                 FunctionArgumentType::Constant(ty, None) => KernelArgumentType::Constant(
                     format!("&[{}]", ty.to_token_stream().to_string().replace(" :: ", "::")).into_boxed_str(),
                 ),
-                FunctionArgumentType::Constant(ty, Some(size)) => KernelArgumentType::Constant(
+                FunctionArgumentType::Constant(ty, Some(sz)) => KernelArgumentType::Constant(
                     format!(
                         "&[{}; {}]",
                         ty.to_token_stream().to_string().replace(" :: ", "::"),
-                        size.to_token_stream().to_string(),
+                        sz.to_token_stream().to_string(),
                     )
                     .into_boxed_str(),
                 ),
@@ -557,7 +557,7 @@ impl CpuCompiler {
             impl crate::backends::common::kernel::#trait_ident for #struct_ident {
                 type Backend = crate::backends::cpu::Cpu;
 
-                fn new(_context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
+                fn new(context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
                     Ok(Self {
                         #(#struct_fields_sets ,)*
                     })

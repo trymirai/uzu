@@ -220,7 +220,7 @@ impl MatmulMetalKernel {
             (a, a_offset),
             b,
             &mut *d,
-            params,
+            std::slice::from_ref(&params),
             threadgroups_per_row,
             threadgroups_per_column,
             ab_scale,
@@ -287,7 +287,16 @@ impl MatmulMetalKernel {
         };
 
         let kernel = self.get_or_create_gemm_mpp(encoder.context(), specialization)?;
-        kernel.encode((a, a_offset), b, &mut *d, params, group_count_x, group_count_y, ab_scale, encoder);
+        kernel.encode(
+            (a, a_offset),
+            b,
+            &mut *d,
+            std::slice::from_ref(&params),
+            group_count_x,
+            group_count_y,
+            ab_scale,
+            encoder,
+        );
 
         if let MatmulArgumentC::Bias(bias) = c {
             self.bias_add.encode(None::<&Allocation<Metal>>, bias, d, output_dim, batch_dim * output_dim, encoder);

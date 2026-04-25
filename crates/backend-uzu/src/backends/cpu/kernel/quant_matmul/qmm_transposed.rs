@@ -126,7 +126,7 @@ pub fn quantized_matmul_qmm_transposed<
     #[specialize] use_hadamard: bool,
     #[specialize] aligned_n: bool,
 ) {
-    let _ = (BM, BK, BN, WM, WN, hadamard_factors, aligned_n); // tile params unused in tile-agnostic CPU reference
+    let _ = (BM, BK, BN, WM, WN); // tile params unused in tile-agnostic CPU reference
     if use_hadamard {
         unimplemented!("not supported yet");
     }

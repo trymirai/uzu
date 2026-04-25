@@ -7,13 +7,13 @@ use crate::ArrayElement;
 #[kernel(FullPrecisionEmbeddingLookup)]
 #[variants(T, f32, f16, bf16)]
 pub fn full_precision_embedding_lookup<T: ArrayElement + Float>(
-    token_ids: *const u64,
-    weights: *const T,
-    output: *mut T,
-    batch_size: u32,
-    vocab_size: u32,
-    model_dim: u32,
-    input_scale: f32,
+    #[allow(unused)] token_ids: *const u64,
+    #[allow(unused)] weights: *const T,
+    #[allow(unused)] output: *mut T,
+    #[allow(unused)] batch_size: u32,
+    #[allow(unused)] vocab_size: u32,
+    #[allow(unused)] model_dim: u32,
+    #[allow(unused)] input_scale: f32,
 ) {
     for batch_idx in 0..batch_size {
         let token_id = unsafe { *token_ids.add(batch_idx as usize) };

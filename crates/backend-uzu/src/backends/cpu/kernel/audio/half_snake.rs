@@ -7,16 +7,15 @@ use crate::ArrayElement;
 #[kernel(AudioHalfSnake)]
 #[variants(T, f32, f16, bf16)]
 pub fn audio_half_snake<T: ArrayElement + Float>(
-    input: *const T,
-    alpha: *const T,
-    output: *mut T,
-    channels: i32,
-    seq_len: i32,
-    snake_channels: i32,
-    negative_slope: f32,
-    eps: f32,
-    batch_size: i32,
+    #[allow(unused)] input: *const T,
+    #[allow(unused)] alpha: *const T,
+    #[allow(unused)] output: *mut T,
+    #[allow(unused)] channels: i32,
+    #[allow(unused)] seq_len: i32,
+    #[allow(unused)] snake_channels: i32,
+    #[allow(unused)] negative_slope: f32,
+    #[allow(unused)] eps: f32,
+    #[allow(unused)] batch_size: i32,
 ) {
-    let _ = (input, alpha, output, channels, seq_len, snake_channels, negative_slope, eps, batch_size);
     todo!()
 }
