@@ -124,6 +124,8 @@ impl MatmulMetalKernel {
                     specialization.simdgroups_per_column,
                     specialization.align_m,
                     specialization.align_n,
+                    specialization.align_k,
+                    specialization.apply_ab_scale,
                     specialization.is_accumulate,
                 )
                 .map_err(MatmulError::BackendError)?;
@@ -199,7 +201,7 @@ impl MatmulMetalKernel {
             (arguments.a, arguments.a_offset as usize),
             arguments.b,
             &mut *arguments.d,
-            params,
+            std::slice::from_ref(&params),
             threadgroups_per_row,
             threadgroups_per_column,
             arguments.ab_scale,
@@ -227,8 +229,13 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let is_accumulate = matches!(arguments.c, MatmulArgumentC::Accumulate);
-        let specialization =
-            gemm_mpp::GemmMppSpecialization::select(arguments.batch_dim, arguments.output_dim, is_accumulate);
+        let specialization = gemm_mpp::GemmMppSpecialization::select(
+            arguments.batch_dim,
+            arguments.output_dim,
+            arguments.input_dim,
+            is_accumulate,
+            arguments.ab_scale != 1.0,
+        );
 
         let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
         let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
@@ -267,7 +274,7 @@ impl MatmulMetalKernel {
             (arguments.a, arguments.a_offset as usize),
             arguments.b,
             &mut *arguments.d,
-            params,
+            std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
             arguments.ab_scale,

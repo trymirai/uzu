@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::model::{File, Repository};
+use crate::types::basic::{File, Repository};
 
 #[bindings::export(Enum)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Reference {
+pub enum ModelReference {
     Mirai {
         toolchain_version: String,
         repository: Option<Repository>,
@@ -20,16 +20,16 @@ pub enum Reference {
     },
 }
 
-impl Reference {
+impl ModelReference {
     pub fn name(&self) -> String {
         match self {
-            Reference::Mirai {
+            ModelReference::Mirai {
                 ..
             } => "mirai".to_string(),
-            Reference::HuggingFace {
+            ModelReference::HuggingFace {
                 ..
             } => "huggingface".to_string(),
-            Reference::Local {
+            ModelReference::Local {
                 ..
             } => "local".to_string(),
         }

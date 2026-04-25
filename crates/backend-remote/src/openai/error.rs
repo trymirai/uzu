@@ -16,4 +16,6 @@ pub enum Error {
     UnsupportedRole,
     #[error("Tool call result is required")]
     ToolCallResultRequired,
+    #[error("Content is required")]
+    ContentRequired,
 }

@@ -16,7 +16,7 @@ pub trait Registry: Send + Sync {
         let identifier = identifier.to_string();
         Box::pin(async move {
             let models = self.models().await?;
-            let model = models.iter().find(|model| model.identifier() == identifier).cloned();
+            let model = models.iter().find(|model| model.identifier == identifier).cloned();
             Ok(model)
         })
     }

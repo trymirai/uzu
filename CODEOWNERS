@@ -1,22 +1,30 @@
 /.github @uuuvn
-/crates/benchmarks @alexxale
+/apps/playground @alexxale
+/crates/backend-remote @alexxale
+/crates/backend-uzu/build @uuuvn
+/crates/backend-uzu/src/backends/cpu @uuuvn
+/crates/backend-uzu/src/backends/metal @LuckyIYI @eugenebokhan @uuuvn @CC-Yeh
+/crates/backend-uzu/src/classifier @eugenebokhan
+/crates/backend-uzu/src/config @uuuvn
+/crates/backend-uzu/src/device @uuuvn
+/crates/backend-uzu/src/language_model @LuckyIYI @eugenebokhan
+/crates/backend-uzu/src/session @uuuvn @LuckyIYI
+/crates/backend-uzu/src/parameters @uuuvn
+/crates/backend-uzu/src/speculators @uuuvn
+/crates/backend-uzu/src/tracer @uuuvn
+/crates/benchmarks @uuuvn
+/crates/bindings @alexxale
 /crates/cli @alexxale
-/crates/uzu/build @uuuvn
-/crates/uzu/examples @alexxale
-/crates/uzu/src/backends/cpu @uuuvn
-/crates/uzu/src/backends/metal @LuckyIYI @eugenebokhan @uuuvn @CC-Yeh
-/crates/uzu/src/classifier @eugenebokhan
-/crates/uzu/src/config @uuuvn
-/crates/uzu/src/device @uuuvn
-/crates/uzu/src/language_model @alexxale @LuckyIYI @eugenebokhan
-/crates/uzu/src/session @alexxale @LuckyIYI
-/crates/uzu/src/parameters @uuuvn
-/crates/uzu/src/speculators @uuuvn
-/crates/uzu/src/tracer @alexxale
-/crates/json-transform @alexxale
-/crates/token-stream-parser @alexxale
+/crates/cli-storage @eugenebokhan
+/crates/cli-release @alexxale
+/crates/download-manager @uuuvn @eugenebokhan
+/crates/dsl @uuuvn
 /crates/hanashi @alexxale
+/crates/json-transform @alexxale
 /crates/nagare @alexxale
-/crates/download-manager @alexxale @eugenebokhan
-/scripts @alexxale
+/crates/shoji @alexxale
+/crates/token-stream-parser @alexxale
+/crates/uzu @alexxale
+/scripts @uuuvn
 /tools @alexxale
+/workspace @alexxale

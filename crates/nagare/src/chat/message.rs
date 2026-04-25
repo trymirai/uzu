@@ -6,14 +6,11 @@ use shoji::{
         State,
         backend::chat_message::{Backend, Instance, Output},
     },
-    types::{
-        encoding::Message,
-        session::chat::{Config, StreamConfig},
-    },
+    types::session::chat::{ChatConfig, ChatMessage, ChatReplyConfig},
 };
 use tokio_util::sync::CancellationToken;
 
-use super::Error;
+use super::ChatSessionError;
 
 pub struct Session {
     instance: Box<dyn Instance>,
@@ -23,13 +20,13 @@ pub struct Session {
 impl Session {
     pub async fn new(
         backend: &dyn Backend,
-        config: Config,
+        config: ChatConfig,
         reference: String,
-    ) -> Result<Self, Error> {
-        let instance = backend.instance(reference, config).await.map_err(|error| Error::Backend {
+    ) -> Result<Self, ChatSessionError> {
+        let instance = backend.instance(reference, config).await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
-        let state = instance.state().await.map_err(|error| Error::Backend {
+        let state = instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
         Ok(Self {
@@ -38,8 +35,8 @@ impl Session {
         })
     }
 
-    pub async fn reset(&mut self) -> Result<(), Error> {
-        self.state = self.instance.state().await.map_err(|error| Error::Backend {
+    pub async fn reset(&mut self) -> Result<(), ChatSessionError> {
+        self.state = self.instance.state().await.map_err(|error| ChatSessionError::Backend {
             message: error.to_string(),
         })?;
         Ok(())
@@ -47,14 +44,14 @@ impl Session {
 
     pub fn stream<'a>(
         &'a mut self,
-        input: &'a Vec<Message>,
-        config: StreamConfig,
+        input: &'a Vec<ChatMessage>,
+        config: ChatReplyConfig,
         cancel_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = Result<Output, Error>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Stream<Item = Result<Output, ChatSessionError>> + Send + 'a>> {
         self.instance
             .stream(input, self.state.as_mut(), config, cancel_token)
             .map(|event| {
-                event.map_err(|error| Error::Backend {
+                event.map_err(|error| ChatSessionError::Backend {
                     message: error.to_string(),
                 })
             })

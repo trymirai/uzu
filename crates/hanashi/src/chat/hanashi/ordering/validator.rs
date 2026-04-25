@@ -1,9 +1,9 @@
-use shoji::types::encoding::Role;
+use shoji::types::session::chat::ChatRole;
 
 use crate::chat::hanashi::ordering::{Config, Error};
 
 pub struct Validator {
-    current: Option<Role>,
+    current: Option<ChatRole>,
     config: Config,
 }
 
@@ -21,9 +21,9 @@ impl Validator {
 
     pub fn validate_next(
         &mut self,
-        role: &Role,
+        role: &ChatRole,
     ) -> Result<(), Error> {
-        if matches!(role, Role::Custom { .. }) {
+        if matches!(role, ChatRole::Custom { .. }) {
             return Ok(());
         }
 
@@ -54,6 +54,6 @@ impl Validator {
     }
 }
 
-fn format_roles(roles: &[Role]) -> String {
+fn format_roles(roles: &[ChatRole]) -> String {
     roles.iter().map(|role| role.to_string()).collect::<Vec<_>>().join(", ")
 }

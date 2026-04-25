@@ -12,8 +12,12 @@ pub use config::Config;
 use download_manager::{
     FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
 };
-pub use error::Error;
-use shoji::types::model::{Accessibility, File, Model, Reference};
+pub use error::StorageError;
+use futures_util::future::join_all;
+use shoji::types::{
+    basic::File,
+    model::{Model, ModelAccessibility, ModelReference},
+};
 use tokio::{
     runtime::Handle,
     sync::broadcast::{Sender, channel},
@@ -38,8 +42,8 @@ impl Storage {
     pub async fn new(
         tokio_handle: Handle,
         config: Config,
-    ) -> Result<Self, Error> {
-        create_dir_all(config.cache_path()).map_err(|_| Error::UnableToCreateDirectory {
+    ) -> Result<Self, StorageError> {
+        create_dir_all(config.cache_path()).map_err(|_| StorageError::UnableToCreateDirectory {
             path: config.cache_path().to_string_lossy().to_string(),
         })?;
 
@@ -50,7 +54,7 @@ impl Storage {
                 tokio_handle.clone(),
             )
             .await
-            .map_err(|error| Error::DownloadManager {
+            .map_err(|error| StorageError::DownloadManager {
                 message: error.to_string(),
             })?,
         ));
@@ -74,14 +78,14 @@ impl Storage {
     pub async fn refresh(
         &self,
         models: Vec<Model>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), StorageError> {
         let models = models.into_iter().filter(|model| model.is_downloadable()).collect::<Vec<_>>();
-        let actual_model_identifiers: HashSet<String> = models.iter().map(|model| model.identifier()).collect();
+        let actual_model_identifiers: HashSet<String> = models.iter().map(|model| model.identifier.clone()).collect();
 
         let download_manager = { self.download_manager.lock().await.clone() };
 
         let existing_file_tasks =
-            download_manager.get_all_file_tasks().await.map_err(|error| Error::DownloadManager {
+            download_manager.get_all_file_tasks().await.map_err(|error| StorageError::DownloadManager {
                 message: error.to_string(),
             })?;
         let mut active_file_tasks = Vec::with_capacity(existing_file_tasks.len());
@@ -107,7 +111,7 @@ impl Storage {
         }
 
         for model in models {
-            let identifier = model.identifier();
+            let identifier = model.identifier.clone();
             if items.contains_key(&identifier) {
                 continue;
             }
@@ -115,7 +119,7 @@ impl Storage {
             let files = self.resolve_model_files(&model)?;
             let total_bytes: u64 = files.iter().map(|file| file.size as u64).sum();
 
-            let cache_path = self.config.cache_model_path(&model).ok_or(Error::UnsupportedItem {
+            let cache_path = self.config.cache_model_path(&model).ok_or(StorageError::UnsupportedItem {
                 identifier: identifier.clone(),
             })?;
 
@@ -129,7 +133,7 @@ impl Storage {
                 let mut file_tasks = Vec::new();
                 for file in &files {
                     let file_path = cache_path.join(&file.name);
-                    let file_check = FileCheck::CRC(file.crc32c().ok_or(Error::HashNotFound {
+                    let file_check = FileCheck::CRC(file.crc32c().ok_or(StorageError::HashNotFound {
                         identifier: identifier.clone(),
                         name: file.name.clone(),
                     })?);
@@ -137,7 +141,7 @@ impl Storage {
                     let file_task = download_manager
                         .file_download_task(&file.url, &file_path, file_check, Some(file.size as u64))
                         .await
-                        .map_err(|error| Error::DownloadManager {
+                        .map_err(|error| StorageError::DownloadManager {
                             message: error.to_string(),
                         })?;
 
@@ -148,7 +152,7 @@ impl Storage {
                     identifier.clone(),
                     files.into(),
                     cache_path.clone(),
-                    DownloadState::not_downloaded(total_bytes),
+                    DownloadState::not_downloaded(total_bytes as i64),
                     download_manager.clone(),
                     file_tasks,
                     self.handle.clone(),
@@ -159,7 +163,7 @@ impl Storage {
                 let _ = item.reconcile().await;
                 let item_state = item.state().await;
 
-                if matches!(item_state.phase, DownloadPhase::NotDownloaded)
+                if matches!(item_state.phase, DownloadPhase::NotDownloaded {})
                     && cache_path.exists()
                     && let Ok(entries) = read_dir(&cache_path)
                 {
@@ -180,7 +184,7 @@ impl Storage {
                     identifier.clone(),
                     files.into(),
                     cache_path.clone(),
-                    DownloadState::not_downloaded(total_bytes),
+                    DownloadState::not_downloaded(total_bytes as i64),
                     download_manager.clone(),
                     Vec::new(),
                     self.handle.clone(),
@@ -215,11 +219,20 @@ impl Storage {
         Some(state)
     }
 
+    pub async fn states(&self) -> HashMap<String, DownloadState> {
+        let items = self.items.lock().await;
+        let state_futures = items.iter().map(|(identifier, item)| {
+            let identifier = identifier.clone();
+            async move { (identifier, item.state().await) }
+        });
+        join_all(state_futures).await.into_iter().collect()
+    }
+
     pub async fn download(
         &self,
         model_identifier: &String,
-    ) -> Result<(), Error> {
-        let item = self.get(model_identifier).await.ok_or_else(|| Error::ItemNotFound {
+    ) -> Result<(), StorageError> {
+        let item = self.get(model_identifier).await.ok_or_else(|| StorageError::ItemNotFound {
             identifier: model_identifier.clone(),
         })?;
         item.download().await
@@ -228,8 +241,8 @@ impl Storage {
     pub async fn pause(
         &self,
         model_identifier: &String,
-    ) -> Result<(), Error> {
-        let item = self.get(model_identifier).await.ok_or_else(|| Error::ItemNotFound {
+    ) -> Result<(), StorageError> {
+        let item = self.get(model_identifier).await.ok_or_else(|| StorageError::ItemNotFound {
             identifier: model_identifier.clone(),
         })?;
         item.pause().await
@@ -238,8 +251,8 @@ impl Storage {
     pub async fn delete(
         &self,
         model_identifier: &String,
-    ) -> Result<(), Error> {
-        let item = self.get(model_identifier).await.ok_or_else(|| Error::ItemNotFound {
+    ) -> Result<(), StorageError> {
+        let item = self.get(model_identifier).await.ok_or_else(|| StorageError::ItemNotFound {
             identifier: model_identifier.clone(),
         })?;
         item.cancel().await
@@ -250,31 +263,31 @@ impl Storage {
     fn resolve_model_files(
         &self,
         model: &Model,
-    ) -> Result<Vec<File>, Error> {
+    ) -> Result<Vec<File>, StorageError> {
         match &model.accessibility {
-            Accessibility::Local {
+            ModelAccessibility::Local {
                 reference,
                 ..
             } => match &reference {
-                Reference::Mirai {
+                ModelReference::Mirai {
                     files,
                     ..
                 } => Ok(files.clone()),
-                Reference::HuggingFace {
+                ModelReference::HuggingFace {
                     ..
-                } => Err(Error::UnsupportedItem {
-                    identifier: model.identifier(),
+                } => Err(StorageError::UnsupportedItem {
+                    identifier: model.identifier.clone(),
                 }),
-                Reference::Local {
+                ModelReference::Local {
                     ..
-                } => Err(Error::UnsupportedItem {
-                    identifier: model.identifier(),
+                } => Err(StorageError::UnsupportedItem {
+                    identifier: model.identifier.clone(),
                 }),
             },
-            Accessibility::Remote {
+            ModelAccessibility::Remote {
                 ..
-            } => Err(Error::UnsupportedItem {
-                identifier: model.identifier(),
+            } => Err(StorageError::UnsupportedItem {
+                identifier: model.identifier.clone(),
             }),
         }
     }

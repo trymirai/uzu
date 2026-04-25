@@ -1,4 +1,4 @@
-use shoji::types::encoding::Role;
+use shoji::types::session::chat::ChatRole;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -6,17 +6,17 @@ pub enum Error {
     InvalidTransition {
         after: String,
         expected: String,
-        got: Role,
+        got: ChatRole,
     },
 
     #[error("Expected one of [{expected}] at start, got '{got}'")]
     InvalidInitial {
         expected: String,
-        got: Role,
+        got: ChatRole,
     },
 
     #[error("No transitions defined for role '{role}'")]
     NoTransitions {
-        role: Role,
+        role: ChatRole,
     },
 }

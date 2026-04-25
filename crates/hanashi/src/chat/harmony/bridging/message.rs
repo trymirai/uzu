@@ -5,8 +5,8 @@ use openai_harmony::chat::{
     Message as ExternalMessage, Role as ExternalRole, SystemContent as ExternalSystemContent, TextContent,
 };
 use shoji::types::{
-    basic::Value,
-    encoding::{ContentBlock, Message, ReasoningEffort, Role, ToolCall, ToolNamespace},
+    basic::{ReasoningEffort, ToolCall, ToolNamespace, Value},
+    session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
 };
 
 use crate::chat::harmony::bridging::{Error, FromHarmony, ToHarmony};
@@ -20,43 +20,43 @@ const RECIPIENT_ASSISTANT: &str = "assistant";
 const BUILTIN_BROWSER: &str = "browser";
 const BUILTIN_PYTHON: &str = "python";
 
-pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMessage>, Error> {
+pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<ExternalMessage>, Error> {
     let mut result = Vec::new();
 
     for message in messages {
         match &message.role {
-            Role::System {} => {
+            ChatRole::System {} => {
                 let mut system_filled = false;
                 let mut system_content = ExternalSystemContent::default();
                 let mut text_parts: Vec<String> = Vec::new();
 
                 for block in &message.content {
                     match block {
-                        ContentBlock::Identity {
+                        ChatContentBlock::Identity {
                             value,
                         } => {
                             system_filled = true;
                             system_content.model_identity = Some(value.clone());
                         },
-                        ContentBlock::ReasoningEffort {
+                        ChatContentBlock::ReasoningEffort {
                             value,
                         } => {
                             system_filled = true;
                             system_content.reasoning_effort = Some(value.clone().to_harmony()?);
                         },
-                        ContentBlock::ConversationStartDate {
+                        ChatContentBlock::ConversationStartDate {
                             value,
                         } => {
                             system_filled = true;
                             system_content.conversation_start_date = Some(value.clone());
                         },
-                        ContentBlock::KnowledgeCutoff {
+                        ChatContentBlock::KnowledgeCutoff {
                             value,
                         } => {
                             system_filled = true;
                             system_content.knowledge_cutoff = Some(value.clone());
                         },
-                        ContentBlock::BuiltinTools {
+                        ChatContentBlock::BuiltinTools {
                             names,
                         } => {
                             for name in names {
@@ -77,7 +77,7 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
                                 }
                             }
                         },
-                        ContentBlock::Text {
+                        ChatContentBlock::Text {
                             value,
                         } => {
                             text_parts.push(value.clone());
@@ -109,18 +109,18 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
                     content_type: None,
                 });
             },
-            Role::Developer {} => {
+            ChatRole::Developer {} => {
                 let mut developer_content = ExternalDeveloperContent::default();
                 let mut text_parts: Vec<String> = Vec::new();
 
                 for block in &message.content {
                     match block {
-                        ContentBlock::Text {
+                        ChatContentBlock::Text {
                             value,
                         } => {
                             text_parts.push(value.clone());
                         },
-                        ContentBlock::Tools {
+                        ChatContentBlock::Tools {
                             namespaces,
                         } => {
                             for namespace in namespaces {
@@ -148,12 +148,12 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
                     content_type: None,
                 });
             },
-            Role::User {} => {
+            ChatRole::User {} => {
                 let mut text_parts: Vec<String> = Vec::new();
 
                 for block in &message.content {
                     match block {
-                        ContentBlock::Text {
+                        ChatContentBlock::Text {
                             value,
                         } => {
                             text_parts.push(value.clone());
@@ -175,24 +175,24 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
 
                 result.push(ExternalMessage::from_role_and_content(ExternalRole::User, text_parts.join("")));
             },
-            Role::Assistant {} => {
+            ChatRole::Assistant {} => {
                 let mut reasoning_parts: Vec<String> = Vec::new();
                 let mut text_parts: Vec<String> = Vec::new();
                 let mut tool_calls: Vec<ToolCall> = Vec::new();
 
                 for block in &message.content {
                     match block {
-                        ContentBlock::Reasoning {
+                        ChatContentBlock::Reasoning {
                             value,
                         } => {
                             reasoning_parts.push(value.clone());
                         },
-                        ContentBlock::Text {
+                        ChatContentBlock::Text {
                             value,
                         } => {
                             text_parts.push(value.clone());
                         },
-                        ContentBlock::ToolCall {
+                        ChatContentBlock::ToolCall {
                             value,
                         } => {
                             tool_calls.push(value.clone());
@@ -244,13 +244,13 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
                     );
                 }
             },
-            Role::Tool {} => {
+            ChatRole::Tool {} => {
                 if message.content.len() != 1 {
                     return Err(Error::MultipleContentBlocks);
                 }
 
                 let block = &message.content[0];
-                let ContentBlock::ToolCallResult {
+                let ChatContentBlock::ToolCallResult {
                     identifier: _,
                     name,
                     value,
@@ -280,7 +280,7 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
                     .with_recipient(RECIPIENT_ASSISTANT),
                 );
             },
-            Role::Custom {
+            ChatRole::Custom {
                 ..
             } => {
                 return Err(Error::UnsupportedRole {
@@ -293,7 +293,7 @@ pub fn bridge_messages_to_harmony(messages: &[Message]) -> Result<Vec<ExternalMe
     Ok(result)
 }
 
-pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<Message>, Error> {
+pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<ChatMessage>, Error> {
     let mut result = Vec::new();
     let mut index = 0;
 
@@ -308,36 +308,36 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                     match external_content {
                         ExternalContent::SystemContent(system_content) => {
                             if let Some(identity) = &system_content.model_identity {
-                                content.push(ContentBlock::Identity {
+                                content.push(ChatContentBlock::Identity {
                                     value: identity.clone(),
                                 });
                             }
                             if let Some(effort) = &system_content.reasoning_effort {
-                                content.push(ContentBlock::ReasoningEffort {
+                                content.push(ChatContentBlock::ReasoningEffort {
                                     value: ReasoningEffort::from_harmony(*effort),
                                 });
                             }
                             if let Some(date) = &system_content.conversation_start_date {
-                                content.push(ContentBlock::ConversationStartDate {
+                                content.push(ChatContentBlock::ConversationStartDate {
                                     value: date.clone(),
                                 });
                             }
                             if let Some(cutoff) = &system_content.knowledge_cutoff {
-                                content.push(ContentBlock::KnowledgeCutoff {
+                                content.push(ChatContentBlock::KnowledgeCutoff {
                                     value: cutoff.clone(),
                                 });
                             }
                             if let Some(tools) = &system_content.tools {
                                 let names: Vec<String> = tools.keys().cloned().collect();
                                 if !names.is_empty() {
-                                    content.push(ContentBlock::BuiltinTools {
+                                    content.push(ChatContentBlock::BuiltinTools {
                                         names,
                                     });
                                 }
                             }
                         },
                         ExternalContent::Text(text_content) => {
-                            content.push(ContentBlock::Text {
+                            content.push(ChatContentBlock::Text {
                                 value: text_content.text.clone(),
                             });
                         },
@@ -349,10 +349,12 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                     }
                 }
 
-                result.push(Message {
-                    role: Role::System {},
+                result.push(ChatMessage {
+                    role: ChatRole::System {},
                     content,
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },
@@ -363,7 +365,7 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                     match external_content {
                         ExternalContent::DeveloperContent(developer_content) => {
                             if let Some(instructions) = &developer_content.instructions {
-                                content.push(ContentBlock::Text {
+                                content.push(ChatContentBlock::Text {
                                     value: instructions.clone(),
                                 });
                             }
@@ -371,14 +373,14 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                                 let namespaces: Vec<ToolNamespace> =
                                     tools.values().cloned().map(ToolNamespace::from_harmony).collect();
                                 if !namespaces.is_empty() {
-                                    content.push(ContentBlock::Tools {
+                                    content.push(ChatContentBlock::Tools {
                                         namespaces,
                                     });
                                 }
                             }
                         },
                         ExternalContent::Text(text_content) => {
-                            content.push(ContentBlock::Text {
+                            content.push(ChatContentBlock::Text {
                                 value: text_content.text.clone(),
                             });
                         },
@@ -390,22 +392,26 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                     }
                 }
 
-                result.push(Message {
-                    role: Role::Developer {},
+                result.push(ChatMessage {
+                    role: ChatRole::Developer {},
                     content,
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },
             ExternalRole::User => {
                 let text = extract_text_content(&message.content);
 
-                result.push(Message {
-                    role: Role::User {},
-                    content: vec![ContentBlock::Text {
+                result.push(ChatMessage {
+                    role: ChatRole::User {},
+                    content: vec![ChatContentBlock::Text {
                         value: text,
                     }],
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },
@@ -418,7 +424,7 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
 
                     match assistant_message.channel.as_deref() {
                         Some(CHANNEL_ANALYSIS) => {
-                            content.push(ContentBlock::Reasoning {
+                            content.push(ChatContentBlock::Reasoning {
                                 value: text,
                             });
                         },
@@ -431,7 +437,7 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
 
                             match serde_json::from_str::<serde_json::Value>(&text) {
                                 Ok(json_value) => {
-                                    content.push(ContentBlock::ToolCall {
+                                    content.push(ChatContentBlock::ToolCall {
                                         value: ToolCall {
                                             identifier: None,
                                             name: name.to_string(),
@@ -440,14 +446,14 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                                     });
                                 },
                                 Err(_) => {
-                                    content.push(ContentBlock::ToolCallCandidate {
+                                    content.push(ChatContentBlock::ToolCallCandidate {
                                         value: Value::from(serde_json::Value::String(text)),
                                     });
                                 },
                             }
                         },
                         _ => {
-                            content.push(ContentBlock::Text {
+                            content.push(ChatContentBlock::Text {
                                 value: text,
                             });
                         },
@@ -456,10 +462,12 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                     index += 1;
                 }
 
-                result.push(Message {
-                    role: Role::Assistant {},
+                result.push(ChatMessage {
+                    role: ChatRole::Assistant {},
                     content,
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
             },
             ExternalRole::Tool => {
@@ -473,14 +481,16 @@ pub fn bridge_messages_from_harmony(messages: &[ExternalMessage]) -> Result<Vec<
                     }
                 })?);
 
-                result.push(Message {
-                    role: Role::Tool {},
-                    content: vec![ContentBlock::ToolCallResult {
+                result.push(ChatMessage {
+                    role: ChatRole::Tool {},
+                    content: vec![ChatContentBlock::ToolCallResult {
                         identifier: None,
                         name: Some(name.to_string()),
                         value,
                     }],
-                    metadata: HashMap::new(),
+                    metadata: ChatMessageMetadata {
+                        values: HashMap::new(),
+                    },
                 });
                 index += 1;
             },

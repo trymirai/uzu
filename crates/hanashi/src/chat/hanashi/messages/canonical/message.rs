@@ -2,8 +2,11 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use serde_json::Value;
-use shoji::types::encoding::{
-    ContentBlock as OriginalContentBlock, ContentBlockType, Message as OriginalMessage, Role, TranslationInput,
+use shoji::types::{
+    basic::TranslationPayload,
+    session::chat::{
+        ChatContentBlock as OriginalContentBlock, ChatContentBlockType, ChatMessage as OriginalMessage, ChatRole,
+    },
 };
 
 use crate::chat::hanashi::messages::{
@@ -12,7 +15,7 @@ use crate::chat::hanashi::messages::{
 };
 
 pub struct Message {
-    pub role: Role,
+    pub role: ChatRole,
     pub content: Vec<ContentBlock>,
     pub metadata: HashMap<String, Value>,
 }
@@ -21,7 +24,7 @@ impl Message {
     pub fn from_message(
         message: &OriginalMessage,
         config: &Config,
-        raw_types: &[ContentBlockType],
+        raw_types: &[ChatContentBlockType],
     ) -> Result<Self, Error> {
         let mut content = Vec::new();
         for block in &message.content {
@@ -39,6 +42,7 @@ impl Message {
             content,
             metadata: message
                 .metadata
+                .values
                 .iter()
                 .map(|(key, value)| {
                     let json_value: Value =
@@ -132,7 +136,7 @@ impl Message {
                 value,
             } => serde_json::to_value(value.clone()),
             OriginalContentBlock::Translation {
-                input,
+                payload: input,
                 source_language_code,
                 target_language_code,
             } => {
@@ -148,13 +152,13 @@ impl Message {
                     .unwrap_or_else(|| "target_language_code".to_string());
                 let mut map = IndexMap::new();
                 match input {
-                    TranslationInput::Text {
+                    TranslationPayload::Text {
                         text,
                     } => {
                         map.insert(config.type_key.clone(), Value::String(config.text_key.clone()));
                         map.insert(config.text_key.clone(), Value::String(text.clone()));
                     },
-                    TranslationInput::Image {
+                    TranslationPayload::Image {
                         url,
                     } => {
                         let url_key = config.url_key.as_ref().ok_or_else(|| Error::SerializationFailed {

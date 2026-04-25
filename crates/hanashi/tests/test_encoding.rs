@@ -14,7 +14,10 @@ use helpers::{
     build_messages, load_registry, load_response_test_data, load_tokenizer, normalize_pattern, response_path,
     tokenizer_directory,
 };
-use shoji::types::encoding::{ContentBlock, Message, ReasoningEffort, Role};
+use shoji::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatContentBlock, ChatMessage, ChatMessageMetadata, ChatRole},
+};
 
 fn print_warning(message: &str) {
     println!("\x1b[33m{}\x1b[0m", message);
@@ -26,7 +29,7 @@ fn run_encoding_test(
     tools_pattern: Option<&str>,
     ignore_prompt: bool,
     ignore_reasoning: bool,
-    messages_normalizer: Option<fn(String, Option<&str>, Vec<Message>) -> Vec<Message>>,
+    messages_normalizer: Option<fn(String, Option<&str>, Vec<ChatMessage>) -> Vec<ChatMessage>>,
 ) {
     let registry = load_registry();
 
@@ -94,18 +97,18 @@ fn run_encoding_test(
             }
             let assistant_message = encoding.state().messages.last().unwrap();
             let has_reasoning =
-                assistant_message.content.iter().any(|block| matches!(block, ContentBlock::Reasoning { .. }));
+                assistant_message.content.iter().any(|block| matches!(block, ChatContentBlock::Reasoning { .. }));
             let used_tool_calls = assistant_message
                 .content
                 .iter()
                 .flat_map(|block| match block {
-                    ContentBlock::ToolCall {
+                    ChatContentBlock::ToolCall {
                         value,
                     } => Some(value.name.clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(assistant_message.role, Role::Assistant {});
+            assert_eq!(assistant_message.role, ChatRole::Assistant {});
             if ignore_reasoning {
                 if has_reasoning != data.expectations.reasoning {
                     print_warning("Reasoning mismatch");
@@ -151,36 +154,40 @@ fn test_encoding_gpt_oss() {
                 .map(|matched| matched.as_str().to_string())
                 .unwrap();
 
-            let original_system_message = messages.iter().find(|message| message.role == Role::System {}).cloned();
+            let original_system_message = messages.iter().find(|message| message.role == ChatRole::System {}).cloned();
             let original_developer_message =
-                messages.iter().find(|message| message.role == Role::Developer {}).cloned();
+                messages.iter().find(|message| message.role == ChatRole::Developer {}).cloned();
             let other_messages = messages
                 .into_iter()
-                .filter(|message| message.role != Role::System {} && message.role != Role::Developer {})
+                .filter(|message| message.role != ChatRole::System {} && message.role != ChatRole::Developer {})
                 .collect::<Vec<_>>();
 
-            let system_message = Message {
-                role: Role::System {},
+            let system_message = ChatMessage {
+                role: ChatRole::System {},
                 content: vec![
-                    ContentBlock::ReasoningEffort {
+                    ChatContentBlock::ReasoningEffort {
                         value: ReasoningEffort::Medium,
                     },
-                    ContentBlock::ConversationStartDate {
+                    ChatContentBlock::ConversationStartDate {
                         value: conversation_date,
                     },
                 ],
-                metadata: HashMap::new(),
+                metadata: ChatMessageMetadata {
+                    values: HashMap::new(),
+                },
             };
-            let mut developer_message = Message {
-                role: Role::Developer {},
+            let mut developer_message = ChatMessage {
+                role: ChatRole::Developer {},
                 content: vec![],
-                metadata: HashMap::new(),
+                metadata: ChatMessageMetadata {
+                    values: HashMap::new(),
+                },
             };
             if let Some(original_developer_message) = original_developer_message {
                 for block in original_developer_message.content {
                     let new_block = block.clone();
                     match block {
-                        ContentBlock::Tools {
+                        ChatContentBlock::Tools {
                             namespaces,
                         } => {
                             if namespaces.iter().any(|namespace| !namespace.tools.is_empty()) {
@@ -194,10 +201,10 @@ fn test_encoding_gpt_oss() {
             if let Some(original_system_message) = original_system_message {
                 for block in original_system_message.content {
                     match block {
-                        ContentBlock::Text {
+                        ChatContentBlock::Text {
                             value,
                         } => {
-                            developer_message.content.push(ContentBlock::Text {
+                            developer_message.content.push(ChatContentBlock::Text {
                                 value: format!(
                                     "{}{}",
                                     value,
@@ -324,13 +331,13 @@ fn test_encoding_functiongemma() {
         false,
         false,
         Some(|_, _, messages| {
-            let mut result: Vec<Message> = Vec::new();
+            let mut result: Vec<ChatMessage> = Vec::new();
             for mut message in messages {
-                if matches!(message.role, Role::System {}) {
-                    message.role = Role::Developer {};
+                if matches!(message.role, ChatRole::System {}) {
+                    message.role = ChatRole::Developer {};
                 }
                 if let Some(last) = result.last_mut() {
-                    if matches!(last.role, Role::Developer {}) && matches!(message.role, Role::Developer {}) {
+                    if matches!(last.role, ChatRole::Developer {}) && matches!(message.role, ChatRole::Developer {}) {
                         last.content.extend(message.content);
                         continue;
                     }
