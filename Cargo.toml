@@ -15,7 +15,7 @@ members = [
     "crates/benchmarks",
     "crates/cli",
     "crates/cli-storage",
-    "crates/cli-release",
+    "crates/cli-tools",
 ]
 resolver = "3"
 
@@ -74,7 +74,7 @@ itertools = "0.14"
 schemars = { version = "1.2", features = ["derive"] }
 is_close = "0.1"
 serde_json5 = "0.2"
-anyhow = "1.0"
+anyhow = "1.0.102"
 async-trait = "0.1"
 bindgen = "0.72"
 walkdir = "2.5"
@@ -174,6 +174,7 @@ keyring = { version = "3.6.3", features = [
     "linux-native-sync-persistent",
     "crypto-rust",
 ] }
+toml = "1.1.2"
 
 [workspace.metadata.dinghy]
 forward-cfgs = ["metal_backend", "grammar_xgrammar"]

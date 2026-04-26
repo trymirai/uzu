@@ -1,0 +1,96 @@
+[tools]
+# Please make sure to use compatible versions of the cargo-swift / uniffi pair.
+# See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
+swift = { provider = "cargo", version = "0.11.0" }
+zigbuild = { provider = "cargo", version = "0.22.3" }
+xwin = { provider = "cargo", version = "0.22.0" }
+maturin = { provider = "uv", version = "1.13.1" }
+
+[targets."aarch64-apple-darwin"]
+backend = "metal"
+aliases = ["apple", "macos"]
+capabilities = ["grammar", "tracing"]
+
+[targets."x86_64-apple-darwin"]
+backend = "cpu"
+aliases = ["apple", "macos"]
+capabilities = ["grammar"]
+
+[targets."aarch64-apple-ios"]
+backend = "metal"
+aliases = ["apple", "ios"]
+capabilities = ["grammar", "tracing"]
+
+[targets."aarch64-apple-ios-sim"]
+backend = "metal"
+aliases = ["apple", "ios", "ios-simulator"]
+capabilities = ["grammar", "tracing"]
+
+[targets."aarch64-unknown-linux-gnu"]
+backend = "cpu"
+aliases = ["linux"]
+capabilities = ["grammar"]
+
+[targets."x86_64-unknown-linux-gnu"]
+backend = "cpu"
+aliases = ["linux"]
+capabilities = ["grammar"]
+
+[targets."aarch64-pc-windows-msvc"]
+backend = "cpu"
+aliases = ["windows"]
+capabilities = ["grammar"]
+
+[targets."x86_64-pc-windows-msvc"]
+backend = "cpu"
+aliases = ["windows"]
+capabilities = ["grammar"]
+
+[targets."wasm32-wasip1-threads"]
+backend = "cpu"
+aliases = ["wasm"]
+capabilities = []
+
+[languages.rust]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-pc-windows-msvc",
+    "x86_64-pc-windows-msvc",
+    "wasm32-wasip1-threads",
+]
+tools = []
+bindings = []
+
+[languages.python]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-pc-windows-msvc",
+    "x86_64-pc-windows-msvc",
+]
+tools = ["maturin", "zigbuild", "xwin"]
+bindings = ["pyo3"]
+
+[languages.swift]
+targets = ["aarch64-apple-darwin", "aarch64-apple-ios", "aarch64-apple-ios-sim"]
+tools = ["swift"]
+bindings = ["uniffi"]
+
+[languages.typescript]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-pc-windows-msvc",
+    "x86_64-pc-windows-msvc",
+]
+tools = ["zigbuild", "xwin"]
+bindings = ["napi"]

@@ -11,10 +11,11 @@ repository.workspace = true
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
-default = ["metal", "grammar"]
-metal = ["backend-uzu/metal"]
-grammar = ["backend-uzu/grammar"]
-tracing = ["backend-uzu/tracing"]
+default = ["backend-cpu"]
+backend-cpu = []
+backend-metal = ["backend-uzu/metal"]
+capability-grammar = ["backend-uzu/grammar"]
+capability-tracing = ["backend-uzu/tracing"]
 bindings = [
     "bindings-uniffi",
     "bindings-napi",

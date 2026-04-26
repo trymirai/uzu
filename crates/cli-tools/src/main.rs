@@ -1,0 +1,94 @@
+use anyhow::Result;
+use clap::{CommandFactory, Parser, Subcommand};
+use cli_tools::{
+    configs::PlatformsConfig,
+    languages::{
+        LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
+    },
+    types::{Command, Configuration, Language},
+};
+
+#[derive(Parser)]
+#[command(name = "uzu-tools", bin_name = "uzu-tools")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Install rustup / uv and required toolchains
+    Setup,
+    /// Install tools for a specific language
+    Install {
+        #[arg(value_enum)]
+        language: Language,
+    },
+    /// Build for a specific language
+    Build {
+        #[arg(value_enum)]
+        language: Language,
+        #[arg(value_enum)]
+        configuration: Configuration,
+    },
+    /// Run tests for a specific language
+    Test {
+        #[arg(value_enum)]
+        language: Language,
+    },
+    /// Run an example for a specific language
+    Example {
+        #[arg(value_enum)]
+        language: Language,
+        name: String,
+    },
+}
+
+fn run_setup() -> Result<()> {
+    Command::rustup_setup().run()?;
+    Command::rustup_update().run()?;
+    Command::rustup_show().run()?;
+    Command::uv_setup().run()?;
+    Ok(())
+}
+
+fn language_backend(
+    language: Language,
+    config: PlatformsConfig,
+) -> Result<Box<dyn LanguageBackend>> {
+    match language {
+        Language::Rust => Ok(Box::new(RustLanguageBackend::new(config))),
+        Language::Python => Ok(Box::new(PythonLanguageBackend::new(config))),
+        Language::Swift => Ok(Box::new(SwiftLanguageBackend::new(config))),
+        Language::TypeScript => Ok(Box::new(TypeScriptLanguageBackend::new(config))),
+    }
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let config = PlatformsConfig::load()?;
+
+    match cli.command {
+        Some(Commands::Setup) => run_setup()?,
+        Some(Commands::Install {
+            language,
+        }) => language_backend(language, config)?.install()?,
+        Some(Commands::Build {
+            language,
+            configuration,
+        }) => language_backend(language, config)?.build(configuration)?,
+        Some(Commands::Test {
+            language,
+        }) => language_backend(language, config)?.test()?,
+        Some(Commands::Example {
+            language,
+            name,
+        }) => language_backend(language, config)?.example(&name)?,
+        None => {
+            let mut cmd = Cli::command();
+            cmd.print_help()?;
+        },
+    }
+
+    Ok(())
+}

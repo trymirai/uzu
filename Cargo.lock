@@ -1318,19 +1318,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cli-release"
-version = "0.1.9"
-dependencies = [
- "clap",
- "heck",
- "ignore",
- "regex",
- "serde_json",
- "syn 2.0.117",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "cli-storage"
 version = "0.1.9"
 dependencies = [
@@ -1344,6 +1331,20 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uzu",
+]
+
+[[package]]
+name = "cli-tools"
+version = "0.1.9"
+dependencies = [
+ "anyhow",
+ "clap",
+ "heck",
+ "ignore",
+ "indexmap 2.14.0",
+ "serde",
+ "syn 2.0.117",
+ "toml 1.1.2+spec-1.1.0",
 ]
 
 [[package]]
