@@ -36,3 +36,9 @@ impl Bindings {
         self.swift_path().join("uzu.xcframework")
     }
 }
+
+impl Bindings {
+    pub fn python_path(&self) -> PathBuf {
+        self.root_path.join("python")
+    }
+}

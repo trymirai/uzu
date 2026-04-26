@@ -8,7 +8,7 @@ use crate::types::{
     },
 };
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Model {
@@ -25,7 +25,7 @@ pub struct Model {
 
 #[bindings::export(Implementation)]
 impl Model {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn name(&self) -> String {
         let parts: Vec<Option<String>> = vec![
             self.family.as_ref().map(|family| family.name()),
@@ -40,17 +40,17 @@ impl Model {
         }
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_local(&self) -> bool {
         matches!(self.accessibility, ModelAccessibility::Local { .. })
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_remote(&self) -> bool {
         matches!(self.accessibility, ModelAccessibility::Remote { .. })
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_downloadable(&self) -> bool {
         matches!(
             self.accessibility,
@@ -60,17 +60,17 @@ impl Model {
         )
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_quantized(&self) -> bool {
         self.quantization.is_some()
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn cache_identifier(&self) -> String {
         self.identifier.replace(":", "-").replace("/", "-")
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn repo_ids(&self) -> Vec<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -111,7 +111,7 @@ impl Model {
         }
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn local_external_path(&self) -> Option<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -134,7 +134,7 @@ impl Model {
         }
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn reference_name(&self) -> Option<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -147,7 +147,7 @@ impl Model {
         }
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn checkpoint_version(&self) -> Option<String> {
         match &self.accessibility {
             ModelAccessibility::Local {
@@ -174,7 +174,7 @@ impl Model {
 
 #[bindings::export(Implementation)]
 impl Model {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn external(
         identifier: String,
         registry_identifier: String,
@@ -209,27 +209,27 @@ impl Model {
 
 #[bindings::export(Implementation)]
 impl Model {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_chat_capable(&self) -> bool {
         self.specializations.contains(&ModelSpecialization::Chat {})
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_classification_capable(&self) -> bool {
         self.specializations.contains(&ModelSpecialization::Classification {})
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_text_to_speech_capable(&self) -> bool {
         self.specializations.contains(&ModelSpecialization::TextToSpeech {})
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_translation_capable(&self) -> bool {
         self.specializations.contains(&ModelSpecialization::Translation {})
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_speculation_capable(&self) -> bool {
         self.specializations.contains(&ModelSpecialization::Speculation {})
     }

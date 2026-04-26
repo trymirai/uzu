@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::types::basic::{ReasoningEffort, ToolCall, ToolNamespace, TranslationPayload, Value};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ChatContentBlockType {
     Identity,
@@ -100,7 +100,7 @@ impl<'d> Deserialize<'d> for ChatContentBlockType {
     }
 }
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatContentBlock {

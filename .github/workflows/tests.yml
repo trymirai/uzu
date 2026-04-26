@@ -111,8 +111,9 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           metal: true
-          node: true
-          swift: true
+          bindings-napi: true
+          bindings-uniffi: true
+          bindings-pyo3: true
 
       - name: Prepare bindings
         run: cargo run -p cli-release prepare-bindings

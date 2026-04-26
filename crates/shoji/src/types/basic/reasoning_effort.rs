@@ -5,7 +5,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReasoningEffort {
     Disabled,

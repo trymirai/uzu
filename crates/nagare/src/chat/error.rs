@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[bindings::export(Error)]
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
 #[non_exhaustive]
 pub enum ChatSessionError {
     #[error("Backend error: {message}")]

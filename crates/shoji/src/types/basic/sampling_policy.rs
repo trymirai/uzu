@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::basic::SamplingMethod;
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SamplingPolicy {
     Default {},
