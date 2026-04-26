@@ -109,6 +109,12 @@ indicatif.workspace = true
 dotenvy.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
+base64.workspace = true
+crc32c.workspace = true
+
+[[test]]
+name = "unit"
+path = "tests/unit/test_entry.rs"
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
