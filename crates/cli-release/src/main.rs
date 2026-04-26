@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use cli_release::{
     handlers::{
-        SyncSource, prepare_bindings_swift, prepare_bindings_ts, prepare_workspace_swift, prepare_workspace_swift_spm,
-        prepare_workspace_ts, prepare_workspace_ts_napi, sync_into_repo,
+        SyncSource, prepare_bindings_python, prepare_bindings_swift, prepare_bindings_ts, prepare_workspace_swift,
+        prepare_workspace_swift_spm, prepare_workspace_ts, prepare_workspace_ts_napi, sync_into_repo,
     },
     types::{Environment, Error},
 };
@@ -41,6 +41,7 @@ enum Commands {
 enum BindingLanguage {
     Swift,
     Ts,
+    Python,
 }
 
 fn prepare_bindings(
@@ -53,10 +54,12 @@ fn prepare_bindings(
             prepare_workspace_ts_napi(environment)?;
             prepare_bindings_ts(environment)?;
         },
+        Some(BindingLanguage::Python) => prepare_bindings_python(environment)?,
         None => {
             prepare_workspace_ts_napi(environment)?;
             prepare_bindings_ts(environment)?;
             prepare_bindings_swift(environment)?;
+            prepare_bindings_python(environment)?;
         },
     }
     Ok(())

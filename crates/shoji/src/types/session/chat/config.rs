@@ -5,7 +5,7 @@ use crate::types::{
     session::chat::ChatSpeculationPreset,
 };
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatConfig {
     pub context_length: ContextLength,
@@ -25,7 +25,7 @@ impl Default for ChatConfig {
 
 #[bindings::export(Implementation)]
 impl ChatConfig {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn create() -> Self {
         Self::default()
     }

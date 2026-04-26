@@ -38,12 +38,18 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
+Install dependencies:
+
+```bash
+pnpm i
+```
+
 Run it using one of the following commands:
 
 ```bash
 pnpm run tsn examples/chat.ts
-pnpm run tsn examples/summarization.ts
-pnpm run tsn examples/classification.ts
+pnpm run tsn examples/chatForSummarization.ts
+pnpm run tsn examples/chatForClassification.ts
 pnpm run tsn examples/cloud.ts
 pnpm run tsn examples/structuredOutput.ts
 pnpm run tsn examples/classifier.ts
@@ -63,7 +69,7 @@ In this example, we will download a model and get a reply to a specific list of 
 In this example, we will use the `summarization` preset to generate a summary of the input text:
 
 ```ts
-// include:examples/summarization.ts
+// include:examples/chatForSummarization.ts
 ```
 
 You will notice that the model’s run count is lower than the actual number of generated tokens due to speculative decoding, which significantly improves generation speed.
@@ -73,7 +79,7 @@ You will notice that the model’s run count is lower than the actual number of 
 In this example, we will use the `classification` preset to determine the sentiment of the user's input:
 
 ```ts
-// include:examples/classification.ts
+// include:examples/chatForClassification.ts
 ```
 
 You can view the stats to see that the answer will be ready immediately after the prefill step, and actual generation won’t even start due to speculative decoding, which significantly improves generation speed.

@@ -11,6 +11,7 @@ use crate::{
 };
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct Downloader {
     identifier: String,
     storage: SharedAccess<Storage>,
@@ -30,7 +31,7 @@ impl Downloader {
 
 #[bindings::export(Implementation)]
 impl Downloader {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn state(&self) -> Option<DownloadState> {
         self.storage.lock().await.state(&self.identifier).await
     }
@@ -80,7 +81,7 @@ impl Downloader {
     }
 }
 
-#[bindings::export(Stream)]
+#[bindings::export(Class(Stream))]
 #[derive(Clone)]
 pub struct DownloaderStream {
     identifier: String,
@@ -108,7 +109,7 @@ impl DownloaderStream {
 
 #[bindings::export(Implementation)]
 impl DownloaderStream {
-    #[bindings::export(StreamNext)]
+    #[bindings::export(Method(StreamNext))]
     pub async fn next(&self) -> Option<DownloaderStreamUpdate> {
         let mut stream_guard = self.stream.lock().await;
         let stream = stream_guard.as_mut()?;
@@ -138,7 +139,7 @@ impl DownloaderStream {
     }
 }
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DownloaderStreamUpdate {
     pub bytes_total: i64,
@@ -147,7 +148,7 @@ pub struct DownloaderStreamUpdate {
 
 #[bindings::export(Implementation)]
 impl DownloaderStreamUpdate {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn progress(&self) -> f32 {
         if self.bytes_total == 0 {
             0.0

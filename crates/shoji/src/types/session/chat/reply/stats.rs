@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplyStats {
     pub duration: f64,
@@ -13,7 +13,7 @@ pub struct ChatReplyStats {
 
 #[bindings::export(Implementation)]
 impl ChatReplyStats {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn tokens_count(&self) -> Option<u32> {
         self.tokens_count_input.and_then(|input| self.tokens_count_output.map(|output| input + output))
     }

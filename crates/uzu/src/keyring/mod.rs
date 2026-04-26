@@ -11,6 +11,7 @@ const SERVICE_PREFIX: &str = "com.trymirai.keyring";
 const BASE_KEY: &str = "keys";
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct Keyring {
     device: Device,
     service_name: String,
@@ -61,7 +62,7 @@ impl Keyring {
 
 #[bindings::export(Implementation)]
 impl Keyring {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn create() -> Result<Self, KeyringError> {
         Self::new()
     }

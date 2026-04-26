@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::basic::Image;
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Metadata {
@@ -15,7 +15,7 @@ pub struct Metadata {
 
 #[bindings::export(Implementation)]
 impl Metadata {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn external(name: String) -> Self {
         Self {
             identifier: "external".to_string(),

@@ -16,7 +16,7 @@ impl CancelToken {
 
 #[bindings::export(Implementation)]
 impl CancelToken {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn create() -> Self {
         Self::new()
     }
@@ -26,7 +26,7 @@ impl CancelToken {
         self.inner.cancel();
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn is_cancelled(&self) -> bool {
         self.inner.is_cancelled()
     }
