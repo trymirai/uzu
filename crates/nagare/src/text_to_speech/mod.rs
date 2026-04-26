@@ -120,21 +120,23 @@ impl TextToSpeechSession {
             match event {
                 TextToSpeechSessionStreamChunk::PcmBatch {
                     batch,
-                } => batches.push(batch.clone()),
+                } => batches.push(batch),
                 TextToSpeechSessionStreamChunk::Error {
                     error,
                 } => return Err(error),
             }
         }
-        if let Some(batch) = batches.last() {
-            return Ok(batch.clone());
-        }
-        Err(TextToSpeechSessionError::NoResponse {})
+        let first = batches.first().ok_or(TextToSpeechSessionError::NoResponse {})?;
+        Ok(PcmBatch {
+            sample_rate: first.sample_rate,
+            channels: first.channels,
+            lengths: vec![batches.iter().flat_map(|batch| batch.lengths.iter().copied()).sum()],
+            samples: batches.iter().flat_map(|batch| batch.samples.iter().copied()).collect(),
+        })
     }
-}
 
-impl TextToSpeechSession {
-    async fn synthesize_stream(
+    #[bindings::export(Method)]
+    pub async fn synthesize_stream(
         &self,
         input: String,
     ) -> TextToSpeechSessionStream {

@@ -22,20 +22,20 @@ impl StructuredAudioCodecGraph {
         let data_type = input.data_type();
 
         let residual = input.clone();
-        let x = snake1d_enqueue(
+        let mut x = snake1d_enqueue(
             encoder,
             input,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_snake1"),
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_snake1")?,
             &unit.snake1_alpha,
             batch_size,
             channels,
             seq_len,
             kernels,
         )?;
-        let x = causal_conv1d_grouped_enqueue(
+        x = causal_conv1d_grouped_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_conv1"),
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_conv1")?,
             &unit.conv1,
             SequenceLayout::Ncs,
             lengths,
@@ -44,10 +44,10 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x = snake1d_enqueue(
+        x = snake1d_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_snake2"),
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_snake2")?,
             &unit.snake2_alpha,
             batch_size,
             channels,
@@ -58,7 +58,7 @@ impl StructuredAudioCodecGraph {
             encoder,
             &x,
             &residual,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_conv2"),
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "res_conv2")?,
             &unit.conv2,
             lengths,
             lengths_array,
@@ -110,6 +110,31 @@ impl StructuredAudioCodecGraph {
         })?;
 
         let ws = &resources.decode_workspace;
+        let vocoder_graph = self.vocoder_graph(resources)?;
+        let kernels = resources.kernels(self.vocoder_data_type)?;
+
+        let worst_case_bytes = {
+            let scratch_bytes = |channels: usize, frame_count: usize| -> usize {
+                size_for_shape(&[batch_size, channels, frame_count], self.vocoder_data_type)
+            };
+            let mut max_bytes = 0usize;
+            let mut current_frames = frames;
+            for (trans_conv, convnext) in vocoder_graph.upsample_blocks.iter() {
+                current_frames = current_frames.saturating_mul(trans_conv.stride);
+                max_bytes = max_bytes.max(scratch_bytes(trans_conv.cout, current_frames));
+                max_bytes = max_bytes.max(scratch_bytes(convnext.pwconv1.cout, current_frames));
+            }
+            let mut current_channels = vocoder_graph.first_conv.cout;
+            max_bytes = max_bytes.max(scratch_bytes(current_channels, current_frames));
+            for block in vocoder_graph.decoder_blocks.iter() {
+                max_bytes = max_bytes.max(scratch_bytes(current_channels, current_frames));
+                current_frames = current_frames.saturating_mul(block.trans_conv.stride);
+                current_channels = block.trans_conv.cout;
+                max_bytes = max_bytes.max(scratch_bytes(current_channels, current_frames));
+            }
+            max_bytes
+        };
+        ws.prime_for(context.as_ref(), worst_case_bytes)?;
 
         let mut x;
         let mut x_layout = SequenceLayout::Nsc;
@@ -134,8 +159,6 @@ impl StructuredAudioCodecGraph {
             frames,
         )?;
 
-        let vocoder_graph = self.vocoder_graph(resources)?;
-        let kernels = resources.kernels(self.vocoder_data_type)?;
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
@@ -161,7 +184,7 @@ impl StructuredAudioCodecGraph {
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &mut encoder,
                 &x,
-                ws.next_scratch(&context, &[batch_size, trans_conv.cout, next_frames], data_type, "up_tconv"),
+                ws.next_scratch(&context, &[batch_size, trans_conv.cout, next_frames], data_type, "up_tconv")?,
                 trans_conv,
                 &next_lengths_i32,
                 batch_size,
@@ -219,7 +242,7 @@ impl StructuredAudioCodecGraph {
                 &[batch_size, vocoder_graph.first_conv.cout, current_frames],
                 data_type,
                 "dec_first_conv",
-            ),
+            )?,
             &vocoder_graph.first_conv,
             x_layout,
             &lengths_i32,
@@ -240,7 +263,7 @@ impl StructuredAudioCodecGraph {
             x = snake1d_enqueue(
                 &mut encoder,
                 &x,
-                ws.next_scratch(&context, &[batch_size, current_channels, current_frames], data_type, "dec_snake"),
+                ws.next_scratch(&context, &[batch_size, current_channels, current_frames], data_type, "dec_snake")?,
                 &block.snake_alpha,
                 batch_size,
                 current_channels,
@@ -257,7 +280,7 @@ impl StructuredAudioCodecGraph {
             x = causal_conv_transpose1d_causal_pad_enqueue(
                 &mut encoder,
                 &x,
-                ws.next_scratch(&context, &[batch_size, block.trans_conv.cout, next_frames], data_type, "dec_tconv"),
+                ws.next_scratch(&context, &[batch_size, block.trans_conv.cout, next_frames], data_type, "dec_tconv")?,
                 &block.trans_conv,
                 &next_lengths_i32,
                 batch_size,
@@ -314,7 +337,7 @@ impl StructuredAudioCodecGraph {
         x = snake1d_enqueue(
             &mut encoder,
             &x,
-            ws.next_scratch(&context, &[batch_size, current_channels, current_frames], data_type, "final_snake"),
+            ws.next_scratch(&context, &[batch_size, current_channels, current_frames], data_type, "final_snake")?,
             &vocoder_graph.final_snake_alpha,
             batch_size,
             current_channels,
@@ -329,7 +352,7 @@ impl StructuredAudioCodecGraph {
                 &[batch_size, vocoder_graph.final_conv.cout, current_frames],
                 data_type,
                 "final_conv",
-            ),
+            )?,
             &vocoder_graph.final_conv,
             SequenceLayout::Ncs,
             &lengths_i32,
