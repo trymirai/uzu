@@ -9,47 +9,56 @@ maturin = { provider = "uv", version = "1.13.1" }
 [targets."aarch64-apple-darwin"]
 backend = "metal"
 aliases = ["apple", "macos"]
-capabilities = ["grammar", "tracing"]
+capabilities_supported = ["grammar", "tracing"]
+capabilities_default = ["grammar"]
 
 [targets."x86_64-apple-darwin"]
 backend = "cpu"
 aliases = ["apple", "macos"]
-capabilities = ["grammar"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
 
 [targets."aarch64-apple-ios"]
 backend = "metal"
 aliases = ["apple", "ios"]
-capabilities = ["grammar", "tracing"]
+capabilities_supported = ["grammar", "tracing"]
+capabilities_default = ["grammar"]
 
 [targets."aarch64-apple-ios-sim"]
 backend = "metal"
 aliases = ["apple", "ios", "ios-simulator"]
-capabilities = ["grammar", "tracing"]
+capabilities_supported = ["grammar", "tracing"]
+capabilities_default = ["grammar"]
 
 [targets."aarch64-unknown-linux-gnu"]
 backend = "cpu"
 aliases = ["linux"]
-capabilities = ["grammar"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
 
 [targets."x86_64-unknown-linux-gnu"]
 backend = "cpu"
 aliases = ["linux"]
-capabilities = ["grammar"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
 
 [targets."aarch64-pc-windows-msvc"]
 backend = "cpu"
 aliases = ["windows"]
-capabilities = ["grammar"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
 
 [targets."x86_64-pc-windows-msvc"]
 backend = "cpu"
 aliases = ["windows"]
-capabilities = ["grammar"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
 
 [targets."wasm32-wasip1-threads"]
 backend = "cpu"
 aliases = ["wasm"]
-capabilities = []
+capabilities_supported = []
+capabilities_default = []
 
 [languages.rust]
 targets = [

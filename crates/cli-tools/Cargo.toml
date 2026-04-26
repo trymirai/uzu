@@ -20,3 +20,4 @@ serde.workspace = true
 toml.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
+colored.workspace = true

@@ -7,5 +7,6 @@ use crate::types::{Backend, Capability};
 pub struct TargetConfig {
     pub backend: Backend,
     pub aliases: Vec<String>,
-    pub capabilities: Vec<Capability>,
+    pub capabilities_supported: Vec<Capability>,
+    pub capabilities_default: Vec<Capability>,
 }

@@ -175,6 +175,7 @@ keyring = { version = "3.6.3", features = [
     "crypto-rust",
 ] }
 toml = "1.1.2"
+colored = "3.1.1"
 
 [workspace.metadata.dinghy]
 forward-cfgs = ["metal_backend", "grammar_xgrammar"]

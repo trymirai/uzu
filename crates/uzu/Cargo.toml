@@ -11,7 +11,7 @@ repository.workspace = true
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
-default = ["backend-cpu"]
+default = ["backend-metal", "capability-grammar"]
 backend-cpu = []
 backend-metal = ["backend-uzu/metal"]
 capability-grammar = ["backend-uzu/grammar"]

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
-    configs::PlatformsConfig,
+    configs::{HOST_TARGET, PlatformsConfig},
     languages::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
     },
-    types::{Command, Configuration, Language},
+    types::{Capability, Command, Configuration, Language},
 };
 
 #[derive(Parser)]
@@ -26,10 +26,14 @@ enum Commands {
     },
     /// Build for a specific language
     Build {
-        #[arg(value_enum)]
+        #[arg(value_enum, default_value = "rust")]
         language: Language,
-        #[arg(value_enum)]
+        #[arg(value_enum, default_value = "release")]
         configuration: Configuration,
+        #[arg(long, value_delimiter = ',', default_value = HOST_TARGET)]
+        targets: Vec<String>,
+        #[arg(long, value_enum, value_delimiter = ',')]
+        capabilities: Vec<Capability>,
     },
     /// Run tests for a specific language
     Test {
@@ -76,7 +80,9 @@ fn main() -> Result<()> {
         Some(Commands::Build {
             language,
             configuration,
-        }) => language_backend(language, config)?.build(configuration)?,
+            targets,
+            capabilities,
+        }) => language_backend(language, config)?.build(configuration, targets, capabilities)?,
         Some(Commands::Test {
             language,
         }) => language_backend(language, config)?.test()?,

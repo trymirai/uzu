@@ -1,13 +1,15 @@
 use std::fs;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Ok, Result, anyhow};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     configs::{LanguageConfig, Paths, TargetConfig, ToolConfig},
-    types::{Language, Tool},
+    types::{Backend, Capability, Language, Tool},
 };
+
+pub const HOST_TARGET: &str = "host";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,5 +42,73 @@ impl PlatformsConfig {
             })
             .collect::<Result<_, _>>()?;
         Ok(tools)
+    }
+
+    pub fn host_target(&self) -> Result<String> {
+        let arch = std::env::consts::ARCH;
+        let os = std::env::consts::OS;
+        let name = match os {
+            "macos" => format!("{arch}-apple-darwin"),
+            "linux" => format!("{arch}-unknown-linux-gnu"),
+            "windows" => format!("{arch}-pc-windows-msvc"),
+            _ => return Err(anyhow!("Unsupported host OS: {os}")),
+        };
+        Ok(name)
+    }
+
+    pub fn targets_for_language(
+        &self,
+        language: Language,
+        requested_targets: Vec<String>,
+    ) -> Result<Vec<String>> {
+        let host_target = self.host_target()?;
+        let target_configs = self.targets.iter().collect::<Vec<_>>();
+        let requested_targets = target_configs
+            .iter()
+            .filter(|(name, config)| {
+                requested_targets.contains(name)
+                    || config.aliases.iter().any(|alias| requested_targets.contains(alias))
+                    || (requested_targets.contains(&HOST_TARGET.to_string()) && (*name == &host_target))
+            })
+            .map(|(name, _)| (*name).clone())
+            .collect::<Vec<_>>();
+
+        let language_config = self.languages.get(&language).context("Language not found")?;
+        let language_targets = language_config.targets.clone();
+
+        let resolved_targets = language_targets
+            .iter()
+            .filter(|target| requested_targets.contains(target))
+            .map(|target| target.clone())
+            .collect::<Vec<_>>();
+        Ok(resolved_targets)
+    }
+
+    pub fn backend_for_target(
+        &self,
+        target: String,
+    ) -> Result<Backend> {
+        let target_config = self.targets.get(&target).context("Target not found")?;
+        Ok(target_config.backend.clone())
+    }
+
+    pub fn capabilities_for_target(
+        &self,
+        target: String,
+        requested_capabilities: Vec<Capability>,
+    ) -> Result<Vec<Capability>> {
+        let target_config = self.targets.get(&target).context("Target not found")?;
+
+        let default_capabilities = target_config.capabilities_default.clone();
+        if requested_capabilities.is_empty() {
+            return Ok(default_capabilities);
+        }
+
+        let supported_capabilities = target_config.capabilities_supported.clone();
+        Ok(requested_capabilities
+            .iter()
+            .filter(|capability| supported_capabilities.contains(capability))
+            .map(|capability| capability.clone())
+            .collect::<Vec<_>>())
     }
 }
