@@ -74,7 +74,7 @@ runs:
     - if: inputs.nextest == 'true'
       uses: taiki-e/install-action@nextest
 
-    - if: inputs.test_data == 'true'
+    - if: inputs.test_data == 'true' || inputs.bindings-pyo3 == 'true'
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
