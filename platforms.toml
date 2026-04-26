@@ -14,7 +14,7 @@ capabilities_default = ["grammar"]
 
 [targets."x86_64-apple-darwin"]
 backend = "cpu"
-aliases = ["apple", "macos"]
+aliases = ["apple", "macos-intel"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
 
@@ -26,7 +26,7 @@ capabilities_default = ["grammar"]
 
 [targets."aarch64-apple-ios-sim"]
 backend = "metal"
-aliases = ["apple", "ios", "ios-simulator"]
+aliases = ["apple", "ios-simulator"]
 capabilities_supported = ["grammar", "tracing"]
 capabilities_default = ["grammar"]
 

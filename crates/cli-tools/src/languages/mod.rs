@@ -32,7 +32,7 @@ pub trait LanguageBackend {
 
     fn build(
         &self,
-        _configuration: Configuration,
+        configuration: Configuration,
         targets: Vec<String>,
         capabilities: Vec<Capability>,
     ) -> Result<()> {
@@ -44,25 +44,58 @@ pub trait LanguageBackend {
         }
         println!("{separator}");
         println!(
-            "Building for targets: {} (resolved from: {})",
+            "Building {} for targets: {} (resolved from: {})",
+            format!("{:?}", language).green(),
             format!("{:?}", resolved_targets).green(),
             format!("{:?}", targets).yellow()
         );
         println!("{separator}");
 
-        for target in resolved_targets {
+        for target in resolved_targets.clone() {
             println!("Building for target: {},", target.green());
 
             let backend = self.config().backend_for_target(target.clone())?;
             let resolved_capabilities = self.config().capabilities_for_target(target.clone(), capabilities.clone())?;
+            let bindings = self.config().bindings_for_language(language)?;
+            let features = vec![
+                vec![backend.feature()],
+                resolved_capabilities.iter().map(|capability| capability.feature()).collect::<Vec<_>>(),
+                bindings.iter().map(|binding| binding.feature()).collect::<Vec<_>>(),
+            ]
+            .iter()
+            .flatten()
+            .map(|feature| feature.clone())
+            .collect::<Vec<_>>();
+
             println!("Backend: {}", format!("{:?}", backend).green());
             println!(
                 "Capabilities: {} (resolved from: {})",
                 format!("{:?}", resolved_capabilities).green(),
                 format!("{:?}", capabilities).yellow()
             );
+            println!("Features: {}", format!("{:?}", features).green());
             println!("{separator}");
+
+            self.build_for_target(target.clone(), configuration.clone(), features.clone())?;
         }
+
+        self.postprocess_targets(resolved_targets)?;
+        Ok(())
+    }
+
+    fn build_for_target(
+        &self,
+        _target: String,
+        _configuration: Configuration,
+        _features: Vec<String>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn postprocess_targets(
+        &self,
+        _targets: Vec<String>,
+    ) -> Result<()> {
         Ok(())
     }
 

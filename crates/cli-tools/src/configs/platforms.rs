@@ -6,10 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     configs::{LanguageConfig, Paths, TargetConfig, ToolConfig},
-    types::{Backend, Capability, Language, Tool},
+    types::{Backend, Bindings, Capability, Language, Tool},
 };
 
 pub const HOST_TARGET: &str = "host";
+pub const ALL_TARGET: &str = "all";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +70,7 @@ impl PlatformsConfig {
                 requested_targets.contains(name)
                     || config.aliases.iter().any(|alias| requested_targets.contains(alias))
                     || (requested_targets.contains(&HOST_TARGET.to_string()) && (*name == &host_target))
+                    || requested_targets.contains(&ALL_TARGET.to_string())
             })
             .map(|(name, _)| (*name).clone())
             .collect::<Vec<_>>();
@@ -110,5 +112,13 @@ impl PlatformsConfig {
             .filter(|capability| supported_capabilities.contains(capability))
             .map(|capability| capability.clone())
             .collect::<Vec<_>>())
+    }
+
+    pub fn bindings_for_language(
+        &self,
+        language: Language,
+    ) -> Result<Vec<Bindings>> {
+        let language_config = self.languages.get(&language).context("Language not found")?;
+        Ok(language_config.bindings.clone())
     }
 }
