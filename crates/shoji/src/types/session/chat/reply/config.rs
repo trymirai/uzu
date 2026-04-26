@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::basic::{Grammar, SamplingMethod, SamplingPolicy};
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatReplyConfig {
     pub token_limit: Option<u32>,
@@ -22,7 +22,7 @@ impl Default for ChatReplyConfig {
 
 #[bindings::export(Implementation)]
 impl ChatReplyConfig {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn create() -> Self {
         Self::default()
     }

@@ -22,7 +22,7 @@ async def quick_start_example() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress()}")
+        print(f"Download progress: {update.progress}")
 
     messages = [
         ChatMessage.system().with_text("You are a helpful assistant"),
@@ -53,7 +53,7 @@ async def chat_example() -> None:
 
     # snippet:model-download
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress()}")
+        print(f"Download progress: {update.progress}")
     # endsnippet:model-download
 
     # snippet:session-create-general
@@ -85,7 +85,7 @@ async def summarization_example() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress()}")
+        print(f"Download progress: {update.progress}")
 
     # snippet:session-input-summarization
     text_to_summarize = (
@@ -130,7 +130,7 @@ async def classification_example() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress()}")
+        print(f"Download progress: {update.progress}")
 
     # snippet:session-create-classification
     feature = Feature(

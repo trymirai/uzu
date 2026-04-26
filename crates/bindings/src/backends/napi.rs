@@ -1,56 +1,133 @@
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Attribute, Ident, Token, Variant, parse_quote, punctuated::Punctuated};
+use syn::{Ident, Token, Variant, punctuated::Punctuated};
 
-use crate::{BindingKind, MethodFlavor};
+use crate::{
+    backends::Backend,
+    contexts::{
+        AliasContext, ClassContext, EnumerationContext, EnumerationShape, ErrorContext, ErrorShape,
+        ImplementationContext, MethodMetadata, StructureContext,
+    },
+    types::{ClassFlavor, MethodFlavor, StructureFlavor},
+};
 
-pub fn attributes(kind: &BindingKind) -> proc_macro2::TokenStream {
-    match kind {
-        BindingKind::Enum => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(string_enum))]
-        },
-        BindingKind::Class => quote! {
+pub struct Napi;
+
+impl Backend for Napi {
+    fn structure_attributes(context: &StructureContext) -> TokenStream {
+        match context.flavor {
+            StructureFlavor::Plain => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object))]
+            },
+            StructureFlavor::Class => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi_derive::napi(constructor))]
+            },
+        }
+    }
+
+    fn structure_companions(context: &StructureContext) -> TokenStream {
+        let type_name = &context.item.ident;
+        match context.flavor {
+            StructureFlavor::Plain => struct_value_implementations(type_name),
+            StructureFlavor::Class => class_value_implementations(type_name),
+        }
+    }
+
+    fn class_attributes(context: &ClassContext) -> TokenStream {
+        match context.flavor {
+            ClassFlavor::Plain => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
+            },
+            ClassFlavor::Stream => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi_derive::napi(async_iterator))]
+            },
+        }
+    }
+
+    fn enumeration_attributes(context: &EnumerationContext) -> TokenStream {
+        match context.shape {
+            EnumerationShape::Unit => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi_derive::napi(string_enum))]
+            },
+            EnumerationShape::Data => quote! {},
+        }
+    }
+
+    fn enumeration_companions(context: &EnumerationContext) -> TokenStream {
+        match context.shape {
+            EnumerationShape::Unit => quote! {},
+            EnumerationShape::Data => enum_variant_classes(&context.item.ident, &context.item.variants),
+        }
+    }
+
+    fn alias_attributes(_context: &AliasContext) -> TokenStream {
+        quote! {
             #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
-        },
-        BindingKind::ClassCloneable => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(constructor))]
-        },
-        BindingKind::Stream => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(async_iterator))]
-        },
-        BindingKind::Struct => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi(object))]
-        },
-        BindingKind::Implementation => quote! {
+        }
+    }
+
+    fn implementation_attributes(_context: &ImplementationContext) -> TokenStream {
+        quote! {
             #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
-        },
-        BindingKind::Alias => quote! {
-            #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
-        },
-        _ => quote! {},
+        }
+    }
+
+    fn method_attributes(metadata: &MethodMetadata) -> TokenStream {
+        match metadata.flavor {
+            MethodFlavor::Plain | MethodFlavor::StreamNext => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi)]
+            },
+            MethodFlavor::Constructor => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi(constructor))]
+            },
+            MethodFlavor::Getter => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi(getter))]
+            },
+            MethodFlavor::Setter => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi(setter))]
+            },
+            MethodFlavor::Factory | MethodFlavor::FactoryWithCallback => quote! {},
+        }
+    }
+
+    fn method_companions(
+        context: &ImplementationContext,
+        metadata: &MethodMetadata,
+    ) -> TokenStream {
+        match metadata.flavor {
+            MethodFlavor::Factory => factory_expansion(&context.self_type, metadata),
+            MethodFlavor::FactoryWithCallback => factory_with_callback_expansion(&context.self_type, metadata),
+            MethodFlavor::StreamNext => stream_next_generator(&context.self_type, &metadata.method),
+            _ => quote! {},
+        }
+    }
+
+    fn error_attributes(context: &ErrorContext) -> TokenStream {
+        match context.shape {
+            ErrorShape::Unit => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi_derive::napi(string_enum))]
+            },
+            ErrorShape::Data => quote! {
+                #[cfg_attr(feature = "bindings-napi", napi_derive::napi)]
+            },
+        }
+    }
+
+    fn error_companions(context: &ErrorContext) -> TokenStream {
+        let type_name = &context.item.ident;
+        let value_implementations = match context.shape {
+            ErrorShape::Unit => quote! {},
+            ErrorShape::Data => struct_value_implementations(type_name),
+        };
+        let error_implementation_block = error_implementations(type_name);
+        quote! {
+            #value_implementations
+            #error_implementation_block
+        }
     }
 }
 
-pub fn method_attribute(flavor: &MethodFlavor) -> Attribute {
-    match flavor {
-        MethodFlavor::Plain => parse_quote! {
-            #[cfg_attr(feature = "bindings-napi", napi)]
-        },
-        MethodFlavor::Constructor => parse_quote! {
-            #[cfg_attr(feature = "bindings-napi", napi(constructor))]
-        },
-        MethodFlavor::Factory => parse_quote! {
-            #[cfg_attr(feature = "bindings-napi", napi)]
-        },
-        MethodFlavor::Getter => parse_quote! {
-            #[cfg_attr(feature = "bindings-napi", napi(getter))]
-        },
-        MethodFlavor::Setter => parse_quote! {
-            #[cfg_attr(feature = "bindings-napi", napi(setter))]
-        },
-    }
-}
-
-pub fn struct_value_implementations(type_name: &Ident) -> proc_macro2::TokenStream {
+fn struct_value_implementations(type_name: &Ident) -> TokenStream {
     quote! {
         #[cfg(feature = "bindings-napi")]
         const _: () = {
@@ -74,7 +151,7 @@ pub fn struct_value_implementations(type_name: &Ident) -> proc_macro2::TokenStre
     }
 }
 
-pub fn class_value_implementations(type_name: &Ident) -> proc_macro2::TokenStream {
+fn class_value_implementations(type_name: &Ident) -> TokenStream {
     quote! {
         #[cfg(feature = "bindings-napi")]
         const _: () = {
@@ -105,10 +182,10 @@ pub fn class_value_implementations(type_name: &Ident) -> proc_macro2::TokenStrea
     }
 }
 
-pub fn enum_variant_classes(
+fn enum_variant_classes(
     enum_ident: &Ident,
     variants: &Punctuated<Variant, Token![,]>,
-) -> proc_macro2::TokenStream {
+) -> TokenStream {
     let union_alias_ident = format_ident!("{}Napi", enum_ident);
     let variant_count = variants.len();
     let either_type_ident: Option<Ident> = match variant_count {
@@ -118,7 +195,7 @@ pub fn enum_variant_classes(
         n => {
             return syn::Error::new_spanned(
                 enum_ident,
-                format!("bindings::export(Enum) supports up to 26 data variants (found {n})"),
+                format!("Bindings::export(Enumeration) supports up to 26 data variants (found {n})"),
             )
             .to_compile_error();
         },
@@ -127,7 +204,7 @@ pub fn enum_variant_classes(
         (0..variant_count).map(|index| format_ident!("{}", (b'A' + index as u8) as char)).collect();
 
     let mut variant_class_items = Vec::new();
-    let mut from_variant_impls = Vec::new();
+    let mut from_variant_implementations = Vec::new();
     let mut to_napi_match_arms = Vec::new();
     let mut from_napi_try_branches = Vec::new();
     let mut union_type_params = Vec::new();
@@ -143,7 +220,7 @@ pub fn enum_variant_classes(
             syn::Fields::Named(named) => &named.named,
             _ => unreachable!("non-named variants must be rejected before reaching this function"),
         };
-        let field_declarations: Vec<proc_macro2::TokenStream> = named_fields
+        let field_declarations: Vec<TokenStream> = named_fields
             .iter()
             .map(|field| {
                 let field_ident = field.ident.as_ref().expect("named field");
@@ -154,7 +231,7 @@ pub fn enum_variant_classes(
         let field_idents: Vec<&Ident> =
             named_fields.iter().map(|field| field.ident.as_ref().expect("named field")).collect();
 
-        let variant_class_value_impls = class_value_implementations(&variant_class_ident);
+        let variant_class_value_implementations = class_value_implementations(&variant_class_ident);
         variant_class_items.push(quote! {
             #[cfg(feature = "bindings-napi")]
             #[napi_derive::napi(constructor)]
@@ -163,10 +240,10 @@ pub fn enum_variant_classes(
                 #( #field_declarations ),*
             }
 
-            #variant_class_value_impls
+            #variant_class_value_implementations
         });
 
-        from_variant_impls.push(quote! {
+        from_variant_implementations.push(quote! {
             #[cfg(feature = "bindings-napi")]
             impl From<#variant_class_ident> for #enum_ident {
                 fn from(value: #variant_class_ident) -> Self {
@@ -242,7 +319,7 @@ pub fn enum_variant_classes(
         },
     };
 
-    let union_from_impls = if either_type_ident.is_some() {
+    let union_from_implementations = if either_type_ident.is_some() {
         quote! {
             #[cfg(feature = "bindings-napi")]
             impl From<#enum_ident> for #union_alias_ident {
@@ -268,10 +345,10 @@ pub fn enum_variant_classes(
 
     quote! {
         #( #variant_class_items )*
-        #( #from_variant_impls )*
+        #( #from_variant_implementations )*
 
         #union_alias_definition
-        #union_from_impls
+        #union_from_implementations
 
         #[cfg(feature = "bindings-napi")]
         const _: () = {
@@ -322,17 +399,114 @@ pub fn enum_variant_classes(
     }
 }
 
-pub fn stream_next_generator(
+fn factory_expansion(
+    self_type: &syn::Type,
+    metadata: &MethodMetadata,
+) -> TokenStream {
+    let method = &metadata.method;
+    let method_ident = &method.sig.ident;
+    let method_name = method_ident.to_string();
+    let wrapper_ident = format_ident!("{}_bindings_napi", method_ident);
+    let inputs = &method.sig.inputs;
+    let output = &method.sig.output;
+    let asyncness = &method.sig.asyncness;
+    let arg_idents = metadata.arg_idents();
+    let forward_await = asyncness.as_ref().map(|_| quote! { .await });
+
+    quote! {
+        #[cfg(feature = "bindings-napi")]
+        #[napi_derive::napi]
+        impl #self_type {
+            #[napi(js_name = #method_name)]
+            pub #asyncness fn #wrapper_ident( #inputs ) #output {
+                <#self_type>::#method_ident( #( #arg_idents ),* )#forward_await
+            }
+        }
+    }
+}
+
+fn factory_with_callback_expansion(
+    self_type: &syn::Type,
+    metadata: &MethodMetadata,
+) -> TokenStream {
+    let method = &metadata.method;
+    let method_ident = &method.sig.ident;
+    let body = &method.block;
+    let callback_inputs = match metadata.callback_inputs() {
+        Some(inputs) => inputs,
+        None => {
+            return syn::Error::new_spanned(
+                &method.sig,
+                "Bindings::export(Method(FactoryWithCallback)) requires a parameter of type \
+                 `Box<dyn Fn(..) + Send + Sync>` (return type must be `()`)",
+            )
+            .to_compile_error();
+        },
+    };
+    let synthetic_idents: Vec<Ident> = (0..callback_inputs.len()).map(|index| format_ident!("arg{index}")).collect();
+    let napi_args_type = napi_args_tuple(&callback_inputs);
+    let napi_call_value = napi_call_tuple(&synthetic_idents);
+
+    quote! {
+        #[cfg(feature = "bindings-napi")]
+        #[napi_derive::napi]
+        impl #self_type {
+            #[napi(factory)]
+            pub fn #method_ident(
+                callback: napi::bindgen_prelude::Function<'static, #napi_args_type, ()>,
+            ) -> napi::Result<Self> {
+                let threadsafe_function = callback
+                    .build_threadsafe_function()
+                    .callee_handled::<false>()
+                    .weak::<true>()
+                    .build()
+                    .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+                let callback: Box<dyn Fn( #( #callback_inputs ),* ) + Send + Sync> =
+                    Box::new(move | #( #synthetic_idents: #callback_inputs ),* | {
+                        let _ = threadsafe_function.call(
+                            #napi_call_value,
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                    });
+                Ok(#body)
+            }
+        }
+    }
+}
+
+fn napi_args_tuple(inputs: &[syn::Type]) -> TokenStream {
+    match inputs.len() {
+        0 => quote! { () },
+        1 => {
+            let single = &inputs[0];
+            quote! { #single }
+        },
+        _ => quote! { ( #( #inputs ),* ) },
+    }
+}
+
+fn napi_call_tuple(idents: &[Ident]) -> TokenStream {
+    match idents.len() {
+        0 => quote! { () },
+        1 => {
+            let single = &idents[0];
+            quote! { #single }
+        },
+        _ => quote! { ( #( #idents ),* ) },
+    }
+}
+
+fn stream_next_generator(
     self_type: &syn::Type,
     method: &syn::ImplItemFn,
-) -> proc_macro2::TokenStream {
+) -> TokenStream {
     let method_ident = &method.sig.ident;
     let yield_type = match extract_option_inner_type(&method.sig.output) {
         Some(ty) => ty,
         None => {
             return syn::Error::new_spanned(
                 &method.sig,
-                "bindings::export(StreamNext) requires return type `Option<T>`",
+                "Bindings::export(Method(StreamNext)) requires return type `Option<T>`",
             )
             .to_compile_error();
         },
@@ -384,178 +558,7 @@ fn extract_option_inner_type(output: &syn::ReturnType) -> Option<syn::Type> {
     None
 }
 
-pub fn factory(
-    self_type: &syn::Type,
-    method: &syn::ImplItemFn,
-) -> proc_macro2::TokenStream {
-    let method_ident = &method.sig.ident;
-    let method_name = method_ident.to_string();
-    let wrapper_ident = format_ident!("{}_bindings_napi", method_ident);
-    let inputs = &method.sig.inputs;
-    let output = &method.sig.output;
-    let asyncness = &method.sig.asyncness;
-    let arg_idents = factory_arg_idents(inputs);
-    let forward_await = asyncness.as_ref().map(|_| quote! { .await });
-
-    quote! {
-        #[cfg(feature = "bindings-napi")]
-        #[napi_derive::napi]
-        impl #self_type {
-            #[napi(js_name = #method_name)]
-            pub #asyncness fn #wrapper_ident( #inputs ) #output {
-                <#self_type>::#method_ident( #( #arg_idents ),* )#forward_await
-            }
-        }
-    }
-}
-
-fn factory_arg_idents(inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::Token![,]>) -> Vec<syn::Ident> {
-    inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(pat_type) => match pat_type.pat.as_ref() {
-                syn::Pat::Ident(pat_ident) => Some(pat_ident.ident.clone()),
-                _ => None,
-            },
-            syn::FnArg::Receiver(_) => None,
-        })
-        .collect()
-}
-
-pub fn factory_with_callback(
-    self_type: &syn::Type,
-    method: &syn::ImplItemFn,
-) -> proc_macro2::TokenStream {
-    let method_ident = &method.sig.ident;
-    let body = &method.block;
-    let callback_inputs = match extract_callback_inputs(method) {
-        Some(inputs) => inputs,
-        None => {
-            return syn::Error::new_spanned(
-                &method.sig,
-                "bindings::export(FactoryWithCallback) requires a parameter of type \
-                 `Box<dyn Fn(..) + Send + Sync>` (return type must be `()`)",
-            )
-            .to_compile_error();
-        },
-    };
-    let synthetic_idents: Vec<syn::Ident> =
-        (0..callback_inputs.len()).map(|index| format_ident!("arg{index}")).collect();
-    let napi_args_type = napi_args_tuple(&callback_inputs);
-    let napi_call_value = napi_call_tuple(&synthetic_idents);
-
-    quote! {
-        #[cfg(feature = "bindings-napi")]
-        #[napi_derive::napi]
-        impl #self_type {
-            #[napi(factory)]
-            pub fn #method_ident(
-                callback: napi::bindgen_prelude::Function<'static, #napi_args_type, ()>,
-            ) -> napi::Result<Self> {
-                let threadsafe_function = callback
-                    .build_threadsafe_function()
-                    .callee_handled::<false>()
-                    .weak::<true>()
-                    .build()
-                    .map_err(|error| napi::Error::from_reason(error.to_string()))?;
-                let callback: Box<dyn Fn( #( #callback_inputs ),* ) + Send + Sync> =
-                    Box::new(move | #( #synthetic_idents: #callback_inputs ),* | {
-                        let _ = threadsafe_function.call(
-                            #napi_call_value,
-                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
-                        );
-                    });
-                Ok(#body)
-            }
-        }
-    }
-}
-
-fn napi_args_tuple(inputs: &[syn::Type]) -> proc_macro2::TokenStream {
-    match inputs.len() {
-        0 => quote! { () },
-        1 => {
-            let single = &inputs[0];
-            quote! { #single }
-        },
-        _ => quote! { ( #( #inputs ),* ) },
-    }
-}
-
-fn napi_call_tuple(idents: &[syn::Ident]) -> proc_macro2::TokenStream {
-    match idents.len() {
-        0 => quote! { () },
-        1 => {
-            let single = &idents[0];
-            quote! { #single }
-        },
-        _ => quote! { ( #( #idents ),* ) },
-    }
-}
-
-pub(crate) fn extract_callback_inputs(method: &syn::ImplItemFn) -> Option<Vec<syn::Type>> {
-    for input in &method.sig.inputs {
-        let syn::FnArg::Typed(pat_type) = input else {
-            continue;
-        };
-        if let Some(inputs) = extract_void_fn_inputs(&pat_type.ty) {
-            return Some(inputs);
-        }
-    }
-    None
-}
-
-fn extract_void_fn_inputs(ty: &syn::Type) -> Option<Vec<syn::Type>> {
-    let inner = extract_box_inner(ty)?;
-    let syn::Type::TraitObject(trait_object) = inner else {
-        return None;
-    };
-    for bound in &trait_object.bounds {
-        let syn::TypeParamBound::Trait(trait_bound) = bound else {
-            continue;
-        };
-        let segment = trait_bound.path.segments.last()?;
-        if segment.ident != "Fn" && segment.ident != "FnMut" && segment.ident != "FnOnce" {
-            continue;
-        }
-        let syn::PathArguments::Parenthesized(paren) = &segment.arguments else {
-            continue;
-        };
-        let returns_unit = match &paren.output {
-            syn::ReturnType::Default => true,
-            syn::ReturnType::Type(_, ty) => match ty.as_ref() {
-                syn::Type::Tuple(tuple) => tuple.elems.is_empty(),
-                _ => false,
-            },
-        };
-        if !returns_unit {
-            return None;
-        }
-        return Some(paren.inputs.iter().cloned().collect());
-    }
-    None
-}
-
-fn extract_box_inner(ty: &syn::Type) -> Option<&syn::Type> {
-    let syn::Type::Path(type_path) = ty else {
-        return None;
-    };
-    let segment = type_path.path.segments.last()?;
-    if segment.ident != "Box" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    for argument in &args.args {
-        if let syn::GenericArgument::Type(inner) = argument {
-            return Some(inner);
-        }
-    }
-    None
-}
-
-pub fn error_implementations(type_name: &Ident) -> proc_macro2::TokenStream {
+fn error_implementations(type_name: &Ident) -> TokenStream {
     quote! {
         #[cfg(feature = "bindings-napi")]
         impl From<#type_name> for napi::Error {

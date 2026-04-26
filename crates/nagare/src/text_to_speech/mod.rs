@@ -14,7 +14,7 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TextToSpeechSessionStreamChunk {
     PcmBatch {
@@ -25,7 +25,7 @@ pub enum TextToSpeechSessionStreamChunk {
     },
 }
 
-#[bindings::export(Stream)]
+#[bindings::export(Class(Stream))]
 #[derive(Clone)]
 pub struct TextToSpeechSessionStream {
     receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>>,
@@ -34,7 +34,7 @@ pub struct TextToSpeechSessionStream {
 
 #[bindings::export(Implementation)]
 impl TextToSpeechSessionStream {
-    #[bindings::export(StreamNext)]
+    #[bindings::export(Method(StreamNext))]
     pub async fn next(&self) -> Option<TextToSpeechSessionStreamChunk> {
         match self.receiver.lock().await.recv().await {
             Some(Ok(batch)) => Some(TextToSpeechSessionStreamChunk::PcmBatch {
@@ -47,13 +47,13 @@ impl TextToSpeechSessionStream {
         }
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn cancel_token(&self) -> CancelToken {
         self.cancel_token.clone()
     }
 }
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TextToSpeechSessionState {
     Idle,
@@ -104,7 +104,7 @@ impl TextToSpeechSession {
 
 #[bindings::export(Implementation)]
 impl TextToSpeechSession {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn state(&self) -> TextToSpeechSessionState {
         *self.state.lock().await
     }

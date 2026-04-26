@@ -647,7 +647,8 @@ class Engine:
 
 @typing.final
 class EngineCallback:
-    ...
+    @staticmethod
+    def create(callback: collections.abc.Callable[[], None]) -> EngineCallback: ...
 
 @typing.final
 class EngineConfig:

@@ -12,7 +12,7 @@ async def main() -> None:
     if model is None:
         raise RuntimeError("Model not found")
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress()}")
+        print(f"Download progress: {update.progress}")
 
     text = (
         "London is the capital of United Kingdom and one of the world's most influential cities, "

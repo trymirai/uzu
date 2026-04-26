@@ -11,7 +11,7 @@ pub enum PcmBatchError {
     },
 }
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PcmBatch {
     pub samples: Vec<f64>,
@@ -28,12 +28,12 @@ impl PcmBatch {
 
 #[bindings::export(Implementation)]
 impl PcmBatch {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn batch_size(&self) -> u32 {
         self.lengths.len() as u32
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn total_frames(&self) -> u32 {
         self.lengths.iter().sum::<_>()
     }

@@ -388,7 +388,13 @@ fn is_bindings_export_with(
     if !matches_path {
         return false;
     }
-    attribute.parse_args::<syn::Ident>().map(|ident| ident == kind).unwrap_or(false)
+    let syn::Meta::List(list) = &attribute.meta else {
+        return false;
+    };
+    list.tokens
+        .to_string()
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|token| token == kind)
 }
 
 fn render_extensions_file(

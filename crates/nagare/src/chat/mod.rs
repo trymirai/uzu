@@ -21,7 +21,7 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChatSessionStreamChunk {
     Replies {
@@ -32,7 +32,7 @@ pub enum ChatSessionStreamChunk {
     },
 }
 
-#[bindings::export(Stream)]
+#[bindings::export(Class(Stream))]
 #[derive(Clone)]
 pub struct ChatSessionStream {
     receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<Vec<ChatReply>, ChatSessionError>>>>,
@@ -41,7 +41,7 @@ pub struct ChatSessionStream {
 
 #[bindings::export(Implementation)]
 impl ChatSessionStream {
-    #[bindings::export(StreamNext)]
+    #[bindings::export(Method(StreamNext))]
     pub async fn next(&self) -> Option<ChatSessionStreamChunk> {
         match self.receiver.lock().await.recv().await {
             Some(Ok(replies)) => Some(ChatSessionStreamChunk::Replies {
@@ -54,13 +54,13 @@ impl ChatSessionStream {
         }
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn cancel_token(&self) -> CancelToken {
         self.cancel_token.clone()
     }
 }
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ChatSessionState {
     Idle,
@@ -112,12 +112,12 @@ impl ChatSession {
 
 #[bindings::export(Implementation)]
 impl ChatSession {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn state(&self) -> ChatSessionState {
         *self.state.lock().await
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn messages(&self) -> Vec<ChatMessage> {
         self.messages.lock().await.clone()
     }

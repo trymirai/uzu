@@ -144,7 +144,7 @@ impl Engine {
 
 #[bindings::export(Implementation)]
 impl Engine {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub async fn create(config: EngineConfig) -> Result<Self, EngineError> {
         Self::new(config).await
     }
@@ -203,52 +203,52 @@ impl Engine {
 
 #[bindings::export(Implementation)]
 impl Engine {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models(&self) -> Result<Vec<Model>, EngineError> {
         self.registry.lock().await.models().await.map_err(EngineError::from)
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_local(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_local()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_remote(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_remote()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_downloadable(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_downloadable()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_for_chat(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_chat_capable()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_for_classification(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_classification_capable()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_for_text_to_speech(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_text_to_speech_capable()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_for_translation(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_translation_capable()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn models_for_speculation(&self) -> Result<Vec<Model>, EngineError> {
         Ok(self.models().await?.into_iter().filter(|model| model.is_speculation_capable()).collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn model_registries(&self) -> Result<Vec<ModelRegistry>, EngineError> {
         let mut registries: Vec<_> = self
             .models()
@@ -262,7 +262,7 @@ impl Engine {
         Ok(registries)
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn model_vendors(&self) -> Result<Vec<ModelVendor>, EngineError> {
         let mut vendors: Vec<_> = self
             .model_families()
@@ -291,7 +291,7 @@ impl Engine {
             .collect())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn model_families(&self) -> Result<Vec<ModelFamily>, EngineError> {
         let mut families: Vec<_> = self
             .models()
@@ -436,7 +436,7 @@ impl Engine {
         self.downloader(model).state().await
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn download_states(&self) -> HashMap<String, DownloadState> {
         self.storage.lock().await.states().await
     }

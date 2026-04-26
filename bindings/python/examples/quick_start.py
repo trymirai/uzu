@@ -12,7 +12,7 @@ async def main() -> None:
         return
 
     async for update in (await engine.download(model)).iterator():
-        print(f"Download progress: {update.progress()}")
+        print(f"Download progress: {update.progress}")
 
     session = await engine.chat(model, ChatConfig.create())
 
