@@ -5,6 +5,8 @@ use std::{
 
 use anyhow::{Result, anyhow};
 
+use crate::types::Configuration;
+
 #[derive(Debug, Clone)]
 pub struct Command {
     current_path: Option<PathBuf>,
@@ -96,6 +98,26 @@ impl Command {
             .with_argument("install")
             .with_argument("--locked")
             .with_argument(&format!("cargo-{name}@{}", version))
+    }
+
+    pub fn cargo_build(
+        package: String,
+        target: String,
+        features: Vec<String>,
+        configuration: Configuration,
+    ) -> Self {
+        let mut command = Self::new("cargo")
+            .with_argument("build")
+            .with_argument("-p")
+            .with_argument(&package)
+            .with_arguments(vec!["--target".to_string(), target])
+            .with_argument("--no-default-features")
+            .with_arguments(vec!["--features".to_string(), features.join(",")]);
+        command = match configuration {
+            Configuration::Debug => command,
+            Configuration::Release => command.with_argument("--release"),
+        };
+        command
     }
 }
 

@@ -26,7 +26,7 @@ capabilities_default = ["grammar"]
 
 [targets."aarch64-apple-ios-sim"]
 backend = "metal"
-aliases = ["apple", "ios-simulator"]
+aliases = ["apple", "ios-sim", "ios-simulator"]
 capabilities_supported = ["grammar", "tracing"]
 capabilities_default = ["grammar"]
 

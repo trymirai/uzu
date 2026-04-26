@@ -6,6 +6,7 @@ use crate::types::Language;
 
 pub struct Paths {
     pub root_path: PathBuf,
+    pub main_crate: String,
 }
 
 impl Paths {
@@ -19,6 +20,7 @@ impl Paths {
             .to_path_buf();
         Ok(Self {
             root_path,
+            main_crate: "uzu".to_string(),
         })
     }
 

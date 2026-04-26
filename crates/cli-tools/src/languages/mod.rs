@@ -15,6 +15,23 @@ use crate::{
     types::{Capability, Configuration, Language},
 };
 
+pub struct LanguageBackendTarget {
+    pub name: String,
+    pub features: Vec<String>,
+}
+
+impl LanguageBackendTarget {
+    pub fn new(
+        name: String,
+        features: Vec<String>,
+    ) -> Self {
+        Self {
+            name,
+            features,
+        }
+    }
+}
+
 pub trait LanguageBackend {
     fn config(&self) -> PlatformsConfig;
 
@@ -38,6 +55,7 @@ pub trait LanguageBackend {
     ) -> Result<()> {
         let separator = "--------------------------------------------------".green();
         let language = self.language();
+        let bindings = self.config().bindings_for_language(language)?;
         let resolved_targets = self.config().targets_for_language(language, targets.clone())?;
         if resolved_targets.is_empty() {
             return Err(anyhow!("None of the provided targets are supported for language: {language:?}"));
@@ -51,50 +69,48 @@ pub trait LanguageBackend {
         );
         println!("{separator}");
 
-        for target in resolved_targets.clone() {
-            println!("Building for target: {},", target.green());
-
-            let backend = self.config().backend_for_target(target.clone())?;
-            let resolved_capabilities = self.config().capabilities_for_target(target.clone(), capabilities.clone())?;
-            let bindings = self.config().bindings_for_language(language)?;
-            let features = vec![
-                vec![backend.feature()],
-                resolved_capabilities.iter().map(|capability| capability.feature()).collect::<Vec<_>>(),
-                bindings.iter().map(|binding| binding.feature()).collect::<Vec<_>>(),
-            ]
+        let targets = resolved_targets
             .iter()
-            .flatten()
-            .map(|feature| feature.clone())
-            .collect::<Vec<_>>();
+            .map(|target| {
+                println!("Resolving target: {},", target.green());
 
-            println!("Backend: {}", format!("{:?}", backend).green());
-            println!(
-                "Capabilities: {} (resolved from: {})",
-                format!("{:?}", resolved_capabilities).green(),
-                format!("{:?}", capabilities).yellow()
-            );
-            println!("Features: {}", format!("{:?}", features).green());
-            println!("{separator}");
+                let backend = self.config().backend_for_target(target.clone())?;
+                let resolved_capabilities =
+                    self.config().capabilities_for_target(target.clone(), capabilities.clone())?;
+                let features = vec![
+                    vec![backend.feature()],
+                    resolved_capabilities.iter().map(|capability| capability.feature()).collect::<Vec<_>>(),
+                    bindings.iter().map(|binding| binding.feature()).collect::<Vec<_>>(),
+                ]
+                .iter()
+                .flatten()
+                .map(|feature| feature.clone())
+                .collect::<Vec<_>>();
 
-            self.build_for_target(target.clone(), configuration.clone(), features.clone())?;
-        }
+                println!("Backend: {}", format!("{:?}", backend).green());
+                println!(
+                    "Capabilities: {} (resolved from: {})",
+                    format!("{:?}", resolved_capabilities).green(),
+                    format!("{:?}", capabilities).yellow()
+                );
+                println!("Features: {}", format!("{:?}", features).green());
+                println!("{separator}");
 
-        self.postprocess_targets(resolved_targets)?;
+                Ok(LanguageBackendTarget::new(target.clone(), features.clone()))
+            })
+            .collect::<Vec<Result<LanguageBackendTarget>>>()
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+
+        self.build_targets(configuration, targets)?;
+
         Ok(())
     }
 
-    fn build_for_target(
+    fn build_targets(
         &self,
-        _target: String,
         _configuration: Configuration,
-        _features: Vec<String>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn postprocess_targets(
-        &self,
-        _targets: Vec<String>,
+        _targets: Vec<LanguageBackendTarget>,
     ) -> Result<()> {
         Ok(())
     }
