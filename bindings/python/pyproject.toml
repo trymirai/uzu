@@ -24,8 +24,8 @@ dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://trymirai.com"
-Repository = "https://github.com/trymirai/uzu-python"
-Issues = "https://github.com/trymirai/uzu-python/issues"
+Repository = "https://github.com/trymirai/uzu"
+Issues = "https://github.com/trymirai/uzu/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3.4", "ruff>=0.14.0"]

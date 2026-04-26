@@ -12,6 +12,7 @@ pub struct Command {
     current_path: Option<PathBuf>,
     name: String,
     arguments: Vec<String>,
+    envs: Vec<(String, String)>,
 }
 
 impl Command {
@@ -20,6 +21,7 @@ impl Command {
             current_path: None,
             name: name.to_string(),
             arguments: vec![],
+            envs: vec![],
         }
     }
 
@@ -59,12 +61,22 @@ impl Command {
         }
     }
 
-    pub fn run(self) -> Result<()> {
-        let mut command = StdCommand::new(&self.name);
-        if let Some(current_path) = self.current_path {
-            command.current_dir(current_path);
+    pub fn with_env(
+        &self,
+        key: &str,
+        value: &str,
+    ) -> Self {
+        let mut current_envs = self.envs.clone();
+        current_envs.push((key.to_string(), value.to_string()));
+
+        Self {
+            envs: current_envs,
+            ..self.clone()
         }
-        command.args(&self.arguments);
+    }
+
+    pub fn run(self) -> Result<()> {
+        let mut command = self.std_command();
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
         let status = command.status()?;
@@ -72,6 +84,28 @@ impl Command {
             return Err(anyhow!("Command failed"));
         }
         Ok(())
+    }
+
+    pub fn output(self) -> Result<String> {
+        let mut command = self.std_command();
+        command.stderr(Stdio::inherit());
+        let output = command.output()?;
+        if !output.status.success() {
+            return Err(anyhow!("Command failed"));
+        }
+        Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    }
+
+    fn std_command(&self) -> StdCommand {
+        let mut command = StdCommand::new(&self.name);
+        if let Some(current_path) = &self.current_path {
+            command.current_dir(current_path);
+        }
+        command.args(&self.arguments);
+        for (key, value) in &self.envs {
+            command.env(key, value);
+        }
+        command
     }
 }
 
@@ -147,21 +181,29 @@ impl Command {
         Self::new("uv").with_argument("run").with_argument("python").with_argument("-c").with_argument(code)
     }
 
-    // pub fn maturin_build(
-    //     configuration: Configuration,
-    //     target: &Target,
-    //     manifest_path: &PathBuf,
-    // ) -> Self {
-    //     let mut command = StdCommand::new("maturin").arg("build");
-    //     command = match configuration {
-    //         Configuration::Debug => command,
-    //         Configuration::Release => command.arg("--release"),
-    //     };
-    //     command = command
-    //         .args(["--target", &target.name])
-    //         .args(["--manifest-path", manifest_path.to_string_lossy().as_ref()]);
-    //     Self::new(command)
-    // }
+    pub fn maturin_build(
+        manifest_path: PathBuf,
+        target: String,
+        features: Vec<String>,
+        configuration: Configuration,
+    ) -> Self {
+        let mut command = Self::new("maturin")
+            .with_argument("build")
+            .with_arguments(vec!["--manifest-path".to_string(), manifest_path.to_string_lossy().to_string()])
+            .with_arguments(vec!["--target".to_string(), target])
+            .with_argument("--no-default-features")
+            .with_arguments(vec!["--features".to_string(), features.join(",")])
+            .with_argument("--strip");
+        command = match configuration {
+            Configuration::Debug => command,
+            Configuration::Release => command.with_argument("--release"),
+        };
+        command
+    }
 }
 
-impl Command {}
+impl Command {
+    pub fn which(name: String) -> Self {
+        Self::new("which").with_argument(&name)
+    }
+}
