@@ -1,11 +1,10 @@
 #pragma once
 
-#include "../../common/defines.h"
+#include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
+#include <metal_stdlib>
+
+#include "defines.h"
 #include "../../common/integral_constant.h"
-using namespace uzu;
-#include "fragment.h"
-#include "mxu_fragment_ops.h"
-#include "mxu_gemm_loop.h"
 #include "../../generated/matmul.h"
 
 using namespace metal;
@@ -19,34 +18,24 @@ template <
     ushort BLOCK_COLS,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
+    bool ALIGN_M,
+    bool ALIGN_N,
+    bool ALIGN_K,
     bool APPLY_AB_SCALE,
     bool IS_ACCUMULATE>
 struct GemmMppCore {
-  METAL_CONST ushort SIMDGROUP_BLOCK_M = BLOCK_ROWS / SIMDGROUPS_PER_ROW;
-  METAL_CONST ushort SIMDGROUP_BLOCK_N = BLOCK_COLS / SIMDGROUPS_PER_COLUMN;
-
-  METAL_CONST ushort SIMDGROUP_BLOCK_K = 32;
-  METAL_CONST ushort BLOCK_K = 256;
-
-  METAL_CONST ushort TILES_M =
-      SIMDGROUP_BLOCK_M / MxuFragmentOps::FRAGMENT_ROWS;
-  METAL_CONST ushort TILES_N =
-      SIMDGROUP_BLOCK_N / MxuFragmentOps::FRAGMENT_COLS;
-
   using AccumulatorType = float;
+  METAL_CONST ushort BLOCK_K = 128;
+  METAL_CONST ushort SIMDGROUP_COUNT =
+      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
 
   static METAL_FUNC void run(
       const device T* left_matrix,
       const device T* right_matrix,
       device T* output_matrix,
       const constant GemmParams* params,
-      const bool align_m,
-      const bool align_n,
-      const bool align_k,
       const float ab_scale,
-      uint simd_group_id,
-      uint2 threadgroup_position,
-      const thread ThreadContext& thread_context
+      uint2 threadgroup_position
   ) {
     uint tile_id_x, tile_id_y;
     if (params->use_morton) {
@@ -75,128 +64,175 @@ struct GemmMppCore {
       return;
     }
 
-    const uint block_row_start = tile_id_y * BLOCK_ROWS;
-    const uint block_col_start = tile_id_x * BLOCK_COLS;
-    const size_t block_row_start_long = size_t(block_row_start);
-    const size_t block_col_start_long = size_t(block_col_start);
+    const uint row_offset = tile_id_y * BLOCK_ROWS;
+    const uint column_offset = tile_id_x * BLOCK_COLS;
+    if (row_offset >= params->M || column_offset >= params->N) {
+      return;
+    }
 
-    const device T* left_block_ptr =
-        left_matrix + block_row_start_long * params->leading_dimension_a;
-    const device T* right_block_ptr =
-        right_matrix + block_col_start_long * params->leading_dimension_b;
+    auto left_tensor_base = tensor(
+        const_cast<device T*>(left_matrix),
+        dextents<int, 2>{int(params->K), int(params->M)},
+        array<int, 2>{1, int(params->leading_dimension_a)}
+    );
+    auto right_tensor_base = tensor(
+        const_cast<device T*>(right_matrix),
+        dextents<int, 2>{int(params->K), int(params->N)},
+        array<int, 2>{1, int(params->leading_dimension_b)}
+    );
+    auto output_tensor_base = tensor(
+        output_matrix,
+        dextents<int, 2>{int(params->N), int(params->M)},
+        array<int, 2>{1, int(params->leading_dimension_d)}
+    );
 
-    const ushort tile_row_offset =
-        SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
-    const ushort tile_col_offset =
-        SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
+    if constexpr (ALIGN_M && ALIGN_N) {
+      auto left_tensor =
+          left_tensor_base.template slice<dynamic_extent, BLOCK_ROWS>(
+              0,
+              int(row_offset)
+          );
+      auto right_tensor =
+          right_tensor_base.template slice<dynamic_extent, BLOCK_COLS>(
+              0,
+              int(column_offset)
+          );
+      auto output_tensor =
+          output_tensor_base.template slice<BLOCK_COLS, BLOCK_ROWS>(
+              int(column_offset),
+              int(row_offset)
+          );
+      multiply_and_store(left_tensor, right_tensor, output_tensor, params, ab_scale);
+    } else {
+      auto left_tensor = left_tensor_base.slice(0, int(row_offset));
+      auto right_tensor = right_tensor_base.slice(0, int(column_offset));
+      auto output_tensor =
+          output_tensor_base.slice(int(column_offset), int(row_offset));
+      multiply_and_store(left_tensor, right_tensor, output_tensor, params, ab_scale);
+    }
+  }
 
-    device T* output_ptr =
-        output_matrix + block_row_start_long * params->leading_dimension_d +
-        block_col_start_long + tile_row_offset * params->leading_dimension_d +
-        tile_col_offset;
-
-    const short simdgroup_limit_m =
-        align_m
-            ? SIMDGROUP_BLOCK_M
-            : short(
-                  min(int(SIMDGROUP_BLOCK_M),
-                      int(params->M) - int(block_row_start + tile_row_offset))
-              );
-    const short simdgroup_limit_n =
-        align_n
-            ? SIMDGROUP_BLOCK_N
-            : short(
-                  min(int(SIMDGROUP_BLOCK_N),
-                      int(params->N) - int(block_col_start + tile_col_offset))
-              );
-
-    const device T* left_simdgroup_ptr =
-        left_block_ptr + size_t(tile_row_offset) * params->leading_dimension_a;
-    const device T* right_simdgroup_ptr =
-        right_block_ptr +
-        size_t(tile_col_offset) * int(params->leading_dimension_b);
-
-    const int aligned_k_iterations = int(params->K) / int(BLOCK_K);
-
-    dispatch_bool(align_k, [&](auto aligned_k) {
-      dispatch_bool(
-          align_m || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
-          [&](auto aligned_m) {
-            dispatch_bool(
-                align_n || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
-                [&](auto aligned_n) {
-                  auto accumulator_tile = gemm_loop<
-                      T,
-                      SIMDGROUP_BLOCK_M,
-                      SIMDGROUP_BLOCK_N,
-                      SIMDGROUP_BLOCK_K,
-                      BLOCK_K,
-                      false,
-                      true,
-                      aligned_m.value,
-                      aligned_n.value,
-                      aligned_k.value,
-                      AccumulatorType>(
-                      left_simdgroup_ptr,
-                      right_simdgroup_ptr,
-                      int(params->leading_dimension_a),
-                      int(params->leading_dimension_b),
-                      int(params->K),
-                      aligned_k_iterations,
-                      simdgroup_limit_m,
-                      simdgroup_limit_n,
-                      thread_context
-                  );
-
-                  if constexpr (APPLY_AB_SCALE) {
-                    METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
-                         i++) {
-                      accumulator_tile.elements()[i] *=
-                          AccumulatorType(ab_scale);
-                    }
-                  }
-
-                  if constexpr (IS_ACCUMULATE) {
-                    Fragment<T, TILES_M, TILES_N, MxuFragmentOps>
-                        existing_output(thread_context);
-                    if constexpr (aligned_m.value && aligned_n.value) {
-                      existing_output.load(
-                          output_ptr,
-                          int(params->leading_dimension_d)
-                      );
-                    } else {
-                      existing_output.load_safe(
-                          output_ptr,
-                          int(params->leading_dimension_d),
-                          short2(simdgroup_limit_n, simdgroup_limit_m)
-                      );
-                    }
-                    METAL_PRAGMA_UNROLL
-                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
-                         i++) {
-                      accumulator_tile.elements()[i] +=
-                          AccumulatorType(existing_output.elements()[i]);
-                    }
-                  }
-
-                  if constexpr (aligned_m.value && aligned_n.value) {
-                    accumulator_tile.store(
-                        output_ptr,
-                        int(params->leading_dimension_d)
-                    );
-                  } else {
-                    accumulator_tile.store_safe(
-                        output_ptr,
-                        int(params->leading_dimension_d),
-                        short2(simdgroup_limit_n, simdgroup_limit_m)
-                    );
-                  }
-                }
-            );
-          }
+private:
+  template <class LeftTensor, class RightTensor, class OutputTensor>
+  static METAL_FUNC void multiply_and_store(
+      thread LeftTensor& left_tensor,
+      thread RightTensor& right_tensor,
+      thread OutputTensor& output_tensor,
+      const constant GemmParams* params,
+      float ab_scale
+  ) {
+    if constexpr (ALIGN_K) {
+      constexpr auto descriptor = mpp::tensor_ops::matmul2d_descriptor(
+          BLOCK_ROWS,
+          BLOCK_COLS,
+          BLOCK_K,
+          false,
+          true,
+          false,
+          mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate
       );
-    });
+      mpp::tensor_ops::matmul2d<
+          descriptor,
+          execution_simdgroups<SIMDGROUP_COUNT>>
+          matmul_operation;
+      auto accumulator =
+          matmul_operation.template get_destination_cooperative_tensor<
+              LeftTensor,
+              RightTensor,
+              AccumulatorType>();
+
+      METAL_PRAGMA_UNROLL
+      for (uint16_t index = 0; index < accumulator.get_capacity(); ++index) {
+        if (accumulator.is_valid_element(index)) {
+          accumulator[index] = AccumulatorType(0);
+        }
+      }
+
+      const uint k_iterations = params->K / BLOCK_K;
+      METAL_PRAGMA_NO_UNROLL
+      for (uint k_index = 0; k_index < k_iterations; ++k_index) {
+        threadgroup_barrier(mem_flags::mem_none);
+        const int k_offset = int(k_index * BLOCK_K);
+        auto left_tile =
+            left_tensor.template slice<BLOCK_K, BLOCK_ROWS>(k_offset, 0);
+        auto right_tile =
+            right_tensor.template slice<BLOCK_K, BLOCK_COLS>(k_offset, 0);
+        matmul_operation.run(left_tile, right_tile, accumulator);
+      }
+
+      store_accumulator(matmul_operation, left_tensor, right_tensor, output_tensor, accumulator, ab_scale);
+    } else {
+      constexpr auto descriptor = mpp::tensor_ops::matmul2d_descriptor(
+          BLOCK_ROWS,
+          BLOCK_COLS,
+          static_cast<int>(dynamic_extent),
+          false,
+          true,
+          false
+      );
+      mpp::tensor_ops::matmul2d<
+          descriptor,
+          execution_simdgroups<SIMDGROUP_COUNT>>
+          matmul_operation;
+      auto accumulator =
+          matmul_operation.template get_destination_cooperative_tensor<
+              LeftTensor,
+              RightTensor,
+              AccumulatorType>();
+
+      METAL_PRAGMA_UNROLL
+      for (uint16_t index = 0; index < accumulator.get_capacity(); ++index) {
+        if (accumulator.is_valid_element(index)) {
+          accumulator[index] = AccumulatorType(0);
+        }
+      }
+
+      matmul_operation.run(left_tensor, right_tensor, accumulator);
+      store_accumulator(matmul_operation, left_tensor, right_tensor, output_tensor, accumulator, ab_scale);
+    }
+  }
+
+  template <
+      class MatmulOperation,
+      class LeftTensor,
+      class RightTensor,
+      class OutputTensor,
+      class Accumulator>
+  static METAL_FUNC void store_accumulator(
+      thread MatmulOperation& matmul_operation,
+      thread LeftTensor& left_tensor,
+      thread RightTensor& right_tensor,
+      thread OutputTensor& output_tensor,
+      thread Accumulator& accumulator,
+      float ab_scale
+  ) {
+    auto output_values =
+        matmul_operation.template get_destination_cooperative_tensor<
+            LeftTensor,
+            RightTensor,
+            T>();
+
+    if constexpr (IS_ACCUMULATE) {
+      output_values.load(output_tensor);
+    }
+
+    METAL_PRAGMA_UNROLL
+    for (uint16_t index = 0; index < accumulator.get_capacity(); ++index) {
+      if (!accumulator.is_valid_element(index)) {
+        continue;
+      }
+
+      float value = accumulator[index];
+      if constexpr (APPLY_AB_SCALE) {
+        value *= ab_scale;
+      }
+      if constexpr (IS_ACCUMULATE) {
+        value += float(output_values[index]);
+      }
+      output_values[index] = T(value);
+    }
+
+    output_values.store(output_tensor);
   }
 };
 

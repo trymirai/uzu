@@ -1,8 +1,8 @@
 #include "../common/dsl.h"
-#include "../common/thread_context.h"
 
 #include "common/gemm_mpp_core.h"
 
+using namespace uzu;
 using namespace uzu::matmul;
 
 template <typename T, uint BLOCK_ROWS, uint BLOCK_COLS, uint SIMDGROUPS_PER_ROW, uint SIMDGROUPS_PER_COLUMN>
@@ -33,30 +33,36 @@ KERNEL(MatmulGemmMpp)(
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(32),
     const uint thread_y THREADS(SIMDGROUPS_PER_ROW),
-    const uint thread_z THREADS(SIMDGROUPS_PER_COLUMN),
-    const ThreadContext thread_context
+    const uint thread_z THREADS(SIMDGROUPS_PER_COLUMN)
 ) {
-  dispatch_bool(apply_ab_scale, [&](auto scale_enabled) {
-    dispatch_bool(is_accumulate, [&](auto accumulate_enabled) {
-      GemmMppCore<
-          T,
-          BLOCK_ROWS,
-          BLOCK_COLS,
-          SIMDGROUPS_PER_ROW,
-          SIMDGROUPS_PER_COLUMN,
-          scale_enabled.value,
-          accumulate_enabled.value>::
-          run(left_matrix,
-              right_matrix,
-              output_matrix,
-              params,
-              align_m,
-              align_n,
-              align_k,
-              ab_scale,
-              thread_context.threadgroup_index,
-              uint2(group_x, group_y),
-              thread_context);
+  (void)thread_x;
+  (void)thread_y;
+  (void)thread_z;
+  dispatch_bool(align_m, [&](auto align_m_enabled) {
+    dispatch_bool(align_n, [&](auto align_n_enabled) {
+      dispatch_bool(align_k, [&](auto align_k_enabled) {
+        dispatch_bool(apply_ab_scale, [&](auto scale_enabled) {
+          dispatch_bool(is_accumulate, [&](auto accumulate_enabled) {
+            GemmMppCore<
+                T,
+                BLOCK_ROWS,
+                BLOCK_COLS,
+                SIMDGROUPS_PER_ROW,
+                SIMDGROUPS_PER_COLUMN,
+                align_m_enabled.value,
+                align_n_enabled.value,
+                align_k_enabled.value,
+                scale_enabled.value,
+                accumulate_enabled.value>::
+                run(left_matrix,
+                    right_matrix,
+                    output_matrix,
+                    params,
+                    ab_scale,
+                    uint2(group_x, group_y));
+          });
+        });
+      });
     });
   });
 }
