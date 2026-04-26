@@ -118,6 +118,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             sliding_window_size: None,
             is_causal: input.do_causal,
             scale: input.scale,
+            k_head_stride: input.head_dim as i64,
+            k_seq_stride: (input.num_kv_heads * input.head_dim) as i64,
+            v_head_stride: input.head_dim as i64,
+            v_seq_stride: (input.num_kv_heads * input.head_dim) as i64,
         };
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

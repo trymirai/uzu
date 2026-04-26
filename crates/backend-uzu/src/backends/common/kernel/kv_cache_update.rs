@@ -1,4 +1,4 @@
-use std::{cell::RefCell, mem::size_of, ops::DerefMut, rc::Rc};
+use std::mem::size_of;
 
 use thiserror::Error;
 
@@ -7,10 +7,10 @@ use crate::{
     backends::common::{Backend, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
 };
 
-pub struct KVLayerData<B: Backend> {
-    pub key_buffer: Rc<RefCell<B::Buffer>>,
+pub struct KVLayerData<'a, B: Backend> {
+    pub key_buffer: &'a mut B::Buffer,
     pub key_shape: [usize; 3],
-    pub value_buffer: Rc<RefCell<B::Buffer>>,
+    pub value_buffer: &'a mut B::Buffer,
     pub value_shape: [usize; 3],
 }
 
@@ -55,7 +55,7 @@ impl<B: Backend> KVCacheUpdate<B> {
     /// Encode the KV cache update operation using a provided command buffer
     pub fn encode(
         &self,
-        in_place_data: &[KVLayerData<B>],
+        in_place_data: &mut [KVLayerData<B>],
         source_indices: &[usize],
         destination_indices: &[usize],
         encoder: &mut Encoder<B>,
@@ -70,18 +70,19 @@ impl<B: Backend> KVCacheUpdate<B> {
         }
         let max_inline_swaps = (B::MAX_INLINE_BYTES / size_of::<Swap>()).max(1);
 
-        for layer_data in in_place_data {
+        for layer_data in in_place_data.iter_mut() {
             if layer_data.key_shape != layer_data.value_shape {
                 return Err(KVCacheUpdateError::ShapeMismatch);
             }
 
-            let [num_heads, max_sequence_length, head_dim] = layer_data.key_shape;
+            // Token-major layout: [max_sequence_length, num_groups, head_dim]
+            let [max_sequence_length, num_heads, head_dim] = layer_data.key_shape;
 
             // non-inline is not supported yet (and is broken anyways due to a data race)
             for swaps_chunk in swaps.chunks(max_inline_swaps) {
                 self.kernel.encode(
-                    layer_data.key_buffer.borrow_mut().deref_mut(),
-                    layer_data.value_buffer.borrow_mut().deref_mut(),
+                    &mut *layer_data.key_buffer,
+                    &mut *layer_data.value_buffer,
                     swaps_chunk,
                     swaps_chunk.len() as u32,
                     num_heads as u32,

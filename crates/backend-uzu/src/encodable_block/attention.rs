@@ -10,7 +10,7 @@ use itertools::iproduct;
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Backend, Encoder, Kernels, SparseBuffer,
         gpu_types::ring::RingParams,
         kernel::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
@@ -180,44 +180,40 @@ impl<B: Backend> Attention<B> {
         let num_heads = queries_array.shape()[0];
         let head_dim = queries_array.shape()[2];
         let num_groups = rotated_keys_array.shape()[0];
-        let max_sequence_length = if state.cache_layers().is_some() {
-            state.array(ArrayId::Keys(self.layer_index)).shape()[1]
-        } else {
-            // For classifiers without KV cache, max_sequence_length is just suffix_length
-            suffix_length
-        };
-
         let is_trie = state.token_subtrie_ranges.is_some();
 
-        let (segment_prefix_length, ring_params) = if let Some(cache_layers) = state.cache_layers() {
-            let projection_step = parameters.projection_step.unwrap_or(0);
-            let cache = cache_layers.borrow();
-            let layer = cache.data[self.layer_index]
-                .as_transformer()
-                .expect("Attention kernel expects transformer layer state");
-            let ring_params = match layer.state {
-                KVCacheLayerState::Windowed {
-                    ring_offset,
-                    ring_length,
-                    window_length,
-                } => {
-                    let overflow = (ring_length + projection_step).saturating_sub(window_length);
-                    Some(RingParams {
-                        ring_offset: ((ring_offset + overflow) % window_length) as u32,
-                        ring_length: (ring_length + projection_step).min(window_length) as u32,
-                    })
-                },
-                _ => None,
+        let (segment_prefix_length, ring_params, key_cache_sparse_array, value_cache_sparse_array) =
+            if let Some(cache_layers) = state.cache_layers() {
+                let projection_step = parameters.projection_step.unwrap_or(0);
+                let cache = cache_layers.borrow();
+                let layer = cache.data[self.layer_index]
+                    .as_transformer()
+                    .expect("Attention kernel expects transformer layer state");
+
+                let segment_prefix_length = layer.projected_segment_prefix_length(projection_step);
+                let ring_params = match layer.state {
+                    KVCacheLayerState::Windowed {
+                        ring_offset,
+                        ring_length,
+                        window_length,
+                    } => {
+                        let overflow = (ring_length + projection_step).saturating_sub(window_length);
+                        Some(RingParams {
+                            ring_offset: ((ring_offset + overflow) % window_length) as u32,
+                            ring_length: (ring_length + projection_step).min(window_length) as u32,
+                        })
+                    },
+                    _ => None,
+                };
+
+                (segment_prefix_length, ring_params, Some(layer.keys.clone()), Some(layer.values.clone()))
+            } else {
+                (0, None, None, None)
             };
-            (layer.projected_segment_prefix_length(projection_step), ring_params)
-        } else {
-            (0, None)
-        };
 
         let is_kv_cache_ring = ring_params.is_some();
-
+        let max_sequence_length = key_cache_sparse_array.as_ref().map_or(suffix_length, |array| array.shape()[0]);
         let sequence_length = segment_prefix_length + suffix_length;
-
         let gqa_factor = num_heads / num_groups;
         let scale = self.attention_scale.unwrap_or(1.0f32 / (head_dim as f32).sqrt());
 
@@ -244,13 +240,20 @@ impl<B: Backend> Attention<B> {
         // Get KV cache buffers only if KV cache exists (LLM mode)
         let has_kv_cache = state.cache_layers().is_some();
 
-        let key_cache_array = has_kv_cache.then(|| state.array(ArrayId::Keys(self.layer_index)));
-        let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
-        let mut key_cache_buf_borrow = key_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
+        // Token-major layout [max_sequence_length, num_groups, head_dim]: grow the
+        // sparse buffers on demand to fit the rows (tokens) about to be written/read.
+        // Must be done before borrowing the underlying sparse buffers below.
+        if has_kv_cache {
+            let required_rows = segment_prefix_length + suffix_length;
+            key_cache_sparse_array.as_ref().unwrap().ensure_rows(required_rows);
+            value_cache_sparse_array.as_ref().unwrap().ensure_rows(required_rows);
+        }
 
-        let value_cache_array = has_kv_cache.then(|| state.array(ArrayId::Values(self.layer_index)));
-        let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
-        let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
+        let key_cache_sparse_buffer_rc = key_cache_sparse_array.as_ref().map(|array| array.sparse_buffer());
+        let mut key_cache_sparse_buffer_ref = key_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
+
+        let value_cache_sparse_buffer_rc = value_cache_sparse_array.as_ref().map(|array| array.sparse_buffer());
+        let mut value_cache_sparse_buffer_ref = value_cache_sparse_buffer_rc.as_ref().map(|rc| rc.borrow_mut());
 
         let extracted_values_array = (!has_kv_cache).then(|| state.array(ArrayId::ExtractedValues));
         let extracted_values_buf_rc = extracted_values_array.as_ref().map(|a| a.buffer());
@@ -302,8 +305,8 @@ impl<B: Backend> Attention<B> {
             self.update_kv_cache_kernel.encode(
                 Some(rotated_keys_buf_borrow.deref()),
                 qkv_buf_borrow.deref(),
-                key_cache_buf_borrow.as_mut().unwrap().deref_mut(),
-                value_cache_buf_borrow.as_mut().unwrap().deref_mut(),
+                key_cache_sparse_buffer_ref.as_mut().unwrap().buffer_mut(),
+                value_cache_sparse_buffer_ref.as_mut().unwrap().buffer_mut(),
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
@@ -315,20 +318,31 @@ impl<B: Backend> Attention<B> {
         }
 
         let key_cache_buffer: &B::Buffer = if has_kv_cache {
-            key_cache_buf_borrow.as_ref().unwrap().deref()
+            key_cache_sparse_buffer_ref.as_ref().unwrap().buffer()
         } else {
             rotated_keys_buf_borrow.deref()
         };
         let value_cache_buffer: &B::Buffer = if has_kv_cache {
-            value_cache_buf_borrow.as_ref().unwrap().deref()
+            value_cache_sparse_buffer_ref.as_ref().unwrap().buffer()
         } else {
             extracted_values_buf_borrow.as_ref().unwrap().deref()
         };
 
-        let k_head_stride = (max_sequence_length * head_dim) as i32;
-        let k_seq_stride = head_dim as i32;
-        let v_head_stride = (max_sequence_length * head_dim) as i32;
-        let v_seq_stride = head_dim as i32;
+        // KV cache layout: [max_sequence_length, num_groups, head_dim] (token-major)
+        // For classifier mode (no KV cache) keys/values still come in group-major layout
+        // [num_groups, suffix_length, head_dim].
+        let (k_head_stride, k_seq_stride, v_head_stride, v_seq_stride) = if has_kv_cache {
+            (head_dim as i32, (num_groups * head_dim) as i32, head_dim as i32, (num_groups * head_dim) as i32)
+        } else {
+            (
+                (max_sequence_length * head_dim) as i32,
+                head_dim as i32,
+                (max_sequence_length * head_dim) as i32,
+                head_dim as i32,
+            )
+        };
+        let (k_head_stride64, k_seq_stride64, v_head_stride64, v_seq_stride64) =
+            (k_head_stride as i64, k_seq_stride as i64, v_head_stride as i64, v_seq_stride as i64);
 
         let kernel_key = KernelKey {
             head_dim: head_dim as u32,
@@ -356,6 +370,10 @@ impl<B: Backend> Attention<B> {
                     is_causal: self.is_causal,
                     sliding_window_size: self.sliding_window_size,
                     scale,
+                    k_head_stride: k_head_stride64,
+                    k_seq_stride: k_seq_stride64,
+                    v_head_stride: v_head_stride64,
+                    v_seq_stride: v_seq_stride64,
                 };
                 self.gemm_block.encode(state.context(), encoder, args).expect("Failed to encode AttentionGemmBlock");
             },

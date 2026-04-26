@@ -1,9 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
 use metal::{
-    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary,
-    MTLResourceOptions,
+    MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
+    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
+    MTLLibrary, MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -16,8 +16,8 @@ use super::{
 };
 use crate::{
     backends::{
-        common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
-        metal::command_buffer::MetalCommandBufferInitial,
+        common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+        metal::{command_buffer::MetalCommandBufferInitial, sparse_buffer::MetalSparseBuffer},
     },
     utils::model_size::ModelSize,
 };
@@ -25,6 +25,7 @@ use crate::{
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
@@ -60,10 +61,11 @@ impl Context for MetalContext {
 
     fn new() -> Result<Rc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn metal::MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
+            <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
         let command_queue =
             device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
+        let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
         let library = device
             .new_library_with_data(kernel::MTLB)
@@ -79,6 +81,7 @@ impl Context for MetalContext {
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
+            command_queue4,
         }))
     }
 
@@ -118,6 +121,13 @@ impl Context for MetalContext {
         buffer
     }
 
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        Ok(MetalSparseBuffer::new(self, capacity)?)
+    }
+
     fn create_allocation(
         &self,
         size: usize,
@@ -155,8 +165,8 @@ impl Context for MetalContext {
 
     fn start_capture(
         &self,
-        trace_path: &std::path::Path,
-    ) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+        trace_path: &Path,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
@@ -172,7 +182,7 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    fn stop_capture(&self) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+    fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error> {
         MTLCaptureManager::shared_capture_manager().stop_capture();
 
         Ok(())

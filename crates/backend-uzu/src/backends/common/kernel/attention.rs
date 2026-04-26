@@ -32,6 +32,14 @@ pub struct AttentionGemmArguments<'a, B: Backend> {
     pub sliding_window_size: Option<usize>,
     pub is_causal: bool,
     pub scale: f32,
+    /// Element stride between kv-heads (groups) in the K buffer.
+    pub k_head_stride: i64,
+    /// Element stride between tokens in the K buffer.
+    pub k_seq_stride: i64,
+    /// Element stride between kv-heads (groups) in the V buffer.
+    pub v_head_stride: i64,
+    /// Element stride between tokens in the V buffer.
+    pub v_seq_stride: i64,
 }
 
 pub struct AttentionGemmBlock<B: Backend> {
@@ -104,9 +112,6 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let q_head_stride = (args.suffix_length * head_dim) as i64;
         let q_seq_stride = head_dim as i64;
 
-        let kv_head_stride = (args.max_sequence_length * head_dim) as i64;
-        let kv_seq_stride = head_dim as i64;
-
         let o_head_stride = head_dim as i64;
         let o_seq_stride = (args.num_heads * head_dim) as i64;
 
@@ -116,8 +121,8 @@ impl<B: Backend> AttentionGemmBlock<B> {
 
         let params = AttnParams {
             q_strides: [0, q_head_stride, q_seq_stride],
-            k_strides: [0, kv_head_stride, kv_seq_stride],
-            v_strides: [0, kv_head_stride, kv_seq_stride],
+            k_strides: [0, args.k_head_stride, args.k_seq_stride],
+            v_strides: [0, args.v_head_stride, args.v_seq_stride],
             o_strides: [0, o_head_stride, o_seq_stride],
             gqa_factor: (args.num_heads / args.num_groups) as i32,
             scale: args.scale,

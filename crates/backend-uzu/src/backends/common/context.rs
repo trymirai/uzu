@@ -25,6 +25,11 @@ pub trait Context: Sized {
         size: usize,
     ) -> Result<<Self::Backend as Backend>::Buffer, <Self::Backend as Backend>::Error>;
 
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
+
     fn create_allocation(
         &self,
         size: usize,

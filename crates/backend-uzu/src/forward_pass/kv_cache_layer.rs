@@ -1,9 +1,9 @@
 use crate::{
-    array::{Array, ArrayContextExt},
     backends::common::{
-        Backend, Encoder,
+        Backend, Encoder, SparseBuffer,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
+    utils::{SparseArray, SparseArrayContext},
 };
 
 #[derive(Clone)]
@@ -16,8 +16,8 @@ pub enum KVSlice<B: Backend> {
         base_ring_offset: usize,
         base_ring_length: usize,
         slots: Vec<usize>,
-        keys: Array<B>,   // [num_groups, slots.len(), head_dim]
-        values: Array<B>, // [num_groups, slots.len(), head_dim]
+        keys: SparseArray<B>,
+        values: SparseArray<B>,
     },
 }
 
@@ -42,10 +42,8 @@ pub const INVALID_POSITION: usize = i32::MAX as usize;
 #[derive(Debug)]
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
-    /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub keys: Array<B>,
-    /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub values: Array<B>,
+    pub keys: SparseArray<B>,
+    pub values: SparseArray<B>,
 }
 
 impl<B: Backend> KVCacheLayer<B> {
@@ -152,14 +150,18 @@ impl<B: Backend> KVCacheLayer<B> {
         let k_shape = self.keys.shape();
         let v_shape = self.values.shape();
 
+        let key_buffer_rc = self.keys.sparse_buffer();
+        let mut key_buffer = key_buffer_rc.borrow_mut();
+        let value_buffer_rc = self.values.sparse_buffer();
+        let mut value_buffer = value_buffer_rc.borrow_mut();
         let layer_data = KVLayerData {
-            key_buffer: self.keys.buffer(),
+            key_buffer: key_buffer.buffer_mut(),
             key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer: self.values.buffer(),
+            value_buffer: value_buffer.buffer_mut(),
             value_shape: [v_shape[0], v_shape[1], v_shape[2]],
         };
 
-        let _ = kv_cache_update.encode(&[layer_data], source_indices, destination_indices, encoder);
+        let _ = kv_cache_update.encode(&mut [layer_data], source_indices, destination_indices, encoder);
     }
 
     pub fn register_accepted_tokens(
@@ -205,15 +207,13 @@ impl<B: Backend> KVCacheLayer<B> {
                     return None;
                 }
                 let shape = self.keys.shape();
-                let num_groups = shape[0];
+                let num_groups = shape[1];
                 let head_dim = shape[2];
                 let dtype = self.keys.data_type();
 
-                let slice_shape = [num_groups, len, head_dim];
-                let mut slice_keys =
-                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
-                let mut slice_values =
-                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
+                let slice_shape = [len, num_groups, head_dim];
+                let mut slice_keys = context.create_sparse_array(&slice_shape, dtype, "kv_cache_layer_slice_keys");
+                let mut slice_values = context.create_sparse_array(&slice_shape, dtype, "kv_cache_layer_slice_values");
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
@@ -227,10 +227,12 @@ impl<B: Backend> KVCacheLayer<B> {
                     })
                     .collect();
 
+                let mut encoder = Encoder::<B>::new(context).expect("Failed to create encoder");
                 for (i, &slot) in slots.iter().enumerate() {
-                    slice_keys.copy_slice(&self.keys, 1, slot..slot + 1, i);
-                    slice_values.copy_slice(&self.values, 1, slot..slot + 1, i);
+                    slice_keys.copy_slice(&self.keys, 0, slot..slot + 1, i, &mut encoder);
+                    slice_values.copy_slice(&self.values, 0, slot..slot + 1, i, &mut encoder);
                 }
+                encoder.end_submit_wait().expect("Failed to execute slice copy");
 
                 Some(KVSlice::Window {
                     window_length,
@@ -246,6 +248,7 @@ impl<B: Backend> KVCacheLayer<B> {
 
     pub fn apply_slice(
         &mut self,
+        encoder: &mut Encoder<B>,
         slice: &KVSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
@@ -287,8 +290,8 @@ impl<B: Backend> KVCacheLayer<B> {
                         *ring_length = *base_ring_length;
 
                         for (i, &slot) in slots.iter().enumerate() {
-                            self.keys.copy_slice(keys, 1, i..i + 1, slot);
-                            self.values.copy_slice(values, 1, i..i + 1, slot);
+                            self.keys.copy_slice(keys, 0, i..i + 1, slot, encoder);
+                            self.values.copy_slice(values, 0, i..i + 1, slot, encoder);
                         }
                     },
                     Some(r) => {
@@ -318,8 +321,8 @@ impl<B: Backend> KVCacheLayer<B> {
 
                         for (i, &slot) in slots[r.clone()].iter().enumerate() {
                             let src_i = r.start + i;
-                            self.keys.copy_slice(keys, 1, src_i..src_i + 1, slot);
-                            self.values.copy_slice(values, 1, src_i..src_i + 1, slot);
+                            self.keys.copy_slice(keys, 0, src_i..src_i + 1, slot, encoder);
+                            self.values.copy_slice(values, 0, src_i..src_i + 1, slot, encoder);
                         }
                     },
                 }

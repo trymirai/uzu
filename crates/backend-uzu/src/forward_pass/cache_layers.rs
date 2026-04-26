@@ -11,6 +11,7 @@ use crate::{
         short_conv_layer::ShortConvLayer,
         ssm_layer::SSMLayer,
     },
+    utils::SparseArrayContext,
 };
 
 #[derive(Debug)]
@@ -142,12 +143,12 @@ impl<B: Backend> CacheLayers<B> {
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: state.clone(),
-                        keys: context.create_array_zeros(
+                        keys: context.create_sparse_array(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                         ),
-                        values: context.create_array_zeros(
+                        values: context.create_sparse_array(
                             &shape,
                             model_shape.kv_cache_data_type(),
                             &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
@@ -325,13 +326,14 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn apply_slice(
         &mut self,
+        encoder: &mut Encoder<B>,
         slice: &CacheLayersSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
         for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
-                    kv.apply_slice(&s, range.clone());
+                    kv.apply_slice(encoder, &s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
@@ -344,6 +346,7 @@ impl<B: Backend> CacheLayers<B> {
         &self,
         context: &B::Context,
     ) -> Self {
+        let mut encoder = Encoder::<B>::new(context).expect("Failed to create Encoder");
         let mut max_prefix_capacity_across_layers = 0usize;
         let data: Box<[CacheLayer<B>]> = self
             .data
@@ -352,7 +355,7 @@ impl<B: Backend> CacheLayers<B> {
             .map(|(layer_index, layer)| match layer {
                 CacheLayer::Transformer(layer) => {
                     let shape = layer.keys.shape().to_vec();
-                    let num_groups = shape[0];
+                    let num_groups = shape[1];
                     let head_dim = shape[2];
                     let dtype = layer.keys.data_type();
                     let copy_rows = layer.prefix_segment_length();
@@ -362,21 +365,21 @@ impl<B: Backend> CacheLayers<B> {
                         max_prefix_capacity_across_layers = copy_rows;
                     }
 
-                    let new_shape = [num_groups, new_total_len, head_dim];
-                    let mut new_keys = context.create_array_zeros(
+                    let new_shape = [new_total_len, num_groups, head_dim];
+                    let mut new_keys = context.create_sparse_array(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_KEYS_LABEL}_{layer_index}"),
                     );
-                    let mut new_values = context.create_array_zeros(
+                    let mut new_values = context.create_sparse_array(
                         &new_shape,
                         dtype,
                         &format!("{ARRAY_TRANSFORMER_VALUES_LABEL}_{layer_index}"),
                     );
 
                     if copy_rows > 0 {
-                        new_keys.copy_slice(&layer.keys, 1, 0..copy_rows, 0);
-                        new_values.copy_slice(&layer.values, 1, 0..copy_rows, 0);
+                        new_keys.copy_slice(&layer.keys, 0, 0..copy_rows, 0, &mut encoder);
+                        new_values.copy_slice(&layer.values, 0, 0..copy_rows, 0, &mut encoder);
                     }
 
                     CacheLayer::Transformer(KVCacheLayer {
@@ -460,6 +463,8 @@ impl<B: Backend> CacheLayers<B> {
                 },
             })
             .collect();
+
+        encoder.end_submit_wait().unwrap();
 
         Self {
             max_suffix_length: self.max_suffix_length,

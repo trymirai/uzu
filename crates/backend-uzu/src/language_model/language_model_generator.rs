@@ -638,7 +638,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         &self,
         range: Range<usize>,
     ) -> Option<Box<dyn Any>> {
-        self.context.cache_layers.borrow().slice(&self.context.context, range).map(|s| Box::new(s) as Box<dyn Any>)
+        let cache_layer_slice = self.context.cache_layers.borrow().slice(&self.context.context, range);
+        cache_layer_slice.map(|s| Box::new(s) as Box<dyn Any>)
     }
     fn apply_slice(
         &mut self,
@@ -646,7 +647,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         range: Range<usize>,
     ) {
         let slice = slice.downcast_ref::<CacheLayersSlice<B>>().unwrap();
-        self.context.cache_layers.borrow_mut().apply_slice(slice, Some(range));
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref()).expect("Failed to create encoder");
+        self.context.cache_layers.borrow_mut().apply_slice(&mut encoder, slice, Some(range));
+        encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
 
     fn build_llm_context(&self) -> Box<dyn Any> {
@@ -659,6 +662,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         context: &dyn Any,
     ) {
         let ctx = context.downcast_ref::<LlmContext<B>>().unwrap();
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref()).expect("Failed to create encoder");
         let mut llm_state = self.context.cache_layers.borrow_mut();
         for (_layer_idx, (ctx_layer, gen_layer)) in
             ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut()).enumerate()
@@ -667,8 +671,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
                     let copy_rows = src.prefix_segment_length();
                     if copy_rows > 0 {
-                        dst.keys.copy_slice(&src.keys, 1, 0..copy_rows, 0);
-                        dst.values.copy_slice(&src.values, 1, 0..copy_rows, 0);
+                        dst.keys.copy_slice(&src.keys, 0, 0..copy_rows, 0, &mut encoder);
+                        dst.values.copy_slice(&src.values, 0, 0..copy_rows, 0, &mut encoder);
                     }
                     dst.state = src.state.clone();
                 },
@@ -679,6 +683,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 _ => panic!("Layer type mismatch when reconfiguring language model generator cache"),
             }
         }
+        encoder.end_submit_wait().unwrap();
         drop(llm_state);
 
         self.tokens = ctx.tokens.clone();

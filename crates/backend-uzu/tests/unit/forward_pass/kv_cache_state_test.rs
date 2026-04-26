@@ -1,12 +1,14 @@
 #![cfg(metal_backend)]
 
 use crate::{
-    ArrayContextExt, DataType,
+    DataType,
     backends::{
         common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
+    prelude::MetalContext,
+    utils::SparseArrayContext,
 };
 
 #[derive(Debug)]
@@ -39,11 +41,10 @@ fn make_test_layer(
             ..
         } => window_length + suffix_capacity,
     };
-    let shape = [1, total_len.max(1), 1];
+    let shape = [total_len.max(1), 1, 1];
 
-    let keys = context.create_array_zeros(&shape, DataType::F32, "kv_cache_keys");
-    let values = context.create_array_zeros(&shape, DataType::F32, "kv_cache_values");
-
+    let keys = context.create_sparse_array(&shape, DataType::F32, "kv_cache_keys");
+    let values = context.create_sparse_array(&shape, DataType::F32, "kv_cache_values");
     KVCacheLayer {
         state,
         keys,
@@ -51,22 +52,16 @@ fn make_test_layer(
     }
 }
 
-fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
-    let initial_keys = {
-        let slice = layer.keys.as_slice_mut::<f32>();
-        for (idx, value) in slice.iter_mut().enumerate() {
-            *value = 1_000.0 + idx as f32;
-        }
-        slice.to_vec()
-    };
+fn fill_arrays(
+    context: &MetalContext,
+    layer: &mut KVCacheLayer<Metal>,
+) -> (Vec<f32>, Vec<f32>) {
+    let element_count = layer.keys.shape().iter().product::<usize>();
+    let initial_keys: Vec<f32> = (0..element_count).map(|idx| 1_000.0 + idx as f32).collect();
+    let initial_values: Vec<f32> = (0..element_count).map(|idx| 2_000.0 + idx as f32).collect();
 
-    let initial_values = {
-        let slice = layer.values.as_slice_mut::<f32>();
-        for (idx, value) in slice.iter_mut().enumerate() {
-            *value = 2_000.0 + idx as f32;
-        }
-        slice.to_vec()
-    };
+    layer.keys.write_typed(context, &initial_keys, 0).unwrap();
+    layer.values.write_typed(context, &initial_values, 0).unwrap();
 
     (initial_keys, initial_values)
 }
@@ -120,7 +115,7 @@ fn run_scenario(
 
     let state_before_update = layer.state.clone();
 
-    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+    let (initial_keys, initial_values) = fill_arrays(context, &mut layer);
 
     let expected_keys = expected_after_update(&state_before_update, &scenario.accepted_suffix_indices, &initial_keys);
     let expected_values =
@@ -151,14 +146,14 @@ fn run_scenario(
         &kv_cache_update,
     );
 
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    encoder.end_submit_wait().unwrap();
 
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
-    let actual_keys = layer.keys.as_slice::<f32>().to_vec();
+    let actual_keys = layer.keys.read_typed::<f32>(context).unwrap().to_vec();
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
-    let actual_values = layer.values.as_slice::<f32>().to_vec();
+    let actual_values = layer.values.read_typed::<f32>(context).unwrap().to_vec();
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
 
     match &layer.state {
@@ -287,21 +282,22 @@ fn kv_cache_slice_apply_contiguous_window() {
         4,
         0,
     );
-    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+    let (initial_keys, initial_values) = fill_arrays(context.as_ref(), &mut layer);
 
     let slice = layer.slice(&context, 0..2).expect("slice should exist");
     // Mutate the captured slots.
+
     {
-        layer.keys.as_slice_mut::<f32>()[0] = -1.0;
-        layer.keys.as_slice_mut::<f32>()[1] = -2.0;
-        layer.values.as_slice_mut::<f32>()[0] = -3.0;
-        layer.values.as_slice_mut::<f32>()[1] = -4.0;
+        layer.keys.write_typed(context.as_ref(), &[-1.0f32, -2.0f32], 0).unwrap();
+        layer.values.write_typed(context.as_ref(), &[-3.0f32, -4.0f32], 0).unwrap();
     }
 
-    layer.apply_slice(&slice, None);
+    let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
+    layer.apply_slice(&mut encoder, &slice, None);
+    encoder.end_submit_wait().unwrap();
 
-    let keys_after = layer.keys.as_slice::<f32>().to_vec();
-    let values_after = layer.values.as_slice::<f32>().to_vec();
+    let keys_after = layer.keys.read_typed::<f32>(context.as_ref()).unwrap().to_vec();
+    let values_after = layer.values.read_typed::<f32>(context.as_ref()).unwrap().to_vec();
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for contiguous slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
@@ -322,21 +318,21 @@ fn kv_cache_slice_apply_wrap_window() {
         4,
         0,
     );
-    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+    let (initial_keys, initial_values) = fill_arrays(context.as_ref(), &mut layer);
 
     let slice = layer.slice(&context, 2..4).expect("slice should exist");
     // Captured slots are expected to wrap; mutate them.
     {
-        layer.keys.as_slice_mut::<f32>()[2] = -11.0;
-        layer.keys.as_slice_mut::<f32>()[3] = -12.0;
-        layer.values.as_slice_mut::<f32>()[2] = -13.0;
-        layer.values.as_slice_mut::<f32>()[3] = -14.0;
+        layer.keys.write_typed(context.as_ref(), &[-11.0f32, -12.0f32], 2).unwrap();
+        layer.values.write_typed(context.as_ref(), &[-13.0f32, -14.0f32], 2).unwrap();
     }
 
-    layer.apply_slice(&slice, None);
+    let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
+    layer.apply_slice(&mut encoder, &slice, None);
+    encoder.end_submit_wait().unwrap();
 
-    let keys_after = layer.keys.as_slice::<f32>().to_vec();
-    let values_after = layer.values.as_slice::<f32>().to_vec();
+    let keys_after = layer.keys.read_typed::<f32>(&context).unwrap().to_vec();
+    let values_after = layer.values.read_typed::<f32>(&context).unwrap().to_vec();
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for wrapped slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }
@@ -366,7 +362,9 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         *prefix_len = 1;
     }
 
-    layer.apply_slice(&slice, None);
+    let mut encoder = Encoder::new(context.as_ref()).expect("encoder should exist");
+    layer.apply_slice(&mut encoder, &slice, None);
+    encoder.end_submit_wait().unwrap();
 
     if let KVCacheLayerState::Full {
         prefix_len,

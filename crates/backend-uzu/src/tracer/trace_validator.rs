@@ -290,9 +290,18 @@ impl<B: Backend> TraceValidator<B> {
             cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_transformer().map(|_| index)).collect()
         };
 
+        let cache_layers = state.cache_layers().unwrap().borrow();
         for index in transformer_layers {
-            let keys = state.array(ArrayId::Keys(index));
-            let values = state.array(ArrayId::Values(index));
+            let kv_cache_layer =
+                cache_layers.data[index].as_transformer().expect("Attention kernel expects transformer layer state");
+            let keys = kv_cache_layer
+                .keys
+                .to_array(ctx.context.as_ref())
+                .expect("Attention kernel keys expects transformer layer state");
+            let values = kv_cache_layer
+                .values
+                .to_array(ctx.context.as_ref())
+                .expect("Attention kernel values expects transformer layer state");
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
                 results.push(TracerValidationResult {

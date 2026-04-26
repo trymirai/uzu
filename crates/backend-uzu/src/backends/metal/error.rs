@@ -10,6 +10,8 @@ pub enum MetalError {
     CannotCreateLibrary(String),
     #[error("Cannot create command queue")]
     CannotCreateCommandQueue,
+    #[error("Cannot create command Metal 4 queue")]
+    CannotCreateCommandQueueMtl4,
     #[error("Cannot create buffer")]
     CannotCreateBuffer,
     #[error("Cannot create command buffer")]
@@ -22,4 +24,8 @@ pub enum MetalError {
     CannotCreateFunction,
     #[error("Cannot create pipeline state: {0}")]
     CannotCreatePipelineState(String),
+    #[error("Can not allocate buffer with size={0}")]
+    SparseBufferAlloc(usize),
+    #[error("Can not allocate heap with size={0} nad page size={1}")]
+    SparseHeapAlloc(usize, usize),
 }
