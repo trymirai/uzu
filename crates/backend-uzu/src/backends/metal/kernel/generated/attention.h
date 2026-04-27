@@ -6,19 +6,19 @@ using namespace metal;
 
 namespace uzu::attention {
 typedef struct {
-  int64_t q_strides[3];
-  int64_t k_strides[3];
-  int64_t v_strides[3];
-  int64_t o_strides[3];
-  int32_t gqa_factor;
+  uint64_t q_strides[3];
+  uint64_t k_strides[3];
+  uint64_t v_strides[3];
+  uint64_t o_strides[3];
+  uint32_t gqa_factor;
   float scale;
-  int32_t q_len;
-  int32_t k_len;
-  int32_t q_off;
-  int32_t nq_aligned;
-  int32_t q_rem;
-  int32_t nk;
-  int32_t nk_aligned;
-  int32_t k_rem;
+  uint32_t q_len;
+  uint32_t k_len;
+  uint32_t q_off;
+  uint32_t nq_aligned;
+  uint32_t q_rem;
+  uint32_t nk;
+  uint32_t nk_aligned;
+  uint32_t k_rem;
 } AttnParams;
 } // namespace uzu::attention
