@@ -31,6 +31,15 @@ impl Language {
         }
     }
 
+    pub fn display(&self) -> String {
+        match self {
+            Language::Rust => "Rust".to_string(),
+            Language::Python => "Python".to_string(),
+            Language::Swift => "Swift".to_string(),
+            Language::TypeScript => "TypeScript".to_string(),
+        }
+    }
+
     pub fn code_fence(&self) -> &'static str {
         match self {
             Language::Rust => "rust",

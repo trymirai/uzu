@@ -166,16 +166,16 @@ typescript = '![TypeScript](https://img.shields.io/badge/TypeScript-yellow)'
 typescript_package = '![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package)'
 typescript_downloads = '![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads)'
 swift = '![Swift](https://img.shields.io/badge/Swift-blue)'
-swift_platforms = '![Apple](https://img.shields.io/badge/Apple-iOS%20%7C%20macOS-blue)'
+swift_platforms = '![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)'
 swift_spm = '![SPM](https://img.shields.io/badge/SPM-compatible-blue)'
 swift_version = '[![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org)'
 
 [examples]
-quick-start = { title = "Quick Start", description = "" }
-chat = { title = "Chat", description = "In this example, we will download a model and get a reply to a specific list of messages:" }
-chat-cloud = { title = "Chat with the cloud model", description = "" }
-chat-speculation-summarization = { title = "Chat using speculation preset for summarization", description = "In this example, we will use the `summarization` speculation preset to generate a summary of the input text:" }
-chat-speculation-classification = { title = "Chat using speculation preset for classification", description = "In this example, we will use the `classification` speculation preset to determine the sentiment of the user's input:" }
-chat-structured-output = { title = "Chat with structured Output", description = "Sometimes you want the generated output to be valid JSON with predefined fields. You can use `GrammarConfig` to manually specify a JSON schema, or use a struct annotated with `@Generable` from Apple’s FoundationModels framework." }
-classification = { title = "Classification", description = "" }
-text-to-speech = { title = "Text to Speech", description = "" }
+quick-start = { title = "Quick Start", description = "Minimal snippet that downloads a model and generates a single reply" }
+chat = { title = "Chat", description = "In this example, we will download a model and get a reply to a specific list of messages:", explanation = "Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend adding the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) entitlement to ensure your app can allocate the required memory." }
+chat-cloud = { title = "Chat with the cloud model", description = "In this example, we will get a reply to a specific list of messages from a cloud model:" }
+chat-speculation-summarization = { title = "Chat using speculation preset for summarization", description = "In this example, we will use the `summarization` speculation preset to generate a summary of the input text:", explanation = "You will notice that the model’s run count is lower than the actual number of generated tokens due to speculative decoding, which significantly improves generation speed." }
+chat-speculation-classification = { title = "Chat using speculation preset for classification", description = "In this example, we will use the `classification` speculation preset to determine the sentiment of the user's input:", explanation = "You can view the stats to see that the answer will be ready immediately after the prefill step, and actual generation won’t even start due to speculative decoding, which significantly improves generation speed." }
+chat-structured-output = { title = "Chat with structured output", description = "Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:" }
+classification = { title = "Classification", description = "In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:" }
+text-to-speech = { title = "Text to Speech", description = "In this example, we will generate audio from text:" }

@@ -17,6 +17,7 @@ pub const ALL_TARGET: &str = "all";
 pub struct ExampleConfig {
     pub title: String,
     pub description: String,
+    pub explanation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
