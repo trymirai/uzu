@@ -18,7 +18,6 @@ PUBLIC KERNEL(KVCacheUpdate) (
     const constant uzu::kv_cache_update::Swap* swaps,
     const constant uint& swap_count,
     const constant uint& num_heads,
-    const constant uint& max_sequence_length,
     const constant uint& head_dim,
     const uint head_idx AXIS(num_heads, 32),
     const uint channel_idx AXIS(head_dim, 32)

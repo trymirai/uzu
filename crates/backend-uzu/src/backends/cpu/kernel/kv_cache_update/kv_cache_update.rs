@@ -12,14 +12,13 @@ pub fn kv_cache_update<T: ArrayElement + Float>(
     swaps: &[crate::backends::common::gpu_types::kv_cache_update::Swap],
     swap_count: u32,
     num_heads: u32,
-    max_sequence_length: u32,
     head_dim: u32,
 ) {
     let num_heads = num_heads as usize;
     let head_dim = head_dim as usize;
 
-    // Token-major layout: [max_sequence_length, num_heads, head_dim]
-    // Stride between tokens: num_heads * head_dim; stride between heads: head_dim.
+    // Stride between tokens: num_heads * head_dim;
+    // Stride between heads: head_dim.
     for head_idx in 0..num_heads {
         for channel_idx in 0..head_dim {
             for i in 0..swap_count as usize {

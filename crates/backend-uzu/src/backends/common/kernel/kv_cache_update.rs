@@ -75,7 +75,7 @@ impl<B: Backend> KVCacheUpdate<B> {
                 return Err(KVCacheUpdateError::ShapeMismatch);
             }
 
-            let [max_sequence_length, num_heads, head_dim] = layer_data.key_shape;
+            let [_, num_heads, head_dim] = layer_data.key_shape;
 
             // non-inline is not supported yet (and is broken anyways due to a data race)
             for swaps_chunk in swaps.chunks(max_inline_swaps) {
@@ -85,7 +85,6 @@ impl<B: Backend> KVCacheUpdate<B> {
                     swaps_chunk,
                     swaps_chunk.len() as u32,
                     num_heads as u32,
-                    max_sequence_length as u32,
                     head_dim as u32,
                     encoder,
                 );
