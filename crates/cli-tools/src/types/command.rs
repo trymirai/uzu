@@ -234,7 +234,7 @@ impl Command {
         target: String,
         features: Vec<String>,
         configuration: Configuration,
-        output_dir: PathBuf,
+        output_path: PathBuf,
     ) -> Self {
         let cross_flag = if target.contains("linux-gnu") {
             "--use-napi-cross"
@@ -250,13 +250,57 @@ impl Command {
             .with_arguments(vec!["--features".to_string(), features.join(",")])
             .with_argument("--platform")
             .with_argument("--output-dir")
-            .with_argument(&output_dir.to_string_lossy())
+            .with_argument(&output_path.to_string_lossy())
             .with_argument(cross_flag);
         command = match configuration {
             Configuration::Debug => command,
             Configuration::Release => command.with_argument("--release"),
         };
         command
+    }
+}
+
+impl Command {
+    pub fn cargo_swift_package(
+        name: String,
+        target: String,
+        features: Vec<String>,
+        configuration: Configuration,
+    ) -> Self {
+        let mut command = Self::new("cargo")
+            .with_argument("swift")
+            .with_argument("package")
+            .with_arguments(vec!["--name".to_string(), name.clone()])
+            .with_arguments(vec!["--xcframework-name".to_string(), name.clone()])
+            .with_arguments(vec!["--target".to_string(), target])
+            .with_argument("--no-default-features")
+            .with_arguments(vec!["--features".to_string(), features.join(",")])
+            .with_argument("-y");
+        command = match configuration {
+            Configuration::Debug => command,
+            Configuration::Release => command.with_argument("--release"),
+        };
+        command
+    }
+
+    pub fn xcodebuild_create_xcframework(
+        slice_libraries_with_headers_paths: Vec<(PathBuf, PathBuf)>,
+        output_path: PathBuf,
+    ) -> Self {
+        let mut command = Self::new("xcodebuild").with_argument("-create-xcframework");
+        for (library_path, headers_path) in slice_libraries_with_headers_paths {
+            command = command.with_arguments(vec!["-library".to_string(), library_path.to_string_lossy().to_string()]);
+            command = command.with_arguments(vec!["-headers".to_string(), headers_path.to_string_lossy().to_string()]);
+        }
+        command.with_arguments(vec!["-output".to_string(), output_path.to_string_lossy().to_string()])
+    }
+
+    pub fn codesign_adhoc(path: PathBuf) -> Self {
+        Self::new("codesign")
+            .with_argument("--force")
+            .with_argument("--sign")
+            .with_argument("-")
+            .with_argument(&path.to_string_lossy())
     }
 }
 

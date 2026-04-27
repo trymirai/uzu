@@ -1,6 +1,7 @@
 mod python;
 mod rust;
 mod swift;
+mod swift_extensions;
 mod typescript;
 
 use anyhow::{Result, anyhow};
@@ -8,6 +9,7 @@ use colored::Colorize;
 pub use python::PythonLanguageBackend;
 pub use rust::RustLanguageBackend;
 pub use swift::SwiftLanguageBackend;
+pub use swift_extensions::generate_swift_extensions;
 pub use typescript::TypeScriptLanguageBackend;
 
 use crate::{
@@ -72,7 +74,7 @@ pub trait LanguageBackend {
         let targets = resolved_targets
             .iter()
             .map(|target| {
-                println!("Resolving target: {},", target.green());
+                println!("Resolving target: {}", target.green());
 
                 let backend = self.config().backend_for_target(target.clone())?;
                 let resolved_capabilities =

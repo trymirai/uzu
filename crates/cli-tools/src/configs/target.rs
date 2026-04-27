@@ -9,4 +9,6 @@ pub struct TargetConfig {
     pub aliases: Vec<String>,
     pub capabilities_supported: Vec<Capability>,
     pub capabilities_default: Vec<Capability>,
+    #[serde(default)]
+    pub required_envs: Vec<String>,
 }

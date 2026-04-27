@@ -24,6 +24,10 @@ impl Paths {
         })
     }
 
+    pub fn artifacts_path(&self) -> PathBuf {
+        self.root_path.join("target").join("cli-tools")
+    }
+
     pub fn platforms_toml(&self) -> PathBuf {
         self.root_path.join("platforms.toml")
     }
@@ -59,5 +63,17 @@ impl Paths {
 
     pub fn napi_output_path(&self) -> PathBuf {
         self.bindings_for_language_path(Language::TypeScript).join("src").join("napi")
+    }
+
+    pub fn swift_xcframework_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::Swift).join(format!("{}.xcframework", self.main_crate))
+    }
+
+    pub fn swift_generated_sources_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::Swift).join("Sources").join("Uzu").join("Generated")
+    }
+
+    pub fn swift_slices_path(&self) -> PathBuf {
+        self.artifacts_path().join("swift").join("slices")
     }
 }

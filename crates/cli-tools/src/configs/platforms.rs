@@ -122,4 +122,17 @@ impl PlatformsConfig {
         let language_config = self.languages.get(&language).context("Language not found")?;
         Ok(language_config.bindings.clone())
     }
+
+    pub fn required_envs_for_target(
+        &self,
+        target: String,
+    ) -> Result<IndexMap<String, String>> {
+        let target_config = self.targets.get(&target).context("Target not found")?;
+        let required_envs = target_config.required_envs.clone();
+        let mut envs = IndexMap::new();
+        for env in required_envs {
+            envs.insert(env.clone(), self.envs.get(&env).context("Environment variable not found")?.clone());
+        }
+        Ok(envs)
+    }
 }

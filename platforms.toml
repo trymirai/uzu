@@ -19,24 +19,28 @@ backend = "metal"
 aliases = ["apple", "macos"]
 capabilities_supported = ["grammar", "tracing"]
 capabilities_default = ["grammar"]
+required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 
 [targets."x86_64-apple-darwin"]
 backend = "cpu"
 aliases = ["apple", "macos-intel"]
 capabilities_supported = ["grammar"]
 capabilities_default = ["grammar"]
+required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios"]
 backend = "metal"
 aliases = ["apple", "ios"]
 capabilities_supported = ["grammar", "tracing"]
 capabilities_default = ["grammar"]
+required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios-sim"]
 backend = "metal"
 aliases = ["apple", "ios-sim", "ios-simulator"]
 capabilities_supported = ["grammar", "tracing"]
 capabilities_default = ["grammar"]
+required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-unknown-linux-gnu"]
 backend = "cpu"
