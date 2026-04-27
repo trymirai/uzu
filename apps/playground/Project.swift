@@ -115,7 +115,9 @@ let appScheme: Scheme = .scheme(
                     set -euo pipefail
                     [ -d "$HOME/.cargo/bin" ] && export PATH="$HOME/.cargo/bin:$PATH"
                     [ -d "/opt/homebrew/bin" ] && export PATH="/opt/homebrew/bin:$PATH"
-                    unset SDKROOT DEVELOPER_DIR_OVERRIDE
+                    unset SDKROOT DEVELOPER_DIR_OVERRIDE \
+                          SWIFT_DEBUG_INFORMATION_FORMAT SWIFT_DEBUG_INFORMATION_VERSION \
+                          DEBUG_INFORMATION_FORMAT
                     case "${PLATFORM_NAME:-macosx}" in
                       iphonesimulator) TARGET=ios-sim ;;
                       iphoneos)        TARGET=ios ;;
