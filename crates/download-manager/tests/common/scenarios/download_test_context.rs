@@ -85,10 +85,9 @@ impl DownloadTestContext {
         &self,
         state: &FileDownloadState,
     ) {
-        assert!(
-            state.downloaded_bytes >= self.payload.file.size as u64,
-            "terminal state should report at least the file size"
-        );
+        assert!(matches!(state.phase, FileDownloadPhase::Downloaded));
+        assert_eq!(state.downloaded_bytes, self.payload.file.size as u64);
+        assert_eq!(state.total_bytes, self.payload.file.size as u64);
         assert_eq!(tokio_read(&self.destination).await.expect("downloaded file missing"), self.payload.bytes.to_vec());
         assert!(
             PathBuf::from(format!("{}.crc", self.destination.display())).exists(),
@@ -99,10 +98,11 @@ impl DownloadTestContext {
     pub async fn expect_no_temp_artifacts(&self) {
         tokio_timeout(Duration::from_secs(2), async {
             loop {
-                let artifacts = [".part", ".lock", ".resume_data"]
+                let mut artifacts = [".part", ".lock", ".resume_data"]
                     .into_iter()
                     .map(|suffix| PathBuf::from(format!("{}{}", self.destination.display(), suffix)))
                     .collect::<Vec<_>>();
+                artifacts.push(self.destination.with_extension("part"));
                 if artifacts.iter().all(|path| !path.exists()) {
                     return;
                 }

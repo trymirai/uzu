@@ -17,21 +17,3 @@ pub enum LockFileState {
     /// Lock exists but is stale (different manager_id, timeout expired)
     Stale(LockFileInfo),
 }
-
-impl LockFileState {
-    /// Check if we can safely acquire or use this lock
-    pub fn can_proceed(&self) -> bool {
-        matches!(
-            self,
-            LockFileState::Missing
-                | LockFileState::OwnedByUs(_)
-                | LockFileState::OwnedBySameAppOldProcess(_)
-                | LockFileState::Stale(_)
-        )
-    }
-
-    /// Check if this is a blocking conflict
-    pub fn is_conflict(&self) -> bool {
-        matches!(self, LockFileState::OwnedByOtherApp(_))
-    }
-}

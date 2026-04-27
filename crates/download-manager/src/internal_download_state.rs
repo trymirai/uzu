@@ -9,10 +9,7 @@ pub enum StateTransitionAction {
 
 #[derive(Debug)]
 pub enum InternalDownloadState<Task> {
-    Downloaded {
-        file_path: PathBuf,
-        crc_path: Option<PathBuf>,
-    },
+    Downloaded,
     Downloading {
         task: Task,
     },
@@ -41,12 +38,7 @@ impl<Task> InternalDownloadState<Task> {
                 },
                 StateTransitionAction::Download,
             ) => Ok(()),
-            (
-                InternalDownloadState::Downloaded {
-                    ..
-                },
-                StateTransitionAction::Download,
-            ) => Ok(()),
+            (InternalDownloadState::Downloaded, StateTransitionAction::Download) => Ok(()),
 
             (
                 InternalDownloadState::Downloading {
@@ -60,12 +52,7 @@ impl<Task> InternalDownloadState<Task> {
                 },
                 StateTransitionAction::Pause,
             ) => Ok(()),
-            (
-                InternalDownloadState::Downloaded {
-                    ..
-                },
-                StateTransitionAction::Pause,
-            ) => Ok(()),
+            (InternalDownloadState::Downloaded, StateTransitionAction::Pause) => Ok(()),
             (InternalDownloadState::NotDownloaded, StateTransitionAction::Pause) => {
                 Err(DownloadError::InvalidStateTransition)
             },

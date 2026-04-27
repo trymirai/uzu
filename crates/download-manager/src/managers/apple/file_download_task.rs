@@ -21,7 +21,7 @@ pub struct FileDownloadTask {
     expected_bytes: Option<u64>,
     state: Arc<TokioMutex<FileDownloadState>>,
     broadcast_sender: TokioBroadcastSender<FileDownloadState>,
-    internal_state: TokioMutex<InternalDownloadState<Retained<NSURLSessionDownloadTask>>>,
+    internal_state: Arc<TokioMutex<InternalDownloadState<Retained<NSURLSessionDownloadTask>>>>,
     session: Option<Retained<NSURLSession>>,
     listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     tokio_handle: TokioHandle,
@@ -66,7 +66,7 @@ impl FileDownloadTask {
             expected_bytes,
             state: Arc::new(TokioMutex::new(initial_state)),
             broadcast_sender,
-            internal_state: TokioMutex::new(internal_state),
+            internal_state: Arc::new(TokioMutex::new(internal_state)),
             session,
             listener_task: Arc::new(TokioMutex::new(None)),
             tokio_handle,
@@ -144,6 +144,16 @@ impl FileDownloadTask {
         self.broadcast_sender.clone()
     }
 
+    fn active_lock_error(&self) -> Option<DownloadError> {
+        match check_lock_file(&self.lock_path(), &self.manager_id, std::process::id()) {
+            LockFileState::OwnedByOtherApp(info) => Some(DownloadError::LockedByOther(info.manager_id)),
+            LockFileState::Missing
+            | LockFileState::OwnedByUs(_)
+            | LockFileState::OwnedBySameAppOldProcess(_)
+            | LockFileState::Stale(_) => None,
+        }
+    }
+
     pub async fn update_state_and_broadcast(
         &self,
         new_state: FileDownloadState,
@@ -206,14 +216,23 @@ impl FileDownloadTask {
                 InternalDownloadState::Paused {
                     ..
                 } => "Paused",
-                InternalDownloadState::Downloaded {
-                    ..
-                } => "Downloaded",
+                InternalDownloadState::Downloaded => "Downloaded",
             }
         );
 
         match &*internal_state_guard {
             InternalDownloadState::NotDownloaded => {
+                if let Some(error) = self.active_lock_error() {
+                    return Err(error);
+                }
+                acquire_lock(&self.tokio_handle, &self.lock_path(), &self.manager_id).await.map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        DownloadError::LockedByOther("unknown".to_string())
+                    } else {
+                        DownloadError::Io(error)
+                    }
+                })?;
+
                 tracing::debug!("[FILE_TASK] Creating new download task for: {}", self.source_url);
                 let session = self.session.as_ref().ok_or(DownloadError::TaskNotFoundAfterCreation)?;
                 let download_task = session.download_task_with_url(&self.source_url)?;
@@ -259,6 +278,17 @@ impl FileDownloadTask {
             InternalDownloadState::Paused {
                 part_path: saved_resume_path,
             } => {
+                if let Some(error) = self.active_lock_error() {
+                    return Err(error);
+                }
+                acquire_lock(&self.tokio_handle, &self.lock_path(), &self.manager_id).await.map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        DownloadError::LockedByOther("unknown".to_string())
+                    } else {
+                        DownloadError::Io(error)
+                    }
+                })?;
+
                 tracing::debug!("[FILE_TASK] Resuming from paused state, resume_path={:?}", saved_resume_path);
 
                 let resume_path = saved_resume_path.clone();
@@ -402,9 +432,7 @@ impl FileDownloadTask {
                 self.reconcile_lock_state().await;
                 Ok(())
             },
-            InternalDownloadState::Downloaded {
-                ..
-            } => {
+            InternalDownloadState::Downloaded => {
                 tracing::debug!("[FILE_TASK] Already downloaded, broadcasting current state");
                 let current_state = self.state.lock().await.clone();
                 self.update_state_and_broadcast(current_state).await;
@@ -429,9 +457,7 @@ impl FileDownloadTask {
                 InternalDownloadState::Paused {
                     ..
                 } => "Paused",
-                InternalDownloadState::Downloaded {
-                    ..
-                } => "Downloaded",
+                InternalDownloadState::Downloaded => "Downloaded",
             }
         );
 
@@ -462,9 +488,7 @@ impl FileDownloadTask {
 
                 Ok(())
             },
-            InternalDownloadState::Downloaded {
-                ..
-            } => Ok(()),
+            InternalDownloadState::Downloaded => Ok(()),
             _ => Ok(()),
         }
     }
@@ -484,9 +508,7 @@ impl FileDownloadTask {
                 InternalDownloadState::Paused {
                     ..
                 } => "Paused",
-                InternalDownloadState::Downloaded {
-                    ..
-                } => "Downloaded",
+                InternalDownloadState::Downloaded => "Downloaded",
             }
         );
 
@@ -575,8 +597,13 @@ impl FileDownloadTask {
         };
 
         // Reduce to checked file state (validates CRC if needed)
-        let checked_file_state =
-            reduce_to_checked_file_state(downloaded_file_state, crc_file_state, &self.destination, expected_crc);
+        let checked_file_state = reduce_to_checked_file_state(
+            downloaded_file_state,
+            crc_file_state,
+            &self.destination,
+            self.expected_bytes,
+            expected_crc,
+        );
 
         tracing::debug!("[FILE_TASK] Checked file state: {:?}", checked_file_state);
 
@@ -654,6 +681,7 @@ impl FileDownloadTask {
         error_message: String,
     ) {
         let error_state = FileDownloadState::error(error_message);
+        *self.internal_state.lock().await = InternalDownloadState::NotDownloaded;
         self.update_state_and_broadcast(error_state).await;
         // On errors, ensure lock is released
         self.reconcile_lock_state().await;
@@ -759,7 +787,7 @@ impl FileDownloadTask {
             expected_bytes: self.expected_bytes,
             state: self.state.clone(),
             broadcast_sender: self.broadcast_sender.clone(),
-            internal_state: TokioMutex::new(InternalDownloadState::NotDownloaded),
+            internal_state: self.internal_state.clone(),
             session: self.session.clone(),
             listener_task: Arc::new(TokioMutex::new(None)),
             tokio_handle: self.tokio_handle.clone(),

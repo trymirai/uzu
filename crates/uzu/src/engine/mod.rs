@@ -78,6 +78,7 @@ impl Engine {
 
             let mirai_registry_config = MiraiRegistryConfig {
                 api_key: config.mirai_api_key,
+                base_url: Default::default(),
                 device: device.clone(),
                 backends: vec![MiraiBackend {
                     identifier: uzu_backend_identifier.clone(),

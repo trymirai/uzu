@@ -26,8 +26,7 @@ impl Registry {
             headers.insert(AUTHORIZATION.to_string(), format!("Bearer {}", api_key));
         }
 
-        let client_config =
-            ClientConfig::new("https://sdk.trymirai.com/api/v1".to_string(), Duration::from_secs(10), headers);
+        let client_config = ClientConfig::new(config.base_url.clone(), Duration::from_secs(10), headers);
         let client = Client::new(client_config).map_err(|error| RegistryError::UnableToCreate {
             message: error.to_string(),
         })?;

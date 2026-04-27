@@ -39,6 +39,7 @@ impl MockDownloadServer {
         let address = listener.local_addr().expect("failed to read mock server address");
         let state = Arc::new(ServerState {
             routes: RwLock::new(HashMap::new()),
+            json_routes: RwLock::new(HashMap::new()),
             records: TokioMutex::new(Vec::new()),
             bytes_sent_by_path: TokioMutex::new(HashMap::new()),
             request_counts_by_route: TokioMutex::new(HashMap::new()),
@@ -100,6 +101,14 @@ impl MockDownloadServer {
         for payload in fixture.payloads() {
             self.serve_file(payload, behavior.clone()).await;
         }
+    }
+
+    pub async fn serve_json(
+        &self,
+        path: &str,
+        json: String,
+    ) {
+        self.state.json_routes.write().await.insert(path.to_string(), json);
     }
 
     pub async fn release_stall(
@@ -167,6 +176,22 @@ async fn handle_connection(
         return Ok(());
     };
 
+    if let Some(json) = state.json_routes.read().await.get(&request.path).cloned() {
+        let order = state.next_order.fetch_add(1, Ordering::SeqCst);
+        state.records.lock().await.push(RequestRecord {
+            order,
+            method: request.method.clone(),
+            path: request.path.clone(),
+            headers: request.headers.clone(),
+            range: request.range,
+            status: 0,
+            bytes_sent: 0,
+        });
+        let bytes_sent = respond_json(&mut stream, &json).await?;
+        update_record(&state, order, 200, bytes_sent).await;
+        return Ok(());
+    }
+
     let route = state.routes.read().await.get(&request.path).cloned();
     let Some(route) = route else {
         respond_empty(&mut stream, 404, "Not Found").await?;
@@ -195,14 +220,25 @@ async fn handle_connection(
             failures,
             status,
         } if request_count <= *failures => respond_empty(&mut stream, *status, "retryable failure").await?,
-        RouteBehavior::RedirectTo {
-            target,
-        } => respond_redirect(&mut stream, target).await?,
         _ => respond_with_file(&mut stream, &state, &request, &route).await?,
     };
 
     update_record(&state, order, bytes_sent.0, bytes_sent.1).await;
     Ok(())
+}
+
+async fn respond_json(
+    stream: &mut TcpStream,
+    json: &str,
+) -> IoResult<u64> {
+    let body = json.as_bytes();
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    stream.write_all(body).await?;
+    Ok(body.len() as u64)
 }
 
 async fn respond_with_file(
@@ -234,9 +270,8 @@ async fn respond_with_file(
 
     let body = &source_bytes[body_start as usize..body_end_exclusive as usize];
     let advertised_length = match route.behavior {
-        RouteBehavior::WrongContentLength => Some((body.len() as u64 / 2).max(1)),
-        RouteBehavior::NoContentLength => None,
-        _ => Some(body.len() as u64),
+        RouteBehavior::WrongContentLength => (body.len() as u64 / 2).max(1),
+        _ => body.len() as u64,
     };
     let mut header_lines = vec![
         format!("HTTP/1.1 {} {}\r\n", status, reason_phrase(status)),
@@ -247,19 +282,10 @@ async fn respond_with_file(
     if range_supported {
         header_lines.push("Accept-Ranges: bytes\r\n".to_string());
     }
-    if let Some(content_length) = advertised_length {
-        header_lines.push(format!("Content-Length: {}\r\n", content_length));
-    }
+    header_lines.push(format!("Content-Length: {}\r\n", advertised_length));
     if status == 206 {
-        let content_range = match route.behavior {
-            RouteBehavior::InvalidRangeResponse => format!("Content-Range: bytes 0-0/{}\r\n", file_size),
-            _ => format!(
-                "Content-Range: bytes {}-{}/{}\r\n",
-                body_start,
-                body_end_exclusive.saturating_sub(1),
-                file_size
-            ),
-        };
+        let content_range =
+            format!("Content-Range: bytes {}-{}/{}\r\n", body_start, body_end_exclusive.saturating_sub(1), file_size);
         header_lines.push(content_range);
     }
     header_lines.push("\r\n".to_string());
@@ -364,16 +390,6 @@ async fn respond_empty(
     stream.write_all(headers.as_bytes()).await?;
     stream.write_all(body).await?;
     Ok((status, body.len() as u64))
-}
-
-async fn respond_redirect(
-    stream: &mut TcpStream,
-    target: &str,
-) -> IoResult<(u16, u64)> {
-    let headers =
-        format!("HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: {}\r\nContent-Length: 0\r\n\r\n", target);
-    stream.write_all(headers.as_bytes()).await?;
-    Ok((302, 0))
 }
 
 async fn respond_range_not_satisfiable(

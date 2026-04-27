@@ -78,7 +78,7 @@ define_class!(
             if let Some(download_info) = download_task.download_info() {
                 let final_destination = PathBuf::from(&download_info.destination_path);
                 if let Some(parent_dir) = final_destination.parent() {
-                    let _ = fs::create_dir_all(parent_dir);
+                    let _ = std::fs::create_dir_all(parent_dir);
 
                     tracing::debug!("[DELEGATE] Moving file from temp to final destination...");
 
@@ -86,7 +86,7 @@ define_class!(
                         Ok(_) => true,
                         Err(_) => match std::fs::copy(&tmp_path, &final_destination) {
                             Ok(_) => {
-                                let _ = fs::remove_file(&tmp_path);
+                                let _ = std::fs::remove_file(&tmp_path);
                                 true
                             },
                             Err(_) => false,
@@ -138,7 +138,7 @@ define_class!(
                 let dest = PathBuf::from(&info.destination_path);
                 let resume_path = format!("{}.resume_data", dest.display());
                 if PathBuf::from(&resume_path).exists() {
-                    let _ = fs::remove_file(&resume_path);
+                    let _ = std::fs::remove_file(&resume_path);
                 }
             }
 

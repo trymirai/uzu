@@ -17,7 +17,7 @@ pub mod managers;
 mod prelude;
 mod utils;
 
-pub use checked_file_state::CheckedFileState;
+pub(crate) use checked_file_state::CheckedFileState;
 pub use download_error::DownloadError;
 pub use download_info::DownloadInfo;
 pub use file_check::FileCheck;
@@ -26,11 +26,11 @@ pub use file_download_manager::{FileDownloadManager, FileDownloadManagerType, cr
 pub use file_download_phase::FileDownloadPhase;
 pub use file_download_state::FileDownloadState;
 pub use file_download_task::FileDownloadTask;
-pub use file_state::{CRCFileState, DownloadedFileState, FileState, ResumeDataFileState};
-pub use internal_download_state::{InternalDownloadState, StateTransitionAction};
-pub use lock_file_info::LockFileInfo;
-pub use lock_file_state::LockFileState;
-pub use lock_manager::{acquire_lock, check_lock_file, release_lock};
+pub(crate) use file_state::{CRCFileState, DownloadedFileState, FileState, ResumeDataFileState};
+pub(crate) use internal_download_state::{InternalDownloadState, StateTransitionAction};
+pub(crate) use lock_file_info::LockFileInfo;
+pub(crate) use lock_file_state::LockFileState;
+pub(crate) use lock_manager::{acquire_lock, check_lock_file, release_lock};
 pub use utils::compute_download_id;
 
 pub type DownloadId = uuid::Uuid;

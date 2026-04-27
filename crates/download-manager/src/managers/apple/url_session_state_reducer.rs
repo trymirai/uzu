@@ -119,6 +119,7 @@ pub fn reduce_to_checked_file_state(
     file_state: DownloadedFileState,
     crc_file_state: CRCFileState,
     file_path: &Path,
+    expected_bytes: Option<u64>,
     expected_crc: Option<&str>,
 ) -> CheckedFileState {
     tracing::info!(
@@ -137,7 +138,9 @@ pub fn reduce_to_checked_file_state(
         (DownloadedFileState::Exists, CRCFileState::Exists, Some(expected)) => {
             let crc_path = format!("{}.crc", file_path.display());
             if let Ok(saved_crc) = std::fs::read_to_string(&crc_path) {
-                if saved_crc.trim() == expected {
+                let file_size_matches_expected = expected_bytes
+                    .is_some_and(|bytes| std::fs::metadata(file_path).is_ok_and(|metadata| metadata.len() == bytes));
+                if saved_crc.trim() == expected && file_size_matches_expected {
                     tracing::debug!("[REDUCE_CHECKED] ✓ Using cached CRC for {}", file_path.display());
                     CheckedFileState::Valid
                 } else {
@@ -375,27 +378,13 @@ pub async fn reconcile_to_internal_state(
         (CheckedFileState::Valid, ResumeDataFileState::Missing, None) => {
             tracing::info!("[RECONCILE] Case 1: Valid file, no resume, no task → Downloaded");
 
-            InternalDownloadState::Downloaded {
-                file_path: file_path.to_path_buf(),
-                crc_path: if crc_path_buf.exists() {
-                    Some(crc_path_buf)
-                } else {
-                    None
-                },
-            }
+            InternalDownloadState::Downloaded
         },
         (CheckedFileState::Valid, ResumeDataFileState::Exists, None) => {
             tracing::info!("[RECONCILE] Case 2: Valid file, has resume, no task → Downloaded (delete resume)");
 
             let _ = std::fs::remove_file(resume_path);
-            InternalDownloadState::Downloaded {
-                file_path: file_path.to_path_buf(),
-                crc_path: if crc_path_buf.exists() {
-                    Some(crc_path_buf)
-                } else {
-                    None
-                },
-            }
+            InternalDownloadState::Downloaded
         },
 
         // Cases 3-10: Valid file with any task - cancel task, cleanup
@@ -406,14 +395,7 @@ pub async fn reconcile_to_internal_state(
             if resume_file == ResumeDataFileState::Exists {
                 let _ = std::fs::remove_file(resume_path);
             }
-            InternalDownloadState::Downloaded {
-                file_path: file_path.to_path_buf(),
-                crc_path: if crc_path_buf.exists() {
-                    Some(crc_path_buf)
-                } else {
-                    None
-                },
-            }
+            InternalDownloadState::Downloaded
         },
 
         // Case 11: Invalid file, no resume, no task

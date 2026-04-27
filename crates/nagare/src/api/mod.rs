@@ -4,6 +4,6 @@ mod endpoint;
 mod error;
 
 pub use client::Client;
-pub use config::Config;
+pub use config::{BaseUrl, Config};
 pub use endpoint::{Endpoint, Payload};
 pub use error::Error;

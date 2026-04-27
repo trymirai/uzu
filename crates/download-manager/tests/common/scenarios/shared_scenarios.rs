@@ -1,7 +1,8 @@
-use std::time::Duration;
-
 use download_manager::{FileDownloadManagerType, create_download_manager};
-use tokio::{runtime::Handle as TokioHandle, time::sleep as tokio_sleep};
+use tokio::{
+    runtime::Handle as TokioHandle,
+    time::{Duration, sleep as tokio_sleep, timeout as tokio_timeout},
+};
 use uuid::Uuid;
 
 use crate::common::{
@@ -53,11 +54,6 @@ pub async fn run_cancel_redownload_scenario(download_manager_type: FileDownloadM
     assert!(progress_state.downloaded_bytes > 0, "download should report positive progress before cancel");
     task.cancel().await.expect("failed to cancel download");
     wait_for_phase_kind(&task, &mut progress, PhaseKind::NotDownloaded).await;
-    tokio_sleep(Duration::from_millis(200)).await;
-
-    if download_manager_type == FileDownloadManagerType::Universal {
-        return;
-    }
 
     task.download().await.expect("failed to resume download");
     let state = wait_for_phase_kind(&task, &mut progress, PhaseKind::Downloaded).await;
@@ -91,9 +87,16 @@ pub async fn run_pause_resume_scenario(download_manager_type: FileDownloadManage
     if download_manager_type == FileDownloadManagerType::Apple {
         assert!(paused_state.downloaded_bytes > 0, "Apple pause should preserve positive progress");
     }
+
+    tokio_timeout(Duration::from_secs(2), async {
+        while context.lock_path().exists() {
+            tokio_sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("lock should be released after pause");
     tokio_sleep(Duration::from_millis(200)).await;
 
-    context.release_stall().await;
     task.download().await.expect("failed to resume download");
     let state = wait_for_phase_kind(&task, &mut progress, PhaseKind::Downloaded).await;
     context.assert_downloaded(&state).await;

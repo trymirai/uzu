@@ -35,6 +35,7 @@ pub fn reduce_to_checked_file_state(
     downloaded_file_state: FileState,
     crc_file_state: FileState,
     destination: &Path,
+    expected_bytes: Option<u64>,
     expected_crc: Option<&str>,
 ) -> CheckedFileState {
     tracing::info!(
@@ -52,7 +53,9 @@ pub fn reduce_to_checked_file_state(
         (FileState::Exists, FileState::Exists, Some(expected_crc_value)) => {
             let crc_path = format!("{}.crc", destination.display());
             if let Ok(saved_crc) = std::fs::read_to_string(&crc_path) {
-                if saved_crc.trim() == expected_crc_value {
+                let file_size_matches_expected = expected_bytes
+                    .is_some_and(|bytes| std::fs::metadata(destination).is_ok_and(|metadata| metadata.len() == bytes));
+                if saved_crc.trim() == expected_crc_value && file_size_matches_expected {
                     tracing::debug!("[AF REDUCE_CHECKED] ✓ Using cached CRC for {}", destination.display());
                     // Cached CRC matches - fast path!
                     CheckedFileState::Valid
@@ -157,19 +160,12 @@ pub async fn reconcile_to_internal_state(
                     let _ = save_crc_file(destination, crc_value);
                 }
             }
-            let _ = fs::remove_file(part_file_path);
-            InternalDownloadState::Downloaded {
-                file_path: destination.to_path_buf(),
-                crc_path: if crc_file_path.exists() {
-                    Some(crc_file_path.to_path_buf())
-                } else {
-                    None
-                },
-            }
+            let _ = fs::remove_file(part_file_path).await;
+            InternalDownloadState::Downloaded
         },
         CheckedFileState::Invalid => {
-            let _ = fs::remove_file(destination);
-            let _ = fs::remove_file(crc_file_path);
+            let _ = fs::remove_file(destination).await;
+            let _ = fs::remove_file(crc_file_path).await;
             match part_file_state {
                 FileState::Exists => InternalDownloadState::Paused {
                     part_path: part_file_path.to_path_buf(),

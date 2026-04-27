@@ -6,4 +6,5 @@ pub mod multi_connection_ranges_test;
 pub mod no_range_support_test;
 pub mod pause_resume_partial_state_test;
 pub mod retry_transient_error_test;
+pub mod state_and_lock_regression_test;
 pub mod wrong_content_length_test;

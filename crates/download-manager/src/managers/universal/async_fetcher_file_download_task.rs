@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use async_fetcher::{FetchEvent, Fetcher, Source};
 use async_shutdown::ShutdownManager;
 use tokio::sync::mpsc;
@@ -22,12 +24,13 @@ pub struct FileDownloadTask {
     expected_bytes: Option<u64>,
     state: Arc<TokioMutex<FileDownloadState>>,
     broadcast_sender: TokioBroadcastSender<FileDownloadState>,
-    internal_state: TokioMutex<InternalDownloadState<()>>,
+    internal_state: Arc<TokioMutex<InternalDownloadState<()>>>,
     config: AsyncFetcherConfig,
     shutdown_manager: Arc<TokioMutex<Option<ShutdownManager<()>>>>,
     listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     tokio_handle: TokioHandle,
     completed_tx: tokio::sync::watch::Sender<bool>,
+    generation: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for FileDownloadTask {
@@ -68,12 +71,13 @@ impl FileDownloadTask {
             expected_bytes,
             state: Arc::new(TokioMutex::new(initial_state)),
             broadcast_sender,
-            internal_state: TokioMutex::new(internal_state),
+            internal_state: Arc::new(TokioMutex::new(internal_state)),
             config,
             shutdown_manager: Arc::new(TokioMutex::new(None)),
             listener_task: Arc::new(TokioMutex::new(None)),
             tokio_handle,
             completed_tx,
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -120,22 +124,14 @@ impl FileDownloadTask {
         self.broadcast_sender.clone()
     }
 
-    pub async fn update_state_and_broadcast(
-        &self,
+    async fn write_state_and_broadcast(
+        state: &Arc<TokioMutex<FileDownloadState>>,
+        broadcast_sender: &TokioBroadcastSender<FileDownloadState>,
         new_state: FileDownloadState,
     ) {
-        let mut state_guard = self.state.lock().await;
+        let mut state_guard = state.lock().await;
         let current_bytes = state_guard.downloaded_bytes;
         let new_bytes = new_state.downloaded_bytes;
-
-        tracing::debug!(
-            "[FILE_TASK] update_state_and_broadcast: id={}, current={:?}({} bytes), new={:?}({} bytes)",
-            self.download_id,
-            state_guard.phase,
-            current_bytes,
-            new_state.phase,
-            new_bytes
-        );
 
         if new_bytes < current_bytes
             && !matches!(
@@ -150,16 +146,35 @@ impl FileDownloadTask {
         *state_guard = new_state.clone();
         drop(state_guard);
 
-        let receiver_count = self.broadcast_sender.receiver_count();
-
-        if receiver_count == 0 {
+        if broadcast_sender.receiver_count() == 0 {
             tracing::debug!("[FILE_TASK] No receivers active, skipping broadcast (likely shutdown)");
             return;
         }
 
-        tracing::debug!("[FILE_TASK] ✓ State updated and broadcasting to {} receiver(s)", receiver_count);
+        let _ = broadcast_sender.send(new_state);
+    }
 
-        let _ = self.broadcast_sender.send(new_state.clone());
+    pub async fn update_state_and_broadcast(
+        &self,
+        new_state: FileDownloadState,
+    ) {
+        tracing::debug!(
+            "[FILE_TASK] update_state_and_broadcast: id={}, new={:?}({} bytes)",
+            self.download_id,
+            new_state.phase,
+            new_state.downloaded_bytes
+        );
+        Self::write_state_and_broadcast(&self.state, &self.broadcast_sender, new_state).await;
+    }
+
+    fn active_lock_error(&self) -> Option<DownloadError> {
+        match check_lock_file(&self.lock_path(), &self.manager_id, std::process::id()) {
+            LockFileState::OwnedByOtherApp(info) => Some(DownloadError::LockedByOther(info.manager_id)),
+            LockFileState::Missing
+            | LockFileState::OwnedByUs(_)
+            | LockFileState::OwnedBySameAppOldProcess(_)
+            | LockFileState::Stale(_) => None,
+        }
     }
 
     pub async fn download(&self) -> Result<(), DownloadError> {
@@ -177,9 +192,7 @@ impl FileDownloadTask {
                 InternalDownloadState::Paused {
                     ..
                 } => "Paused",
-                InternalDownloadState::Downloaded {
-                    ..
-                } => "Downloaded",
+                InternalDownloadState::Downloaded => "Downloaded",
             }
         );
 
@@ -188,11 +201,23 @@ impl FileDownloadTask {
             | InternalDownloadState::Paused {
                 ..
             } => {
+                if let Some(error) = self.active_lock_error() {
+                    return Err(error);
+                }
+
                 let part_path = self.destination.with_extension("part");
 
                 if let Some(parent) = self.destination.parent() {
                     tokio::fs::create_dir_all(parent).await.map_err(|e| DownloadError::IOError(e.to_string()))?;
                 }
+
+                acquire_lock(&self.tokio_handle, &self.lock_path(), &self.manager_id).await.map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        DownloadError::LockedByOther("unknown".to_string())
+                    } else {
+                        DownloadError::Io(error)
+                    }
+                })?;
 
                 let resume_from_bytes = if part_path.exists() {
                     tokio::fs::metadata(&part_path).await.ok().map(|m| m.len()).unwrap_or(0)
@@ -202,6 +227,7 @@ impl FileDownloadTask {
 
                 let shutdown = ShutdownManager::new();
                 *self.shutdown_manager.lock().await = Some(shutdown.clone());
+                let download_generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
                 let (events_tx, events_rx) = mpsc::unbounded_channel();
 
@@ -225,6 +251,10 @@ impl FileDownloadTask {
                 };
                 let expected_bytes = self.expected_bytes;
                 let broadcast_sender = self.broadcast_sender.clone();
+                let state = self.state.clone();
+                let internal_state = self.internal_state.clone();
+                let completed_tx = self.completed_tx.clone();
+                let generation = self.generation.clone();
 
                 *internal_state_guard = InternalDownloadState::Downloading {
                     task: (),
@@ -243,6 +273,10 @@ impl FileDownloadTask {
 
                     let mut evt_rx = UnboundedReceiverStream::new(events_rx);
                     while let Some((_path, _data, evt)) = evt_rx.next().await {
+                        if generation.load(Ordering::SeqCst) != download_generation {
+                            continue;
+                        }
+
                         tracing::debug!(
                             "[FETCHER] Received event: id={}, event={:?}",
                             download_id,
@@ -278,7 +312,7 @@ impl FileDownloadTask {
                                     total,
                                     receiver_count
                                 );
-                                let _ = broadcast_sender.send(progress_state);
+                                Self::write_state_and_broadcast(&state, &broadcast_sender, progress_state).await;
                             },
                             FetchEvent::Fetched => {
                                 tracing::debug!("[FETCHER] Download completed: {}", download_id);
@@ -305,7 +339,9 @@ impl FileDownloadTask {
                                             downloaded_bytes: 0,
                                             total_bytes: 0,
                                         };
-                                        let _ = broadcast_sender.send(error_state);
+                                        *internal_state.lock().await = InternalDownloadState::NotDownloaded;
+                                        Self::write_state_and_broadcast(&state, &broadcast_sender, error_state).await;
+                                        let _ = completed_tx.send(true);
                                         return;
                                     }
                                 }
@@ -330,28 +366,38 @@ impl FileDownloadTask {
                                                 tracing::warn!("[FETCHER] Failed to save CRC file: {}", e);
                                             }
 
-                                            let final_bytes = downloaded_bytes;
-                                            let total = total_size.unwrap_or(expected_bytes.unwrap_or(final_bytes));
+                                            let final_bytes = expected_bytes.unwrap_or_else(|| {
+                                                std::fs::metadata(&destination)
+                                                    .map(|metadata| metadata.len())
+                                                    .unwrap_or(downloaded_bytes)
+                                            });
+                                            let total = expected_bytes.unwrap_or(total_size.unwrap_or(final_bytes));
                                             let completed_state = FileDownloadState {
                                                 phase: FileDownloadPhase::Downloaded,
                                                 downloaded_bytes: final_bytes,
                                                 total_bytes: total,
                                             };
-                                            let _ = broadcast_sender.send(completed_state);
+                                            *internal_state.lock().await = InternalDownloadState::Downloaded;
+                                            Self::write_state_and_broadcast(&state, &broadcast_sender, completed_state)
+                                                .await;
+                                            let _ = completed_tx.send(true);
                                         },
                                         Ok(false) => {
                                             tracing::error!("[FETCHER] CRC verification failed - checksum mismatch");
-                                            let _ = fs::remove_file(&destination);
+                                            let _ = fs::remove_file(&destination).await;
                                             let error_state = FileDownloadState {
                                                 phase: FileDownloadPhase::Error("CRC verification failed".to_string()),
                                                 downloaded_bytes: 0,
                                                 total_bytes: 0,
                                             };
-                                            let _ = broadcast_sender.send(error_state);
+                                            *internal_state.lock().await = InternalDownloadState::NotDownloaded;
+                                            Self::write_state_and_broadcast(&state, &broadcast_sender, error_state)
+                                                .await;
+                                            let _ = completed_tx.send(true);
                                         },
                                         Err(e) => {
                                             tracing::error!("[FETCHER] CRC verification error: {}", e);
-                                            let _ = fs::remove_file(&destination);
+                                            let _ = fs::remove_file(&destination).await;
                                             let error_state = FileDownloadState {
                                                 phase: FileDownloadPhase::Error(format!(
                                                     "CRC verification error: {}",
@@ -360,18 +406,27 @@ impl FileDownloadTask {
                                                 downloaded_bytes: 0,
                                                 total_bytes: 0,
                                             };
-                                            let _ = broadcast_sender.send(error_state);
+                                            *internal_state.lock().await = InternalDownloadState::NotDownloaded;
+                                            Self::write_state_and_broadcast(&state, &broadcast_sender, error_state)
+                                                .await;
+                                            let _ = completed_tx.send(true);
                                         },
                                     }
                                 } else {
-                                    let final_bytes = downloaded_bytes;
-                                    let total = total_size.unwrap_or(expected_bytes.unwrap_or(final_bytes));
+                                    let final_bytes = expected_bytes.unwrap_or_else(|| {
+                                        std::fs::metadata(&destination)
+                                            .map(|metadata| metadata.len())
+                                            .unwrap_or(downloaded_bytes)
+                                    });
+                                    let total = expected_bytes.unwrap_or(total_size.unwrap_or(final_bytes));
                                     let completed_state = FileDownloadState {
                                         phase: FileDownloadPhase::Downloaded,
                                         downloaded_bytes: final_bytes,
                                         total_bytes: total,
                                     };
-                                    let _ = broadcast_sender.send(completed_state);
+                                    *internal_state.lock().await = InternalDownloadState::Downloaded;
+                                    Self::write_state_and_broadcast(&state, &broadcast_sender, completed_state).await;
+                                    let _ = completed_tx.send(true);
                                 }
                             },
                             FetchEvent::Retrying => {
@@ -385,20 +440,48 @@ impl FileDownloadTask {
                 let fetch_task = fetcher.stream_from(source_stream, 1);
                 let broadcast_clone = self.broadcast_sender.clone();
                 let download_id_clone = self.download_id;
+                let state_clone = self.state.clone();
+                let internal_state_clone = self.internal_state.clone();
+                let completed_tx_clone = self.completed_tx.clone();
+                let destination_clone = self.destination.clone();
+                let generation_clone = self.generation.clone();
 
                 tracing::info!("[FETCHER] Starting fetch task for id={}", download_id);
 
                 self.tokio_handle.spawn(async move {
                     futures_util::pin_mut!(fetch_task);
                     while let Some((_path, _data, result)) = fetch_task.next().await {
+                        if generation_clone.load(Ordering::SeqCst) != download_generation {
+                            continue;
+                        }
+
                         if let Err(e) = result {
+                            let is_still_downloading =
+                                matches!(*internal_state_clone.lock().await, InternalDownloadState::Downloading { .. });
+                            if !is_still_downloading {
+                                tracing::debug!(
+                                    "[FETCHER] Ignoring late fetch error after task left downloading state: {}",
+                                    e
+                                );
+                                continue;
+                            }
+
                             tracing::error!("[FETCHER] Error downloading {}: {}", download_id_clone, e);
                             let error_state = FileDownloadState {
                                 phase: FileDownloadPhase::Error(e.to_string()),
                                 downloaded_bytes: 0,
                                 total_bytes: 0,
                             };
-                            let _ = broadcast_clone.send(error_state);
+                            let part_path = destination_clone.with_extension("part");
+                            *internal_state_clone.lock().await = if part_path.exists() {
+                                InternalDownloadState::Paused {
+                                    part_path,
+                                }
+                            } else {
+                                InternalDownloadState::NotDownloaded
+                            };
+                            Self::write_state_and_broadcast(&state_clone, &broadcast_clone, error_state).await;
+                            let _ = completed_tx_clone.send(true);
                         }
                     }
                 });
@@ -411,9 +494,7 @@ impl FileDownloadTask {
                 tracing::debug!("[FILE_TASK] Already downloading");
                 Ok(())
             },
-            InternalDownloadState::Downloaded {
-                ..
-            } => {
+            InternalDownloadState::Downloaded => {
                 tracing::debug!("[FILE_TASK] Already downloaded, broadcasting current state");
                 let current_state = self.state.lock().await.clone();
                 self.update_state_and_broadcast(current_state).await;
@@ -438,9 +519,7 @@ impl FileDownloadTask {
                 InternalDownloadState::Paused {
                     ..
                 } => "Paused",
-                InternalDownloadState::Downloaded {
-                    ..
-                } => "Downloaded",
+                InternalDownloadState::Downloaded => "Downloaded",
             }
         );
 
@@ -453,10 +532,13 @@ impl FileDownloadTask {
                 if let Some(shutdown) = self.shutdown_manager.lock().await.as_ref() {
                     let _ = shutdown.trigger_shutdown(());
                 }
+                self.generation.fetch_add(1, Ordering::SeqCst);
 
                 let part_path = self.destination.with_extension("part");
-                let downloaded_bytes = tokio::fs::metadata(&part_path).await.ok().map(|m| m.len()).unwrap_or(0);
-                let total_bytes = self.expected_bytes.unwrap_or(downloaded_bytes);
+                let part_bytes = tokio::fs::metadata(&part_path).await.ok().map(|m| m.len()).unwrap_or(0);
+                let current_bytes = self.state.lock().await.downloaded_bytes;
+                let total_bytes = self.expected_bytes.unwrap_or(part_bytes.max(current_bytes));
+                let downloaded_bytes = part_bytes.max(current_bytes).min(total_bytes);
 
                 *internal_state_guard = InternalDownloadState::Paused {
                     part_path: part_path.clone(),
@@ -471,9 +553,7 @@ impl FileDownloadTask {
 
                 Ok(())
             },
-            InternalDownloadState::Downloaded {
-                ..
-            } => Ok(()),
+            InternalDownloadState::Downloaded => Ok(()),
             _ => Ok(()),
         }
     }
@@ -493,9 +573,7 @@ impl FileDownloadTask {
                 InternalDownloadState::Paused {
                     ..
                 } => "Paused",
-                InternalDownloadState::Downloaded {
-                    ..
-                } => "Downloaded",
+                InternalDownloadState::Downloaded => "Downloaded",
             }
         );
 
@@ -506,6 +584,7 @@ impl FileDownloadTask {
                 if let Some(shutdown) = self.shutdown_manager.lock().await.as_ref() {
                     let _ = shutdown.trigger_shutdown(());
                 }
+                self.generation.fetch_add(1, Ordering::SeqCst);
             },
             InternalDownloadState::Paused {
                 ..
@@ -514,7 +593,7 @@ impl FileDownloadTask {
         }
 
         let part_path = self.destination.with_extension("part");
-        let _ = fs::remove_file(&part_path);
+        let _ = fs::remove_file(&part_path).await;
 
         *internal_state_guard = InternalDownloadState::NotDownloaded;
         drop(internal_state_guard);

@@ -102,11 +102,9 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
 
         let download_id = compute_download_id(source_url, destination_path);
 
-        {
-            let task_cache_guard = self.task_cache.lock().await;
-            if let Some(cached_task) = task_cache_guard.get(&download_id) {
-                return Ok(cached_task.clone());
-            }
+        let mut task_cache_guard = self.task_cache.lock().await;
+        if let Some(cached_task) = task_cache_guard.get(&download_id) {
+            return Ok(cached_task.clone());
         }
 
         // Lock presence will be reflected by reduction, no error on create
@@ -129,8 +127,13 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             destination_path.display(),
             expected_crc
         );
-        let checked_file_state =
-            reduce_to_checked_file_state(downloaded_file_state, crc_file_state, destination_path, expected_crc);
+        let checked_file_state = reduce_to_checked_file_state(
+            downloaded_file_state,
+            crc_file_state,
+            destination_path,
+            expected_bytes,
+            expected_crc,
+        );
 
         tracing::info!(
             "[MANAGER:AF] reconcile_to_internal_state inputs: checked={:?}, part={:?}, dest={}, crc_path={}, part_path={}, expected_bytes={:?}",
@@ -188,7 +191,7 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
         tracing::debug!("[MANAGER] Starting listener for download_id={}", download_id);
         file_task.start_listening((*self.global_broadcast_sender).clone()).await;
 
-        self.task_cache.lock().await.insert(download_id, file_task.clone());
+        task_cache_guard.insert(download_id, file_task.clone());
         Ok(file_task)
     }
 }

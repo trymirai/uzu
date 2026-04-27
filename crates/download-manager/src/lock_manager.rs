@@ -105,10 +105,28 @@ pub async fn acquire_lock(
                 fs::create_dir_all(parent)?;
             }
 
-            // Atomic write using temp file + rename
-            let temp_path = lock_path_buf.with_extension("lock.tmp");
-            fs::write(&temp_path, json)?;
-            fs::rename(temp_path, &lock_path_buf)?;
+            if lock_path_buf.exists() {
+                let lock_state = check_lock_file(&lock_path_buf, &lock_info.manager_id, lock_info.process_id);
+                match lock_state {
+                    LockFileState::Missing
+                    | LockFileState::OwnedByUs(_)
+                    | LockFileState::OwnedBySameAppOldProcess(_)
+                    | LockFileState::Stale(_) => {
+                        let _ = fs::remove_file(&lock_path_buf);
+                    },
+                    LockFileState::OwnedByOtherApp(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            "lock owned by another active manager",
+                        ));
+                    },
+                }
+            }
+
+            fs::OpenOptions::new().write(true).create_new(true).open(&lock_path_buf).and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(json.as_bytes())
+            })?;
             Ok::<(), std::io::Error>(())
         })
         .await

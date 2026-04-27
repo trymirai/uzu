@@ -15,12 +15,7 @@ pub enum RouteBehavior {
         failures: u64,
         status: u16,
     },
-    RedirectTo {
-        target: String,
-    },
     CorruptBody,
     WrongContentLength,
-    NoContentLength,
     NoRangeSupport,
-    InvalidRangeResponse,
 }

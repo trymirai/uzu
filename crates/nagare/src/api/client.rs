@@ -66,6 +66,6 @@ impl Client {
         &self,
         endpoint: &E,
     ) -> String {
-        format!("{}/{}", self.config.base_url, endpoint.path())
+        format!("{}/{}", self.config.base_url.as_str().trim_end_matches('/'), endpoint.path())
     }
 }

@@ -37,14 +37,4 @@ impl DownloadInfo {
             crc32c: Some(crc32c.into()),
         }
     }
-
-    /// Serialize this DownloadInfo to a compact JSON string.
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
-
-    /// Deserialize a DownloadInfo from a JSON string.
-    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
-    }
 }

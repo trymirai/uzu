@@ -1,7 +1,8 @@
-use std::time::Duration;
-
 use download_manager::{FileDownloadManagerType, create_download_manager};
-use tokio::{runtime::Handle as TokioHandle, time::sleep as tokio_sleep};
+use tokio::{
+    runtime::Handle as TokioHandle,
+    time::{sleep as tokio_sleep, timeout as tokio_timeout},
+};
 
 use crate::common::{
     mock_download_server::RouteBehavior,
@@ -36,9 +37,18 @@ async fn test_universal_pause_resume_completes_from_partial_state() {
     assert!(progress_state.downloaded_bytes > 0);
     task.pause().await.expect("failed to pause download");
     let paused_state = wait_for_phase_kind(&task, &mut progress, PhaseKind::Paused).await;
-    assert!(paused_state.downloaded_bytes <= progress_state.downloaded_bytes);
+    assert!(paused_state.downloaded_bytes > 0);
+    assert!(paused_state.downloaded_bytes <= paused_state.total_bytes);
 
-    tokio_sleep(Duration::from_millis(200)).await;
+    tokio_timeout(std::time::Duration::from_secs(2), async {
+        while context.lock_path().exists() {
+            tokio_sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("lock should be released after pause");
+    tokio_sleep(std::time::Duration::from_millis(200)).await;
+
     task.download().await.expect("failed to resume download");
     let state = wait_for_phase_kind(&task, &mut progress, PhaseKind::Downloaded).await;
     context.assert_downloaded(&state).await;

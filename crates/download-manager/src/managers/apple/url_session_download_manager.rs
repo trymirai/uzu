@@ -103,13 +103,6 @@ impl URLSessionDownloadManager {
                 let resume_data_state = check_resume_file_exists(&resume_data_path);
                 let url_session_task_state = Some(download_task.state());
 
-                let checked_file_state = reduce_to_checked_file_state(
-                    downloaded_file_state,
-                    crc_file_state,
-                    &destination,
-                    download_info.crc32c.as_deref(),
-                );
-
                 // Extract expected bytes from download task
                 let expected_bytes = {
                     let count = download_task.count_of_bytes_expected_to_receive();
@@ -119,6 +112,14 @@ impl URLSessionDownloadManager {
                         None
                     }
                 };
+
+                let checked_file_state = reduce_to_checked_file_state(
+                    downloaded_file_state,
+                    crc_file_state,
+                    &destination,
+                    expected_bytes,
+                    download_info.crc32c.as_deref(),
+                );
 
                 let internal_state = reconcile_to_internal_state(
                     checked_file_state,
@@ -219,11 +220,9 @@ impl FileDownloadManager for URLSessionDownloadManager {
 
         let download_id = compute_download_id(source_url, destination_path);
 
-        {
-            let task_cache_guard = self.task_cache.lock().await;
-            if let Some(cached_task) = task_cache_guard.get(&download_id) {
-                return Ok(cached_task.clone());
-            }
+        let mut task_cache_guard = self.task_cache.lock().await;
+        if let Some(cached_task) = task_cache_guard.get(&download_id) {
+            return Ok(cached_task.clone());
         }
 
         // Check lock file before proceeding (result will be used by reduction only)
@@ -244,8 +243,13 @@ impl FileDownloadManager for URLSessionDownloadManager {
             FileCheck::None => None,
         };
 
-        let checked_file_state =
-            reduce_to_checked_file_state(downloaded_file_state, crc_file_state, destination_path, expected_crc);
+        let checked_file_state = reduce_to_checked_file_state(
+            downloaded_file_state,
+            crc_file_state,
+            destination_path,
+            expected_bytes,
+            expected_crc,
+        );
 
         let internal_state = reconcile_to_internal_state(
             checked_file_state,
@@ -288,7 +292,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
         tracing::debug!("[MANAGER] Starting listener for download_id={}", download_id);
         file_task.start_listening((*self.global_broadcast_sender).clone()).await;
 
-        self.task_cache.lock().await.insert(download_id, file_task.clone());
+        task_cache_guard.insert(download_id, file_task.clone());
         Ok(file_task)
     }
 }
