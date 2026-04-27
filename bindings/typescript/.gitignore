@@ -9,3 +9,4 @@ tmp
 .dev.vars
 .eslintcache
 .claude/
+*.node

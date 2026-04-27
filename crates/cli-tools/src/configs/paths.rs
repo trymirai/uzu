@@ -56,4 +56,8 @@ impl Paths {
     ) -> PathBuf {
         self.crate_path(name).join("Cargo.toml")
     }
+
+    pub fn napi_output_path(&self) -> PathBuf {
+        self.bindings_for_language_path(Language::TypeScript).join("src").join("napi")
+    }
 }

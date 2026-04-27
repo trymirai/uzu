@@ -203,6 +203,50 @@ impl Command {
 }
 
 impl Command {
+    pub fn pnpm_install() -> Self {
+        Self::new("pnpm").with_argument("install")
+    }
+
+    pub fn pnpm_run(script: &str) -> Self {
+        Self::new("pnpm").with_argument("run").with_argument(script)
+    }
+
+    pub fn pnpm_exec() -> Self {
+        Self::new("pnpm").with_argument("exec")
+    }
+
+    pub fn napi_build(
+        manifest_path: PathBuf,
+        target: String,
+        features: Vec<String>,
+        configuration: Configuration,
+        output_dir: PathBuf,
+    ) -> Self {
+        let cross_flag = if target.contains("linux-gnu") {
+            "--use-napi-cross"
+        } else {
+            "-x"
+        };
+        let mut command = Self::pnpm_exec()
+            .with_argument("napi")
+            .with_argument("build")
+            .with_arguments(vec!["--manifest-path".to_string(), manifest_path.to_string_lossy().to_string()])
+            .with_arguments(vec!["--target".to_string(), target])
+            .with_argument("--no-default-features")
+            .with_arguments(vec!["--features".to_string(), features.join(",")])
+            .with_argument("--platform")
+            .with_argument("--output-dir")
+            .with_argument(&output_dir.to_string_lossy())
+            .with_argument(cross_flag);
+        command = match configuration {
+            Configuration::Debug => command,
+            Configuration::Release => command.with_argument("--release"),
+        };
+        command
+    }
+}
+
+impl Command {
     pub fn which(name: String) -> Self {
         Self::new("which").with_argument(&name)
     }
