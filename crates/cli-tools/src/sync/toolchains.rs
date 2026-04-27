@@ -1,13 +1,17 @@
 use anyhow::{Context, Result};
 use toml_edit::{DocumentMut, Item, Value};
 
-use crate::{configs::PlatformsConfig, sync::SyncTask};
+use crate::{
+    configs::{PlatformsConfig, WorkspaceManifest},
+    sync::SyncTask,
+};
 
 pub struct ToolchainsSyncTask;
 
 impl SyncTask for ToolchainsSyncTask {
     fn process(
-        config: &PlatformsConfig,
+        platforms: &PlatformsConfig,
+        _workspace: &WorkspaceManifest,
         input: &str,
     ) -> Result<String> {
         let mut document: DocumentMut = input.parse()?;
@@ -19,7 +23,7 @@ impl SyncTask for ToolchainsSyncTask {
             .context("Missing toolchain.targets in rust-toolchain.toml")?;
 
         targets.clear();
-        for name in config.targets.keys() {
+        for name in platforms.targets.keys() {
             let mut value = Value::from(name.as_str());
             value.decor_mut().set_prefix("\n    ");
             targets.push_formatted(value);

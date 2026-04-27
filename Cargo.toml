@@ -22,9 +22,8 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-name = "uzu"
 version = "0.1.9"
-authors = ["Mirai Tech Inc. <https://trymirai.com>"]
+authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
 homepage = "https://trymirai.com"

@@ -1,12 +1,12 @@
 {
     "name": "@trymirai/uzu",
-    "version": "0.0.0",
+    "version": "0.1.9",
     "description": "A high-performance inference engine for AI models",
     "author": "Mirai Tech Inc. <contact@getmirai.co>",
     "types": "dist/index.d.ts",
     "main": "dist/index.js",
     "type": "commonjs",
-    "repository": "github:trymirai/uzu",
+    "repository": "https://github.com/trymirai/uzu",
     "license": "MIT",
     "packageManager": "pnpm@10.18.1",
     "os": [

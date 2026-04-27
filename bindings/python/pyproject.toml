@@ -9,10 +9,16 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Mirai Tech Inc.", email = "contact@getmirai.co" }]
-keywords = ["llm", "inference", "ai", "rust", "pyo3"]
+keywords = [
+    "rust",
+    "ai",
+    "metal",
+    "high-performance",
+    "inference",
+    "llm",
+    "tts",
+]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: MacOS",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
