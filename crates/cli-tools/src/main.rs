@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand};
 use cli_tools::{
     configs::{HOST_TARGET, PlatformsConfig},
@@ -20,11 +20,6 @@ struct Cli {
 enum Commands {
     /// Install rustup / uv and required toolchains
     Setup,
-    /// Synchronize project files with platform.toml
-    Sync {
-        #[arg(long)]
-        check: bool,
-    },
     /// Install tools for a specific language
     Install {
         #[arg(value_enum)]
@@ -52,6 +47,13 @@ enum Commands {
         language: Language,
         name: String,
     },
+    /// Synchronize project files with platform.toml
+    Sync {
+        #[arg(long)]
+        check: bool,
+    },
+    /// Verify that the working tree has no uncommitted changes after building each language
+    Verify,
 }
 
 fn run_setup() -> Result<()> {
@@ -66,6 +68,19 @@ fn run_setup() -> Result<()> {
     Command::uv_setup().run()?;
     Command::pnpm_setup().run()?;
 
+    Ok(())
+}
+
+fn run_verify(config: &PlatformsConfig) -> Result<()> {
+    for language in config.languages.keys() {
+        let backend = language_backend(language.clone(), config.clone())?;
+        backend.build(Configuration::Release, vec![config.host_target()?], vec![])?;
+    }
+    let output = Command::git_status_porcelain().output()?;
+    if !output.is_empty() {
+        eprintln!("{output}");
+        return Err(anyhow!("The repository has uncommitted changes after building all languages"));
+    }
     Ok(())
 }
 
@@ -88,9 +103,6 @@ fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Setup) => run_setup()?,
-        Some(Commands::Sync {
-            check,
-        }) => run_sync(check)?,
         Some(Commands::Install {
             language,
         }) => language_backend(language, config)?.install()?,
@@ -123,6 +135,10 @@ fn main() -> Result<()> {
             }
             backend.example(&name, configuration, host_target.clone(), capabilities.clone())?
         },
+        Some(Commands::Sync {
+            check,
+        }) => run_sync(check)?,
+        Some(Commands::Verify) => run_verify(&config)?,
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

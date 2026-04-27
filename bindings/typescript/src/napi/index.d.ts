@@ -38,6 +38,7 @@ export declare class ClassificationSession {
 export declare class TextToSpeechSession {
   get state(): Promise<TextToSpeechSessionState>
   synthesize(input: string): Promise<PcmBatch>
+  synthesizeStream(input: string): Promise<TextToSpeechSessionStream>
 }
 
 /**

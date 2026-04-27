@@ -124,6 +124,12 @@ impl Command {
 }
 
 impl Command {
+    pub fn git_status_porcelain() -> Self {
+        Self::new("git").with_argument("status").with_argument("--porcelain")
+    }
+}
+
+impl Command {
     pub fn rustup_setup() -> Self {
         Self::new("sh")
             .with_argument("-c")
