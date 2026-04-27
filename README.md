@@ -1399,7 +1399,11 @@ In this example, we will generate audio from text:
 <summary>Rust</summary>
 
 ```rust
-use uzu::engine::{Engine, EngineConfig};
+use uzu::{
+    engine::{Engine, EngineConfig},
+    session::text_to_speech::TextToSpeechSessionStreamChunk,
+    types::basic::PcmBatch,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1418,9 +1422,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum \
         and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.";
     let output_path = dirs::home_dir().ok_or("Home not found")?.join("Desktop").join("output.wav");
+
     let session = engine.text_to_speech(model).await?;
-    let pcm_batch = session.synthesize(text.to_string()).await?;
-    pcm_batch.save_as_wav(output_path.to_string_lossy().to_string())?;
+    let stream = session.synthesize_stream(text.to_string()).await;
+    let mut pcm_batches: Vec<PcmBatch> = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event {
+            TextToSpeechSessionStreamChunk::PcmBatch {
+                batch,
+            } => {
+                pcm_batches.push(batch);
+            },
+            TextToSpeechSessionStreamChunk::Error {
+                error,
+            } => {
+                println!("Error: {error}");
+            },
+        }
+    }
+
+    let pcm_batch_first = pcm_batches.first().ok_or("No batches")?;
+    let pcm_batch_full = PcmBatch {
+        samples: pcm_batches.iter().flat_map(|batch| batch.samples.iter().copied()).collect(),
+        sample_rate: pcm_batch_first.sample_rate,
+        channels: pcm_batch_first.channels,
+        lengths: vec![pcm_batches.iter().flat_map(|batch| batch.lengths.iter().copied()).sum()],
+    };
+    pcm_batch_full.save_as_wav(output_path.to_string_lossy().to_string())?;
     println!("Output saved to: {}", output_path.display());
 
     Ok(())
