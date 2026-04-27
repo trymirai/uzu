@@ -11,6 +11,7 @@ pub struct LicenseSyncTask;
 
 impl SyncTask for LicenseSyncTask {
     fn process(
+        &self,
         _platforms: &PlatformsConfig,
         _workspace: &WorkspaceManifest,
         _input: &str,

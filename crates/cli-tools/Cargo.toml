@@ -22,6 +22,7 @@ toml.workspace = true
 toml_edit.workspace = true
 regex.workspace = true
 serde_json.workspace = true
+minijinja.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 colored.workspace = true

@@ -50,7 +50,7 @@ impl LanguageBackend for RustLanguageBackend {
         name: &str,
     ) -> Result<()> {
         let paths = Paths::new()?;
-        let name = self.language().convert_name(name);
+        let name = self.language().convert_command_name(name);
         Command::cargo_run_example(paths.main_crate.clone(), name).run()
     }
 }

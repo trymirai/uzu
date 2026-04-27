@@ -1343,6 +1343,7 @@ dependencies = [
  "heck",
  "ignore",
  "indexmap 2.14.0",
+ "minijinja",
  "regex",
  "serde",
  "serde_json",

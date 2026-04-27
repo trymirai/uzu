@@ -10,6 +10,7 @@ pub struct PyprojectSyncTask;
 
 impl SyncTask for PyprojectSyncTask {
     fn process(
+        &self,
         _platforms: &PlatformsConfig,
         workspace: &WorkspaceManifest,
         input: &str,

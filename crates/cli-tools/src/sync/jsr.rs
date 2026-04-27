@@ -10,6 +10,7 @@ pub struct JsrSyncTask;
 
 impl SyncTask for JsrSyncTask {
     fn process(
+        &self,
         _platforms: &PlatformsConfig,
         workspace: &WorkspaceManifest,
         input: &str,

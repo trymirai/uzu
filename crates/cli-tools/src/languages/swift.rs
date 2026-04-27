@@ -101,7 +101,7 @@ impl LanguageBackend for SwiftLanguageBackend {
     ) -> Result<()> {
         let paths = Paths::new()?;
         let bindings_path = paths.bindings_for_language_path(self.language());
-        let name = self.language().convert_name(name);
+        let name = self.language().convert_command_name(name);
         Command::swift_run_example(name).with_current_path(&bindings_path).run()
     }
 }

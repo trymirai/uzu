@@ -32,6 +32,14 @@ impl Paths {
         self.root_path.join("platforms.toml")
     }
 
+    pub fn readme_template_path(&self) -> PathBuf {
+        self.root_path.join("workspace").join("readme").join("template.md")
+    }
+
+    pub fn readme_fragments_path(&self) -> PathBuf {
+        self.root_path.join("workspace").join("readme").join("fragments")
+    }
+
     pub fn workspace_manifest_path(&self) -> PathBuf {
         self.root_path.join("Cargo.toml")
     }

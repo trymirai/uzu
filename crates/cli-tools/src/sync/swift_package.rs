@@ -10,6 +10,7 @@ pub struct SwiftPackageSyncTask;
 
 impl SyncTask for SwiftPackageSyncTask {
     fn process(
+        &self,
         platforms: &PlatformsConfig,
         _workspace: &WorkspaceManifest,
         input: &str,

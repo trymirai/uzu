@@ -1,5 +1,5 @@
 use clap::ValueEnum;
-use heck::{ToLowerCamelCase, ToSnakeCase};
+use heck::{ToLowerCamelCase, ToSnakeCase, ToUpperCamelCase};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum)]
@@ -17,6 +17,7 @@ pub enum Language {
 pub enum Case {
     Snake,
     LowerCamel,
+    UpperCamel,
     Kebab,
 }
 
@@ -30,7 +31,16 @@ impl Language {
         }
     }
 
-    pub fn case(&self) -> Case {
+    pub fn code_fence(&self) -> &'static str {
+        match self {
+            Language::Rust => "rust",
+            Language::Python => "python",
+            Language::Swift => "swift",
+            Language::TypeScript => "ts",
+        }
+    }
+
+    pub fn command_argument_case(&self) -> Case {
         match self {
             Language::Rust | Language::Python => Case::Snake,
             Language::TypeScript => Case::LowerCamel,
@@ -38,14 +48,45 @@ impl Language {
         }
     }
 
-    pub fn convert_name(
+    pub fn file_case(&self) -> Case {
+        match self {
+            Language::Swift => Case::UpperCamel,
+            _ => self.command_argument_case(),
+        }
+    }
+
+    pub fn file_extension(&self) -> &'static str {
+        match self {
+            Language::Rust => "rs",
+            Language::Python => "py",
+            Language::Swift => "swift",
+            Language::TypeScript => "ts",
+        }
+    }
+
+    pub fn convert_command_name(
         &self,
         name: &str,
     ) -> String {
-        match self.case() {
-            Case::Snake => name.to_snake_case(),
-            Case::LowerCamel => name.to_lower_camel_case(),
-            Case::Kebab => name.to_string(),
-        }
+        format(name, self.command_argument_case())
+    }
+
+    pub fn convert_file_name(
+        &self,
+        name: &str,
+    ) -> String {
+        format(name, self.file_case())
+    }
+}
+
+fn format(
+    name: &str,
+    case: Case,
+) -> String {
+    match case {
+        Case::Snake => name.to_snake_case(),
+        Case::LowerCamel => name.to_lower_camel_case(),
+        Case::UpperCamel => name.to_upper_camel_case(),
+        Case::Kebab => name.to_string(),
     }
 }

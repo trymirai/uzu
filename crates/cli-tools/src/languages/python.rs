@@ -65,7 +65,7 @@ impl LanguageBackend for PythonLanguageBackend {
         let paths = Paths::new()?;
         let bindings_path = paths.bindings_for_language_path(self.language());
         let examples_path = self.config.examples_path_for_language(self.language())?;
-        let name = self.language().convert_name(name);
+        let name = self.language().convert_file_name(name);
         let file_path = examples_path.join(format!("{name}.py"));
         Command::uv_python_file(file_path).with_current_path(&bindings_path).run()
     }

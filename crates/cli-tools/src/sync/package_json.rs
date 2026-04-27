@@ -13,6 +13,7 @@ pub struct PackageJsonSyncTask;
 
 impl SyncTask for PackageJsonSyncTask {
     fn process(
+        &self,
         platforms: &PlatformsConfig,
         workspace: &WorkspaceManifest,
         input: &str,

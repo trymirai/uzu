@@ -10,6 +10,7 @@ pub struct ToolchainsSyncTask;
 
 impl SyncTask for ToolchainsSyncTask {
     fn process(
+        &self,
         platforms: &PlatformsConfig,
         _workspace: &WorkspaceManifest,
         input: &str,

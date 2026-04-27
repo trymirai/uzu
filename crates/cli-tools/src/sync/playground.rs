@@ -10,6 +10,7 @@ pub struct PlaygroundSyncTask;
 
 impl SyncTask for PlaygroundSyncTask {
     fn process(
+        &self,
         platforms: &PlatformsConfig,
         workspace: &WorkspaceManifest,
         input: &str,
