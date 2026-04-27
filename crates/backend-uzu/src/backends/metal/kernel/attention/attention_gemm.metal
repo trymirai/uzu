@@ -265,7 +265,7 @@ PUBLIC KERNEL(AttentionGemm)(
   }
 
   // Determine K block loop limit (causal can early-stop)
-  int kb_lim = params.nk;
+  uint32_t kb_lim = params.nk;
   if (is_causal) {
     const int q_max = (int(q_tile_idx) + 1) * BLOCK_QUERY_ROWS + params.q_off;
     kb_lim = (q_max + BK - 1) / BK;

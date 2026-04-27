@@ -1,0 +1,88 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "uzu"
+description = "A high-performance inference engine for AI models"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Mirai Tech Inc.", email = "contact@getmirai.co" }]
+keywords = ["llm", "inference", "ai", "rust", "pyo3"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://trymirai.com"
+Repository = "https://github.com/trymirai/uzu-python"
+Issues = "https://github.com/trymirai/uzu-python/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.4", "ruff>=0.14.0"]
+examples = ["pydantic>=2.13.3"]
+
+[tool.maturin]
+features = ["bindings-pyo3"]
+module-name = "uzu"
+bindings = "pyo3"
+strip = true
+manifest-path = "../../crates/uzu/Cargo.toml"
+python-source = "."
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 119
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "C408",
+    "C901",
+    "D",
+    "EM101",
+    "EM102",
+    "ERA001",
+    "FIX002",
+    "F722",
+    "FBT001",
+    "FBT002",
+    "N812",
+    "PD008",
+    "PGH003",
+    "PLC0415",
+    "PLR0904",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "PLR2004",
+    "PLR6301",
+    "PLW0108",
+    "PT",
+    "PTH123",
+    "RET503",
+    "RET504",
+    "RUF005",
+    "S",
+    "SIM108",
+    "T20",
+    "TD003",
+    "TRY003",
+    "CPY001",
+    "COM812",
+    "TC003",
+]

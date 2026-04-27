@@ -22,19 +22,31 @@ bindings = [
     "bindings-wasm",
 ]
 bindings-uniffi = [
+    "bindings-types/bindings-uniffi",
     "shoji/bindings-uniffi",
     "nagare/bindings-uniffi",
     "dep:uniffi",
 ]
 bindings-napi = [
+    "bindings-types/bindings-napi",
     "shoji/bindings-napi",
     "nagare/bindings-napi",
     "dep:napi",
     "dep:napi-derive",
     "dep:napi-build",
 ]
-bindings-pyo3 = ["shoji/bindings-pyo3", "nagare/bindings-pyo3", "dep:pyo3"]
+bindings-pyo3 = [
+    "bindings-types/bindings-pyo3",
+    "shoji/bindings-pyo3",
+    "nagare/bindings-pyo3",
+    "dep:pyo3",
+    "dep:pyo3-build-config",
+    "dep:pyo3-async-runtimes",
+    "dep:pyo3-stub-gen",
+    "dep:inventory",
+]
 bindings-wasm = [
+    "bindings-types/bindings-wasm",
     "shoji/bindings-wasm",
     "nagare/bindings-wasm",
     "dep:wasm-bindgen",
@@ -44,6 +56,7 @@ bindings-wasm = [
 ]
 
 [dependencies]
+bindings-types.workspace = true
 bindings.workspace = true
 backend-uzu.workspace = true
 shoji.workspace = true
@@ -51,6 +64,9 @@ uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
+pyo3-async-runtimes = { workspace = true, optional = true }
+pyo3-stub-gen = { workspace = true, optional = true }
+inventory = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
@@ -91,6 +107,9 @@ chrono.workspace = true
 tempfile.workspace = true
 indicatif.workspace = true
 dotenvy.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
+pyo3-build-config = { workspace = true, optional = true }
