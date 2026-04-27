@@ -122,13 +122,6 @@ impl Command {
         command
     }
 }
-
-impl Command {
-    pub fn git_status_porcelain() -> Self {
-        Self::new("git").with_argument("status").with_argument("--porcelain")
-    }
-}
-
 impl Command {
     pub fn rustup_setup() -> Self {
         Self::new("sh")
@@ -401,5 +394,9 @@ impl Command {
 impl Command {
     pub fn which(name: String) -> Self {
         Self::new("which").with_argument(&name)
+    }
+
+    pub fn git_status_porcelain() -> Self {
+        Self::new("git").with_argument("status").with_argument("--porcelain")
     }
 }
