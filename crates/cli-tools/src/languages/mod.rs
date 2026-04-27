@@ -64,8 +64,9 @@ pub trait LanguageBackend {
         }
         println!("{separator}");
         println!(
-            "Building {} for targets: {} (resolved from: {})",
+            "Building {} ({}) for targets: {} (resolved from: {})",
             format!("{:?}", language).green(),
+            format!("{:?}", configuration).green(),
             format!("{:?}", resolved_targets).green(),
             format!("{:?}", targets).yellow()
         );

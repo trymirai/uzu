@@ -40,4 +40,8 @@ impl LanguageBackend for RustLanguageBackend {
         }
         Ok(())
     }
+
+    fn test(&self) -> Result<()> {
+        Command::cargo_test().run()
+    }
 }

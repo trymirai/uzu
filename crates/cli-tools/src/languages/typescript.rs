@@ -61,4 +61,10 @@ impl LanguageBackend for TypeScriptLanguageBackend {
 
         Ok(())
     }
+
+    fn test(&self) -> Result<()> {
+        let paths = Paths::new()?;
+        let bindings_path = paths.bindings_for_language_path(self.language());
+        Command::pnpm_jest().with_current_path(&bindings_path).run()
+    }
 }

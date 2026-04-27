@@ -167,6 +167,10 @@ impl Command {
         };
         command
     }
+
+    pub fn cargo_test() -> Self {
+        Self::new("cargo").with_argument("test")
+    }
 }
 
 impl Command {
@@ -193,6 +197,13 @@ impl Command {
 
     pub fn uv_python(code: &str) -> Self {
         Self::new("uv").with_argument("run").with_argument("python").with_argument("-c").with_argument(code)
+    }
+
+    pub fn uv_pytest() -> Self {
+        Self::new("uv")
+            .with_argument("run")
+            .with_arguments(vec!["--extra".to_string(), "dev".to_string()])
+            .with_argument("pytest")
     }
 
     pub fn maturin_build(
@@ -227,6 +238,10 @@ impl Command {
 
     pub fn pnpm_exec() -> Self {
         Self::new("pnpm").with_argument("exec")
+    }
+
+    pub fn pnpm_jest() -> Self {
+        Self::pnpm_exec().with_argument("jest")
     }
 
     pub fn napi_build(
@@ -293,6 +308,10 @@ impl Command {
             command = command.with_arguments(vec!["-headers".to_string(), headers_path.to_string_lossy().to_string()]);
         }
         command.with_arguments(vec!["-output".to_string(), output_path.to_string_lossy().to_string()])
+    }
+
+    pub fn swift_test() -> Self {
+        Self::new("swift").with_argument("test")
     }
 
     pub fn codesign_adhoc(path: PathBuf) -> Self {
