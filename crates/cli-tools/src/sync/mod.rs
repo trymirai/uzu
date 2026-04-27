@@ -1,6 +1,7 @@
 use std::path::Path;
 
 mod jsr;
+mod license;
 mod package_json;
 mod playground;
 mod pyproject;
@@ -9,6 +10,7 @@ mod toolchains;
 
 use anyhow::{Ok, Result, anyhow};
 pub use jsr::JsrSyncTask;
+pub use license::LicenseSyncTask;
 pub use package_json::PackageJsonSyncTask;
 pub use playground::PlaygroundSyncTask;
 pub use pyproject::PyprojectSyncTask;
@@ -52,12 +54,15 @@ pub fn run_sync(check: bool) -> Result<()> {
     ToolchainsSyncTask::run(&platforms, &workspace, &root_path.join("rust-toolchain.toml"), check)?;
 
     PyprojectSyncTask::run(&platforms, &workspace, &root_path.join("bindings/python/pyproject.toml"), check)?;
+    LicenseSyncTask::run(&platforms, &workspace, &root_path.join("bindings/python/LICENSE"), check)?;
 
     PackageJsonSyncTask::run(&platforms, &workspace, &root_path.join("bindings/typescript/package.json"), check)?;
     JsrSyncTask::run(&platforms, &workspace, &root_path.join("bindings/typescript/jsr.json"), check)?;
     JsrSyncTask::run(&platforms, &workspace, &root_path.join("bindings/typescript/jsr.json.orig"), check)?;
+    LicenseSyncTask::run(&platforms, &workspace, &root_path.join("bindings/typescript/LICENSE"), check)?;
 
     SwiftPackageSyncTask::run(&platforms, &workspace, &root_path.join("bindings/swift/Package.swift"), check)?;
+    LicenseSyncTask::run(&platforms, &workspace, &root_path.join("bindings/swift/LICENSE"), check)?;
 
     PlaygroundSyncTask::run(&platforms, &workspace, &root_path.join("apps/playground/Project.swift"), check)?;
 
