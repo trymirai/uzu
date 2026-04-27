@@ -1,7 +1,8 @@
 use crate::{
-    array::{Array, ArrayContextExt},
+    DataType,
+    array::{Array, ArrayContextExt, allocation_as_bytes, allocation_as_bytes_mut, size_for_shape},
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -39,16 +40,79 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
-#[derive(Debug)]
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub keys: Array<B>,
+    pub keys: Allocation<B>,
     /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub values: Array<B>,
+    pub values: Allocation<B>,
+    pub shape: [usize; 3],
+    pub data_type: DataType,
+}
+
+fn copy_grouped_rows(
+    source_keys_bytes: &[u8],
+    source_values_bytes: &[u8],
+    source_block_size: usize,
+    destination_keys_bytes: &mut [u8],
+    destination_values_bytes: &mut [u8],
+    destination_block_size: usize,
+    row_size: usize,
+    num_groups: usize,
+    row_pairs: impl IntoIterator<Item = (usize, usize)>,
+) {
+    for (source_row, destination_row) in row_pairs {
+        for group in 0..num_groups {
+            let source_offset = group * source_block_size + source_row * row_size;
+            let destination_offset = group * destination_block_size + destination_row * row_size;
+            destination_keys_bytes[destination_offset..destination_offset + row_size]
+                .copy_from_slice(&source_keys_bytes[source_offset..source_offset + row_size]);
+            destination_values_bytes[destination_offset..destination_offset + row_size]
+                .copy_from_slice(&source_values_bytes[source_offset..source_offset + row_size]);
+        }
+    }
 }
 
 impl<B: Backend> KVCacheLayer<B> {
+    pub fn encode_copy_prefix_rows_to(
+        &self,
+        destination: &mut KVCacheLayer<B>,
+        row_count: usize,
+        encoder: &mut Encoder<B>,
+    ) {
+        if row_count == 0 {
+            return;
+        }
+
+        let [num_groups, source_seq, head_dim] = self.shape;
+        let [destination_groups, destination_seq, destination_head_dim] = destination.shape;
+        assert_eq!(num_groups, destination_groups, "KV cache group count mismatch");
+        assert_eq!(head_dim, destination_head_dim, "KV cache head dim mismatch");
+        assert_eq!(self.data_type, destination.data_type, "KV cache dtype mismatch");
+        assert!(row_count <= source_seq, "source KV cache copy exceeds source sequence");
+        assert!(row_count <= destination_seq, "source KV cache copy exceeds destination sequence");
+
+        let row_size = size_for_shape(&[1, 1, head_dim], self.data_type);
+        let source_block_size = source_seq * row_size;
+        let destination_block_size = destination_seq * row_size;
+        let copy_size = row_count * row_size;
+
+        for group in 0..num_groups {
+            encoder.encode_copy(
+                &self.keys,
+                group * source_block_size..group * source_block_size + copy_size,
+                &mut destination.keys,
+                group * destination_block_size..group * destination_block_size + copy_size,
+            );
+            encoder.encode_copy(
+                &self.values,
+                group * source_block_size..group * source_block_size + copy_size,
+                &mut destination.values,
+                group * destination_block_size..group * destination_block_size + copy_size,
+            );
+        }
+    }
+
     pub fn prefix_segment_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {
@@ -139,7 +203,7 @@ impl<B: Backend> KVCacheLayer<B> {
     }
 
     fn scatter_if_required(
-        &self,
+        &mut self,
         source_indices: &[usize],
         destination_indices: &[usize],
         encoder: &mut Encoder<B>,
@@ -149,17 +213,15 @@ impl<B: Backend> KVCacheLayer<B> {
             return;
         }
 
-        let k_shape = self.keys.shape();
-        let v_shape = self.values.shape();
-
-        let layer_data = KVLayerData {
-            key_buffer: self.keys.buffer(),
-            key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer: self.values.buffer(),
-            value_shape: [v_shape[0], v_shape[1], v_shape[2]],
+        let mut layer_data = KVLayerData {
+            key_allocation: &mut self.keys,
+            key_shape: self.shape,
+            value_allocation: &mut self.values,
+            value_shape: self.shape,
         };
 
-        let _ = kv_cache_update.encode(&[layer_data], source_indices, destination_indices, encoder);
+        let _ =
+            kv_cache_update.encode(std::slice::from_mut(&mut layer_data), source_indices, destination_indices, encoder);
     }
 
     pub fn register_accepted_tokens(
@@ -204,16 +266,17 @@ impl<B: Backend> KVCacheLayer<B> {
                 if len == 0 || len > window_length {
                     return None;
                 }
-                let shape = self.keys.shape();
-                let num_groups = shape[0];
-                let head_dim = shape[2];
-                let dtype = self.keys.data_type();
+                let [num_groups, _, head_dim] = self.shape;
+                let dtype = self.data_type;
+                let row_size = size_for_shape(&[1, 1, head_dim], dtype);
 
                 let slice_shape = [num_groups, len, head_dim];
                 let mut slice_keys =
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
                 let mut slice_values =
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
+                let source_keys_bytes = allocation_as_bytes(&self.keys);
+                let source_values_bytes = allocation_as_bytes(&self.values);
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
@@ -227,10 +290,22 @@ impl<B: Backend> KVCacheLayer<B> {
                     })
                     .collect();
 
-                for (i, &slot) in slots.iter().enumerate() {
-                    slice_keys.copy_slice(&self.keys, 1, slot..slot + 1, i);
-                    slice_values.copy_slice(&self.values, 1, slot..slot + 1, i);
-                }
+                let source_block_size = self.shape[1] * row_size;
+                let destination_block_size = len * row_size;
+                let destination_keys_bytes = slice_keys.as_bytes_mut();
+                let destination_values_bytes = slice_values.as_bytes_mut();
+
+                copy_grouped_rows(
+                    source_keys_bytes,
+                    source_values_bytes,
+                    source_block_size,
+                    destination_keys_bytes,
+                    destination_values_bytes,
+                    destination_block_size,
+                    row_size,
+                    num_groups,
+                    slots.iter().enumerate().map(|(destination_row, &source_row)| (source_row, destination_row)),
+                );
 
                 Some(KVSlice::Window {
                     window_length,
@@ -281,15 +356,33 @@ impl<B: Backend> KVCacheLayer<B> {
                 },
             ) => {
                 *w_len = *window_length;
+                let [num_groups, destination_seq, head_dim] = self.shape;
+                let row_size = size_for_shape(&[1, 1, head_dim], self.data_type);
+                let destination_block_size = destination_seq * row_size;
+                let source_block_size = keys.shape()[1] * row_size;
+                let source_keys_bytes = keys.as_bytes();
+                let source_values_bytes = values.as_bytes();
+                let destination_keys_bytes = allocation_as_bytes_mut(&mut self.keys);
+                let destination_values_bytes = allocation_as_bytes_mut(&mut self.values);
                 match range {
                     None => {
                         *ring_offset = *base_ring_offset;
                         *ring_length = *base_ring_length;
 
-                        for (i, &slot) in slots.iter().enumerate() {
-                            self.keys.copy_slice(keys, 1, i..i + 1, slot);
-                            self.values.copy_slice(values, 1, i..i + 1, slot);
-                        }
+                        copy_grouped_rows(
+                            source_keys_bytes,
+                            source_values_bytes,
+                            source_block_size,
+                            destination_keys_bytes,
+                            destination_values_bytes,
+                            destination_block_size,
+                            row_size,
+                            num_groups,
+                            slots
+                                .iter()
+                                .enumerate()
+                                .map(|(source_row, &destination_row)| (source_row, destination_row)),
+                        );
                     },
                     Some(r) => {
                         let len = r.end.saturating_sub(r.start);
@@ -316,11 +409,20 @@ impl<B: Backend> KVCacheLayer<B> {
                         *ring_offset = new_offset;
                         *ring_length = new_len;
 
-                        for (i, &slot) in slots[r.clone()].iter().enumerate() {
-                            let src_i = r.start + i;
-                            self.keys.copy_slice(keys, 1, src_i..src_i + 1, slot);
-                            self.values.copy_slice(values, 1, src_i..src_i + 1, slot);
-                        }
+                        copy_grouped_rows(
+                            source_keys_bytes,
+                            source_values_bytes,
+                            source_block_size,
+                            destination_keys_bytes,
+                            destination_values_bytes,
+                            destination_block_size,
+                            row_size,
+                            num_groups,
+                            slots[r.clone()]
+                                .iter()
+                                .enumerate()
+                                .map(|(index, &destination_row)| (r.start + index, destination_row)),
+                        );
                     },
                 }
             },

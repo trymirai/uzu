@@ -9,11 +9,11 @@ use half::{bf16, f16};
 use crate::{
     DataType,
     backends::common::{
-        Backend, Buffer, Context, Encoder,
+        Allocation, AllocationType, Backend, Buffer, Context, Encoder,
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-            QuantizedMatmulType, tests::common::helpers::alloc_buffer_with_data,
+            QuantizedMatmulType, tests::common::helpers::alloc_allocation_with_data,
         },
     },
 };
@@ -261,23 +261,23 @@ fn generate_test_quant_params(
     }
 }
 
-fn buffer_from_f32_slice<B: Backend>(
+fn allocation_from_f32_slice<B: Backend>(
     ctx: &B::Context,
     dtype: DataType,
     values: &[f32],
-) -> B::Buffer {
+) -> Allocation<B> {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
-            alloc_buffer_with_data::<B, f16>(ctx, data.as_slice())
+            alloc_allocation_with_data::<B, f16>(ctx, data.as_slice())
         },
         DataType::BF16 => {
             let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
-            alloc_buffer_with_data::<B, bf16>(ctx, data.as_slice())
+            alloc_allocation_with_data::<B, bf16>(ctx, data.as_slice())
         },
-        DataType::F32 => alloc_buffer_with_data::<B, f32>(ctx, values),
+        DataType::F32 => alloc_allocation_with_data::<B, f32>(ctx, values),
         other => {
-            panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
+            panic!("Unsupported dtype for allocation_from_f32_slice: {:?}", other)
         },
     }
 }
@@ -319,15 +319,17 @@ fn execute_quantized_matmul<B: Backend>(
     };
     let x_quant = quantize_slice(&x_f32, data_type);
 
-    let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
-    let s_buf = buffer_from_f32_slice::<B>(ctx, data_type, &params.scales);
+    let w_buf = alloc_allocation_with_data::<B, u8>(ctx, &weights_packed);
+    let s_buf = allocation_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_type {
-        QuantizedMatmulType::ZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
-        QuantizedMatmulType::Mlx => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
+        QuantizedMatmulType::ZeroPoint => alloc_allocation_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizedMatmulType::Mlx => allocation_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
-    let x_buf = buffer_from_f32_slice::<B>(ctx, data_type, &x_f32);
-    let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
+    let x_buf = allocation_from_f32_slice::<B>(ctx, data_type, &x_f32);
+    let mut y_buf = ctx
+        .create_allocation(batch * output_dim * data_type.size_in_bytes(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let kernel = QuantizedMatmulKernelEncodable::<B>::new(
         &ctx,
@@ -350,17 +352,17 @@ fn execute_quantized_matmul<B: Backend>(
     if iterations > 1 {
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
-                a_buffer: &x_buf,
+                a: &x_buf,
                 a_offset: 0,
-                b_buffer: &w_buf,
-                scales_buffer: &s_buf,
-                zero_points_or_biases_buffer: &b_buf,
-                output_buffer: &mut y_buf,
+                b: &w_buf,
+                scales: &s_buf,
+                zero_points_or_biases: &b_buf,
+                output: &mut y_buf,
                 hadamard_factors: None,
                 batch_dim: batch,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
-            kernel.encode(&mut encoder, args).unwrap();
+            kernel.encode(&mut encoder, args);
             encoder.end_encoding().submit().wait_until_completed().unwrap();
         }
     }
@@ -368,17 +370,17 @@ fn execute_quantized_matmul<B: Backend>(
     let start = Instant::now();
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
-            a_buffer: &x_buf,
+            a: &x_buf,
             a_offset: 0,
-            b_buffer: &w_buf,
-            scales_buffer: &s_buf,
-            zero_points_or_biases_buffer: &b_buf,
-            output_buffer: &mut y_buf,
+            b: &w_buf,
+            scales: &s_buf,
+            zero_points_or_biases: &b_buf,
+            output: &mut y_buf,
             hadamard_factors: None,
             batch_dim: batch,
         };
         let mut encoder = Encoder::new(ctx).unwrap();
-        kernel.encode(&mut encoder, args).unwrap();
+        kernel.encode(&mut encoder, args);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
     let elapsed = start.elapsed();
@@ -402,19 +404,30 @@ fn execute_quantized_matmul<B: Backend>(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
+                let (buffer, range) = y_buf.as_buffer_range();
+                let y_out = unsafe {
+                    let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+                    let bytes = std::slice::from_raw_parts(src, range.len());
+                    bytemuck::cast_slice::<u8, f16>(bytes)
+                };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const bf16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
+                let (buffer, range) = y_buf.as_buffer_range();
+                let y_out = unsafe {
+                    let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+                    let bytes = std::slice::from_raw_parts(src, range.len());
+                    bytemuck::cast_slice::<u8, bf16>(bytes)
+                };
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::F32 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f32;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
-                y_out.to_vec()
+                let (buffer, range) = y_buf.as_buffer_range();
+                unsafe {
+                    let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
+                    let bytes = std::slice::from_raw_parts(src, range.len());
+                    bytemuck::cast_slice::<u8, f32>(bytes).to_vec()
+                }
             },
             other => panic!("Unsupported dtype for validation: {:?}", other),
         };

@@ -12,22 +12,17 @@ use std::{
 };
 
 use half::{bf16, f16};
-use ndarray::{IxDyn, s};
+use ndarray::{ArrayView, IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
     ArrayElement, DataType,
     array::Array,
-    backends::common::{Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::ModelMetadata,
-    encodable_block::{EncodingParameters, Sampling},
-    forward_pass::{
-        cache_layers::CacheLayers,
-        scratch_buffers::ScratchBuffers,
-        state::{ArrayId, ForwardPassState},
-        traces::ActivationTrace,
-    },
+    encodable_block::{DecoderDecodeInput, EncodingParameters, Sampling},
+    forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -38,6 +33,7 @@ use crate::{
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
         types::Error,
     },
+    try_allocation_to_vec,
 };
 
 // ============================================================================
@@ -246,39 +242,46 @@ impl<B: Backend> TraceValidator<B> {
 
         let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
         let token_positions = Self::load_array_as_vec::<i32, usize>(&traces_view, "activation_trace.token_positions");
-        let token_seeds: Vec<u64> = vec![0; token_ids.len()];
-
-        let mut state = ForwardPassState::new_llm(
-            ctx.context.clone(),
-            &ctx.decoder_config,
+        let token_inputs = TokenInputs::new_llm(
+            ctx.context.as_ref(),
             &ctx.model_shape,
-            &ctx.scratch_buffers,
-            ctx.cache_layers.clone(),
-            ctx.shared_buffers.clone(),
             &token_ids,
             None,
             &token_positions,
             None,
-            &token_seeds,
-            token_ids.len(),
+            None,
             /*sampling_start=*/ 0,
             /*sampling_length=*/ token_ids.len(),
-            false,
-            false,
-            None,
-            None,
         );
+        let mut traces = ActivationTrace::new_llm(ctx.context.as_ref(), &ctx.model_shape, token_ids.len());
 
         let mut encoder =
             Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-
-        ctx.executables
-            .encode(&mut state, &EncodingParameters::new(), &mut encoder)
-            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        {
+            let mut cache_layers = ctx.cache_layers.borrow_mut();
+            let decoder_arguments = token_inputs.decoder_arguments(
+                &ctx.model_shape,
+                ctx.shared_buffers.as_ref(),
+                Some(&mut *cache_layers),
+                token_ids.len(),
+                /*sampling_start=*/ 0,
+                /*sampling_length=*/ token_ids.len(),
+                #[cfg(feature = "tracing")]
+                Some(&mut traces),
+            );
+            ctx.executables
+                .encode_decode(
+                    decoder_arguments,
+                    DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
+                    None,
+                    &EncodingParameters::new(),
+                    &mut encoder,
+                )
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        }
         let pending = encoder.end_encoding().submit();
         pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
-        let traces = state.traces().clone();
         let data_type = ctx.model_shape.activation_data_type();
 
         // Common layer validation
@@ -286,38 +289,50 @@ impl<B: Backend> TraceValidator<B> {
 
         // LLM-specific: KV cache validation
         let transformer_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache = ctx.cache_layers.borrow();
             cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_transformer().map(|_| index)).collect()
         };
 
         for index in transformer_layers {
-            let keys = state.array(ArrayId::Keys(index));
-            let values = state.array(ArrayId::Values(index));
+            let cache = ctx.cache_layers.borrow();
+            let kv = cache.data[index].as_transformer().expect("Expected transformer layer");
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
-                    metrics: Self::validate_array(data_type, &expected, &keys, Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_allocation(
+                        data_type,
+                        &expected,
+                        &kv.keys,
+                        &kv.shape,
+                        Some(ArrayTransform::KVCacheSlice),
+                    ),
                 });
             }
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.values", index),
-                    metrics: Self::validate_array(data_type, &expected, &values, Some(ArrayTransform::KVCacheSlice)),
+                    metrics: Self::validate_allocation(
+                        data_type,
+                        &expected,
+                        &kv.values,
+                        &kv.shape,
+                        Some(ArrayTransform::KVCacheSlice),
+                    ),
                 });
             }
         }
 
         // LLM-specific: SSM state validation
         let ssm_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache = ctx.cache_layers.borrow();
             cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_state_space().map(|_| index)).collect()
         };
 
         for index in ssm_layers {
-            let conv_state = state.array(ArrayId::SsmConvState(index));
-            let ssm_state = state.array(ArrayId::SsmState(index));
+            let cache = ctx.cache_layers.borrow();
+            let ssm = cache.data[index].as_state_space().expect("Expected SSM layer");
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -326,10 +341,11 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(
+                        metrics: Self::validate_optional_allocation(
                             data_type,
                             &expected,
-                            &conv_state,
+                            ssm.conv_state.as_ref(),
+                            &ssm.conv_shape,
                             Some(ArrayTransform::SsmConvState),
                         ),
                     });
@@ -343,7 +359,7 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
+                        metrics: Self::validate_allocation(data_type, &expected, &ssm.ssm_state, &ssm.ssm_shape, None),
                     });
                 }
             }
@@ -351,13 +367,13 @@ impl<B: Backend> TraceValidator<B> {
 
         // LLM-specific: DeltaNet state validation
         let delta_net_layers: Vec<usize> = {
-            let cache = state.cache_layers().unwrap().borrow();
+            let cache = ctx.cache_layers.borrow();
             cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
         };
 
         for index in delta_net_layers {
-            let conv_state = state.array(ArrayId::DeltaNetConvState(index));
-            let ssm_state = state.array(ArrayId::DeltaNetSsmState(index));
+            let cache = ctx.cache_layers.borrow();
+            let delta = cache.data[index].as_delta_net().expect("Expected DeltaNet layer");
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -366,10 +382,11 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(
+                        metrics: Self::validate_allocation(
                             data_type,
                             &expected,
-                            &conv_state,
+                            &delta.conv_state,
+                            &delta.conv_shape,
                             Some(ArrayTransform::SsmConvState),
                         ),
                     });
@@ -383,7 +400,13 @@ impl<B: Backend> TraceValidator<B> {
                 if let Ok(expected) = traces_view.leaf_array(&path) {
                     results.push(TracerValidationResult {
                         name: path,
-                        metrics: Self::validate_array(data_type, &expected, &ssm_state, None),
+                        metrics: Self::validate_allocation(
+                            data_type,
+                            &expected,
+                            &delta.ssm_state,
+                            &delta.ssm_shape,
+                            None,
+                        ),
                     });
                 }
             }
@@ -392,7 +415,8 @@ impl<B: Backend> TraceValidator<B> {
         // LLM-specific: Token comparison
         let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf_array("logits") {
             let expected_tokens = Self::get_tokens_from_logits(&expected_logits);
-            let produced_tokens = Self::get_tokens_from_logits(&traces.borrow().logits);
+            let produced_tokens =
+                Self::get_tokens_from_allocation_logits(data_type, &traces.logits, expected_logits.shape());
             expected_tokens
                 .iter()
                 .zip(produced_tokens.iter())
@@ -506,68 +530,68 @@ impl<B: Backend> TraceValidator<B> {
     // ========================================================================
 
     fn validate_layer_traces(
-        traces: &Rc<RefCell<ActivationTrace<B>>>,
+        traces: &ActivationTrace<B>,
         traces_view: &ParameterTree<B::Context>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        let validate = |path: &str, array: &Array<B>| -> Option<TracerValidationResult> {
-            if traces_view.leaf_array(path).is_ok() {
+        let validate = |path: &str, allocation: &Allocation<B>| -> Option<TracerValidationResult> {
+            if let Ok(expected) = traces_view.leaf_array(path) {
                 Some(TracerValidationResult {
                     name: path.to_string(),
-                    metrics: Self::validate_array_with_name(data_type, traces_view, path, array),
+                    metrics: Self::validate_allocation(data_type, &expected, allocation, expected.shape(), None),
                 })
             } else {
                 None
             }
         };
 
-        for (index, layer_traces) in traces.borrow().layer_results.iter().enumerate() {
+        for (index, layer_traces) in traces.layer_results.iter().enumerate() {
             let path = |suffix: &str| -> String {
                 format!("activation_trace.layer_results.{}.activation_trace.{}", index, suffix)
             };
 
-            if let Some(r) = validate(&path("inputs"), &layer_traces.borrow().inputs) {
+            if let Some(r) = validate(&path("inputs"), &layer_traces.inputs) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("pre_mixer_norm"), &layer_traces.borrow().pre_attention_norm) {
+            if let Some(r) = validate(&path("pre_mixer_norm"), &layer_traces.pre_attention_norm) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("mixer"), &layer_traces.borrow().attention) {
+            if let Some(r) = validate(&path("mixer"), &layer_traces.attention) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("post_mixer_norm"), &layer_traces.borrow().post_attention_norm) {
+            if let Some(r) = validate(&path("post_mixer_norm"), &layer_traces.post_attention_norm) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("mlp_inputs"), &layer_traces.borrow().mlp_inputs) {
+            if let Some(r) = validate(&path("mlp_inputs"), &layer_traces.mlp_inputs) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("pre_mlp_norm"), &layer_traces.borrow().pre_mlp_norm) {
+            if let Some(r) = validate(&path("pre_mlp_norm"), &layer_traces.pre_mlp_norm) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("mlp"), &layer_traces.borrow().mlp) {
+            if let Some(r) = validate(&path("mlp"), &layer_traces.mlp) {
                 results.push(r);
             }
-            if let Some(r) = validate(&path("post_mlp_norm"), &layer_traces.borrow().post_mlp_norm) {
+            if let Some(r) = validate(&path("post_mlp_norm"), &layer_traces.post_mlp_norm) {
                 results.push(r);
             }
 
             let outputs_path = format!("activation_trace.layer_results.{}.outputs", index);
-            if let Some(r) = validate(&outputs_path, &layer_traces.borrow().outputs) {
+            if let Some(r) = validate(&outputs_path, &layer_traces.outputs) {
                 results.push(r);
             }
         }
 
         // Output norm (common to all models)
-        if let Some(r) = validate("activation_trace.output_norm", &traces.borrow().output_norm) {
+        if let Some(r) = validate("activation_trace.output_norm", &traces.output_norm) {
             results.push(r);
         }
 
         // Logits (common to all models, but path may vary)
-        if let Some(r) = validate("activation_trace.logits", &traces.borrow().logits) {
+        if let Some(r) = validate("activation_trace.logits", &traces.logits) {
             results.push(r);
-        } else if let Some(r) = validate("logits", &traces.borrow().logits) {
+        } else if let Some(r) = validate("logits", &traces.logits) {
             results.push(r);
         }
 
@@ -575,23 +599,18 @@ impl<B: Backend> TraceValidator<B> {
     }
 
     fn validate_classifier_traces(
-        traces: &Rc<RefCell<ActivationTrace<B>>>,
+        traces: &ActivationTrace<B>,
         traces_view: &ParameterTree<B::Context>,
         data_type: DataType,
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
         // Output pooling (classifier-specific)
-        if let Some(output_pooling) = &traces.borrow().output_pooling {
-            if traces_view.leaf_array("activation_trace.output_pooling").is_ok() {
+        if let Some(output_pooling) = &traces.output_pooling {
+            if let Ok(expected) = traces_view.leaf_array("activation_trace.output_pooling") {
                 results.push(TracerValidationResult {
                     name: "activation_trace.output_pooling".to_string(),
-                    metrics: Self::validate_array_with_name(
-                        data_type,
-                        traces_view,
-                        "activation_trace.output_pooling",
-                        output_pooling,
-                    ),
+                    metrics: Self::validate_allocation(data_type, &expected, output_pooling, expected.shape(), None),
                 });
             }
         }
@@ -600,40 +619,79 @@ impl<B: Backend> TraceValidator<B> {
     }
 
     // ========================================================================
-    // Array Validation
+    // Allocation Validation
     // ========================================================================
 
-    fn validate_array(
+    fn validate_allocation(
         data_type: DataType,
         expected_array: &Array<B>,
-        produced_array: &Array<B>,
+        produced_allocation: &Allocation<B>,
+        produced_shape: &[usize],
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         match data_type {
-            DataType::F16 => Self::validate_array_of_type::<f16>(expected_array, produced_array, transform),
-            DataType::BF16 => Self::validate_array_of_type::<bf16>(expected_array, produced_array, transform),
-            DataType::F32 => Self::validate_array_of_type::<f32>(expected_array, produced_array, transform),
+            DataType::F16 => {
+                Self::validate_allocation_of_type::<f16>(expected_array, produced_allocation, produced_shape, transform)
+            },
+            DataType::BF16 => Self::validate_allocation_of_type::<bf16>(
+                expected_array,
+                produced_allocation,
+                produced_shape,
+                transform,
+            ),
+            DataType::F32 => {
+                Self::validate_allocation_of_type::<f32>(expected_array, produced_allocation, produced_shape, transform)
+            },
             _ => panic!("Unsupported data type: {:?}", data_type),
         }
     }
 
-    fn validate_array_with_name(
+    fn validate_optional_allocation(
         data_type: DataType,
-        traces_view: &ParameterTree<B::Context>,
-        expected_array_path: &str,
-        produced_array: &Array<B>,
+        expected_array: &Array<B>,
+        produced_allocation: Option<&Allocation<B>>,
+        produced_shape: &[usize],
+        transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
-        let expected_array = traces_view.leaf_array(expected_array_path).unwrap();
-        Self::validate_array(data_type, &expected_array, produced_array, None)
+        match produced_allocation {
+            Some(produced_allocation) => {
+                Self::validate_allocation(data_type, expected_array, produced_allocation, produced_shape, transform)
+            },
+            None => match data_type {
+                DataType::F16 => {
+                    Self::validate_allocation_data_of_type::<f16>(expected_array, &[], produced_shape, transform)
+                },
+                DataType::BF16 => {
+                    Self::validate_allocation_data_of_type::<bf16>(expected_array, &[], produced_shape, transform)
+                },
+                DataType::F32 => {
+                    Self::validate_allocation_data_of_type::<f32>(expected_array, &[], produced_shape, transform)
+                },
+                _ => panic!("Unsupported data type: {:?}", data_type),
+            },
+        }
     }
 
-    fn validate_array_of_type<Precision: ArrayElement>(
+    fn validate_allocation_of_type<Precision: ArrayElement>(
         expected_array: &Array<B>,
-        produced_array: &Array<B>,
+        produced_allocation: &Allocation<B>,
+        produced_shape: &[usize],
+        transform: Option<ArrayTransform>,
+    ) -> TracerValidationMetrics {
+        let produced =
+            try_allocation_to_vec::<B, Precision>(produced_allocation).expect("Failed to read produced allocation");
+        Self::validate_allocation_data_of_type(expected_array, &produced, produced_shape, transform)
+    }
+
+    fn validate_allocation_data_of_type<Precision: ArrayElement>(
+        expected_array: &Array<B>,
+        produced_slice: &[Precision],
+        produced_shape: &[usize],
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
         let expected_view = expected_array.as_view::<Precision>();
-        let produced_view = produced_array.as_view::<Precision>();
+        let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), produced_slice)
+            .expect("Failed to reshape allocation");
 
         let (mut expected_data, mut produced_data) = match transform {
             Some(ArrayTransform::KVCacheSlice) => {
@@ -673,7 +731,6 @@ impl<B: Backend> TraceValidator<B> {
         let expected_shape = expected_data.shape().to_vec();
         let produced_shape = produced_data.shape().to_vec();
 
-        // Handle shape mismatches with leading dimension of 1
         if expected_shape != produced_shape {
             if expected_shape.len() == produced_shape.len() + 1
                 && expected_shape.get(0) == Some(&1)
@@ -699,7 +756,6 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         let reference: Vec<f32> = expected_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
-
         let result: Vec<f32> = produced_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
 
         let (atol, rtol, allowed_voilations_tol) = match expected_array.data_type() {
@@ -728,6 +784,28 @@ impl<B: Backend> TraceValidator<B> {
         fraction_of_allowed_violations: f32,
     ) -> TracerValidationMetrics {
         assert_eq!(result.len(), reference.len());
+        if reference.is_empty() {
+            return TracerValidationMetrics {
+                atol,
+                rtol,
+                fraction_of_allowed_violations,
+                reference_shape,
+                result_shape,
+                num_violations: 0,
+                max_allowed_violations: 0,
+                max_err_idx: 0,
+                max_err: 0.0,
+                max_err_rel: 0.0,
+                max_err_reference_value: 0.0,
+                rms_diff: 0.0,
+                rms_result: 0.0,
+                rms_reference: 0.0,
+                rel_rms_reference: 0.0,
+                diff_max: 0.0,
+                diff_avg: 0.0,
+                result_nan: false,
+            };
+        }
 
         let mut num_violations = 0;
         let mut max_err = 0.0f32;
@@ -848,10 +926,6 @@ impl<B: Backend> TraceValidator<B> {
             return;
         }
 
-        let decoder_config = &context.decoder_config;
-        context.scratch_buffers =
-            ScratchBuffers::new(context.context.as_ref(), decoder_config, &context.model_shape, desired_suffix_length);
-
         context.cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.context.as_ref(),
             &context.model_shape,
@@ -859,6 +933,7 @@ impl<B: Backend> TraceValidator<B> {
             desired_suffix_length,
         )));
 
+        let decoder_config = context.model_config.decoder_config().expect("Failed to resolve decoder config");
         let intermediate_dtype: DataType = decoder_config.output_norm_config.scale_precision.into();
 
         context.kv_cache_update = Box::new(
@@ -866,13 +941,8 @@ impl<B: Backend> TraceValidator<B> {
                 .expect("Failed to create KV cache update kernel"),
         );
 
-        context.gpu_sampler = Sampling::new(
-            context.context.as_ref(),
-            intermediate_dtype,
-            desired_suffix_length,
-            decoder_config.vocab_size,
-        )
-        .expect("Failed to create sampling kernel");
+        context.gpu_sampler =
+            Sampling::new(context.context.as_ref(), intermediate_dtype).expect("Failed to create sampling kernel");
     }
 
     fn get_tokens_from_logits(logits: &Array<B>) -> Vec<u64> {
@@ -888,5 +958,28 @@ impl<B: Backend> TraceValidator<B> {
     fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<B>) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
         sampler.sample(logits.as_view::<Precision>())
+    }
+
+    fn get_tokens_from_allocation_logits(
+        data_type: DataType,
+        logits: &Allocation<B>,
+        shape: &[usize],
+    ) -> Vec<u64> {
+        match data_type {
+            DataType::F16 => Self::get_tokens_from_allocation_logits_of_type::<f16>(logits, shape),
+            DataType::BF16 => Self::get_tokens_from_allocation_logits_of_type::<bf16>(logits, shape),
+            DataType::F32 => Self::get_tokens_from_allocation_logits_of_type::<f32>(logits, shape),
+            _ => panic!("Unsupported data type: {:?}", data_type),
+        }
+    }
+
+    fn get_tokens_from_allocation_logits_of_type<Precision: ArrayElement>(
+        logits: &Allocation<B>,
+        shape: &[usize],
+    ) -> Vec<u64> {
+        let sampler = ArgmaxSampler {};
+        let logits = try_allocation_to_vec::<B, Precision>(logits).expect("Failed to read logits allocation");
+        let logits = ArrayView::from_shape(IxDyn(shape), &logits).expect("invalid logits trace shape");
+        sampler.sample(logits)
     }
 }

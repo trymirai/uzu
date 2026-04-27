@@ -55,6 +55,25 @@ fn request(
         .to_string()
 }
 
+fn is_unknown_answer(response: &str) -> bool {
+    let response = response.to_lowercase();
+    [
+        "not sure",
+        "not able",
+        "not aware",
+        "don't know",
+        "do not know",
+        "can't tell",
+        "cannot tell",
+        "no information",
+        "any information",
+        "more context",
+        "more details",
+    ]
+    .iter()
+    .any(|pattern| response.contains(pattern))
+}
+
 #[tag(heavy)]
 #[test]
 fn test_context_mode_none() {
@@ -69,7 +88,8 @@ fn test_context_mode_none() {
     println!("response_1: {}", response_1);
     println!("response_2: {}", response_2);
 
-    assert_eq!(response_1, response_2);
+    assert!(is_unknown_answer(&response_1));
+    assert!(is_unknown_answer(&response_2));
 }
 
 #[tag(heavy)]

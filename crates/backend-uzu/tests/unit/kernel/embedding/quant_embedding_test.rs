@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -124,16 +123,17 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let weights_array = context.create_array_from(&[input.vocab_size as usize, weights_stride], &input.weights, "");
     let scales_array = context.create_array_from(&[input.vocab_size as usize, num_groups], &input.scales, "");
     let biases_array = context.create_array_from(&[input.vocab_size as usize, num_groups], &input.biases, "");
-    let output_array =
-        context.create_array_uninitialized(&[input.batch_size as usize, input.model_dim as usize], T::data_type(), "");
+    let mut output = context
+        .create_array_uninitialized(&[input.batch_size as usize, input.model_dim as usize], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        token_ids_array.buffer().borrow().deref(),
-        weights_array.buffer().borrow().deref(),
-        scales_array.buffer().borrow().deref(),
-        biases_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        token_ids_array.allocation(),
+        weights_array.allocation(),
+        scales_array.allocation(),
+        biases_array.allocation(),
+        &mut output,
         input.batch_size,
         input.vocab_size,
         input.model_dim,
@@ -142,7 +142,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn test_quant_mode<T: ArrayElement + Float + Debug + Display>(quant_mode: QuantizationMode) {

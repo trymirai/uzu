@@ -1,15 +1,11 @@
-use std::{
-    cell::RefCell,
-    mem::size_of,
-    ops::{Deref, DerefMut},
-};
+use std::mem::size_of;
 
 use thiserror::Error;
 
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{
             ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel, BitmaskKernel, GumbelKernel, MinPKernel,
@@ -32,7 +28,6 @@ enum ArgmaxImplementation<B: Backend> {
     TwoPass {
         main_kernel: <B::Kernels as Kernels>::ArgmaxMainKernel,
         final_kernel: <B::Kernels as Kernels>::ArgmaxFinalKernel,
-        partial_results_buffer: RefCell<B::Buffer>,
     },
 }
 
@@ -44,8 +39,6 @@ pub struct SamplingKernel<B: Backend> {
     minp: <B::Kernels as Kernels>::MinPKernel,
     gumbel: <B::Kernels as Kernels>::GumbelKernel,
     argmax_implementation: ArgmaxImplementation<B>,
-    max_batch_size: usize,
-    max_vocab_size: usize,
 }
 
 #[derive(Debug, Error)]
@@ -54,27 +47,23 @@ pub enum SamplingError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Function not found: {0}")]
     FunctionNotFound(String),
-    #[error("Batch size {0} exceeds maximum {1}")]
-    BatchSizeExceeded(usize, usize),
-    #[error("Vocab size {0} exceeds maximum {1}")]
-    VocabSizeExceeded(usize, usize),
+    #[error("batch size must be greater than 0")]
+    EmptyBatch,
+    #[error("vocab size must be greater than 0")]
+    EmptyVocab,
 }
 
 impl<B: Backend> SamplingKernel<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
     ) -> Result<Self, SamplingError<B>> {
-        Self::new_with_strategy(context, data_type, max_batch_size, max_vocab_size, ArgmaxStrategy::TwoPass)
+        Self::new_with_strategy(context, data_type, ArgmaxStrategy::TwoPass)
     }
 
     pub fn new_with_strategy(
         context: &B::Context,
         data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
         argmax_strategy: ArgmaxStrategy,
     ) -> Result<Self, SamplingError<B>> {
         let bitmask = <B::Kernels as Kernels>::BitmaskKernel::new(context, data_type, true)
@@ -105,23 +94,9 @@ impl<B: Backend> SamplingKernel<B> {
                 let final_kernel =
                     <B::Kernels as Kernels>::ArgmaxFinalKernel::new(context).map_err(SamplingError::BackendError)?;
 
-                let block_size = 1024;
-                let grain_size = 4;
-
-                let elements_per_group = block_size * grain_size;
-                let max_vocab_groups_per_batch = (max_vocab_size + elements_per_group - 1) / elements_per_group;
-                let max_partial_results = max_batch_size * max_vocab_groups_per_batch;
-
-                let partial_results_buffer = RefCell::new(
-                    context
-                        .create_buffer(max_partial_results * size_of::<ArgmaxPair>())
-                        .expect("Failed to create partial results buffer"),
-                );
-
                 ArgmaxImplementation::TwoPass {
                     main_kernel,
                     final_kernel,
-                    partial_results_buffer,
                 }
             },
         };
@@ -134,36 +109,32 @@ impl<B: Backend> SamplingKernel<B> {
             minp,
             gumbel,
             argmax_implementation,
-            max_batch_size,
-            max_vocab_size,
         })
     }
 
     pub fn encode(
         &self,
-        mut logits_buffer: &mut B::Buffer,
-        seeds_buffer: &B::Buffer,
-        seeds_offset: usize,
-        bitmask_buffer: Option<&B::Buffer>,
-        bitmask_offset: usize,
-        sampled_tokens_buffer: &mut B::Buffer,
+        logits_buffer: &mut Allocation<B>,
+        seeds_buffer: &Allocation<B>,
+        bitmask_buffer: Option<&Allocation<B>>,
+        sampled_tokens_buffer: &mut Allocation<B>,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), SamplingError<B>> {
-        if batch_size > self.max_batch_size {
-            return Err(SamplingError::BatchSizeExceeded(batch_size, self.max_batch_size));
+        if batch_size == 0 {
+            return Err(SamplingError::EmptyBatch);
         }
-        if vocab_size > self.max_vocab_size {
-            return Err(SamplingError::VocabSizeExceeded(vocab_size, self.max_vocab_size));
+        if vocab_size == 0 {
+            return Err(SamplingError::EmptyVocab);
         }
 
         if let Some(bitmask_buffer) = bitmask_buffer {
             self.bitmask.encode(
-                None::<&B::Buffer>,
-                (bitmask_buffer, bitmask_offset),
-                logits_buffer.deref_mut(),
+                None::<&Allocation<B>>,
+                bitmask_buffer,
+                &mut *logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
                 encoder,
@@ -182,8 +153,8 @@ impl<B: Backend> SamplingKernel<B> {
                 && processing_order == SamplingProcessingOrder::TemperatureThenFilters
             {
                 self.temperature.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
+                    None::<&Allocation<B>>,
+                    &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
@@ -193,8 +164,8 @@ impl<B: Backend> SamplingKernel<B> {
 
             if let Some(top_k) = top_k {
                 self.topk.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
+                    None::<&Allocation<B>>,
+                    &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     top_k,
@@ -203,8 +174,8 @@ impl<B: Backend> SamplingKernel<B> {
             }
             if let Some(top_p) = top_p {
                 self.topp.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
+                    None::<&Allocation<B>>,
+                    &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     top_p,
@@ -213,8 +184,8 @@ impl<B: Backend> SamplingKernel<B> {
             }
             if let Some(min_p) = min_p {
                 self.minp.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
+                    None::<&Allocation<B>>,
+                    &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     min_p,
@@ -226,8 +197,8 @@ impl<B: Backend> SamplingKernel<B> {
                 && processing_order == SamplingProcessingOrder::FiltersThenTemperature
             {
                 self.temperature.encode(
-                    None::<&B::Buffer>,
-                    logits_buffer.deref_mut(),
+                    None::<&Allocation<B>>,
+                    &mut *logits_buffer,
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
@@ -236,9 +207,9 @@ impl<B: Backend> SamplingKernel<B> {
             }
 
             self.gumbel.encode(
-                None::<&B::Buffer>,
-                (seeds_buffer, seeds_offset),
-                logits_buffer.deref_mut(),
+                None::<&Allocation<B>>,
+                seeds_buffer,
+                &mut *logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,
                 encoder,
@@ -249,28 +220,29 @@ impl<B: Backend> SamplingKernel<B> {
             ArgmaxImplementation::SinglePass {
                 kernel,
             } => {
-                kernel.encode(
-                    logits_buffer.deref(),
-                    sampled_tokens_buffer,
-                    batch_size as u32,
-                    vocab_size as u32,
-                    encoder,
-                );
+                kernel.encode(&*logits_buffer, sampled_tokens_buffer, batch_size as u32, vocab_size as u32, encoder);
             },
             ArgmaxImplementation::TwoPass {
                 main_kernel,
                 final_kernel,
-                partial_results_buffer,
             } => {
+                let block_size = 1024;
+                let grain_size = 4;
+                let elements_per_group = block_size * grain_size;
+                let vocab_groups_per_batch = vocab_size.div_ceil(elements_per_group);
+                let partial_results_count = batch_size * vocab_groups_per_batch;
+                let mut partial_results = encoder
+                    .allocate_scratch(partial_results_count * size_of::<ArgmaxPair>())
+                    .map_err(SamplingError::BackendError)?;
                 main_kernel.encode(
-                    logits_buffer.deref(),
-                    partial_results_buffer.borrow_mut().deref_mut(),
+                    &*logits_buffer,
+                    &mut partial_results,
                     batch_size as u32,
                     vocab_size as u32,
                     encoder,
                 );
                 final_kernel.encode(
-                    partial_results_buffer.borrow().deref(),
+                    &partial_results,
                     sampled_tokens_buffer,
                     batch_size as u32,
                     vocab_size as u32,

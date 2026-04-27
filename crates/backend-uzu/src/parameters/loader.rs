@@ -9,7 +9,7 @@ use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
-    backends::common::{Backend, Buffer, Context},
+    backends::common::{Allocation, AllocationType, Backend, Buffer, Context},
     utils::fs::file_read_exact_at,
 };
 
@@ -94,18 +94,17 @@ where
         self.index.keys()
     }
 
-    pub fn get_leaf<'leaf>(
+    fn get_leaf<'leaf>(
         &'leaf self,
         key: &str,
     ) -> Result<ParameterLeaf<'file, 'context, 'leaf, C>, ParameterLoaderError<C::Backend>> {
         Ok(ParameterLeaf {
-            key: key.to_string(),
             metadata: self.index.get(key).ok_or_else(|| ParameterLoaderError::KeyNotFound(key.to_string()))?,
             loader: self,
         })
     }
 
-    pub fn get(
+    fn get(
         &self,
         key: &str,
     ) -> Result<Array<C::Backend>, ParameterLoaderError<C::Backend>> {
@@ -151,7 +150,6 @@ where
 }
 
 pub struct ParameterLeaf<'file, 'context, 'leaf, C: Context> {
-    key: String,
     metadata: &'leaf ParameterMetadata,
     loader: &'leaf ParameterLoader<'context, 'file, C>,
 }
@@ -169,16 +167,21 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
         self.metadata.size
     }
 
-    pub fn read_buffer(&self) -> Result<<C::Backend as Backend>::Buffer, ParameterLoaderError<C::Backend>> {
-        let mut buffer =
-            self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
-        buffer.set_label(Some(&format!("parameter_loader_{}", self.key.replace(".", "_"))));
+    pub fn read_allocation(&self) -> Result<Allocation<C::Backend>, ParameterLoaderError<C::Backend>> {
+        let allocation = self
+            .loader
+            .context
+            .create_allocation(self.metadata.size, AllocationType::Global)
+            .map_err(ParameterLoaderError::BackendError)?;
+        let (buffer, range) = allocation.as_buffer_range();
         file_read_exact_at(
             self.loader.file,
-            unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, self.metadata.size) },
+            unsafe {
+                std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
+            },
             self.metadata.offset as u64,
         )?;
-        Ok(buffer)
+        Ok(allocation)
     }
 }
 
@@ -188,13 +191,6 @@ pub struct ParameterTree<'loader, C: Context> {
 }
 
 impl<'loader, C: Context> ParameterTree<'loader, C> {
-    pub fn new(loader: &'loader ParameterLoader<'loader, 'loader, C>) -> Self {
-        Self {
-            loader,
-            prefix: None,
-        }
-    }
-
     pub fn path_prefix(&self) -> Option<&str> {
         self.prefix.as_deref()
     }
@@ -234,6 +230,13 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
         name: &str,
     ) -> Result<ParameterLeaf<'loader, 'loader, 'leaf, C>, ParameterLoaderError<C::Backend>> {
         self.loader.get_leaf(&self.join_prefix(name))
+    }
+
+    pub fn leaf_allocation(
+        &self,
+        name: &str,
+    ) -> Result<Allocation<C::Backend>, ParameterLoaderError<C::Backend>> {
+        self.leaf(name)?.read_allocation()
     }
 
     pub fn read_extract_at(

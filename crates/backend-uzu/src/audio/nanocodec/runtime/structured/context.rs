@@ -1,4 +1,5 @@
 use super::*;
+use crate::array::Array;
 
 impl StructuredAudioCodecGraph {
     fn conv1d_input_context<B: Backend>(layer: &StructuredAudioConv1d<B>) -> AudioResult<usize> {
@@ -97,7 +98,6 @@ impl StructuredAudioCodecGraph {
     pub(super) fn decode_quantizer_to_nsc_array_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        context: &Rc<B::Context>,
         encoder: &mut Encoder<B>,
         tokens: &[u32],
         lengths: &[usize],
@@ -148,11 +148,24 @@ impl StructuredAudioCodecGraph {
         let mut lengths_array = resources.length_staging(batch_size);
         lengths_array.as_slice_mut::<i32>()[..lengths_i32.len()].copy_from_slice(&lengths_i32);
 
-        let output = context.create_array_zeros(
-            &[batch_size, frames, self.input_dim],
-            quantizer_resources.data_type,
-            "structured_audio_quantizer_output_nsc",
-        );
+        let output = unsafe {
+            Array::from_allocation(
+                encoder
+                    .allocate_scratch(size_for_shape(
+                        &[batch_size, frames, self.input_dim],
+                        quantizer_resources.data_type,
+                    ))
+                    .map_err(|err| {
+                        AudioError::Runtime(format!("failed to allocate structured audio quantizer output: {err}"))
+                    })?,
+                0,
+                &[batch_size, frames, self.input_dim],
+                quantizer_resources.data_type,
+            )
+        };
+        let output_shape = output.shape().to_vec();
+        let output_data_type = output.data_type();
+        let mut output = output.into_allocation();
         let batch_i32 = usize_to_i32(batch_size, "batch_size")?;
         let codebooks_i32 = usize_to_i32(codebooks, "codebooks")?;
         let frames_i32 = usize_to_i32(frames, "frames")?;
@@ -162,34 +175,16 @@ impl StructuredAudioCodecGraph {
         let semantic_cardinality_i32 = usize_to_i32(quantizer_resources.semantic_cardinality, "semantic_cardinality")?;
         let residual_cardinality_i32 = usize_to_i32(quantizer_resources.residual_cardinality, "residual_cardinality")?;
 
-        let tokens_buffer = tokens_array.buffer();
-        let tokens_buffer = tokens_buffer.borrow();
-        let lengths_buffer = lengths_array.buffer();
-        let lengths_buffer = lengths_buffer.borrow();
-        let semantic_codebook_buffer = quantizer_resources.semantic_codebook.buffer();
-        let semantic_codebook_buffer = semantic_codebook_buffer.borrow();
-        let semantic_out_proj_buffer = quantizer_resources.semantic_out_proj.buffer();
-        let semantic_out_proj_buffer = semantic_out_proj_buffer.borrow();
-        let semantic_out_bias_buffer = quantizer_resources.semantic_out_bias.buffer();
-        let semantic_out_bias_buffer = semantic_out_bias_buffer.borrow();
-        let residual_codebooks_buffer = quantizer_resources.residual_codebooks.buffer();
-        let residual_codebooks_buffer = residual_codebooks_buffer.borrow();
-        let residual_out_proj_buffer = quantizer_resources.residual_out_proj.buffer();
-        let residual_out_proj_buffer = residual_out_proj_buffer.borrow();
-        let residual_out_bias_buffer = quantizer_resources.residual_out_bias.buffer();
-        let residual_out_bias_buffer = residual_out_bias_buffer.borrow();
-        let output_buffer = output.buffer();
-        let mut output_buffer = output_buffer.borrow_mut();
         quantizer_resources.kernel.encode(
-            &*tokens_buffer,
-            &*lengths_buffer,
-            &*semantic_codebook_buffer,
-            &*semantic_out_proj_buffer,
-            &*semantic_out_bias_buffer,
-            &*residual_codebooks_buffer,
-            &*residual_out_proj_buffer,
-            &*residual_out_bias_buffer,
-            &mut *output_buffer,
+            tokens_array.allocation(),
+            lengths_array.allocation(),
+            quantizer_resources.semantic_codebook.allocation(),
+            quantizer_resources.semantic_out_proj.allocation(),
+            quantizer_resources.semantic_out_bias.allocation(),
+            quantizer_resources.residual_codebooks.allocation(),
+            quantizer_resources.residual_out_proj.allocation(),
+            quantizer_resources.residual_out_bias.allocation(),
+            &mut output,
             batch_i32,
             codebooks_i32,
             frames_i32,
@@ -201,6 +196,6 @@ impl StructuredAudioCodecGraph {
             encoder,
         );
 
-        Ok(output)
+        Ok(unsafe { Array::from_allocation(output, 0, &output_shape, output_data_type) })
     }
 }

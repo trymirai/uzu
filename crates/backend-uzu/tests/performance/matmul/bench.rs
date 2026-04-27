@@ -4,7 +4,7 @@ use backend_uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            AllocationType, Backend, Buffer, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -13,23 +13,19 @@ use backend_uzu::{
         metal::Metal,
     },
 };
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{error::BenchError, output::PerfResult, shapes::TestShape};
 
 type Ctx = <Metal as Backend>::Context;
-type Buf = Retained<ProtocolObject<dyn MTLBuffer>>;
 
 const WARMUP_ITERATIONS: usize = 3;
 const BENCHMARK_ITERATIONS: usize = 10;
 
 fn fill_buffer_random(
-    buffer: &ProtocolObject<dyn MTLBuffer>,
+    buffer: &<Metal as Backend>::Buffer,
     byte_count: usize,
 ) {
-    let pointer = buffer.contents().as_ptr() as *mut u8;
-    let slice = unsafe { std::slice::from_raw_parts_mut(pointer, byte_count) };
+    let slice = unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, byte_count) };
     for (i, byte) in slice.iter_mut().enumerate() {
         *byte = (i % 251) as u8;
     }
@@ -39,14 +35,13 @@ fn encode_and_run(
     context: &Ctx,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     shape: &TestShape,
-    a_buffer: &Buf,
-    b_buffer: &Buf,
-    d_buffer: &mut Buf,
+    a_buffer: &backend_uzu::backends::common::Allocation<Metal>,
+    b_buffer: &backend_uzu::backends::common::Allocation<Metal>,
+    d_buffer: &mut backend_uzu::backends::common::Allocation<Metal>,
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
     kernel.encode(
-        context,
         MatmulArguments {
             a: a_buffer,
             a_offset: 0,
@@ -79,17 +74,17 @@ fn run_benchmark(
     let b_byte_count = shape.output_dim * shape.input_dim * elem_size;
     let d_byte_count = shape.batch * shape.output_dim * elem_size;
 
-    let (a_buffer, b_buffer, mut d_buffer) = match (
-        context.device.new_buffer(a_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-        context.device.new_buffer(b_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-        context.device.new_buffer(d_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-    ) {
-        (Some(a), Some(b), Some(d)) => (a, b, d),
-        _ => return Err(BenchError::BufferAllocation),
-    };
+    let a_buffer =
+        context.create_allocation(a_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
+    let b_buffer =
+        context.create_allocation(b_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
+    let mut d_buffer =
+        context.create_allocation(d_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
 
-    fill_buffer_random(&a_buffer, a_byte_count);
-    fill_buffer_random(&b_buffer, b_byte_count);
+    let (a_raw, _) = a_buffer.as_buffer_range();
+    let (b_raw, _) = b_buffer.as_buffer_range();
+    fill_buffer_random(a_raw, a_byte_count);
+    fill_buffer_random(b_raw, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
         encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {

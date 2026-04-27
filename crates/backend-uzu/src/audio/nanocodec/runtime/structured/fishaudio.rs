@@ -1,4 +1,5 @@
 use super::*;
+use crate::array::{Array, ArrayContextExt};
 
 pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
@@ -11,8 +12,7 @@ pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
 pub(super) struct StructuredAudioPostModuleRuntime<B: Backend> {
     pub(super) context: Rc<B::Context>,
     pub(super) model_shape: ModelShape,
-    pub(super) scratch_buffers: ScratchBuffers<B>,
-    pub(super) shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
+    pub(super) shared_buffers: Rc<SharedBuffers<B>>,
     pub(super) layers: Box<[LayerExecutables<B>]>,
     pub(super) output_norm: RMSNorm<B>,
     pub(super) max_sequence_length: usize,
@@ -53,90 +53,43 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
 /// by the pool and it is large enough. When a residual connection keeps an
 /// extra reference alive, a fresh buffer is allocated transparently.
 pub(super) struct DecodeWorkspace<B: Backend> {
-    slots: [RefCell<Option<Rc<RefCell<B::Buffer>>>>; 2],
-    toggle: Cell<bool>,
-    /// Pair of reusable I32 arrays for per-stage sequence lengths. Cached to
-    /// avoid allocating new GPU buffers on every decode call.
-    lengths_pair: [RefCell<Option<Array<B>>>; 2],
+    _marker: std::marker::PhantomData<B>,
 }
 
 impl<B: Backend> DecodeWorkspace<B> {
     fn new() -> Self {
         Self {
-            slots: [RefCell::new(None), RefCell::new(None)],
-            toggle: Cell::new(false),
-            lengths_pair: [RefCell::new(None), RefCell::new(None)],
+            _marker: std::marker::PhantomData,
         }
     }
 
-    /// Return a reusable I32 array of at least `min_elements` entries for
-    /// sequence length data. `index` must be 0 or 1 (ping-pong pair).
     pub(super) fn lengths_array(
         &self,
-        context: &B::Context,
-        index: usize,
+        encoder: &mut Encoder<B>,
         min_elements: usize,
     ) -> Array<B> {
-        debug_assert!(index < 2);
-        let mut slot = self.lengths_pair[index].borrow_mut();
-        if let Some(existing) = slot.as_ref() {
-            if existing.num_elements() >= min_elements {
-                return existing.clone();
-            }
-        }
-        let label = if index == 0 {
-            "structured_audio_lengths_a"
-        } else {
-            "structured_audio_lengths_b"
-        };
-        let array = context.create_array_zeros(&[min_elements], DataType::I32, label);
-        *slot = Some(array.clone());
-        array
+        let allocation = encoder
+            .allocate_constant(min_elements * std::mem::size_of::<i32>())
+            .expect("Failed to allocate structured audio lengths");
+        unsafe { Array::from_allocation(allocation, 0, &[min_elements], DataType::I32) }
     }
 
-    /// Return a scratch [`Array`] backed by the next slot in the ping-pong
-    /// pair. The underlying GPU buffer is reused when possible.
     pub(super) fn next_scratch(
         &self,
-        context: &B::Context,
+        encoder: &mut Encoder<B>,
         shape: &[usize],
         data_type: DataType,
-        label: &str,
     ) -> Array<B> {
-        let idx = usize::from(self.toggle.get());
-        self.toggle.set(!self.toggle.get());
-
-        let needed = size_for_shape(shape, data_type);
-        let mut slot = self.slots[idx].borrow_mut();
-
-        // Try to reuse the existing buffer if nobody else holds a reference
-        // and it is large enough.
-        if let Some(buf_rc) = slot.as_ref() {
-            if Rc::strong_count(buf_rc) == 1 && buf_rc.borrow().length() >= needed {
-                let array = unsafe { Array::from_parts(buf_rc.clone(), 0, shape, data_type) };
-                return array;
-            }
-        }
-
-        // Allocate a fresh buffer and cache it.
-        let mut buffer = context.create_buffer(needed).expect("Failed to create scratch buffer");
-        buffer.set_label(Some(label));
-        let buf_rc = Rc::new(RefCell::new(buffer));
-        *slot = Some(buf_rc.clone());
-        unsafe { Array::from_parts(buf_rc, 0, shape, data_type) }
+        let allocation =
+            encoder.allocate_scratch(size_for_shape(shape, data_type)).expect("Failed to allocate scratch");
+        unsafe { Array::from_allocation(allocation, 0, shape, data_type) }
     }
 
     /// Clear both scratch slots, forcing the next call to allocate fresh
     /// buffers. This must be called after submitting a command buffer that
     /// references scratch intermediates so that the in-flight GPU work is
     /// not corrupted by a subsequent decode pass reusing the same buffers.
-    pub(super) fn reset(&self) {
-        *self.slots[0].borrow_mut() = None;
-        *self.slots[1].borrow_mut() = None;
-        self.toggle.set(false);
-        *self.lengths_pair[0].borrow_mut() = None;
-        *self.lengths_pair[1].borrow_mut() = None;
-    }
+    pub(super) fn reset(&self) {}
 }
 
 pub(in crate::audio::nanocodec::runtime) struct StructuredAudioRuntimeResources<B: Backend> {
@@ -200,7 +153,7 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
                 return existing.clone();
             }
         }
-        let array = self.context.create_array_zeros(&[min_elements], DataType::U32, "quantizer_token_staging");
+        let array = self.context.create_array_uninitialized(&[min_elements], DataType::U32, "structured_audio_tokens");
         *slot = Some(array.clone());
         array
     }
@@ -215,7 +168,7 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
                 return existing.clone();
             }
         }
-        let array = self.context.create_array_zeros(&[min_elements], DataType::I32, "quantizer_length_staging");
+        let array = self.context.create_array_uninitialized(&[min_elements], DataType::I32, "structured_audio_lengths");
         *slot = Some(array.clone());
         array
     }

@@ -1,55 +1,67 @@
 //! Prediction head encodable for classification output.
 
-#[cfg(feature = "tracing")]
-use crate::forward_pass::state::ArrayId;
 use crate::{
-    backends::common::{Backend, Encoder},
-    encodable_block::{Activation, Normalization, linear::Linear},
-    forward_pass::state::ForwardPassState,
+    DataType,
+    array::size_for_shape,
+    backends::common::{
+        ActivationConfig, Allocation, Backend, Encoder,
+        gpu_types::ActivationType,
+        kernel::{ActivationKernel, Kernels},
+    },
+    encodable_block::{Normalization, linear::Linear},
 };
 
 pub struct ClassifierPredictionHead<B: Backend> {
     dense: Box<dyn Linear<B>>,
-    activation: Activation<B>,
+    activation_kernel: <B::Kernels as Kernels>::ActivationKernel,
+    activation: ActivationConfig,
+    activation_data_type: DataType,
     norm: Normalization<B>,
     readout: Box<dyn Linear<B>>,
-    #[allow(dead_code)]
-    num_labels: usize,
+    hidden_dim: usize,
 }
 
 impl<B: Backend> ClassifierPredictionHead<B> {
     pub fn new(
+        context: &B::Context,
         dense: Box<dyn Linear<B>>,
-        activation: Activation<B>,
+        activation: ActivationConfig,
+        activation_data_type: DataType,
         norm: Normalization<B>,
         readout: Box<dyn Linear<B>>,
-        num_labels: usize,
-    ) -> Self {
-        Self {
+        hidden_dim: usize,
+    ) -> Result<Self, B::Error> {
+        let activation_kernel = <B::Kernels as Kernels>::ActivationKernel::new(context, activation_data_type, false)?;
+        Ok(Self {
             dense,
+            activation_kernel,
             activation,
+            activation_data_type,
             norm,
             readout,
-            num_labels,
-        }
+            hidden_dim,
+        })
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        self.dense.encode(state, encoder)?;
-        self.activation.encode(state, encoder)?;
-        self.norm.encode(state, encoder)?;
-        self.readout.encode(state, encoder)?;
-
-        #[cfg(feature = "tracing")]
-        {
-            let traces = state.traces().clone();
-            state.encode_copy_array(encoder, ArrayId::ClassifierPredictionHeadLogits, traces.borrow().logits.clone());
+    ) -> Result<Allocation<B>, B::Error> {
+        let batch_dim = 1;
+        let dense = self.dense.encode(input, batch_dim, encoder)?;
+        if self.activation.act_type() == ActivationType::IDENTITY {
+            panic!("Identity activation is not supported for kernel");
         }
-
-        Ok(())
+        let mut activated = encoder.allocate_scratch(size_for_shape(&[self.hidden_dim], self.activation_data_type))?;
+        self.activation_kernel.encode(
+            Some(&dense),
+            &mut activated,
+            self.hidden_dim as u32,
+            self.activation.act_type(),
+            encoder,
+        );
+        let normalized = self.norm.encode(&activated, 0, batch_dim, encoder)?;
+        self.readout.encode(normalized, batch_dim, encoder)
     }
 }

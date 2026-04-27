@@ -1,28 +1,80 @@
 //! Sampling kernel encodable.
 
-use std::ops::{Deref, DerefMut};
+use ndarray::ArrayView2;
 
 use crate::{
     DataType,
+    array::{Array, ArrayContextExt},
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::sampling::{SamplingError, SamplingKernel},
     },
-    forward_pass::state::{ArrayId, ForwardPassState},
+    session::parameter::SamplingMethod,
 };
 
 pub struct Sampling<B: Backend> {
     kernel: SamplingKernel<B>,
 }
 
+pub struct SamplingArguments<'a, B: Backend> {
+    pub logits: &'a mut Allocation<B>,
+    pub seeds: &'a Allocation<B>,
+    pub bitmask: Option<&'a Allocation<B>>,
+    pub output: &'a mut Allocation<B>,
+    pub sampling_method: SamplingMethod,
+    pub batch_size: usize,
+    pub vocab_size: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct SamplingInputs<B: Backend> {
+    pub seeds: Array<B>,
+    pub bitmask: Option<Array<B>>,
+}
+
+impl<B: Backend> SamplingInputs<B> {
+    pub(crate) fn bitmask_array_from_slice(
+        context: &B::Context,
+        row_count: usize,
+        token_bitmask: &[u32],
+        bitmask_row_len: usize,
+    ) -> Array<B> {
+        let mut array = context.create_array_zeros(&[row_count, bitmask_row_len], DataType::U32, "sampling_bitmask");
+        let source =
+            ArrayView2::from_shape((row_count, bitmask_row_len), token_bitmask).expect("Invalid token bitmask shape");
+        array.copy_from_view(source);
+        array
+    }
+
+    pub(crate) fn from_slices(
+        context: &B::Context,
+        token_seeds: &[u64],
+        token_bitmask: Option<&[u32]>,
+        bitmask_row_len: Option<usize>,
+    ) -> Self {
+        let seeds = context.create_array_from(&[token_seeds.len()], token_seeds, "sampling_seeds");
+
+        let bitmask = match (token_bitmask, bitmask_row_len) {
+            (Some(token_bitmask), Some(bitmask_row_len)) => {
+                Some(Self::bitmask_array_from_slice(context, token_seeds.len(), token_bitmask, bitmask_row_len))
+            },
+            (None, None) => None,
+            _ => panic!("bitmask data and row length must either both exist or both be absent"),
+        };
+
+        Self {
+            seeds,
+            bitmask,
+        }
+    }
+}
+
 impl<B: Backend> Sampling<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        max_batch_size: usize,
-        max_vocab_size: usize,
     ) -> Result<Self, SamplingError<B>> {
-        let kernel = SamplingKernel::new(context, data_type, max_batch_size, max_vocab_size)?;
+        let kernel = SamplingKernel::new(context, data_type)?;
         Ok(Self {
             kernel,
         })
@@ -30,43 +82,19 @@ impl<B: Backend> Sampling<B> {
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        args: SamplingArguments<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let batch_dim = state.sampling_length();
-        let sampling_start = state.sampling_start();
-        let sampling_method = state.sampling_method().unwrap();
-
-        let logits = state.array(ArrayId::Logits);
-        let seeds = state.array(ArrayId::TokenSeeds);
-        let output = state.sampling_output().unwrap();
-
-        let vocab_size = logits.shape()[1];
-        let seeds_offset = seeds.offset() + sampling_start * std::mem::size_of::<u64>();
-
-        let (bitmask_buffer, bitmask_offset) = state.token_bitmask().map_or((None, 0usize), |bitmask| {
-            let bitmask_row_len = bitmask.shape()[1];
-            let bitmask_offset = bitmask.offset() + sampling_start * bitmask_row_len * std::mem::size_of::<u32>();
-            (Some(bitmask.buffer()), bitmask_offset)
-        });
-        let bitmask_borrow = bitmask_buffer.as_ref().map(|b| b.borrow());
-
-        self.kernel
-            .encode(
-                logits.buffer().borrow_mut().deref_mut(),
-                seeds.buffer().borrow().deref(),
-                seeds_offset,
-                bitmask_borrow.as_deref(),
-                bitmask_offset,
-                output.buffer().borrow_mut().deref_mut(),
-                sampling_method,
-                batch_dim,
-                vocab_size,
-                encoder,
-            )
-            .expect("Sampling encoding failed");
-
-        Ok(())
+    ) -> Result<(), SamplingError<B>> {
+        self.kernel.encode(
+            args.logits,
+            args.seeds,
+            args.bitmask,
+            args.output,
+            args.sampling_method,
+            args.batch_size,
+            args.vocab_size,
+            encoder,
+        )
     }
 }
 

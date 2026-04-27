@@ -1,14 +1,9 @@
-use std::{
-    mem::size_of,
-    ops::{Deref, DerefMut},
-};
-
-use backend_uzu::backends::common::Buffer;
+use std::mem::size_of;
 
 use crate::{
-    ArrayContextExt, DataType,
+    DataType, allocation_copy_from_slice, allocation_to_vec,
     backends::common::{
-        Backend, Context, Encoder, Kernels,
+        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dScanKernel,
@@ -21,30 +16,15 @@ use crate::{
 #[path = "../../../../common/mod.rs"]
 mod common;
 
-fn write_buffer<B: Backend>(
-    buf: &B::Buffer,
-    data: &[f32],
-) {
-    unsafe {
-        std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cpu_ptr().as_ptr() as *mut f32, data.len());
-    }
-}
-
-fn read_buffer<B: Backend>(
-    buf: &B::Buffer,
-    len: usize,
-) -> Vec<f32> {
-    let mut out = vec![0.0f32; len];
-    unsafe {
-        std::ptr::copy_nonoverlapping(buf.cpu_ptr().as_ptr() as *const f32, out.as_mut_ptr(), len);
-    }
-    out
-}
-
-fn zero_buffer<B: Backend>(buf: &B::Buffer) {
-    unsafe {
-        std::ptr::write_bytes(buf.cpu_ptr().as_ptr(), 0, buf.length());
-    }
+fn allocation_from_slice<B: Backend, T: crate::ArrayElement>(
+    context: &B::Context,
+    data: &[T],
+) -> Allocation<B> {
+    let allocation = context
+        .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
+    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    allocation
 }
 
 fn ssd_prefill_cpu_reference(
@@ -105,7 +85,6 @@ fn ssd_prefill_cpu_reference(
     (y_out, state)
 }
 
-#[allow(dead_code)]
 struct SSDPrefillFixture {
     suffix_len: usize,
     num_heads: usize,
@@ -113,9 +92,6 @@ struct SSDPrefillFixture {
     state_dim: usize,
     group_size: i32,
     total_x: usize,
-    total_dt: usize,
-    total_cb: usize,
-    total_state: usize,
     x_strides: [usize; 3],
     dt_strides: [usize; 2],
     cb_strides: [usize; 3],
@@ -163,9 +139,6 @@ impl SSDPrefillFixture {
             state_dim,
             group_size,
             total_x,
-            total_dt,
-            total_cb,
-            total_state,
             x_strides,
             dt_strides,
             cb_strides,
@@ -187,56 +160,24 @@ fn run_prefill_kernel_mode<B: Backend>(
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
-    let x_array = ctx.create_array_from(&[fixture.x_data.len()], &fixture.x_data, "");
-    let x_array_buf = x_array.buffer();
-    let x_array_buf_borrow = x_array_buf.borrow();
-    let x_buf = x_array_buf_borrow.deref();
+    let x_buf = allocation_from_slice::<B, _>(ctx, &fixture.x_data);
+    let dt_buf = allocation_from_slice::<B, _>(ctx, &fixture.dt_data);
+    let b_buf = allocation_from_slice::<B, _>(ctx, &fixture.b_data);
+    let c_buf = allocation_from_slice::<B, _>(ctx, &fixture.c_data);
+    let d_buf = allocation_from_slice::<B, _>(ctx, &fixture.d_data);
+    let z_buf = allocation_from_slice::<B, _>(ctx, &fixture.z_data);
+    let mut state_buf = allocation_from_slice::<B, _>(ctx, &fixture.state_init);
+    let mut y_buf = allocation_from_slice::<B, _>(ctx, &vec![0f32; fixture.total_x]);
 
-    let dt_array = ctx.create_array_from(&[fixture.dt_data.len()], &fixture.dt_data, "");
-    let dt_array_buf = dt_array.buffer();
-    let dt_array_buf_borrow = dt_array_buf.borrow();
-    let dt_buf = dt_array_buf_borrow.deref();
-
-    let b_array = ctx.create_array_from(&[fixture.b_data.len()], &fixture.b_data, "");
-    let b_array_buf = b_array.buffer();
-    let b_array_buf_borrow = b_array_buf.borrow();
-    let b_buf = b_array_buf_borrow.deref();
-
-    let c_array = ctx.create_array_from(&[fixture.c_data.len()], &fixture.c_data, "");
-    let c_array_buf = c_array.buffer();
-    let c_array_buf_borrow = c_array_buf.borrow();
-    let c_buf = c_array_buf_borrow.deref();
-
-    let d_array = ctx.create_array_from(&[fixture.d_data.len()], &fixture.d_data, "");
-    let d_array_buf = d_array.buffer();
-    let d_array_buf_borrow = d_array_buf.borrow();
-    let d_buf = d_array_buf_borrow.deref();
-
-    let z_array = ctx.create_array_from(&[fixture.z_data.len()], &fixture.z_data, "");
-    let z_array_buf = z_array.buffer();
-    let z_array_buf_borrow = z_array_buf.borrow();
-    let z_buf = z_array_buf_borrow.deref();
-
-    let state_array = ctx.create_array_from(&[fixture.state_init.len()], &fixture.state_init, "");
-    let state_array_buf = state_array.buffer();
-    let mut state_array_buf_borrow = state_array_buf.borrow_mut();
-    let state_buf = state_array_buf_borrow.deref_mut();
-
-    let y = vec![0f32; fixture.total_x];
-    let y_array = ctx.create_array_from(&[y.len()], &y, "");
-    let y_array_buf = y_array.buffer();
-    let mut y_array_buf_borrow = y_array_buf.borrow_mut();
-    let y_buf = y_array_buf_borrow.deref_mut();
-
-    let args = SSDPrefillArguments::<B> {
-        x: x_buf,
-        dt: dt_buf,
-        b: b_buf,
-        c: c_buf,
-        d: d_buf,
-        z: z_buf,
-        state: state_buf,
-        y: y_buf,
+    let args = SSDPrefillArguments {
+        x: &x_buf,
+        dt: &dt_buf,
+        b: &b_buf,
+        c: &c_buf,
+        d: &d_buf,
+        z: &z_buf,
+        state: &mut state_buf,
+        y: &mut y_buf,
         suffix_len: fixture.suffix_len,
         group_size: fixture.group_size as u32,
         state_size: fixture.state_dim as u32,
@@ -252,8 +193,8 @@ fn run_prefill_kernel_mode<B: Backend>(
     kernel.encode(&mut encoder, args, mode);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_vec = read_buffer::<B>(y_buf, fixture.total_x);
-    let state_vec = read_buffer::<B>(state_buf, fixture.total_state);
+    let y_vec = allocation_to_vec::<B, f32>(&y_buf);
+    let state_vec = allocation_to_vec::<B, f32>(&state_buf);
     (y_vec, state_vec, None)
 }
 
@@ -275,106 +216,63 @@ fn run_conv_scan_once<B: Backend>(
     let _total_w = channels * kernel_size as usize;
     let total_state = channels * tap_count;
 
-    let y_array = if alias_io {
-        ctx.create_array_from(&[x_data.len()], x_data, "")
+    let mut y_buf = if alias_io {
+        allocation_from_slice::<B, _>(ctx, x_data)
     } else {
-        ctx.create_array_zeros(&[total_x], DataType::F32, "")
+        allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_x])
     };
-    let b_out_array = ctx.create_array_zeros(&[total_x], DataType::F32, "");
-    let c_out_array = ctx.create_array_zeros(&[total_x], DataType::F32, "");
-
-    let w_array = ctx.create_array_from(&[w_data.len()], w_data, "");
-    let b_array = ctx.create_array_from(&[b_data.len()], b_data, "");
-
-    let state_array = ctx.create_array_uninitialized(&[total_state], DataType::F32, "");
-    let scratch_array = ctx.create_array_uninitialized(&[total_state], DataType::F32, "");
-
-    {
-        let state_buf = state_array.buffer();
-        let state_borrow = state_buf.borrow();
-        write_buffer::<B>(state_borrow.deref(), state_init);
-        if use_scratch && tap_count > 0 {
-            let scratch_buf = scratch_array.buffer();
-            let scratch_borrow = scratch_buf.borrow();
-            zero_buffer::<B>(scratch_borrow.deref());
-        }
-    }
+    let mut b_out_buf = allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_x]);
+    let mut c_out_buf = allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_x]);
+    let w_buf = allocation_from_slice::<B, _>(ctx, w_data);
+    let b_buf = allocation_from_slice::<B, _>(ctx, b_data);
+    let mut state_buf = allocation_from_slice::<B, _>(ctx, state_init);
+    let scratch_buf = allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_state]);
 
     let padded_len = tap_count + suffix_len;
-    let padded_array = ctx.create_array_uninitialized(&[padded_len * channels], DataType::F32, "");
-    {
-        let padded_buf = padded_array.buffer();
-        let padded_borrow = padded_buf.borrow();
-        let mut host = vec![0.0f32; padded_len * channels];
-        for tap in 0..tap_count {
-            for ch in 0..channels {
-                host[tap * channels + ch] = state_init[ch * tap_count + tap];
-            }
+    let mut padded_host = vec![0.0f32; padded_len * channels];
+    for tap in 0..tap_count {
+        for ch in 0..channels {
+            padded_host[tap * channels + ch] = state_init[ch * tap_count + tap];
         }
-        for token in 0..suffix_len {
-            for ch in 0..channels {
-                host[(tap_count + token) * channels + ch] = x_data[token * channels + ch];
-            }
-        }
-        write_buffer::<B>(padded_borrow.deref(), &host);
     }
+    for token in 0..suffix_len {
+        for ch in 0..channels {
+            padded_host[(tap_count + token) * channels + ch] = x_data[token * channels + ch];
+        }
+    }
+    let padded_buf = allocation_from_slice::<B, _>(ctx, &padded_host);
 
     let mut encoder = Encoder::new(ctx).unwrap();
-    {
-        let padded_buf = padded_array.buffer();
-        let padded_borrow = padded_buf.borrow();
-        let w_buf = w_array.buffer();
-        let w_borrow = w_buf.borrow();
-        let b_buf = b_array.buffer();
-        let b_borrow = b_buf.borrow();
-        let y_buf = y_array.buffer();
-        let mut y_borrow = y_buf.borrow_mut();
-        let b_out_buf = b_out_array.buffer();
-        let mut b_out_borrow = b_out_buf.borrow_mut();
-        let c_out_buf = c_out_array.buffer();
-        let mut c_out_borrow = c_out_buf.borrow_mut();
-        let state_buf = state_array.buffer();
-        let mut state_borrow = state_buf.borrow_mut();
-
-        kernel.encode(
-            padded_borrow.deref(),
-            w_borrow.deref(),
-            Some(b_borrow.deref()),
-            y_borrow.deref_mut(),
-            b_out_borrow.deref_mut(),
-            c_out_borrow.deref_mut(),
-            state_borrow.deref_mut(),
-            suffix_len as u32,
-            kernel_size as u32,
-            channels as u32,
-            tap_count as u32,
-            channels as u32,
-            channels as u32,
-            0u32,
-            ActivationType::SILU,
-            &mut encoder,
-        );
-    }
+    kernel.encode(
+        &padded_buf,
+        &w_buf,
+        Some(&b_buf),
+        &mut y_buf,
+        &mut b_out_buf,
+        &mut c_out_buf,
+        &mut state_buf,
+        suffix_len as u32,
+        kernel_size as u32,
+        channels as u32,
+        tap_count as u32,
+        channels as u32,
+        channels as u32,
+        0u32,
+        ActivationType::SILU,
+        &mut encoder,
+    );
 
     if use_scratch && tap_count > 0 {
         let bytes = channels * tap_count * size_of::<f32>();
         if bytes > 0 {
-            let scratch_buf = scratch_array.buffer();
-            let scratch_borrow = scratch_buf.borrow();
-            let state_buf = state_array.buffer();
-            let mut state_borrow = state_buf.borrow_mut();
-            encoder.encode_copy(scratch_borrow.deref(), 0..bytes, state_borrow.deref_mut(), 0..bytes);
+            encoder.encode_copy(&scratch_buf, 0..bytes, &mut state_buf, 0..bytes);
         }
     }
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let y_buf = y_array.buffer();
-    let y_borrow = y_buf.borrow();
-    let state_buf = state_array.buffer();
-    let state_borrow = state_buf.borrow();
-    let y_vec = read_buffer::<B>(y_borrow.deref(), total_x);
-    let state_vec = read_buffer::<B>(state_borrow.deref(), total_state);
+    let y_vec = allocation_to_vec::<B, f32>(&y_buf);
+    let state_vec = allocation_to_vec::<B, f32>(&state_buf);
     (y_vec, state_vec)
 }
 

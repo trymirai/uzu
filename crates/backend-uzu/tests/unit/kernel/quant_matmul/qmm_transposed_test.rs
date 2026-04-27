@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
+        common::{Backend, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
         cpu::Cpu,
     },
 };
@@ -11,7 +11,10 @@ use half::{bf16, f16};
 use num_traits::Float;
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
-use crate::{common::helpers::alloc_buffer_with_data, uzu_test};
+use crate::{
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    uzu_test,
+};
 
 fn make_input_basic<T: ArrayElement + Float>(
     m: usize,
@@ -185,16 +188,15 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     )
     .expect("Failed to create QuantizedMatmulQmmTransposedKernel");
 
-    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
+    let w_buf = alloc_allocation_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_allocation_with_data::<B, T>(&context, &input.scales);
 
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
-    let had_buf = hadamard_factors.map(|f| alloc_buffer_with_data::<B, i32>(&context, f));
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(&context, b));
+    let had_buf = hadamard_factors.map(|f| alloc_allocation_with_data::<B, i32>(&context, f));
 
-    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+    let x_buf = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<B, T>(&context, (input.m as usize) * (input.n as usize));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -213,9 +215,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+    allocation_to_vec(&y_buf)
 }
 
 fn check_against_expected<T: ArrayElement + Float + Debug + Display>(

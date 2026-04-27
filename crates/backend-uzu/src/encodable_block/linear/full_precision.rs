@@ -1,22 +1,18 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
 use super::Linear;
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{
             ManualKernels,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
         },
     },
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -53,12 +49,11 @@ pub enum FullPrecisionLinearError<B: Backend> {
 
 pub struct FullPrecisionLinear<B: Backend> {
     kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    bias_buffer: Option<Rc<RefCell<B::Buffer>>>,
-    weights_buffer: Rc<RefCell<B::Buffer>>,
+    bias: Option<Allocation<B>>,
+    weights: Allocation<B>,
     input_dim: usize,
     output_dim: usize,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
+    precision: DataType,
 }
 
 impl<B: Backend> FullPrecisionLinear<B> {
@@ -68,15 +63,13 @@ impl<B: Backend> FullPrecisionLinear<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
     ) -> Result<Self, FullPrecisionLinearError<B>> {
         if !matches!(precision, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(FullPrecisionLinearError::UnsupportedDataType(precision));
         }
 
-        let weights = parameter_tree.leaf_array("weights").map_err(FullPrecisionLinearError::ParameterError)?;
-        let weights_shape = weights.shape().to_vec();
+        let weights_leaf = parameter_tree.leaf("weights").map_err(FullPrecisionLinearError::ParameterError)?;
+        let weights_shape = weights_leaf.shape().to_vec();
         if weights_shape != [output_dim, input_dim] {
             return Err(FullPrecisionLinearError::InvalidWeightsShape {
                 got: weights_shape.into_boxed_slice(),
@@ -85,16 +78,16 @@ impl<B: Backend> FullPrecisionLinear<B> {
             });
         }
 
-        if weights.data_type() != precision {
+        if weights_leaf.data_type() != precision {
             return Err(FullPrecisionLinearError::InvalidWeightsDataType {
                 expected: precision,
-                got: weights.data_type(),
+                got: weights_leaf.data_type(),
             });
         }
 
-        let bias_buffer = match parameter_tree.leaf_array("biases") {
-            Ok(biases) => {
-                let bias_shape = biases.shape().to_vec();
+        let bias = match parameter_tree.leaf("biases") {
+            Ok(biases_leaf) => {
+                let bias_shape = biases_leaf.shape().to_vec();
                 if bias_shape != [output_dim] {
                     return Err(FullPrecisionLinearError::InvalidBiasShape {
                         got: bias_shape.into_boxed_slice(),
@@ -102,14 +95,14 @@ impl<B: Backend> FullPrecisionLinear<B> {
                     });
                 }
 
-                if biases.data_type() != precision {
+                if biases_leaf.data_type() != precision {
                     return Err(FullPrecisionLinearError::InvalidBiasDataType {
                         expected: precision,
-                        got: biases.data_type(),
+                        got: biases_leaf.data_type(),
                     });
                 }
 
-                Some(biases.buffer())
+                Some(biases_leaf.read_allocation().map_err(FullPrecisionLinearError::ParameterError)?)
             },
             Err(_) => None,
         };
@@ -118,12 +111,11 @@ impl<B: Backend> FullPrecisionLinear<B> {
 
         Ok(Self {
             kernel: RefCell::new(kernel),
-            bias_buffer,
-            weights_buffer: weights.buffer(),
+            bias,
+            weights: weights_leaf.read_allocation().map_err(FullPrecisionLinearError::ParameterError)?,
             input_dim,
             output_dim,
-            input_array_id,
-            output_array_id,
+            precision,
         })
     }
 }
@@ -131,32 +123,28 @@ impl<B: Backend> FullPrecisionLinear<B> {
 impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let batch_dim = state.active_row_count();
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
-
-        let bias_borrow = self.bias_buffer.as_ref().map(|b| b.borrow());
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.precision))?;
         self.kernel.borrow_mut().encode(
-            state.context(),
             MatmulArguments {
-                a: input_array.buffer().borrow().deref(),
+                a: &input,
                 a_offset: 0,
-                b: self.weights_buffer.borrow().deref(),
+                b: &self.weights,
                 ab_scale: 1.0,
-                c: match bias_borrow.as_deref() {
-                    Some(b) => MatmulArgumentC::Bias(b),
+                c: match self.bias.as_ref() {
+                    Some(bias) => MatmulArgumentC::Bias(bias),
                     None => MatmulArgumentC::None,
                 },
-                d: output_array.buffer().borrow_mut().deref_mut(),
+                d: &mut output,
                 batch_dim: batch_dim as u32,
                 input_dim: self.input_dim as u32,
                 output_dim: self.output_dim as u32,
             },
             encoder,
         );
-        Ok(())
+        Ok(output)
     }
 }

@@ -2,33 +2,32 @@ use std::rc::Rc;
 
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
     config::TransformerLayerConfig,
     encodable_block::{
-        Attention, EncodingParameters, Linear, Mlp, Normalization, QKNorm, Rope, TensorAddSwap, TensorCopy,
+        Attention, AttentionArguments, EncodingParameters, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope,
     },
-    forward_pass::state::{ArrayId, ForwardPassState},
+    forward_pass::state::RopeType,
     parameters::ParameterTree,
 };
 
 pub struct ClassifierLayer<B: Backend> {
-    #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
-    layer_index: usize,
-    copy_main_to_shortcut_mixer: TensorCopy<B>,
     pre_attention_norm: Option<Normalization<B>>,
     qkv_projection: Box<dyn Linear<B>>,
     qk_norm: Option<QKNorm<B>>,
     rope: Rc<Rope<B>>,
-    use_rope: bool,
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
-    mixer_residual_add: TensorAddSwap<B>,
-    copy_main_to_shortcut_mlp: TensorCopy<B>,
+    mixer_residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
     pre_mlp_norm: Normalization<B>,
     mlp: Box<dyn Mlp<B>>,
     post_mlp_norm: Option<Normalization<B>>,
-    mlp_residual_add: TensorAddSwap<B>,
+    mlp_residual_add: <B::Kernels as Kernels>::TensorAddSwapKernel,
+    model_dim: usize,
+    num_heads: usize,
+    num_groups: usize,
+    head_dim: usize,
 }
 
 impl<B: Backend> ClassifierLayer<B> {
@@ -47,11 +46,7 @@ impl<B: Backend> ClassifierLayer<B> {
     ) -> Self {
         let ctx = context.as_ref(); // Reference for functions expecting &B::Context
         let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
-        let use_rope = attention_config.use_rope;
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
-
-        let copy_main_to_shortcut_mixer =
-            TensorCopy::<B>::new(ctx, intermediate_data_type, ArrayId::Main, ArrayId::Shortcut).unwrap();
 
         let pre_attention_norm = if let Some(norm_config) = &layer_config.pre_attention_norm_config {
             if layer_loader.subtree("pre_mixer_norm").is_ok() {
@@ -60,8 +55,6 @@ impl<B: Backend> ClassifierLayer<B> {
                         ctx,
                         intermediate_data_type,
                         norm_config.clone(),
-                        ArrayId::Main,
-                        ArrayId::Main,
                         &layer_loader.subtree("pre_mixer_norm").unwrap(),
                     )
                     .expect("Failed to create pre-attention norm kernel"),
@@ -75,13 +68,10 @@ impl<B: Backend> ClassifierLayer<B> {
 
         let qkv_projection = <dyn Linear<B>>::new(
             &attention_config.qkv_projection_config,
-            attention_config.has_qkv_biases,
             model_dim,
             [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
             ctx,
             &layer_loader.subtree("mixer.qkv_projection").unwrap(),
-            ArrayId::Main,
-            ArrayId::QKV,
         )
         .expect("Failed to create qkv projection");
 
@@ -91,7 +81,6 @@ impl<B: Backend> ClassifierLayer<B> {
                 intermediate_data_type,
                 attention_config.query_norm_config.clone(),
                 attention_config.key_norm_config.clone(),
-                ArrayId::QKV,
                 &layer_loader.subtree("mixer").unwrap(),
                 num_heads,
                 num_groups,
@@ -106,13 +95,10 @@ impl<B: Backend> ClassifierLayer<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             &attention_config.out_projection_config,
-            attention_config.has_out_biases,
             num_heads * head_dim,
             [model_dim],
             ctx,
             &layer_loader.subtree("mixer.out_projection").unwrap(),
-            ArrayId::AttentionOutput,
-            ArrayId::Main,
         )
         .expect("Failed to create out projection");
 
@@ -122,8 +108,6 @@ impl<B: Backend> ClassifierLayer<B> {
                     ctx,
                     intermediate_data_type,
                     norm_config.clone(),
-                    ArrayId::Main,
-                    ArrayId::Main,
                     &layer_loader.subtree("post_mixer_norm").unwrap(),
                 )
                 .expect("Failed to create post-attention norm kernel"),
@@ -132,18 +116,13 @@ impl<B: Backend> ClassifierLayer<B> {
             None
         };
 
-        let mixer_residual_add =
-            TensorAddSwap::<B>::new(ctx, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main).unwrap();
-
-        let copy_main_to_shortcut_mlp =
-            TensorCopy::<B>::new(ctx, intermediate_data_type, ArrayId::Main, ArrayId::Shortcut).unwrap();
+        let mixer_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(ctx, intermediate_data_type)
+            .expect("Failed to create mixer residual add kernel");
 
         let pre_mlp_norm = Normalization::new(
             ctx,
             intermediate_data_type,
             layer_config.pre_mlp_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
             &layer_loader.subtree("pre_mlp_norm").unwrap(),
         )
         .expect("Failed to create pre-MLP norm kernel");
@@ -165,8 +144,6 @@ impl<B: Backend> ClassifierLayer<B> {
                     ctx,
                     intermediate_data_type,
                     norm_config.clone(),
-                    ArrayId::Main,
-                    ArrayId::Main,
                     &layer_loader.subtree("post_mlp_norm").unwrap(),
                 )
                 .expect("Failed to create post-MLP norm kernel"),
@@ -178,7 +155,6 @@ impl<B: Backend> ClassifierLayer<B> {
         let attention = Attention::new(
             ctx,
             intermediate_data_type,
-            layer_index,
             attention_scale,
             attention_config.has_sinks,
             false,
@@ -187,112 +163,161 @@ impl<B: Backend> ClassifierLayer<B> {
         )
         .expect("Failed to create attention kernel");
 
-        let mlp_residual_add =
-            TensorAddSwap::<B>::new(ctx, intermediate_data_type, ArrayId::Shortcut, ArrayId::Main).unwrap();
+        let mlp_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(ctx, intermediate_data_type)
+            .expect("Failed to create mlp residual add kernel");
 
         Self {
-            layer_index,
-            copy_main_to_shortcut_mixer,
             pre_attention_norm,
             qkv_projection,
             qk_norm,
             rope,
-            use_rope,
             attention,
             out_projection,
             post_attention_norm,
             mixer_residual_add,
-            copy_main_to_shortcut_mlp,
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
             mlp_residual_add,
+            model_dim,
+            num_heads,
+            num_groups,
+            head_dim,
         }
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        args: LayerArguments<B>,
         parameters: &EncodingParameters,
+        main: Allocation<B>,
+        shortcut: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
+    ) -> Result<Allocation<B>, B::Error> {
+        let LayerArguments {
+            batch_dim,
+            token_positions,
+            token_subtrie_ranges,
+            attention_sinks,
+            rope_cosines,
+            rope_sines,
+            rope_max_sequence_length,
+            rope_dim,
+            #[cfg(feature = "tracing")]
+            trace,
+            ..
+        } = args;
         #[cfg(feature = "tracing")]
-        let layer_traces = state.traces().borrow().layer_results.get(self.layer_index).cloned();
+        let mut layer_traces = trace;
+        let layer_len = batch_dim * self.model_dim;
 
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().inputs.clone());
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.inputs, ..);
         }
 
-        self.copy_main_to_shortcut_mixer.encode(state, encoder)?;
+        debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
+        encoder.encode_copy(&main, .., shortcut, ..);
 
-        if let Some(ref pre_attn_norm) = self.pre_attention_norm {
-            pre_attn_norm.encode(state, encoder)?;
-            #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
-            }
+        let mut main = if let Some(ref pre_attn_norm) = self.pre_attention_norm {
+            pre_attn_norm.encode(&main, 0, batch_dim, encoder)?
         } else {
-            #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_attention_norm.clone());
-            }
+            main
+        };
+        #[cfg(feature = "tracing")]
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.pre_attention_norm, ..);
         }
 
-        self.qkv_projection.encode(state, encoder)?;
+        let mut qkv = self.qkv_projection.encode(main, batch_dim, encoder)?;
         if let Some(ref qk_norm) = self.qk_norm {
-            qk_norm.encode(state, encoder)?;
+            qk_norm.encode(&mut qkv, batch_dim, encoder)?;
         }
-        self.rope.encode(state, self.use_rope, encoder)?;
-        self.attention.encode(state, parameters, encoder)?;
-        self.out_projection.encode(state, encoder)?;
+        let cosines = rope_cosines.expect("Classifier attention layer requires RoPE cosine allocation");
+        let sines = rope_sines.expect("Classifier attention layer requires RoPE sine allocation");
+        let (queries, rotated_keys) = self.rope.encode(
+            &qkv,
+            token_positions,
+            cosines,
+            sines,
+            batch_dim,
+            self.num_heads,
+            self.num_groups,
+            self.head_dim,
+            rope_max_sequence_length,
+            rope_dim,
+            encoder,
+        )?;
+        let attention_output = self.attention.encode(
+            AttentionArguments {
+                projection_step: parameters.projection_step.unwrap_or(0),
+                token_subtrie_ranges,
+                attention_sinks,
+                kv_cache_layer: None,
+            },
+            &qkv,
+            &queries,
+            rotated_keys,
+            None,
+            batch_dim,
+            self.num_heads,
+            self.num_groups,
+            self.head_dim,
+            encoder,
+        )?;
+        main = self.out_projection.encode(attention_output, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().attention.clone());
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.attention, ..);
         }
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
-            post_attn_norm.encode(state, encoder)?;
+            main = post_attn_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_attention_norm.clone());
+            if let Some(layer_traces) = layer_traces.as_deref_mut() {
+                encoder.encode_copy(&main, .., &mut layer_traces.post_attention_norm, ..);
             }
         }
 
-        self.mixer_residual_add.encode(state, encoder)?;
+        self.mixer_residual_add.encode(&mut *shortcut, &mut main, layer_len as u32, encoder);
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp_inputs.clone());
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.mlp_inputs, ..);
         }
 
-        self.copy_main_to_shortcut_mlp.encode(state, encoder)?;
+        debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
+        encoder.encode_copy(&main, .., shortcut, ..);
 
-        self.pre_mlp_norm.encode(state, encoder)?;
+        main = self.pre_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().pre_mlp_norm.clone());
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.pre_mlp_norm, ..);
         }
 
-        self.mlp.encode(state, encoder)?;
+        main = self.mlp.encode(main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().mlp.clone());
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.mlp, ..);
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
-            post_mlp_norm.encode(state, encoder)?;
+            main = post_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
-            if let Some(ref layer_traces) = layer_traces {
-                state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
+            if let Some(layer_traces) = layer_traces.as_deref_mut() {
+                encoder.encode_copy(&main, .., &mut layer_traces.post_mlp_norm, ..);
             }
         }
 
-        self.mlp_residual_add.encode(state, encoder)?;
+        self.mlp_residual_add.encode(shortcut, &mut main, layer_len as u32, encoder);
         #[cfg(feature = "tracing")]
-        if let Some(ref layer_traces) = layer_traces {
-            state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().outputs.clone());
+        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+            encoder.encode_copy(&main, .., &mut layer_traces.outputs, ..);
         }
 
-        Ok(())
+        Ok(main)
+    }
+
+    pub fn rope_type(&self) -> RopeType {
+        self.rope.rope_type()
     }
 }

@@ -7,15 +7,14 @@ use std::{
 
 use crate::{
     DataType,
+    array::{Array, ArrayContextExt},
     backends::common::{
-        Backend, Buffer, Context, Kernels,
-        kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
+        Backend, Context, Kernels,
+        kernel::{TokenCopySampledKernel, kv_cache_update::KVCacheUpdate},
     },
-    config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
+    config::{LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
-    forward_pass::{
-        cache_layers::CacheLayers, model_shape::ModelShape, scratch_buffers::ScratchBuffers, state::SharedBuffers,
-    },
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     language_model::rng::PRng,
     parameters::ParameterLoader,
     session::{
@@ -30,13 +29,10 @@ use crate::{
 pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Rc<RefCell<B::Buffer>>,
+    pub positions: Array<B>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Rc<RefCell<B::Buffer>>,
-    /// Results buffer: [batch_size] u32
-    /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Rc<RefCell<B::Buffer>>,
+    pub seeds: Array<B>,
     /// Event for GPU-side synchronization between passes
     pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
@@ -53,18 +49,13 @@ impl<B: Backend> AsyncBuffers<B> {
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
-        let positions =
-            context.create_buffer(max_tokens * std::mem::size_of::<i32>()).expect("Failed to create positions buffer");
-        let seeds =
-            context.create_buffer(max_tokens * std::mem::size_of::<u64>()).expect("Failed to create seeds buffer");
-        let results =
-            context.create_buffer(batch_size * std::mem::size_of::<u32>()).expect("Failed to create results buffer");
+        let positions = context.create_array_uninitialized(&[max_tokens], DataType::I32, "async_positions");
+        let seeds = context.create_array_uninitialized(&[max_tokens], DataType::U64, "async_seeds");
         let event = context.create_event().expect("Failed to create event");
 
         Self {
-            positions: Rc::new(RefCell::new(positions)),
-            seeds: Rc::new(RefCell::new(seeds)),
-            results: Rc::new(RefCell::new(results)),
+            positions,
+            seeds,
             event,
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
@@ -75,32 +66,28 @@ impl<B: Backend> AsyncBuffers<B> {
     /// Prepare positions buffer: [prefill_count-1, prefill_count, ...]
     /// Uses prefill_count-1 to match sync path which uses self.tokens.len()-1
     pub fn prepare_positions(
-        &self,
+        &mut self,
         prefill_count: usize,
         tokens_to_generate: usize,
     ) {
         self.prefill_count.set(prefill_count);
         let base_position = prefill_count.saturating_sub(1);
-        let ptr = self.positions.borrow().cpu_ptr().as_ptr() as *mut i32;
-        for i in 0..tokens_to_generate {
-            unsafe {
-                *ptr.add(i) = (base_position + i) as i32;
-            }
+        let positions = self.positions.as_slice_mut::<i32>();
+        for (index, position) in positions.iter_mut().take(tokens_to_generate).enumerate() {
+            *position = (base_position + index) as i32;
         }
     }
 
     /// Prepare seeds buffer with deterministic sequence
     pub fn prepare_seeds(
-        &self,
+        &mut self,
         seed: &PRng,
         prefix_len: usize,
         tokens_to_generate: usize,
     ) {
-        let ptr = self.seeds.borrow().cpu_ptr().as_ptr() as *mut u64;
-        for i in 0..tokens_to_generate {
-            unsafe {
-                *ptr.add(i) = seed.derive((prefix_len + i - 1) as u64);
-            }
+        let seeds = self.seeds.as_slice_mut::<u64>();
+        for (index, value) in seeds.iter_mut().take(tokens_to_generate).enumerate() {
+            *value = seed.derive((prefix_len + index - 1) as u64);
         }
     }
 
@@ -114,11 +101,9 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
-    pub scratch_buffers: ScratchBuffers<B>,
+    pub shared_buffers: Rc<SharedBuffers<B>>,
 
     pub model_config: LanguageModelConfig,
-    pub decoder_config: DecoderConfig,
     pub model_shape: ModelShape,
     pub executables: Decoder<B>,
     pub kv_cache_update: Box<KVCacheUpdate<B>>,
@@ -127,7 +112,6 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
 
     /// Kernels for copying sampled tokens in async pipeline
     pub token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
-    pub token_copy_results: <B::Kernels as Kernels>::TokenCopyToResultsKernel,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers<B>,
 }
@@ -159,10 +143,9 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
-        shared_buffers.borrow_mut().update_data(&root_loader_view);
-
-        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_suffix_length);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
+        shared_buffers.update_data(&root_loader_view);
+        let shared_buffers = Rc::new(shared_buffers);
 
         let executables = Decoder::new(context.as_ref(), &decoder_config, &root_loader_view);
 
@@ -180,12 +163,9 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         );
 
         let gpu_sampler =
-            Sampling::<B>::new(&context, intermediate_data_type, max_suffix_length, decoder_config.vocab_size)
-                .map_err(|e| Error::UnableToCreateContext(e.into()))?;
+            Sampling::<B>::new(&context, intermediate_data_type).map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
-            .map_err(|e| Error::UnableToCreateContext(e.into()))?;
-        let token_copy_results = <B::Kernels as Kernels>::TokenCopyToResultsKernel::new(&context)
             .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let async_batch_size = decoding_config.async_batch_size.resolve::<B>(model_path, context.as_ref());
@@ -197,16 +177,13 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             context,
             cache_layers,
             shared_buffers,
-            scratch_buffers,
             model_config: language_model_config.clone(),
-            decoder_config,
             model_shape,
             executables,
             kv_cache_update,
             gpu_sampler,
             seed,
             token_copy_sampled,
-            token_copy_results,
             async_buffers,
         };
 

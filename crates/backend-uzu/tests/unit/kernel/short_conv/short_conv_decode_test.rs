@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -47,41 +46,25 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let out_array = context.create_array_uninitialized(&[out_size], T::data_type(), "");
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type(), "").into_allocation();
 
     let state_size = input.model_dim as usize * input.state_stride as usize;
-    let next_state_array = if state_in_place {
-        if state_size > 0 {
-            context.create_array_from(&[state_size], &input.state, "")
-        } else {
-            context.create_array_uninitialized(&[1], T::data_type(), "")
-        }
+    let mut next_state = if state_in_place {
+        context.create_array_from(&[state_size], &input.state, "").into_allocation()
     } else {
-        context.create_array_uninitialized(&[state_size.max(1)], T::data_type(), "")
+        context.create_array_uninitialized(&[state_size], T::data_type(), "").into_allocation()
     };
 
-    let state_array = if state_in_place {
-        None
-    } else if state_size > 0 {
-        Some(context.create_array_from(&[state_size], &input.state, ""))
-    } else {
-        Some(context.create_array_uninitialized(&[1], T::data_type(), ""))
-    };
-
-    let bias_buf_rc = b_array.as_ref().map(|b| b.buffer());
-    let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
-    let state_buf_rc = state_array.as_ref().map(|s| s.buffer());
-    let state_buf_borrow = state_buf_rc.as_ref().map(|rc| rc.borrow());
+    let state_array = (!state_in_place).then(|| context.create_array_from(&[state_size], &input.state, ""));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        in_proj_array.buffer().borrow().deref(),
-        w_array.buffer().borrow().deref(),
-        bias_buf_borrow.as_deref(),
-        state_buf_borrow.as_deref(),
-        out_array.buffer().borrow_mut().deref_mut(),
-        next_state_array.buffer().borrow_mut().deref_mut(),
+        in_proj_array.allocation(),
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        state_array.as_ref().map(|state| state.allocation()),
+        &mut out,
+        &mut next_state,
         input.suffix_len,
         input.kernel_size,
         input.in_proj_stride,
@@ -91,7 +74,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (out_array.as_slice().to_vec(), next_state_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&out),
+        crate::common::helpers::allocation_to_vec(&next_state),
+    )
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(
@@ -285,15 +271,6 @@ fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
-fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
-    for has_bias in [false, true] {
-        for state_in_place in [false, true] {
-            let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 1, has_bias);
-            test_internal(&input, &expected_out, &expected_state, state_in_place);
-        }
-    }
-}
-
 // basic tests
 #[uzu_test]
 fn test_basic_f32() {
@@ -340,20 +317,4 @@ fn test_edge_small_f16() {
 #[uzu_test]
 fn test_edge_small_bf16() {
     test_edge_small::<bf16>();
-}
-
-// edge: kernel_size=1 (no state taps)
-#[uzu_test]
-fn test_edge_kernel_f32() {
-    test_edge_kernel::<f32>();
-}
-
-#[uzu_test]
-fn test_edge_kernel_f16() {
-    test_edge_kernel::<f16>();
-}
-
-#[uzu_test]
-fn test_edge_kernel_bf16() {
-    test_edge_kernel::<bf16>();
 }

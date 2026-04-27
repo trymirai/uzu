@@ -1,13 +1,12 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
     time::{Duration, Instant},
 };
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::RMSNormKernel},
+        common::{Allocation, Context, Encoder, Kernels, kernel::RMSNormKernel, Backend},
         cpu::Cpu,
     },
 };
@@ -138,25 +137,23 @@ fn get_output<
     .expect("Failed to create RMSNormKernel");
 
     let input_size = input.input.len();
-    let input_array = context.create_array_from(&[input_size], &input.input, "");
-    let input_array_buffer_rc = input_array.buffer();
-    let input_array_borrow = input_array_buffer_rc.borrow();
-    let input_array_deref = input_array_borrow.deref();
-    let input_buffer = (!input.in_place).then(|| input_array_deref);
+    let input_buffer = (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input, "").into_allocation());
 
     let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
-    let output_array = match input.in_place {
-        true => context.create_array_from(&[input_size], &input.output, ""),
-        false => context.create_array_uninitialized(&[input_size], OutputT::data_type(), ""),
+    let mut output = match input.in_place {
+        true => context.create_array_from(&[input_size], &input.output, "").into_allocation(),
+        false => context
+            .create_array_uninitialized(&[input_size], OutputT::data_type(), "")
+            .into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_buffer,
-        scales_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
-        None::<&mut B::Buffer>,
-        None::<&B::Buffer>,
+        input_buffer.as_ref(),
+        scales_array.allocation(),
+        &mut output,
+        None::<&mut Allocation<B>>,
+        None::<&Allocation<B>>,
         input.batch_size,
         input.element_count,
         input.epsilon,
@@ -169,7 +166,11 @@ fn get_output<
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
     let gpu_elapsed_ms = completed.gpu_execution_time();
 
-    (output_array.as_slice().to_vec(), host_elapsed_ms, gpu_elapsed_ms)
+    (
+        crate::common::helpers::allocation_to_vec(&output),
+        host_elapsed_ms,
+        gpu_elapsed_ms,
+    )
 }
 
 fn test_internal<
@@ -430,19 +431,9 @@ fn bench_rms_norm(c: &mut Criterion) {
             let (input_data, scale_data) = get_rms_norm_data(1337, batch_size, model_dim);
             let input_size = batch_size * model_dim;
 
-            let input_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
-            unsafe {
-                std::slice::from_raw_parts_mut::<T>(input_buffer.cpu_ptr().as_ptr() as *mut T, input_size)
-                    .copy_from_slice(input_data.as_ref());
-            }
-
-            let scales_buffer = context.create_buffer(model_dim * std::mem::size_of::<T>()).unwrap();
-            unsafe {
-                std::slice::from_raw_parts_mut::<T>(scales_buffer.cpu_ptr().as_ptr() as *mut T, model_dim)
-                    .copy_from_slice(scale_data.as_ref());
-            }
-
-            let mut output_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
+            let input_buffer = context.create_array_from(&[input_size], input_data.as_ref(), "").into_allocation();
+            let scales_buffer = context.create_array_from(&[model_dim], scale_data.as_ref(), "").into_allocation();
+            let mut output_buffer = context.create_array_uninitialized(&[input_size], T::data_type(), "").into_allocation();
 
             group.throughput(Throughput::Elements((batch_size * model_dim) as u64));
 
@@ -455,8 +446,8 @@ fn bench_rms_norm(c: &mut Criterion) {
                             Some(&input_buffer),
                             &scales_buffer,
                             &mut output_buffer,
-                            None::<&mut <B as Backend>::Buffer>,
-                            None::<&<B as Backend>::Buffer>,
+                            None::<&mut Allocation<B>>,
+                            None::<&Allocation<B>>,
                             batch_size as u32,
                             model_dim as u32,
                             epsilon,

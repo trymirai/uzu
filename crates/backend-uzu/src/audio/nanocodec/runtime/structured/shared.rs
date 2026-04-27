@@ -1,4 +1,5 @@
 use super::*;
+use crate::array::Array;
 
 pub(super) fn array_batch_view<B: Backend>(
     array: &Array<B>,
@@ -15,7 +16,7 @@ pub(super) fn array_batch_view<B: Backend>(
     if active_frames > frames {
         return Err(AudioError::Runtime("array batch view active_frames exceeds frames".to_string()));
     }
-    Ok(unsafe { Array::from_parts(array.buffer(), batch_offset, &[active_frames, channels], array.data_type()) })
+    Ok(array.view_at_offset(batch_offset.saturating_sub(array.offset()), &[active_frames, channels]))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

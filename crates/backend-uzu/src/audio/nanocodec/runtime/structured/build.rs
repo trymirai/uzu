@@ -1,9 +1,10 @@
 use super::*;
+use crate::array::{Array, ArrayContextExt};
 
 pub(super) type BackendParameterTree<'loader, B> = crate::parameters::ParameterTree<'loader, <B as Backend>::Context>;
 
-pub(super) fn read_float_array<B: Backend, const RANK: usize>(
-    tree: &BackendParameterTree<'_, B>,
+pub(super) fn read_float_allocation<B: Backend, const RANK: usize>(
+    tree: &BackendParameterTree<B>,
     name: &str,
     expected_data_type: DataType,
 ) -> AudioResult<([usize; RANK], Array<B>)> {
@@ -16,8 +17,8 @@ pub(super) fn read_float_array<B: Backend, const RANK: usize>(
     }
     if array.shape().len() != RANK {
         return Err(AudioError::Runtime(format!(
-            "expected rank-{RANK} tensor for '{name}', got shape {:?}",
-            array.shape()
+            "expected rank-{RANK} tensor for '{name}', got rank {}",
+            array.shape().len()
         )));
     }
     let mut dims = [0usize; RANK];
@@ -26,58 +27,58 @@ pub(super) fn read_float_array<B: Backend, const RANK: usize>(
 }
 
 pub(super) fn read_float_vector_exact<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     name: &str,
     expected_len: usize,
     expected_data_type: DataType,
 ) -> AudioResult<Array<B>> {
-    let (shape, array) = read_float_array::<B, 1>(tree, name, expected_data_type)?;
+    let (shape, allocation) = read_float_allocation::<B, 1>(tree, name, expected_data_type)?;
     if shape[0] != expected_len {
         return Err(AudioError::Runtime(format!(
             "tensor '{name}' shape mismatch: expected [{expected_len}], got {:?}",
             shape
         )));
     }
-    Ok(array)
+    Ok(allocation)
 }
 
 pub(super) fn read_float_matrix_exact<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     name: &str,
     expected_rows: usize,
     expected_cols: usize,
     expected_data_type: DataType,
 ) -> AudioResult<Array<B>> {
-    let (shape, array) = read_float_array::<B, 2>(tree, name, expected_data_type)?;
+    let (shape, allocation) = read_float_allocation::<B, 2>(tree, name, expected_data_type)?;
     if shape != [expected_rows, expected_cols] {
         return Err(AudioError::Runtime(format!(
             "tensor '{name}' shape mismatch: expected [{expected_rows}, {expected_cols}], got {:?}",
             shape
         )));
     }
-    Ok(array)
+    Ok(allocation)
 }
 
 pub(super) fn outer_axis_view<B: Backend>(
-    array: &Array<B>,
+    allocation: &Array<B>,
     index: usize,
     slice_shape: &[usize],
+    data_type: DataType,
 ) -> AudioResult<Array<B>> {
-    let slice_bytes = size_for_shape(slice_shape, array.data_type());
+    let slice_bytes = size_for_shape(slice_shape, data_type);
     let offset = index
         .checked_mul(slice_bytes)
-        .and_then(|value| value.checked_add(array.offset()))
-        .ok_or(AudioError::Runtime("array outer-axis view offset overflow".to_string()))?;
-    Ok(unsafe { Array::from_parts(array.buffer(), offset, slice_shape, array.data_type()) })
+        .ok_or(AudioError::Runtime("allocation outer-axis view offset overflow".to_string()))?;
+    Ok(allocation.view_at_offset(offset, slice_shape))
 }
 
 pub(super) fn read_conv1d_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     dilation: usize,
     groups: usize,
 ) -> AudioResult<StructuredAudioConv1d<B>> {
-    let (shape, weight) = read_float_array::<B, 3>(tree, "weights", data_type)?;
+    let (shape, weight) = read_float_allocation::<B, 3>(tree, "weights", data_type)?;
     let bias = read_float_vector_exact::<B>(tree, "biases", shape[0], data_type)?;
     if groups == 0 || shape[0] == 0 || shape[1] == 0 || shape[2] == 0 {
         return Err(AudioError::InvalidTokenCardinality);
@@ -100,7 +101,7 @@ pub(super) fn read_conv1d_layer<B: Backend>(
 }
 
 pub(super) fn read_conv_transpose1d_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     stride: usize,
     groups: usize,
@@ -108,7 +109,7 @@ pub(super) fn read_conv_transpose1d_layer<B: Backend>(
     if stride == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    let (shape, weight) = read_float_array::<B, 3>(tree, "weights", data_type)?;
+    let (shape, weight) = read_float_allocation::<B, 3>(tree, "weights", data_type)?;
     if groups == 0 || shape[0] == 0 || shape[1] == 0 || shape[2] == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
@@ -139,7 +140,7 @@ pub(super) fn read_conv_transpose1d_layer<B: Backend>(
 }
 
 pub(super) fn read_pointwise_conv_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     expected_out_dim: usize,
     expected_in_dim: usize,
@@ -147,7 +148,7 @@ pub(super) fn read_pointwise_conv_layer<B: Backend>(
     let weight = read_float_matrix_exact::<B>(tree, "weights", expected_out_dim, expected_in_dim, data_type)?;
     let bias = read_float_vector_exact::<B>(tree, "biases", expected_out_dim, data_type)?;
     Ok(StructuredAudioPointwiseConv {
-        weight: weight.view(&[expected_out_dim, expected_in_dim, 1]),
+        weight,
         bias,
         cin: expected_in_dim,
         cout: expected_out_dim,
@@ -156,19 +157,18 @@ pub(super) fn read_pointwise_conv_layer<B: Backend>(
 
 pub(super) fn read_norm_layer<B: Backend>(
     context: &Rc<B::Context>,
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     channels: usize,
     epsilon: f32,
     subtract_mean: bool,
     use_bias: bool,
-    label_prefix: &str,
 ) -> AudioResult<StructuredAudioNorm<B>> {
     let scales = read_float_vector_exact::<B>(tree, "scales", channels, data_type)?;
     let bias = if use_bias {
         read_float_vector_exact::<B>(tree, "biases", channels, data_type)?
     } else {
-        context.create_array_zeros(&[channels], data_type, &format!("{label_prefix}_bias"))
+        context.create_array_zeros(&[channels], data_type, "structured_audio_norm_bias")
     };
     Ok(StructuredAudioNorm {
         scales,
@@ -180,12 +180,12 @@ pub(super) fn read_norm_layer<B: Backend>(
 
 pub(super) fn read_convnext_layer<B: Backend>(
     context: &Rc<B::Context>,
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     norm_config: &DescriptAudioConvNeXtNormConfig,
 ) -> AudioResult<StructuredAudioConvNeXt<B>> {
     let depthwise_tree = tree.subtree("dwconv")?;
-    let (depthwise_shape, depthwise_weight) = read_float_array::<B, 3>(&depthwise_tree, "weights", data_type)?;
+    let (depthwise_shape, depthwise_weight) = read_float_allocation::<B, 3>(&depthwise_tree, "weights", data_type)?;
     if depthwise_shape[1] != 1 {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt depthwise weight in_channels_per_group must be 1 at 'dwconv.weights', got {}",
@@ -201,13 +201,6 @@ pub(super) fn read_convnext_layer<B: Backend>(
         dilation: 1,
         groups: depthwise_shape[0],
     };
-    if depthwise_conv.bias.shape()[0] != depthwise_conv.cout {
-        return Err(AudioError::Runtime(format!(
-            "ConvNeXt depthwise bias mismatch at 'dwconv.biases': expected {}, got {}",
-            depthwise_conv.cout,
-            depthwise_conv.bias.shape()[0]
-        )));
-    }
     if depthwise_conv.cout == 0 || depthwise_conv.kernel_size == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
@@ -226,9 +219,8 @@ pub(super) fn read_convnext_layer<B: Backend>(
         norm_config.epsilon,
         norm_config.subtract_mean,
         norm_config.use_bias,
-        "structured_audio_convnext_norm",
     )?;
-    let (pwconv1_shape, _) = read_float_array::<B, 2>(&tree.subtree("pwconv1")?, "weights", data_type)?;
+    let (pwconv1_shape, _) = read_float_allocation::<B, 2>(&tree.subtree("pwconv1")?, "weights", data_type)?;
     if pwconv1_shape[1] != channels {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt pwconv1 input mismatch at 'pwconv1.weights': expected {}, got {}",
@@ -246,13 +238,13 @@ pub(super) fn read_convnext_layer<B: Backend>(
 }
 
 pub(super) fn read_residual_unit_layer<B: Backend>(
-    tree: &BackendParameterTree<'_, B>,
+    tree: &BackendParameterTree<B>,
     data_type: DataType,
     dilation: usize,
 ) -> AudioResult<StructuredAudioResidualUnit<B>> {
     let snake1_alpha = {
         let snake1_tree = tree.subtree("snake1")?;
-        let (shape, alpha) = read_float_array::<B, 1>(&snake1_tree, "alpha", data_type)?;
+        let (shape, alpha) = read_float_allocation::<B, 1>(&snake1_tree, "alpha", data_type)?;
         if shape[0] == 0 {
             return Err(AudioError::InvalidTokenCardinality);
         }
@@ -261,7 +253,7 @@ pub(super) fn read_residual_unit_layer<B: Backend>(
     let conv1 = read_conv1d_layer::<B>(&tree.subtree("conv1")?, data_type, dilation, 1)?;
     let snake2_alpha = {
         let snake2_tree = tree.subtree("snake2")?;
-        let (shape, alpha) = read_float_array::<B, 1>(&snake2_tree, "alpha", data_type)?;
+        let (shape, alpha) = read_float_allocation::<B, 1>(&snake2_tree, "alpha", data_type)?;
         if shape[0] != conv1.cout {
             return Err(AudioError::Runtime(format!(
                 "residual snake2 alpha mismatch: expected {}, got {}",
@@ -270,13 +262,6 @@ pub(super) fn read_residual_unit_layer<B: Backend>(
         }
         alpha
     };
-    if snake1_alpha.shape()[0] != conv1.cin {
-        return Err(AudioError::Runtime(format!(
-            "residual snake1 alpha mismatch: expected {}, got {}",
-            conv1.cin,
-            snake1_alpha.shape()[0]
-        )));
-    }
     let conv2 = read_conv1d_layer::<B>(&tree.subtree("conv2")?, data_type, 1, 1)?;
     Ok(StructuredAudioResidualUnit {
         snake1_alpha,
@@ -288,7 +273,7 @@ pub(super) fn read_residual_unit_layer<B: Backend>(
 
 pub(super) fn build_vocoder_graph_from_tree<B: Backend>(
     context: &Rc<B::Context>,
-    root: &BackendParameterTree<'_, B>,
+    root: &BackendParameterTree<B>,
     config: &DescriptAudioCodecConfig,
     data_type: DataType,
 ) -> AudioResult<StructuredAudioDecoderGraph<B>> {
@@ -330,11 +315,7 @@ pub(super) fn build_vocoder_graph_from_tree<B: Backend>(
         let res_unit1 = read_residual_unit_layer::<B>(&block_tree.subtree("res_unit1")?, data_type, 1)?;
         let res_unit2 = read_residual_unit_layer::<B>(&block_tree.subtree("res_unit2")?, data_type, 3)?;
         let res_unit3 = read_residual_unit_layer::<B>(&block_tree.subtree("res_unit3")?, data_type, 9)?;
-        if snake_alpha.shape()[0] != trans_conv.cin
-            || res_unit1.conv1.cin != channels
-            || res_unit2.conv1.cin != channels
-            || res_unit3.conv1.cin != channels
-        {
+        if res_unit1.conv1.cin != channels || res_unit2.conv1.cin != channels || res_unit3.conv1.cin != channels {
             return Err(AudioError::Runtime(format!(
                 "structured audio decoder block {index} channel mismatch in exported weights"
             )));

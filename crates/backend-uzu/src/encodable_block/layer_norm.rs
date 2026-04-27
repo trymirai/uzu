@@ -1,21 +1,15 @@
 //! LayerNorm encodable.
 
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
-
 use thiserror::Error;
 
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{Kernels, LayerNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -30,9 +24,10 @@ pub enum LayerNormError<B: Backend> {
 pub struct LayerNorm<B: Backend> {
     kernel: <B::Kernels as Kernels>::LayerNormKernel,
     config: NormalizationConfig,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-    scales_buffer: Rc<RefCell<B::Buffer>>,
+    scales: Allocation<B>,
+    element_count: usize,
+    input_data_type: DataType,
+    output_data_type: DataType,
 }
 
 impl<B: Backend> LayerNorm<B> {
@@ -40,64 +35,61 @@ impl<B: Backend> LayerNorm<B> {
         context: &B::Context,
         intermediate_data_type: DataType,
         config: NormalizationConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, LayerNormError<B>> {
-        let scales = parameter_tree.leaf_array("scales").map_err(LayerNormError::ParameterError)?;
+        let scales_leaf = parameter_tree.leaf("scales").map_err(LayerNormError::ParameterError)?;
+        let element_count = scales_leaf.shape()[0];
+        let scales = scales_leaf.read_allocation().map_err(LayerNormError::ParameterError)?;
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
-
         let kernel = <B::Kernels as Kernels>::LayerNormKernel::new(
             context,
             intermediate_data_type,
             scale_data_type,
             scale_data_type,
             accumulation_data_type,
-            input_array_id == output_array_id,
+            false,
         )
         .map_err(LayerNormError::BackendError)?;
 
         Ok(Self {
             kernel,
             config,
-            input_array_id,
-            output_array_id,
-            scales_buffer: scales.buffer(),
+            scales,
+            element_count,
+            input_data_type: intermediate_data_type,
+            output_data_type: scale_data_type,
         })
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: &Allocation<B>,
+        row_offset: usize,
+        row_count: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
-
-        let batch_dim = input_array.shape()[0] as u32;
-        let model_dim = input_array.shape()[1] as u32;
+    ) -> Result<Allocation<B>, B::Error> {
         let full_layer = if self.config.upcast_mode == UpcastMode::FullLayer {
             1u32
         } else {
             0u32
         };
-
-        let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
-        let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
-
+        let row_size = self.element_count * self.input_data_type.size_in_bytes();
+        let input_offset = row_offset * row_size;
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.output_data_type))?;
         self.kernel.encode(
-            input_buffer_borrow.as_deref(),
-            self.scales_buffer.borrow().deref(),
-            output_array.buffer().borrow_mut().deref_mut(),
-            batch_dim,
-            model_dim,
+            Some((input, input_offset)),
+            &self.scales,
+            &mut output,
+            row_count as u32,
+            self.element_count as u32,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
             full_layer,
             encoder,
         );
-        Ok(())
+        Ok(output)
     }
 }

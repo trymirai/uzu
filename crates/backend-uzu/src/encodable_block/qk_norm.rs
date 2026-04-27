@@ -1,21 +1,14 @@
 //! QK Normalization encodable.
 
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
-
 use thiserror::Error;
 
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{Kernels, QKNormKernel},
     },
     config::{NormalizationConfig, UpcastMode},
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -32,9 +25,8 @@ pub struct QKNorm<B: Backend> {
     key_kernel: Option<<B::Kernels as Kernels>::QKNormKernel>,
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
-    qkv_array_id: ArrayId,
-    query_scales_buffer: Option<Rc<RefCell<B::Buffer>>>,
-    key_scales_buffer: Option<Rc<RefCell<B::Buffer>>>,
+    query_scales: Option<Allocation<B>>,
+    key_scales: Option<Allocation<B>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -46,7 +38,6 @@ impl<B: Backend> QKNorm<B> {
         intermediate_data_type: DataType,
         query_config: Option<NormalizationConfig>,
         key_config: Option<NormalizationConfig>,
-        qkv_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
         num_q_heads: usize,
         num_kv_heads: usize,
@@ -54,12 +45,16 @@ impl<B: Backend> QKNorm<B> {
     ) -> Result<Self, QKNormError<B>> {
         let mut query_kernel = None;
         let mut key_kernel = None;
-        let mut query_scales_buffer = None;
-        let mut key_scales_buffer = None;
+        let mut query_scales = None;
+        let mut key_scales = None;
 
         // Setup query normalization if configured
         if let Some(ref q_config) = query_config {
-            let scales = parameter_tree.leaf_array("query_norm.scales").map_err(QKNormError::ParameterError)?;
+            let scales = parameter_tree
+                .leaf("query_norm.scales")
+                .map_err(QKNormError::ParameterError)?
+                .read_allocation()
+                .map_err(QKNormError::ParameterError)?;
 
             let accumulation_data_type: DataType = q_config.accumulation_precision.into();
             let scale_data_type: DataType = q_config.scale_precision.into();
@@ -79,12 +74,16 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             query_kernel = Some(kernel);
-            query_scales_buffer = Some(scales.buffer());
+            query_scales = Some(scales);
         }
 
         // Setup key normalization if configured
         if let Some(ref k_config) = key_config {
-            let scales = parameter_tree.leaf_array("key_norm.scales").map_err(QKNormError::ParameterError)?;
+            let scales = parameter_tree
+                .leaf("key_norm.scales")
+                .map_err(QKNormError::ParameterError)?
+                .read_allocation()
+                .map_err(QKNormError::ParameterError)?;
 
             let accumulation_data_type: DataType = k_config.accumulation_precision.into();
             let scale_data_type: DataType = k_config.scale_precision.into();
@@ -104,7 +103,7 @@ impl<B: Backend> QKNorm<B> {
             .map_err(QKNormError::BackendError)?;
 
             key_kernel = Some(kernel);
-            key_scales_buffer = Some(scales.buffer());
+            key_scales = Some(scales);
         }
 
         Ok(Self {
@@ -112,9 +111,8 @@ impl<B: Backend> QKNorm<B> {
             key_kernel,
             query_config,
             key_config,
-            qkv_array_id,
-            query_scales_buffer,
-            key_scales_buffer,
+            query_scales,
+            key_scales,
             num_q_heads,
             num_kv_heads,
             head_dim,
@@ -123,21 +121,19 @@ impl<B: Backend> QKNorm<B> {
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        qkv: &mut Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        let qkv_array = state.array(self.qkv_array_id);
-        let batch_dim = qkv_array.shape()[0] as u32;
-
         // Process query normalization if configured
-        if let (Some(query_kernel), Some(query_scales_buffer), Some(query_config)) =
-            (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
+        if let (Some(query_kernel), Some(query_scales), Some(query_config)) =
+            (&self.query_kernel, &self.query_scales, &self.query_config)
         {
             query_kernel.encode(
-                None::<&B::Buffer>,
-                query_scales_buffer.borrow().deref(),
-                qkv_array.buffer().borrow_mut().deref_mut(),
-                batch_dim,
+                None::<&Allocation<B>>,
+                query_scales,
+                &mut *qkv,
+                batch_dim as u32,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 self.head_dim as u32,
@@ -151,14 +147,14 @@ impl<B: Backend> QKNorm<B> {
         }
 
         // Process key normalization if configured
-        if let (Some(key_kernel), Some(key_scales_buffer), Some(key_config)) =
-            (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
+        if let (Some(key_kernel), Some(key_scales), Some(key_config)) =
+            (&self.key_kernel, &self.key_scales, &self.key_config)
         {
             key_kernel.encode(
-                None::<&B::Buffer>,
-                key_scales_buffer.borrow().deref(),
-                qkv_array.buffer().borrow_mut().deref_mut(),
-                batch_dim,
+                None::<&Allocation<B>>,
+                key_scales,
+                &mut *qkv,
+                batch_dim as u32,
                 self.num_q_heads as u32,
                 self.num_kv_heads as u32,
                 self.head_dim as u32,

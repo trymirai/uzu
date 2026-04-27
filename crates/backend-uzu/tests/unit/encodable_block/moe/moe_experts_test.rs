@@ -9,7 +9,7 @@
 use backend_uzu::{
     DataType,
     backends::common::{
-        Buffer, Encoder,
+        Encoder,
         gpu_types::{ActivationType, activation_silu_alpha},
         kernel::moe::{
             MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,
@@ -23,7 +23,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use crate::encodable_block::mlp::moe::tests::{
     common::{
         assert::assert_eq_float,
-        helpers::{alloc_buffer, alloc_buffer_with_data, create_context},
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
     },
     cpu_tile_counts, cpu_tile_scan,
 };
@@ -378,26 +378,26 @@ fn test_two_pass_decode_correctness() {
         );
 
         // Prepare GPU buffers
-        let x_perm_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &x_perm);
-        let offsets_buf = alloc_buffer_with_data::<B, u32>(&ctx, &offsets);
-        let mut row_expert_map_buf = alloc_buffer_with_data::<B, u32>(&ctx, &row_expert_map);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+        let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x_perm);
+        let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
+        let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &row_expert_map);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
-        let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, sum_k * d_ff);
-        let mut y_partial_buf = alloc_buffer::<B, bf16>(&ctx, sum_k * d_model);
+        let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, sum_k * d_ff);
+        let mut y_partial_buf = alloc_allocation::<B, bf16>(&ctx, sum_k * d_model);
 
         // Tile infrastructure
         let h_blocks_decode = (d_ff + 3) / 4;
         let max_total_tiles = sum_k * h_blocks_decode;
 
-        let mut tile_counts_buf = alloc_buffer::<B, u32>(&ctx, e);
-        let mut tile_offsets_buf = alloc_buffer::<B, u32>(&ctx, e + 1);
-        let mut total_tiles_buf = alloc_buffer::<B, u32>(&ctx, 8);
-        let mut tile_map_buf = alloc_buffer::<B, u32>(&ctx, max_total_tiles * 3);
-        let mut dispatch_args_buf = alloc_buffer::<B, u32>(&ctx, 3);
+        let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
+        let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
+        let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
+        let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_total_tiles * 3);
+        let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
 
         // Execute 2-pass decode kernel
         let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
@@ -409,11 +409,11 @@ fn test_two_pass_decode_correctness() {
         experts_kernel.encode(
             &mut encoder,
             MoeExpertsTwoPassArguments {
-                x_perm_buffer: &x_perm_buf,
+                x_perm: &x_perm_buf,
                 expert_offsets: &offsets_buf,
                 row_expert_map: &mut row_expert_map_buf,
-                hidden_buffer: &mut hidden_buf,
-                output_buffer: &mut y_partial_buf,
+                hidden: &mut hidden_buf,
+                output: &mut y_partial_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
                 up_biases: &up_biases_buf,
@@ -441,8 +441,7 @@ fn test_two_pass_decode_correctness() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Read GPU partial output and do CPU finalize (weighted sum)
-        let y_partial_gpu =
-            unsafe { std::slice::from_raw_parts(y_partial_buf.cpu_ptr().as_ptr() as *const bf16, sum_k * d_model) };
+        let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
 
         // Finalize: y[t] = Σ_k prob[t,k] * y_partial[t*k + k_idx]
         let mut y_gpu = vec![bf16::from_f32(0.0); t * d_model];
@@ -527,34 +526,34 @@ fn test_two_pass_decode_multi_token() {
         );
 
         // GPU buffers
-        let x_perm_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &scatter.x_perm);
-        let offsets_buf = alloc_buffer_with_data::<B, u32>(&ctx, &scatter.offsets);
-        let mut row_expert_map_buf = alloc_buffer_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w13);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w2);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.down_biases);
-        let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, sum_k * d_ff);
-        let mut y_partial_buf = alloc_buffer::<B, bf16>(&ctx, sum_k * d_model);
+        let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
+        let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
+        let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
+        let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, sum_k * d_ff);
+        let mut y_partial_buf = alloc_allocation::<B, bf16>(&ctx, sum_k * d_model);
 
         // Tile infrastructure
         let max_total_tiles = sum_k * ((d_ff + 3) / 4);
-        let mut tile_counts_buf = alloc_buffer::<B, u32>(&ctx, e);
-        let mut tile_offsets_buf = alloc_buffer::<B, u32>(&ctx, e + 1);
-        let mut total_tiles_buf = alloc_buffer::<B, u32>(&ctx, 8);
-        let mut tile_map_buf = alloc_buffer::<B, u32>(&ctx, max_total_tiles * 3);
-        let mut dispatch_args_buf = alloc_buffer::<B, u32>(&ctx, 3);
+        let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
+        let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
+        let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
+        let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_total_tiles * 3);
+        let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
 
         let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         experts_kernel.encode(
             &mut encoder,
             MoeExpertsTwoPassArguments {
-                x_perm_buffer: &x_perm_buf,
+                x_perm: &x_perm_buf,
                 expert_offsets: &offsets_buf,
                 row_expert_map: &mut row_expert_map_buf,
-                hidden_buffer: &mut hidden_buf,
-                output_buffer: &mut y_partial_buf,
+                hidden: &mut hidden_buf,
+                output: &mut y_partial_buf,
                 w13_all: &w13_buf,
                 w2_all: &w2_buf,
                 up_biases: &up_biases_buf,
@@ -580,9 +579,8 @@ fn test_two_pass_decode_multi_token() {
         );
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let y_partial_gpu =
-            unsafe { std::slice::from_raw_parts(y_partial_buf.cpu_ptr().as_ptr() as *const bf16, sum_k * d_model) };
-        let y_gpu = gather_and_finalize(y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
+        let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
+        let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
 
         assert_eq_float(&y_expected, &y_gpu, 0.02, "2-pass decode multi-token");
         eprintln!("[2-pass decode multi-token] ✓ PASSED");
@@ -630,32 +628,32 @@ fn test_two_pass_prefill_correctness() {
         );
 
         // GPU buffers
-        let x_perm_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &scatter.x_perm);
-        let offsets_buf = alloc_buffer_with_data::<B, u32>(&ctx, &scatter.offsets);
-        let mut row_expert_map_buf = alloc_buffer_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w13);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.w2);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &data.down_biases);
-        let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, sum_k * d_ff);
-        let mut y_partial_buf = alloc_buffer::<B, bf16>(&ctx, sum_k * d_model);
+        let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
+        let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
+        let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
+        let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, sum_k * d_ff);
+        let mut y_partial_buf = alloc_allocation::<B, bf16>(&ctx, sum_k * d_model);
 
         // Tile infrastructure
         let max_total_tiles = sum_k * ((d_ff + 3) / 4);
-        let mut tile_counts_buf = alloc_buffer::<B, u32>(&ctx, e);
-        let mut tile_offsets_buf = alloc_buffer::<B, u32>(&ctx, e + 1);
-        let mut total_tiles_buf = alloc_buffer::<B, u32>(&ctx, 8);
-        let mut tile_map_buf = alloc_buffer::<B, u32>(&ctx, max_total_tiles * 3);
-        let mut dispatch_args_buf = alloc_buffer::<B, u32>(&ctx, 3);
+        let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
+        let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
+        let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
+        let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_total_tiles * 3);
+        let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
 
         let experts_kernel = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let args = MoeExpertsTwoPassArguments {
-            x_perm_buffer: &x_perm_buf,
+            x_perm: &x_perm_buf,
             expert_offsets: &offsets_buf,
             row_expert_map: &mut row_expert_map_buf,
-            hidden_buffer: &mut hidden_buf,
-            output_buffer: &mut y_partial_buf,
+            hidden: &mut hidden_buf,
+            output: &mut y_partial_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
@@ -681,9 +679,8 @@ fn test_two_pass_prefill_correctness() {
         experts_kernel.encode(&mut encoder, args);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let y_partial_gpu =
-            unsafe { std::slice::from_raw_parts(y_partial_buf.cpu_ptr().as_ptr() as *const bf16, sum_k * d_model) };
-        let y_gpu = gather_and_finalize(y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
+        let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
+        let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
 
         assert_eq_float(&y_expected, &y_gpu, 0.02, "2-pass prefill");
         eprintln!("[2-pass prefill] ✓ PASSED");
@@ -768,15 +765,15 @@ fn test_fused_single_token_decode() {
         );
 
         // GPU buffers
-        let x_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &x);
-        let topk_ids_buf = alloc_buffer_with_data::<B, i32>(&ctx, &topk_ids);
-        let topk_probs_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &topk_probs);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13_all);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2_all);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
-        let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, k * d_ff);
-        let mut y_buf = alloc_buffer::<B, bf16>(&ctx, d_model);
+        let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
+        let topk_ids_buf = alloc_allocation_with_data::<B, i32>(&ctx, &topk_ids);
+        let topk_probs_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &topk_probs);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13_all);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2_all);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
+        let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, k * d_ff);
+        let mut y_buf = alloc_allocation::<B, bf16>(&ctx, d_model);
 
         // Run fused decode kernel
         let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
@@ -810,7 +807,7 @@ fn test_fused_single_token_decode() {
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Read GPU output
-        let y_gpu = unsafe { std::slice::from_raw_parts(y_buf.cpu_ptr().as_ptr() as *const bf16, d_model) };
+        let y_gpu = allocation_prefix_to_vec::<B, bf16>(&y_buf, d_model);
 
         // Compute error metrics
         let mut max_abs_error = 0.0f32;
@@ -837,7 +834,7 @@ fn test_fused_single_token_decode() {
         );
 
         let tolerance = 0.02;
-        assert_eq_float(&y_expected, y_gpu, tolerance, "fused single-token output");
+        assert_eq_float(&y_expected, &y_gpu, tolerance, "fused single-token output");
 
         eprintln!("[fused single-token] PASSED (tolerance={:.4})", tolerance);
     });
@@ -895,15 +892,15 @@ fn test_fused_single_token_k4() {
             f32::INFINITY,
         );
 
-        let x_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &x);
-        let topk_ids_buf = alloc_buffer_with_data::<B, i32>(&ctx, &topk_ids);
-        let topk_probs_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &topk_probs);
-        let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13_all);
-        let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2_all);
-        let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-        let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
-        let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, k * d_ff);
-        let mut y_buf = alloc_buffer::<B, bf16>(&ctx, d_model);
+        let x_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x);
+        let topk_ids_buf = alloc_allocation_with_data::<B, i32>(&ctx, &topk_ids);
+        let topk_probs_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &topk_probs);
+        let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13_all);
+        let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2_all);
+        let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
+        let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
+        let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, k * d_ff);
+        let mut y_buf = alloc_allocation::<B, bf16>(&ctx, d_model);
 
         let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx).expect("fused kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
@@ -933,7 +930,7 @@ fn test_fused_single_token_k4() {
         );
         encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let y_gpu = unsafe { std::slice::from_raw_parts(y_buf.cpu_ptr().as_ptr() as *const bf16, d_model) };
+        let y_gpu = allocation_prefix_to_vec::<B, bf16>(&y_buf, d_model);
 
         // Compute error metrics
         let mut max_abs_error = 0.0f32;
@@ -960,7 +957,7 @@ fn test_fused_single_token_k4() {
         );
 
         let tolerance = 0.02;
-        assert_eq_float(y_gpu, &y_expected, tolerance, "fused single-token K=4 output");
+        assert_eq_float(&y_gpu, &y_expected, tolerance, "fused single-token K=4 output");
 
         eprintln!("[fused single-token K=4] PASSED (tolerance={:.4})", tolerance);
     });

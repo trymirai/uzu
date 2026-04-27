@@ -1,15 +1,13 @@
 //! Pooling encodable for sequence-level aggregation.
 
-use std::ops::{Deref, DerefMut};
-
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{Kernels, PoolingClsKernel, PoolingMeanKernel},
     },
     config::PoolingType,
-    forward_pass::state::{ArrayId, ForwardPassState},
 };
 
 enum PoolingKernel<B: Backend> {
@@ -20,8 +18,8 @@ enum PoolingKernel<B: Backend> {
 impl<B: Backend> PoolingKernel<B> {
     fn encode(
         &self,
-        input: &B::Buffer,
-        output: &mut B::Buffer,
+        input: &Allocation<B>,
+        output: &mut Allocation<B>,
         seq_len: u32,
         hidden_dim: u32,
         batch_dim: u32,
@@ -37,6 +35,7 @@ impl<B: Backend> PoolingKernel<B> {
 pub struct Pooling<B: Backend> {
     pooling_kernel: PoolingKernel<B>,
     model_dim: usize,
+    data_type: DataType,
 }
 
 impl<B: Backend> Pooling<B> {
@@ -55,36 +54,20 @@ impl<B: Backend> Pooling<B> {
         Ok(Self {
             pooling_kernel,
             model_dim,
+            data_type,
         })
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        seq_len: usize,
+        main: &Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
+    ) -> Result<Allocation<B>, B::Error> {
         let batch_dim = 1;
-        let seq_len = state.aux_buffers_suffix_length();
+        let mut pooling = encoder.allocate_scratch(size_for_shape(&[1, self.model_dim], self.data_type))?;
 
-        let main_array = state.array(ArrayId::Main);
-        let pooling_array = state.array(ArrayId::ClassifierPooling);
-
-        self.pooling_kernel.encode(
-            main_array.buffer().borrow().deref(),
-            pooling_array.buffer().borrow_mut().deref_mut(),
-            seq_len as u32,
-            self.model_dim as u32,
-            batch_dim,
-            encoder,
-        );
-
-        #[cfg(feature = "tracing")]
-        {
-            let output_pooling_trace = state.traces().borrow().output_pooling().clone();
-            state.encode_copy_array(encoder, ArrayId::ClassifierPooling, output_pooling_trace);
-        }
-
-        state.set_active_row_count(pooling_array.shape()[0]);
-        Ok(())
+        self.pooling_kernel.encode(main, &mut pooling, seq_len as u32, self.model_dim as u32, batch_dim, encoder);
+        Ok(pooling)
     }
 }

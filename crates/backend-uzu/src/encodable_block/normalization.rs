@@ -5,9 +5,8 @@ use thiserror::Error;
 use super::{LayerNorm, LayerNormError, RMSNorm, RMSNormError};
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder},
     config::NormalizationConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
 };
 
@@ -32,29 +31,18 @@ impl<B: Backend> Normalization<B> {
         context: &B::Context,
         intermediate_data_type: DataType,
         config: NormalizationConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, NormalizationError<B>> {
         if config.subtract_mean {
-            Ok(Self::LayerNorm(LayerNorm::new(
-                context,
-                intermediate_data_type,
-                config,
-                input_array_id,
-                output_array_id,
-                parameter_tree,
-            )?))
+            Ok(Self::LayerNorm(LayerNorm::new(context, intermediate_data_type, config, parameter_tree)?))
         } else {
             Ok(Self::RMSNorm(RMSNorm::new(
                 context,
                 intermediate_data_type,
                 config,
-                input_array_id,
-                output_array_id,
                 parameter_tree,
                 None,
-                None,
+                false,
                 false,
             )?))
         }
@@ -62,12 +50,14 @@ impl<B: Backend> Normalization<B> {
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: &Allocation<B>,
+        row_offset: usize,
+        row_count: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
+    ) -> Result<Allocation<B>, B::Error> {
         match self {
-            Self::LayerNorm(layer_norm) => layer_norm.encode(state, encoder),
-            Self::RMSNorm(rms_norm) => rms_norm.encode(state, encoder),
+            Self::LayerNorm(layer_norm) => layer_norm.encode(input, row_offset, row_count, encoder),
+            Self::RMSNorm(rms_norm) => rms_norm.encode(input, row_offset, row_count, None, encoder),
         }
     }
 }

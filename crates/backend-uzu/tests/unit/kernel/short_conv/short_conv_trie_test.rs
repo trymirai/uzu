@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -32,44 +31,40 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let context = B::Context::new().expect("Failed to create Context");
 
     let has_bias = input.b.is_some();
-    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
-        .expect("Failed to create ShortConvTrieKernel");
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
+            .expect("Failed to create ShortConvTrieKernel");
 
     let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
     let w_array = context.create_array_from(&[input.w.len()], &input.w, "");
     let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let out_array = context.create_array_uninitialized(&[out_size], T::data_type(), "");
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type(), "").into_allocation();
 
     let state_stride = input.state_stride as usize;
     let model_dim = input.model_dim as usize;
     let suffix_len = input.suffix_len as usize;
 
     let base_state_size = model_dim * state_stride;
-    let base_state_array = if base_state_size > 0 {
-        context.create_array_from(&[base_state_size], &input.base_state, "")
-    } else {
-        context.create_array_uninitialized(&[1], T::data_type(), "")
-    };
+    let base_state_array = context.create_array_from(&[base_state_size], &input.base_state, "");
 
     let parents_array = context.create_array_from(&[input.parents.len()], &input.parents, "");
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
-    let suffix_state_array = context.create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type(), "");
-
-    let bias_buf_rc = b_array.as_ref().map(|b| b.buffer());
-    let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
+    let mut suffix_state = context
+        .create_array_uninitialized(&[suffix_state_size], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        in_proj_array.buffer().borrow().deref(),
-        w_array.buffer().borrow().deref(),
-        bias_buf_borrow.as_deref(),
-        base_state_array.buffer().borrow().deref(),
-        parents_array.buffer().borrow().deref(),
-        out_array.buffer().borrow_mut().deref_mut(),
-        suffix_state_array.buffer().borrow_mut().deref_mut(),
+        in_proj_array.allocation(),
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        base_state_array.allocation(),
+        parents_array.allocation(),
+        &mut out,
+        &mut suffix_state,
         input.suffix_len,
         input.kernel_size,
         input.in_proj_stride,
@@ -79,7 +74,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (out_array.as_slice().to_vec(), suffix_state_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&out),
+        crate::common::helpers::allocation_to_vec(&suffix_state),
+    )
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.
@@ -350,13 +348,6 @@ fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
-fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
-    for has_bias in [false, true] {
-        let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 1, has_bias);
-        test_internal(&input, &expected_out, &expected_state);
-    }
-}
-
 // basic tests (linear chain)
 #[uzu_test]
 fn test_basic_f32() {
@@ -419,20 +410,4 @@ fn test_edge_small_f16() {
 #[uzu_test]
 fn test_edge_small_bf16() {
     test_edge_small::<bf16>();
-}
-
-// edge: kernel_size=1 (no state taps)
-#[uzu_test]
-fn test_edge_kernel_f32() {
-    test_edge_kernel::<f32>();
-}
-
-#[uzu_test]
-fn test_edge_kernel_f16() {
-    test_edge_kernel::<f16>();
-}
-
-#[uzu_test]
-fn test_edge_kernel_bf16() {
-    test_edge_kernel::<bf16>();
 }

@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -128,23 +127,21 @@ fn get_output<
     .expect("Failed to create LayerNormKernel");
 
     let input_size = input.input.len();
-    let input_array = context.create_array_from(&[input_size], &input.input, "");
-    let input_array_buffer_rc = input_array.buffer();
-    let input_array_borrow = input_array_buffer_rc.borrow();
-    let input_array_deref = input_array_borrow.deref();
-    let input_buffer = (!input.in_place).then(|| input_array_deref);
+    let input_buffer = (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input, "").into_allocation());
 
     let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
-    let output_array = match input.in_place {
-        true => context.create_array_from(&[input_size], &input.output, ""),
-        false => context.create_array_uninitialized(&[input_size], OUT::data_type(), ""),
+    let mut output = match input.in_place {
+        true => context.create_array_from(&[input_size], &input.output, "").into_allocation(),
+        false => context
+            .create_array_uninitialized(&[input_size], OUT::data_type(), "")
+            .into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_buffer,
-        scales_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        input_buffer.as_ref(),
+        scales_array.allocation(),
+        &mut output,
         input.batch_size,
         input.model_dim,
         input.epsilon,
@@ -154,7 +151,7 @@ fn get_output<
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn test_internal<

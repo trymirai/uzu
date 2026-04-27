@@ -3,7 +3,7 @@ use crate::{
     config::{DecoderConfig, DecoderLayerType, LinearConfig, MLPConfig, MixerConfig},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModelShape {
     activation_type: DataType,
     kv_cache_type: DataType,

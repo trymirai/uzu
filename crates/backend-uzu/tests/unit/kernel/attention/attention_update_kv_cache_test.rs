@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -41,21 +40,25 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
 
     let cache_size = input.num_groups as usize * input.max_sequence_length as usize * input.head_dim as usize;
 
-    let rotated_keys_array = input.rotated_keys.as_ref().map(|rk| context.create_array_from(&[rk.len()], rk, ""));
-    let rotated_keys_buf_rc = rotated_keys_array.as_ref().map(|a| a.buffer());
-    let rotated_keys_buf_borrow = rotated_keys_buf_rc.as_ref().map(|rc| rc.borrow());
-    let rotated_keys_buffer: Option<&B::Buffer> = rotated_keys_buf_borrow.as_ref().map(|b| b.deref());
+    let rotated_keys = input
+        .rotated_keys
+        .as_ref()
+        .map(|rk| context.create_array_from(&[rk.len()], rk, "").into_allocation());
 
     let qkv_array = context.create_array_from(&[input.qkv.len()], &input.qkv, "");
-    let key_cache_array = context.create_array_from(&[cache_size], &input.key_cache, "");
-    let value_cache_array = context.create_array_from(&[cache_size], &input.value_cache, "");
+    let mut key_cache = context
+        .create_array_from(&[cache_size], &input.key_cache, "")
+        .into_allocation();
+    let mut value_cache = context
+        .create_array_from(&[cache_size], &input.value_cache, "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        rotated_keys_buffer,
-        qkv_array.buffer().borrow().deref(),
-        key_cache_array.buffer().borrow_mut().deref_mut(),
-        value_cache_array.buffer().borrow_mut().deref_mut(),
+        rotated_keys.as_ref(),
+        qkv_array.allocation(),
+        &mut key_cache,
+        &mut value_cache,
         input.num_groups,
         input.num_heads,
         input.head_dim,
@@ -66,7 +69,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (key_cache_array.as_slice().to_vec(), value_cache_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&key_cache),
+        crate::common::helpers::allocation_to_vec(&value_cache),
+    )
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(keys_in_place: bool) -> Input<T> {

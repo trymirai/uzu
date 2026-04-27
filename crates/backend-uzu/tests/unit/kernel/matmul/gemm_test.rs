@@ -1,13 +1,12 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -25,7 +24,13 @@ use num_traits::Float;
 
 #[cfg(metal_backend)]
 use crate::{common::type_short_name, uzu_bench};
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -55,40 +60,31 @@ fn get_test_data<T: ArrayElement + Float>(
     (input, expected)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(
-    input: &Input<T>,
-    ab_scale: f32,
-) -> Vec<T> {
+fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f32) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let m = input.m as u32;
     let k = input.k as u32;
     let n = input.n as u32;
 
-    let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
     let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
-
-    let a_buf = a_array.buffer();
-    let a_ref = a_buf.borrow();
-    let b_buf = b_array.buffer();
-    let b_ref = b_buf.borrow();
-    let d_buf = d_array.buffer();
-    let mut d_ref = d_buf.borrow_mut();
+    let a_allocation = alloc_allocation_with_data::<B, T>(&context, &input.a);
+    let mut d_allocation = context
+        .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        &context,
         MatmulArguments {
-            a: a_ref.deref(),
+            a: &a_allocation,
             a_offset: 0,
-            b: b_ref.deref(),
+            b: b_array.allocation(),
             ab_scale,
             c: MatmulArgumentC::None,
-            d: d_ref.deref_mut(),
+            d: &mut d_allocation,
             batch_dim: m,
             input_dim: k,
             output_dim: n,
@@ -96,9 +92,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(d_ref);
-    d_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&d_allocation)
 }
 
 fn test<T: ArrayElement + Float + Debug + Display>(
@@ -125,12 +119,7 @@ fn test_with_scale<T: ArrayElement + Float + Debug + Display>(
     let expected = get_output::<T, Cpu>(&input, ab_scale);
     for_each_non_cpu_backend!(|B| {
         let output = get_output::<T, B>(&input, ab_scale);
-        assert_eq_float(
-            &expected,
-            &output,
-            eps,
-            &format!("backend {} ab_scale={ab_scale}", std::any::type_name::<B>()),
-        );
+        assert_eq_float(&expected, &output, eps, &format!("backend {} ab_scale={ab_scale}", std::any::type_name::<B>()));
     });
 }
 
@@ -210,10 +199,13 @@ fn bench_gemm(criterion: &mut Criterion) {
         criterion.benchmark_group(format!("{}/Kernel/Matmul/GEMM", type_short_name::<Metal>()));
 
     for &(batch_dim, input_dim, output_dim) in BENCHMARK_SHAPES {
-        let left_array = metal_context.create_array_uninitialized(&[batch_dim, input_dim], bf16::data_type(), "");
+        let left_allocation = metal_context
+            .create_allocation(batch_dim * input_dim * std::mem::size_of::<bf16>(), AllocationType::Global)
+            .expect("Failed to create allocation");
         let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type(), "");
-        let destination_array =
-            metal_context.create_array_uninitialized(&[batch_dim, output_dim], bf16::data_type(), "");
+        let mut destination_allocation = metal_context
+            .create_allocation(batch_dim * output_dim * std::mem::size_of::<bf16>(), AllocationType::Global)
+            .expect("Failed to create allocation");
 
         let floating_point_operations = 2 * batch_dim * input_dim * output_dim;
         benchmark_group.throughput(Throughput::Elements(floating_point_operations as u64));
@@ -221,26 +213,18 @@ fn bench_gemm(criterion: &mut Criterion) {
         benchmark_group.bench_function(
             BenchmarkId::new("BF16", format!("M[{batch_dim}]K[{input_dim}]N[{output_dim}]")),
             |bencher| {
-                let left_buffer = left_array.buffer();
-                let left_ref = left_buffer.borrow();
-                let right_buffer = right_array.buffer();
-                let right_ref = right_buffer.borrow();
-                let destination_buffer = destination_array.buffer();
-
                 bencher.iter_custom(|iteration_count| {
                     let mut encoder = Encoder::<Metal>::new(&metal_context).unwrap();
 
                     for _ in 0..iteration_count {
-                        let mut destination_ref = destination_buffer.borrow_mut();
                         matmul_kernel.encode_with_path(
-                            &metal_context,
                             MatmulArguments {
-                                a: left_ref.deref(),
+                                a: &left_allocation,
                                 a_offset: 0,
-                                b: right_ref.deref(),
+                                b: right_array.allocation(),
                                 ab_scale: 1.0,
                                 c: MatmulArgumentC::None,
-                                d: destination_ref.deref_mut(),
+                                d: &mut destination_allocation,
                                 batch_dim: batch_dim as u32,
                                 input_dim: input_dim as u32,
                                 output_dim: output_dim as u32,
