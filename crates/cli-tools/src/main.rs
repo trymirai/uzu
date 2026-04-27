@@ -5,6 +5,7 @@ use cli_tools::{
     languages::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
     },
+    sync::run_sync,
     types::{Capability, Command, Configuration, Language},
 };
 
@@ -19,6 +20,11 @@ struct Cli {
 enum Commands {
     /// Install rustup / uv and required toolchains
     Setup,
+    /// Synchronize project files with platform.toml
+    Sync {
+        #[arg(long)]
+        check: bool,
+    },
     /// Install tools for a specific language
     Install {
         #[arg(value_enum)]
@@ -75,6 +81,9 @@ fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Setup) => run_setup()?,
+        Some(Commands::Sync {
+            check,
+        }) => run_sync(check)?,
         Some(Commands::Install {
             language,
         }) => language_backend(language, config)?.install()?,

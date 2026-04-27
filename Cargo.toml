@@ -20,12 +20,26 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.9"
 edition = "2024"
 rust-version = "1.94"
-license = "MIT"
-authors = ["Mirai Tech <https://trymirai.com>"]
+name = "uzu"
+version = "0.1.9"
+authors = ["Mirai Tech Inc. <https://trymirai.com>"]
+description = "A high-performance inference engine for AI models"
+readme = "README.md"
+homepage = "https://trymirai.com"
 repository = "https://github.com/trymirai/uzu"
+license = "MIT"
+license-file = "LICENSE"
+keywords = [
+    "rust",
+    "ai",
+    "metal",
+    "high-performance",
+    "inference",
+    "llm",
+    "tts",
+]
 
 [workspace.dependencies]
 dsl = { path = "crates/dsl" }
@@ -175,6 +189,7 @@ keyring = { version = "3.6.3", features = [
     "crypto-rust",
 ] }
 toml = "1.1.2"
+toml_edit = "0.25.11"
 colored = "3.1.1"
 
 [workspace.metadata.dinghy]
