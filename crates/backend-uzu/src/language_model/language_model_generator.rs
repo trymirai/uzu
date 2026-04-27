@@ -667,8 +667,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
                     let copy_rows = src.prefix_segment_length();
                     if copy_rows > 0 {
-                        dst.keys.copy_slice(&src.keys, 1, 0..copy_rows, 0);
-                        dst.values.copy_slice(&src.values, 1, 0..copy_rows, 0);
+                        dst.keys.copy_slice(&src.keys, 0, 0..copy_rows, 0);
+                        dst.values.copy_slice(&src.values, 0, 0..copy_rows, 0);
                     }
                     dst.state = src.state.clone();
                 },
