@@ -1,5 +1,5 @@
 pub mod broadcasts_progress_test;
 pub mod cancel_removes_partial_state_test;
-pub mod downloads_mock_model_files_test;
+pub mod downloads_registry_model_files_test;
 pub mod relaunch_preserves_completed_files_test;
 pub mod relaunch_preserves_partial_files_test;

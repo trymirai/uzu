@@ -4,7 +4,7 @@ use crate::common::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_storage_downloads_mock_model_files() {
+async fn test_storage_downloads_registry_model_files() {
     let fixture = StorageFixture::new(RouteBehavior::Normal).await;
 
     fixture.download().await;

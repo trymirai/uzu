@@ -103,7 +103,7 @@ autocxx = "0.30"
 cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
-test-tag = "0.1"
+rstest = "0.26"
 proptest = { version = "1.10", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
 criterion-macro = "0.4.0"

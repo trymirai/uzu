@@ -736,7 +736,6 @@ dependencies = [
  "syn 2.0.117",
  "sysinfo",
  "tempfile",
- "test-tag",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
@@ -2184,6 +2183,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "block2",
+ "bytesize",
  "chrono",
  "crc32c",
  "futures-util",
@@ -2193,8 +2193,10 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "reqwest 0.13.2",
+ "rstest",
  "serde",
  "serde_json",
+ "shoji",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -5988,6 +5990,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "relative-path"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
+
+[[package]]
 name = "reqwest"
 version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6226,6 +6234,35 @@ dependencies = [
  "time",
  "tokio",
  "uncased",
+]
+
+[[package]]
+name = "rstest"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5a3193c063baaa2a95a33f03035c8a72b83d97a54916055ba22d35ed3839d49"
+dependencies = [
+ "futures-timer",
+ "futures-util",
+ "rstest_macros",
+]
+
+[[package]]
+name = "rstest_macros"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c845311f0ff7951c5506121a9ad75aec44d083c31583b2ea5a30bcb0b0abba0"
+dependencies = [
+ "cfg-if 1.0.4",
+ "glob",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "relative-path",
+ "rustc_version",
+ "syn 2.0.117",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -7173,17 +7210,6 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-input-types",
  "winapi",
-]
-
-[[package]]
-name = "test-tag"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5a2455608f6a56fc2ce66c89dd005501c169688f29165468e65f0b47e060333"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -8176,6 +8202,7 @@ dependencies = [
  "base64 0.22.1",
  "bindings",
  "bindings-types",
+ "bytesize",
  "chrono",
  "crc32c",
  "dirs",
@@ -8200,6 +8227,7 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-stub-gen",
  "reqwest 0.13.2",
+ "rstest",
  "schemars 1.2.1",
  "serde",
  "serde-wasm-bindgen",

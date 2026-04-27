@@ -12,7 +12,6 @@ use backend_uzu::{
     },
 };
 use shoji::types::basic::Feature;
-use test_tag::tag;
 use tokenizers::Tokenizer;
 
 use crate::common::path::get_test_model_path;
@@ -25,13 +24,11 @@ fn build_default_text() -> String {
     String::from("Tell about London")
 }
 
-#[tag(heavy)]
 #[test]
 fn test_text_session_base() {
     run(build_default_text(), build_decoding_config(), 128);
 }
 
-#[tag(heavy)]
 #[test]
 fn test_text_session_with_prompt_lookup_speculator() {
     let number_of_speculated_tokens = 16 - 1;
@@ -48,7 +45,6 @@ fn test_text_session_with_prompt_lookup_speculator() {
     run(text, decoding_config, 256);
 }
 
-#[tag(heavy)]
 #[test]
 fn test_text_session_with_fixed_speculator() {
     let tokenizer = Tokenizer::from_file(get_test_model_path().join("tokenizer.json")).unwrap();
@@ -86,13 +82,11 @@ fn test_text_session_with_fixed_speculator() {
 }
 
 #[ignore]
-#[tag(heavy)]
 #[test]
 fn test_text_session_ngram_speculator_chat() {
     todo!("Implement test_text_session_ngram_speculator_chat")
 }
 
-#[tag(heavy)]
 #[test]
 fn test_text_session_scenario() {
     let system_prompt = String::from("You are a helpful assistant.");
@@ -100,7 +94,6 @@ fn test_text_session_scenario() {
     run_scenario(Some(system_prompt), user_prompts);
 }
 
-#[tag(heavy)]
 #[test]
 fn test_text_session_stability() {
     let mut session = Session::new(get_test_model_path(), build_decoding_config()).unwrap();

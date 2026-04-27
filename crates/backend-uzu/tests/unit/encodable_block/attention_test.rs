@@ -6,7 +6,6 @@ use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array4, s};
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use test_tag::tag;
 
 use crate::{
     DataType,
@@ -934,7 +933,6 @@ fn test_two_pass_attention_gqa() {
     }
 }
 
-#[tag(heavy)]
 #[test]
 fn perf_two_pass_attention() {
     use std::time::Instant;

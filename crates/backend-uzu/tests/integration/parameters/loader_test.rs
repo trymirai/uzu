@@ -10,11 +10,9 @@ use backend_uzu::{
 };
 use half::bf16;
 use is_close::is_close;
-use test_tag::tag;
 
 use crate::common::path::get_test_weights_path;
 
-#[tag(heavy)]
 #[test]
 fn test_parameter_loader_basic() {
     let weights_path = get_test_weights_path();

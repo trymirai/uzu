@@ -47,7 +47,6 @@ metal = { workspace = true, optional = true }
 xgrammar = { workspace = true, optional = true }
 
 [dev-dependencies]
-test-tag.workspace = true
 proptest.workspace = true
 criterion.workspace = true
 criterion-macro.workspace = true

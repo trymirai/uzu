@@ -1,27 +1,40 @@
-use download_manager::managers::apple::URLSessionDownloadTaskResumeData;
+use download_manager::{FileDownloadManagerType, create_download_manager, managers::apple::URLSessionDownloadTaskResumeData};
+use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::{
-    mock_download_server::{MockFile, RouteBehavior},
-    scenarios::{DownloadScenario, ManagerKind},
+    mock_download_server::RouteBehavior,
+    scenarios::{DownloadTestContext, PhaseKind, wait_for_phase_kind},
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_apple_pause_writes_parseable_resume_data() {
-    let scenario = DownloadScenario::new(
-        ManagerKind::Apple,
-        MockFile::large_tokenizer("download-manager/apple-resume-data"),
+    let context = DownloadTestContext::new(
+        "model.safetensors",
         RouteBehavior::StallAt {
             byte_offset: 128 * 1024,
         },
     )
     .await;
+    let manager = create_download_manager(
+        FileDownloadManagerType::Apple,
+        Some("apple-resume-data".to_string()),
+        TokioHandle::current(),
+    )
+    .await
+    .expect("failed to create download manager");
+    let task = manager
+        .file_download_task(&context.payload.file.url, &context.destination, context.file_check(), context.file_size())
+        .await
+        .expect("failed to create file download task");
+    let mut progress = task.progress().await.expect("progress stream should open");
 
-    scenario.start_download().await;
-    scenario.wait_for_bytes(128 * 1024).await;
-    let paused_state = scenario.pause_download().await;
+    task.download().await.expect("failed to start download");
+    context.wait_for_bytes(128 * 1024).await;
+    task.pause().await.expect("failed to pause download");
+    let paused_state = wait_for_phase_kind(&task, &mut progress, PhaseKind::Paused).await;
     assert!(paused_state.downloaded_bytes > 0, "pause should report downloaded bytes");
 
-    let resume_data = URLSessionDownloadTaskResumeData::from_file(scenario.resume_data_path())
+    let resume_data = URLSessionDownloadTaskResumeData::from_file(context.resume_data_path())
         .expect("resume data should parse through URLSessionDownloadTaskResumeData");
     let bytes_received = resume_data.bytes_received.expect("resume data should include bytes_received");
     assert!(bytes_received > 0, "resume data should preserve positive progress");

@@ -10,7 +10,6 @@ use backend_uzu::session::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use test_tag::tag;
 
 use crate::{common::path::get_test_model_path, util::speculator::RepeatSpeculator};
 
@@ -91,13 +90,11 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     }
 }
 
-#[tag(heavy)]
 #[test]
 fn test_grammar_json_schema() {
     test_grammar(SpeculatorConfig::default());
 }
 
-#[tag(heavy)]
 #[test]
 fn test_grammar_json_schema_with_speculator() {
     test_grammar(SpeculatorConfig {

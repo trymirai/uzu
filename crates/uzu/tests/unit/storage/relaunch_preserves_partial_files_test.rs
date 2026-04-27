@@ -10,7 +10,8 @@ async fn test_storage_relaunch_preserves_partial_files_as_paused() {
     })
     .await;
     fixture.download().await;
-    fixture.server.wait_for_bytes(&fixture.file_set.tokenizer.path, 64 * 1024).await;
+    let tokenizer = fixture.registry_fixture.payload("tokenizer.json");
+    fixture.server.wait_for_bytes(&tokenizer.path(), 64 * 1024).await;
     fixture.pause().await;
 
     let storage = fixture.recreate_storage().await;
