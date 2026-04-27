@@ -15,6 +15,7 @@ pub const ALL_TARGET: &str = "all";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PlatformsConfig {
+    pub envs: IndexMap<String, String>,
     pub tools: IndexMap<String, ToolConfig>,
     pub targets: IndexMap<String, TargetConfig>,
     pub languages: IndexMap<Language, LanguageConfig>,

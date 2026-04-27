@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+use indexmap::IndexMap;
 
 use crate::types::Configuration;
 
@@ -12,7 +13,7 @@ pub struct Command {
     current_path: Option<PathBuf>,
     name: String,
     arguments: Vec<String>,
-    envs: Vec<(String, String)>,
+    envs: IndexMap<String, String>,
 }
 
 impl Command {
@@ -21,7 +22,7 @@ impl Command {
             current_path: None,
             name: name.to_string(),
             arguments: vec![],
-            envs: vec![],
+            envs: IndexMap::new(),
         }
     }
 
@@ -67,7 +68,20 @@ impl Command {
         value: &str,
     ) -> Self {
         let mut current_envs = self.envs.clone();
-        current_envs.push((key.to_string(), value.to_string()));
+        current_envs.insert(key.to_string(), value.to_string());
+
+        Self {
+            envs: current_envs,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_envs(
+        &self,
+        envs: IndexMap<String, String>,
+    ) -> Self {
+        let mut current_envs = self.envs.clone();
+        current_envs.extend(envs);
 
         Self {
             envs: current_envs,

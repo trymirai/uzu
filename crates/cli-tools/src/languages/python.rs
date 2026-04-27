@@ -42,6 +42,7 @@ impl LanguageBackend for PythonLanguageBackend {
             Command::maturin_build(manifest_path.clone(), target.name.clone(), target.features.clone(), configuration)
                 .with_current_path(&bindings_path)
                 .with_env("CARGO_ZIGBUILD_ZIG_PATH", &zig_path)
+                .with_envs(self.config.envs.clone())
                 .run()?;
             if target.name == host_target {
                 Command::uv_sync().with_current_path(&bindings_path).run()?;

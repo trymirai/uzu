@@ -71,6 +71,7 @@ fn language_backend(
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = PlatformsConfig::load()?;
+    let host_target = config.host_target()?;
 
     match cli.command {
         Some(Commands::Setup) => run_setup()?,
@@ -85,11 +86,19 @@ fn main() -> Result<()> {
         }) => language_backend(language, config)?.build(configuration, targets, capabilities)?,
         Some(Commands::Test {
             language,
-        }) => language_backend(language, config)?.test()?,
+        }) => {
+            let backend = language_backend(language, config.clone())?;
+            backend.build(Configuration::Release, vec![host_target], vec![])?;
+            backend.test()?
+        },
         Some(Commands::Example {
             language,
             name,
-        }) => language_backend(language, config)?.example(&name)?,
+        }) => {
+            let backend = language_backend(language, config.clone())?;
+            backend.build(Configuration::Release, vec![host_target], vec![])?;
+            backend.example(&name)?
+        },
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

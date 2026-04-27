@@ -35,6 +35,7 @@ impl LanguageBackend for RustLanguageBackend {
         let paths = Paths::new()?;
         for target in targets {
             Command::cargo_build(paths.main_crate.clone(), target.name.clone(), target.features.clone(), configuration)
+                .with_envs(self.config.envs.clone())
                 .run()?;
         }
         Ok(())

@@ -51,6 +51,7 @@ impl LanguageBackend for TypeScriptLanguageBackend {
             )
             .with_current_path(&bindings_path)
             .with_env("CARGO_ZIGBUILD_ZIG_PATH", &zig_path)
+            .with_envs(self.config.envs.clone())
             .run()?;
             if target.name == host_target {
                 Command::pnpm_run("fix").with_current_path(&bindings_path).run()?;
