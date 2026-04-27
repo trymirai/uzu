@@ -8,7 +8,7 @@ use crate::{
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::{DecoderLayerType, ShortConvConfig},
-    encodable_block::linear::Linear,
+    encodable_block::{LoraFusion, linear::Linear},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterTree, resolve_subtree},
 };
@@ -35,7 +35,7 @@ impl<B: Backend> ShortConvMixer<B> {
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> (Self, Option<B::Buffer>) {
+    ) -> (Self, Option<B::Buffer>, Option<LoraFusion<B>>) {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
         }
@@ -45,17 +45,18 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
 
-        let (in_projection, in_proj_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-            &short_conv_config.in_projection_config,
-            false,
-            model_dim,
-            [model_dim * 3],
-            context,
-            &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
-            ArrayId::Main,
-            ArrayId::SsmInProj,
-        )
-        .expect("Failed to create in-projection kernel");
+        let (in_projection, in_proj_input_hadamard_factors, in_proj_lora) =
+            <dyn Linear<B>>::new_extracting_input_fusions(
+                &short_conv_config.in_projection_config,
+                false,
+                model_dim,
+                [model_dim * 3],
+                context,
+                &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
+                ArrayId::Main,
+                ArrayId::SsmInProj,
+            )
+            .expect("Failed to create in-projection kernel");
 
         let out_projection = <dyn Linear<B>>::new(
             &short_conv_config.out_projection_config,
@@ -101,6 +102,7 @@ impl<B: Backend> ShortConvMixer<B> {
                 conv_bias,
             },
             in_proj_input_hadamard_factors,
+            in_proj_lora,
         )
     }
 

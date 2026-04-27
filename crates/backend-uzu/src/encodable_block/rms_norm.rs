@@ -8,6 +8,7 @@ use std::{
 
 use thiserror::Error;
 
+use super::LoraFusion;
 use crate::{
     DataType,
     backends::common::{
@@ -35,6 +36,7 @@ pub struct RMSNorm<B: Backend> {
     shortcut_array_id: Option<ArrayId>,
     scales_buffer: Rc<RefCell<B::Buffer>>,
     hadamard_factors_buffer: Option<B::Buffer>,
+    lora_rotated_adapter_down: Option<B::Buffer>,
     use_sampling_range: bool,
 }
 
@@ -49,6 +51,7 @@ impl<B: Backend> RMSNorm<B> {
         hadamard_factors_buffer: Option<B::Buffer>,
         shortcut_array_id: Option<ArrayId>,
         residual_add: bool,
+        lora: Option<LoraFusion<B>>,
     ) -> Result<Self, RMSNormError<B>> {
         let scales = parameter_tree.leaf_array("scales").map_err(RMSNormError::ParameterError)?;
 
@@ -60,17 +63,23 @@ impl<B: Backend> RMSNorm<B> {
             UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
         };
 
+        let use_lora = lora.is_some();
+        // 16 is the only compiled LORA_RANK variant; unused when use_lora=false.
+        let kernel_lora_rank = lora.as_ref().map(|l| l.rank).unwrap_or(16);
+
         let kernel = <B::Kernels as Kernels>::RMSNormKernel::new(
             context,
             input_type,
             scales_type,
             output_type,
             accumulation_data_type,
+            kernel_lora_rank,
             input_array_id == output_array_id,
             config.upcast_mode == UpcastMode::FullLayer,
             shortcut_array_id.is_some(),
             residual_add,
             hadamard_factors_buffer.is_some(),
+            use_lora,
         )
         .map_err(RMSNormError::BackendError)?;
 
@@ -82,6 +91,7 @@ impl<B: Backend> RMSNorm<B> {
             shortcut_array_id,
             scales_buffer: scales.buffer(),
             hadamard_factors_buffer,
+            lora_rotated_adapter_down: lora.map(|l| l.rotated_adapter_down),
             use_sampling_range: false,
         })
     }
@@ -130,12 +140,25 @@ impl<B: Backend> RMSNorm<B> {
         let shortcut_rc = self.shortcut_array_id.map(|id| state.array(id).buffer());
         let mut shortcut_borrow = shortcut_rc.as_ref().map(|rc| rc.borrow_mut());
 
+        // For the fused LoRA path: h_output goes into lora_intermediate.
+        let lora_h_rc = self.lora_rotated_adapter_down.as_ref().map(|_| {
+            state
+                .common_aux
+                .lora_intermediate
+                .as_ref()
+                .expect("lora_intermediate required for fused RMSNorm+LoRA")
+                .buffer()
+        });
+        let mut lora_h_borrow = lora_h_rc.as_ref().map(|rc| rc.borrow_mut());
+
         self.kernel.encode(
             input_buffer_borrow.as_deref().map(|b| (b, input_offset)),
             self.scales_buffer.borrow().deref(),
             (output_array.buffer().borrow_mut().deref_mut(), output_offset),
             shortcut_borrow.as_deref_mut().map(|b| (b, input_offset)),
             self.hadamard_factors_buffer.as_ref(),
+            self.lora_rotated_adapter_down.as_ref(),
+            lora_h_borrow.as_deref_mut(),
             batch_len as u32,
             element_count as u32,
             self.config.epsilon,

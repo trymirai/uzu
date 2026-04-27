@@ -190,6 +190,7 @@ impl<B: Backend> Decoder<B> {
             None,
             Some(ArrayId::Shortcut),
             true,
+            None,
         )
         .map(RMSNorm::with_sampling_range)
         .expect("Failed to create output RMS norm kernel");

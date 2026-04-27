@@ -9,17 +9,20 @@ using namespace metal;
 
 #define BLOCK_SIZE 1024
 
-template <typename InputT, typename ScaleT, typename OutputT, typename AccumT>
+template <typename InputT, typename ScaleT, typename OutputT, typename AccumT, uint LORA_RANK>
 VARIANTS(InputT, float, half, bfloat)
 VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
+VARIANTS(LORA_RANK, 16)
 PUBLIC KERNEL(RMSNorm)(
     const device InputT* input OPTIONAL(!in_place),
     const device ScaleT* scales,
     device OutputT* output,
     device InputT* shortcut OPTIONAL(copy_to_shortcut),
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
+    const device OutputT* rotated_adapter_down OPTIONAL(use_lora),
+    device OutputT* h_output OPTIONAL(use_lora),
     constant uint& batch_size,
     constant uint& element_count,
     constant float& epsilon,
@@ -29,6 +32,7 @@ PUBLIC KERNEL(RMSNorm)(
     const bool copy_to_shortcut SPECIALIZE,
     const bool residual_add SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
+    const bool use_lora SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -78,7 +82,11 @@ PUBLIC KERNEL(RMSNorm)(
       static_cast<AccumT>(epsilon)
   );
 
-  // Step 3 - elementwise normalization
+  // Step 3 - elementwise normalization (and optional LoRA h accumulation).
+  // h[r] = rotated_adapter_down[r, :] @ y_scaled — pre-butterfly operand since
+  // rotated_adapter_down = A_down @ H was composed at model-load time.
+  float h_partial[LORA_RANK] = {0};
+
   for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
     AccumT x;
     // If we fuse TensorAddSwap, read shortcut (that now has input + shortcut)
@@ -101,6 +109,13 @@ PUBLIC KERNEL(RMSNorm)(
       val = static_cast<OutputT>(x * rms_inv) * static_cast<OutputT>(scale);
     }
 
+    if (use_lora) {
+      float y_i = static_cast<float>(val);
+      for (uint r = 0; r < LORA_RANK; r++)
+        h_partial[r] +=
+            static_cast<float>(rotated_adapter_down[i * LORA_RANK + r]) * y_i;
+    }
+
     if (use_hadamard) {
       val = static_cast<OutputT>(simdgroup_random_hadamard_transform(
           static_cast<ushort>(thread_in_row % METAL_SIMD_SIZE),
@@ -110,5 +125,23 @@ PUBLIC KERNEL(RMSNorm)(
     }
 
     output[i] = val;
+  }
+
+  // Step 4 (use_lora) — reduce h_partial across threads into h_output.
+  // Reuses shared_sum (idle after step 2) sequentially for each of LORA_RANK
+  // rows.
+  if (use_lora) {
+    h_output += batch_idx * LORA_RANK;
+    for (uint r = 0; r < LORA_RANK; r++) {
+      float h_r =
+          threadgroup_cooperative_reduce<SimdReduceSum<float>, BLOCK_SIZE>(
+              h_partial[r],
+              reinterpret_cast<threadgroup float*>(shared_sum),
+              thread_context
+          );
+      if (thread_in_row == 0) {
+        h_output[r] = static_cast<OutputT>(h_r);
+      }
+    }
   }
 }

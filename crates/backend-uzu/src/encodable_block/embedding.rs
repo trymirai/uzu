@@ -298,6 +298,7 @@ impl<B: Backend> Embedding<B> {
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
                         use_hadamard: false,
+                        lora_rank: None,
                     },
                 )?;
 
@@ -378,6 +379,7 @@ impl<B: Backend> Embedding<B> {
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
                         use_hadamard: false,
+                        lora_rank: None,
                     },
                 )?;
 
@@ -448,6 +450,7 @@ impl<B: Backend> Embedding<B> {
                         mode: *embedding_quantization_mode,
                         quantization_type: QuantizedMatmulType::Mlx,
                         use_hadamard: false,
+                        lora_rank: None,
                     },
                 )?;
 
@@ -656,6 +659,9 @@ impl<B: Backend> Embedding<B> {
                         output_buffer: output,
                         hadamard_factors: None,
                         batch_dim,
+                        h_buffer: None,
+                        adapter_up: None,
+                        lora_scale: 0.0,
                     },
                 )?;
             },

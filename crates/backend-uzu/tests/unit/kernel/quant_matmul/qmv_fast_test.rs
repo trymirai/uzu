@@ -16,6 +16,8 @@ use itertools::iproduct;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
+const LORA_RANK: u32 = 16;
+
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{
     common::{helpers::alloc_buffer_with_data, type_short_name},
@@ -64,7 +66,16 @@ fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
+pub struct LoraInputs<'a, T: ArrayElement + Float> {
+    pub h: &'a [T],
+    pub a_up: &'a [T],
+    pub scale: f32,
+}
+
+fn get_output<B: Backend, T: ArrayElement + Float>(
+    input: &Input<T>,
+    lora: Option<&LoraInputs<T>>,
+) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
@@ -72,6 +83,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
     let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
     let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
+    let h_buf = lora.map(|l| alloc_buffer_with_data::<B, T>(&context, l.h));
+    let a_up_buf = lora.map(|l| alloc_buffer_with_data::<B, T>(&context, l.a_up));
     let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
     let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
 
@@ -82,9 +95,11 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
         input.group_size,
         input.bits,
+        LORA_RANK,
         input.use_zero_points,
         input.use_mlx_quant,
         false,
+        lora.is_some(),
     )
     .expect("Failed to create QuantizedMatmulQmvFastKernel");
     kernel.encode(
@@ -95,6 +110,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         &x_buf,
         &mut y_buf,
         None::<&B::Buffer>,
+        h_buf.as_ref(),
+        a_up_buf.as_ref(),
+        lora.map(|l| l.scale),
         input.k,
         input.n,
         input.m,
@@ -214,7 +232,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<B, T>(input);
+        let output = get_output::<B, T>(input, None);
         assert_eq!(expected.len(), output.len(), "Output length mismatch");
 
         let mut errors = 0;
@@ -304,6 +322,33 @@ qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, zp = false, mlx = true);
 qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, zp = false, mlx = true);
 qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, zp = false, mlx = true);
 
+#[uzu_test]
+fn test_lora_gs128_4bit_mlx() {
+    const RANK: usize = 16;
+    const M: usize = 1;
+    const K: usize = 512;
+    const N: usize = 64;
+    let (input, _) = get_test_data::<bf16>(M, K, N, 128, 4, false, true);
+    let h: Vec<bf16> = (0..M * RANK).map(|i| bf16::from_f32(0.01 * f32::sin(i as f32 * 0.3))).collect();
+    let a_up: Vec<bf16> = (0..N * RANK).map(|i| bf16::from_f32(0.01 * f32::sin(i as f32 * 0.17))).collect();
+    let lora = LoraInputs { h: &h, a_up: &a_up, scale: 0.5 };
+    let cpu_out = get_output::<Cpu, bf16>(&input, Some(&lora));
+    let (rel_tol, abs_tol): (f64, f64) = (0.05, 0.5);
+    for_each_non_cpu_backend!(|B| {
+        let out = get_output::<B, bf16>(&input, Some(&lora));
+        let mut errors = 0usize;
+        for (i, (&exp, &got)) in cpu_out.iter().zip(out.iter()).enumerate() {
+            let e = exp.to_f32();
+            let g = got.to_f32();
+            if !check_tolerance(e, g, rel_tol, abs_tol) {
+                if errors < 5 { eprintln!("  idx={} exp={} got={} diff={}", i, e, g, (e - g).abs()); }
+                errors += 1;
+            }
+        }
+        assert_eq!(errors, 0, "QmvFast LoRA: backend={} mismatches={}", std::any::type_name::<B>(), errors);
+    });
+}
+
 fn gen_random<T: rand::distr::uniform::SampleUniform + PartialOrd + Copy, R: rand::Rng>(
     rng: &mut R,
     range: std::ops::Range<T>,
@@ -341,8 +386,10 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
             T::data_type(),
             group_size,
             bits,
+            LORA_RANK,
             use_zero_points,
             use_mlx_quant,
+            false,
             false,
         )
         .unwrap();
@@ -395,6 +442,9 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                         &x_buf,
                         &mut y_buf,
                         None::<&B::Buffer>,
+                        None::<&B::Buffer>,
+                        None::<&B::Buffer>,
+                        None::<f32>,
                         k as u32,
                         n as u32,
                         m as u32,
