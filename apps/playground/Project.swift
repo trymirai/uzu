@@ -111,8 +111,21 @@ let appScheme: Scheme = .scheme(
         preActions: [
             .executionAction(
                 title: "Update Uzu Package",
-                scriptText:
-                    "/bin/bash \"$PROJECT_DIR/../../scripts/prepare_bindings.sh\" swift",
+                scriptText: """
+                    set -euo pipefail
+                    [ -d "$HOME/.cargo/bin" ] && export PATH="$HOME/.cargo/bin:$PATH"
+                    [ -d "/opt/homebrew/bin" ] && export PATH="/opt/homebrew/bin:$PATH"
+                    unset SDKROOT DEVELOPER_DIR_OVERRIDE
+                    case "${PLATFORM_NAME:-macosx}" in
+                      iphonesimulator) TARGET=ios-sim ;;
+                      iphoneos)        TARGET=ios ;;
+                      *)               TARGET=macos ;;
+                    esac
+                    CONFIGURATION_VALUE=release
+                    [ "${CONFIGURATION:-Release}" = "Debug" ] && CONFIGURATION_VALUE=debug
+                    cd "$PROJECT_DIR/../.."
+                    cargo tools build swift "$CONFIGURATION_VALUE" --targets "$TARGET"
+                    """,
                 target: .init(stringLiteral: projectName)
             )
         ]
