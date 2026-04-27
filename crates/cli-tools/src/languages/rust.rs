@@ -27,6 +27,10 @@ impl LanguageBackend for RustLanguageBackend {
         Language::Rust
     }
 
+    fn expects_prebuild_for_run(&self) -> bool {
+        return false;
+    }
+
     fn build_targets(
         &self,
         configuration: Configuration,
@@ -41,16 +45,29 @@ impl LanguageBackend for RustLanguageBackend {
         Ok(())
     }
 
-    fn test(&self) -> Result<()> {
-        Command::cargo_test().run()
+    fn test_target(
+        &self,
+        configuration: Configuration,
+        target: LanguageBackendTarget,
+    ) -> Result<()> {
+        Command::cargo_test(target.name.clone(), target.features.clone(), configuration).run()
     }
 
-    fn example(
+    fn example_target(
         &self,
         name: &str,
+        configuration: Configuration,
+        target: LanguageBackendTarget,
     ) -> Result<()> {
         let paths = Paths::new()?;
         let name = self.language().convert_command_name(name);
-        Command::cargo_run_example(paths.main_crate.clone(), name).run()
+        Command::cargo_run_example(
+            paths.main_crate.clone(),
+            name,
+            target.name.clone(),
+            target.features.clone(),
+            configuration,
+        )
+        .run()
     }
 }

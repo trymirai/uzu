@@ -103,17 +103,25 @@ fn main() -> Result<()> {
         Some(Commands::Test {
             language,
         }) => {
+            let configuration = Configuration::Release;
+            let capabilities = vec![];
             let backend = language_backend(language, config.clone())?;
-            backend.build(Configuration::Release, vec![host_target], vec![])?;
-            backend.test()?
+            if backend.expects_prebuild_for_run() {
+                backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
+            }
+            backend.test(configuration, host_target.clone(), capabilities.clone())?
         },
         Some(Commands::Example {
             language,
             name,
         }) => {
+            let configuration = Configuration::Release;
+            let capabilities = vec![];
             let backend = language_backend(language, config.clone())?;
-            backend.build(Configuration::Release, vec![host_target], vec![])?;
-            backend.example(&name)?
+            if backend.expects_prebuild_for_run() {
+                backend.build(configuration, vec![host_target.clone()], capabilities.clone())?;
+            }
+            backend.example(&name, configuration, host_target.clone(), capabilities.clone())?
         },
         None => {
             let mut cmd = Cli::command();

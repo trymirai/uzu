@@ -168,20 +168,43 @@ impl Command {
         command
     }
 
-    pub fn cargo_test() -> Self {
-        Self::new("cargo").with_argument("test")
+    pub fn cargo_test(
+        target: String,
+        features: Vec<String>,
+        configuration: Configuration,
+    ) -> Self {
+        let mut command = Self::new("cargo")
+            .with_argument("test")
+            .with_arguments(vec!["--target".to_string(), target])
+            .with_argument("--no-default-features")
+            .with_arguments(vec!["--features".to_string(), features.join(",")]);
+        command = match configuration {
+            Configuration::Debug => command,
+            Configuration::Release => command.with_argument("--release"),
+        };
+        command
     }
 
     pub fn cargo_run_example(
         package: String,
         name: String,
+        target: String,
+        features: Vec<String>,
+        configuration: Configuration,
     ) -> Self {
-        Self::new("cargo")
+        let mut command = Self::new("cargo")
             .with_argument("run")
             .with_argument("-p")
             .with_argument(&package)
             .with_arguments(vec!["--example".to_string(), name])
-            .with_argument("--release")
+            .with_arguments(vec!["--target".to_string(), target])
+            .with_argument("--no-default-features")
+            .with_arguments(vec!["--features".to_string(), features.join(",")]);
+        command = match configuration {
+            Configuration::Debug => command,
+            Configuration::Release => command.with_argument("--release"),
+        };
+        command
     }
 }
 

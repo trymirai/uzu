@@ -19,18 +19,6 @@
       "problemMatcher": []
     },
     {
-      "label": "Prepare Bindings",
-      "type": "shell",
-      "command": "cargo run -p cli-release prepare-bindings",
-      "problemMatcher": []
-    },
-    {
-      "label": "Prepare Workspace",
-      "type": "shell",
-      "command": "cargo run -p cli-release prepare-workspace \"$(uv run python3 -c 'import tomllib; print(tomllib.load(open(\"Cargo.toml\", \"rb\"))[\"workspace\"][\"package\"][\"version\"])')\"",
-      "problemMatcher": []
-    },
-    {
       "label": "Download Model",
       "type": "shell",
       "command": "uv run downloader download \"${input:modelRepo}\"",

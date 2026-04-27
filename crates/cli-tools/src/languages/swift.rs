@@ -89,15 +89,21 @@ impl LanguageBackend for SwiftLanguageBackend {
         Ok(())
     }
 
-    fn test(&self) -> Result<()> {
+    fn test_target(
+        &self,
+        _configuration: Configuration,
+        _target: LanguageBackendTarget,
+    ) -> Result<()> {
         let paths = Paths::new()?;
         let bindings_path = paths.bindings_for_language_path(self.language());
         Command::swift_test().with_current_path(&bindings_path).run()
     }
 
-    fn example(
+    fn example_target(
         &self,
         name: &str,
+        _configuration: Configuration,
+        _target: LanguageBackendTarget,
     ) -> Result<()> {
         let paths = Paths::new()?;
         let bindings_path = paths.bindings_for_language_path(self.language());
