@@ -379,18 +379,21 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
 
         self.reset_generation_state();
         let mut sampling = TextSamplingState::from_config(seed, &self.runtime_config.sampling);
-        let mut current_semantic_token = self.decode_initial_semantic_token(text_tokens, &mut sampling)?;
-        let post_scale = if self.scale_codebook_embeddings {
-            Some(1.0 / ((self.num_codebooks + 1) as f32).sqrt())
-        } else {
-            None
-        };
 
         let mut max_new_tokens = self.max_seq_len.saturating_sub(text_tokens.len());
         max_new_tokens = max_new_tokens.min(max_semantic_frames.max(1));
         if let Some(limit) = self.runtime_config.max_new_tokens_override {
             max_new_tokens = max_new_tokens.min(limit);
         }
+        self.slow_runner.prepare_for_generation(text_tokens.len() + max_new_tokens)?;
+        self.fast_runner.prepare_for_generation(self.num_codebooks + 1)?;
+
+        let mut current_semantic_token = self.decode_initial_semantic_token(text_tokens, &mut sampling)?;
+        let post_scale = if self.scale_codebook_embeddings {
+            Some(1.0 / ((self.num_codebooks + 1) as f32).sqrt())
+        } else {
+            None
+        };
         let mut by_codebook =
             (0..self.num_codebooks).map(|_| Vec::<u32>::with_capacity(max_new_tokens)).collect::<Vec<_>>();
         if self.current_codes_scratch.len() != self.num_codebooks {
