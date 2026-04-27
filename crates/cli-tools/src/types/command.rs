@@ -248,6 +248,12 @@ impl Command {
 }
 
 impl Command {
+    pub fn pnpm_setup() -> Self {
+        Self::new("sh")
+            .with_argument("-c")
+            .with_argument("pnpm --version >/dev/null 2>&1 || curl -fsSL https://get.pnpm.io/install.sh | sh")
+    }
+
     pub fn pnpm_install() -> Self {
         Self::new("pnpm").with_argument("install")
     }
@@ -322,11 +328,23 @@ impl Command {
         command
     }
 
+    pub fn xcodebuild() -> Self {
+        Self::new("xcodebuild")
+    }
+
+    pub fn xcodebuild_first_launch() -> Self {
+        Self::xcodebuild().with_argument("-runFirstLaunch")
+    }
+
+    pub fn xcodebuild_download_metal_toolchain() -> Self {
+        Self::xcodebuild().with_arguments(vec!["-downloadComponent".to_string(), "MetalToolchain".to_string()])
+    }
+
     pub fn xcodebuild_create_xcframework(
         slice_libraries_with_headers_paths: Vec<(PathBuf, PathBuf)>,
         output_path: PathBuf,
     ) -> Self {
-        let mut command = Self::new("xcodebuild").with_argument("-create-xcframework");
+        let mut command = Self::xcodebuild().with_argument("-create-xcframework");
         for (library_path, headers_path) in slice_libraries_with_headers_paths {
             command = command.with_arguments(vec!["-library".to_string(), library_path.to_string_lossy().to_string()]);
             command = command.with_arguments(vec!["-headers".to_string(), headers_path.to_string_lossy().to_string()]);

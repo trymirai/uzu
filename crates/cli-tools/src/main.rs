@@ -55,10 +55,17 @@ enum Commands {
 }
 
 fn run_setup() -> Result<()> {
+    if cfg!(target_vendor = "apple") {
+        Command::xcodebuild_first_launch().run()?;
+        Command::xcodebuild_download_metal_toolchain().run()?;
+    }
+
     Command::rustup_setup().run()?;
     Command::rustup_update().run()?;
     Command::rustup_show().run()?;
     Command::uv_setup().run()?;
+    Command::pnpm_setup().run()?;
+
     Ok(())
 }
 
