@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Ok, Result, anyhow};
 use indexmap::IndexMap;
@@ -121,6 +121,14 @@ impl PlatformsConfig {
     ) -> Result<Vec<Bindings>> {
         let language_config = self.languages.get(&language).context("Language not found")?;
         Ok(language_config.bindings.clone())
+    }
+
+    pub fn examples_path_for_language(
+        &self,
+        language: Language,
+    ) -> Result<PathBuf> {
+        let language_config = self.languages.get(&language).context("Language not found")?;
+        Ok(Paths::new()?.root_path.join(&language_config.examples_path))
     }
 
     pub fn required_envs_for_target(

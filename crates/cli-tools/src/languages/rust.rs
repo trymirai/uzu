@@ -44,4 +44,13 @@ impl LanguageBackend for RustLanguageBackend {
     fn test(&self) -> Result<()> {
         Command::cargo_test().run()
     }
+
+    fn example(
+        &self,
+        name: &str,
+    ) -> Result<()> {
+        let paths = Paths::new()?;
+        let name = self.language().convert_name(name);
+        Command::cargo_run_example(paths.main_crate.clone(), name).run()
+    }
 }

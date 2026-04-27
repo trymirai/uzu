@@ -171,6 +171,18 @@ impl Command {
     pub fn cargo_test() -> Self {
         Self::new("cargo").with_argument("test")
     }
+
+    pub fn cargo_run_example(
+        package: String,
+        name: String,
+    ) -> Self {
+        Self::new("cargo")
+            .with_argument("run")
+            .with_argument("-p")
+            .with_argument(&package)
+            .with_arguments(vec!["--example".to_string(), name])
+            .with_argument("--release")
+    }
 }
 
 impl Command {
@@ -204,6 +216,14 @@ impl Command {
             .with_argument("run")
             .with_arguments(vec!["--extra".to_string(), "dev".to_string()])
             .with_argument("pytest")
+    }
+
+    pub fn uv_python_file(path: PathBuf) -> Self {
+        Self::new("uv")
+            .with_argument("run")
+            .with_arguments(vec!["--extra".to_string(), "examples".to_string()])
+            .with_argument("python")
+            .with_argument(&path.to_string_lossy())
     }
 
     pub fn maturin_build(
@@ -242,6 +262,10 @@ impl Command {
 
     pub fn pnpm_jest() -> Self {
         Self::pnpm_exec().with_argument("jest")
+    }
+
+    pub fn pnpm_tsn(path: PathBuf) -> Self {
+        Self::pnpm_run("tsn").with_argument(&path.to_string_lossy())
     }
 
     pub fn napi_build(
@@ -312,6 +336,10 @@ impl Command {
 
     pub fn swift_test() -> Self {
         Self::new("swift").with_argument("test")
+    }
+
+    pub fn swift_run_example(name: String) -> Self {
+        Self::new("swift").with_argument("run").with_argument("examples").with_argument(&name)
     }
 
     pub fn codesign_adhoc(path: PathBuf) -> Self {

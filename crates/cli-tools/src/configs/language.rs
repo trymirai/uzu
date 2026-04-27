@@ -8,4 +8,5 @@ pub struct LanguageConfig {
     pub targets: Vec<String>,
     pub tools: Vec<String>,
     pub bindings: Vec<Bindings>,
+    pub examples_path: String,
 }

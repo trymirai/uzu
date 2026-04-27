@@ -94,6 +94,16 @@ impl LanguageBackend for SwiftLanguageBackend {
         let bindings_path = paths.bindings_for_language_path(self.language());
         Command::swift_test().with_current_path(&bindings_path).run()
     }
+
+    fn example(
+        &self,
+        name: &str,
+    ) -> Result<()> {
+        let paths = Paths::new()?;
+        let bindings_path = paths.bindings_for_language_path(self.language());
+        let name = self.language().convert_name(name);
+        Command::swift_run_example(name).with_current_path(&bindings_path).run()
+    }
 }
 
 fn collect_slice_libs_with_headers(
