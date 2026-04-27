@@ -7,7 +7,7 @@ struct Country: Codable {
     let capital: String
 }
 
-public func runStructuredOutput() async throws {
+public func runChatStructuredOutput() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     

@@ -1,6 +1,6 @@
 import Uzu
 
-public func runClassifier() async throws {
+public func runClassification() async throws {
     let engine = try await Engine.create(config: .create())
     
     guard let model = try await engine.model(identifier: "trymirai/chat-moderation-router") else {

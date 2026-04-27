@@ -82,18 +82,22 @@ targets = [
 ]
 tools = ["ziglang", "zigbuild", "xwin"]
 bindings = []
+examples_path = "crates/uzu/examples"
 
 [languages.python]
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 tools = ["ziglang", "zigbuild", "xwin", "maturin"]
 bindings = ["pyo3"]
+examples_path = "bindings/python/examples"
 
 [languages.swift]
 targets = ["aarch64-apple-darwin", "aarch64-apple-ios", "aarch64-apple-ios-sim"]
 tools = ["swift"]
 bindings = ["uniffi"]
+examples_path = "bindings/swift/Sources/Examples"
 
 [languages.typescript]
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 tools = ["ziglang", "zigbuild", "xwin"]
 bindings = ["napi"]
+examples_path = "bindings/typescript/examples"

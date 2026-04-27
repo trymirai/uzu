@@ -18,24 +18,20 @@ struct Example: AsyncParsableCommand {
 
     mutating func run() async throws {
         switch mode {
-        case "chat":
-            try await runChat()
-        case "chat-for-summarization":
-            try await runChatForSummarization()
-        case "chat-for-classification":
-            try await runChatForClassification()
         case "quick-start":
             try await runQuickStart()
-        case "snippets":
-            try await runSnippets()
-        case "cloud":
-            try await runCloud()
-        case "ssm":
-            try await runSSM()
-        case "structured-output":
-            try await runStructuredOutput()
-        case "classifier":
-            try await runClassifier()
+        case "chat":
+            try await runChat()
+        case "chat-cloud":
+            try await runChatCloud()
+        case "chat-structured-output":
+            try await runChatStructuredOutput()
+        case "chat-speculation-summarization":
+            try await runChatSpeculationSummarization()
+        case "chat-speculation-classification":
+            try await runChatSpeculationClassification()
+        case "classification":
+            try await runClassification()
         case "text-to-speech":
             try await runTextToSpeech()
         default:

@@ -1,6 +1,6 @@
 import Uzu
 
-public func runChatForSummarization() async throws {
+public func runChatSpeculationSummarization() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     

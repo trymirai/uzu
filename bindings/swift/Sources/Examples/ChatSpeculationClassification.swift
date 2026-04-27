@@ -1,6 +1,6 @@
 import Uzu
 
-public func runChatForClassification() async throws {
+public func runChatSpeculationClassification() async throws {
     let engineConfig = EngineConfig.create()
     let engine = try await Engine.create(config: engineConfig)
     

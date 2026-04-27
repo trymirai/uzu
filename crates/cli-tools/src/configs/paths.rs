@@ -32,6 +32,10 @@ impl Paths {
         self.root_path.join("platforms.toml")
     }
 
+    pub fn workspace_manifest_path(&self) -> PathBuf {
+        self.root_path.join("Cargo.toml")
+    }
+
     pub fn bindings_path(&self) -> PathBuf {
         self.root_path.join("bindings")
     }
