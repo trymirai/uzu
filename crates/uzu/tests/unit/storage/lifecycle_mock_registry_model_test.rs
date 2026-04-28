@@ -54,6 +54,7 @@ async fn test_storage_mock_registry_model_download_lifecycle() -> Result<(), Box
     for served_file in registry.files {
         let destination = item.cache_path.join(&served_file.file.name);
         assert_eq!(tokio::fs::read(&destination).await?, served_file.bytes.to_vec());
+        assert!(std::path::PathBuf::from(format!("{}.crc", destination.display())).is_file());
     }
 
     Ok(())
