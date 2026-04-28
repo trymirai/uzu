@@ -12,18 +12,19 @@ pub fn kv_cache_update<T: ArrayElement + Float>(
     swaps: &[crate::backends::common::gpu_types::kv_cache_update::Swap],
     swap_count: u32,
     num_heads: u32,
-    max_sequence_length: u32,
     head_dim: u32,
 ) {
-    let max_sequence_length = max_sequence_length as usize;
+    let num_heads = num_heads as usize;
     let head_dim = head_dim as usize;
 
-    for head_idx in 0..num_heads as usize {
+    // Stride between tokens: num_heads * head_dim;
+    // Stride between heads: head_dim.
+    for head_idx in 0..num_heads {
         for channel_idx in 0..head_dim {
             for i in 0..swap_count as usize {
-                let head_offset = head_idx * max_sequence_length * head_dim;
-                let source_idx = head_offset + (swaps[i].source as usize) * head_dim + channel_idx;
-                let dest_idx = head_offset + (swaps[i].destination as usize) * head_dim + channel_idx;
+                let head_offset = head_idx * head_dim;
+                let source_idx = (swaps[i].source as usize) * num_heads * head_dim + head_offset + channel_idx;
+                let dest_idx = (swaps[i].destination as usize) * num_heads * head_dim + head_offset + channel_idx;
                 unsafe {
                     let keys_src_ptr = in_place_keys.add(source_idx);
                     let mut keys_dst_ptr = in_place_keys.add(dest_idx);

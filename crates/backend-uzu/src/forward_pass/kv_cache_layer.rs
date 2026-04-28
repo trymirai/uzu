@@ -205,11 +205,11 @@ impl<B: Backend> KVCacheLayer<B> {
                     return None;
                 }
                 let shape = self.keys.shape();
-                let num_groups = shape[0];
+                let num_groups = shape[1];
                 let head_dim = shape[2];
                 let dtype = self.keys.data_type();
 
-                let slice_shape = [num_groups, len, head_dim];
+                let slice_shape = [len, num_groups, head_dim];
                 let mut slice_keys =
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
                 let mut slice_values =
@@ -228,8 +228,8 @@ impl<B: Backend> KVCacheLayer<B> {
                     .collect();
 
                 for (i, &slot) in slots.iter().enumerate() {
-                    slice_keys.copy_slice(&self.keys, 1, slot..slot + 1, i);
-                    slice_values.copy_slice(&self.values, 1, slot..slot + 1, i);
+                    slice_keys.copy_slice(&self.keys, 0, slot..slot + 1, i);
+                    slice_values.copy_slice(&self.values, 0, slot..slot + 1, i);
                 }
 
                 Some(KVSlice::Window {
@@ -287,8 +287,8 @@ impl<B: Backend> KVCacheLayer<B> {
                         *ring_length = *base_ring_length;
 
                         for (i, &slot) in slots.iter().enumerate() {
-                            self.keys.copy_slice(keys, 1, i..i + 1, slot);
-                            self.values.copy_slice(values, 1, i..i + 1, slot);
+                            self.keys.copy_slice(keys, 0, i..i + 1, slot);
+                            self.values.copy_slice(values, 0, i..i + 1, slot);
                         }
                     },
                     Some(r) => {
@@ -318,8 +318,8 @@ impl<B: Backend> KVCacheLayer<B> {
 
                         for (i, &slot) in slots[r.clone()].iter().enumerate() {
                             let src_i = r.start + i;
-                            self.keys.copy_slice(keys, 1, src_i..src_i + 1, slot);
-                            self.values.copy_slice(values, 1, src_i..src_i + 1, slot);
+                            self.keys.copy_slice(keys, 0, src_i..src_i + 1, slot);
+                            self.values.copy_slice(values, 0, src_i..src_i + 1, slot);
                         }
                     },
                 }
