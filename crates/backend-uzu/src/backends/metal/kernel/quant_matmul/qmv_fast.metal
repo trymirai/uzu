@@ -99,28 +99,23 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[3] +=
             qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum);
       } else {
-        uint8_t zp_byte0 = zps[0];
-        uint8_t zp_byte1 = zps[zp_stride];
-        uint8_t zp_byte2 = zps[2 * zp_stride];
-        uint8_t zp_byte3 = zps[3 * zp_stride];
-        U zp0 = static_cast<U>(
-            (BITS == 4 && high_nibble) ? (zp_byte0 >> 4) : (zp_byte0 & 0x0F)
+        uchar4 zp_bytes = uchar4(
+            zps[0],
+            zps[zp_stride],
+            zps[2 * zp_stride],
+            zps[3 * zp_stride]
         );
-        U zp1 = static_cast<U>(
-            (BITS == 4 && high_nibble) ? (zp_byte1 >> 4) : (zp_byte1 & 0x0F)
-        );
-        U zp2 = static_cast<U>(
-            (BITS == 4 && high_nibble) ? (zp_byte2 >> 4) : (zp_byte2 & 0x0F)
-        );
-        U zp3 = static_cast<U>(
-            (BITS == 4 && high_nibble) ? (zp_byte3 >> 4) : (zp_byte3 & 0x0F)
-        );
-        if (BITS == 8) {
-          zp0 = static_cast<U>(zp_byte0);
-          zp1 = static_cast<U>(zp_byte1);
-          zp2 = static_cast<U>(zp_byte2);
-          zp3 = static_cast<U>(zp_byte3);
+        uchar4 zp_nibbles;
+        if (BITS == 4) {
+          const uint8_t shift = high_nibble ? 4u : 0u;
+          zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
+        } else {
+          zp_nibbles = zp_bytes;
         }
+        U zp0 = static_cast<U>(zp_nibbles.x);
+        U zp1 = static_cast<U>(zp_nibbles.y);
+        U zp2 = static_cast<U>(zp_nibbles.z);
+        U zp3 = static_cast<U>(zp_nibbles.w);
         result[0] +=
             qdot<U, values_per_thread, BITS>(wl0, x_thread, s0, -s0 * zp0, sum);
         result[1] +=
