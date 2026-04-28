@@ -51,9 +51,16 @@ impl LanguageBackend for PythonLanguageBackend {
                 if !bindings_path.join(".venv").exists() {
                     Command::uv_venv().with_current_path(&bindings_path).run()?;
                 }
-                Command::uv_pip_install_wheel(wheel_path)
+                Command::uv_pip_install_wheel(wheel_path.clone())
                     .with_current_path(&bindings_path)
                     .with_envs(envs.clone())
+                    .run()?;
+                Command::new("unzip")
+                    .with_argument("-o")
+                    .with_argument(&wheel_path.to_string_lossy())
+                    .with_argument(&format!("{}/uzu.abi3.so", paths.main_crate))
+                    .with_argument("-d")
+                    .with_argument(&bindings_path.to_string_lossy())
                     .run()?;
                 Command::uv_python("import uzu; uzu.generate_annotations()")
                     .with_current_path(&bindings_path)
