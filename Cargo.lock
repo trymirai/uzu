@@ -746,6 +746,7 @@ dependencies = [
  "syn 2.0.117",
  "sysinfo",
  "tempfile",
+ "test-tag",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",
@@ -2226,12 +2227,12 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "block2",
- "bytesize",
  "chrono",
  "crc32c",
  "futures-util",
  "indicatif",
  "libc",
+ "mock-registry",
  "objc-sys",
  "objc2",
  "objc2-foundation",
@@ -2239,7 +2240,6 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
- "shoji",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -4301,6 +4301,23 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mock-registry"
+version = "0.1.9"
+dependencies = [
+ "base64 0.22.1",
+ "bytesize",
+ "chrono",
+ "crc32c",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "shoji",
+ "tokio",
+ "tracing",
+ "wiremock",
 ]
 
 [[package]]
@@ -7258,6 +7275,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-tag"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5a2455608f6a56fc2ce66c89dd005501c169688f29165468e65f0b47e060333"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8245,12 +8273,9 @@ dependencies = [
  "async-openai",
  "backend-remote",
  "backend-uzu",
- "base64 0.22.1",
  "bindings",
  "bindings-types",
- "bytesize",
  "chrono",
- "crc32c",
  "dirs",
  "dotenvy",
  "download-manager",
@@ -8261,6 +8286,7 @@ dependencies = [
  "indicatif",
  "inventory",
  "keyring",
+ "mock-registry",
  "nagare",
  "napi",
  "napi-build",
@@ -8273,7 +8299,6 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-stub-gen",
  "reqwest 0.13.2",
- "rstest",
  "schemars 1.2.1",
  "serde",
  "serde-wasm-bindgen",
@@ -8292,7 +8317,6 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wiremock",
 ]
 
 [[package]]
