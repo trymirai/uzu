@@ -22,10 +22,6 @@ inputs:
     description: "Additional Rust target to install"
     required: false
     default: ''
-  node:
-    description: "Install requirements for Node"
-    required: false
-    default: 'false'
 
 runs:
   using: composite
@@ -85,11 +81,6 @@ runs:
         uv run export configs
         uv run export tokenizers
       shell: bash
-
-    - if: inputs.node == 'true'
-      uses: actions/setup-node@v4
-      with:
-        node-version: "20"
 
     - if: inputs.node == 'true'
       uses: pnpm/action-setup@v4

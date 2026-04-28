@@ -115,7 +115,13 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           metal: true
-          node: true
+
+      - name: Reset existing rustup toolchains on self-hosted runner
+        run: |
+          if command -v rustup >/dev/null; then
+            rustup toolchain uninstall stable 2>/dev/null || true
+            rustup toolchain uninstall nightly 2>/dev/null || true
+          fi
 
       - name: Setup
         run: |

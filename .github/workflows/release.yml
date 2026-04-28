@@ -22,18 +22,14 @@ jobs:
       VERSION: ${{ inputs.version }}
 
     steps:
-      - name: Checkout main
+      - name: Release: Checkout main
         uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Capture pre-release main HEAD
-        id: head-commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Validate version
+      - name: Release: Validate version
         run: |
           set -euo pipefail
           git fetch --tags origin
@@ -56,77 +52,66 @@ jobs:
             echo "No previous tags; ${VERSION} is the first release"
           fi
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup
-        run: cargo tools setup
-
-      - name: Install language tools
+      - name: Release: Reset existing rustup toolchains on self-hosted runner
         run: |
+          if command -v rustup >/dev/null; then
+            rustup toolchain uninstall stable 2>/dev/null || true
+            rustup toolchain uninstall nightly 2>/dev/null || true
+          fi
+
+      - name: Release: Install tools
+        run: |
+          cargo tools setup
           cargo tools install rust
           cargo tools install python
           cargo tools install swift
           cargo tools install typescript
 
-      - name: Sync
+      - name: Release: Sync
         run: cargo tools sync
 
-      - name: Build release artifacts
+      - name: Release: Build artifacts
         run: cargo tools release "${VERSION}"
 
       # ---------------------------------------------------------------
-      # Verify main hasn't advanced while we were building.
-      # If it has, abort before publishing or pushing tags.
+      # Publish Platform
       # ---------------------------------------------------------------
-      - name: Verify main has not advanced
-        run: |
-          git fetch origin main
-          remote=$(git rev-parse origin/main)
-          local="${{ steps.head-commit.outputs.sha }}"
-          if [ "$remote" != "$local" ]; then
-            echo "main advanced from $local to $remote during the run; aborting"; exit 1
-          fi
-
-      # ---------------------------------------------------------------
-      # Upload platform snippets
-      # ---------------------------------------------------------------
-      - name: Decode platform bucket credentials
+      - name: Publish Platform: Decode bucket credentials
         run: |
           echo "${{ secrets.PLATFORM_BUCKET_BASE64_CREDENTIALS }}" | base64 -d > "$RUNNER_TEMP/gcloud/platform.json"
           echo "PLATFORM_CREDENTIALS=$RUNNER_TEMP/gcloud/platform.json" >> "$GITHUB_ENV"
 
-      - name: Authenticate to GCS (platform bucket)
+      - name: Publish Platform: Authenticate to GCS
         uses: google-github-actions/auth@v2
         with:
           credentials_json_path: ${{ env.PLATFORM_CREDENTIALS }}
 
-      - name: Setup gcloud
+      - name: Publish Platform: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Upload platform snippets
+      - name: Publish Platform: Upload snippets
         run: |
           gsutil -m rsync -r -d workspace/release/platform \
             "gs://platform-bucket-0485e11/snippets"
 
       # ---------------------------------------------------------------
-      # Upload Swift xcframework zip to artifacts bucket
+      # Publish Swift
       # ---------------------------------------------------------------
-      - name: Decode artifacts bucket credentials
+      - name: Publish Swift: Decode artifacts bucket credentials
         run: |
           mkdir -p "$RUNNER_TEMP/gcloud"
           echo "${{ secrets.ARTIFACTS_BUCKET_BASE64_CREDENTIALS }}" | base64 -d > "$RUNNER_TEMP/gcloud/artifacts.json"
           echo "ARTIFACTS_CREDENTIALS=$RUNNER_TEMP/gcloud/artifacts.json" >> "$GITHUB_ENV"
 
-      - name: Authenticate to GCS (artifacts bucket)
+      - name: Publish Swift: Authenticate to GCS
         uses: google-github-actions/auth@v2
         with:
           credentials_json_path: ${{ env.ARTIFACTS_CREDENTIALS }}
 
-      - name: Setup gcloud
+      - name: Publish Swift: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Upload Swift xcframework
+      - name: Publish Swift: Upload xcframework
         run: |
           set -euo pipefail
           GS_URI="gs://artifacts-bucket-cd05ceb/uzu-swift/releases/${VERSION}.zip"
@@ -136,33 +121,27 @@ jobs:
           gsutil cp "workspace/release/swift-spm/${VERSION}.zip" "$GS_URI"
 
       # ---------------------------------------------------------------
-      # Publish npm package
+      # Publish TypeScript
       # ---------------------------------------------------------------
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Publish to npm
+      - name: Publish TypeScript
         working-directory: workspace/release/typescript-npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: pnpm publish --access public
 
       # ---------------------------------------------------------------
-      # Publish PyPI wheels
+      # Publish Python
       # ---------------------------------------------------------------
-      - name: Publish to PyPI
+      - name: Publish Python
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
           uv publish workspace/release/python-pypi/*.whl
 
       # ---------------------------------------------------------------
-      # Sync docs into trymirai/docs repo
+      # Publish Docs
       # ---------------------------------------------------------------
-      - name: Generate GitHub App token for docs repo
+      - name: Publish Docs: Generate GitHub App token
         id: docs-token
         uses: actions/create-github-app-token@v2
         with:
@@ -171,7 +150,7 @@ jobs:
           owner: trymirai
           repositories: docs
 
-      - name: Checkout docs repo
+      - name: Publish Docs: Checkout repo
         uses: actions/checkout@v6
         with:
           repository: trymirai/docs
@@ -180,14 +159,14 @@ jobs:
           path: docs-repo
           persist-credentials: false
 
-      - name: Sync generated docs into docs repo
+      - name: Publish Docs: Sync
         run: |
           set -euo pipefail
           rsync -a --delete \
             --exclude '.git' --exclude '.git/*' \
             workspace/release/docs/ docs-repo/snippets/generated/
 
-      - name: Commit and push docs changes
+      - name: Publish Docs: Commit and push changes
         env:
           GH_TOKEN: ${{ steps.docs-token.outputs.token }}
         run: |
@@ -208,7 +187,7 @@ jobs:
       # Commit changes generated by sync + release, tag, push.
       # The tag is attached to the commit this pipeline produces.
       # ---------------------------------------------------------------
-      - name: Commit and tag
+      - name: Release: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
