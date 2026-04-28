@@ -28,11 +28,21 @@ jobs:
           metal: true
           bindings: true
 
+      - name: "Release: Generate GitHub App token"
+        id: release-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: trymirai
+          repositories: uzu
+
       - name: "Release: Checkout main"
         uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ steps.release-token.outputs.token }}
           persist-credentials: true
 
       - name: "Release: Validate version"
