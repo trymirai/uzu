@@ -90,11 +90,13 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     }
 }
 
+#[tag(heavy)]
 #[test]
 fn test_grammar_json_schema() {
     test_grammar(SpeculatorConfig::default());
 }
 
+#[tag(heavy)]
 #[test]
 fn test_grammar_json_schema_with_speculator() {
     test_grammar(SpeculatorConfig {

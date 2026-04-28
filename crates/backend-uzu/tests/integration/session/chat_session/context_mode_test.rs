@@ -54,6 +54,7 @@ fn request(
         .to_string()
 }
 
+#[tag(heavy)]
 #[test]
 fn test_context_mode_none() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::None);
@@ -70,6 +71,7 @@ fn test_context_mode_none() {
     assert_eq!(response_1, response_2);
 }
 
+#[tag(heavy)]
 #[test]
 fn test_context_mode_static() {
     let parameter_name = "Alice".to_string();
@@ -105,6 +107,7 @@ fn test_context_mode_static() {
     assert!(response_city.to_lowercase().contains(parameter_city.to_lowercase().as_str()));
 }
 
+#[tag(heavy)]
 #[test]
 #[ignore = "Flaky test - depends on LLM output which varies even with fixed seed"]
 fn test_context_mode_dynamic() {
@@ -147,6 +150,7 @@ fn test_context_mode_dynamic() {
     */ // TODO: Fix this test
 }
 
+#[tag(heavy)]
 #[test]
 fn test_context_mode_dynamic_scenario() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::Dynamic);

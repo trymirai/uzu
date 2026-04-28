@@ -933,6 +933,7 @@ fn test_two_pass_attention_gqa() {
     }
 }
 
+#[tag(heavy)]
 #[test]
 fn perf_two_pass_attention() {
     use std::time::Instant;
