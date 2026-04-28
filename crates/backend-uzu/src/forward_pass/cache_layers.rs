@@ -352,7 +352,7 @@ impl<B: Backend> CacheLayers<B> {
             .map(|(layer_index, layer)| match layer {
                 CacheLayer::Transformer(layer) => {
                     let shape = layer.keys.shape().to_vec();
-                    let num_groups = shape[0];
+                    let num_groups = shape[1];
                     let head_dim = shape[2];
                     let dtype = layer.keys.data_type();
                     let copy_rows = layer.prefix_segment_length();
@@ -362,7 +362,7 @@ impl<B: Backend> CacheLayers<B> {
                         max_prefix_capacity_across_layers = copy_rows;
                     }
 
-                    let new_shape = [num_groups, new_total_len, head_dim];
+                    let new_shape = [new_total_len, num_groups, head_dim];
                     let mut new_keys = context.create_array_zeros(
                         &new_shape,
                         dtype,
@@ -375,8 +375,8 @@ impl<B: Backend> CacheLayers<B> {
                     );
 
                     if copy_rows > 0 {
-                        new_keys.copy_slice(&layer.keys, 1, 0..copy_rows, 0);
-                        new_values.copy_slice(&layer.values, 1, 0..copy_rows, 0);
+                        new_keys.copy_slice(&layer.keys, 0, 0..copy_rows, 0);
+                        new_values.copy_slice(&layer.values, 0, 0..copy_rows, 0);
                     }
 
                     CacheLayer::Transformer(KVCacheLayer {

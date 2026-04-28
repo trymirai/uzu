@@ -18,19 +18,19 @@ PUBLIC KERNEL(KVCacheUpdate) (
     const constant uzu::kv_cache_update::Swap* swaps,
     const constant uint& swap_count,
     const constant uint& num_heads,
-    const constant uint& max_sequence_length,
     const constant uint& head_dim,
     const uint head_idx AXIS(num_heads, 32),
     const uint channel_idx AXIS(head_dim, 32)
 ) {
   for (uint i = 0; i < swap_count; ++i) {
-    // [headIdx: 0..num_heads, tokenIdx: 0..max_sequence_length, channelIdx:
-    // 0..head_dim]
-    const uint head_offset = head_idx * max_sequence_length * head_dim;
+    // Token-major layout: [max_sequence_length, num_heads, head_dim]
+    // Offset = token_idx * num_heads * head_dim +
+    //          head_idx * head_dim + channel_idx
+    const uint head_offset = head_idx * head_dim;
     const uint sourceIdx =
-        head_offset + swaps[i].source * head_dim + channel_idx;
+        swaps[i].source * num_heads * head_dim + head_offset + channel_idx;
     const uint destIdx =
-        head_offset + swaps[i].destination * head_dim + channel_idx;
+        swaps[i].destination * num_heads * head_dim + head_offset + channel_idx;
 
     swap(in_place_keys, sourceIdx, destIdx);
     swap(in_place_values, sourceIdx, destIdx);
