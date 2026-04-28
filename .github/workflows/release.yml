@@ -78,6 +78,7 @@ jobs:
       # ---------------------------------------------------------------
       - name: "Publish Platform: Decode bucket credentials"
         run: |
+          mkdir -p "$RUNNER_TEMP/gcloud"
           echo "${{ secrets.PLATFORM_BUCKET_BASE64_CREDENTIALS }}" | base64 -d > "$RUNNER_TEMP/gcloud/platform.json"
           echo "PLATFORM_CREDENTIALS=$RUNNER_TEMP/gcloud/platform.json" >> "$GITHUB_ENV"
 
