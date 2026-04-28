@@ -132,7 +132,7 @@ impl StructuredAudioCodecGraph {
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];
         let mut lengths_array = ws.lengths_array(&mut encoder, lengths_i32.len());
-        lengths_array.as_slice_mut::<i32>()[..lengths_i32.len()].copy_from_slice(&lengths_i32);
+        lengths_array.as_slice_mut::<i32>().copy_from_slice(&lengths_i32);
         let mut next_lengths_array = ws.lengths_array(&mut encoder, lengths_i32.len());
 
         for (block_index, (trans_conv, convnext)) in vocoder_graph.upsample_blocks.iter().enumerate() {
@@ -146,7 +146,7 @@ impl StructuredAudioCodecGraph {
                 .checked_mul(trans_conv.stride)
                 .ok_or(AudioError::Runtime("structured audio upsampler frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, trans_conv.stride)?;
-            next_lengths_array.as_slice_mut::<i32>()[..next_lengths_i32.len()].copy_from_slice(&next_lengths_i32);
+            next_lengths_array.as_slice_mut::<i32>().copy_from_slice(&next_lengths_i32);
 
             let up_tconv =
                 ws.next_scratch(&mut encoder, &[batch_size, trans_conv.cout, next_frames], self.vocoder_data_type);
@@ -249,7 +249,7 @@ impl StructuredAudioCodecGraph {
                 .checked_mul(block.trans_conv.stride)
                 .ok_or(AudioError::Runtime("structured audio decoder frame overflow".to_string()))?;
             scale_lengths_i32_in_place(&lengths_i32, &mut next_lengths_i32, block.trans_conv.stride)?;
-            next_lengths_array.as_slice_mut::<i32>()[..next_lengths_i32.len()].copy_from_slice(&next_lengths_i32);
+            next_lengths_array.as_slice_mut::<i32>().copy_from_slice(&next_lengths_i32);
 
             let dec_tconv = ws.next_scratch(
                 &mut encoder,

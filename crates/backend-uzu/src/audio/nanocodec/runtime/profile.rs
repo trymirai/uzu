@@ -44,25 +44,24 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
                 final_command_buffer,
                 completion_notification: _,
             } => {
-                final_command_buffer.wait_until_completed().map_err(|err| {
+                let completed_command_buffer = final_command_buffer.wait_until_completed().map_err(|err| {
                     AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
                 })?;
                 let allocation_read_error =
                     |err| AudioError::Runtime(format!("failed to read FishAudio decoder output allocation: {err}"));
-                let samples: Vec<f32> = match data_type {
-                    DataType::F32 => try_allocation_to_vec::<B, f32>(&output).map_err(allocation_read_error)?,
+                let samples_result: AudioResult<Vec<f32>> = match data_type {
+                    DataType::F32 => try_allocation_to_vec::<B, f32>(&output).map_err(allocation_read_error),
                     DataType::F16 => try_allocation_to_vec::<B, half::f16>(&output)
-                        .map_err(allocation_read_error)?
-                        .iter()
-                        .map(|&v| f32::from(v))
-                        .collect(),
+                        .map_err(allocation_read_error)
+                        .map(|values| values.iter().map(|&value| f32::from(value)).collect()),
                     DataType::BF16 => try_allocation_to_vec::<B, half::bf16>(&output)
-                        .map_err(allocation_read_error)?
-                        .iter()
-                        .map(|&v| f32::from(v))
-                        .collect(),
-                    dt => return Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
+                        .map_err(allocation_read_error)
+                        .map(|values| values.iter().map(|&value| f32::from(value)).collect()),
+                    dt => Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
                 };
+                drop(output);
+                drop(completed_command_buffer);
+                let samples = samples_result?;
                 Ok(DecodedPaddedAudio {
                     samples,
                     channels,

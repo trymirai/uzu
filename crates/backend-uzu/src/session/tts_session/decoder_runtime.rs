@@ -239,11 +239,10 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
     fn create_sampling_inputs_from_slices(
         &self,
-        token_count: usize,
         token_seeds: &[u64],
         token_bitmask: Option<&[u32]>,
     ) -> SamplingInputs<B> {
-        let bitmask_row_len = token_bitmask.map(|_| self.ctx.model_shape.bitmask_shape(token_count)[1]);
+        let bitmask_row_len = token_bitmask.map(|_| self.ctx.decoder_config.vocab_size.div_ceil(32));
         SamplingInputs::from_slices(self.ctx.context.as_ref(), token_seeds, token_bitmask, bitmask_row_len)
     }
 
@@ -421,7 +420,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
         followup_count: usize,
         vocab_limit: Option<usize>,
         sampling: &mut TextSamplingState,
+        pending_token_inputs: &mut Vec<TokenInputs<B>>,
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
+        pending_sampling_outputs: &mut Vec<Allocation<B>>,
     ) -> Result<usize, Error> {
         let total_count =
             1_usize.checked_add(followup_count).ok_or(TtsModelConfigError::AsyncChainFollowupCountOverflow)?;
@@ -506,35 +507,43 @@ impl<B: Backend> TokenDecoderRunner<B> {
             false, // capture_hidden
             pre_injection_encode,
             initial_seed,
+            pending_token_inputs,
             pending_sampling_inputs,
         )?;
 
-        // Copy the sampled token for chaining and into results[0].
-        {
-            if followup_count > 0 {
-                let token_ids_shape = [1];
-                let token_ids_data_type = crate::DataType::U64;
-                let mut next_token_ids = self
-                    .ctx
-                    .context
-                    .create_array_uninitialized(&token_ids_shape, token_ids_data_type, "async_token_id")
-                    .into_allocation();
-                self.ctx.token_copy_sampled.encode(&sampling_output, &mut next_token_ids, encoder);
-                self.encode_followup_passes_on(
-                    encoder,
-                    followup_count,
-                    Some(unsafe { Array::from_allocation(next_token_ids, 0, &token_ids_shape, token_ids_data_type) }),
-                    vocab_mask_limit,
-                    sampling.method(),
-                    1,
-                    pending_sampling_inputs,
-                )?;
-            }
-            self.copy_sampling_output_to_async_result_on(encoder, &sampling_output, 0);
-        }
+        let first_followup_token_ids = if followup_count > 0 {
+            let token_ids_shape = [1];
+            let token_ids_data_type = crate::DataType::U64;
+            let mut next_token_ids = self
+                .ctx
+                .context
+                .create_array_uninitialized(&token_ids_shape, token_ids_data_type, "async_token_id")
+                .into_allocation();
+            self.ctx.token_copy_sampled.encode(&sampling_output, &mut next_token_ids, encoder);
+            Some(unsafe { Array::from_allocation(next_token_ids, 0, &token_ids_shape, token_ids_data_type) })
+        } else {
+            None
+        };
+        self.copy_sampling_output_to_async_result_on(encoder, &sampling_output, 0);
 
         self.encode_cache_acceptance_update_on(encoder, initial_token_count);
         self.register_positions_and_advance(initial_token_count);
+
+        if followup_count > 0 {
+            self.encode_followup_passes_on(
+                encoder,
+                followup_count,
+                first_followup_token_ids,
+                vocab_mask_limit,
+                sampling.method(),
+                1,
+                pending_token_inputs,
+                pending_sampling_inputs,
+                pending_sampling_outputs,
+            )?;
+        }
+
+        pending_sampling_outputs.push(sampling_output);
 
         self.next_position = followup_base_position.saturating_add(followup_count);
         // Do NOT submit -- the caller will submit after encoding more work.
@@ -557,35 +566,25 @@ impl<B: Backend> TokenDecoderRunner<B> {
         vocab_mask_limit: Option<usize>,
         sampling_method: SamplingMethod,
         results_offset_slots: usize,
+        pending_token_inputs: &mut Vec<TokenInputs<B>>,
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
+        pending_sampling_outputs: &mut Vec<Allocation<B>>,
     ) -> Result<(), Error> {
         let encoding_parameters = EncodingParameters::new();
         let cache_layers_rc = self.ctx.cache_layers.clone();
         let token_bitmask =
             vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit)).map(Box::<[u32]>::from);
-        let bitmask_row_len = token_bitmask.as_ref().map(|_| self.ctx.decoder_config.vocab_size.div_ceil(32));
-        let token_bitmask_array = token_bitmask.as_deref().zip(bitmask_row_len).map(|(mask, row_len)| {
-            SamplingInputs::bitmask_array_from_slice(self.ctx.context.as_ref(), 1, mask, row_len)
-        });
         let mut next_token_ids = first_token_ids;
 
         for pass in 0..followup_count {
             let results_slot = results_offset_slots + pass;
             let token_ids = [0];
-            let token_positions_allocation =
-                Some(self.ctx.async_chain_positions.view_at_offset(pass * std::mem::size_of::<i32>(), &[1]));
-            let sampling_inputs = SamplingInputs {
-                seeds: self.ctx.async_chain_seeds.view_at_offset(pass * std::mem::size_of::<u64>(), &[1]),
-                bitmask: token_bitmask_array.clone(),
-            };
-            let token_inputs = self.llm_token_inputs(
-                &token_ids,
-                &[self.next_position + pass],
-                next_token_ids.take(),
-                token_positions_allocation,
-                0,
-                1,
-            );
+            let seed = self.ctx.async_chain_seeds.as_slice::<u64>()[pass];
+            let sampling_inputs = self.create_sampling_inputs_from_slices(&[seed], token_bitmask.as_deref());
+            let token_inputs =
+                self.llm_token_inputs(&token_ids, &[self.next_position + pass], next_token_ids.take(), None, 0, 1);
+            pending_token_inputs.push(token_inputs);
+            let token_inputs = pending_token_inputs.last().expect("token inputs must be pending");
 
             {
                 let mut logits = {
@@ -625,6 +624,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     });
                 }
                 self.copy_sampling_output_to_async_result_on(encoder, &sampling_output, results_slot);
+                pending_sampling_outputs.push(sampling_output);
             }
 
             self.ctx.cache_layers.borrow_mut().update_after_acceptance(&[0], None, encoder, &self.ctx.kv_cache_update);
@@ -714,6 +714,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         capture_hidden: bool,
         mut pre_injection_encode: Option<&mut PreInjectionEncodeCallback<B>>,
         preconsumed_seed: Option<u64>,
+        pending_token_inputs: &mut Vec<TokenInputs<B>>,
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
     ) -> Result<Allocation<B>, Error> {
         if token_ids.is_empty() {
@@ -773,8 +774,18 @@ impl<B: Backend> TokenDecoderRunner<B> {
             return Err(Error::GenerateFailed);
         }
 
-        let sampling_inputs = self.create_sampling_inputs_from_slices(token_count, token_seeds, token_bitmask);
+        let sampling_seed_end = sampling_start + sampling_length;
+        let sampling_token_seeds = &token_seeds[sampling_start..sampling_seed_end];
+        let sampling_token_bitmask = token_bitmask.map(|mask| {
+            let row_words = self.ctx.decoder_config.vocab_size.div_ceil(32);
+            let row_start = sampling_start * row_words;
+            let row_end = row_start + sampling_length * row_words;
+            &mask[row_start..row_end]
+        });
+        let sampling_inputs = self.create_sampling_inputs_from_slices(sampling_token_seeds, sampling_token_bitmask);
         let token_inputs = self.llm_token_inputs(token_ids, positions, None, None, sampling_start, sampling_length);
+        pending_token_inputs.push(token_inputs);
+        let token_inputs = pending_token_inputs.last().expect("token inputs must be pending");
 
         let encoding_parameters = EncodingParameters::new();
         let mut main = self
@@ -970,6 +981,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
             let context = Rc::clone(&self.ctx.context);
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
+            let mut pending_token_inputs = Vec::new();
             let mut pending_sampling_inputs = Vec::new();
 
             let sampling_output = self.encode_single_forward_pass_on(
@@ -981,6 +993,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 capture_hidden,
                 pre_injection_encode,
                 None,
+                &mut pending_token_inputs,
                 &mut pending_sampling_inputs,
             )?;
             self.encode_cache_acceptance_update_on(&mut encoder, token_count);
@@ -1060,7 +1073,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
         precomputed_token_bitmask: Option<&[u32]>,
         capture_hidden: bool,
         pre_injection_encode: Option<&mut PreInjectionEncodeCallback<B>>,
+        pending_token_inputs: &mut Vec<TokenInputs<B>>,
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
+        pending_sampling_outputs: &mut Vec<Allocation<B>>,
     ) -> Result<(), Error> {
         let token_count = token_ids.len();
 
@@ -1073,12 +1088,14 @@ impl<B: Backend> TokenDecoderRunner<B> {
             capture_hidden,
             pre_injection_encode,
             None,
+            pending_token_inputs,
             pending_sampling_inputs,
         )?;
 
         // Copy sampled token to async_chain_results[0] so the caller can
         // read it after the eventual submit.
         self.copy_sampling_output_to_async_result_on(encoder, &sampling_output, 0);
+        pending_sampling_outputs.push(sampling_output);
 
         self.encode_cache_acceptance_update_on(encoder, token_count);
         // Do NOT submit -- the caller will submit.
