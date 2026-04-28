@@ -1,9 +1,11 @@
+use std::fs;
+
 use anyhow::Result;
 
 use crate::{
-    configs::{Paths, PlatformsConfig},
+    configs::{ALL_TARGET, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget},
-    types::{Command, Configuration, Language},
+    types::{Capability, Command, Configuration, Language},
 };
 
 pub struct PythonLanguageBackend {
@@ -74,5 +76,38 @@ impl LanguageBackend for PythonLanguageBackend {
         let name = self.language().convert_file_name(name);
         let file_path = examples_path.join(format!("{name}.py"));
         Command::uv_python_file(file_path).with_current_path(&bindings_path).run()
+    }
+
+    fn release(
+        &self,
+        _version: &str,
+    ) -> Result<()> {
+        self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
+
+        let paths = Paths::new()?;
+        let destination = paths.release_python_pypi_path();
+        if destination.exists() {
+            fs::remove_dir_all(&destination)?;
+        }
+        fs::create_dir_all(&destination)?;
+
+        let wheels_root = paths.target_wheels_path();
+        if !wheels_root.exists() {
+            anyhow::bail!("No wheels at {}", wheels_root.display());
+        }
+
+        let mut copied = 0;
+        for entry in fs::read_dir(&wheels_root)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) == Some("whl") {
+                fs::copy(&path, destination.join(entry.file_name()))?;
+                copied += 1;
+            }
+        }
+        if copied == 0 {
+            anyhow::bail!("No `.whl` files found in {}", wheels_root.display());
+        }
+        Ok(())
     }
 }

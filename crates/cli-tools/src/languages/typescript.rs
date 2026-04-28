@@ -1,9 +1,12 @@
+use std::fs;
+
 use anyhow::Result;
 
 use crate::{
-    configs::{Paths, PlatformsConfig},
+    configs::{ALL_TARGET, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget},
-    types::{Command, Configuration, Language},
+    types::{Capability, Command, Configuration, Language},
+    utilities::fs::copy_directory,
 };
 
 pub struct TypeScriptLanguageBackend {
@@ -84,5 +87,25 @@ impl LanguageBackend for TypeScriptLanguageBackend {
         let name = self.language().convert_file_name(name);
         let file_path = examples_path.join(format!("{name}.ts"));
         Command::pnpm_tsn(file_path).with_current_path(&bindings_path).run()
+    }
+
+    fn release(
+        &self,
+        _version: &str,
+    ) -> Result<()> {
+        self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
+
+        let paths = Paths::new()?;
+        let source = paths.bindings_for_language_path(self.language()).join("dist");
+        if !source.exists() {
+            anyhow::bail!("Missing dist folder at {}", source.display());
+        }
+
+        let destination = paths.release_typescript_npm_path();
+        if destination.exists() {
+            fs::remove_dir_all(&destination)?;
+        }
+        copy_directory(&source, &destination)?;
+        Ok(())
     }
 }

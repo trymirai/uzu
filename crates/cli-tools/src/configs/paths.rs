@@ -24,8 +24,16 @@ impl Paths {
         })
     }
 
+    pub fn target_path(&self) -> PathBuf {
+        self.root_path.join("target")
+    }
+
+    pub fn target_wheels_path(&self) -> PathBuf {
+        self.target_path().join("wheels")
+    }
+
     pub fn artifacts_path(&self) -> PathBuf {
-        self.root_path.join("target").join("cli-tools")
+        self.target_path().join("cli-tools")
     }
 
     pub fn platforms_toml(&self) -> PathBuf {
@@ -87,5 +95,33 @@ impl Paths {
 
     pub fn swift_slices_path(&self) -> PathBuf {
         self.artifacts_path().join("swift").join("slices")
+    }
+
+    pub fn release_workspace_path(&self) -> PathBuf {
+        self.root_path.join("workspace").join("release")
+    }
+
+    pub fn release_platform_path(&self) -> PathBuf {
+        self.release_workspace_path().join("platform")
+    }
+
+    pub fn release_docs_path(&self) -> PathBuf {
+        self.release_workspace_path().join("docs")
+    }
+
+    pub fn release_swift_spm_path(&self) -> PathBuf {
+        self.release_workspace_path().join("swift-spm")
+    }
+
+    pub fn release_typescript_npm_path(&self) -> PathBuf {
+        self.release_workspace_path().join("typescript-npm")
+    }
+
+    pub fn release_python_pypi_path(&self) -> PathBuf {
+        self.release_workspace_path().join("python-pypi")
+    }
+
+    pub fn root_package_swift_path(&self) -> PathBuf {
+        self.root_path.join("Package.swift")
     }
 }

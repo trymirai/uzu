@@ -5,6 +5,7 @@ use cli_tools::{
     languages::{
         LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
     },
+    release::run_release,
     sync::run_sync,
     types::{Capability, Command, Configuration, Language},
 };
@@ -54,6 +55,10 @@ enum Commands {
     },
     /// Verify that the working tree has no uncommitted changes after building each language
     Verify,
+    /// Bump version, sync, build all languages, and stage release artifacts
+    Release {
+        version: String,
+    },
 }
 
 fn run_setup() -> Result<()> {
@@ -139,6 +144,9 @@ fn main() -> Result<()> {
             check,
         }) => run_sync(check)?,
         Some(Commands::Verify) => run_verify(&config)?,
+        Some(Commands::Release {
+            version,
+        }) => run_release(&version)?,
         None => {
             let mut cmd = Cli::command();
             cmd.print_help()?;

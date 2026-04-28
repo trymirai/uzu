@@ -121,6 +121,13 @@ pub trait LanguageBackend {
         Ok(())
     }
 
+    fn release(
+        &self,
+        _version: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     fn resolve_targets(
         &self,
         name: String,

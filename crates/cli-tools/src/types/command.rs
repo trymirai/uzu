@@ -378,6 +378,13 @@ impl Command {
         Self::new("swift").with_argument("test")
     }
 
+    pub fn swift_compute_checksum(path: PathBuf) -> Self {
+        Self::new("swift")
+            .with_argument("package")
+            .with_argument("compute-checksum")
+            .with_argument(&path.to_string_lossy())
+    }
+
     pub fn swift_run_example(name: String) -> Self {
         Self::new("swift").with_argument("run").with_argument("examples").with_argument(&name)
     }
@@ -398,5 +405,15 @@ impl Command {
 
     pub fn git_status_porcelain() -> Self {
         Self::new("git").with_argument("status").with_argument("--porcelain")
+    }
+
+    pub fn zip_directory(
+        source: PathBuf,
+        output: PathBuf,
+    ) -> Self {
+        Self::new("zip")
+            .with_argument("-r")
+            .with_argument(&output.to_string_lossy())
+            .with_argument(&source.to_string_lossy())
     }
 }

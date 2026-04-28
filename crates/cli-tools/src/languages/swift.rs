@@ -6,10 +6,14 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 
 use crate::{
-    configs::{Paths, PlatformsConfig},
+    configs::{ALL_TARGET, Paths, PlatformsConfig},
     languages::{LanguageBackend, LanguageBackendTarget, generate_swift_extensions},
-    types::{Command, Configuration, Language},
+    types::{Capability, Command, Configuration, Language},
+    utilities::fs::copy_directory,
 };
+
+const FRAMEWORK_URL_TEMPLATE: &str =
+    "https://artifacts.trymirai.com/uzu-swift/releases/{version}.zip";
 
 pub struct SwiftLanguageBackend {
     config: PlatformsConfig,
@@ -83,7 +87,7 @@ impl LanguageBackend for SwiftLanguageBackend {
         let any_slice_path = fs::read_dir(&slices_path)?.next().context("No slices produced")??;
         let sources_path = any_slice_path.path().join("Sources");
         fs::create_dir_all(&generated_sources_path)?;
-        copy_directory_recursive(&sources_path, &generated_sources_path)?;
+        copy_directory(&sources_path, &generated_sources_path)?;
         generate_swift_extensions(paths.crates_path(), extensions_path.clone())?;
 
         Ok(())
@@ -109,6 +113,70 @@ impl LanguageBackend for SwiftLanguageBackend {
         let bindings_path = paths.bindings_for_language_path(self.language());
         let name = self.language().convert_command_name(name);
         Command::swift_run_example(name).with_current_path(&bindings_path).run()
+    }
+
+    fn release(
+        &self,
+        version: &str,
+    ) -> Result<()> {
+        self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
+
+        let paths = Paths::new()?;
+        let xcframework_path = paths.swift_xcframework_path();
+        if !xcframework_path.exists() {
+            anyhow::bail!("Missing xcframework at {}", xcframework_path.display());
+        }
+
+        let spm_root = paths.release_swift_spm_path();
+        if spm_root.exists() {
+            fs::remove_dir_all(&spm_root)?;
+        }
+        fs::create_dir_all(&spm_root)?;
+
+        let zip_path = spm_root.join(format!("{version}.zip"));
+        let staging_dir = spm_root.join(version);
+        fs::create_dir_all(&staging_dir)?;
+        let staged_xcframework = staging_dir.join(format!("{}.xcframework", paths.main_crate));
+        copy_directory(&xcframework_path, &staged_xcframework)?;
+        Command::zip_directory(staging_dir.clone(), zip_path.clone()).run()?;
+        fs::remove_dir_all(&staging_dir)?;
+
+        let checksum = Command::swift_compute_checksum(zip_path.clone()).output()?;
+        let checksum = checksum
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .last()
+            .context("Empty checksum output")?
+            .to_string();
+
+        let source_package_swift =
+            paths.bindings_for_language_path(Language::Swift).join("Package.swift");
+        let body = fs::read_to_string(&source_package_swift)
+            .with_context(|| format!("Failed to read {}", source_package_swift.display()))?;
+        let url = FRAMEWORK_URL_TEMPLATE.replace("{version}", version);
+        let replacement = format!("url: \"{url}\",\n            checksum: \"{checksum}\"");
+        let body = body.replace("path: \"uzu.xcframework\"", &replacement);
+
+        let target_paths = [
+            (".target(", "\"Uzu\"", "bindings/swift/Sources/Uzu"),
+            (".executableTarget(", "\"Examples\"", "bindings/swift/Sources/Examples"),
+            (".testTarget(", "\"UzuTests\"", "bindings/swift/Tests/UzuTests"),
+        ];
+        let mut body = body;
+        for (target_kind, name_literal, source_path) in target_paths {
+            let needle = format!("{target_kind}\n            name: {name_literal},");
+            let replacement =
+                format!("{needle}\n            path: \"{source_path}\",");
+            let updated = body.replace(&needle, &replacement);
+            if updated == body {
+                anyhow::bail!("Failed to inject path for {target_kind} {name_literal}");
+            }
+            body = updated;
+        }
+
+        fs::write(paths.root_package_swift_path(), body)?;
+
+        Ok(())
     }
 }
 
@@ -173,21 +241,3 @@ fn find_static_lib(slice_path: &Path) -> Result<PathBuf> {
     walk(slice_path).context("Static lib (.a) not found in the slice")
 }
 
-fn copy_directory_recursive(
-    source_path: &Path,
-    destination_path: &Path,
-) -> Result<()> {
-    fs::create_dir_all(destination_path)?;
-    for entry in fs::read_dir(source_path)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let from_path = entry.path();
-        let to_path = destination_path.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_directory_recursive(&from_path, &to_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&from_path, &to_path)?;
-        }
-    }
-    Ok(())
-}
