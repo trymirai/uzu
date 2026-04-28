@@ -22,16 +22,8 @@ inputs:
     description: "Additional Rust target to install"
     required: false
     default: ''
-  bindings-napi:
-    description: "Install requirements for bindings-napi"
-    required: false
-    default: 'false'
-  bindings-uniffi:
-    description: "Install requirements for bindings-uniffi"
-    required: false
-    default: 'false'
-  bindings-pyo3:
-    description: "Install requirements for bindings-pyo3"
+  node:
+    description: "Install requirements for Node"
     required: false
     default: 'false'
 
@@ -94,23 +86,12 @@ runs:
         uv run export tokenizers
       shell: bash
 
-    - if: inputs.bindings-napi == 'true'
+    - if: inputs.node == 'true'
       uses: actions/setup-node@v4
       with:
         node-version: "20"
 
-    - if: inputs.bindings-napi == 'true'
+    - if: inputs.node == 'true'
       uses: pnpm/action-setup@v4
       with:
         version: 10.33.0
-
-    # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
-    # See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
-    - if: inputs.bindings-uniffi == 'true'
-      run: cargo install cargo-swift@0.11.0 -f
-      shell: bash
-
-    - if: inputs.bindings-pyo3 == 'true'
-      run: |
-        uv tool install maturin
-      shell: bash
