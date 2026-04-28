@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: [self-hosted, macos, mac, arm64]
+    runs-on: [self-hosted, macos, mac, arm64, m4pro]
     env:
       VERSION: ${{ inputs.version }}
 
