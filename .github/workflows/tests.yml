@@ -115,6 +115,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           metal: true
+          bindings: true
 
       - name: "Reset existing rustup toolchains on self-hosted runner"
         run: |
