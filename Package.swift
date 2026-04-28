@@ -17,7 +17,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "uzu",
-            path: "bindings/swift/uzu.xcframework"
+            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.4.3.zip",
+            checksum: "e0a92b41004a8013ce9432e9d085a2b8b8117ae9b20a8ea2e6e46159517ec9aa"
         ),
         .target(
             name: "Uzu",
