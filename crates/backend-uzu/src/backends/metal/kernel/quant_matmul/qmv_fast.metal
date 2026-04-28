@@ -112,18 +112,18 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         } else {
           zp_nibbles = zp_bytes;
         }
-        U zp0 = static_cast<U>(zp_nibbles.x);
-        U zp1 = static_cast<U>(zp_nibbles.y);
-        U zp2 = static_cast<U>(zp_nibbles.z);
-        U zp3 = static_cast<U>(zp_nibbles.w);
-        result[0] +=
-            qdot<U, values_per_thread, BITS>(wl0, x_thread, s0, -s0 * zp0, sum);
-        result[1] +=
-            qdot<U, values_per_thread, BITS>(wl1, x_thread, s1, -s1 * zp1, sum);
-        result[2] +=
-            qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, -s2 * zp2, sum);
-        result[3] +=
-            qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, -s3 * zp3, sum);
+        result[0] += qdot<U, values_per_thread, BITS>(
+            wl0, x_thread, s0, -s0 * static_cast<U>(zp_nibbles.x), sum
+        );
+        result[1] += qdot<U, values_per_thread, BITS>(
+            wl1, x_thread, s1, -s1 * static_cast<U>(zp_nibbles.y), sum
+        );
+        result[2] += qdot<U, values_per_thread, BITS>(
+            wl2, x_thread, s2, -s2 * static_cast<U>(zp_nibbles.z), sum
+        );
+        result[3] += qdot<U, values_per_thread, BITS>(
+            wl3, x_thread, s3, -s3 * static_cast<U>(zp_nibbles.w), sum
+        );
       }
     }
 
