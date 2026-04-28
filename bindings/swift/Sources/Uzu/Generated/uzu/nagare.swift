@@ -951,6 +951,8 @@ public protocol TextToSpeechSessionProtocol: AnyObject, Sendable {
     
     func synthesize(input: String) async throws  -> PcmBatch
     
+    func synthesizeStream(input: String) async  -> TextToSpeechSessionStream
+    
 }
 open class TextToSpeechSession: TextToSpeechSessionProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1037,6 +1039,24 @@ open func synthesize(input: String)async throws  -> PcmBatch  {
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePcmBatch_lift,
             errorHandler: FfiConverterTypeTextToSpeechSessionError_lift
+        )
+}
+    
+open func synthesizeStream(input: String)async  -> TextToSpeechSessionStream  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nagare_fn_method_texttospeechsession_synthesize_stream(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(input)
+                )
+            },
+            pollFunc: ffi_nagare_rust_future_poll_u64,
+            completeFunc: ffi_nagare_rust_future_complete_u64,
+            freeFunc: ffi_nagare_rust_future_free_u64,
+            liftFunc: FfiConverterTypeTextToSpeechSessionStream_lift,
+            errorHandler: nil
+            
         )
 }
     
@@ -2077,6 +2097,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_texttospeechsession_synthesize() != 10886) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nagare_checksum_method_texttospeechsession_synthesize_stream() != 498) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_texttospeechsessionstream_cancel_token() != 440) {
