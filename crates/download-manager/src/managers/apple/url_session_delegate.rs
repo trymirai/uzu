@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use crate::{
     DownloadId, FileDownloadEvent,
@@ -78,15 +78,15 @@ define_class!(
             if let Some(download_info) = download_task.download_info() {
                 let final_destination = PathBuf::from(&download_info.destination_path);
                 if let Some(parent_dir) = final_destination.parent() {
-                    let _ = std::fs::create_dir_all(parent_dir);
+                    let _ = fs::create_dir_all(parent_dir);
 
                     tracing::debug!("[DELEGATE] Moving file from temp to final destination...");
 
-                    let move_successful = match std::fs::rename(&tmp_path, &final_destination) {
+                    let move_successful = match fs::rename(&tmp_path, &final_destination) {
                         Ok(_) => true,
-                        Err(_) => match std::fs::copy(&tmp_path, &final_destination) {
+                        Err(_) => match fs::copy(&tmp_path, &final_destination) {
                             Ok(_) => {
-                                let _ = std::fs::remove_file(&tmp_path);
+                                let _ = fs::remove_file(&tmp_path);
                                 true
                             },
                             Err(_) => false,
@@ -138,7 +138,7 @@ define_class!(
                 let dest = PathBuf::from(&info.destination_path);
                 let resume_path = format!("{}.resume_data", dest.display());
                 if PathBuf::from(&resume_path).exists() {
-                    let _ = std::fs::remove_file(&resume_path);
+                    let _ = fs::remove_file(&resume_path);
                 }
             }
 

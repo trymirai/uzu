@@ -54,7 +54,7 @@ pub fn reduce_to_checked_file_state(
             let crc_path = format!("{}.crc", destination.display());
             if let Ok(saved_crc) = std::fs::read_to_string(&crc_path) {
                 let file_size_matches_expected = expected_bytes
-                    .is_some_and(|bytes| std::fs::metadata(destination).is_ok_and(|metadata| metadata.len() == bytes));
+                    .is_some_and(|bytes| destination.metadata().is_ok_and(|metadata| metadata.len() == bytes));
                 if saved_crc.trim() == expected_crc_value && file_size_matches_expected {
                     tracing::debug!("[AF REDUCE_CHECKED] ✓ Using cached CRC for {}", destination.display());
                     // Cached CRC matches - fast path!

@@ -353,7 +353,7 @@ impl FileDownloadTask {
                                         crc
                                     );
 
-                                    if let Ok(metadata) = std::fs::metadata(&destination) {
+                                    if let Ok(metadata) = destination.metadata() {
                                         tracing::debug!("[FETCHER] File size: {} bytes", metadata.len());
                                     }
 
@@ -367,7 +367,8 @@ impl FileDownloadTask {
                                             }
 
                                             let final_bytes = expected_bytes.unwrap_or_else(|| {
-                                                std::fs::metadata(&destination)
+                                                destination
+                                                    .metadata()
                                                     .map(|metadata| metadata.len())
                                                     .unwrap_or(downloaded_bytes)
                                             });
@@ -414,7 +415,8 @@ impl FileDownloadTask {
                                     }
                                 } else {
                                     let final_bytes = expected_bytes.unwrap_or_else(|| {
-                                        std::fs::metadata(&destination)
+                                        destination
+                                            .metadata()
                                             .map(|metadata| metadata.len())
                                             .unwrap_or(downloaded_bytes)
                                     });

@@ -139,7 +139,7 @@ pub fn reduce_to_checked_file_state(
             let crc_path = format!("{}.crc", file_path.display());
             if let Ok(saved_crc) = std::fs::read_to_string(&crc_path) {
                 let file_size_matches_expected = expected_bytes
-                    .is_some_and(|bytes| std::fs::metadata(file_path).is_ok_and(|metadata| metadata.len() == bytes));
+                    .is_some_and(|bytes| file_path.metadata().is_ok_and(|metadata| metadata.len() == bytes));
                 if saved_crc.trim() == expected && file_size_matches_expected {
                     tracing::debug!("[REDUCE_CHECKED] ✓ Using cached CRC for {}", file_path.display());
                     CheckedFileState::Valid
