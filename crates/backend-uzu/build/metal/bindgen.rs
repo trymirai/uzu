@@ -247,7 +247,7 @@ pub fn bindgen(
 
                         quote! {
                             crate::backends::common::Access {
-                                range: #arg_name.0.gpu_address_subrange((#arg_name.1)..(#arg_name.0.length())),
+                                range: #arg_name.0.gpu_address_subrange((#arg_name.1)..(#arg_name.1 + #arg_name.2)),
                                 flags: crate::backends::common::AccessFlags {
                                     compute_read: true,
                                     compute_write: #compute_write,
