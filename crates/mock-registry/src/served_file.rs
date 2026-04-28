@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use shoji::types::basic::{File, HashMethod};
 
+use crate::{Error, Result};
+
 #[derive(Clone, Debug)]
 pub struct ServedFile {
     pub file: File,
@@ -9,12 +11,14 @@ pub struct ServedFile {
 }
 
 impl ServedFile {
-    pub fn crc32c(&self) -> String {
+    pub fn crc32c(&self) -> Result<String> {
         self.file
             .hashes
             .iter()
             .find(|hash| hash.method == HashMethod::CRC32C)
             .map(|hash| hash.value.clone())
-            .expect("mock registry files must always have CRC32C hashes")
+            .ok_or_else(|| Error::MissingCrc32c {
+                name: self.file.name.clone(),
+            })
     }
 }

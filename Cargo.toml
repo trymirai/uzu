@@ -133,6 +133,9 @@ tracing-appender = "0.2.4"
 llm_json = "1.0.2"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 futures-util = "0.3.31"
+http = "1.4.0"
+httparse = "1.10.1"
+stream_throttle = "0.5.1"
 async-fetcher = "0.12"
 reqwest = { version = "0.13.2", features = [
     "json",
@@ -145,6 +148,7 @@ async-shutdown = "0.2.2"
 objc-sys = "0.3.5"
 crc32c = "0.6.8"
 base64 = "0.22.1"
+bitflags = "2.11.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 jsonschema = "0.46.0"
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.

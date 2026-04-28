@@ -8,9 +8,11 @@ use crate::common::{MockRegistry, wait_for_phase};
 #[case::universal(FileDownloadManagerType::Universal)]
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_download_fresh_completes(#[case] download_manager_type: FileDownloadManagerType) {
-    let registry = MockRegistry::start().await;
-    let tokenizer = registry.file("tokenizer.json");
+async fn test_download_fresh_completes(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let registry = MockRegistry::start().await?;
+    let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
 
@@ -19,7 +21,7 @@ async fn test_download_fresh_completes(#[case] download_manager_type: FileDownlo
         .file_download_task(
             &tokenizer.file.url,
             &destination,
-            FileCheck::CRC(tokenizer.crc32c()),
+            FileCheck::CRC(tokenizer.crc32c()?),
             Some(tokenizer.file.size as u64),
         )
         .await
@@ -33,4 +35,5 @@ async fn test_download_fresh_completes(#[case] download_manager_type: FileDownlo
     assert_eq!(state.total_bytes, tokenizer.file.size as u64);
     assert_eq!(tokio::fs::read(&destination).await.unwrap(), tokenizer.bytes.to_vec());
     assert!(std::path::PathBuf::from(format!("{}.crc", destination.display())).is_file());
+    Ok(())
 }

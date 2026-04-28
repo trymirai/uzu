@@ -5,7 +5,10 @@ use shoji::types::{
 
 use crate::ServedFile;
 
-pub fn mock_model(files: &[ServedFile]) -> Model {
+pub fn mock_model(
+    identifier: &str,
+    files: &[ServedFile],
+) -> Model {
     let registry = ModelRegistry {
         identifier: "mock-registry".to_string(),
         metadata: Metadata {
@@ -26,7 +29,7 @@ pub fn mock_model(files: &[ServedFile]) -> Model {
         },
     };
     Model {
-        identifier: "mock/MockModel-1B".to_string(),
+        identifier: identifier.to_string(),
         registry,
         backends: vec![backend],
         family: None,

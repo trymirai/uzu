@@ -10,13 +10,15 @@ license.workspace = true
 
 [dependencies]
 base64.workspace = true
+bitflags.workspace = true
 bytesize.workspace = true
-chrono.workspace = true
 crc32c.workspace = true
-reqwest.workspace = true
-serde.workspace = true
+http.workspace = true
+httparse.workspace = true
 serde_json.workspace = true
 shoji.workspace = true
+stream_throttle.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 wiremock.workspace = true

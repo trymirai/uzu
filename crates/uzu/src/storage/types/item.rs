@@ -354,6 +354,21 @@ impl Item {
         tracing::debug!("[MODEL] Calling ensure_paused");
 
         let result = self.ensure_paused().await;
+        if result.is_ok() {
+            let file_tasks_guard = self.file_download_tasks.lock().await;
+            let mut file_download_states = Vec::with_capacity(file_tasks_guard.len());
+            for file_task in file_tasks_guard.iter() {
+                file_download_states.push(file_task.state().await);
+            }
+            drop(file_tasks_guard);
+
+            let mut cache_guard = self.file_download_states.lock().await;
+            *cache_guard = file_download_states;
+            drop(cache_guard);
+
+            let paused_state = self.reduce_state().await;
+            self.update_state_and_broadcast(paused_state).await;
+        }
 
         tracing::debug!("[MODEL] pause() completed for model: {}", self.identifier);
 

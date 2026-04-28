@@ -1,1 +1,2 @@
 mod downloads_mock_registry_model_files_test;
+mod lifecycle_mock_registry_model_test;
