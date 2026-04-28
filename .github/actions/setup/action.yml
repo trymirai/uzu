@@ -87,6 +87,11 @@ runs:
       shell: bash
 
     - if: inputs.bindings == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - if: inputs.bindings == 'true'
       uses: pnpm/action-setup@v4
       with:
         version: 10.33.0
