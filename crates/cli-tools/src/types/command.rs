@@ -294,14 +294,12 @@ impl Command {
     }
 
     pub fn maturin_build(
-        manifest_path: PathBuf,
         target: String,
         features: Vec<String>,
         configuration: Configuration,
     ) -> Self {
         let mut command = Self::new("maturin")
             .with_argument("build")
-            .with_arguments(vec!["--manifest-path".to_string(), manifest_path.to_string_lossy().to_string()])
             .with_arguments(vec!["--target".to_string(), target])
             .with_argument("--no-default-features")
             .with_arguments(vec!["--features".to_string(), features.join(",")])

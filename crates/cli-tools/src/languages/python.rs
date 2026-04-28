@@ -35,22 +35,16 @@ impl LanguageBackend for PythonLanguageBackend {
         targets: Vec<LanguageBackendTarget>,
     ) -> Result<()> {
         let paths = Paths::new()?;
-        let manifest_path = paths.crate_manifest_path(&paths.main_crate);
         let bindings_path = paths.bindings_for_language_path(self.language());
         let (zig_path, _) = Command::which("python-zig".to_string()).output()?;
 
         let host_target = self.config.host_target()?;
         for target in targets {
-            let (_, stderr) = Command::maturin_build(
-                manifest_path.clone(),
-                target.name.clone(),
-                target.features.clone(),
-                configuration,
-            )
-            .with_current_path(&bindings_path)
-            .with_env("CARGO_ZIGBUILD_ZIG_PATH", &zig_path)
-            .with_envs(self.config.required_envs_for_target(target.name.clone())?)
-            .output()?;
+            let (_, stderr) = Command::maturin_build(target.name.clone(), target.features.clone(), configuration)
+                .with_current_path(&bindings_path)
+                .with_env("CARGO_ZIGBUILD_ZIG_PATH", &zig_path)
+                .with_envs(self.config.required_envs_for_target(target.name.clone())?)
+                .output()?;
             let wheel_path = parse_wheel_path(&stderr)?;
             if target.name == host_target {
                 let envs = self.config.required_envs_for_target(target.name.clone())?;
