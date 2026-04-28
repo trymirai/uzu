@@ -40,7 +40,6 @@ impl LanguageBackend for TypeScriptLanguageBackend {
         let bindings_path = paths.bindings_for_language_path(self.language());
         let output_path = paths.napi_output_path();
         let (zig_path, _) = Command::which("python-zig".to_string()).output()?;
-        let host_target = self.config.host_target()?;
 
         Command::pnpm_install().with_current_path(&bindings_path).run()?;
 
@@ -56,10 +55,8 @@ impl LanguageBackend for TypeScriptLanguageBackend {
             .with_env("CARGO_ZIGBUILD_ZIG_PATH", &zig_path)
             .with_envs(self.config.required_envs_for_target(target.name.clone())?)
             .run()?;
-            if target.name == host_target {
-                Command::pnpm_run("fix").with_current_path(&bindings_path).run()?;
-                Command::pnpm_run("build").with_current_path(&bindings_path).run()?;
-            }
+            Command::pnpm_run("fix").with_current_path(&bindings_path).run()?;
+            Command::pnpm_run("build").with_current_path(&bindings_path).run()?;
         }
 
         Ok(())
