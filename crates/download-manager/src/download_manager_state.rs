@@ -8,23 +8,23 @@ use crate::{DownloadError, DownloadId, FileDownloadEvent, FileDownloadTask, Toki
 pub(crate) type TaskCache = Arc<TokioMutex<HashMap<DownloadId, Arc<dyn FileDownloadTask>>>>;
 
 #[derive(Clone)]
-pub(crate) struct ManagerCore {
+pub(crate) struct DownloadManagerState {
     manager_id: String,
     global_broadcast_sender: Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>>,
     tokio_handle: TokioHandle,
     task_cache: TaskCache,
 }
 
-impl std::fmt::Debug for ManagerCore {
+impl std::fmt::Debug for DownloadManagerState {
     fn fmt(
         &self,
         formatter: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        formatter.debug_struct("ManagerCore").field("manager_id", &self.manager_id).finish()
+        formatter.debug_struct("DownloadManagerState").field("manager_id", &self.manager_id).finish()
     }
 }
 
-impl ManagerCore {
+impl DownloadManagerState {
     pub(crate) fn new(
         custom_manager_id: Option<String>,
         suffix: &str,

@@ -1,8 +1,8 @@
-use download_manager::{FileCheck, FileDownloadManagerType, create_download_manager};
+use download_manager::{FileCheck, FileDownloadManagerType, FileDownloadPhase, create_download_manager};
 use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::common::{MockRegistry, PhaseKind, wait_for_phase_kind};
+use crate::common::{MockRegistry, wait_for_phase};
 
 #[rstest]
 #[case::universal(FileDownloadManagerType::Universal)]
@@ -27,7 +27,7 @@ async fn test_download_fresh_completes(#[case] download_manager_type: FileDownlo
     let mut progress = task.progress().await.unwrap();
 
     task.download().await.unwrap();
-    let state = wait_for_phase_kind(&task, &mut progress, PhaseKind::Downloaded).await;
+    let state = wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Downloaded)).await;
 
     assert_eq!(state.downloaded_bytes, tokenizer.file.size as u64);
     assert_eq!(state.total_bytes, tokenizer.file.size as u64);

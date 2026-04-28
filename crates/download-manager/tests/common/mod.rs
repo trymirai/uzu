@@ -5,38 +5,20 @@ pub use mock_registry::{Behavior, MockRegistry};
 use tokio::time::timeout;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PhaseKind {
-    Downloaded,
-    Error,
-}
-
-impl PhaseKind {
-    fn matches(
-        self,
-        phase: &FileDownloadPhase,
-    ) -> bool {
-        match self {
-            Self::Downloaded => matches!(phase, FileDownloadPhase::Downloaded),
-            Self::Error => matches!(phase, FileDownloadPhase::Error(_)),
-        }
-    }
-}
-
-pub async fn wait_for_phase_kind(
+pub async fn wait_for_phase(
     task: &Arc<dyn FileDownloadTask>,
     progress_stream: &mut BroadcastStream<FileDownloadState>,
-    phase_kind: PhaseKind,
+    mut is_expected_phase: impl FnMut(&FileDownloadPhase) -> bool,
 ) -> FileDownloadState {
     timeout(Duration::from_secs(30), async {
         loop {
             let state = task.state().await;
-            if phase_kind.matches(&state.phase) {
+            if is_expected_phase(&state.phase) {
                 return state;
             }
 
             if let Some(Ok(state)) = progress_stream.next().await {
-                if phase_kind.matches(&state.phase) {
+                if is_expected_phase(&state.phase) {
                     return state;
                 }
             }

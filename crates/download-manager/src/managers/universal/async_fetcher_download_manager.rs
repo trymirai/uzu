@@ -3,20 +3,20 @@ use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 use crate::{
     Arc, DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadManager,
     FileDownloadTask as FileDownloadTaskTrait, Path, PathBuf, TokioBroadcastSender, TokioHandle, compute_download_id,
-    manager_core::ManagerCore,
+    download_manager_state::DownloadManagerState,
     managers::universal::{AsyncFetcherConfig, FileDownloadTask},
 };
 
 #[derive(Debug, Clone)]
 pub struct AsyncFetcherDownloadManager {
-    core: ManagerCore,
+    state: DownloadManagerState,
     pub config: AsyncFetcherConfig,
 }
 
 impl AsyncFetcherDownloadManager {
     #[allow(unused)]
     pub fn manager_id(&self) -> &str {
-        self.core.manager_id()
+        self.state.manager_id()
     }
 
     #[allow(unused)]
@@ -32,10 +32,10 @@ impl AsyncFetcherDownloadManager {
         tokio_handle: TokioHandle,
         custom_manager_id: Option<String>,
     ) -> Result<Self, DownloadError> {
-        let core = ManagerCore::new(custom_manager_id, "universal", tokio_handle);
+        let state = DownloadManagerState::new(custom_manager_id, "universal", tokio_handle);
 
         let manager = Self {
-            core,
+            state,
             config,
         };
 
@@ -52,19 +52,19 @@ impl AsyncFetcherDownloadManager {
 impl FileDownloadManager for AsyncFetcherDownloadManager {
     #[allow(unused)]
     fn manager_id(&self) -> &str {
-        self.core.manager_id()
+        self.state.manager_id()
     }
 
     fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<(DownloadId, FileDownloadEvent)> {
-        self.core.subscribe_to_all_downloads()
+        self.state.subscribe_to_all_downloads()
     }
 
     fn global_broadcast_sender(&self) -> Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>> {
-        self.core.global_broadcast_sender()
+        self.state.global_broadcast_sender()
     }
 
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTaskTrait>>, DownloadError> {
-        self.core.get_all_file_tasks().await
+        self.state.get_all_file_tasks().await
     }
 
     async fn file_download_task(
@@ -82,7 +82,7 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
         let download_id = compute_download_id(source_url, destination_path);
 
         {
-            let task_cache_guard = self.core.task_cache().lock().await;
+            let task_cache_guard = self.state.task_cache().lock().await;
             if let Some(cached_task) = task_cache_guard.get(&download_id) {
                 return Ok(cached_task.clone());
             }
@@ -138,7 +138,7 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             destination_path.display(),
             part_file_path.display(),
             expected_bytes,
-            self.core.manager_id()
+            self.state.manager_id()
         );
         let file_download_state = reduce_to_file_download_state(
             checked_file_state,
@@ -146,7 +146,7 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             destination_path,
             &part_file_path,
             expected_bytes,
-            self.core.manager_id(),
+            self.state.manager_id(),
         );
 
         tracing::info!("[MANAGER:AF] initial states: internal={:?}, display={:?}", internal_state, file_download_state);
@@ -156,18 +156,18 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             source_url.clone(),
             destination_path.to_path_buf(),
             file_check,
-            self.core.manager_id_string(),
+            self.state.manager_id_string(),
             expected_bytes,
             internal_state,
             file_download_state,
             self.config.clone(),
-            self.core.tokio_handle(),
+            self.state.tokio_handle(),
         ));
 
         tracing::debug!("[MANAGER] Starting listener for download_id={}", download_id);
-        file_task.start_listening((*self.core.global_broadcast_sender()).clone()).await;
+        file_task.start_listening((*self.state.global_broadcast_sender()).clone()).await;
 
-        self.core.task_cache().lock().await.insert(download_id, file_task.clone());
+        self.state.task_cache().lock().await.insert(download_id, file_task.clone());
         Ok(file_task)
     }
 }
