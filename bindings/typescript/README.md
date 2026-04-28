@@ -67,6 +67,7 @@ main().catch((error) => {
 
 
 <br>
+
 Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
 
 ## Examples
