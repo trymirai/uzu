@@ -1,7 +1,7 @@
 use serde_json::json;
 use shoji::types::model::Model;
 
-use crate::common::mock_download_server::{FilePayload, MockDownloadServer, RegistryFixture, RouteBehavior};
+use crate::common::mock_download_server::{FilePayload, MockDownloadServer, RegistryFixture};
 
 pub struct MockMiraiServer {
     server: MockDownloadServer,
@@ -9,10 +9,10 @@ pub struct MockMiraiServer {
 }
 
 impl MockMiraiServer {
-    pub async fn start(route_behavior: RouteBehavior) -> Self {
+    pub async fn start() -> Self {
         let server = MockDownloadServer::start().await;
         let registry_fixture = RegistryFixture::llama_3_2_1b_instruct(&server.base_url(), "mock-mirai");
-        server.serve_registry_fixture(&registry_fixture, route_behavior).await;
+        server.serve_registry_fixture(&registry_fixture).await;
         let model = registry_fixture.model.clone();
         let registry_response = registry_response_json(&model);
         server.serve_json("/api/v1/fetch/models", registry_response).await;
@@ -81,5 +81,5 @@ fn registry_response_json(model: &Model) -> String {
         "metadatas": metadatas,
     });
 
-    serde_json::to_string(&response).expect("mock registry response should serialize")
+    serde_json::to_string(&response).unwrap()
 }

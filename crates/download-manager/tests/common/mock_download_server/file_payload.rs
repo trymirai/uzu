@@ -12,12 +12,12 @@ pub struct FilePayload {
 
 impl FilePayload {
     pub fn path(&self) -> String {
-        let url = Url::parse(&self.file.url).expect("mock file URL should be valid");
+        let url = Url::parse(&self.file.url).unwrap();
         url.path().to_string()
     }
 
     pub fn crc32c(&self) -> String {
-        self.file.crc32c().expect("mock file should have CRC32C")
+        self.file.crc32c().unwrap()
     }
 
     pub fn corrupt_bytes(&self) -> Arc<[u8]> {

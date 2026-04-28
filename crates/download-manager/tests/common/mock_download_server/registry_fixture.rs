@@ -45,13 +45,8 @@ impl RegistryFixture {
         &self,
         file_name: &str,
     ) -> FilePayload {
-        let file = self
-            .files
-            .iter()
-            .find(|candidate| candidate.name == file_name)
-            .cloned()
-            .expect("Llama fixture file should exist");
-        let bytes = self.payloads_by_name.get(file_name).cloned().expect("Llama fixture payload should exist");
+        let file = self.files.iter().find(|candidate| candidate.name == file_name).cloned().unwrap();
+        let bytes = self.payloads_by_name.get(file_name).cloned().unwrap();
         FilePayload {
             file,
             bytes,
@@ -76,7 +71,7 @@ impl RegistryFixture {
         let file = File {
             url: format!("{}{}", base_url.trim_end_matches('/'), path),
             name: name.to_string(),
-            size: i64::try_from(size.as_u64()).expect("mock file size should fit in i64"),
+            size: i64::try_from(size.as_u64()).unwrap(),
             hashes: vec![Hash {
                 method: HashMethod::CRC32C,
                 value: crc32c,
@@ -140,7 +135,7 @@ impl RegistryFixture {
         size: ByteSize,
     ) -> Vec<u8> {
         let name_seed = name.bytes().fold(0u8, |seed, byte| seed.wrapping_add(byte));
-        (0..usize::try_from(size.as_u64()).expect("mock file size should fit in usize"))
+        (0..usize::try_from(size.as_u64()).unwrap())
             .map(|byte_index| {
                 let low_bits = byte_index as u8;
                 low_bits.wrapping_mul(31).wrapping_add(name_seed).wrapping_add((byte_index / 7) as u8)

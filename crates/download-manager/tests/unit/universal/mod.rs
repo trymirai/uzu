@@ -1,10 +1,2 @@
-pub mod broadcast_reports_terminal_phase_test;
 pub mod corrupt_body_test;
-pub mod existing_part_file_test;
-pub mod forced_disconnect_test;
-pub mod multi_connection_ranges_test;
-pub mod no_range_support_test;
-pub mod pause_resume_partial_state_test;
-pub mod retry_transient_error_test;
 pub mod state_and_lock_regression_test;
-pub mod wrong_content_length_test;

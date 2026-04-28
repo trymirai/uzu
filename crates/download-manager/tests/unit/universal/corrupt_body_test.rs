@@ -13,20 +13,14 @@ async fn test_universal_corrupt_body_fails_crc() {
         RouteBehavior::CorruptBody,
     )
     .await;
-    let manager = create_download_manager(
-        FileDownloadManagerType::Universal,
-        Some("universal-corrupt".to_string()),
-        TokioHandle::current(),
-    )
-    .await
-    .expect("failed to create download manager");
+    let manager = create_download_manager(FileDownloadManagerType::Universal, None, TokioHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(&context.payload.file.url, &context.destination, context.file_check(), context.file_size())
         .await
-        .expect("failed to create file download task");
-    let mut progress = task.progress().await.expect("progress stream should open");
+        .unwrap();
+    let mut progress = task.progress().await.unwrap();
 
-    task.download().await.expect("failed to start download");
+    task.download().await.unwrap();
     let state = wait_for_phase_kind(&task, &mut progress, PhaseKind::Error).await;
     let message = error_message(state);
     assert!(message.contains("CRC") || message.contains("checksum"), "unexpected error: {message}");

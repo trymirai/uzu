@@ -113,6 +113,7 @@ base64.workspace = true
 crc32c.workspace = true
 bytesize.workspace = true
 rstest.workspace = true
+wiremock = "0.6.5"
 
 [[test]]
 name = "unit"

@@ -41,6 +41,7 @@ tracing-appender.workspace = true
 bytesize.workspace = true
 shoji.workspace = true
 rstest.workspace = true
+wiremock = "0.6.5"
 
 [[test]]
 name = "unit"
