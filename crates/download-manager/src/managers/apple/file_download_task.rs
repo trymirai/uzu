@@ -1,14 +1,27 @@
 use std::path::PathBuf;
 
-use tokio::sync::{Mutex as TokioMutex, broadcast::Sender as TokioBroadcastSender};
+use tokio::{
+    sync::{
+        Mutex as TokioMutex,
+        broadcast::Sender as TokioBroadcastSender,
+        watch::{Receiver as TokioWatchReceiver, Sender as TokioWatchSender, channel as tokio_watch_channel},
+    },
+    time::{Duration as TokioDuration, sleep as tokio_sleep},
+};
 use uuid::Uuid;
 
 use crate::{
-    DownloadError, DownloadId, DownloadInfo, FileCheck, FileDownloadEvent, FileDownloadPhase, FileDownloadState,
-    FileDownloadTask as FileDownloadTaskTrait, InternalDownloadState, LockFileState, StateTransitionAction,
-    check_lock_file,
+    DownloadError, DownloadEventSender, DownloadId, DownloadInfo, FileCheck, FileDownloadEvent, FileDownloadPhase,
+    FileDownloadState, FileDownloadTask as FileDownloadTaskTrait, InternalDownloadState, LockFileState,
+    StateTransitionAction, check_lock_file,
     lock_manager::{acquire_lock, release_lock},
-    managers::apple::{URLSessionDownloadTaskResumeData, URLSessionExt, UrlSessionDownloadTaskExt},
+    managers::apple::{
+        URLSessionDownloadTaskResumeData, URLSessionExt, UrlSessionDownloadTaskExt,
+        url_session_state_reducer::{
+            check_crc_file_exists, check_file_exists, check_resume_file_exists, reconcile_to_internal_state,
+            reduce_to_checked_file_state, reduce_to_file_download_state,
+        },
+    },
     prelude::*,
 };
 
@@ -25,8 +38,8 @@ pub struct FileDownloadTask {
     session: Option<Retained<NSURLSession>>,
     listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     tokio_handle: TokioHandle,
-    completed_tx: tokio::sync::watch::Sender<bool>,
-    _completed_rx: tokio::sync::watch::Receiver<bool>,
+    completed_tx: TokioWatchSender<bool>,
+    _completed_rx: TokioWatchReceiver<bool>,
 }
 
 impl std::fmt::Debug for FileDownloadTask {
@@ -57,7 +70,7 @@ impl FileDownloadTask {
         tokio_handle: TokioHandle,
     ) -> Self {
         let (broadcast_sender, _receiver) = tokio_broadcast_channel::<FileDownloadState>(64);
-        let (completed_tx, completed_rx) = tokio::sync::watch::channel(false);
+        let (completed_tx, completed_rx) = tokio_watch_channel(false);
         Self {
             download_id,
             source_url,
@@ -532,11 +545,6 @@ impl FileDownloadTask {
     /// Handle URLSession download completion event
     /// This encapsulates the reduction and reconciliation logic
     pub async fn handle_download_completion(&self) {
-        use crate::managers::apple::url_session_state_reducer::{
-            check_crc_file_exists, check_file_exists, check_resume_file_exists, reconcile_to_internal_state,
-            reduce_to_checked_file_state, reduce_to_file_download_state,
-        };
-
         tracing::debug!(
             "[FILE_TASK] handle_download_completion: id={}, dest={}",
             self.download_id,
@@ -547,7 +555,7 @@ impl FileDownloadTask {
         // macOS file system might have slight latency
         self.tokio_handle
             .spawn(async {
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                tokio_sleep(TokioDuration::from_millis(10)).await;
             })
             .await
             .ok();
@@ -664,7 +672,7 @@ impl FileDownloadTask {
     /// Start listening to global download events
     pub async fn start_listening(
         &self,
-        global_broadcast: TokioBroadcastSender<(crate::DownloadId, crate::FileDownloadEvent)>,
+        global_broadcast: DownloadEventSender,
     ) {
         // Check if already listening
         let mut listener_guard = self.listener_task.lock().await;
@@ -692,7 +700,7 @@ impl FileDownloadTask {
                         tracing::debug!("[FILE_TASK] Received event for download_id={}: {:?}", download_id, event);
 
                         match event {
-                            crate::FileDownloadEvent::DownloadCompleted {
+                            FileDownloadEvent::DownloadCompleted {
                                 final_destination,
                                 ..
                             } => {
@@ -711,14 +719,14 @@ impl FileDownloadTask {
                                 let _ = task
                                     .tokio_handle
                                     .spawn(async {
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                        tokio_sleep(TokioDuration::from_millis(100)).await;
                                     })
                                     .await;
 
                                 task.handle_download_completion().await;
                                 let _ = completed.send(true);
                             },
-                            crate::FileDownloadEvent::ProgressUpdate {
+                            FileDownloadEvent::ProgressUpdate {
                                 bytes_written,
                                 total_bytes_written,
                                 total_bytes_expected,
@@ -726,7 +734,7 @@ impl FileDownloadTask {
                                 task.handle_progress_update(bytes_written, total_bytes_written, total_bytes_expected)
                                     .await;
                             },
-                            crate::FileDownloadEvent::Error {
+                            FileDownloadEvent::Error {
                                 message,
                             } => {
                                 task.handle_error(message).await;
@@ -815,7 +823,7 @@ impl FileDownloadTaskTrait for FileDownloadTask {
 
     async fn start_listening(
         &self,
-        global_broadcast: TokioBroadcastSender<(DownloadId, FileDownloadEvent)>,
+        global_broadcast: DownloadEventSender,
     ) {
         self.start_listening(global_broadcast).await
     }

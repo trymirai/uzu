@@ -25,7 +25,10 @@ pub use download_info::DownloadInfo;
 pub use download_state::DownloadState;
 pub use file_check::FileCheck;
 pub use file_download_event::FileDownloadEvent;
-pub use file_download_manager::{FileDownloadManager, FileDownloadManagerType, create_download_manager};
+pub use file_download_manager::{
+    DownloadEvent, DownloadEventSender, FileDownloadManager, FileDownloadManagerType, SharedDownloadEventSender,
+    create_download_manager,
+};
 pub use file_download_phase::FileDownloadPhase;
 pub use file_download_state::FileDownloadState;
 pub use file_download_task::FileDownloadTask;

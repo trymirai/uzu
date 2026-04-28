@@ -1,16 +1,18 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::sync::broadcast::Sender as TokioBroadcastSender;
+use tokio::sync::broadcast::channel as tokio_broadcast_channel;
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
-use crate::{DownloadError, DownloadId, FileDownloadEvent, FileDownloadTask, TokioHandle, TokioMutex};
+use crate::{
+    DownloadError, DownloadEvent, DownloadId, FileDownloadTask, SharedDownloadEventSender, TokioHandle, TokioMutex,
+};
 
 pub(crate) type TaskCache = Arc<TokioMutex<HashMap<DownloadId, Arc<dyn FileDownloadTask>>>>;
 
 #[derive(Clone)]
 pub(crate) struct DownloadManagerState {
     pub(crate) manager_id: String,
-    pub(crate) global_broadcast_sender: Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>>,
+    pub(crate) global_broadcast_sender: SharedDownloadEventSender,
     pub(crate) tokio_handle: TokioHandle,
     pub(crate) task_cache: TaskCache,
 }
@@ -30,8 +32,7 @@ impl DownloadManagerState {
         tokio_handle: TokioHandle,
     ) -> Self {
         let manager_id = generate_manager_id(suffix);
-        let (global_broadcast_sender, _global_broadcast_receiver) =
-            tokio::sync::broadcast::channel::<(DownloadId, FileDownloadEvent)>(256);
+        let (global_broadcast_sender, _global_broadcast_receiver) = tokio_broadcast_channel::<DownloadEvent>(256);
         Self {
             manager_id,
             global_broadcast_sender: Arc::new(global_broadcast_sender),
@@ -40,7 +41,7 @@ impl DownloadManagerState {
         }
     }
 
-    pub(crate) fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<(DownloadId, FileDownloadEvent)> {
+    pub(crate) fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent> {
         TokioBroadcastStream::new(self.global_broadcast_sender.subscribe())
     }
 

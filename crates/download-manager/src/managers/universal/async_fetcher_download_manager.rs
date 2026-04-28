@@ -1,8 +1,8 @@
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
-    Arc, DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadManager,
-    FileDownloadTask as FileDownloadTaskTrait, Path, PathBuf, TokioBroadcastSender, TokioHandle, compute_download_id,
+    Arc, DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask as FileDownloadTaskTrait, Path,
+    PathBuf, SharedDownloadEventSender, TokioHandle, compute_download_id,
     download_manager_state::DownloadManagerState,
     managers::universal::{AsyncFetcherConfig, FileDownloadTask},
 };
@@ -47,11 +47,11 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
         &self.state.manager_id
     }
 
-    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<(DownloadId, FileDownloadEvent)> {
+    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent> {
         self.state.subscribe_to_all_downloads()
     }
 
-    fn global_broadcast_sender(&self) -> Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>> {
+    fn global_broadcast_sender(&self) -> SharedDownloadEventSender {
         self.state.global_broadcast_sender.clone()
     }
 

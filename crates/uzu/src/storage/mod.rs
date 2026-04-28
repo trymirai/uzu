@@ -18,15 +18,11 @@ use shoji::types::{
     basic::File,
     model::{Model, ModelAccessibility, ModelReference},
 };
-use tokio::{
-    runtime::Handle,
-    sync::broadcast::{Sender, channel},
-};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::{runtime::Handle as TokioHandle, sync::broadcast::channel as tokio_broadcast_channel};
 
 use crate::{
     helpers::SharedAccess,
-    storage::types::{DownloadPhase, DownloadState, Item},
+    storage::types::{DownloadPhase, DownloadState, Item, StorageDownloadEventSender, StorageDownloadEventStream},
 };
 
 pub struct Storage {
@@ -34,13 +30,13 @@ pub struct Storage {
 
     download_manager: SharedAccess<Arc<dyn FileDownloadManager>>,
     items: SharedAccess<HashMap<String, Item>>,
-    items_broadcast_sender: Sender<(String, DownloadState)>,
-    handle: Handle,
+    items_broadcast_sender: StorageDownloadEventSender,
+    handle: TokioHandle,
 }
 
 impl Storage {
     pub async fn new(
-        tokio_handle: Handle,
+        tokio_handle: TokioHandle,
         config: Config,
     ) -> Result<Self, StorageError> {
         create_dir_all(config.cache_path()).map_err(|_| StorageError::UnableToCreateDirectory {
@@ -57,7 +53,7 @@ impl Storage {
 
         let items = SharedAccess::new(HashMap::new());
 
-        let (items_broadcast_sender, _) = channel(256);
+        let (items_broadcast_sender, _) = tokio_broadcast_channel(256);
 
         let storage = Self {
             config,
@@ -194,8 +190,8 @@ impl Storage {
         Ok(())
     }
 
-    pub fn subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
-        BroadcastStream::new(self.items_broadcast_sender.subscribe())
+    pub fn subscribe(&self) -> StorageDownloadEventStream {
+        StorageDownloadEventStream::new(self.items_broadcast_sender.subscribe())
     }
 
     pub async fn get(

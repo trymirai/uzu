@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadManager,
-    FileDownloadTask as FileDownloadTaskTrait, compute_download_id,
+    DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask as FileDownloadTaskTrait,
+    SharedDownloadEventSender, compute_download_id,
     download_manager_state::DownloadManagerState,
     managers::apple::{
         FileDownloadTask, SessionConfig, URLSessionDelegate, URLSessionExt, UrlSessionDownloadTaskExt,
@@ -205,11 +205,11 @@ impl FileDownloadManager for URLSessionDownloadManager {
         &self.state.manager_id
     }
 
-    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<(DownloadId, FileDownloadEvent)> {
+    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent> {
         self.state.subscribe_to_all_downloads()
     }
 
-    fn global_broadcast_sender(&self) -> Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>> {
+    fn global_broadcast_sender(&self) -> SharedDownloadEventSender {
         self.state.global_broadcast_sender.clone()
     }
 

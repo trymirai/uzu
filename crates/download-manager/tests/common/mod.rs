@@ -1,8 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use download_manager::{FileDownloadPhase, FileDownloadState, FileDownloadTask};
 pub use mock_registry::{Behavior, MockRegistry};
-use tokio::time::timeout;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 pub async fn wait_for_phase(
@@ -10,22 +9,19 @@ pub async fn wait_for_phase(
     progress_stream: &mut BroadcastStream<FileDownloadState>,
     mut is_expected_phase: impl FnMut(&FileDownloadPhase) -> bool,
 ) -> FileDownloadState {
-    timeout(Duration::from_secs(30), async {
-        loop {
-            let state = task.state().await;
-            if is_expected_phase(&state.phase) {
-                return state;
-            }
+    let state = task.state().await;
+    if is_expected_phase(&state.phase) {
+        return state;
+    }
 
-            if let Some(Ok(state)) = progress_stream.next().await {
-                if is_expected_phase(&state.phase) {
-                    return state;
-                }
-            }
+    while let Some(result) = progress_stream.next().await {
+        let state = result.expect("download progress stream must not lag");
+        if is_expected_phase(&state.phase) {
+            return state;
         }
-    })
-    .await
-    .expect("download did not reach expected phase")
+    }
+
+    panic!("download progress stream ended before expected phase");
 }
 
 pub fn error_message(state: FileDownloadState) -> String {
