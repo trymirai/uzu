@@ -91,7 +91,6 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-heade
     "build",
     "python",
     "python_package",
-    "python_downloads",
     "python_version",
     "typescript",
     "typescript_package",
@@ -115,7 +114,6 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-pytho
     "build",
     "python",
     "python_package",
-    "python_downloads",
     "python_version",
 ] }
 
@@ -157,17 +155,16 @@ discord = '<a href="https://discord.com/invite/trymirai"><img src="https://img.s
 email = '<a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a>'
 docs = '<a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a>'
 license = '[![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE)'
-build = '![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)'
-python = '![Python](https://img.shields.io/badge/Python-orange)'
-python_package = '![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package)'
-python_downloads = '![Downloads](https://img.shields.io/pypi/dm/uzu?color=orange&label=Downloads)'
-python_version = '![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python)'
-typescript = '![TypeScript](https://img.shields.io/badge/TypeScript-yellow)'
-typescript_package = '![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package)'
-typescript_downloads = '![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads)'
-swift = '![Swift](https://img.shields.io/badge/Swift-blue)'
-swift_platforms = '![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)'
-swift_spm = '![SPM](https://img.shields.io/badge/SPM-compatible-blue)'
+build = '[![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions)'
+python = '[![Python](https://img.shields.io/badge/Python-orange)](bindings/python)'
+python_package = '[![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&)](https://pypi.org/project/uzu/)'
+python_version = '[![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&)](https://pypi.org/project/uzu/)'
+typescript = '[![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript)'
+typescript_package = '[![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package)](https://www.npmjs.com/package/@trymirai/uzu)'
+typescript_downloads = '[![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads)]((https://www.npmjs.com/package/@trymirai/uzu))'
+swift = '[![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift)'
+swift_platforms = '[![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift)'
+swift_spm = '[![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift)'
 swift_version = '[![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org)'
 
 [examples]
