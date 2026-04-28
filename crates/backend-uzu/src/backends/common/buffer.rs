@@ -1,9 +1,7 @@
 use std::{fmt::Debug, ops::Range, os::raw::c_void, ptr::NonNull};
 
-use super::Backend;
-
 pub trait Buffer: Debug {
-    type Backend: Backend<Buffer = Self>;
+    type Backend: super::Backend;
 
     fn set_label(
         &mut self,
@@ -11,6 +9,7 @@ pub trait Buffer: Debug {
     );
 
     fn cpu_ptr(&self) -> NonNull<c_void>;
+
     fn gpu_ptr(&self) -> usize;
 
     fn length(&self) -> usize;

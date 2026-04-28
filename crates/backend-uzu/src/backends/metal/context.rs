@@ -1,9 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
 use metal::{
-    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary,
-    MTLResourceOptions,
+    MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
+    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
+    MTLGPUFamily, MTLLibrary, MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -25,6 +25,7 @@ use crate::{
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    pub command_queue4: Option<Retained<ProtocolObject<dyn MTL4CommandQueue>>>,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
@@ -60,10 +61,16 @@ impl Context for MetalContext {
 
     fn new() -> Result<Rc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn metal::MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
+            <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
         let command_queue =
             device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
+
+        let command_queue4 = if device.supports_family(MTLGPUFamily::Metal4) {
+            Some(device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?)
+        } else {
+            None
+        };
 
         let library = device
             .new_library_with_data(kernel::MTLB)
@@ -74,6 +81,7 @@ impl Context for MetalContext {
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
+            command_queue4,
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: RefCell::new(0),
             device_capabilities,
