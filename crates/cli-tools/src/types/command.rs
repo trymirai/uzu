@@ -100,14 +100,15 @@ impl Command {
         Ok(())
     }
 
-    pub fn output(self) -> Result<String> {
+    pub fn output(self) -> Result<(String, String)> {
         let mut command = self.std_command();
-        command.stderr(Stdio::inherit());
         let output = command.output()?;
         if !output.status.success() {
             return Err(anyhow!("Command failed"));
         }
-        Ok(String::from_utf8(output.stdout)?.trim().to_string())
+        let stdout = String::from_utf8(output.stdout)?.trim().to_string();
+        let stderr = String::from_utf8(output.stderr)?.trim().to_string();
+        Ok((stdout, stderr))
     }
 
     fn std_command(&self) -> StdCommand {
@@ -226,7 +227,15 @@ impl Command {
     }
 
     pub fn uv_sync() -> Self {
-        Self::new("uv").with_argument("sync")
+        Self::new("uv").with_argument("sync").with_argument("--reinstall")
+    }
+
+    pub fn uv_pip_install_wheel(path: PathBuf) -> Self {
+        Self::new("uv")
+            .with_argument("pip")
+            .with_argument("install")
+            .with_argument("--force-reinstall")
+            .with_argument(&path.to_string_lossy())
     }
 
     pub fn uv_python(code: &str) -> Self {

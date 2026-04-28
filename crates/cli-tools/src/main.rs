@@ -81,7 +81,7 @@ fn run_verify(config: &PlatformsConfig) -> Result<()> {
         let backend = language_backend(language.clone(), config.clone())?;
         backend.build(Configuration::Release, vec![config.host_target()?], vec![])?;
     }
-    let output = Command::git_status_porcelain().output()?;
+    let (output, _) = Command::git_status_porcelain().output()?;
     if !output.is_empty() {
         eprintln!("{output}");
         return Err(anyhow!("The repository has uncommitted changes after building all languages"));

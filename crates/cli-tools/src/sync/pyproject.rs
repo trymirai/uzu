@@ -24,7 +24,10 @@ impl SyncTask for PyprojectSyncTask {
             .and_then(Item::as_table_mut)
             .context("Missing [project] table in pyproject.toml")?;
         project.insert("description", Item::Value(Value::from(package.description.as_str())));
-        project.insert("readme", Item::Value(Value::from(package.readme.as_str())));
+        let mut readme = InlineTable::new();
+        readme.insert("file", Value::from(package.readme.as_str()));
+        readme.insert("content-type", Value::from("text/markdown"));
+        project.insert("readme", Item::Value(Value::InlineTable(readme)));
         project.insert("license", Item::Value(Value::from(package.license.as_str())));
 
         let mut authors = Array::new();

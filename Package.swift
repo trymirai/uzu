@@ -21,8 +21,8 @@ let package = Package(
         ),
         .target(
             name: "Uzu",
-            dependencies: ["uzu"],
             path: "bindings/swift/Sources/Uzu",
+            dependencies: ["uzu"],
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .linkedFramework("SystemConfiguration"),
@@ -32,16 +32,16 @@ let package = Package(
         ),
         .executableTarget(
             name: "Examples",
+            path: "bindings/swift/Sources/Examples",
             dependencies: [
                 "Uzu",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ],
-            path: "bindings/swift/Sources/Examples"
+            ]
         ),
         .testTarget(
             name: "UzuTests",
+            path: "bindings/swift/Tests/UzuTests",
             dependencies: ["Uzu"],
-            path: "bindings/swift/Tests/UzuTests"
         ),
     ]
 )

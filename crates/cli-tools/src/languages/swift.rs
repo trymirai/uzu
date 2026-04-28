@@ -140,7 +140,7 @@ impl LanguageBackend for SwiftLanguageBackend {
             .with_current_path(&xcframework_parent)
             .run()?;
 
-        let checksum = Command::swift_compute_checksum(zip_path.clone()).output()?;
+        let (checksum, _) = Command::swift_compute_checksum(zip_path.clone()).output()?;
         let checksum = checksum
             .lines()
             .filter(|line| !line.trim().is_empty())
