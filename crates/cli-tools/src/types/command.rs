@@ -1,6 +1,8 @@
 use std::{
+    io::{BufRead, BufReader},
     path::PathBuf,
     process::{Command as StdCommand, Stdio},
+    thread,
 };
 
 use anyhow::{Result, anyhow};
@@ -102,13 +104,41 @@ impl Command {
 
     pub fn output(self) -> Result<(String, String)> {
         let mut command = self.std_command();
-        let output = command.output()?;
-        if !output.status.success() {
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        let mut child = command.spawn()?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow!("Missing stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| anyhow!("Missing stderr"))?;
+
+        let stdout_thread = thread::spawn(move || -> Result<String> {
+            let mut buffer = String::new();
+            for line in BufReader::new(stdout).lines() {
+                let line = line?;
+                println!("{line}");
+                buffer.push_str(&line);
+                buffer.push('\n');
+            }
+            Ok(buffer)
+        });
+        let stderr_thread = thread::spawn(move || -> Result<String> {
+            let mut buffer = String::new();
+            for line in BufReader::new(stderr).lines() {
+                let line = line?;
+                eprintln!("{line}");
+                buffer.push_str(&line);
+                buffer.push('\n');
+            }
+            Ok(buffer)
+        });
+
+        let stdout = stdout_thread.join().map_err(|_| anyhow!("stdout thread panicked"))??;
+        let stderr = stderr_thread.join().map_err(|_| anyhow!("stderr thread panicked"))??;
+        let status = child.wait()?;
+        if !status.success() {
             return Err(anyhow!("Command failed"));
         }
-        let stdout = String::from_utf8(output.stdout)?.trim().to_string();
-        let stderr = String::from_utf8(output.stderr)?.trim().to_string();
-        Ok((stdout, stderr))
+        Ok((stdout.trim().to_string(), stderr.trim().to_string()))
     }
 
     fn std_command(&self) -> StdCommand {
@@ -235,11 +265,17 @@ impl Command {
             .with_argument("pip")
             .with_argument("install")
             .with_argument("--force-reinstall")
+            .with_argument("--no-deps")
             .with_argument(&path.to_string_lossy())
     }
 
     pub fn uv_python(code: &str) -> Self {
-        Self::new("uv").with_argument("run").with_argument("python").with_argument("-c").with_argument(code)
+        Self::new("uv")
+            .with_argument("run")
+            .with_argument("--no-sync")
+            .with_argument("python")
+            .with_argument("-c")
+            .with_argument(code)
     }
 
     pub fn uv_pytest() -> Self {
