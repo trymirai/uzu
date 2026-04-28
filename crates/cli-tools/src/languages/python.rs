@@ -48,6 +48,9 @@ impl LanguageBackend for PythonLanguageBackend {
             let wheel_path = parse_wheel_path(&stderr)?;
             if target.name == host_target {
                 let envs = self.config.required_envs_for_target(target.name.clone())?;
+                if !bindings_path.join(".venv").exists() {
+                    Command::uv_venv().with_current_path(&bindings_path).run()?;
+                }
                 Command::uv_pip_install_wheel(wheel_path)
                     .with_current_path(&bindings_path)
                     .with_envs(envs.clone())

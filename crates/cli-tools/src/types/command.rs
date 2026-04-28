@@ -260,6 +260,10 @@ impl Command {
         Self::new("uv").with_argument("sync").with_argument("--reinstall")
     }
 
+    pub fn uv_venv() -> Self {
+        Self::new("uv").with_argument("venv")
+    }
+
     pub fn uv_pip_install_wheel(path: PathBuf) -> Self {
         Self::new("uv")
             .with_argument("pip")
