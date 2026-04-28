@@ -19,8 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Install rustup / uv and required toolchains
-    Setup,
+    /// Install rustup / uv / pnpm and required targets
+    Setup {
+        #[arg(long)]
+        include_platform_specific: bool,
+    },
     /// Install tools for a specific language
     Install {
         #[arg(value_enum)]
@@ -61,10 +64,12 @@ enum Commands {
     },
 }
 
-fn run_setup() -> Result<()> {
-    if cfg!(target_vendor = "apple") {
-        Command::xcodebuild_first_launch().run()?;
-        Command::xcodebuild_download_metal_toolchain().run()?;
+fn run_setup(include_platform_specific: bool) -> Result<()> {
+    if include_platform_specific {
+        if cfg!(target_vendor = "apple") {
+            Command::xcodebuild_first_launch().run()?;
+            Command::xcodebuild_download_metal_toolchain().run()?;
+        }
     }
 
     Command::rustup_setup().run()?;
@@ -107,7 +112,9 @@ fn main() -> Result<()> {
     let host_target = config.host_target()?;
 
     match cli.command {
-        Some(Commands::Setup) => run_setup()?,
+        Some(Commands::Setup {
+            include_platform_specific,
+        }) => run_setup(include_platform_specific)?,
         Some(Commands::Install {
             language,
         }) => language_backend(language, config)?.install()?,
