@@ -37,7 +37,7 @@ unsafe impl Sync for URLSessionDownloadManager {}
 impl URLSessionDownloadManager {
     #[allow(unused)]
     pub fn manager_id(&self) -> &str {
-        self.state.manager_id()
+        &self.state.manager_id
     }
 
     #[allow(unused)]
@@ -46,19 +46,10 @@ impl URLSessionDownloadManager {
         drop_policy: URLSessionDropPolicy,
         tokio_handle: TokioHandle,
     ) -> Result<Self, DownloadError> {
-        Self::new_with_manager_id(session_config, drop_policy, tokio_handle, None).await
-    }
-
-    pub async fn new_with_manager_id(
-        session_config: SessionConfig,
-        drop_policy: URLSessionDropPolicy,
-        tokio_handle: TokioHandle,
-        custom_manager_id: Option<String>,
-    ) -> Result<Self, DownloadError> {
-        let state = DownloadManagerState::new(custom_manager_id, "apple", tokio_handle);
+        let state = DownloadManagerState::new("apple", tokio_handle);
 
         let backend = autoreleasepool(|_| unsafe {
-            let delegate = URLSessionDelegate::new(state.global_broadcast_sender());
+            let delegate = URLSessionDelegate::new(state.global_broadcast_sender.clone());
 
             let delegate_protocol_object = ProtocolObject::<dyn NSURLSessionDelegate>::from_retained(delegate.clone());
 
@@ -152,7 +143,7 @@ impl URLSessionDownloadManager {
                     Some(&download_task),
                     &destination,
                     expected_bytes,
-                    self.state.manager_id(),
+                    &self.state.manager_id,
                 );
 
                 let file_check = download_info.crc32c.map_or(FileCheck::None, |crc_hash| FileCheck::CRC(crc_hash));
@@ -162,15 +153,15 @@ impl URLSessionDownloadManager {
                     download_info.source_url.clone(),
                     destination.clone(),
                     file_check,
-                    self.state.manager_id_string(),
+                    self.state.manager_id.clone(),
                     expected_bytes,
                     internal_state,
                     file_download_state,
                     Some(self.session.clone()),
-                    self.state.tokio_handle(),
+                    self.state.tokio_handle.clone(),
                 ));
 
-                file_task.start_listening((*self.state.global_broadcast_sender()).clone()).await;
+                file_task.start_listening((*self.state.global_broadcast_sender).clone()).await;
 
                 // Special case: If task is Completed and file exists with valid CRC,
                 // the delegate callback was missed (app was closed during completion).
@@ -185,7 +176,7 @@ impl URLSessionDownloadManager {
                     file_task.handle_download_completion().await;
                 }
 
-                self.state.task_cache().lock().await.insert(download_id, file_task);
+                self.state.task_cache.lock().await.insert(download_id, file_task);
             } else {
                 download_task.cancel();
             }
@@ -211,7 +202,7 @@ impl Drop for URLSessionDownloadManager {
 #[async_trait::async_trait]
 impl FileDownloadManager for URLSessionDownloadManager {
     fn manager_id(&self) -> &str {
-        self.state.manager_id()
+        &self.state.manager_id
     }
 
     fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<(DownloadId, FileDownloadEvent)> {
@@ -219,7 +210,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
     }
 
     fn global_broadcast_sender(&self) -> Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>> {
-        self.state.global_broadcast_sender()
+        self.state.global_broadcast_sender.clone()
     }
 
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTaskTrait>>, DownloadError> {
@@ -238,7 +229,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
         let download_id = compute_download_id(source_url, destination_path);
 
         {
-            let task_cache_guard = self.state.task_cache().lock().await;
+            let task_cache_guard = self.state.task_cache.lock().await;
             if let Some(cached_task) = task_cache_guard.get(&download_id) {
                 return Ok(cached_task.clone());
             }
@@ -246,7 +237,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
 
         // Check lock file before proceeding (result will be used by reduction only)
         let lock_path = PathBuf::from(format!("{}.lock", destination_path.display()));
-        let _ = check_lock_file(&lock_path, self.state.manager_id(), std::process::id());
+        let _ = check_lock_file(&lock_path, &self.state.manager_id, std::process::id());
 
         // If file is locked by another manager, do not error here.
         // Reduction will expose LockedByOther in the FileDownloadState.
@@ -283,7 +274,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
             None,
             destination_path,
             expected_bytes,
-            self.state.manager_id(),
+            &self.state.manager_id,
         );
 
         // Do not acquire lock here. Lock acquisition/release is handled during
@@ -294,19 +285,19 @@ impl FileDownloadManager for URLSessionDownloadManager {
             source_url.clone(),
             destination_path.to_path_buf(),
             file_check,
-            self.state.manager_id_string(),
+            self.state.manager_id.clone(),
             expected_bytes,
             internal_state,
             file_download_state,
             Some(self.session.clone()),
-            self.state.tokio_handle(),
+            self.state.tokio_handle.clone(),
         ));
 
         // Start listening to global broadcast events
         tracing::debug!("[MANAGER] Starting listener for download_id={}", download_id);
-        file_task.start_listening((*self.state.global_broadcast_sender()).clone()).await;
+        file_task.start_listening((*self.state.global_broadcast_sender).clone()).await;
 
-        self.state.task_cache().lock().await.insert(download_id, file_task.clone());
+        self.state.task_cache.lock().await.insert(download_id, file_task.clone());
         Ok(file_task)
     }
 }

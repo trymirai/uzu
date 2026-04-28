@@ -14,7 +14,7 @@ async fn test_download_fresh_completes(#[case] download_manager_type: FileDownlo
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
 
-    let manager = create_download_manager(download_manager_type, None, TokioHandle::current()).await.unwrap();
+    let manager = create_download_manager(download_manager_type, TokioHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
             &tokenizer.file.url,

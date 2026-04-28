@@ -48,15 +48,11 @@ impl Storage {
         })?;
 
         let download_manager = SharedAccess::new(Arc::from(
-            create_download_manager(
-                FileDownloadManagerType::default(),
-                Some(config.name.clone()),
-                tokio_handle.clone(),
-            )
-            .await
-            .map_err(|error| StorageError::DownloadManager {
-                message: error.to_string(),
-            })?,
+            create_download_manager(FileDownloadManagerType::default(), tokio_handle.clone()).await.map_err(
+                |error| StorageError::DownloadManager {
+                    message: error.to_string(),
+                },
+            )?,
         ));
 
         let items = SharedAccess::new(HashMap::new());
