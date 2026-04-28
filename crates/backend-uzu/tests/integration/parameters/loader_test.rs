@@ -10,6 +10,7 @@ use backend_uzu::{
 };
 use half::bf16;
 use is_close::is_close;
+use test_tag::tag;
 
 use crate::common::path::get_test_weights_path;
 

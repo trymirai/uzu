@@ -39,10 +39,10 @@ libc.workspace = true
 indicatif.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
-bytesize.workspace = true
-shoji.workspace = true
 rstest.workspace = true
-wiremock = "0.6.5"
+mock-registry.workspace = true
+wiremock.workspace = true
+chrono.workspace = true
 
 [[test]]
 name = "unit"

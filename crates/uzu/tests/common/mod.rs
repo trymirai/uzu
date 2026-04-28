@@ -1,4 +1,2 @@
-#[path = "../../../download-manager/tests/common/mock_download_server/mod.rs"]
-pub mod mock_download_server;
-pub mod mock_mirai_server;
+pub mod test_helpers;
 pub mod tracing_setup;

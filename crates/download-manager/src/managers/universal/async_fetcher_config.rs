@@ -16,6 +16,19 @@ impl Default for AsyncFetcherConfig {
 }
 
 impl AsyncFetcherConfig {
+    #[allow(unused)]
+    pub fn new(
+        connections_per_file: u16,
+        retries: u16,
+        progress_interval_ms: u64,
+    ) -> Self {
+        Self {
+            connections_per_file,
+            retries,
+            progress_interval_ms,
+        }
+    }
+
     pub fn with_connections_per_file(
         mut self,
         connections_per_file: u16,

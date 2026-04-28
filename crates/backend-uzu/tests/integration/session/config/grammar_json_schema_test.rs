@@ -10,6 +10,7 @@ use backend_uzu::session::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use test_tag::tag;
 
 use crate::{common::path::get_test_model_path, util::speculator::RepeatSpeculator};
 

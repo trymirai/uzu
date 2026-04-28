@@ -6,6 +6,7 @@ use bytemuck;
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array4, s};
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use test_tag::tag;
 
 use crate::{
     DataType,

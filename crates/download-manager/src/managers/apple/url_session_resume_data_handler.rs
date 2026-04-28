@@ -3,6 +3,14 @@ use crate::prelude::*;
 pub struct URLSessionResumeDataHandler(RcBlock<dyn Fn(*mut NSData)>);
 
 impl URLSessionResumeDataHandler {
+    #[allow(unused)]
+    pub fn new<F>(handler: F) -> Self
+    where
+        F: Fn(*mut NSData) + 'static,
+    {
+        Self(RcBlock::new(handler))
+    }
+
     pub fn new_bytes<F>(handler: F) -> Self
     where
         F: Fn(Box<[u8]>) + 'static,

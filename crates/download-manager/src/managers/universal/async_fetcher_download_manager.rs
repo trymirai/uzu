@@ -1,43 +1,30 @@
-use std::collections::HashMap;
-
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
     Arc, DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadManager,
-    FileDownloadTask as FileDownloadTaskTrait, Path, PathBuf, TokioBroadcastSender, TokioHandle, TokioMutex,
-    compute_download_id,
+    FileDownloadTask as FileDownloadTaskTrait, Path, PathBuf, TokioBroadcastSender, TokioHandle, compute_download_id,
+    manager_core::ManagerCore,
     managers::universal::{AsyncFetcherConfig, FileDownloadTask},
-    tokio_broadcast_channel,
 };
-
-type TaskCache = Arc<TokioMutex<HashMap<DownloadId, Arc<dyn FileDownloadTaskTrait>>>>;
 
 #[derive(Debug, Clone)]
 pub struct AsyncFetcherDownloadManager {
-    manager_id: String,
+    core: ManagerCore,
     pub config: AsyncFetcherConfig,
-    pub global_broadcast_sender: Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>>,
-    tokio_handle: TokioHandle,
-    task_cache: TaskCache,
 }
 
 impl AsyncFetcherDownloadManager {
-    fn generate_manager_id() -> String {
-        #[cfg(target_vendor = "apple")]
-        {
-            use crate::NSBundle;
-            let bundle_id = NSBundle::mainBundle().bundleIdentifier().unwrap_or_default().to_string();
+    #[allow(unused)]
+    pub fn manager_id(&self) -> &str {
+        self.core.manager_id()
+    }
 
-            if bundle_id.is_empty() {
-                "mirai.universal".to_string()
-            } else {
-                format!("{}.mirai.universal", bundle_id)
-            }
-        }
-        #[cfg(not(target_vendor = "apple"))]
-        {
-            "mirai.universal".to_string()
-        }
+    #[allow(unused)]
+    pub async fn new(
+        config: AsyncFetcherConfig,
+        tokio_handle: TokioHandle,
+    ) -> Result<Self, DownloadError> {
+        Self::new_with_manager_id(config, tokio_handle, None).await
     }
 
     pub async fn new_with_manager_id(
@@ -45,24 +32,16 @@ impl AsyncFetcherDownloadManager {
         tokio_handle: TokioHandle,
         custom_manager_id: Option<String>,
     ) -> Result<Self, DownloadError> {
-        let manager_id = custom_manager_id.unwrap_or_else(|| Self::generate_manager_id());
-
-        let (global_broadcast_sender, _) = tokio_broadcast_channel::<(DownloadId, FileDownloadEvent)>(256);
-        let global_broadcast_sender = Arc::new(global_broadcast_sender);
-
-        let task_cache: TaskCache = Arc::new(TokioMutex::new(HashMap::new()));
+        let core = ManagerCore::new(custom_manager_id, "universal", tokio_handle);
 
         let manager = Self {
-            manager_id: manager_id.clone(),
+            core,
             config,
-            global_broadcast_sender,
-            tokio_handle,
-            task_cache,
         };
 
         tracing::debug!(
             "[DOWNLOAD_MANAGER] AsyncFetcherDownloadManager created with tokio handle, manager_id={}",
-            manager_id
+            manager.manager_id()
         );
 
         Ok(manager)
@@ -71,21 +50,21 @@ impl AsyncFetcherDownloadManager {
 
 #[async_trait::async_trait]
 impl FileDownloadManager for AsyncFetcherDownloadManager {
+    #[allow(unused)]
     fn manager_id(&self) -> &str {
-        &self.manager_id
+        self.core.manager_id()
     }
 
     fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<(DownloadId, FileDownloadEvent)> {
-        TokioBroadcastStream::new(self.global_broadcast_sender.subscribe())
+        self.core.subscribe_to_all_downloads()
     }
 
     fn global_broadcast_sender(&self) -> Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>> {
-        self.global_broadcast_sender.clone()
+        self.core.global_broadcast_sender()
     }
 
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTaskTrait>>, DownloadError> {
-        let task_cache_guard = self.task_cache.lock().await;
-        Ok(task_cache_guard.values().cloned().collect())
+        self.core.get_all_file_tasks().await
     }
 
     async fn file_download_task(
@@ -102,9 +81,11 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
 
         let download_id = compute_download_id(source_url, destination_path);
 
-        let mut task_cache_guard = self.task_cache.lock().await;
-        if let Some(cached_task) = task_cache_guard.get(&download_id) {
-            return Ok(cached_task.clone());
+        {
+            let task_cache_guard = self.core.task_cache().lock().await;
+            if let Some(cached_task) = task_cache_guard.get(&download_id) {
+                return Ok(cached_task.clone());
+            }
         }
 
         // Lock presence will be reflected by reduction, no error on create
@@ -127,13 +108,8 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             destination_path.display(),
             expected_crc
         );
-        let checked_file_state = reduce_to_checked_file_state(
-            downloaded_file_state,
-            crc_file_state,
-            destination_path,
-            expected_bytes,
-            expected_crc,
-        );
+        let checked_file_state =
+            reduce_to_checked_file_state(downloaded_file_state, crc_file_state, destination_path, expected_crc);
 
         tracing::info!(
             "[MANAGER:AF] reconcile_to_internal_state inputs: checked={:?}, part={:?}, dest={}, crc_path={}, part_path={}, expected_bytes={:?}",
@@ -162,7 +138,7 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             destination_path.display(),
             part_file_path.display(),
             expected_bytes,
-            self.manager_id
+            self.core.manager_id()
         );
         let file_download_state = reduce_to_file_download_state(
             checked_file_state,
@@ -170,7 +146,7 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             destination_path,
             &part_file_path,
             expected_bytes,
-            &self.manager_id,
+            self.core.manager_id(),
         );
 
         tracing::info!("[MANAGER:AF] initial states: internal={:?}, display={:?}", internal_state, file_download_state);
@@ -180,18 +156,18 @@ impl FileDownloadManager for AsyncFetcherDownloadManager {
             source_url.clone(),
             destination_path.to_path_buf(),
             file_check,
-            self.manager_id.clone(),
+            self.core.manager_id_string(),
             expected_bytes,
             internal_state,
             file_download_state,
             self.config.clone(),
-            self.tokio_handle.clone(),
+            self.core.tokio_handle(),
         ));
 
         tracing::debug!("[MANAGER] Starting listener for download_id={}", download_id);
-        file_task.start_listening((*self.global_broadcast_sender).clone()).await;
+        file_task.start_listening((*self.core.global_broadcast_sender()).clone()).await;
 
-        task_cache_guard.insert(download_id, file_task.clone());
+        self.core.task_cache().lock().await.insert(download_id, file_task.clone());
         Ok(file_task)
     }
 }

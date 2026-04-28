@@ -1,1 +1,1 @@
-pub mod downloads_mock_mirai_registry_model_files_test;
+mod downloads_mock_registry_model_files_test;

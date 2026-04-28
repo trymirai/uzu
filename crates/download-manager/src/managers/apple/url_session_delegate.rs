@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     DownloadId, FileDownloadEvent,
@@ -82,9 +82,9 @@ define_class!(
 
                     tracing::debug!("[DELEGATE] Moving file from temp to final destination...");
 
-                    let move_successful = match fs::rename(&tmp_path, &final_destination) {
+                    let move_successful = match std::fs::rename(&tmp_path, &final_destination) {
                         Ok(_) => true,
-                        Err(_) => match fs::copy(&tmp_path, &final_destination) {
+                        Err(_) => match std::fs::copy(&tmp_path, &final_destination) {
                             Ok(_) => {
                                 let _ = fs::remove_file(&tmp_path);
                                 true

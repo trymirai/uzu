@@ -10,6 +10,7 @@ use backend_uzu::session::{
     },
     types::{Input, Message, Output},
 };
+use test_tag::tag;
 
 use crate::common::path::get_test_model_path;
 

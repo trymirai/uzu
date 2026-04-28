@@ -12,6 +12,7 @@ use backend_uzu::{
     },
 };
 use shoji::types::basic::Feature;
+use test_tag::tag;
 use tokenizers::Tokenizer;
 
 use crate::common::path::get_test_model_path;

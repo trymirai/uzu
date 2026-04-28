@@ -105,28 +105,10 @@ pub async fn acquire_lock(
                 fs::create_dir_all(parent)?;
             }
 
-            if lock_path_buf.exists() {
-                let lock_state = check_lock_file(&lock_path_buf, &lock_info.manager_id, lock_info.process_id);
-                match lock_state {
-                    LockFileState::Missing
-                    | LockFileState::OwnedByUs(_)
-                    | LockFileState::OwnedBySameAppOldProcess(_)
-                    | LockFileState::Stale(_) => {
-                        let _ = fs::remove_file(&lock_path_buf);
-                    },
-                    LockFileState::OwnedByOtherApp(_) => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::AlreadyExists,
-                            "lock owned by another active manager",
-                        ));
-                    },
-                }
-            }
-
-            fs::OpenOptions::new().write(true).create_new(true).open(&lock_path_buf).and_then(|mut file| {
-                use std::io::Write;
-                file.write_all(json.as_bytes())
-            })?;
+            // Atomic write using temp file + rename
+            let temp_path = lock_path_buf.with_extension("lock.tmp");
+            fs::write(&temp_path, json)?;
+            fs::rename(temp_path, &lock_path_buf)?;
             Ok::<(), std::io::Error>(())
         })
         .await
@@ -154,4 +136,26 @@ pub async fn release_lock(
         .await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))??;
     Ok(())
+}
+
+/// Try to acquire a lock (non-blocking check first)
+pub async fn try_acquire_lock(
+    tokio_handle: &TokioHandle,
+    lock_path: &Path,
+    manager_id: &str,
+) -> Result<bool, std::io::Error> {
+    let lock_path_buf = lock_path.to_path_buf();
+    let manager_id_str = manager_id.to_string();
+    let process_id = std::process::id();
+
+    let lock_state = tokio_handle
+        .spawn_blocking(move || check_lock_file(&lock_path_buf, &manager_id_str, process_id))
+        .await
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+    if lock_state.is_conflict() {
+        return Ok(false);
+    }
+    acquire_lock(tokio_handle, lock_path, manager_id).await?;
+    Ok(true)
 }
