@@ -12,8 +12,7 @@ use crate::{
     utilities::fs::copy_directory,
 };
 
-const FRAMEWORK_URL_TEMPLATE: &str =
-    "https://artifacts.trymirai.com/uzu-swift/releases/{version}.zip";
+const FRAMEWORK_URL_TEMPLATE: &str = "https://artifacts.trymirai.com/uzu-swift/releases/{version}.zip";
 
 pub struct SwiftLanguageBackend {
     config: PlatformsConfig,
@@ -134,12 +133,12 @@ impl LanguageBackend for SwiftLanguageBackend {
         fs::create_dir_all(&spm_root)?;
 
         let zip_path = spm_root.join(format!("{version}.zip"));
-        let staging_dir = spm_root.join(version);
-        fs::create_dir_all(&staging_dir)?;
-        let staged_xcframework = staging_dir.join(format!("{}.xcframework", paths.main_crate));
-        copy_directory(&xcframework_path, &staged_xcframework)?;
-        Command::zip_directory(staging_dir.clone(), zip_path.clone()).run()?;
-        fs::remove_dir_all(&staging_dir)?;
+        let xcframework_parent = xcframework_path.parent().context("xcframework path has no parent")?.to_path_buf();
+        let xcframework_name =
+            xcframework_path.file_name().context("xcframework path has no file name")?.to_string_lossy().to_string();
+        Command::zip_directory(xcframework_name.into(), zip_path.clone())
+            .with_current_path(&xcframework_parent)
+            .run()?;
 
         let checksum = Command::swift_compute_checksum(zip_path.clone()).output()?;
         let checksum = checksum
@@ -149,8 +148,7 @@ impl LanguageBackend for SwiftLanguageBackend {
             .context("Empty checksum output")?
             .to_string();
 
-        let source_package_swift =
-            paths.bindings_for_language_path(Language::Swift).join("Package.swift");
+        let source_package_swift = paths.bindings_for_language_path(Language::Swift).join("Package.swift");
         let body = fs::read_to_string(&source_package_swift)
             .with_context(|| format!("Failed to read {}", source_package_swift.display()))?;
         let url = FRAMEWORK_URL_TEMPLATE.replace("{version}", version);
@@ -165,8 +163,7 @@ impl LanguageBackend for SwiftLanguageBackend {
         let mut body = body;
         for (target_kind, name_literal, source_path) in target_paths {
             let needle = format!("{target_kind}\n            name: {name_literal},");
-            let replacement =
-                format!("{needle}\n            path: \"{source_path}\",");
+            let replacement = format!("{needle}\n            path: \"{source_path}\",");
             let updated = body.replace(&needle, &replacement);
             if updated == body {
                 anyhow::bail!("Failed to inject path for {target_kind} {name_literal}");
@@ -240,4 +237,3 @@ fn find_static_lib(slice_path: &Path) -> Result<PathBuf> {
     }
     walk(slice_path).context("Static lib (.a) not found in the slice")
 }
-

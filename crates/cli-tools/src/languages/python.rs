@@ -47,8 +47,12 @@ impl LanguageBackend for PythonLanguageBackend {
                 .with_envs(self.config.required_envs_for_target(target.name.clone())?)
                 .run()?;
             if target.name == host_target {
-                Command::uv_sync().with_current_path(&bindings_path).run()?;
-                Command::uv_python("import uzu; uzu.generate_annotations()").with_current_path(&bindings_path).run()?;
+                let envs = self.config.required_envs_for_target(target.name.clone())?;
+                Command::uv_sync().with_current_path(&bindings_path).with_envs(envs.clone()).run()?;
+                Command::uv_python("import uzu; uzu.generate_annotations()")
+                    .with_current_path(&bindings_path)
+                    .with_envs(envs)
+                    .run()?;
             }
         }
         Ok(())
@@ -82,16 +86,20 @@ impl LanguageBackend for PythonLanguageBackend {
         &self,
         _version: &str,
     ) -> Result<()> {
+        let paths = Paths::new()?;
+        let wheels_root = paths.target_wheels_path();
+        if wheels_root.exists() {
+            fs::remove_dir_all(&wheels_root)?;
+        }
+
         self.build(Configuration::Release, vec![ALL_TARGET.to_string()], Vec::<Capability>::new())?;
 
-        let paths = Paths::new()?;
         let destination = paths.release_python_pypi_path();
         if destination.exists() {
             fs::remove_dir_all(&destination)?;
         }
         fs::create_dir_all(&destination)?;
 
-        let wheels_root = paths.target_wheels_path();
         if !wheels_root.exists() {
             anyhow::bail!("No wheels at {}", wheels_root.display());
         }

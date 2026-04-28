@@ -226,7 +226,7 @@ impl Command {
     }
 
     pub fn uv_sync() -> Self {
-        Self::new("uv").with_argument("sync").with_argument("--reinstall")
+        Self::new("uv").with_argument("sync")
     }
 
     pub fn uv_python(code: &str) -> Self {

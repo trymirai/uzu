@@ -10,8 +10,7 @@ pub use version::bump_workspace_version;
 use crate::{
     configs::{Paths, PlatformsConfig, WorkspaceManifest},
     languages::{
-        LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend,
-        TypeScriptLanguageBackend,
+        LanguageBackend, PythonLanguageBackend, RustLanguageBackend, SwiftLanguageBackend, TypeScriptLanguageBackend,
     },
     sync::run_sync,
     types::Language,
