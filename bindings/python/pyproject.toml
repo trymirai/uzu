@@ -5,14 +5,20 @@ build-backend = "maturin"
 [project]
 name = "uzu"
 description = "A high-performance inference engine for AI models"
-readme = "README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Mirai Tech Inc.", email = "contact@getmirai.co" }]
-keywords = ["llm", "inference", "ai", "rust", "pyo3"]
+keywords = [
+    "rust",
+    "ai",
+    "metal",
+    "high-performance",
+    "inference",
+    "llm",
+    "tts",
+]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: MacOS",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -24,8 +30,8 @@ dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://trymirai.com"
-Repository = "https://github.com/trymirai/uzu-python"
-Issues = "https://github.com/trymirai/uzu-python/issues"
+Repository = "https://github.com/trymirai/uzu"
+Issues = "https://github.com/trymirai/uzu/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3.4", "ruff>=0.14.0"]
@@ -41,7 +47,6 @@ python-source = "."
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py312"

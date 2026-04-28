@@ -126,11 +126,12 @@ fn run(
         };
         let seed = rand::rng().random::<u64>();
         let config = TtsRunConfig::default();
-        session.synthesize_with_seed_and_config(input, seed, &config)
+        let chunk_sender = sender.clone();
+        session.synthesize_streaming_with_seed_and_config(input, seed, &config, |pcm| {
+            let _ = chunk_sender.unbounded_send(Ok(build_pcm_batch(pcm)));
+        })
     };
-    let result = match result {
-        Ok(pcm) => Ok(build_pcm_batch(&pcm)),
-        Err(error) => Err(Box::new(Error::from(error)) as BackendError),
-    };
-    let _ = sender.unbounded_send(result);
+    if let Err(error) = result {
+        let _ = sender.unbounded_send(Err(Box::new(Error::from(error)) as BackendError));
+    }
 }
