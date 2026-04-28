@@ -28,10 +28,6 @@ jobs:
           metal: true
           bindings: true
 
-      - uses: actions/setup-node@v4
-        with:
-          registry-url: "https://registry.npmjs.org"
-
       - name: "Release: Checkout main"
         uses: actions/checkout@v6
         with:
