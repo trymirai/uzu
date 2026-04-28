@@ -4,8 +4,8 @@ import PackageDescription
 let package = Package(
     name: "Uzu",
     platforms: [
-        .iOS("26.0"),
-        .macOS("26.0"),
+        .iOS("26.4"),
+        .macOS("26.4"),
     ],
     products: [
         .library(name: "Uzu", targets: ["Uzu"]),

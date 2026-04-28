@@ -1,0 +1,181 @@
+[envs]
+MACOSX_DEPLOYMENT_TARGET = "26.4"
+IPHONEOS_DEPLOYMENT_TARGET = "26.4"
+XROS_DEPLOYMENT_TARGET = "26.4"
+TVOS_DEPLOYMENT_TARGET = "26.4"
+WATCHOS_DEPLOYMENT_TARGET = "26.4"
+
+[tools]
+# Please make sure to use compatible versions of the cargo-swift / uniffi pair.
+# See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
+swift = { provider = "cargo", version = "0.11.0" }
+zigbuild = { provider = "cargo", version = "0.22.3" }
+xwin = { provider = "cargo", version = "0.22.0" }
+ziglang = { provider = "uv", version = "0.16.0" }
+maturin = { provider = "uv", version = "1.13.1" }
+
+[targets."aarch64-apple-darwin"]
+backend = "metal"
+aliases = ["apple", "macos"]
+capabilities_supported = ["grammar", "tracing"]
+capabilities_default = ["grammar"]
+required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
+
+[targets."x86_64-apple-darwin"]
+backend = "cpu"
+aliases = ["apple", "macos-intel"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
+required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
+
+[targets."aarch64-apple-ios"]
+backend = "metal"
+aliases = ["apple", "ios"]
+capabilities_supported = ["grammar", "tracing"]
+capabilities_default = ["grammar"]
+required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
+
+[targets."aarch64-apple-ios-sim"]
+backend = "metal"
+aliases = ["apple", "ios-sim", "ios-simulator"]
+capabilities_supported = ["grammar", "tracing"]
+capabilities_default = ["grammar"]
+required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
+
+[targets."aarch64-unknown-linux-gnu"]
+backend = "cpu"
+aliases = ["linux"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
+
+[targets."x86_64-unknown-linux-gnu"]
+backend = "cpu"
+aliases = ["linux"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
+
+[targets."aarch64-pc-windows-msvc"]
+backend = "cpu"
+aliases = ["windows"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
+
+[targets."x86_64-pc-windows-msvc"]
+backend = "cpu"
+aliases = ["windows"]
+capabilities_supported = ["grammar"]
+capabilities_default = ["grammar"]
+
+[targets."wasm32-wasip1-threads"]
+backend = "cpu"
+aliases = ["wasm"]
+capabilities_supported = []
+capabilities_default = []
+
+[languages.rust]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "wasm32-wasip1-threads",
+]
+tools = ["ziglang", "zigbuild", "xwin"]
+bindings = []
+examples_path = "crates/uzu/examples"
+metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-header.jpg", badges = [
+    "discord",
+    "email",
+    "docs",
+    "license",
+    "build",
+    "python",
+    "python_package",
+    "python_downloads",
+    "python_version",
+    "typescript",
+    "typescript_package",
+    "typescript_downloads",
+    "swift",
+    "swift_spm",
+    "swift_platforms",
+    "swift_version",
+] }
+
+[languages.python]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+tools = ["ziglang", "zigbuild", "xwin", "maturin"]
+bindings = ["pyo3"]
+examples_path = "bindings/python/examples"
+metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-python.jpg", badges = [
+    "discord",
+    "email",
+    "docs",
+    "license",
+    "build",
+    "python",
+    "python_package",
+    "python_downloads",
+    "python_version",
+] }
+
+[languages.swift]
+targets = ["aarch64-apple-darwin", "aarch64-apple-ios", "aarch64-apple-ios-sim"]
+tools = ["swift"]
+bindings = ["uniffi"]
+examples_path = "bindings/swift/Sources/Examples"
+metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-swift-header.jpg", badges = [
+    "discord",
+    "email",
+    "docs",
+    "license",
+    "build",
+    "swift",
+    "swift_spm",
+    "swift_platforms",
+    "swift_version",
+] }
+
+[languages.typescript]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+tools = ["ziglang", "zigbuild", "xwin"]
+bindings = ["napi"]
+examples_path = "bindings/typescript/examples"
+metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-typescript.jpg", badges = [
+    "discord",
+    "email",
+    "docs",
+    "license",
+    "build",
+    "typescript",
+    "typescript_package",
+    "typescript_downloads",
+] }
+
+[badges]
+discord = '<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a>'
+email = '<a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a>'
+docs = '<a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a>'
+license = '[![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE)'
+build = '![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)'
+python = '![Python](https://img.shields.io/badge/Python-orange)'
+python_package = '![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package)'
+python_downloads = '![Downloads](https://img.shields.io/pypi/dm/uzu?color=orange&label=Downloads)'
+python_version = '![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python)'
+typescript = '![TypeScript](https://img.shields.io/badge/TypeScript-yellow)'
+typescript_package = '![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package)'
+typescript_downloads = '![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads)'
+swift = '![Swift](https://img.shields.io/badge/Swift-blue)'
+swift_platforms = '![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)'
+swift_spm = '![SPM](https://img.shields.io/badge/SPM-compatible-blue)'
+swift_version = '[![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org)'
+
+[examples]
+quick-start = { title = "Quick Start", description = "Minimal snippet that downloads a model and generates a single reply" }
+chat = { title = "Chat", description = "In this example, we will download a model and get a reply to a specific list of messages:", explanation = "Once loaded, the same `ChatSession` can be reused for multiple requests until you drop it. Each model may consume a significant amount of RAM, so it's important to keep only one session loaded at a time. For iOS apps, we recommend adding the [Increased Memory Capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.kernel.increased-memory-limit) entitlement to ensure your app can allocate the required memory." }
+chat-cloud = { title = "Chat with the cloud model", description = "In this example, we will get a reply to a specific list of messages from a cloud model:" }
+chat-speculation-summarization = { title = "Chat using speculation preset for summarization", description = "In this example, we will use the `summarization` speculation preset to generate a summary of the input text:", explanation = "You will notice that the model’s run count is lower than the actual number of generated tokens due to speculative decoding, which significantly improves generation speed." }
+chat-speculation-classification = { title = "Chat using speculation preset for classification", description = "In this example, we will use the `classification` speculation preset to determine the sentiment of the user's input:", explanation = "You can view the stats to see that the answer will be ready immediately after the prefill step, and actual generation won’t even start due to speculative decoding, which significantly improves generation speed." }
+chat-structured-output = { title = "Chat with structured output", description = "Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:" }
+classification = { title = "Classification", description = "In this example, we will use a classification model to determine whether the user's input is safe from a moderation perspective:" }
+text-to-speech = { title = "Text to Speech", description = "In this example, we will generate audio from text:" }
