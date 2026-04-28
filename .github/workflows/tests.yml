@@ -116,14 +116,14 @@ jobs:
         with:
           metal: true
 
-      - name: Reset existing rustup toolchains on self-hosted runner
+      - name: "Reset existing rustup toolchains on self-hosted runner"
         run: |
           if command -v rustup >/dev/null; then
             rustup toolchain uninstall stable 2>/dev/null || true
             rustup toolchain uninstall nightly 2>/dev/null || true
           fi
 
-      - name: Setup
+      - name: "Setup"
         run: |
           cargo tools setup
           cargo tools install rust
@@ -131,11 +131,11 @@ jobs:
           cargo tools install swift
           cargo tools install typescript
 
-      - name: Verify
+      - name: "Verify"
         run: |
           cargo tools verify
 
-      - name: Test
+      - name: "Test"
         run: |
           cargo tools test python
           cargo tools test swift

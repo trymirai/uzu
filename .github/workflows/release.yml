@@ -1,4 +1,4 @@
-name: Release
+name: "Release"
 
 on:
   workflow_dispatch:
@@ -22,14 +22,14 @@ jobs:
       VERSION: ${{ inputs.version }}
 
     steps:
-      - name: Release: Checkout main
+      - name: "Release: Checkout main"
         uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Release: Validate version
+      - name: "Release: Validate version"
         run: |
           set -euo pipefail
           git fetch --tags origin
@@ -52,14 +52,14 @@ jobs:
             echo "No previous tags; ${VERSION} is the first release"
           fi
 
-      - name: Release: Reset existing rustup toolchains on self-hosted runner
+      - name: "Release: Reset existing rustup toolchains on self-hosted runner"
         run: |
           if command -v rustup >/dev/null; then
             rustup toolchain uninstall stable 2>/dev/null || true
             rustup toolchain uninstall nightly 2>/dev/null || true
           fi
 
-      - name: Release: Install tools
+      - name: "Release: Install tools"
         run: |
           cargo tools setup
           cargo tools install rust
@@ -67,29 +67,29 @@ jobs:
           cargo tools install swift
           cargo tools install typescript
 
-      - name: Release: Sync
+      - name: "Release: Sync"
         run: cargo tools sync
 
-      - name: Release: Build artifacts
+      - name: "Release: Build artifacts"
         run: cargo tools release "${VERSION}"
 
       # ---------------------------------------------------------------
       # Publish Platform
       # ---------------------------------------------------------------
-      - name: Publish Platform: Decode bucket credentials
+      - name: "Publish Platform: Decode bucket credentials"
         run: |
           echo "${{ secrets.PLATFORM_BUCKET_BASE64_CREDENTIALS }}" | base64 -d > "$RUNNER_TEMP/gcloud/platform.json"
           echo "PLATFORM_CREDENTIALS=$RUNNER_TEMP/gcloud/platform.json" >> "$GITHUB_ENV"
 
-      - name: Publish Platform: Authenticate to GCS
+      - name: "Publish Platform: Authenticate to GCS"
         uses: google-github-actions/auth@v2
         with:
           credentials_json_path: ${{ env.PLATFORM_CREDENTIALS }}
 
-      - name: Publish Platform: Setup gcloud
+      - name: "Publish Platform: Setup gcloud"
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Publish Platform: Upload snippets
+      - name: "Publish Platform: Upload snippets"
         run: |
           gsutil -m rsync -r -d workspace/release/platform \
             "gs://platform-bucket-0485e11/snippets"
@@ -97,21 +97,21 @@ jobs:
       # ---------------------------------------------------------------
       # Publish Swift
       # ---------------------------------------------------------------
-      - name: Publish Swift: Decode artifacts bucket credentials
+      - name: "Publish Swift: Decode artifacts bucket credentials"
         run: |
           mkdir -p "$RUNNER_TEMP/gcloud"
           echo "${{ secrets.ARTIFACTS_BUCKET_BASE64_CREDENTIALS }}" | base64 -d > "$RUNNER_TEMP/gcloud/artifacts.json"
           echo "ARTIFACTS_CREDENTIALS=$RUNNER_TEMP/gcloud/artifacts.json" >> "$GITHUB_ENV"
 
-      - name: Publish Swift: Authenticate to GCS
+      - name: "Publish Swift: Authenticate to GCS"
         uses: google-github-actions/auth@v2
         with:
           credentials_json_path: ${{ env.ARTIFACTS_CREDENTIALS }}
 
-      - name: Publish Swift: Setup gcloud
+      - name: "Publish Swift: Setup gcloud"
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Publish Swift: Upload xcframework
+      - name: "Publish Swift: Upload xcframework"
         run: |
           set -euo pipefail
           GS_URI="gs://artifacts-bucket-cd05ceb/uzu-swift/releases/${VERSION}.zip"
@@ -123,7 +123,7 @@ jobs:
       # ---------------------------------------------------------------
       # Publish TypeScript
       # ---------------------------------------------------------------
-      - name: Publish TypeScript
+      - name: "Publish TypeScript"
         working-directory: workspace/release/typescript-npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -132,7 +132,7 @@ jobs:
       # ---------------------------------------------------------------
       # Publish Python
       # ---------------------------------------------------------------
-      - name: Publish Python
+      - name: "Publish Python"
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
@@ -141,7 +141,7 @@ jobs:
       # ---------------------------------------------------------------
       # Publish Docs
       # ---------------------------------------------------------------
-      - name: Publish Docs: Generate GitHub App token
+      - name: "Publish Docs: Generate GitHub App token"
         id: docs-token
         uses: actions/create-github-app-token@v2
         with:
@@ -150,7 +150,7 @@ jobs:
           owner: trymirai
           repositories: docs
 
-      - name: Publish Docs: Checkout repo
+      - name: "Publish Docs: Checkout repo"
         uses: actions/checkout@v6
         with:
           repository: trymirai/docs
@@ -159,14 +159,14 @@ jobs:
           path: docs-repo
           persist-credentials: false
 
-      - name: Publish Docs: Sync
+      - name: "Publish Docs: Sync"
         run: |
           set -euo pipefail
           rsync -a --delete \
             --exclude '.git' --exclude '.git/*' \
             workspace/release/docs/ docs-repo/snippets/generated/
 
-      - name: Publish Docs: Commit and push changes
+      - name: "Publish Docs: Commit and push changes"
         env:
           GH_TOKEN: ${{ steps.docs-token.outputs.token }}
         run: |
@@ -187,7 +187,7 @@ jobs:
       # Commit changes generated by sync + release, tag, push.
       # The tag is attached to the commit this pipeline produces.
       # ---------------------------------------------------------------
-      - name: Release: Commit and tag
+      - name: "Release: Commit and tag"
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
