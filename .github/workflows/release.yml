@@ -84,14 +84,16 @@ jobs:
       # ---------------------------------------------------------------
       - name: "Publish Platform: Decode bucket credentials"
         run: |
-          mkdir -p "$RUNNER_TEMP/gcloud"
-          echo "${{ secrets.PLATFORM_BUCKET_BASE64_CREDENTIALS }}" | base64 -d > "$RUNNER_TEMP/gcloud/platform.json"
-          echo "PLATFORM_CREDENTIALS=$RUNNER_TEMP/gcloud/platform.json" >> "$GITHUB_ENV"
+          {
+            echo "PLATFORM_CREDENTIALS_JSON<<EOF"
+            echo "${{ secrets.PLATFORM_BUCKET_BASE64_CREDENTIALS }}" | base64 -d
+            echo "EOF"
+          } >> "$GITHUB_ENV"
 
       - name: "Publish Platform: Authenticate to GCS"
         uses: google-github-actions/auth@v2
         with:
-          credentials_json_path: ${{ env.PLATFORM_CREDENTIALS }}
+          credentials_json: ${{ env.PLATFORM_CREDENTIALS_JSON }}
 
       - name: "Publish Platform: Setup gcloud"
         uses: google-github-actions/setup-gcloud@v2
@@ -106,14 +108,16 @@ jobs:
       # ---------------------------------------------------------------
       - name: "Publish Swift: Decode artifacts bucket credentials"
         run: |
-          mkdir -p "$RUNNER_TEMP/gcloud"
-          echo "${{ secrets.ARTIFACTS_BUCKET_BASE64_CREDENTIALS }}" | base64 -d > "$RUNNER_TEMP/gcloud/artifacts.json"
-          echo "ARTIFACTS_CREDENTIALS=$RUNNER_TEMP/gcloud/artifacts.json" >> "$GITHUB_ENV"
+          {
+            echo "ARTIFACTS_CREDENTIALS_JSON<<EOF"
+            echo "${{ secrets.ARTIFACTS_BUCKET_BASE64_CREDENTIALS }}" | base64 -d
+            echo "EOF"
+          } >> "$GITHUB_ENV"
 
       - name: "Publish Swift: Authenticate to GCS"
         uses: google-github-actions/auth@v2
         with:
-          credentials_json_path: ${{ env.ARTIFACTS_CREDENTIALS }}
+          credentials_json: ${{ env.ARTIFACTS_CREDENTIALS_JSON }}
 
       - name: "Publish Swift: Setup gcloud"
         uses: google-github-actions/setup-gcloud@v2
