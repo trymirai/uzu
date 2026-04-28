@@ -2,6 +2,7 @@ mod checked_file_state;
 mod crc_utils;
 mod download_error;
 mod download_info;
+mod download_manager_state;
 mod download_state;
 mod file_check;
 mod file_download_event;

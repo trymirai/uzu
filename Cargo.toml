@@ -11,6 +11,7 @@ members = [
     "crates/hanashi",
     "crates/nagare",
     "crates/download-manager",
+    "crates/mock-registry",
     "crates/uzu",
     "crates/benchmarks",
     "crates/cli",
@@ -52,6 +53,7 @@ token-stream-parser = { path = "crates/token-stream-parser", default-features = 
 hanashi = { path = "crates/hanashi", default-features = false }
 nagare = { path = "crates/nagare", default-features = false }
 download-manager = { path = "crates/download-manager", default-features = false }
+mock-registry = { path = "crates/mock-registry", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
@@ -117,6 +119,8 @@ cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
 test-tag = "0.1"
+rstest = "0.26"
+wiremock = "0.6"
 proptest = { version = "1.10", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
 criterion-macro = "0.4.0"
