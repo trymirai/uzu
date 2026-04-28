@@ -100,8 +100,9 @@ jobs:
 
       - name: "Publish Platform: Upload snippets"
         run: |
-          gsutil -m rsync -r -d workspace/release/platform \
-            "gs://platform-bucket-0485e11/snippets"
+          gcloud storage rsync workspace/release/platform \
+            "gs://platform-bucket-0485e11/snippets" \
+            --recursive --delete-unmatched-destination-objects
 
       # ---------------------------------------------------------------
       # Publish Swift
