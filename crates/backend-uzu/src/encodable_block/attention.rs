@@ -177,7 +177,7 @@ impl<B: Backend> Attention<B> {
 
         let (max_sequence_length, segment_prefix_length, ring_params) =
             if let Some(layer) = args.kv_cache_layer.as_deref() {
-                let max_sequence_length = layer.shape[1];
+                let max_sequence_length = layer.shape[0];
                 let ring_params = match layer.state {
                     KVCacheLayerState::Windowed {
                         ring_offset,
@@ -240,10 +240,19 @@ impl<B: Backend> Attention<B> {
             })
             .transpose()?;
 
-        let k_head_stride = (max_sequence_length * head_dim) as i32;
-        let k_seq_stride = head_dim as i32;
-        let v_head_stride = (max_sequence_length * head_dim) as i32;
-        let v_seq_stride = head_dim as i32;
+        // KV cache layout: [max_sequence_length, num_groups, head_dim] (token-major)
+        // For classifier mode (no KV cache) keys/values still come in group-major layout
+        // [num_groups, suffix_length, head_dim].
+        let (k_head_stride, k_seq_stride, v_head_stride, v_seq_stride) = if has_kv_cache {
+            (head_dim as u32, (num_groups * head_dim) as u32, head_dim as u32, (num_groups * head_dim) as u32)
+        } else {
+            (
+                (max_sequence_length * head_dim) as u32,
+                head_dim as u32,
+                (max_sequence_length * head_dim) as u32,
+                head_dim as u32,
+            )
+        };
 
         let kernel_key = KernelKey {
             head_dim: head_dim as u32,
@@ -322,10 +331,10 @@ impl<B: Backend> Attention<B> {
         sinks_allocation: Option<&Allocation<B>>,
         gqa_factor: usize,
         sequence_length: usize,
-        k_head_stride: i32,
-        k_seq_stride: i32,
-        v_head_stride: i32,
-        v_seq_stride: i32,
+        k_head_stride: u32,
+        k_seq_stride: u32,
+        v_head_stride: u32,
+        v_seq_stride: u32,
         ring_params: Option<RingParams>,
         scale: f32,
         num_heads: usize,
@@ -356,6 +365,10 @@ impl<B: Backend> Attention<B> {
                     is_causal: self.is_causal,
                     sliding_window_size: self.sliding_window_size,
                     scale,
+                    k_head_stride: k_head_stride as u64,
+                    k_seq_stride: k_seq_stride as u64,
+                    v_head_stride: v_head_stride as u64,
+                    v_seq_stride: v_seq_stride as u64,
                 };
                 self.gemm_block.encode(encoder, args)?;
             },
@@ -371,10 +384,10 @@ impl<B: Backend> Attention<B> {
                     attention_output,
                     gqa_factor as u32,
                     sequence_length as u32,
-                    k_head_stride as u32,
-                    k_seq_stride as u32,
-                    v_head_stride as u32,
-                    v_seq_stride as u32,
+                    k_head_stride,
+                    k_seq_stride,
+                    v_head_stride,
+                    v_seq_stride,
                     ring_params,
                     scale,
                     trie_allocation,
@@ -409,10 +422,10 @@ impl<B: Backend> Attention<B> {
                     &mut maxs,
                     gqa_factor as u32,
                     sequence_length as u32,
-                    k_head_stride as u32,
-                    k_seq_stride as u32,
-                    v_head_stride as u32,
-                    v_seq_stride as u32,
+                    k_head_stride,
+                    k_seq_stride,
+                    v_head_stride,
+                    v_seq_stride,
                     ring_params,
                     scale,
                     num_heads as u32,

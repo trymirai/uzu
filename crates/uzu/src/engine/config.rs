@@ -14,7 +14,7 @@ const KEY_XAI_API_KEY: &str = "XAI_API_KEY";
 const KEY_BASETEN_API_KEY: &str = "BASETEN_API_KEY";
 const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct EngineConfig {
@@ -33,7 +33,7 @@ pub struct EngineConfig {
 
 #[bindings::export(Implementation)]
 impl EngineConfig {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn create() -> Self {
         Self::default()
     }

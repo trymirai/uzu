@@ -343,7 +343,7 @@ impl ModelShape {
     ) -> impl Iterator<Item = [usize; 3]> {
         self.sliding_window_length_per_layer.iter().map(move |length| {
             let length = length.unwrap_or(max_prefix_length);
-            [self.num_groups, length + max_suffix_length, self.head_dim]
+            [length + max_suffix_length, self.num_groups, self.head_dim]
         })
     }
 

@@ -8,7 +8,7 @@ pub type TokenId = u32;
 #[bindings::export(Alias)]
 pub type TokenValue = String;
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Token {

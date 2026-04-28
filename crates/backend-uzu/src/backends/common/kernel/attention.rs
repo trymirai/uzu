@@ -32,6 +32,14 @@ pub struct AttentionGemmArguments<'a, B: Backend> {
     pub sliding_window_size: Option<usize>,
     pub is_causal: bool,
     pub scale: f32,
+    /// Element stride between kv-heads (groups) in the K buffer.
+    pub k_head_stride: u64,
+    /// Element stride between tokens in the K buffer.
+    pub k_seq_stride: u64,
+    /// Element stride between kv-heads (groups) in the V buffer.
+    pub v_head_stride: u64,
+    /// Element stride between tokens in the V buffer.
+    pub v_seq_stride: u64,
 }
 
 pub struct AttentionGemmBlock<B: Backend> {
@@ -100,14 +108,11 @@ impl<B: Backend> AttentionGemmBlock<B> {
         };
 
         // Params (all strides in elements)
-        let q_head_stride = (args.suffix_length * head_dim) as i64;
-        let q_seq_stride = head_dim as i64;
+        let q_head_stride = (args.suffix_length * head_dim) as u64;
+        let q_seq_stride = head_dim as u64;
 
-        let kv_head_stride = (args.max_sequence_length * head_dim) as i64;
-        let kv_seq_stride = head_dim as i64;
-
-        let o_head_stride = head_dim as i64;
-        let o_seq_stride = (args.num_heads * head_dim) as i64;
+        let o_head_stride = head_dim as u64;
+        let o_seq_stride = (args.num_heads * head_dim) as u64;
 
         let nk = (args.sequence_length + bk - 1) / bk;
         let nq_aligned = args.suffix_length / BQ;
@@ -115,19 +120,19 @@ impl<B: Backend> AttentionGemmBlock<B> {
 
         let params = AttnParams {
             q_strides: [0, q_head_stride, q_seq_stride],
-            k_strides: [0, kv_head_stride, kv_seq_stride],
-            v_strides: [0, kv_head_stride, kv_seq_stride],
+            k_strides: [0, args.k_head_stride, args.k_seq_stride],
+            v_strides: [0, args.v_head_stride, args.v_seq_stride],
             o_strides: [0, o_head_stride, o_seq_stride],
-            gqa_factor: (args.num_heads / args.num_groups) as i32,
+            gqa_factor: (args.num_heads / args.num_groups) as u32,
             scale: args.scale,
-            q_len: args.suffix_length as i32,
-            k_len: args.sequence_length as i32,
-            q_off: args.segment_prefix_length as i32,
-            nq_aligned: nq_aligned as i32,
-            q_rem: (args.suffix_length - nq_aligned * BQ) as i32,
-            nk: nk as i32,
-            nk_aligned: nk_aligned as i32,
-            k_rem: (args.sequence_length - nk_aligned * bk) as i32,
+            q_len: args.suffix_length as u32,
+            k_len: args.sequence_length as u32,
+            q_off: args.segment_prefix_length as u32,
+            nq_aligned: nq_aligned as u32,
+            q_rem: (args.suffix_length - nq_aligned * BQ) as u32,
+            nk: nk as u32,
+            nk_aligned: nk_aligned as u32,
+            k_rem: (args.sequence_length - nk_aligned * bk) as u32,
         };
 
         kernel.encode(

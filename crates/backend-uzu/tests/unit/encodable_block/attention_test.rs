@@ -191,13 +191,13 @@ fn create_attention_cache_allocation(
     max_sequence_length: usize,
     context: &<Metal as Backend>::Context,
 ) -> Allocation<Metal> {
-    let (_batch_size, num_heads, sequence_length, head_dim) = values.dim();
-    let mut cache = vec![0.0_f32; num_heads * max_sequence_length * head_dim];
+    let (_batch_size, num_kv_heads, sequence_length, head_dim) = values.dim();
+    let mut cache = vec![0.0_f32; max_sequence_length * num_kv_heads * head_dim];
 
-    for head_index in 0..num_heads {
-        for sequence_index in 0..sequence_length {
+    for sequence_index in 0..sequence_length {
+        for head_index in 0..num_kv_heads {
             for dim_index in 0..head_dim {
-                let flat_index = head_index * max_sequence_length * head_dim + sequence_index * head_dim + dim_index;
+                let flat_index = sequence_index * num_kv_heads * head_dim + head_index * head_dim + dim_index;
                 cache[flat_index] = values[[0, head_index, sequence_index, dim_index]];
             }
         }
@@ -261,10 +261,10 @@ fn run_single_pass_attention(
         &mut output_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
-        (seq_len * head_dim) as u32,
         head_dim as u32,
-        (seq_len * head_dim) as u32,
+        (num_kv_heads * head_dim) as u32,
         head_dim as u32,
+        (num_kv_heads * head_dim) as u32,
         None,
         scale,
         None::<&Allocation<Metal>>,
@@ -367,6 +367,10 @@ fn run_gemm_attention(
         sliding_window_size: None,
         is_causal,
         scale,
+        k_head_stride: head_dim as u64,
+        k_seq_stride: (num_kv_heads * head_dim) as u64,
+        v_head_stride: head_dim as u64,
+        v_seq_stride: (num_kv_heads * head_dim) as u64,
     };
 
     kernel.encode(&mut encoder, args)?;
@@ -602,10 +606,10 @@ fn run_two_pass_attention(
         &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
-        (seq_len * head_dim) as u32,
         head_dim as u32,
-        (seq_len * head_dim) as u32,
+        (num_kv_heads * head_dim) as u32,
         head_dim as u32,
+        (num_kv_heads * head_dim) as u32,
         None,
         scale,
         num_heads as u32,
@@ -727,10 +731,10 @@ fn perf_two_pass_attention() {
         &mut maxs_buffer,
         (num_heads / num_kv_heads) as u32,
         seq_len as u32,
-        (seq_len * head_dim) as u32,
         head_dim as u32,
-        (seq_len * head_dim) as u32,
+        (num_kv_heads * head_dim) as u32,
         head_dim as u32,
+        (num_kv_heads * head_dim) as u32,
         None,
         scale,
         num_heads as u32,

@@ -6,7 +6,7 @@ use os::{application_identifier, home_path, is_environment_sandboxed, is_keyring
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Device {
@@ -46,7 +46,7 @@ impl Device {
 
 #[bindings::export(Implementation)]
 impl Device {
-    #[bindings::export(Factory)]
+    #[bindings::export(Method(Factory))]
     pub fn create() -> Result<Self, DeviceError> {
         Self::new()
     }

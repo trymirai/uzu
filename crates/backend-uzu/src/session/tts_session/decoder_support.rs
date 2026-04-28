@@ -335,7 +335,9 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
             partial_pcm,
             resolve_decode_duration,
         ) = if force {
-            let pending = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+            let Some(pending) = self.pending_chunk.take() else {
+                return Ok(());
+            };
             let step_stats = pending.chunk.step_stats();
             let ready_frames = pending.ready_frames;
             let next_chunk_frames = pending.next_chunk_frames;

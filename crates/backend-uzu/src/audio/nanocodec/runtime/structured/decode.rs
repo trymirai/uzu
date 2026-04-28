@@ -112,6 +112,8 @@ impl StructuredAudioCodecGraph {
         })?;
 
         let ws = &resources.decode_workspace;
+        let vocoder_graph = self.vocoder_graph(resources)?;
+        let kernels = resources.kernels(self.vocoder_data_type)?;
 
         let mut x;
         let mut x_layout = SequenceLayout::Nsc;
@@ -126,8 +128,6 @@ impl StructuredAudioCodecGraph {
         )?;
         x = self.apply_post_module_enqueued(resources, &mut encoder, quantized_nsc, lengths, batch_size, frames)?;
 
-        let vocoder_graph = self.vocoder_graph(resources)?;
-        let kernels = resources.kernels(self.vocoder_data_type)?;
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
         let mut next_lengths_i32 = vec![0_i32; lengths_i32.len()];

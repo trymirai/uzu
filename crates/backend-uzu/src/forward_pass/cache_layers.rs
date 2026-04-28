@@ -395,7 +395,7 @@ impl<B: Backend> CacheLayers<B> {
             .map(|layer| match layer {
                 CacheLayer::Transformer(layer) => {
                     let shape = layer.shape;
-                    let [num_groups, _, head_dim] = shape;
+                    let [_, num_groups, head_dim] = shape;
                     let dtype = layer.data_type;
                     let copy_rows = layer.prefix_segment_length();
 
@@ -404,7 +404,7 @@ impl<B: Backend> CacheLayers<B> {
                         max_prefix_capacity_across_layers = copy_rows;
                     }
 
-                    let new_shape = [num_groups, new_total_len, head_dim];
+                    let new_shape = [new_total_len, num_groups, head_dim];
                     let new_bytes = size_for_shape(&new_shape, dtype);
                     let new_keys = context
                         .create_allocation(new_bytes, AllocationType::Global)

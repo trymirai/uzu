@@ -1,0 +1,12 @@
+node_modules
+Brewfile.lock.json
+dist
+dist-deno
+/*.tgz
+.idea/
+tmp
+.pack
+.dev.vars
+.eslintcache
+.claude/
+*.node

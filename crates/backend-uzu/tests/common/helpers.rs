@@ -209,6 +209,10 @@ fn encode_attention_gemm<T: ArrayElement + Float, B: Backend>(
                 sliding_window_size: None,
                 is_causal: input.do_causal,
                 scale: input.scale,
+                k_head_stride: (max_sequence_length * input.head_dim) as u64,
+                k_seq_stride: input.head_dim as u64,
+                v_head_stride: (max_sequence_length * input.head_dim) as u64,
+                v_seq_stride: input.head_dim as u64,
             },
         )
         .expect("Failed to encode AttentionGemm");

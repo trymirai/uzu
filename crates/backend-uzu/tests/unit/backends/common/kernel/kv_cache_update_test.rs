@@ -16,31 +16,18 @@ fn apply_swaps_3d<T: Clone>(
     array: &mut Array3<T>,
     swaps: &[Swap],
 ) {
-    let (num_heads, _seq_len, head_dim) = array.dim();
+    let (_seq_len, num_heads, head_dim) = array.dim();
     for head in 0..num_heads {
         for channel in 0..head_dim {
             for swap in swaps {
                 let src = swap.source as usize;
                 let dst = swap.destination as usize;
-                let temp = array[(head, src, channel)].clone();
-                array[(head, src, channel)] = array[(head, dst, channel)].clone();
-                array[(head, dst, channel)] = temp;
+                let temp = array[(src, head, channel)].clone();
+                array[(src, head, channel)] = array[(dst, head, channel)].clone();
+                array[(dst, head, channel)] = temp;
             }
         }
     }
-}
-
-#[test]
-fn test_kv_cache_update_kernel() {
-    let metal_context = match <Metal as Backend>::Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            println!("Failed to create MetalContext: {:?}. Skipping test.", e);
-            return;
-        },
-    };
-
-    test_random_pattern(&metal_context);
 }
 
 fn test_random_pattern(context: &<Metal as Backend>::Context) {
@@ -59,11 +46,11 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
     let seq_len = 15usize;
     let head_dim = 7usize;
 
-    let key_data = Array3::<f32>::from_shape_fn((num_heads, seq_len, head_dim), |(h, t, c)| {
+    let key_data = Array3::<f32>::from_shape_fn((seq_len, num_heads, head_dim), |(h, t, c)| {
         (h * 1_000_000 + t * 100 + c * 10) as f32
     });
 
-    let value_data = Array3::<f32>::from_shape_fn((num_heads, seq_len, head_dim), |(h, t, c)| {
+    let value_data = Array3::<f32>::from_shape_fn((seq_len, num_heads, head_dim), |(h, t, c)| {
         (h * 1_000_000 + t * 100 + c * 10 + 1_000) as f32
     });
 
@@ -84,9 +71,9 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
     {
         let mut kv_layers = [KVLayerData::<Metal> {
             key_allocation: &mut key_allocation,
-            key_shape: [num_heads, seq_len, head_dim],
+            key_shape: [seq_len, num_heads, head_dim],
             value_allocation: &mut value_allocation,
-            value_shape: [num_heads, seq_len, head_dim],
+            value_shape: [seq_len, num_heads, head_dim],
         }];
         match kv_cache_update.encode(&mut kv_layers, &source_indices, &destination_indices, &mut encoder) {
             Ok(_) => {},
@@ -100,23 +87,36 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let key_values: Vec<f32> = common::helpers::allocation_to_vec(&key_allocation);
-    let key_result = Array::from_shape_vec((num_heads, seq_len, head_dim), key_values)
+    let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_values)
         .expect("Failed to convert key result to ndarray");
 
     let value_values: Vec<f32> = common::helpers::allocation_to_vec(&value_allocation);
-    let value_result = Array::from_shape_vec((num_heads, seq_len, head_dim), value_values)
+    let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_values)
         .expect("Failed to convert value result to ndarray");
 
-    println!("Original keys head 0 rows 0,14:");
-    println!("Row 0: {:?}", key_data.slice(s![0, 0, ..]));
-    println!("Row 14: {:?}", key_data.slice(s![0, 14, ..]));
+    println!("Original keys tokens 0,14 head 0:");
+    println!("Token 0: {:?}", key_data.slice(s![0, 0, ..]));
+    println!("Token 14: {:?}", key_data.slice(s![14, 0, ..]));
 
-    println!("Result keys head 0 rows 0,14:");
-    println!("Row 0: {:?}", key_result.slice(s![0, 0, ..]));
-    println!("Row 14: {:?}", key_result.slice(s![0, 14, ..]));
+    println!("Result keys tokens 0,14 head 0:");
+    println!("Token 0: {:?}", key_result.slice(s![0, 0, ..]));
+    println!("Token 14: {:?}", key_result.slice(s![14, 0, ..]));
 
     assert_eq!(key_result, expected_keys);
     assert_eq!(value_result, expected_values);
+}
+
+#[test]
+fn test_kv_cache_update_kernel() {
+    let metal_context = match <Metal as Backend>::Context::new() {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            println!("Failed to create MetalContext: {:?}. Skipping test.", e);
+            return;
+        },
+    };
+
+    test_random_pattern(&metal_context);
 }
 
 #[test]

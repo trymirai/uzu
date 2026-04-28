@@ -45,13 +45,6 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
     pub(super) residual_out_bias: Array<B>,
 }
 
-/// Ping-pong scratch pool for the sequential decode pipeline.
-///
-/// At any point in the pipeline at most two data buffers are live (the current
-/// input and the current output). `next_scratch` alternates between two slots,
-/// re-using a buffer when its `Rc` strong-count shows it is exclusively owned
-/// by the pool and it is large enough. When a residual connection keeps an
-/// extra reference alive, a fresh buffer is allocated transparently.
 pub(super) struct DecodeWorkspace<B: Backend> {
     _marker: std::marker::PhantomData<B>,
 }
@@ -85,10 +78,6 @@ impl<B: Backend> DecodeWorkspace<B> {
         unsafe { Array::from_allocation(allocation, 0, shape, data_type) }
     }
 
-    /// Clear both scratch slots, forcing the next call to allocate fresh
-    /// buffers. This must be called after submitting a command buffer that
-    /// references scratch intermediates so that the in-flight GPU work is
-    /// not corrupted by a subsequent decode pass reusing the same buffers.
     pub(super) fn reset(&self) {}
 }
 

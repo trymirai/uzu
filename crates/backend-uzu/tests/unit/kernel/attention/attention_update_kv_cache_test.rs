@@ -213,6 +213,108 @@ fn get_test_data_prefix_zero<T: ArrayElement + Float>() -> Input<T> {
     }
 }
 
+fn get_test_data_keys_in_place_offset<T: ArrayElement + Float>() -> Input<T> {
+    let num_groups = 2u32;
+    let num_heads = 4u32;
+    let head_dim = 2u32;
+    let suffix_length = 1u32;
+    let prefix_segment_length = 3u32;
+    let max_sequence_length = 5u32;
+
+    let cache_size = (num_groups * max_sequence_length * head_dim) as usize;
+    let qkv_stride = ((num_heads + 2 * num_groups) * head_dim) as usize;
+    let qkv_size = suffix_length as usize * qkv_stride;
+
+    let mut qkv = vec![T::zero(); qkv_size];
+    let value_base_offset = ((num_heads + num_groups) * head_dim) as usize;
+    for g in 0..num_groups as usize {
+        for d in 0..head_dim as usize {
+            let off = value_base_offset + g * head_dim as usize + d;
+            qkv[off] = T::from(200.0 + (g * head_dim as usize + d) as f32).unwrap();
+        }
+    }
+
+    // Place rotated key sentinels at the rotated_key_offset positions of the
+    // (in-place) source buffer: (g * suffix_length + t) * head_dim + d.
+    let mut key_cache = vec![T::zero(); cache_size];
+    for g in 0..num_groups as usize {
+        for t in 0..suffix_length as usize {
+            for d in 0..head_dim as usize {
+                let off = (g * suffix_length as usize + t) * head_dim as usize + d;
+                key_cache[off] =
+                    T::from(100.0 + ((g * suffix_length as usize + t) * head_dim as usize + d) as f32).unwrap();
+            }
+        }
+    }
+
+    let value_cache = vec![T::zero(); cache_size];
+
+    Input {
+        rotated_keys: None,
+        qkv: qkv.into_boxed_slice(),
+        key_cache: key_cache.into_boxed_slice(),
+        value_cache: value_cache.into_boxed_slice(),
+        num_groups,
+        num_heads,
+        head_dim,
+        suffix_length,
+        prefix_segment_length,
+        max_sequence_length,
+        keys_in_place: true,
+    }
+}
+
+fn test_keys_in_place_cache_offset<T: ArrayElement + Float + Debug + Display>() {
+    let input = get_test_data_keys_in_place_offset::<T>();
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.01f32
+    } else {
+        1e-6
+    };
+
+    for_each_non_cpu_backend!(|B| {
+        let (key_cache_out, value_cache_out) = get_output::<T, B>(&input);
+        let backend_name = std::any::type_name::<B>();
+
+        for g in 0..input.num_groups {
+            for t in 0..input.suffix_length {
+                for d in 0..input.head_dim {
+                    let cache_token_index = input.prefix_segment_length + t;
+                    // keys_in_place layout:
+                    //   cache_offset = (group * max_sequence_length
+                    //                   + cache_token_index) * head_dim + dim
+                    let cache_offset =
+                        ((g * input.max_sequence_length + cache_token_index) * input.head_dim + d) as usize;
+
+                    let rotated_key_offset = ((g * input.suffix_length + t) * input.head_dim + d) as usize;
+                    let expected_key = T::from(100.0 + rotated_key_offset as f32).unwrap();
+                    let value_lane = (g * input.head_dim + d) as usize;
+                    let expected_value = T::from(200.0 + value_lane as f32).unwrap();
+
+                    assert_eq_float::<T>(
+                        &[expected_key],
+                        &[key_cache_out[cache_offset]],
+                        eps,
+                        &format!(
+                            "key_cache[{}] mismatch (backend={}, g={}, t={}, d={})",
+                            cache_offset, backend_name, g, t, d,
+                        ),
+                    );
+                    assert_eq_float::<T>(
+                        &[expected_value],
+                        &[value_cache_out[cache_offset]],
+                        eps,
+                        &format!(
+                            "value_cache[{}] mismatch (backend={}, g={}, t={}, d={})",
+                            cache_offset, backend_name, g, t, d,
+                        ),
+                    );
+                }
+            }
+        }
+    });
+}
+
 fn test_internal<T: ArrayElement + Float + Debug + Display>(
     input: &Input<T>,
     expected_key_cache: &[T],
@@ -310,4 +412,20 @@ fn test_prefix_zero_f16() {
 #[uzu_test]
 fn test_prefix_zero_bf16() {
     test_prefix_zero::<bf16>();
+}
+
+// Explicit cache_offset verification when keys_in_place == true.
+#[uzu_test]
+fn test_keys_in_place_cache_offset_f32() {
+    test_keys_in_place_cache_offset::<f32>();
+}
+
+#[uzu_test]
+fn test_keys_in_place_cache_offset_f16() {
+    test_keys_in_place_cache_offset::<f16>();
+}
+
+#[uzu_test]
+fn test_keys_in_place_cache_offset_bf16() {
+    test_keys_in_place_cache_offset::<bf16>();
 }

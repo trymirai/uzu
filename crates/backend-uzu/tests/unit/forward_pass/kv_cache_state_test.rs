@@ -50,7 +50,7 @@ fn make_test_layer(
             ..
         } => window_length + suffix_capacity,
     };
-    let shape = [1, total_len.max(1), 1];
+    let shape = [total_len.max(1), 1, 1];
 
     let zeroes = vec![0.0_f32; shape.iter().product()];
     let keys = alloc_allocation_with_data(context, &zeroes);

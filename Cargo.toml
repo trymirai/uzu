@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/dsl",
+    "crates/bindings-types",
     "crates/bindings",
     "crates/shoji",
     "crates/backend-uzu",
@@ -14,20 +15,34 @@ members = [
     "crates/benchmarks",
     "crates/cli",
     "crates/cli-storage",
-    "crates/cli-release",
+    "crates/cli-tools",
 ]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.9"
 edition = "2024"
 rust-version = "1.94"
-license = "MIT"
-authors = ["Mirai Tech <https://trymirai.com>"]
+version = "0.1.9"
+authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
+description = "A high-performance inference engine for AI models"
+readme = "README.md"
+homepage = "https://trymirai.com"
 repository = "https://github.com/trymirai/uzu"
+license = "MIT"
+license-file = "LICENSE"
+keywords = [
+    "rust",
+    "ai",
+    "metal",
+    "high-performance",
+    "inference",
+    "llm",
+    "tts",
+]
 
 [workspace.dependencies]
 dsl = { path = "crates/dsl" }
+bindings-types = { path = "crates/bindings-types", default-features = false }
 bindings = { path = "crates/bindings", default-features = false }
 shoji = { path = "crates/shoji", default-features = false }
 backend-uzu = { path = "crates/backend-uzu", default-features = false }
@@ -72,7 +87,7 @@ itertools = "0.14"
 schemars = { version = "1.2", features = ["derive"] }
 is_close = "0.1"
 serde_json5 = "0.2"
-anyhow = "1.0"
+anyhow = "1.0.102"
 async-trait = "0.1"
 bindgen = "0.72"
 walkdir = "2.5"
@@ -138,12 +153,16 @@ napi = { version = "3.8.3", features = [
 ] }
 napi-derive = "3.5.2"
 napi-build = "2.3.1"
-pyo3 = { version = "0.28.2", features = [
+pyo3 = { version = "0.28.3", features = [
     "extension-module",
-    "abi3-py38",
+    "abi3-py312",
     "experimental-async",
     "multiple-pymethods",
 ] }
+pyo3-build-config = "0.28.3"
+pyo3-async-runtimes = { version = "0.28.0", features = ["tokio-runtime"] }
+pyo3-stub-gen = "0.22.1"
+inventory = "0.3.24"
 wasm-bindgen = { version = "0.2.114", features = ["serde-serialize"] }
 serde-wasm-bindgen = "0.6.5"
 wasm-bindgen-futures = "0.4.64"
@@ -168,6 +187,9 @@ keyring = { version = "3.6.3", features = [
     "linux-native-sync-persistent",
     "crypto-rust",
 ] }
+toml = "1.1.2"
+toml_edit = "0.25.11"
+colored = "3.1.1"
 
 [workspace.metadata.dinghy]
 forward-cfgs = ["metal_backend", "grammar_xgrammar"]

@@ -64,6 +64,7 @@ struct TokenDecoderContext<B: Backend> {
     shared_buffers: Rc<SharedBuffers<B>>,
     model_shape: ModelShape,
     decoder_config: Rc<crate::config::DecoderConfig>,
+    runtime_config: TextDecoderRuntimeConfig,
     executables: Decoder<B>,
     sampler: GpuSampling<B>,
     kv_cache_update: KVCacheUpdate<B>,
@@ -72,6 +73,7 @@ struct TokenDecoderContext<B: Backend> {
     async_chain_seeds: Array<B>,
     async_chain_results: Allocation<B>,
     async_chain_capacity: usize,
+    current_max_prefix_length: usize,
 }
 
 impl<B: Backend> TokenDecoderContext<B> {
@@ -89,8 +91,8 @@ impl<B: Backend> TokenDecoderContext<B> {
         runtime_config: &TextDecoderRuntimeConfig,
     ) -> Result<(Self, DataType), Error> {
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
-        let max_prefix_length = decoder_config.context_length;
         let max_suffix_length = text_decoder_prefill_step_size(runtime_config, decoder_config.context_length).max(32);
+        let max_prefix_length = max_suffix_length;
         let activation_data_type = model_shape.activation_data_type();
         let loaded_model = TokenDecoderLoadedModel::<B>::load(
             &context,
@@ -121,6 +123,7 @@ impl<B: Backend> TokenDecoderContext<B> {
                 shared_buffers: loaded_model.shared_buffers,
                 model_shape,
                 decoder_config,
+                runtime_config: runtime_config.clone(),
                 executables: loaded_model.executables,
                 sampler: loaded_model.sampler,
                 kv_cache_update,
@@ -129,6 +132,7 @@ impl<B: Backend> TokenDecoderContext<B> {
                 async_chain_seeds,
                 async_chain_results,
                 async_chain_capacity,
+                current_max_prefix_length: max_prefix_length,
             },
             activation_data_type,
         ))
@@ -332,6 +336,25 @@ impl<B: Backend> TokenDecoderRunner<B> {
             &mut self.ctx.async_chain_results,
             result_offset..result_offset + copy_size,
         );
+    }
+
+    pub(super) fn prepare_for_generation(
+        &mut self,
+        max_prefix_length: usize,
+    ) -> Result<(), Error> {
+        let max_prefix_length = max_prefix_length.max(1).min(self.ctx.decoder_config.context_length);
+        let max_suffix_length = text_decoder_prefill_step_size(&self.ctx.runtime_config, max_prefix_length).max(32);
+        if self.ctx.current_max_prefix_length == max_prefix_length {
+            return Ok(());
+        }
+        let context = self.ctx.context.as_ref();
+        *self.ctx.cache_layers.borrow_mut() =
+            CacheLayers::new(context, &self.ctx.model_shape, max_prefix_length, max_suffix_length);
+        let intermediate_data_type: DataType = self.ctx.decoder_config.output_norm_config.scale_precision.into();
+        self.ctx.kv_cache_update =
+            KVCacheUpdate::new(context, intermediate_data_type, max_prefix_length).map_err(unable_to_create_context)?;
+        self.ctx.current_max_prefix_length = max_prefix_length;
+        Ok(())
     }
 
     pub(super) fn prefill_without_sampling(

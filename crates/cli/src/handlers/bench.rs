@@ -61,8 +61,12 @@ pub fn handle_bench(
 }
 
 fn calculate_metric(data: Vec<f64>) -> String {
-    if let (Some(mean), Some(std_dev)) = (mean(&data), std_dev(&data)) {
-        format!("{:.3} ± {:.3}", mean, std_dev)
+    let mean = mean(&data);
+    let std_dev = std_dev(&data);
+    if let (Some(mean), Some(std_dev)) = (mean, std_dev) {
+        format!("{mean:.3} ± {std_dev:.3}")
+    } else if let Some(mean) = mean {
+        format!("{mean:.3}")
     } else {
         "-".to_string()
     }

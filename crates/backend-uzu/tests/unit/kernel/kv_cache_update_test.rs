@@ -54,7 +54,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         &input.swaps,
         input.swaps.len() as u32,
         input.num_heads,
-        input.max_sequence_length,
         input.head_dim,
         &mut encoder,
     );
