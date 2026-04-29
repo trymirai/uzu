@@ -44,12 +44,16 @@ pub async fn create_download_manager(
 ) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
     match file_download_manager_type {
         FileDownloadManagerType::Universal => {
-            Ok(Box::new(UniversalDownloadManager::new("download-manager-universal".to_string())))
+            let manager: Box<dyn FileDownloadManager> =
+                Box::new(UniversalDownloadManager::new("download-manager-universal".to_string()));
+            Ok(manager)
         },
         FileDownloadManagerType::Apple => {
             #[cfg(target_vendor = "apple")]
             {
-                Ok(Box::new(AppleDownloadManager::new("download-manager-apple".to_string())))
+                let manager: Box<dyn FileDownloadManager> =
+                    Box::new(AppleDownloadManager::new("download-manager-apple".to_string()));
+                Ok(manager)
             }
             #[cfg(not(target_vendor = "apple"))]
             {
