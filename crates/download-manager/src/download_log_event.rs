@@ -25,6 +25,10 @@ pub enum DownloadLogEvent {
         download_id: DownloadId,
         event: FileDownloadEvent,
     },
+    FsmTransition {
+        from: &'static str,
+        to: &'static str,
+    },
 }
 
 pub fn record_download_log_event(event: DownloadLogEvent) {

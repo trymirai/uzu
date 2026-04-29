@@ -17,12 +17,12 @@ use crate::{
     FileDownloadState,
     backends::common::{Backend, InitialTaskAttachment},
     file_download_task_actor::{
-        DownloadTaskActor, LifecycleState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
-        TerminalOutcome, project_public_state, project_runtime_public_state,
+        DownloadFsm, DownloadLifecycleState, DownloadTaskActor, PendingProgressSlot, ProgressCounters,
+        PublicProjection, TaskCommand, TerminalOutcome, project_public_state, project_runtime_public_state,
     },
     record_download_log_event,
     reducer::InitialLifecycleState,
-    traits::{ActiveDownloadGenerationCounter, BackendEventSender, DownloadBackend, DownloadConfig},
+    traits::{BackendEventSender, DownloadBackend, DownloadConfig},
 };
 
 pub struct GenericFileDownloadTask<B: DownloadBackend> {
@@ -56,23 +56,23 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         let (progress_sender, _) = tokio_broadcast_channel(64);
         let (terminal_sender, terminal_receiver) = tokio_watch_channel(TerminalOutcome::Pending);
 
+        let fsm = DownloadFsm::<B>::new(Arc::clone(&config), context, backend_event_sender);
+        let lifecycle = fsm.into_state_machine(initial_lifecycle_state.into());
         let actor = DownloadTaskActor::<B>::new(
             Arc::clone(&config),
-            initial_lifecycle_state.into(),
+            lifecycle,
             initial_projection,
             initial_progress,
-            ActiveDownloadGenerationCounter::default(),
-            context,
             command_receiver,
             backend_event_receiver,
             pending_progress,
             progress_waker_receiver,
-            backend_event_sender,
             public_state_sender,
             progress_sender.clone(),
             terminal_sender,
         );
-        let actor_task = tokio::spawn(actor.run());
+        let runtime_handle = tokio::runtime::Handle::current();
+        let actor_task = tokio::task::spawn_blocking(move || runtime_handle.block_on(actor.run()));
 
         Self {
             config,
@@ -105,8 +105,8 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         let (progress_sender, _) = tokio_broadcast_channel(64);
         let (terminal_sender, terminal_receiver) = tokio_watch_channel(TerminalOutcome::Pending);
 
-        let mut generation_counter = ActiveDownloadGenerationCounter::default();
-        let attachment_generation = generation_counter.allocate_next();
+        let mut fsm = DownloadFsm::<B>::new(Arc::clone(&config), Arc::clone(&context), backend_event_sender.clone());
+        let attachment_generation = fsm.allocate_next_generation();
         let (lifecycle_state, progress_counters) = match B::initial_task_attachment(
             context.as_ref(),
             Arc::clone(&config),
@@ -121,7 +121,7 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
                 initial_downloaded_bytes,
                 total_bytes,
             } => (
-                LifecycleState::Downloading {
+                DownloadLifecycleState::Downloading {
                     active_task: Some(active_task),
                     generation: attachment_generation,
                 },
@@ -135,24 +135,23 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         let initial_public_state =
             project_runtime_public_state(&lifecycle_state, &initial_projection, progress_counters, &config);
         let (public_state_sender, public_state_receiver) = tokio_watch_channel(initial_public_state);
+        let lifecycle = fsm.into_state_machine(lifecycle_state);
 
         let actor = DownloadTaskActor::<B>::new(
             Arc::clone(&config),
-            lifecycle_state,
+            lifecycle,
             initial_projection,
             progress_counters,
-            generation_counter,
-            context,
             command_receiver,
             backend_event_receiver,
             pending_progress,
             progress_waker_receiver,
-            backend_event_sender,
             public_state_sender,
             progress_sender.clone(),
             terminal_sender,
         );
-        let actor_task = tokio::spawn(actor.run());
+        let runtime_handle = tokio::runtime::Handle::current();
+        let actor_task = tokio::task::spawn_blocking(move || runtime_handle.block_on(actor.run()));
 
         Ok(Self {
             config,
@@ -335,10 +334,10 @@ impl<B: DownloadBackend> Drop for GenericFileDownloadTask<B> {
     }
 }
 
-impl<B: DownloadBackend> From<InitialLifecycleState> for LifecycleState<B> {
+impl<B: DownloadBackend> From<InitialLifecycleState> for DownloadLifecycleState<B> {
     fn from(initial_lifecycle_state: InitialLifecycleState) -> Self {
         match initial_lifecycle_state {
-            InitialLifecycleState::NotDownloaded => Self::NotDownloaded,
+            InitialLifecycleState::NotDownloaded => Self::NotDownloaded {},
             InitialLifecycleState::Paused {
                 part_path,
             } => Self::Paused {

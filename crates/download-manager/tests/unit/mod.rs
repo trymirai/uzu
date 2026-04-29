@@ -1,9 +1,10 @@
+mod backends;
 mod lifecycle_test;
+mod test_actor_task;
 mod test_corrupt_body;
 mod test_create_download_manager;
-mod test_generic_file_download_task;
+mod test_fsm_transitions;
 mod test_manager_startup;
 mod test_public_state_projector;
 mod test_reducer_startup;
 mod test_state_and_lock_regression;
-mod test_universal_resume;

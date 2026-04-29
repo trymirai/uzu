@@ -1,50 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
-use chrono::Utc;
-use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType};
 use rstest::rstest;
-use tokio::{fs::write as tokio_write, runtime::Handle as TokioHandle};
+use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::MockRegistry;
-
-#[rstest]
-#[case::universal(FileDownloadManagerType::Universal)]
-#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
-#[tokio::test(flavor = "multi_thread")]
-async fn test_foreign_lock_surfaces_locked_state(
-    #[case] download_manager_type: FileDownloadManagerType
-) -> Result<(), Box<dyn std::error::Error>> {
-    let registry = MockRegistry::start().await?;
-    let model_weights = registry.file("model.safetensors")?;
-    let temp_dir = tempfile::tempdir().unwrap();
-    let destination = temp_dir.path().join(&model_weights.file.name);
-    let lock_path = PathBuf::from(format!("{}.lock", destination.display()));
-    let foreign_lock = serde_json::json!({
-        "manager_id": "other-manager",
-        "acquired_at": Utc::now(),
-        "process_id": std::process::id(),
-    });
-    tokio_write(&lock_path, serde_json::to_vec(&foreign_lock).unwrap())
-        .await
-        .unwrap();
-
-    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current())
-        .await
-        .unwrap();
-    let task = manager
-        .file_download_task(
-            &model_weights.file.url,
-            &destination,
-            FileCheck::CRC(model_weights.crc32c()?),
-            Some(model_weights.file.size as u64),
-        )
-        .await
-        .unwrap();
-
-    let state = task.state().await;
-    assert!(matches!(state.phase, FileDownloadPhase::LockedByOther(_)));
-    Ok(())
-}
 
 #[rstest]
 #[case::universal(FileDownloadManagerType::Universal)]

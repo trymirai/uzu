@@ -1,6 +1,6 @@
 use crate::{
     FileDownloadState,
-    file_download_task_actor::{LifecycleState, ProgressCounters, PublicProjection},
+    file_download_task_actor::{DownloadLifecycleState, ProgressCounters, PublicProjection},
     reducer::InitialLifecycleState,
     traits::{DownloadBackend, DownloadConfig},
 };
@@ -35,7 +35,7 @@ pub fn project_public_state(
 }
 
 pub fn project_runtime_public_state<B: DownloadBackend>(
-    lifecycle_state: &LifecycleState<B>,
+    lifecycle_state: &DownloadLifecycleState<B>,
     projection: &PublicProjection,
     progress_counters: ProgressCounters,
     config: &DownloadConfig,
@@ -44,20 +44,22 @@ pub fn project_runtime_public_state<B: DownloadBackend>(
         PublicProjection::StickyError(message) => FileDownloadState::error(message.clone()),
         PublicProjection::LockedByOther(manager_id) => FileDownloadState::locked_by_other(manager_id.clone()),
         PublicProjection::None => match lifecycle_state {
-            LifecycleState::NotDownloaded => FileDownloadState::not_downloaded(config.expected_bytes.unwrap_or(0)),
-            LifecycleState::Paused {
+            DownloadLifecycleState::NotDownloaded {} => {
+                FileDownloadState::not_downloaded(config.expected_bytes.unwrap_or(0))
+            },
+            DownloadLifecycleState::Paused {
                 ..
             } => FileDownloadState::paused(
                 progress_counters.downloaded_bytes,
                 fallback_total_bytes(progress_counters, config.expected_bytes),
             ),
-            LifecycleState::Downloaded {
+            DownloadLifecycleState::Downloaded {
                 ..
             } => {
                 let total_bytes = config.expected_bytes.unwrap_or(progress_counters.total_bytes);
                 FileDownloadState::downloaded(total_bytes)
             },
-            LifecycleState::Downloading {
+            DownloadLifecycleState::Downloading {
                 ..
             } => FileDownloadState::downloading(
                 progress_counters.downloaded_bytes,

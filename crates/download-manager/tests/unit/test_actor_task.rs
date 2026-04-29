@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::common::MockRegistry;
 
-async fn task(
-    initial_lifecycle_state: InitialLifecycleState
+async fn actor_task(
+    initial_lifecycle_state: InitialLifecycleState,
 ) -> Result<GenericFileDownloadTask<UniversalBackend>, Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let served_file = registry.file("config.json")?;
@@ -36,8 +36,8 @@ async fn task(
 }
 
 #[tokio::test]
-async fn test_generic_file_download_task_state_is_cached_projection() -> Result<(), Box<dyn std::error::Error>> {
-    let task = task(InitialLifecycleState::Paused {
+async fn test_actor_task_state_is_cached_projection() -> Result<(), Box<dyn std::error::Error>> {
+    let task = actor_task(InitialLifecycleState::Paused {
         part_path: PathBuf::from("model.bin.part"),
     })
     .await?;
@@ -51,8 +51,8 @@ async fn test_generic_file_download_task_state_is_cached_projection() -> Result<
 }
 
 #[tokio::test]
-async fn test_generic_file_download_task_pause_from_downloaded_is_invalid() -> Result<(), Box<dyn std::error::Error>> {
-    let task = task(InitialLifecycleState::Downloaded {
+async fn test_actor_task_pause_from_downloaded_is_invalid() -> Result<(), Box<dyn std::error::Error>> {
+    let task = actor_task(InitialLifecycleState::Downloaded {
         file_path: PathBuf::from("model.bin"),
         crc_path: None,
     })
@@ -65,9 +65,8 @@ async fn test_generic_file_download_task_pause_from_downloaded_is_invalid() -> R
 }
 
 #[tokio::test]
-async fn test_generic_file_download_task_cancel_from_paused_is_idempotent_cleanup(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let task = task(InitialLifecycleState::Paused {
+async fn test_actor_task_cancel_from_paused_is_idempotent_cleanup() -> Result<(), Box<dyn std::error::Error>> {
+    let task = actor_task(InitialLifecycleState::Paused {
         part_path: PathBuf::from("model.bin.part"),
     })
     .await?;
