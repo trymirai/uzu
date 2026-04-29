@@ -1,16 +1,23 @@
 use async_fetcher::{FetchEvent, Fetcher, Source};
 use async_shutdown::ShutdownManager;
-use tokio::sync::mpsc;
+use tokio::{
+    sync::{
+        mpsc,
+        watch::{Receiver as TokioWatchReceiver, Sender as TokioWatchSender, channel as tokio_watch_channel},
+    },
+    time::{Duration as TokioDuration, sleep as tokio_sleep},
+};
 use tokio_stream::{
     StreamExt as TokioStreamExt,
     wrappers::{BroadcastStream as TokioBroadcastStream, UnboundedReceiverStream},
 };
 
 use crate::{
-    Arc, DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadPhase, FileDownloadState,
-    FileDownloadTask as FileDownloadTaskTrait, InternalDownloadState, LockFileState, PathBuf, StateTransitionAction,
-    TokioBroadcastSender, TokioHandle, TokioJoinHandle, TokioMutex, Uuid, acquire_lock, calculate_and_verify_crc,
-    check_lock_file, crc_utils, fs, managers::universal::AsyncFetcherConfig, release_lock, tokio_broadcast_channel,
+    Arc, DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadEvent, FileDownloadPhase,
+    FileDownloadState, FileDownloadTask as FileDownloadTaskTrait, InternalDownloadState, LockFileState, PathBuf,
+    StateTransitionAction, TokioBroadcastSender, TokioHandle, TokioJoinHandle, TokioMutex, Uuid, acquire_lock,
+    calculate_and_verify_crc, check_lock_file, crc_utils, fs, managers::universal::AsyncFetcherConfig, release_lock,
+    tokio_broadcast_channel,
 };
 
 pub struct FileDownloadTask {
@@ -28,8 +35,8 @@ pub struct FileDownloadTask {
     fetcher_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
     tokio_handle: TokioHandle,
-    completed_tx: tokio::sync::watch::Sender<bool>,
-    _completed_rx: tokio::sync::watch::Receiver<bool>,
+    completed_tx: TokioWatchSender<bool>,
+    _completed_rx: TokioWatchReceiver<bool>,
 }
 
 impl std::fmt::Debug for FileDownloadTask {
@@ -60,7 +67,7 @@ impl FileDownloadTask {
         tokio_handle: TokioHandle,
     ) -> Self {
         let (broadcast_sender, _receiver) = tokio_broadcast_channel::<FileDownloadState>(64);
-        let (completed_tx, completed_rx) = tokio::sync::watch::channel(false);
+        let (completed_tx, completed_rx) = tokio_watch_channel(false);
         Self {
             download_id,
             source_url,
@@ -295,7 +302,7 @@ impl FileDownloadTask {
                                         destination.display()
                                     );
                                     // Give a brief moment for filesystem operations to complete
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                    tokio_sleep(TokioDuration::from_millis(100)).await;
 
                                     if !destination.exists() {
                                         tracing::error!(
@@ -560,7 +567,7 @@ impl FileDownloadTask {
 
     pub async fn start_listening(
         &self,
-        global_broadcast: TokioBroadcastSender<(DownloadId, FileDownloadEvent)>,
+        global_broadcast: DownloadEventSender,
     ) {
         let mut listener_guard = self.listener_task.lock().await;
         if listener_guard.is_some() {
@@ -716,7 +723,7 @@ impl FileDownloadTaskTrait for FileDownloadTask {
 
     async fn start_listening(
         &self,
-        global_broadcast: TokioBroadcastSender<(DownloadId, FileDownloadEvent)>,
+        global_broadcast: DownloadEventSender,
     ) {
         self.start_listening(global_broadcast).await
     }

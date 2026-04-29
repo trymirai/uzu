@@ -10,7 +10,7 @@ use tokio::runtime::Handle;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tokio_handle = Handle::current();
 
-    let manager = create_download_manager(FileDownloadManagerType::default(), None, tokio_handle).await?;
+    let manager = create_download_manager(FileDownloadManagerType::default(), tokio_handle).await?;
 
     let url = "https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/main/tokenizer.json".to_string();
 

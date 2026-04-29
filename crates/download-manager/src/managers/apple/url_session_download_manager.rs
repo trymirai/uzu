@@ -1,11 +1,9 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadManager,
-    FileDownloadTask as FileDownloadTaskTrait, compute_download_id,
+    DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask as FileDownloadTaskTrait,
+    SharedDownloadEventSender, compute_download_id,
+    download_manager_state::DownloadManagerState,
     managers::apple::{
         FileDownloadTask, SessionConfig, URLSessionDelegate, URLSessionExt, UrlSessionDownloadTaskExt,
         url_session_state_reducer::{
@@ -15,8 +13,6 @@ use crate::{
     },
     prelude::*,
 };
-
-type TaskCache = Arc<TokioMutex<HashMap<DownloadId, Arc<dyn FileDownloadTaskTrait>>>>;
 
 #[allow(unused)]
 #[derive(Debug, Clone)]
@@ -28,34 +24,20 @@ pub enum URLSessionDropPolicy {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct URLSessionDownloadManager {
-    manager_id: String,
+    state: DownloadManagerState,
     session: Retained<NSURLSession>,
     delegate: Retained<URLSessionDelegate>,
     delegate_protocol_object: Retained<ProtocolObject<dyn NSURLSessionDelegate>>,
     drop_policy: URLSessionDropPolicy,
-    pub global_broadcast_sender: Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>>,
-    tokio_handle: TokioHandle,
-    task_cache: TaskCache,
 }
 
 unsafe impl Send for URLSessionDownloadManager {}
 unsafe impl Sync for URLSessionDownloadManager {}
 
 impl URLSessionDownloadManager {
-    fn generate_manager_id() -> String {
-        use crate::NSBundle;
-        let bundle_id = NSBundle::mainBundle().bundleIdentifier().unwrap_or_default().to_string();
-
-        if bundle_id.is_empty() {
-            "mirai.apple".to_string()
-        } else {
-            format!("{}.mirai.apple", bundle_id)
-        }
-    }
-
     #[allow(unused)]
     pub fn manager_id(&self) -> &str {
-        &self.manager_id
+        &self.state.manager_id
     }
 
     #[allow(unused)]
@@ -64,25 +46,10 @@ impl URLSessionDownloadManager {
         drop_policy: URLSessionDropPolicy,
         tokio_handle: TokioHandle,
     ) -> Result<Self, DownloadError> {
-        Self::new_with_manager_id(session_config, drop_policy, tokio_handle, None).await
-    }
-
-    pub async fn new_with_manager_id(
-        session_config: SessionConfig,
-        drop_policy: URLSessionDropPolicy,
-        tokio_handle: TokioHandle,
-        custom_manager_id: Option<String>,
-    ) -> Result<Self, DownloadError> {
-        let manager_id = custom_manager_id.unwrap_or_else(|| Self::generate_manager_id());
-
-        let (global_broadcast_sender, _global_broadcast_receiver) =
-            tokio_broadcast_channel::<(DownloadId, FileDownloadEvent)>(256);
-        let global_broadcast_sender = Arc::new(global_broadcast_sender);
-
-        let task_cache: TaskCache = Arc::new(TokioMutex::new(HashMap::new()));
+        let state = DownloadManagerState::new("apple", tokio_handle);
 
         let backend = autoreleasepool(|_| unsafe {
-            let delegate = URLSessionDelegate::new(global_broadcast_sender.clone());
+            let delegate = URLSessionDelegate::new(state.global_broadcast_sender.clone());
 
             let delegate_protocol_object = ProtocolObject::<dyn NSURLSessionDelegate>::from_retained(delegate.clone());
 
@@ -93,14 +60,11 @@ impl URLSessionDownloadManager {
             );
 
             Self {
-                manager_id,
+                state,
                 session,
                 delegate: delegate.clone(),
                 delegate_protocol_object,
                 drop_policy,
-                global_broadcast_sender,
-                tokio_handle,
-                task_cache,
             }
         });
 
@@ -179,7 +143,7 @@ impl URLSessionDownloadManager {
                     Some(&download_task),
                     &destination,
                     expected_bytes,
-                    &self.manager_id,
+                    &self.state.manager_id,
                 );
 
                 let file_check = download_info.crc32c.map_or(FileCheck::None, |crc_hash| FileCheck::CRC(crc_hash));
@@ -189,15 +153,15 @@ impl URLSessionDownloadManager {
                     download_info.source_url.clone(),
                     destination.clone(),
                     file_check,
-                    self.manager_id.clone(),
+                    self.state.manager_id.clone(),
                     expected_bytes,
                     internal_state,
                     file_download_state,
                     Some(self.session.clone()),
-                    self.tokio_handle.clone(),
+                    self.state.tokio_handle.clone(),
                 ));
 
-                file_task.start_listening((*self.global_broadcast_sender).clone()).await;
+                file_task.start_listening((*self.state.global_broadcast_sender).clone()).await;
 
                 // Special case: If task is Completed and file exists with valid CRC,
                 // the delegate callback was missed (app was closed during completion).
@@ -212,7 +176,7 @@ impl URLSessionDownloadManager {
                     file_task.handle_download_completion().await;
                 }
 
-                self.task_cache.lock().await.insert(download_id, file_task);
+                self.state.task_cache.lock().await.insert(download_id, file_task);
             } else {
                 download_task.cancel();
             }
@@ -238,20 +202,19 @@ impl Drop for URLSessionDownloadManager {
 #[async_trait::async_trait]
 impl FileDownloadManager for URLSessionDownloadManager {
     fn manager_id(&self) -> &str {
-        &self.manager_id
+        &self.state.manager_id
     }
 
-    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<(DownloadId, FileDownloadEvent)> {
-        TokioBroadcastStream::new(self.global_broadcast_sender.subscribe())
+    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent> {
+        self.state.subscribe_to_all_downloads()
     }
 
-    fn global_broadcast_sender(&self) -> Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>> {
-        self.global_broadcast_sender.clone()
+    fn global_broadcast_sender(&self) -> SharedDownloadEventSender {
+        self.state.global_broadcast_sender.clone()
     }
 
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTaskTrait>>, DownloadError> {
-        let task_cache_guard = self.task_cache.lock().await;
-        Ok(task_cache_guard.values().cloned().collect())
+        self.state.get_all_file_tasks().await
     }
 
     async fn file_download_task(
@@ -266,7 +229,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
         let download_id = compute_download_id(source_url, destination_path);
 
         {
-            let task_cache_guard = self.task_cache.lock().await;
+            let task_cache_guard = self.state.task_cache.lock().await;
             if let Some(cached_task) = task_cache_guard.get(&download_id) {
                 return Ok(cached_task.clone());
             }
@@ -274,7 +237,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
 
         // Check lock file before proceeding (result will be used by reduction only)
         let lock_path = PathBuf::from(format!("{}.lock", destination_path.display()));
-        let _ = check_lock_file(&lock_path, &self.manager_id, std::process::id());
+        let _ = check_lock_file(&lock_path, &self.state.manager_id, std::process::id());
 
         // If file is locked by another manager, do not error here.
         // Reduction will expose LockedByOther in the FileDownloadState.
@@ -311,7 +274,7 @@ impl FileDownloadManager for URLSessionDownloadManager {
             None,
             destination_path,
             expected_bytes,
-            &self.manager_id,
+            &self.state.manager_id,
         );
 
         // Do not acquire lock here. Lock acquisition/release is handled during
@@ -322,19 +285,19 @@ impl FileDownloadManager for URLSessionDownloadManager {
             source_url.clone(),
             destination_path.to_path_buf(),
             file_check,
-            self.manager_id.clone(),
+            self.state.manager_id.clone(),
             expected_bytes,
             internal_state,
             file_download_state,
             Some(self.session.clone()),
-            self.tokio_handle.clone(),
+            self.state.tokio_handle.clone(),
         ));
 
         // Start listening to global broadcast events
         tracing::debug!("[MANAGER] Starting listener for download_id={}", download_id);
-        file_task.start_listening((*self.global_broadcast_sender).clone()).await;
+        file_task.start_listening((*self.state.global_broadcast_sender).clone()).await;
 
-        self.task_cache.lock().await.insert(download_id, file_task.clone());
+        self.state.task_cache.lock().await.insert(download_id, file_task.clone());
         Ok(file_task)
     }
 }
