@@ -1,5 +1,5 @@
 use std::{
-    fs::{create_dir_all, read_dir, remove_dir_all, remove_file},
+    fs::{create_dir_all, remove_dir_all, remove_file},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -486,31 +486,6 @@ impl Item {
         join_all(pause_futures).await;
 
         tracing::debug!("[MODEL] ensure_paused: All file tasks paused");
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    async fn cleanup_empty_directory(&self) -> Result<(), StorageError> {
-        if !self.cache_path.exists() {
-            return Ok(());
-        }
-        let entries = read_dir(&self.cache_path).map_err(|error| StorageError::IO {
-            message: error.to_string(),
-        })?;
-        let mut has_real_files = false;
-        for entry in entries {
-            if let Ok(entry) = entry {
-                if let Some(name) = entry.file_name().to_str() {
-                    if !name.ends_with(".resume_data") && !name.ends_with(".crc") && !name.starts_with('.') {
-                        has_real_files = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if !has_real_files {
-            let _ = remove_dir_all(&self.cache_path);
-        }
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use tokio::runtime::Handle as TokioHandle;
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
@@ -15,34 +15,18 @@ use crate::{
 pub struct DownloadManager<B: Backend> {
     state: DownloadManagerState,
     context: Arc<B::Context>,
-    backend: PhantomData<B>,
 }
 
 impl<B: Backend> DownloadManager<B> {
-    pub fn new(manager_id: String) -> Self
-    where
-        B::Context: Default,
-    {
-        record_download_log_event(DownloadLogEvent::ManagerCreated {
-            manager_id: manager_id.clone(),
-        });
-        Self {
-            state: DownloadManagerState::with_manager_id(manager_id, TokioHandle::current()),
-            context: Arc::new(B::Context::default()),
-            backend: PhantomData,
-        }
-    }
-
     pub fn from_tokio_handle(tokio_handle: TokioHandle) -> Result<Self, DownloadError> {
         let context = B::create_context(tokio_handle.clone())?;
-        let state = DownloadManagerState::new(B::manager_suffix(), tokio_handle);
+        let state = DownloadManagerState::new(B::manager_suffix());
         record_download_log_event(DownloadLogEvent::ManagerCreated {
             manager_id: state.manager_id.clone(),
         });
         Ok(Self {
             state,
             context: Arc::new(context),
-            backend: PhantomData,
         })
     }
 }

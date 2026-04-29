@@ -1,9 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::{
-    runtime::Handle as TokioHandle,
-    sync::{Mutex as TokioMutex, broadcast::channel as tokio_broadcast_channel},
-};
+use tokio::sync::{Mutex as TokioMutex, broadcast::channel as tokio_broadcast_channel};
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{DownloadError, DownloadEvent, DownloadId, FileDownloadTask, SharedDownloadEventSender};
@@ -15,7 +12,6 @@ type ConstructionLocks = Arc<TokioMutex<HashMap<DownloadId, Arc<TokioMutex<()>>>
 pub struct DownloadManagerState {
     pub manager_id: String,
     pub global_broadcast_sender: SharedDownloadEventSender,
-    pub tokio_handle: TokioHandle,
     task_cache: TaskCache,
     construction_locks: ConstructionLocks,
 }
@@ -30,22 +26,11 @@ impl std::fmt::Debug for DownloadManagerState {
 }
 
 impl DownloadManagerState {
-    pub fn new(
-        suffix: &str,
-        tokio_handle: TokioHandle,
-    ) -> Self {
-        Self::with_manager_id(generate_manager_id(suffix), tokio_handle)
-    }
-
-    pub fn with_manager_id(
-        manager_id: String,
-        tokio_handle: TokioHandle,
-    ) -> Self {
+    pub fn new(suffix: &str) -> Self {
         let (global_broadcast_sender, _) = tokio_broadcast_channel::<DownloadEvent>(256);
         Self {
-            manager_id,
+            manager_id: generate_manager_id(suffix),
             global_broadcast_sender: Arc::new(global_broadcast_sender),
-            tokio_handle,
             task_cache: Arc::new(TokioMutex::new(HashMap::new())),
             construction_locks: Arc::new(TokioMutex::new(HashMap::new())),
         }

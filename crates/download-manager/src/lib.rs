@@ -39,14 +39,12 @@ pub use file_download_manager::{
 pub use file_download_phase::FileDownloadPhase;
 pub use file_download_state::FileDownloadState;
 pub use file_download_task::FileDownloadTask;
-pub use file_state::{CRCFileState, DownloadedFileState, FileState, ResumeDataFileState};
+pub use file_state::FileState;
 pub use lock_file_info::LockFileInfo;
 pub use lock_file_state::LockFileState;
 pub use lock_manager::{acquire_lock, check_lock_file, release_lock, try_acquire_lock};
 
 pub type DownloadId = uuid::Uuid;
-pub type TaskID = usize;
-
 pub fn compute_download_id(
     source_url: &str,
     destination_path: &std::path::Path,

@@ -5,7 +5,6 @@ use objc2_foundation::{NSString, NSURLSessionDownloadTask, NSURLSessionTaskState
 
 use crate::{DownloadId, DownloadInfo, compute_download_id};
 
-#[allow(dead_code)]
 pub trait AppleDownloadTaskExt {
     fn set_download_info(
         &self,

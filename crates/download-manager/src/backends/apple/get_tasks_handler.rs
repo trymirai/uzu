@@ -4,15 +4,13 @@ use block2::{Block, RcBlock};
 use objc2::rc::Retained;
 use objc2_foundation::{NSArray, NSURLSessionDataTask, NSURLSessionDownloadTask, NSURLSessionUploadTask};
 
-pub struct AppleGetTasksHandler(
-    RcBlock<
-        dyn Fn(
-            NonNull<NSArray<NSURLSessionDataTask>>,
-            NonNull<NSArray<NSURLSessionUploadTask>>,
-            NonNull<NSArray<NSURLSessionDownloadTask>>,
-        ),
-    >,
+type AppleGetTasksBlock = dyn Fn(
+    NonNull<NSArray<NSURLSessionDataTask>>,
+    NonNull<NSArray<NSURLSessionUploadTask>>,
+    NonNull<NSArray<NSURLSessionDownloadTask>>,
 );
+
+pub struct AppleGetTasksHandler(RcBlock<AppleGetTasksBlock>);
 
 impl AppleGetTasksHandler {
     pub fn new(
@@ -41,13 +39,7 @@ impl AppleGetTasksHandler {
 }
 
 impl Deref for AppleGetTasksHandler {
-    type Target = Block<
-        dyn Fn(
-            NonNull<NSArray<NSURLSessionDataTask>>,
-            NonNull<NSArray<NSURLSessionUploadTask>>,
-            NonNull<NSArray<NSURLSessionDownloadTask>>,
-        ),
-    >;
+    type Target = Block<AppleGetTasksBlock>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
