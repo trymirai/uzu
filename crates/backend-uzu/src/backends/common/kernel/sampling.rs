@@ -237,7 +237,8 @@ impl<B: Backend> SamplingKernel<B> {
 
             self.gumbel.encode(
                 None::<&B::Buffer>,
-                (seeds_buffer, seeds_offset),
+                seeds_buffer,
+                (seeds_offset / size_of::<u64>()) as u32,
                 logits_buffer.deref_mut(),
                 batch_size as u32,
                 vocab_size as u32,

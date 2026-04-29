@@ -64,7 +64,7 @@ impl SyncTask for ReadmeSyncTask {
             .with_context(|| format!("Missing [languages.{}]", primary_language.name()))?
             .metadata
             .clone();
-        let badges = resolve_badges(platforms, &metadata.badges)?;
+        let badges = resolve_badges(platforms, &metadata.badges, &workspace.workspace.package.version)?;
 
         let template_body = fs::read_to_string(paths.readme_template_path())?;
         let mut environment = Environment::new();
@@ -132,15 +132,19 @@ impl SyncTask for ReadmeSyncTask {
 fn resolve_badges(
     platforms: &PlatformsConfig,
     badge_ids: &[String],
+    version: &str,
 ) -> Result<Vec<String>> {
+    let mut environment = Environment::new();
     badge_ids
         .iter()
         .map(|id| {
-            platforms
+            let body = platforms
                 .badges
                 .get(id)
-                .cloned()
-                .with_context(|| format!("Unknown badge id '{id}' in platforms.toml [badges]"))
+                .with_context(|| format!("Unknown badge id '{id}' in platforms.toml [badges]"))?;
+            environment.add_template(id, body)?;
+            let rendered = environment.get_template(id)?.render(context! { version => version })?;
+            Ok(rendered)
         })
         .collect()
 }
