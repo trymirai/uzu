@@ -1,6 +1,6 @@
 {
     "name": "@trymirai/uzu",
-    "version": "0.1.9",
+    "version": "0.4.4",
     "description": "A high-performance inference engine for AI models",
     "author": "Mirai Tech Inc. <contact@getmirai.co>",
     "types": "dist/index.d.ts",

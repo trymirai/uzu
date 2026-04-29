@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
+use regex::Regex;
 
 use crate::{
     configs::{ALL_TARGET, Paths, PlatformsConfig},
@@ -155,20 +156,33 @@ impl LanguageBackend for SwiftLanguageBackend {
         let replacement = format!("url: \"{url}\",\n            checksum: \"{checksum}\"");
         let body = body.replace("path: \"uzu.xcframework\"", &replacement);
 
+        // Inject `path:` after `dependencies:` so the resulting argument order
+        // matches PackageDescription's Target initializer (name, dependencies, path, ...).
         let target_paths = [
-            (".target(", "\"Uzu\"", "bindings/swift/Sources/Uzu"),
-            (".executableTarget(", "\"Examples\"", "bindings/swift/Sources/Examples"),
-            (".testTarget(", "\"UzuTests\"", "bindings/swift/Tests/UzuTests"),
+            (r"\.target\(", "Uzu", "bindings/swift/Sources/Uzu"),
+            (r"\.executableTarget\(", "Examples", "bindings/swift/Sources/Examples"),
+            (r"\.testTarget\(", "UzuTests", "bindings/swift/Tests/UzuTests"),
         ];
         let mut body = body;
-        for (target_kind, name_literal, source_path) in target_paths {
-            let needle = format!("{target_kind}\n            name: {name_literal},");
-            let replacement = format!("{needle}\n            path: \"{source_path}\",");
-            let updated = body.replace(&needle, &replacement);
-            if updated == body {
-                anyhow::bail!("Failed to inject path for {target_kind} {name_literal}");
-            }
-            body = updated;
+        for (target_kind, name, source_path) in target_paths {
+            let pattern = format!(
+                r#"(?s){}\s*\n(?P<indent>\s*)name:\s*"{}",\s*\n\s*dependencies:\s*\[.*?\](?P<comma>,?)"#,
+                target_kind, name,
+            );
+            let regex = Regex::new(&pattern)?;
+            let captured =
+                regex.captures(&body).with_context(|| format!("Failed to locate target {name} for path injection"))?;
+            let matched = captured.get(0).unwrap().as_str().to_string();
+            let indent = captured.name("indent").context("Missing indent in captured")?.as_str().to_string();
+            let trailing = captured.name("comma").context("Missing comma in captured")?.as_str().to_string();
+            let comma_after_path = if trailing.is_empty() {
+                ""
+            } else {
+                ","
+            };
+            let stripped = matched.strip_suffix(',').unwrap_or(&matched);
+            let replacement = format!("{stripped},\n{indent}path: \"{source_path}\"{comma_after_path}");
+            body = body.replacen(&matched, &replacement, 1);
         }
 
         fs::write(paths.root_package_swift_path(), body)?;
