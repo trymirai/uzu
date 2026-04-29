@@ -4305,7 +4305,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.1.9"
+version = "0.4.4"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.11.1",
