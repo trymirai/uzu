@@ -7,9 +7,11 @@ use std::{
     thread,
 };
 
+use backend_uzu::backends::common::{Backend, SparsePages};
+
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
-    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
+    cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError, sparse_pages::CpuSparsePages},
 };
 
 pub struct CpuContext {
@@ -80,6 +82,15 @@ impl Context for CpuContext {
         Ok(Box::pin(AtomicU64::new(0)))
     }
 
+    fn create_sparse_pages(
+        &self,
+        _capacity: usize,
+    ) -> Result<Box<impl SparsePages<Backend = Self::Backend> + 'static>, <Self::Backend as Backend>::Error> {
+        unimplemented!("CPU backend does not support sparse pages");
+        #[allow(unreachable_code)]
+        Ok(Box::new(CpuSparsePages::new()))
+    }
+
     fn peak_memory_usage(&self) -> Option<usize> {
         None
     }
@@ -88,7 +99,7 @@ impl Context for CpuContext {
 
     fn start_capture(
         &self,
-        _trace_path: &std::path::Path,
+        _trace_path: &Path,
     ) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
     }

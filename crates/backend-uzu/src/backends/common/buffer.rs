@@ -1,7 +1,9 @@
 use std::{fmt::Debug, ops::Range, os::raw::c_void, ptr::NonNull};
 
+use crate::backends::common::Backend;
+
 pub trait Buffer: Debug {
-    type Backend: super::Backend;
+    type Backend: Backend;
 
     fn set_label(
         &mut self,

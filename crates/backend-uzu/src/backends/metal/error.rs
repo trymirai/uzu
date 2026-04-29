@@ -26,7 +26,7 @@ pub enum MetalError {
     CannotCreatePipelineState(String),
     #[error("Can not allocate buffer with size={0}")]
     SparseBufferAlloc(usize),
-    #[error("Can not allocate heap with size={0} nad page size={1}")]
+    #[error("Can not allocate heap with size={0} and page size={1}")]
     SparseHeapAlloc(usize, usize),
     #[error("Sparse buffer requires Metal 4 queue")]
     SparseRequireMtl4Queue,

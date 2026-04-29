@@ -1,5 +1,7 @@
 use std::{env, path::Path, rc::Rc};
 
+use backend_uzu::backends::common::SparsePages;
+
 use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
 
 pub trait Context: Sized {
@@ -37,6 +39,11 @@ pub trait Context: Sized {
     ) -> AllocationPool<Self::Backend>;
 
     fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
+
+    fn create_sparse_pages(
+        &self,
+        capacity: usize,
+    ) -> Result<Box<impl SparsePages<Backend = Self::Backend> + 'static>, <Self::Backend as Backend>::Error>;
 
     fn peak_memory_usage(&self) -> Option<usize>;
 

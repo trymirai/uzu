@@ -5,6 +5,7 @@ mod context;
 mod error;
 mod event;
 mod kernel;
+mod sparse_pages;
 
 pub use backend::Cpu;
 

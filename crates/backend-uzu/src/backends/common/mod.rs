@@ -10,6 +10,7 @@ pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
 mod sparse_buffer;
+mod sparse_pages;
 
 pub use activation_config::ActivationConfig;
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
@@ -24,4 +25,5 @@ pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
-pub use sparse_buffer::SparseBuffer;
+pub use sparse_buffer::{SparseBuffer, SparseBufferContext};
+pub use sparse_pages::{SparsePages, SparsePagesOperation};

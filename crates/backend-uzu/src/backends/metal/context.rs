@@ -1,9 +1,10 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
+use backend_uzu::backends::common::{Backend, SparsePages};
 use metal::{
     MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
     MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLGPUFamily, MTLLibrary, MTLResourceOptions,
+    MTLGPUFamily, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -17,7 +18,10 @@ use super::{
 use crate::{
     backends::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
-        metal::command_buffer::MetalCommandBufferInitial,
+        metal::{
+            command_buffer::MetalCommandBufferInitial,
+            sparse_pages::{MetalSparsePages, get_page_size_bytes},
+        },
     },
     utils::model_size::ModelSize,
 };
@@ -151,6 +155,17 @@ impl Context for MetalContext {
         self.device.new_event().ok_or(MetalError::CannotCreateEvent)
     }
 
+    fn create_sparse_pages(
+        &self,
+        capacity: usize,
+    ) -> Result<Box<impl SparsePages<Backend = Self::Backend> + 'static>, <Self::Backend as Backend>::Error> {
+        let page_size = MTLSparsePageSize::KB256;
+        let page_size_bytes = get_page_size_bytes(page_size);
+        let pages_count = capacity.div_ceil(page_size_bytes);
+        let pages = MetalSparsePages::new(self, page_size, pages_count)?;
+        Ok(Box::new(pages))
+    }
+
     fn peak_memory_usage(&self) -> Option<usize> {
         Some(*self.peak_memory_usage.borrow())
     }
@@ -163,8 +178,8 @@ impl Context for MetalContext {
 
     fn start_capture(
         &self,
-        trace_path: &std::path::Path,
-    ) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+        trace_path: &Path,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
@@ -180,7 +195,7 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    fn stop_capture(&self) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+    fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error> {
         MTLCaptureManager::shared_capture_manager().stop_capture();
 
         Ok(())
