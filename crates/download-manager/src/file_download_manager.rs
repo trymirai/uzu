@@ -12,6 +12,10 @@ pub type DownloadEvent = (DownloadId, FileDownloadEvent);
 pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
 pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 
+pub type DownloadEvent = (DownloadId, FileDownloadEvent);
+pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
+pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
+
 #[async_trait::async_trait]
 pub trait FileDownloadManager: Send + Sync + 'static {
     fn manager_id(&self) -> &str;

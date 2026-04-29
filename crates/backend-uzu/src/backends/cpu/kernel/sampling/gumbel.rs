@@ -12,6 +12,7 @@ use crate::{
 pub fn gumbel<T: ArrayElement + Float>(
     #[optional(!in_place)] logits: Option<*const T>,
     batch_seeds: *const u64,
+    batch_seeds_offset: u32,
     processed_logits: *mut T,
     batch_size: u32,
     vocab_size: u32,
@@ -24,7 +25,7 @@ pub fn gumbel<T: ArrayElement + Float>(
 
     for batch_idx in 0..batch_size as usize {
         let batch_start = batch_idx * vocab_size as usize;
-        let rng_seed = unsafe { *batch_seeds.add(batch_idx) };
+        let rng_seed = unsafe { *batch_seeds.add(batch_seeds_offset as usize + batch_idx) };
         for vocab_idx in 0..vocab_size as usize {
             let global_idx = batch_start + vocab_idx;
             unsafe {
