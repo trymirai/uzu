@@ -3,7 +3,10 @@ use std::{path::Path, sync::Arc};
 use tokio::{runtime::Handle as TokioHandle, sync::broadcast::Sender as TokioBroadcastSender};
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
-use crate::{DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask};
+use crate::{
+    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask,
+    backends::{apple::AppleDownloadManager, universal::UniversalDownloadManager},
+};
 
 pub type DownloadEvent = (DownloadId, FileDownloadEvent);
 pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
@@ -27,7 +30,8 @@ pub trait FileDownloadManager: Send + Sync + 'static {
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError>;
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum FileDownloadManagerType {
     Universal,
     #[default]
@@ -39,13 +43,13 @@ pub async fn create_download_manager(
     _tokio_handle: TokioHandle,
 ) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
     match file_download_manager_type {
-        FileDownloadManagerType::Universal => Ok(Box::new(crate::backends::universal::UniversalDownloadManager::new(
-            "download-manager-universal".to_string(),
-        ))),
+        FileDownloadManagerType::Universal => {
+            Ok(Box::new(UniversalDownloadManager::new("download-manager-universal".to_string())))
+        },
         FileDownloadManagerType::Apple => {
             #[cfg(target_vendor = "apple")]
             {
-                Ok(Box::new(crate::backends::apple::AppleDownloadManager::new("download-manager-apple".to_string())))
+                Ok(Box::new(AppleDownloadManager::new("download-manager-apple".to_string())))
             }
             #[cfg(not(target_vendor = "apple"))]
             {

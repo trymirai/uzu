@@ -9,9 +9,7 @@ use std::{
 };
 
 pub use config::Config;
-use download_manager::{
-    FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
-};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadPhase, create_download_manager};
 pub use error::StorageError;
 use futures_util::future::join_all;
 use shoji::types::{
@@ -44,11 +42,11 @@ impl Storage {
         })?;
 
         let download_manager = SharedAccess::new(Arc::from(
-            create_download_manager(FileDownloadManagerType::default(), tokio_handle.clone()).await.map_err(
-                |error| StorageError::DownloadManager {
+            create_download_manager(config.download_manager_type, tokio_handle.clone()).await.map_err(|error| {
+                StorageError::DownloadManager {
                     message: error.to_string(),
-                },
-            )?,
+                }
+            })?,
         ));
 
         let items = SharedAccess::new(HashMap::new());

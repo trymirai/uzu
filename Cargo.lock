@@ -1286,8 +1286,10 @@ dependencies = [
 name = "cli-storage"
 version = "0.1.9"
 dependencies = [
+ "clap",
  "crossterm",
  "dotenvy",
+ "download-manager",
  "futures-util",
  "ratatui",
  "shoji",

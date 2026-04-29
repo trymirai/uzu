@@ -12,6 +12,7 @@ use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
+use download_manager::FileDownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use nagare::{chat::ChatSession, classification::ClassificationSession, text_to_speech::TextToSpeechSession};
@@ -52,13 +53,21 @@ pub struct Engine {
 
 impl Engine {
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
+        Self::new_with_download_manager_type(config, FileDownloadManagerType::default()).await
+    }
+
+    pub async fn new_with_download_manager_type(
+        config: EngineConfig,
+        download_manager_type: FileDownloadManagerType,
+    ) -> Result<Self, EngineError> {
         let tokio_handle = Handle::try_current().map_err(|error| EngineError::TokioError {
             message: error.to_string(),
         })?;
 
         let device = Device::new()?;
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string());
+        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
+            .with_download_manager_type(download_manager_type);
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
         let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);

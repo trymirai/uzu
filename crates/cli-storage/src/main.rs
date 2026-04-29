@@ -8,20 +8,46 @@ mod ui;
 
 use std::{io, sync::Arc};
 
+use clap::{Parser, ValueEnum};
 use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use download_manager::FileDownloadManagerType;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use uzu::engine::{Engine, EngineConfig};
 
 use crate::{app::App, events::EventHandler};
 
+#[derive(Debug, Clone, Parser)]
+struct Cli {
+    #[arg(long, value_enum, default_value_t = DownloadManagerCliType::default())]
+    download_manager: DownloadManagerCliType,
+}
+
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+enum DownloadManagerCliType {
+    #[default]
+    Apple,
+    Universal,
+}
+
+impl From<DownloadManagerCliType> for FileDownloadManagerType {
+    fn from(download_manager_type: DownloadManagerCliType) -> Self {
+        match download_manager_type {
+            DownloadManagerCliType::Apple => Self::Apple,
+            DownloadManagerCliType::Universal => Self::Universal,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
     dotenvy::dotenv().ok();
     let runtime = tokio::runtime::Handle::current();
-    let engine = Arc::new(Engine::new(EngineConfig::default()).await?);
+    let engine =
+        Arc::new(Engine::new_with_download_manager_type(EngineConfig::default(), cli.download_manager.into()).await?);
 
     // Setup terminal
     enable_raw_mode()?;

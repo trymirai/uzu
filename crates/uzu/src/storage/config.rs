@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use download_manager::FileDownloadManagerType;
 use serde::{Deserialize, Serialize};
 use shoji::types::model::Model;
 
@@ -11,6 +12,7 @@ pub struct Config {
     pub device: Device,
     pub base_path: Option<PathBuf>,
     pub name: String,
+    pub download_manager_type: FileDownloadManagerType,
 }
 
 impl Config {
@@ -23,6 +25,7 @@ impl Config {
             device,
             base_path,
             name,
+            download_manager_type: FileDownloadManagerType::default(),
         }
     }
 
@@ -45,5 +48,15 @@ impl Config {
 
     pub fn log_name(&self) -> String {
         format!("{}.log", self.name)
+    }
+
+    pub fn with_download_manager_type(
+        &self,
+        download_manager_type: FileDownloadManagerType,
+    ) -> Self {
+        Self {
+            download_manager_type,
+            ..self.clone()
+        }
     }
 }
