@@ -6,3 +6,4 @@ mod test_manager_startup;
 mod test_public_state_projector;
 mod test_reducer_startup;
 mod test_state_and_lock_regression;
+mod test_universal_resume;

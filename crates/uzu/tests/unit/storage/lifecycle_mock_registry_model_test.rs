@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::Utc;
 use mock_registry::{Behavior, MockRegistry};
 use tokio::runtime::Handle as TokioHandle;
 use tokio::time::{Duration, timeout};
@@ -71,6 +72,40 @@ async fn test_storage_mock_registry_model_download_lifecycle() -> Result<(), Box
         assert!(std::path::PathBuf::from(format!("{}.crc", destination.display())).is_file());
     }
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_storage_cancel_does_not_delete_locked_files() -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    let registry = MockRegistry::start().await?;
+    let model = registry.models.first().ok_or_else(|| std::io::Error::other("mock registry must include a model"))?;
+    let test_storage = TestStorage::with_models(TokioHandle::current(), vec![model.clone()]).await?;
+    let item = test_storage
+        .storage
+        .get(&model.identifier)
+        .await
+        .ok_or_else(|| format!("model not found: {}", model.identifier))?;
+    let served_file = registry.files.first().ok_or_else(|| std::io::Error::other("mock registry must include files"))?;
+    let destination = item.cache_path.join(&served_file.file.name);
+    if let Some(parent) = destination.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&destination, served_file.bytes.as_ref()).await?;
+    tokio::fs::write(
+        std::path::PathBuf::from(format!("{}.lock", destination.display())),
+        serde_json::to_vec(&serde_json::json!({
+            "manager_id": "foreign-manager",
+            "acquired_at": Utc::now(),
+            "process_id": std::process::id(),
+        }))?,
+    )
+    .await?;
+
+    let result = item.cancel().await;
+
+    assert!(result.is_err());
+    assert!(destination.exists());
     Ok(())
 }
 
