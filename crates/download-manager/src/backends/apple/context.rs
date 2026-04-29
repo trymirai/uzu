@@ -6,7 +6,8 @@ use std::{
 
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
-    NSData, NSString, NSURL, NSURLSession, NSURLSessionConfiguration, NSURLSessionDelegate, NSURLSessionDownloadTask,
+    NSBundle, NSData, NSString, NSURL, NSURLSession, NSURLSessionConfiguration, NSURLSessionDelegate,
+    NSURLSessionDownloadTask,
 };
 use tokio::runtime::Handle as TokioHandle;
 
@@ -49,7 +50,7 @@ impl AppleBackendContext {
         let delegate_protocol_object = AppleSessionDelegate::protocol_object(delegate.clone());
         let session = unsafe {
             NSURLSession::sessionWithConfiguration_delegate_delegateQueue(
-                &NSURLSessionConfiguration::ephemeralSessionConfiguration(),
+                &automatic_session_configuration(),
                 Some(&delegate_protocol_object),
                 None,
             )
@@ -97,6 +98,20 @@ impl AppleBackendContext {
 
     pub fn event_registry(&self) -> AppleEventRegistry {
         Arc::clone(&self.event_registry)
+    }
+}
+
+fn automatic_session_configuration() -> Retained<NSURLSessionConfiguration> {
+    let bundle_id = NSBundle::mainBundle().bundleIdentifier().unwrap_or_default().to_string();
+    if bundle_id.is_empty() {
+        NSURLSessionConfiguration::ephemeralSessionConfiguration()
+    } else {
+        let session_id = NSString::from_str(&format!("{bundle_id}.trymirai.download-manager"));
+        let configuration = NSURLSessionConfiguration::backgroundSessionConfigurationWithIdentifier(&session_id);
+        configuration.setSessionSendsLaunchEvents(true);
+        configuration.setDiscretionary(false);
+        configuration.setWaitsForConnectivity(true);
+        configuration
     }
 }
 

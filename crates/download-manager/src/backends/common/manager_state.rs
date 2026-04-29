@@ -91,10 +91,7 @@ impl DownloadManagerState {
         download_id: DownloadId,
     ) -> Arc<TokioMutex<()>> {
         let mut construction_locks = self.construction_locks.lock().await;
-        construction_locks
-            .entry(download_id)
-            .or_insert_with(|| Arc::new(TokioMutex::new(())))
-            .clone()
+        construction_locks.entry(download_id).or_insert_with(|| Arc::new(TokioMutex::new(()))).clone()
     }
 }
 
