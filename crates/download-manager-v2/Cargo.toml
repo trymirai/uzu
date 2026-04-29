@@ -1,0 +1,37 @@
+[package]
+name = "download-manager-v2"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+
+[dependencies]
+async-fetcher.workspace = true
+async-shutdown.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+chrono.workspace = true
+crc32c.workspace = true
+futures-util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+statig = { version = "0.4.1", features = ["async"] }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -17,6 +17,7 @@ members = [
     "crates/cli",
     "crates/cli-storage",
     "crates/cli-tools",
+    "crates/download-manager-v2",
 ]
 resolver = "3"
 
@@ -112,7 +113,7 @@ indicatif = "0.18"
 inquire = "0.9"
 console = "0.16"
 rocket = { version = "0.5", features = ["json"] }
-uuid = { version = "1.20", features = ["v4", "v5"] }
+uuid = { version = "1.20", features = ["serde", "v4", "v5"] }
 comfy-table = { version = "7.2", default-features = false }
 autocxx = "0.30"
 cxx = "1.0"
