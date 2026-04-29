@@ -1,23 +1,17 @@
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum DownloadError {
     #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
     #[error("json error: {0}")]
-    SerdeJson(#[from] serde_json::Error),
-    #[error("http client error: {0}")]
-    Reqwest(#[from] reqwest::Error),
+    SerdeJson(String),
     #[error("http error: status {0}")]
     HttpStatus(u16),
     #[error("canceled")]
     Canceled,
     #[error("resume unsupported")]
     ResumeUnsupported,
-    #[error("io error: {0}")]
-    IOError(String),
     #[error("unsupported file download manager type")]
     UnsupportedType,
-
-    // Concrete cases instead of stringly-typed variants
     #[error("bad url")]
     BadUrl,
     #[error("missing download info for task")]
@@ -40,4 +34,22 @@ pub enum DownloadError {
     InvalidStateTransition,
     #[error("file locked by another manager: {0}")]
     LockedByOther(String),
+    #[error("task stopped")]
+    TaskStopped,
+    #[error("channel closed")]
+    ChannelClosed,
+    #[error("backend error: {0}")]
+    Backend(String),
+}
+
+impl From<std::io::Error> for DownloadError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error.to_string())
+    }
+}
+
+impl From<serde_json::Error> for DownloadError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::SerdeJson(error.to_string())
+    }
 }

@@ -12,13 +12,12 @@ pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 #[async_trait::async_trait]
 pub trait FileDownloadManager: Send + Sync + 'static {
     fn manager_id(&self) -> &str;
-
     fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent>;
-
     fn global_broadcast_sender(&self) -> SharedDownloadEventSender;
 
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError>;
 
+    #[allow(clippy::ptr_arg)]
     async fn file_download_task(
         &self,
         source_url: &String,
@@ -28,29 +27,30 @@ pub trait FileDownloadManager: Send + Sync + 'static {
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FileDownloadManagerType {
     Universal,
+    #[default]
     Apple,
 }
 
-impl Default for FileDownloadManagerType {
-    fn default() -> Self {
-        if cfg!(target_vendor = "apple") {
-            FileDownloadManagerType::Apple
-        } else {
-            FileDownloadManagerType::Universal
-        }
-    }
-}
-
-#[allow(unreachable_code)]
 pub async fn create_download_manager(
-    r#type: FileDownloadManagerType,
-    tokio_handle: TokioHandle,
+    file_download_manager_type: FileDownloadManagerType,
+    _tokio_handle: TokioHandle,
 ) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
-    let inner = download_manager_v2::create_download_manager(r#type.into(), tokio_handle)
-        .await
-        .map_err(|error| DownloadError::IOError(error.to_string()))?;
-    Ok(Box::new(crate::V2DownloadManagerAdapter::new(inner)) as Box<dyn FileDownloadManager>)
+    match file_download_manager_type {
+        FileDownloadManagerType::Universal => Ok(Box::new(crate::backends::universal::UniversalDownloadManager::new(
+            "download-manager-universal".to_string(),
+        ))),
+        FileDownloadManagerType::Apple => {
+            #[cfg(target_vendor = "apple")]
+            {
+                Ok(Box::new(crate::backends::apple::AppleDownloadManager::new("download-manager-apple".to_string())))
+            }
+            #[cfg(not(target_vendor = "apple"))]
+            {
+                Err(DownloadError::UnsupportedType)
+            }
+        },
+    }
 }

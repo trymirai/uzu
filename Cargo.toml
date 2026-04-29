@@ -17,7 +17,6 @@ members = [
     "crates/cli",
     "crates/cli-storage",
     "crates/cli-tools",
-    "crates/download-manager-v2",
 ]
 resolver = "3"
 

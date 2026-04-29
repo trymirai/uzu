@@ -252,10 +252,12 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 remove_file(part_path);
                 self.lifecycle_state = LifecycleState::NotDownloaded;
             },
-            LifecycleState::NotDownloaded
-            | LifecycleState::Downloaded {
+            LifecycleState::Downloaded {
                 ..
-            } => {},
+            } => {
+                self.lifecycle_state = LifecycleState::NotDownloaded;
+            },
+            LifecycleState::NotDownloaded => {},
         }
 
         self.progress_counters = ProgressCounters::default();

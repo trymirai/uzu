@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use download_manager_v2::{
+use download_manager::{
     DownloadError, FileCheck, FileDownloadPhase, FileDownloadTask,
     backends::universal::{UniversalBackend, UniversalBackendContext},
     file_download_task_actor::{GenericFileDownloadTask, ProgressCounters, PublicProjection},

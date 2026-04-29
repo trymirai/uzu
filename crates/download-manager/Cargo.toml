@@ -12,10 +12,8 @@ license.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 futures-util.workspace = true
-tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
@@ -25,8 +23,7 @@ base64.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 async-fetcher.workspace = true
-reqwest.workspace = true
-download-manager-v2 = { version = "0.1.9", path = "../download-manager-v2" }
+statig = { version = "0.4.1", features = ["async"] }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true

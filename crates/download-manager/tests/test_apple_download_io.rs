@@ -1,8 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use download_manager_v2::{
-    FileCheck, FileDownloadManager, FileDownloadPhase, backends::universal::UniversalDownloadManager,
-};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadPhase, backends::apple::AppleDownloadManager};
 use tempfile::tempdir;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -11,19 +9,19 @@ use tokio::{
 };
 
 #[tokio::test]
-async fn test_universal_manager_downloads_file_to_destination() {
-    let body = b"hello from v2";
+async fn test_apple_manager_downloads_file_to_destination() {
+    let body = b"hello from apple v2";
     let source_url = spawn_one_response_http_server(body).await;
     let temporary_directory = tempdir().unwrap();
-    let destination = temporary_directory.path().join("download.bin");
-    let manager = UniversalDownloadManager::new("test-manager".to_string());
+    let destination = temporary_directory.path().join("apple-download.bin");
+    let manager = AppleDownloadManager::new("test-apple-manager".to_string());
     let task = manager
         .file_download_task(&source_url, Path::new(&destination), FileCheck::None, Some(body.len() as u64))
         .await
         .unwrap();
 
     task.download().await.unwrap();
-    timeout(Duration::from_secs(5), task.wait()).await.unwrap();
+    timeout(Duration::from_secs(10), task.wait()).await.unwrap();
 
     let state = task.state().await;
     assert_eq!(state.phase, FileDownloadPhase::Downloaded);

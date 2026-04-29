@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use download_manager_v2::{
+use download_manager::{
     FileCheck, FileDownloadManager, FileDownloadPhase, backends::universal::UniversalDownloadManager,
 };
 

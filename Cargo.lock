@@ -2221,7 +2221,6 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 name = "download-manager"
 version = "0.1.9"
 dependencies = [
- "anyhow",
  "async-fetcher",
  "async-shutdown",
  "async-trait",
@@ -2229,7 +2228,6 @@ dependencies = [
  "block2",
  "chrono",
  "crc32c",
- "download-manager-v2",
  "futures-util",
  "indicatif",
  "libc",
@@ -2237,36 +2235,7 @@ dependencies = [
  "objc-sys",
  "objc2",
  "objc2-foundation",
- "reqwest 0.13.2",
  "rstest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "download-manager-v2"
-version = "0.1.9"
-dependencies = [
- "async-fetcher",
- "async-shutdown",
- "async-trait",
- "base64 0.22.1",
- "block2",
- "chrono",
- "crc32c",
- "futures-util",
- "objc2",
- "objc2-foundation",
  "serde",
  "serde_json",
  "statig",
@@ -2275,7 +2244,10 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

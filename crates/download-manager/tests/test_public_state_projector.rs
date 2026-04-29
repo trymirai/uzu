@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use download_manager_v2::{
+use download_manager::{
     FileCheck, FileDownloadPhase,
     file_download_task_actor::{ProgressCounters, PublicProjection, project_public_state},
     reducer::InitialLifecycleState,
