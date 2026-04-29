@@ -389,12 +389,24 @@ impl Item {
         // Reduce state after ensuring file tasks
         let current_state = self.reduce_state().await;
         self.update_state_and_broadcast(current_state.clone()).await;
+        if matches!(current_state.phase, DownloadPhase::Locked {}) {
+            return Err(StorageError::InvalidStateTransition {
+                from: current_state.phase,
+                to: DownloadPhase::NotDownloaded {},
+            });
+        }
 
         let file_tasks_guard = self.file_download_tasks.lock().await;
         for file_task in file_tasks_guard.iter() {
+            let download_id = file_task.download_id();
             let _ = file_task.cancel().await;
+            let _ = self.file_download_manager.remove_file_task(download_id).await;
         }
         drop(file_tasks_guard);
+
+        self.stop_listening().await;
+        *self.file_download_tasks.lock().await = Vec::new();
+        *self.file_download_states.lock().await = Vec::new();
 
         for file_info in self.files.iter() {
             let file_path = self.cache_path.join(&file_info.name);
@@ -576,10 +588,11 @@ impl Item {
             // Fan-in: per-stream forwarders into a single bounded channel
             let num_streams = streams.len();
             let (tx, mut rx) = tokio_mpsc_channel::<(usize, FileDownloadState)>(1024);
+            let mut forwarder_handles = Vec::with_capacity(num_streams);
 
             for (idx, mut stream) in streams {
                 let tx = tx.clone();
-                model.handle.spawn(async move {
+                let forwarder_handle = model.handle.spawn(async move {
                     while let Some(item) = stream.next().await {
                         match item {
                             Ok(state) => {
@@ -592,7 +605,11 @@ impl Item {
                         }
                     }
                 });
+                forwarder_handles.push(forwarder_handle);
             }
+            let _forwarder_handles = ListenerForwarderHandles {
+                handles: forwarder_handles,
+            };
             drop(tx); // close when all forwarders end
 
             // Aggregator: coalesce bursts, keep only latest state per task
@@ -661,5 +678,17 @@ impl Item {
                 | DownloadPhase::Paused {}
                 | DownloadPhase::Error { .. }
         )
+    }
+}
+
+struct ListenerForwarderHandles {
+    handles: Vec<TokioJoinHandle<()>>,
+}
+
+impl Drop for ListenerForwarderHandles {
+    fn drop(&mut self) {
+        for handle in &self.handles {
+            handle.abort();
+        }
     }
 }

@@ -254,9 +254,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             },
             LifecycleState::Downloaded {
                 ..
-            } => {
-                self.lifecycle_state = LifecycleState::NotDownloaded;
-            },
+            } => {},
             LifecycleState::NotDownloaded => {},
         }
 

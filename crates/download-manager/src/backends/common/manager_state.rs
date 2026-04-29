@@ -9,6 +9,7 @@ use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 use crate::{DownloadError, DownloadEvent, DownloadId, FileDownloadTask, SharedDownloadEventSender};
 
 type TaskCache = Arc<TokioMutex<HashMap<DownloadId, Arc<dyn FileDownloadTask>>>>;
+type ConstructionLocks = Arc<TokioMutex<HashMap<DownloadId, Arc<TokioMutex<()>>>>>;
 
 #[derive(Clone)]
 pub struct DownloadManagerState {
@@ -16,6 +17,7 @@ pub struct DownloadManagerState {
     pub global_broadcast_sender: SharedDownloadEventSender,
     pub tokio_handle: TokioHandle,
     task_cache: TaskCache,
+    construction_locks: ConstructionLocks,
 }
 
 impl std::fmt::Debug for DownloadManagerState {
@@ -45,6 +47,7 @@ impl DownloadManagerState {
             global_broadcast_sender: Arc::new(global_broadcast_sender),
             tokio_handle,
             task_cache: Arc::new(TokioMutex::new(HashMap::new())),
+            construction_locks: Arc::new(TokioMutex::new(HashMap::new())),
         }
     }
 
@@ -73,6 +76,25 @@ impl DownloadManagerState {
         task: Arc<dyn FileDownloadTask>,
     ) {
         self.task_cache.lock().await.insert(download_id, task);
+    }
+
+    pub async fn remove_task(
+        &self,
+        download_id: DownloadId,
+    ) {
+        self.task_cache.lock().await.remove(&download_id);
+        self.construction_locks.lock().await.remove(&download_id);
+    }
+
+    pub async fn construction_lock(
+        &self,
+        download_id: DownloadId,
+    ) -> Arc<TokioMutex<()>> {
+        let mut construction_locks = self.construction_locks.lock().await;
+        construction_locks
+            .entry(download_id)
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone()
     }
 }
 

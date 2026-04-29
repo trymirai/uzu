@@ -2,7 +2,7 @@ use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, 
 use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::common::{MockRegistry, wait_for_phase};
+use crate::common::{MockRegistry, init_test_tracing, wait_for_phase};
 
 #[rstest]
 #[case::universal(FileDownloadManagerType::Universal)]
@@ -11,6 +11,8 @@ use crate::common::{MockRegistry, wait_for_phase};
 async fn test_download_fresh_completes(
     #[case] download_manager_type: FileDownloadManagerType,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    tracing::info!(?download_manager_type, "starting fresh download lifecycle test");
     let registry = MockRegistry::start().await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
@@ -28,8 +30,10 @@ async fn test_download_fresh_completes(
         .unwrap();
     let mut progress = task.progress().await.unwrap();
 
+    tracing::info!(destination = %destination.display(), "starting file download");
     task.download().await.unwrap();
     let state = wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Downloaded)).await;
+    tracing::info!(?state, "file download reached terminal state");
 
     assert_eq!(state.downloaded_bytes, tokenizer.file.size as u64);
     assert_eq!(state.total_bytes, tokenizer.file.size as u64);

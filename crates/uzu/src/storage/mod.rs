@@ -82,7 +82,9 @@ impl Storage {
         for task in existing_file_tasks {
             let task_state = task.state().await;
             if matches!(task_state.phase, FileDownloadPhase::Error(_)) {
+                let download_id = task.download_id();
                 let _ = task.cancel().await;
+                let _ = download_manager.remove_file_task(download_id).await;
             } else {
                 active_file_tasks.push(task);
             }
@@ -96,6 +98,7 @@ impl Storage {
             .collect();
         for identifier in stale_model_identifiers {
             if let Some(item) = items.remove(&identifier) {
+                let _ = item.cancel().await;
                 item.stop_listening().await;
             }
         }

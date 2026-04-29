@@ -94,6 +94,10 @@ impl AppleBackendContext {
     ) {
         self.prepare_task(task, config, generation, backend_event_sender);
     }
+
+    pub fn event_registry(&self) -> AppleEventRegistry {
+        Arc::clone(&self.event_registry)
+    }
 }
 
 unsafe impl Send for AppleBackendContext {}
@@ -111,9 +115,9 @@ impl BackendContext for AppleBackendContext {
     ) -> Result<AppleActiveTask, AppleBackendError> {
         let ns_url = NSURL::URLWithString(&NSString::from_str(&config.source_url)).ok_or(AppleBackendError::BadUrl)?;
         let task = self.session.downloadTaskWithURL(&ns_url);
-        self.prepare_task(&task, config, generation, backend_event_sender);
+        self.prepare_task(&task, Arc::clone(&config), generation, backend_event_sender);
         task.resume();
-        Ok(AppleActiveTask::wrap(task))
+        Ok(AppleActiveTask::new(task, Arc::clone(&self.event_registry), config.download_id))
     }
 
     async fn resume(
@@ -127,9 +131,9 @@ impl BackendContext for AppleBackendContext {
             tokio::fs::read(resume_artifact_path).await.map_err(|error| AppleBackendError::Io(error.to_string()))?;
         let ns_data = NSData::with_bytes(&resume_data);
         let task = self.session.downloadTaskWithResumeData(&ns_data);
-        self.prepare_task(&task, config, generation, backend_event_sender);
+        self.prepare_task(&task, Arc::clone(&config), generation, backend_event_sender);
         task.resume();
-        Ok(AppleActiveTask::wrap(task))
+        Ok(AppleActiveTask::new(task, Arc::clone(&self.event_registry), config.download_id))
     }
 }
 

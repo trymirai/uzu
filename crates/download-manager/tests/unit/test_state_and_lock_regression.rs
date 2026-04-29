@@ -2,12 +2,18 @@ use std::{path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use rstest::rstest;
 use tokio::{fs::write as tokio_write, runtime::Handle as TokioHandle};
 
 use crate::common::MockRegistry;
 
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_universal_foreign_lock_surfaces_locked_state() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_foreign_lock_surfaces_locked_state(
+    #[case] download_manager_type: FileDownloadManagerType
+) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let model_weights = registry.file("model.safetensors")?;
     let temp_dir = tempfile::tempdir().unwrap();
@@ -22,7 +28,7 @@ async fn test_universal_foreign_lock_surfaces_locked_state() -> Result<(), Box<d
         .await
         .unwrap();
 
-    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, TokioHandle::current())
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current())
         .await
         .unwrap();
     let task = manager
@@ -40,13 +46,18 @@ async fn test_universal_foreign_lock_surfaces_locked_state() -> Result<(), Box<d
     Ok(())
 }
 
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_universal_concurrent_task_creation_returns_same_task() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_concurrent_task_creation_returns_same_task(
+    #[case] download_manager_type: FileDownloadManagerType
+) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, TokioHandle::current())
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current())
         .await
         .unwrap();
 

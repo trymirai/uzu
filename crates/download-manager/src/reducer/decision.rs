@@ -24,8 +24,12 @@ pub fn decide(
         _ => PublicProjection::None,
     };
 
-    let decision_action_plan = decide_actions(observation, validation);
-    let action_plan = ActionPlan::merge_in_order([validation.action_plan.clone(), decision_action_plan]);
+    let action_plan = if lock_observation.state.is_conflict() {
+        ActionPlan::empty()
+    } else {
+        let decision_action_plan = decide_actions(observation, validation);
+        ActionPlan::merge_in_order([validation.action_plan.clone(), decision_action_plan])
+    };
 
     let initial_lifecycle_state = match validation.checked {
         CheckedFileState::Valid => InitialLifecycleState::Downloaded {

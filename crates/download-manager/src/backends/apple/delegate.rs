@@ -72,8 +72,11 @@ define_class!(
             let Some(download_id) = download_task.download_id() else {
                 return;
             };
-            let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|registry| registry.get(&download_id).cloned())
+            let Some(sink) = Self::ivars(self)
+                .event_registry
+                .lock()
+                .ok()
+                .and_then(|mut registry| registry.remove(&download_id))
             else {
                 return;
             };
@@ -95,8 +98,11 @@ define_class!(
             let Some(download_id) = download_task.download_id() else {
                 return;
             };
-            let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|registry| registry.get(&download_id).cloned())
+            let Some(sink) = Self::ivars(self)
+                .event_registry
+                .lock()
+                .ok()
+                .and_then(|mut registry| registry.remove(&download_id))
             else {
                 return;
             };

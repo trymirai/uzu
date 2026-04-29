@@ -1,17 +1,23 @@
 use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
+use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::common::{Behavior, MockRegistry, error_message, wait_for_phase};
+use crate::common::{Behavior, MockRegistry, error_message, init_test_tracing, wait_for_phase};
 
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_universal_corrupt_body_fails_crc() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_corrupt_body_fails_crc(
+    #[case] download_manager_type: FileDownloadManagerType
+) -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    tracing::info!(?download_manager_type, "starting corrupt body CRC test");
     let registry = MockRegistry::start_with(Behavior::CORRUPT_BODY).await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, TokioHandle::current())
-        .await
-        .unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
             &tokenizer.file.url,
@@ -26,6 +32,7 @@ async fn test_universal_corrupt_body_fails_crc() -> Result<(), Box<dyn std::erro
     task.download().await.unwrap();
     let state = wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Error(_))).await;
     let message = error_message(state);
+    tracing::info!(message, "download failed as expected");
     assert!(
         message.contains("CRC") || message.contains("checksum"),
         "unexpected error: {message}"

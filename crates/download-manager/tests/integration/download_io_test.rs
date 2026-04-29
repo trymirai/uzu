@@ -6,6 +6,8 @@ use rstest::rstest;
 use tempfile::tempdir;
 use tokio::{runtime::Handle as TokioHandle, time::timeout};
 
+use crate::common::init_test_tracing;
+
 #[rstest]
 #[case::universal(FileDownloadManagerType::Universal)]
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
@@ -13,6 +15,8 @@ use tokio::{runtime::Handle as TokioHandle, time::timeout};
 async fn test_download_manager_downloads_mock_registry_file_to_destination(
     #[case] download_manager_type: FileDownloadManagerType
 ) -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    tracing::info!(?download_manager_type, "starting integration file download test");
     let registry = MockRegistry::start().await?;
     let served_file = registry.file("config.json")?;
     let temporary_directory = tempdir().unwrap();
@@ -29,6 +33,7 @@ async fn test_download_manager_downloads_mock_registry_file_to_destination(
 
     task.download().await?;
     timeout(Duration::from_secs(10), task.wait()).await?;
+    tracing::info!(destination = %destination.display(), "download wait completed");
 
     let state = task.state().await;
     assert_eq!(state.phase, FileDownloadPhase::Downloaded);

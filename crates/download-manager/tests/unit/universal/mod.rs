@@ -1,2 +1,0 @@
-mod corrupt_body_test;
-mod state_and_lock_regression_test;

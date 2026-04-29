@@ -1,2 +1,8 @@
 mod lifecycle_test;
-mod universal;
+mod test_corrupt_body;
+mod test_create_download_manager;
+mod test_generic_file_download_task;
+mod test_manager_startup;
+mod test_public_state_projector;
+mod test_reducer_startup;
+mod test_state_and_lock_regression;

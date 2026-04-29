@@ -65,6 +65,14 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
         self.state.get_all_file_tasks().await
     }
 
+    async fn remove_file_task(
+        &self,
+        download_id: crate::DownloadId,
+    ) -> Result<(), DownloadError> {
+        self.state.remove_task(download_id).await;
+        Ok(())
+    }
+
     #[allow(clippy::ptr_arg)]
     async fn file_download_task(
         &self,
@@ -74,6 +82,12 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
         expected_bytes: Option<u64>,
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError> {
         let download_id = compute_download_id(source_url, destination_path);
+        if let Some(cached_task) = self.state.get_task(download_id).await {
+            return Ok(cached_task);
+        }
+
+        let construction_lock = self.state.construction_lock(download_id).await;
+        let _construction_guard = construction_lock.lock().await;
         if let Some(cached_task) = self.state.get_task(download_id).await {
             return Ok(cached_task);
         }

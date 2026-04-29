@@ -5,7 +5,10 @@ use std::{
 };
 
 use futures_util::StreamExt;
-use reqwest::header::{CONTENT_LENGTH, RANGE};
+use reqwest::{
+    StatusCode,
+    header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE},
+};
 use tokio::{
     fs::{File as TokioFile, OpenOptions as TokioOpenOptions},
     io::AsyncWriteExt,
@@ -157,6 +160,17 @@ async fn download_once(
     }
 
     let response = request.send().await.map_err(|error| error.to_string())?;
+    let status = response.status();
+    let content_range = response.headers().get(CONTENT_RANGE).cloned();
+    let resume_from_bytes = if resume_from_bytes > 0 {
+        match status {
+            StatusCode::PARTIAL_CONTENT if content_range.is_some() => resume_from_bytes,
+            StatusCode::OK => 0,
+            _ => return Err(format!("server did not honor range request: status {status}")),
+        }
+    } else {
+        resume_from_bytes
+    };
     let response = response.error_for_status().map_err(|error| error.to_string())?;
     let remaining_bytes = response
         .headers()

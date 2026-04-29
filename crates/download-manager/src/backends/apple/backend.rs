@@ -54,7 +54,7 @@ impl common::Backend for AppleBackend {
                     task.resume();
                 }
                 Ok(InitialTaskAttachment::Downloading {
-                    active_task: AppleActiveTask::wrap(task),
+                    active_task: AppleActiveTask::new(task, context.event_registry(), config.download_id),
                     initial_downloaded_bytes,
                     total_bytes,
                 })

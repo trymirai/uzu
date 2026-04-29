@@ -12,12 +12,21 @@ pub type DownloadEvent = (DownloadId, FileDownloadEvent);
 pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
 pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum FileDownloadManagerType {
     Universal,
-    #[default]
     Apple,
+}
+
+impl Default for FileDownloadManagerType {
+    fn default() -> Self {
+        if cfg!(target_vendor = "apple") {
+            Self::Apple
+        } else {
+            Self::Universal
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -27,6 +36,11 @@ pub trait FileDownloadManager: Send + Sync + 'static {
     fn global_broadcast_sender(&self) -> SharedDownloadEventSender;
 
     async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError>;
+
+    async fn remove_file_task(
+        &self,
+        download_id: DownloadId,
+    ) -> Result<(), DownloadError>;
 
     #[allow(clippy::ptr_arg)]
     async fn file_download_task(

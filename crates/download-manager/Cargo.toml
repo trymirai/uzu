@@ -43,3 +43,7 @@ chrono.workspace = true
 [[test]]
 name = "unit"
 path = "tests/unit/test_entry.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"

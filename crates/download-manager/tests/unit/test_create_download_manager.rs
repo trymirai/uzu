@@ -14,3 +14,14 @@ async fn test_file_download_manager_new_returns_manager(#[case] download_manager
     };
     assert!(manager.manager_id().ends_with(expected_manager_id));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_file_download_manager_system_default_is_supported_on_current_platform() {
+    let manager = <dyn FileDownloadManager>::system_default(TokioHandle::current()).await.unwrap();
+    let expected_manager_id = if cfg!(target_vendor = "apple") {
+        "mirai.apple"
+    } else {
+        "mirai.universal"
+    };
+    assert!(manager.manager_id().ends_with(expected_manager_id));
+}
