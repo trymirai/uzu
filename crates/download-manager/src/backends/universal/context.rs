@@ -1,13 +1,15 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
-use async_fetcher::{FetchEvent, Fetcher, Source};
-use async_shutdown::ShutdownManager;
-use futures_util::{StreamExt, stream};
-use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use futures_util::StreamExt;
+use reqwest::header::{CONTENT_LENGTH, RANGE};
+use tokio::{
+    fs::{File as TokioFile, OpenOptions as TokioOpenOptions},
+    io::AsyncWriteExt,
+};
 
 use crate::{
     backends::universal::{UniversalActiveTask, UniversalBackend, UniversalBackendError},
@@ -25,7 +27,7 @@ pub struct UniversalBackendContext {
 impl Default for UniversalBackendContext {
     fn default() -> Self {
         Self {
-            connections_per_file: 4,
+            connections_per_file: 1,
             retries: 3,
             progress_interval_ms: 500,
         }
@@ -69,82 +71,131 @@ impl UniversalBackendContext {
             tokio::fs::create_dir_all(parent).await.map_err(|error| UniversalBackendError::Io(error.to_string()))?;
         }
 
-        let resume_from_bytes =
-            tokio::fs::metadata(&resume_artifact_path).await.ok().map(|metadata| metadata.len()).unwrap_or(0);
-        let shutdown_manager = ShutdownManager::new();
-        let (fetch_event_sender, fetch_event_receiver) = tokio_unbounded_channel();
-
-        let fetcher = Fetcher::<()>::default()
-            .connections_per_file(self.connections_per_file)
-            .retries(self.retries)
-            .progress_interval(self.progress_interval_ms)
-            .shutdown(shutdown_manager.clone())
-            .events(fetch_event_sender)
-            .build();
-        let source = Source::builder(Arc::from(config.destination.clone()), config.source_url.clone().into())
-            .partial(Arc::from(resume_artifact_path.clone()))
-            .build();
-
-        let event_task = spawn_fetch_event_task(
-            fetch_event_receiver,
+        let retry_count = self.retries;
+        let progress_interval = Duration::from_millis(self.progress_interval_ms);
+        let task_handle = tokio::spawn(download_streaming(
+            config,
             generation,
-            resume_from_bytes,
-            config.expected_bytes,
-            backend_event_sender.clone(),
-        );
-        let fetch_task = spawn_fetch_task(fetcher, source, generation, backend_event_sender);
+            resume_artifact_path.clone(),
+            backend_event_sender,
+            retry_count,
+            progress_interval,
+        ));
 
-        Ok(UniversalActiveTask::new(shutdown_manager, Box::from([event_task, fetch_task]), resume_artifact_path))
+        Ok(UniversalActiveTask::new(Box::from([task_handle]), resume_artifact_path))
     }
 }
 
-fn spawn_fetch_event_task(
-    fetch_event_receiver: tokio::sync::mpsc::UnboundedReceiver<(Arc<Path>, Arc<()>, FetchEvent)>,
+async fn download_streaming(
+    config: Arc<DownloadConfig>,
     generation: ActiveDownloadGeneration,
-    resume_from_bytes: u64,
-    expected_bytes: Option<u64>,
+    resume_artifact_path: PathBuf,
     backend_event_sender: BackendEventSender,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut total_size = None;
-        let mut downloaded_bytes = resume_from_bytes;
-        let mut fetch_event_stream = UnboundedReceiverStream::new(fetch_event_receiver);
+    retry_count: u16,
+    progress_interval: Duration,
+) {
+    let result = download_streaming_with_retries(
+        Arc::clone(&config),
+        generation,
+        &resume_artifact_path,
+        &backend_event_sender,
+        retry_count,
+        progress_interval,
+    )
+    .await;
 
-        while let Some((_path, _data, fetch_event)) = fetch_event_stream.next().await {
-            match fetch_event {
-                FetchEvent::ContentLength(length) => {
-                    total_size = Some(length.saturating_add(resume_from_bytes));
-                },
-                FetchEvent::Progress(bytes) => {
-                    downloaded_bytes = downloaded_bytes.saturating_add(bytes);
-                    let total_bytes = total_size.or(expected_bytes).unwrap_or(downloaded_bytes);
-                    backend_event_sender.send_progress(generation, downloaded_bytes, Some(total_bytes)).await;
-                },
-                FetchEvent::Fetched => {
-                    let _ = backend_event_sender.send_terminal(BackendEvent::completed(generation)).await;
-                    break;
-                },
-                FetchEvent::Fetching | FetchEvent::Retrying => {},
-            }
-        }
-    })
+    let terminal_event = match result {
+        Ok(()) => BackendEvent::completed(generation),
+        Err(error) => BackendEvent::error(generation, error),
+    };
+    let _ = backend_event_sender.send_terminal(terminal_event).await;
 }
 
-fn spawn_fetch_task(
-    fetcher: Arc<Fetcher<()>>,
-    source: Source,
+async fn download_streaming_with_retries(
+    config: Arc<DownloadConfig>,
     generation: ActiveDownloadGeneration,
-    backend_event_sender: BackendEventSender,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let source_stream = stream::once(async { (source, Arc::new(())) });
-        let fetch_task = fetcher.stream_from(source_stream, 1);
-        futures_util::pin_mut!(fetch_task);
-
-        while let Some((_path, _data, result)) = fetch_task.next().await {
-            if let Err(error) = result {
-                let _ = backend_event_sender.send_terminal(BackendEvent::error(generation, error.to_string())).await;
-            }
+    resume_artifact_path: &Path,
+    backend_event_sender: &BackendEventSender,
+    retry_count: u16,
+    progress_interval: Duration,
+) -> Result<(), String> {
+    let mut attempt = 0_u16;
+    loop {
+        match download_once(
+            Arc::clone(&config),
+            generation,
+            resume_artifact_path,
+            backend_event_sender,
+            progress_interval,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < retry_count => {
+                attempt = attempt.saturating_add(1);
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                tracing::debug!("retrying universal download after error: {error}");
+            },
+            Err(error) => return Err(error),
         }
-    })
+    }
+}
+
+async fn download_once(
+    config: Arc<DownloadConfig>,
+    generation: ActiveDownloadGeneration,
+    resume_artifact_path: &Path,
+    backend_event_sender: &BackendEventSender,
+    progress_interval: Duration,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let resume_from_bytes =
+        tokio::fs::metadata(resume_artifact_path).await.ok().map(|metadata| metadata.len()).unwrap_or(0);
+    let mut request = client.get(&config.source_url);
+    if resume_from_bytes > 0 {
+        request = request.header(RANGE, format!("bytes={resume_from_bytes}-"));
+    }
+
+    let response = request.send().await.map_err(|error| error.to_string())?;
+    let response = response.error_for_status().map_err(|error| error.to_string())?;
+    let remaining_bytes = response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    let total_bytes = remaining_bytes
+        .map(|remaining_bytes| remaining_bytes.saturating_add(resume_from_bytes))
+        .or(config.expected_bytes);
+
+    let mut file = open_part_file(resume_artifact_path, resume_from_bytes).await.map_err(|error| error.to_string())?;
+    let mut downloaded_bytes = resume_from_bytes;
+    let mut last_progress_emit =
+        std::time::Instant::now().checked_sub(progress_interval).unwrap_or_else(std::time::Instant::now);
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| error.to_string())?;
+        file.write_all(&chunk).await.map_err(|error| error.to_string())?;
+        downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
+
+        if last_progress_emit.elapsed() >= progress_interval {
+            backend_event_sender.send_progress(generation, downloaded_bytes, total_bytes).await;
+            last_progress_emit = std::time::Instant::now();
+        }
+    }
+
+    file.flush().await.map_err(|error| error.to_string())?;
+    backend_event_sender.send_progress(generation, downloaded_bytes, total_bytes.or(Some(downloaded_bytes))).await;
+    tokio::fs::rename(resume_artifact_path, &config.destination).await.map_err(|error| error.to_string())
+}
+
+async fn open_part_file(
+    resume_artifact_path: &Path,
+    resume_from_bytes: u64,
+) -> Result<TokioFile, std::io::Error> {
+    if resume_from_bytes > 0 {
+        TokioOpenOptions::new().create(true).append(true).open(resume_artifact_path).await
+    } else {
+        TokioOpenOptions::new().create(true).write(true).truncate(true).open(resume_artifact_path).await
+    }
 }
