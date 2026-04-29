@@ -11,6 +11,7 @@ VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(Gumbel) (
     device const T* logits OPTIONAL(!in_place),
     device const uint64_t* batch_seeds,
+    constant uint& batch_seeds_offset,
     device T* processed_logits,
     constant uint& batch_size,
     constant uint& vocab_size,
@@ -30,7 +31,7 @@ PUBLIC KERNEL(Gumbel) (
 
   uint grain_offset = batch_start + grain_offset_in_batch;
 
-  uint64_t rng_seed = batch_seeds[batch_idx];
+  uint64_t rng_seed = batch_seeds[batch_seeds_offset + batch_idx];
   uint64_t rng_offset = (group_idx * BLOCK_SIZE + thread_idx) *
                         (GRAIN_SIZE + WORDS_PER_OFFSET - 1) / WORDS_PER_OFFSET;
   PhiloxState rng;
