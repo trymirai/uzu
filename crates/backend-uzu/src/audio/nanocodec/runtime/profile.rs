@@ -1,12 +1,13 @@
 use std::sync::mpsc::Receiver;
 
 use super::*;
-use crate::{backends::common::Allocation, try_allocation_to_vec};
+use crate::{array::Array, backends::common::Allocation, try_allocation_to_vec};
 
 pub enum SubmittedDecodedPaddedAudio<B: Backend> {
     Ready(DecodedPaddedAudio),
     Pending {
         output: Allocation<B>,
+        retained_inputs: Box<[Array<B>]>,
         data_type: DataType,
         channels: usize,
         frames: usize,
@@ -37,6 +38,7 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
             Self::Ready(decoded) => Ok(decoded),
             Self::Pending {
                 output,
+                retained_inputs,
                 data_type,
                 channels,
                 frames,
@@ -47,6 +49,7 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
                 let completed_command_buffer = final_command_buffer.wait_until_completed().map_err(|err| {
                     AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
                 })?;
+                drop(retained_inputs);
                 let allocation_read_error =
                     |err| AudioError::Runtime(format!("failed to read FishAudio decoder output allocation: {err}"));
                 let samples_result: AudioResult<Vec<f32>> = match data_type {

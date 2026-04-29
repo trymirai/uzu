@@ -30,10 +30,10 @@ pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {
-    let allocation = context
+    let mut allocation = context
         .create_allocation(allocation_size_bytes::<T>(data.len()), AllocationType::Global)
         .expect("Failed to create allocation");
-    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
     allocation
 }
 
@@ -51,7 +51,7 @@ pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
 }
 
 pub fn write_allocation<B: Backend, T: ArrayElement>(
-    allocation: &Allocation<B>,
+    allocation: &mut Allocation<B>,
     data: &[T],
 ) {
     allocation_copy_from_slice(allocation, data).expect("Failed to write allocation")

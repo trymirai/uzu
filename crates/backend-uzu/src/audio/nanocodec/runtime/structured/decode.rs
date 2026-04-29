@@ -18,7 +18,6 @@ impl StructuredAudioCodecGraph {
         kernels: &StructuredAudioKernelCache<B>,
     ) -> AudioResult<Array<B>> {
         let ws = &resources.decode_workspace;
-        let residual = input.clone();
         let res_snake1 = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
         let x = snake1d_enqueue(
             encoder,
@@ -61,7 +60,7 @@ impl StructuredAudioCodecGraph {
         causal_conv1d_grouped_residual_enqueue(
             encoder,
             &x,
-            &residual,
+            input,
             res_conv2,
             &unit.conv2,
             lengths,
@@ -126,7 +125,15 @@ impl StructuredAudioCodecGraph {
             codebooks,
             frames,
         )?;
-        x = self.apply_post_module_enqueued(resources, &mut encoder, quantized_nsc, lengths, batch_size, frames)?;
+        let retained_inputs = quantized_nsc.retained_inputs;
+        x = self.apply_post_module_enqueued(
+            resources,
+            &mut encoder,
+            quantized_nsc.output,
+            lengths,
+            batch_size,
+            frames,
+        )?;
 
         let mut current_channels = self.input_dim;
         let mut current_frames = frames;
@@ -358,7 +365,6 @@ impl StructuredAudioCodecGraph {
                 let _ = completion_sender.send(());
             }
         });
-        let final_command_buffer = encoder.end_encoding().submit();
         let out_lengths = lengths_i32
             .into_iter()
             .map(|length| {
@@ -367,8 +373,10 @@ impl StructuredAudioCodecGraph {
                 })
             })
             .collect::<AudioResult<Vec<_>>>()?;
+        let final_command_buffer = encoder.end_encoding().submit();
         Ok(SubmittedDecodedPaddedAudio::Pending {
             output: x.into_allocation(),
+            retained_inputs,
             data_type: self.vocoder_data_type,
             channels: vocoder_graph.final_conv.cout,
             frames: current_frames,

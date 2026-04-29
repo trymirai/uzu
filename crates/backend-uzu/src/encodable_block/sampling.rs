@@ -26,7 +26,6 @@ pub struct SamplingArguments<'a, B: Backend> {
     pub vocab_size: usize,
 }
 
-#[derive(Clone)]
 pub(crate) struct SamplingInputs<B: Backend> {
     pub seeds: Array<B>,
     pub bitmask: Option<Array<B>>,

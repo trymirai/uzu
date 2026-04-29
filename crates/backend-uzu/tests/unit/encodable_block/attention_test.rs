@@ -23,10 +23,10 @@ fn alloc_allocation_with_data<T: crate::ArrayElement>(
     context: &<Metal as Backend>::Context,
     data: &[T],
 ) -> Allocation<Metal> {
-    let allocation = context
+    let mut allocation = context
         .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
-    crate::allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    crate::allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
     allocation
 }
 

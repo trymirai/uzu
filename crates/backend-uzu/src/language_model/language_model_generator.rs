@@ -492,8 +492,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             is_prefilling: false,
         };
 
-        let token_ids_allocation = (pass_idx > 0)
-            .then(|| self.async_token_ids.clone().expect("previous async pass must provide token_ids allocation"));
+        let token_ids_allocation = if pass_idx > 0 {
+            Some(self.async_token_ids.take().expect("previous async pass must provide token_ids allocation"))
+        } else {
+            None
+        };
         let sampling_inputs = SamplingInputs::from_slices(self.context.context.as_ref(), &[token_seed], None, None);
 
         let is_first_decode = !is_continuation;

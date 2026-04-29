@@ -20,10 +20,10 @@ fn allocation_from_slice<B: Backend, T: crate::ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {
-    let allocation = context
+    let mut allocation = context
         .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
-    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
     allocation
 }
 

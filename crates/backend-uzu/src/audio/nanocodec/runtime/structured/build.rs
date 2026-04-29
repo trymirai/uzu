@@ -59,17 +59,25 @@ pub(super) fn read_float_matrix_exact<B: Backend>(
     Ok(allocation)
 }
 
-pub(super) fn outer_axis_view<B: Backend>(
-    allocation: &Array<B>,
+pub(super) fn copy_to_outer_axis_slice<B: Backend>(
+    destination: &mut Array<B>,
     index: usize,
+    source: &Array<B>,
     slice_shape: &[usize],
-    data_type: DataType,
-) -> AudioResult<Array<B>> {
-    let slice_bytes = size_for_shape(slice_shape, data_type);
-    let offset = index
-        .checked_mul(slice_bytes)
-        .ok_or(AudioError::Runtime("allocation outer-axis view offset overflow".to_string()))?;
-    Ok(allocation.view_at_offset(offset, slice_shape))
+) -> AudioResult<()> {
+    let slice_bytes = size_for_shape(slice_shape, source.data_type());
+    let offset =
+        index.checked_mul(slice_bytes).ok_or(AudioError::Runtime("outer-axis slice offset overflow".to_string()))?;
+    let end =
+        offset.checked_add(slice_bytes).ok_or(AudioError::Runtime("outer-axis slice end overflow".to_string()))?;
+    if end > destination.size() {
+        return Err(AudioError::Runtime(format!(
+            "outer-axis slice exceeds destination: end {end}, destination size {}",
+            destination.size()
+        )));
+    }
+    destination.as_bytes_mut()[offset..end].copy_from_slice(source.as_bytes());
+    Ok(())
 }
 
 pub(super) fn read_conv1d_layer<B: Backend>(

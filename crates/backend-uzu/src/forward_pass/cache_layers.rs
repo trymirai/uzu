@@ -20,7 +20,6 @@ pub enum CacheLayer<B: Backend> {
     DeltaNet(DeltaNetLayer<B>),
 }
 
-#[derive(Clone)]
 pub enum CacheLayerSlice<B: Backend> {
     Transformer(KVSlice<B>),
     StateSpace,
@@ -92,7 +91,6 @@ pub struct CacheLayers<B: Backend> {
     pub data: Box<[CacheLayer<B>]>,
 }
 
-#[derive(Clone)]
 pub struct CacheLayersSlice<B: Backend> {
     pub layers: Vec<CacheLayerSlice<B>>,
 }

@@ -1,6 +1,11 @@
 use super::*;
 use crate::array::Array;
 
+pub(super) struct QuantizerDecodeOutput<B: Backend> {
+    pub(super) output: Array<B>,
+    pub(super) retained_inputs: Box<[Array<B>]>,
+}
+
 impl StructuredAudioCodecGraph {
     fn conv1d_input_context<B: Backend>(layer: &StructuredAudioConv1d<B>) -> AudioResult<usize> {
         layer
@@ -104,7 +109,7 @@ impl StructuredAudioCodecGraph {
         batch_size: usize,
         codebooks: usize,
         frames: usize,
-    ) -> AudioResult<Array<B>> {
+    ) -> AudioResult<QuantizerDecodeOutput<B>> {
         if codebooks != self.total_codebooks {
             return Err(AudioError::Runtime(format!(
                 "structured audio codebook mismatch: expected {}, got {codebooks}",
@@ -195,7 +200,11 @@ impl StructuredAudioCodecGraph {
             residual_cardinality_i32,
             encoder,
         );
+        let retained_inputs = vec![tokens_array, lengths_array].into_boxed_slice();
 
-        Ok(unsafe { Array::from_allocation(output, 0, &output_shape, output_data_type) })
+        Ok(QuantizerDecodeOutput {
+            output: unsafe { Array::from_allocation(output, 0, &output_shape, output_data_type) },
+            retained_inputs,
+        })
     }
 }

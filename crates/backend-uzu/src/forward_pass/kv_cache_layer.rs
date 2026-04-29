@@ -7,7 +7,6 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
 pub enum KVSlice<B: Backend> {
     Full {
         base_prefix_len: usize,

@@ -34,8 +34,8 @@ fn alloc_allocation_with_data<T: ArrayElement>(
     context: &<Metal as Backend>::Context,
     data: &[T],
 ) -> Allocation<Metal> {
-    let allocation = empty_allocation::<T>(context, data.len());
-    crate::allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    let mut allocation = empty_allocation::<T>(context, data.len());
+    crate::allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
     allocation
 }
 

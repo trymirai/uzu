@@ -87,8 +87,6 @@ pub(in crate::audio::nanocodec::runtime) struct StructuredAudioRuntimeResources<
     pub(super) post_module_runtime: RefCell<Option<Rc<StructuredAudioPostModuleRuntime<B>>>>,
     pub(super) vocoder_graph: RefCell<Option<Rc<StructuredAudioDecoderGraph<B>>>>,
     pub(super) quantizer_resources: RefCell<Option<Rc<FishAudioQuantizerResources<B>>>>,
-    token_staging: RefCell<Option<Array<B>>>,
-    length_staging: RefCell<Option<Array<B>>>,
     pub(super) decode_workspace: DecodeWorkspace<B>,
 }
 
@@ -100,8 +98,6 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
             post_module_runtime: RefCell::new(None),
             vocoder_graph: RefCell::new(None),
             quantizer_resources: RefCell::new(None),
-            token_staging: RefCell::new(None),
-            length_staging: RefCell::new(None),
             decode_workspace: DecodeWorkspace::new(),
         }
     }
@@ -110,13 +106,10 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
         &self.context
     }
 
-    /// Reset the decode workspace and staging arrays so that subsequent
-    /// decode passes allocate fresh buffers. Call this after submitting a
-    /// command buffer whose encoded work references the current buffers.
+    /// Reset the decode workspace after submitting a command buffer whose
+    /// encoded work references the current buffers.
     pub(in crate::audio::nanocodec::runtime) fn reset_for_pending(&self) {
         self.decode_workspace.reset();
-        *self.token_staging.borrow_mut() = None;
-        *self.length_staging.borrow_mut() = None;
     }
 
     pub(super) fn kernels(
@@ -136,30 +129,14 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
         &self,
         min_elements: usize,
     ) -> Array<B> {
-        let mut slot = self.token_staging.borrow_mut();
-        if let Some(existing) = slot.as_ref() {
-            if existing.num_elements() >= min_elements {
-                return existing.clone();
-            }
-        }
-        let array = self.context.create_array_uninitialized(&[min_elements], DataType::U32, "structured_audio_tokens");
-        *slot = Some(array.clone());
-        array
+        self.context.create_array_uninitialized(&[min_elements], DataType::U32, "structured_audio_tokens")
     }
 
     pub(super) fn length_staging(
         &self,
         min_elements: usize,
     ) -> Array<B> {
-        let mut slot = self.length_staging.borrow_mut();
-        if let Some(existing) = slot.as_ref() {
-            if existing.num_elements() >= min_elements {
-                return existing.clone();
-            }
-        }
-        let array = self.context.create_array_uninitialized(&[min_elements], DataType::I32, "structured_audio_lengths");
-        *slot = Some(array.clone());
-        array
+        self.context.create_array_uninitialized(&[min_elements], DataType::I32, "structured_audio_lengths")
     }
 }
 

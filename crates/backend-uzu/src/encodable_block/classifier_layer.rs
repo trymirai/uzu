@@ -16,6 +16,7 @@ pub struct ClassifierLayer<B: Backend> {
     qkv_projection: Box<dyn Linear<B>>,
     qk_norm: Option<QKNorm<B>>,
     rope: Rc<Rope<B>>,
+    use_rope: bool,
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
@@ -171,6 +172,7 @@ impl<B: Backend> ClassifierLayer<B> {
             qkv_projection,
             qk_norm,
             rope,
+            use_rope: attention_config.use_rope,
             attention,
             out_projection,
             post_attention_norm,
@@ -245,7 +247,11 @@ impl<B: Backend> ClassifierLayer<B> {
             self.num_groups,
             self.head_dim,
             rope_max_sequence_length,
-            rope_dim,
+            if self.use_rope {
+                rope_dim
+            } else {
+                0
+            },
             encoder,
         )?;
         let attention_output = self.attention.encode(

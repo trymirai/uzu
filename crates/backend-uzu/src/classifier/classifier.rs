@@ -194,10 +194,13 @@ impl<B: Backend> Classifier<B> {
             .wait_until_completed()
             .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
 
-        let logits = self.copy_logits_from_allocation(&logits)?;
+        let logits_result = self.copy_logits_from_allocation(&logits);
+        drop(logits);
+        drop(main);
+        drop(shortcut);
         drop(completed);
 
-        Ok(logits)
+        logits_result
     }
 
     #[cfg(not(feature = "tracing"))]

@@ -22,7 +22,6 @@ impl StructuredAudioCodecGraph {
     ) -> AudioResult<Array<B>> {
         let ws = &resources.decode_workspace;
 
-        let residual = input.clone();
         let cnxt_dw = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
         let x = causal_conv1d_grouped_enqueue(
             encoder,
@@ -80,7 +79,7 @@ impl StructuredAudioCodecGraph {
             kernels,
         )?;
         let cnxt_add = ws.next_scratch(encoder, &[batch_size, layer.pwconv2.cout, seq_len], self.vocoder_data_type);
-        add_enqueue(encoder, &x, &residual, cnxt_add, kernels)
+        add_enqueue(encoder, &x, input, cnxt_add, kernels)
     }
 
     pub(super) fn build_post_module_runtime<B: Backend>(
@@ -206,17 +205,17 @@ impl StructuredAudioCodecGraph {
         let residual_quantizers = self.config.n_codebooks;
         let residual_count_for_shape = residual_quantizers.max(1);
         let residual_codebook_rows_for_shape = self.codebook_size.max(1);
-        let residual_codebooks = context.create_array_zeros(
+        let mut residual_codebooks = context.create_array_zeros(
             &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
             data_type,
             "structured_audio_quantizer_residual_codebooks",
         );
-        let residual_out_proj = context.create_array_zeros(
+        let mut residual_out_proj = context.create_array_zeros(
             &[residual_count_for_shape, self.input_dim, codebook_dim],
             data_type,
             "structured_audio_quantizer_residual_out_proj",
         );
-        let residual_out_bias = context.create_array_zeros(
+        let mut residual_out_bias = context.create_array_zeros(
             &[residual_count_for_shape, self.input_dim],
             data_type,
             "structured_audio_quantizer_residual_out_bias",
@@ -246,14 +245,9 @@ impl StructuredAudioCodecGraph {
                 data_type,
             )?;
 
-            let mut dst_codebook =
-                outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim], data_type)?;
-            dst_codebook.copy_from_array(&codebook);
-            let mut dst_out_proj =
-                outer_axis_view(&residual_out_proj, index, &[self.input_dim, codebook_dim], data_type)?;
-            dst_out_proj.copy_from_array(&out_proj);
-            let mut dst_out_bias = outer_axis_view(&residual_out_bias, index, &[self.input_dim], data_type)?;
-            dst_out_bias.copy_from_array(&out_bias);
+            copy_to_outer_axis_slice(&mut residual_codebooks, index, &codebook, &[self.codebook_size, codebook_dim])?;
+            copy_to_outer_axis_slice(&mut residual_out_proj, index, &out_proj, &[self.input_dim, codebook_dim])?;
+            copy_to_outer_axis_slice(&mut residual_out_bias, index, &out_bias, &[self.input_dim])?;
         }
 
         Ok(FishAudioQuantizerResources {
@@ -474,19 +468,16 @@ impl StructuredAudioCodecGraph {
                     );
                     copied_output_prefix = true;
                 }
-                let source = array_batch_view(&latent_nsc, batch_index, frames, self.input_dim, active_len)?;
+                let source_range =
+                    array_batch_byte_range(&latent_nsc, batch_index, frames, self.input_dim, active_len)?;
                 let main_array = resources.decode_workspace.next_scratch(
                     encoder,
                     &[active_len, self.input_dim],
                     self.vocoder_data_type,
                 );
                 let mut main = main_array.into_allocation();
-                encoder.encode_copy(
-                    source.allocation(),
-                    source.offset()..source.offset() + source.size(),
-                    &mut main,
-                    0..source.size(),
-                );
+                let source_size = source_range.end - source_range.start;
+                encoder.encode_copy(latent_nsc.allocation(), source_range, &mut main, 0..source_size);
                 let main = Self::encode_post_module_layers(&runtime, &token_inputs, active_len, main, encoder)?;
                 let destination_offset = batch_index * batch_stride_bytes;
                 let active_bytes = active_len * self.input_dim * self.vocoder_data_type.size_in_bytes();

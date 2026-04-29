@@ -13,10 +13,10 @@ fn alloc_allocation_with_data<T: crate::ArrayElement>(
     context: &<Metal as Backend>::Context,
     data: &[T],
 ) -> Allocation<Metal> {
-    let allocation = context
+    let mut allocation = context
         .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
-    allocation_copy_from_slice(&allocation, data).expect("Failed to initialize allocation");
+    allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
     allocation
 }
 
@@ -80,14 +80,14 @@ fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 1_000.0 + idx as f32).collect();
-        allocation_copy_from_slice(&layer.keys, &data).expect("Failed to seed key allocation");
+        allocation_copy_from_slice(&mut layer.keys, &data).expect("Failed to seed key allocation");
         data
     };
 
     let initial_values = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 2_000.0 + idx as f32).collect();
-        allocation_copy_from_slice(&layer.values, &data).expect("Failed to seed value allocation");
+        allocation_copy_from_slice(&mut layer.values, &data).expect("Failed to seed value allocation");
         data
     };
 

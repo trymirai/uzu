@@ -1,6 +1,6 @@
-use std::{fmt, ops::Range, os::raw::c_void, ptr::NonNull, rc::Rc};
+use std::{fmt, ops::Range, os::raw::c_void, ptr::NonNull};
 
-use ndarray::{ArrayView, Dimension, IxDyn};
+use ndarray::{ArrayView as NdArrayView, Dimension, IxDyn};
 use thiserror::Error;
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub struct Array<B: Backend> {
-    allocation: Option<Rc<Allocation<B>>>,
+    allocation: Option<Allocation<B>>,
     offset: usize,
     shape: Box<[usize]>,
     data_type: DataType,
@@ -58,43 +58,10 @@ impl<B: Backend> Array<B> {
             allocation_len
         );
         Self {
-            allocation: Some(Rc::new(allocation)),
+            allocation: Some(allocation),
             offset,
             shape: shape.into(),
             data_type,
-        }
-    }
-
-    pub fn view(
-        &self,
-        shape: &[usize],
-    ) -> Self {
-        self.view_at_offset(0, shape)
-    }
-
-    pub fn view_at_offset(
-        &self,
-        byte_offset: usize,
-        shape: &[usize],
-    ) -> Self {
-        let required_bytes = size_for_shape(shape, self.data_type);
-        let offset = self.offset + byte_offset;
-        let view_end = self.offset + self.size();
-        Self::assert_offset_alignment(offset, self.data_type);
-        assert!(
-            offset + required_bytes <= view_end,
-            "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but allocation length is {} bytes",
-            shape,
-            self.data_type,
-            offset,
-            offset + required_bytes,
-            view_end
-        );
-        Self {
-            allocation: self.allocation.clone(),
-            offset,
-            shape: shape.into(),
-            data_type: self.data_type,
         }
     }
 
@@ -112,13 +79,16 @@ impl<B: Backend> Array<B> {
     }
 
     pub fn allocation(&self) -> &Allocation<B> {
-        self.allocation.as_deref().expect("Empty Array has no backing allocation")
+        self.allocation.as_ref().expect("Empty Array has no backing allocation")
+    }
+
+    fn allocation_mut(&mut self) -> Option<&mut Allocation<B>> {
+        self.allocation.as_mut()
     }
 
     pub fn into_allocation(self) -> Allocation<B> {
         assert_eq!(self.offset, 0, "Array view cannot be converted into Allocation");
         let allocation = self.allocation.expect("Empty Array has no backing allocation");
-        let allocation = Rc::try_unwrap(allocation).unwrap_or_else(|_| panic!("Array allocation is shared"));
         assert_eq!(
             size_for_shape(&self.shape, self.data_type),
             allocation.as_buffer_range().1.len(),
@@ -165,7 +135,17 @@ impl<B: Backend> Array<B> {
     }
 
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.cpu_ptr().as_ptr() as *mut u8, self.size()) }
+        let size = self.size();
+        let offset = self.offset;
+        let data_type = self.data_type;
+        let Some(allocation) = self.allocation_mut() else {
+            assert_eq!(size, 0, "Empty Array has no backing allocation");
+            let pointer = NonNull::new(data_type.size_in_bytes() as *mut c_void).expect("dtype-aligned empty pointer");
+            return unsafe { std::slice::from_raw_parts_mut(pointer.as_ptr() as *mut u8, size) };
+        };
+        let (buffer, allocation_range) = allocation.as_buffer_range();
+        let start = allocation_range.start + offset;
+        unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(start), size) }
     }
 
     pub fn as_slice<T: ArrayElement>(&self) -> &[T] {
@@ -178,8 +158,8 @@ impl<B: Backend> Array<B> {
         bytemuck::cast_slice_mut(self.as_bytes_mut())
     }
 
-    pub fn as_view<T: ArrayElement>(&self) -> ArrayView<'_, T, IxDyn> {
-        ArrayView::from_shape(IxDyn(self.shape()), self.as_slice::<T>()).expect("Failed to create array view")
+    pub fn as_view<T: ArrayElement>(&self) -> NdArrayView<'_, T, IxDyn> {
+        NdArrayView::from_shape(IxDyn(self.shape()), self.as_slice::<T>()).expect("Failed to create array view")
     }
 
     pub fn copy_from_array<C: Backend>(
@@ -243,7 +223,7 @@ impl<B: Backend> Array<B> {
 
     pub fn copy_from_view<T: ArrayElement, D: Dimension>(
         &mut self,
-        view: ArrayView<T, D>,
+        view: NdArrayView<T, D>,
     ) {
         assert_eq!(self.data_type(), T::data_type());
 
@@ -262,23 +242,21 @@ impl<B: Backend> Array<B> {
 }
 
 pub fn allocation_copy_from_slice<B: Backend, T: ArrayElement>(
-    allocation: &Allocation<B>,
+    allocation: &mut Allocation<B>,
     data: &[T],
 ) -> Result<(), AllocationAccessError> {
     let bytes = bytemuck::cast_slice(data);
     if bytes.is_empty() {
         return Ok(());
     }
-    let (buffer, range) = allocation.as_buffer_range();
-    if bytes.len() > range.len() {
+    let destination = allocation_as_bytes_mut(allocation);
+    if bytes.len() > destination.len() {
         return Err(AllocationAccessError::WriteExceedsRange {
             write_len: bytes.len(),
-            range_len: range.len(),
+            range_len: destination.len(),
         });
     }
-    let destination =
-        unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), bytes.len()) };
-    destination.copy_from_slice(bytes);
+    destination[..bytes.len()].copy_from_slice(bytes);
     Ok(())
 }
 
@@ -311,17 +289,6 @@ pub fn try_allocation_to_vec<B: Backend, T: ArrayElement>(
 
 pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
     try_allocation_to_vec(allocation).expect("Failed to read allocation")
-}
-
-impl<B: Backend> Clone for Array<B> {
-    fn clone(&self) -> Self {
-        Self {
-            allocation: self.allocation.clone(),
-            offset: self.offset,
-            shape: self.shape.clone(),
-            data_type: self.data_type,
-        }
-    }
 }
 
 impl<B: Backend> fmt::Debug for Array<B> {
@@ -362,7 +329,7 @@ pub trait ArrayContextExt {
         &self,
         shape: &[usize],
         data_type: DataType,
-        _label: &str,
+        label: &str,
     ) -> Array<Self::Backend>;
 
     fn create_array_zeros(
