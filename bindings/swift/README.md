@@ -24,7 +24,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.4.3")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.4.4")
 ]
 ```
 
