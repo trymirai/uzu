@@ -11,6 +11,7 @@ members = [
     "crates/hanashi",
     "crates/nagare",
     "crates/download-manager",
+    "crates/mock-registry",
     "crates/uzu",
     "crates/benchmarks",
     "crates/cli",
@@ -52,6 +53,7 @@ token-stream-parser = { path = "crates/token-stream-parser", default-features = 
 hanashi = { path = "crates/hanashi", default-features = false }
 nagare = { path = "crates/nagare", default-features = false }
 download-manager = { path = "crates/download-manager", default-features = false }
+mock-registry = { path = "crates/mock-registry", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
 xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
@@ -117,6 +119,8 @@ cxx = "1.0"
 cmake = "0.1"
 autocxx-build = "0.30"
 test-tag = "0.1"
+rstest = "0.26"
+wiremock = "0.6"
 proptest = { version = "1.10", default-features = false, features = ["std"] }
 criterion = { version = "0.8.2", default-features = false }
 criterion-macro = "0.4.0"
@@ -129,6 +133,9 @@ tracing-appender = "0.2.4"
 llm_json = "1.0.2"
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 futures-util = "0.3.31"
+http = "1.4.0"
+httparse = "1.10.1"
+stream_throttle = "0.5.1"
 async-fetcher = "0.12"
 reqwest = { version = "0.13.2", features = [
     "json",
@@ -141,6 +148,7 @@ async-shutdown = "0.2.2"
 objc-sys = "0.3.5"
 crc32c = "0.6.8"
 base64 = "0.22.1"
+bitflags = "2.11.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 jsonschema = "0.46.0"
 # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
