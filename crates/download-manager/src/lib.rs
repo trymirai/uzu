@@ -8,7 +8,7 @@ mod checked_file_state;
 mod crc_utils;
 mod download_error;
 mod download_info;
-mod download_manager_state;
+mod download_log_event;
 mod download_state;
 mod file_check;
 mod file_download_event;
@@ -29,12 +29,12 @@ pub mod traits;
 pub use checked_file_state::CheckedFileState;
 pub use download_error::DownloadError;
 pub use download_info::DownloadInfo;
+pub use download_log_event::{DownloadLogEvent, record_download_log_event};
 pub use download_state::DownloadState;
 pub use file_check::FileCheck;
 pub use file_download_event::FileDownloadEvent;
 pub use file_download_manager::{
     DownloadEvent, DownloadEventSender, FileDownloadManager, FileDownloadManagerType, SharedDownloadEventSender,
-    create_download_manager,
 };
 pub use file_download_phase::FileDownloadPhase;
 pub use file_download_state::FileDownloadState;

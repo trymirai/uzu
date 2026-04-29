@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use chrono::Utc;
-use download_manager::{FileCheck, FileDownloadManagerType, FileDownloadPhase, create_download_manager};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
 use tokio::{fs::write as tokio_write, runtime::Handle as TokioHandle};
 
 use crate::common::MockRegistry;
@@ -22,7 +22,9 @@ async fn test_universal_foreign_lock_surfaces_locked_state() -> Result<(), Box<d
         .await
         .unwrap();
 
-    let manager = create_download_manager(FileDownloadManagerType::Universal, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, TokioHandle::current())
+        .await
+        .unwrap();
     let task = manager
         .file_download_task(
             &model_weights.file.url,
@@ -44,7 +46,9 @@ async fn test_universal_concurrent_task_creation_returns_same_task() -> Result<(
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = create_download_manager(FileDownloadManagerType::Universal, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, TokioHandle::current())
+        .await
+        .unwrap();
 
     let (first, second) = tokio::join!(
         manager.file_download_task(

@@ -13,11 +13,14 @@ use tokio::{
 use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
 
 use crate::{
-    DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadEvent, FileDownloadPhase, FileDownloadState,
+    DownloadError, DownloadEventSender, DownloadId, DownloadLogEvent, FileCheck, FileDownloadEvent, FileDownloadPhase,
+    FileDownloadState,
+    backends::common::{Backend, InitialTaskAttachment},
     file_download_task_actor::{
         DownloadTaskActor, LifecycleState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
-        TerminalOutcome, project_public_state,
+        TerminalOutcome, project_public_state, project_runtime_public_state,
     },
+    record_download_log_event,
     reducer::InitialLifecycleState,
     traits::{ActiveDownloadGenerationCounter, BackendEventSender, DownloadBackend, DownloadConfig},
 };
@@ -81,6 +84,86 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
             listener_task: Arc::new(TokioMutex::new(None)),
             backend: PhantomData,
         }
+    }
+
+    pub async fn spawn_with_initial_attachment(
+        config: Arc<DownloadConfig>,
+        context: Arc<B::Context>,
+        initial_lifecycle_state: InitialLifecycleState,
+        initial_projection: PublicProjection,
+        initial_progress: ProgressCounters,
+    ) -> Result<Self, DownloadError>
+    where
+        B: Backend,
+    {
+        let (command_sender, command_receiver) = tokio_mpsc_channel(64);
+        let (backend_event_sender, backend_event_receiver) = tokio_mpsc_channel(64);
+        let pending_progress = Arc::new(TokioMutex::new(PendingProgressSlot::default()));
+        let (progress_waker_sender, progress_waker_receiver) = tokio_watch_channel(());
+        let backend_event_sender =
+            BackendEventSender::new(backend_event_sender, Arc::clone(&pending_progress), progress_waker_sender);
+        let (progress_sender, _) = tokio_broadcast_channel(64);
+        let (terminal_sender, terminal_receiver) = tokio_watch_channel(TerminalOutcome::Pending);
+
+        let mut generation_counter = ActiveDownloadGenerationCounter::default();
+        let attachment_generation = generation_counter.allocate_next();
+        let (lifecycle_state, progress_counters) = match B::initial_task_attachment(
+            context.as_ref(),
+            Arc::clone(&config),
+            attachment_generation,
+            backend_event_sender.clone(),
+        )
+        .await?
+        {
+            InitialTaskAttachment::None => (initial_lifecycle_state.into(), initial_progress),
+            InitialTaskAttachment::Downloading {
+                active_task,
+                initial_downloaded_bytes,
+                total_bytes,
+            } => (
+                LifecycleState::Downloading {
+                    active_task: Some(active_task),
+                    generation: attachment_generation,
+                },
+                ProgressCounters {
+                    downloaded_bytes: initial_downloaded_bytes,
+                    total_bytes: total_bytes.or(config.expected_bytes).unwrap_or(initial_downloaded_bytes),
+                },
+            ),
+        };
+
+        let initial_public_state =
+            project_runtime_public_state(&lifecycle_state, &initial_projection, progress_counters, &config);
+        let (public_state_sender, public_state_receiver) = tokio_watch_channel(initial_public_state);
+
+        let actor = DownloadTaskActor::<B>::new(
+            Arc::clone(&config),
+            lifecycle_state,
+            initial_projection,
+            progress_counters,
+            generation_counter,
+            context,
+            command_receiver,
+            backend_event_receiver,
+            pending_progress,
+            progress_waker_receiver,
+            backend_event_sender,
+            public_state_sender,
+            progress_sender.clone(),
+            terminal_sender,
+        );
+        let actor_task = tokio::spawn(actor.run());
+
+        Ok(Self {
+            config,
+            command_sender,
+            actor_task,
+            public_state_receiver,
+            progress_sender,
+            terminal_receiver,
+            listener_task: Arc::new(TokioMutex::new(None)),
+            backend: PhantomData,
+        })
     }
 
     async fn send_command(
@@ -178,32 +261,38 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
                     FileDownloadPhase::Downloading => {
                         let bytes_written = state.downloaded_bytes.saturating_sub(last_downloaded_bytes);
                         last_downloaded_bytes = state.downloaded_bytes;
-                        let _ = global_broadcast.send((
+                        let event = FileDownloadEvent::ProgressUpdate {
+                            bytes_written,
+                            total_bytes_written: state.downloaded_bytes,
+                            total_bytes_expected: state.total_bytes,
+                        };
+                        record_download_log_event(DownloadLogEvent::PublicEventEmitted {
                             download_id,
-                            FileDownloadEvent::ProgressUpdate {
-                                bytes_written,
-                                total_bytes_written: state.downloaded_bytes,
-                                total_bytes_expected: state.total_bytes,
-                            },
-                        ));
+                            event: event.clone(),
+                        });
+                        let _ = global_broadcast.send((download_id, event));
                     },
                     FileDownloadPhase::Downloaded => {
-                        let _ = global_broadcast.send((
+                        let event = FileDownloadEvent::DownloadCompleted {
+                            tmp_path: destination.clone(),
+                            final_destination: destination.clone(),
+                        };
+                        record_download_log_event(DownloadLogEvent::PublicEventEmitted {
                             download_id,
-                            FileDownloadEvent::DownloadCompleted {
-                                tmp_path: destination.clone(),
-                                final_destination: destination.clone(),
-                            },
-                        ));
+                            event: event.clone(),
+                        });
+                        let _ = global_broadcast.send((download_id, event));
                         break;
                     },
                     FileDownloadPhase::Error(message) => {
-                        let _ = global_broadcast.send((
+                        let event = FileDownloadEvent::Error {
+                            message,
+                        };
+                        record_download_log_event(DownloadLogEvent::PublicEventEmitted {
                             download_id,
-                            FileDownloadEvent::Error {
-                                message,
-                            },
-                        ));
+                            event: event.clone(),
+                        });
+                        let _ = global_broadcast.send((download_id, event));
                         break;
                     },
                     FileDownloadPhase::NotDownloaded

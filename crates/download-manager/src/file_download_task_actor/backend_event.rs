@@ -1,6 +1,6 @@
 use crate::traits::ActiveDownloadGeneration;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BackendEvent {
     Completed {
         generation: ActiveDownloadGeneration,

@@ -12,9 +12,13 @@ pub type DownloadEvent = (DownloadId, FileDownloadEvent);
 pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
 pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 
-pub type DownloadEvent = (DownloadId, FileDownloadEvent);
-pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
-pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum FileDownloadManagerType {
+    Universal,
+    #[default]
+    Apple,
+}
 
 #[async_trait::async_trait]
 pub trait FileDownloadManager: Send + Sync + 'static {
@@ -34,35 +38,33 @@ pub trait FileDownloadManager: Send + Sync + 'static {
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError>;
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum FileDownloadManagerType {
-    Universal,
-    #[default]
-    Apple,
-}
-
-pub async fn create_download_manager(
-    file_download_manager_type: FileDownloadManagerType,
-    _tokio_handle: TokioHandle,
-) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
-    match file_download_manager_type {
-        FileDownloadManagerType::Universal => {
-            let manager: Box<dyn FileDownloadManager> =
-                Box::new(UniversalDownloadManager::new("download-manager-universal".to_string()));
-            Ok(manager)
-        },
-        FileDownloadManagerType::Apple => {
-            #[cfg(target_vendor = "apple")]
-            {
+impl dyn FileDownloadManager {
+    pub async fn new(
+        file_download_manager_type: FileDownloadManagerType,
+        tokio_handle: TokioHandle,
+    ) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
+        match file_download_manager_type {
+            FileDownloadManagerType::Universal => {
                 let manager: Box<dyn FileDownloadManager> =
-                    Box::new(AppleDownloadManager::new("download-manager-apple".to_string()));
+                    Box::new(UniversalDownloadManager::from_tokio_handle(tokio_handle)?);
                 Ok(manager)
-            }
-            #[cfg(not(target_vendor = "apple"))]
-            {
-                Err(DownloadError::UnsupportedType)
-            }
-        },
+            },
+            FileDownloadManagerType::Apple => {
+                #[cfg(target_vendor = "apple")]
+                {
+                    let manager: Box<dyn FileDownloadManager> =
+                        Box::new(AppleDownloadManager::from_tokio_handle(tokio_handle)?);
+                    Ok(manager)
+                }
+                #[cfg(not(target_vendor = "apple"))]
+                {
+                    Err(DownloadError::UnsupportedType)
+                }
+            },
+        }
+    }
+
+    pub async fn system_default(tokio_handle: TokioHandle) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
+        Self::new(FileDownloadManagerType::default(), tokio_handle).await
     }
 }

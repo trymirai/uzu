@@ -1,4 +1,4 @@
-use download_manager::{FileCheck, FileDownloadManagerType, FileDownloadPhase, create_download_manager};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::common::{Behavior, MockRegistry, error_message, wait_for_phase};
@@ -9,7 +9,9 @@ async fn test_universal_corrupt_body_fails_crc() -> Result<(), Box<dyn std::erro
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
-    let manager = create_download_manager(FileDownloadManagerType::Universal, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(FileDownloadManagerType::Universal, TokioHandle::current())
+        .await
+        .unwrap();
     let task = manager
         .file_download_task(
             &tokenizer.file.url,

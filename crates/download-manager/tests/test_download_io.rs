@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use download_manager::{FileCheck, FileDownloadManagerType, FileDownloadPhase, create_download_manager};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
 use mock_registry::MockRegistry;
 use rstest::rstest;
 use tempfile::tempdir;
@@ -17,7 +17,7 @@ async fn test_download_manager_downloads_mock_registry_file_to_destination(
     let served_file = registry.file("config.json")?;
     let temporary_directory = tempdir().unwrap();
     let destination = temporary_directory.path().join(&served_file.file.name);
-    let manager = create_download_manager(download_manager_type, TokioHandle::current()).await?;
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await?;
     let task = manager
         .file_download_task(
             &served_file.file.url,

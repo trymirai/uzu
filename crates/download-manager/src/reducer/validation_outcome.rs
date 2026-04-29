@@ -1,6 +1,6 @@
 use crate::{
     CheckedFileState, FileState,
-    crc_utils::{calculate_and_verify_crc, save_crc_file},
+    crc_utils::calculate_and_verify_crc,
     reducer::{Action, ActionPlan, DiskObservation},
 };
 
@@ -11,33 +11,36 @@ pub struct ValidationOutcome {
 }
 
 pub fn validate(observation: &DiskObservation) -> ValidationOutcome {
-    let checked = match (observation.destination_state, observation.expected_crc.as_deref()) {
-        (FileState::Missing, _) => CheckedFileState::Missing,
-        (FileState::Exists, None) => CheckedFileState::Valid,
+    let (checked, mut actions) = match (observation.destination_state, observation.expected_crc.as_deref()) {
+        (FileState::Missing, _) => (CheckedFileState::Missing, Vec::new()),
+        (FileState::Exists, None) => (CheckedFileState::Valid, Vec::new()),
         (FileState::Exists, Some(expected_crc)) if cached_crc_matches(observation, expected_crc) => {
-            CheckedFileState::Valid
+            (CheckedFileState::Valid, Vec::new())
         },
         (FileState::Exists, Some(expected_crc)) => {
             match calculate_and_verify_crc(&observation.destination_path, expected_crc) {
-                Ok(true) => {
-                    let _ = save_crc_file(&observation.destination_path, expected_crc);
-                    CheckedFileState::Valid
-                },
-                Ok(false) | Err(_) => CheckedFileState::Invalid,
+                Ok(true) => (
+                    CheckedFileState::Valid,
+                    vec![Action::SaveCrcCache {
+                        destination: observation.destination_path.clone(),
+                        crc: expected_crc.to_string(),
+                    }],
+                ),
+                Ok(false) | Err(_) => (CheckedFileState::Invalid, Vec::new()),
             }
         },
     };
 
-    let action_plan = if checked == CheckedFileState::Missing && observation.crc_state == FileState::Exists {
-        match observation.crc_path.clone() {
-            Some(path) => ActionPlan::from_ordered_actions([Action::DeleteCrcCache {
-                path,
-            }]),
-            None => ActionPlan::empty(),
-        }
-    } else {
-        ActionPlan::empty()
-    };
+    if checked == CheckedFileState::Missing
+        && observation.crc_state == FileState::Exists
+        && let Some(path) = observation.crc_path.clone()
+    {
+        actions.push(Action::DeleteCrcCache {
+            path,
+        });
+    }
+
+    let action_plan = ActionPlan::from_ordered_actions(actions);
 
     ValidationOutcome {
         checked,

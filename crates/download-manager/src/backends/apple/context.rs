@@ -13,8 +13,8 @@ use tokio::runtime::Handle as TokioHandle;
 use crate::{
     DownloadInfo, FileCheck,
     backends::apple::{
-        AppleActiveTask, AppleBackend, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleSessionDelegate,
-        task_ext::AppleDownloadTaskExt,
+        AppleActiveTask, AppleBackend, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleGetTasksHandler,
+        AppleSessionDelegate, task_ext::AppleDownloadTaskExt,
     },
     traits::{ActiveDownloadGeneration, BackendContext, BackendEventSender, DownloadConfig},
 };
@@ -62,6 +62,37 @@ impl AppleBackendContext {
             event_registry,
             tokio_handle,
         }
+    }
+
+    pub fn matching_download_task(
+        &self,
+        config: &DownloadConfig,
+    ) -> Option<objc2::rc::Retained<NSURLSessionDownloadTask>> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let sender = Arc::new(Mutex::new(Some(sender)));
+        let handler = AppleGetTasksHandler::new({
+            let sender = Arc::clone(&sender);
+            move |_data_tasks, _upload_tasks, download_tasks| {
+                if let Some(sender) = sender.lock().ok().and_then(|mut sender| sender.take()) {
+                    let _ = sender.send(download_tasks);
+                }
+            }
+        });
+        unsafe {
+            self.session.getTasksWithCompletionHandler(&handler);
+        }
+        let download_tasks = receiver.recv().unwrap_or_default();
+        download_tasks.into_iter().find(|task| task.download_id() == Some(config.download_id))
+    }
+
+    pub fn attach_existing_task(
+        &self,
+        task: &NSURLSessionDownloadTask,
+        config: Arc<DownloadConfig>,
+        generation: ActiveDownloadGeneration,
+        backend_event_sender: BackendEventSender,
+    ) {
+        self.prepare_task(task, config, generation, backend_event_sender);
     }
 }
 

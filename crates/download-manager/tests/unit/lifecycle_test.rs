@@ -1,4 +1,4 @@
-use download_manager::{FileCheck, FileDownloadManagerType, FileDownloadPhase, create_download_manager};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase};
 use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 
@@ -16,7 +16,7 @@ async fn test_download_fresh_completes(
     let temp_dir = tempfile::tempdir().unwrap();
     let destination = temp_dir.path().join(&tokenizer.file.name);
 
-    let manager = create_download_manager(download_manager_type, TokioHandle::current()).await.unwrap();
+    let manager = <dyn FileDownloadManager>::new(download_manager_type, TokioHandle::current()).await.unwrap();
     let task = manager
         .file_download_task(
             &tokenizer.file.url,
