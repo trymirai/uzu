@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{basic::Metadata, model::ModelVendor};
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ModelQuantization {
@@ -16,7 +16,7 @@ pub struct ModelQuantization {
 
 #[bindings::export(Implementation)]
 impl ModelQuantization {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn name(&self) -> String {
         self.metadata.name.clone()
     }

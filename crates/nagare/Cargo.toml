@@ -1,11 +1,12 @@
 [package]
 name = "nagare"
-version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+version.workspace = true
 authors.workspace = true
+homepage.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -18,15 +19,29 @@ bindings = [
     "bindings-pyo3",
     "bindings-wasm",
 ]
-bindings-uniffi = ["shoji/bindings-uniffi", "dep:uniffi"]
+bindings-uniffi = [
+    "bindings-types/bindings-uniffi",
+    "shoji/bindings-uniffi",
+    "dep:uniffi",
+]
 bindings-napi = [
+    "bindings-types/bindings-napi",
     "shoji/bindings-napi",
     "dep:napi",
     "dep:napi-derive",
     "dep:napi-build",
 ]
-bindings-pyo3 = ["shoji/bindings-pyo3", "dep:pyo3"]
+bindings-pyo3 = [
+    "bindings-types/bindings-pyo3",
+    "shoji/bindings-pyo3",
+    "dep:pyo3",
+    "dep:pyo3-build-config",
+    "dep:pyo3-async-runtimes",
+    "dep:pyo3-stub-gen",
+    "dep:inventory",
+]
 bindings-wasm = [
+    "bindings-types/bindings-wasm",
     "shoji/bindings-wasm",
     "dep:wasm-bindgen",
     "dep:serde-wasm-bindgen",
@@ -35,6 +50,7 @@ bindings-wasm = [
 ]
 
 [dependencies]
+bindings-types.workspace = true
 bindings.workspace = true
 shoji.workspace = true
 hanashi.workspace = true
@@ -51,6 +67,9 @@ uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
+pyo3-async-runtimes = { workspace = true, optional = true }
+pyo3-stub-gen = { workspace = true, optional = true }
+inventory = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
@@ -58,3 +77,4 @@ tsify = { workspace = true, optional = true }
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
+pyo3-build-config = { workspace = true, optional = true }

@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
 use crate::{
-    DownloadId, FileDownloadEvent,
+    FileDownloadEvent, SharedDownloadEventSender,
     managers::apple::{URLSessionError, UrlSessionDownloadTaskExt},
     prelude::*,
 };
 
 #[derive(Debug, Clone)]
 pub struct URLSessionDelegateIvars {
-    pub global_broadcast_sender: Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>>,
+    pub global_broadcast_sender: SharedDownloadEventSender,
 }
 
 define_class!(
@@ -184,7 +184,7 @@ define_class!(
 );
 
 impl URLSessionDelegate {
-    pub fn new(global_broadcast_sender: Arc<TokioBroadcastSender<(DownloadId, FileDownloadEvent)>>) -> Retained<Self> {
+    pub fn new(global_broadcast_sender: SharedDownloadEventSender) -> Retained<Self> {
         unsafe {
             let class = Self::class();
             let allocated: Allocated<Self> = msg_send![class, alloc];

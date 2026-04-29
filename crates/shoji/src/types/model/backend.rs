@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::basic::Metadata;
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ModelBackend {
@@ -14,7 +14,7 @@ pub struct ModelBackend {
 
 #[bindings::export(Implementation)]
 impl ModelBackend {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn name(&self) -> String {
         self.metadata.name.clone()
     }

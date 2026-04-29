@@ -15,7 +15,7 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
-#[bindings::export(Enum)]
+#[bindings::export(Enumeration)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ClassificationSessionState {
     Idle,
@@ -28,6 +28,7 @@ struct InstanceHolder {
 }
 
 #[bindings::export(Class)]
+#[derive(Clone)]
 pub struct ClassificationSession {
     holder: Arc<Mutex<InstanceHolder>>,
     state: Arc<Mutex<ClassificationSessionState>>,
@@ -65,7 +66,7 @@ impl ClassificationSession {
 
 #[bindings::export(Implementation)]
 impl ClassificationSession {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub async fn state(&self) -> ClassificationSessionState {
         *self.state.lock().await
     }

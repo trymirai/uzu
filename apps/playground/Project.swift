@@ -18,7 +18,7 @@ let settings: Settings = .settings(
         "DEVELOPMENT_TEAM": "C39GZ239GY",
         "TARGETED_DEVICE_FAMILY": "1,2",
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
-        "MARKETING_VERSION": "2.0.0",
+        "MARKETING_VERSION": "0.4.4",
         "CURRENT_PROJECT_VERSION": "1",
     ],
     configurations: [
@@ -69,7 +69,7 @@ let appTarget: Target = .target(
     destinations: [.iPhone, .iPad, .mac],
     product: .app,
     bundleId: "com.mirai.tech.playground",
-    deploymentTargets: .multiplatform(iOS: "26.0", macOS: "26.0"),
+    deploymentTargets: .multiplatform(iOS: "26.4", macOS: "26.4"),
     infoPlist: .extendingDefault(with: [
         "CFBundleShortVersionString": "$(MARKETING_VERSION)",
         "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
@@ -111,8 +111,23 @@ let appScheme: Scheme = .scheme(
         preActions: [
             .executionAction(
                 title: "Update Uzu Package",
-                scriptText:
-                    "/bin/bash \"$PROJECT_DIR/../../scripts/prepare_bindings.sh\" swift",
+                scriptText: """
+                    set -euo pipefail
+                    [ -d "$HOME/.cargo/bin" ] && export PATH="$HOME/.cargo/bin:$PATH"
+                    [ -d "/opt/homebrew/bin" ] && export PATH="/opt/homebrew/bin:$PATH"
+                    unset SDKROOT DEVELOPER_DIR_OVERRIDE \
+                          SWIFT_DEBUG_INFORMATION_FORMAT SWIFT_DEBUG_INFORMATION_VERSION \
+                          DEBUG_INFORMATION_FORMAT
+                    case "${PLATFORM_NAME:-macosx}" in
+                      iphonesimulator) TARGET=ios-sim ;;
+                      iphoneos)        TARGET=ios ;;
+                      *)               TARGET=macos ;;
+                    esac
+                    CONFIGURATION_VALUE=release
+                    [ "${CONFIGURATION:-Release}" = "Debug" ] && CONFIGURATION_VALUE=debug
+                    cd "$PROJECT_DIR/../.."
+                    cargo tools build swift "$CONFIGURATION_VALUE" --targets "$TARGET"
+                    """,
                 target: .init(stringLiteral: projectName)
             )
         ]

@@ -1,11 +1,12 @@
 [package]
 name = "download-manager"
-version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+version.workspace = true
 authors.workspace = true
+homepage.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [dependencies]
 tokio.workspace = true
@@ -38,3 +39,11 @@ libc.workspace = true
 indicatif.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
+rstest.workspace = true
+mock-registry.workspace = true
+wiremock.workspace = true
+chrono.workspace = true
+
+[[test]]
+name = "unit"
+path = "tests/unit/test_entry.rs"

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::basic::{Hash, HashMethod};
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct File {
@@ -14,12 +14,12 @@ pub struct File {
 
 #[bindings::export(Implementation)]
 impl File {
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn crc32c(&self) -> Option<String> {
         self.hashes.iter().find(|hash| hash.method == HashMethod::CRC32C).map(|hash| hash.value.clone())
     }
 
-    #[bindings::export(Getter)]
+    #[bindings::export(Method(Getter))]
     pub fn md5(&self) -> Option<String> {
         self.hashes.iter().find(|hash| hash.method == HashMethod::MD5).map(|hash| hash.value.clone())
     }

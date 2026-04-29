@@ -1,0 +1,236 @@
+name: "Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: [self-hosted, macos, mac, arm64, m4pro]
+    env:
+      VERSION: ${{ inputs.version }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          metal: true
+          bindings: true
+
+      - name: "Release: Generate GitHub App token"
+        id: release-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: trymirai
+          repositories: uzu
+
+      - name: "Release: Checkout main"
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.release-token.outputs.token }}
+          persist-credentials: true
+
+      - name: "Release: Validate version"
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+
+          # 1. Tag must not already exist (locally or on origin)
+          if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null \
+             || git ls-remote --tags origin "refs/tags/${VERSION}" | grep -q .; then
+            echo "Tag ${VERSION} already exists"; exit 1
+          fi
+
+          # 2. New version must be greater than every existing tag (semver-aware sort)
+          latest=$(git tag --list | sort -V | tail -n1 || true)
+          if [ -n "$latest" ]; then
+            highest=$(printf '%s\n%s\n' "$latest" "${VERSION}" | sort -V | tail -n1)
+            if [ "$highest" != "${VERSION}" ] || [ "$latest" = "${VERSION}" ]; then
+              echo "Version ${VERSION} is not greater than latest tag $latest"; exit 1
+            fi
+            echo "Bumping ${latest} -> ${VERSION}"
+          else
+            echo "No previous tags; ${VERSION} is the first release"
+          fi
+
+      - name: "Release: Reset existing rustup toolchains on self-hosted runner"
+        run: |
+          if command -v rustup >/dev/null; then
+            rustup toolchain uninstall stable 2>/dev/null || true
+            rustup toolchain uninstall nightly 2>/dev/null || true
+          fi
+
+      - name: "Release: Install tools"
+        run: |
+          cargo tools setup
+          cargo tools install rust
+          cargo tools install python
+          cargo tools install swift
+          cargo tools install typescript
+
+      - name: "Release: Sync"
+        run: cargo tools sync
+
+      - name: "Release: Build artifacts"
+        run: cargo tools release "${VERSION}"
+
+      # ---------------------------------------------------------------
+      # Commit + tag locally now, while the workspace only contains
+      # sync/build output. Publishes below write credential files and
+      # clone other repos into the workspace, which would otherwise be
+      # swept into `git add -A`. The push happens at the very end,
+      # after every publish step has succeeded.
+      # ---------------------------------------------------------------
+      - name: "Release: Commit and tag"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Release ${VERSION}"
+          fi
+          git tag "${VERSION}"
+
+      # ---------------------------------------------------------------
+      # Publish Platform
+      # ---------------------------------------------------------------
+      - name: "Publish Platform: Decode bucket credentials"
+        run: |
+          {
+            echo "PLATFORM_CREDENTIALS_JSON<<EOF"
+            echo "${{ secrets.PLATFORM_BUCKET_BASE64_CREDENTIALS }}" | base64 -d
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: "Publish Platform: Authenticate to GCS"
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.PLATFORM_CREDENTIALS_JSON }}
+
+      - name: "Publish Platform: Setup gcloud"
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: "Publish Platform: Upload snippets"
+        run: |
+          gcloud storage rsync workspace/release/platform \
+            "gs://platform-bucket-0485e11/snippets" \
+            --recursive --delete-unmatched-destination-objects
+
+      # ---------------------------------------------------------------
+      # Publish Swift
+      # ---------------------------------------------------------------
+      - name: "Publish Swift: Decode artifacts bucket credentials"
+        run: |
+          {
+            echo "ARTIFACTS_CREDENTIALS_JSON<<EOF"
+            echo "${{ secrets.ARTIFACTS_BUCKET_BASE64_CREDENTIALS }}" | base64 -d
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: "Publish Swift: Authenticate to GCS"
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.ARTIFACTS_CREDENTIALS_JSON }}
+
+      - name: "Publish Swift: Setup gcloud"
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: "Publish Swift: Upload xcframework"
+        run: |
+          set -euo pipefail
+          GS_URI="gs://artifacts-bucket-cd05ceb/uzu-swift/releases/${VERSION}.zip"
+          if gsutil -q stat "$GS_URI"; then
+            echo "Release zip already exists at $GS_URI"; exit 1
+          fi
+          gsutil cp "workspace/release/swift-spm/${VERSION}.zip" "$GS_URI"
+
+      # ---------------------------------------------------------------
+      # Publish TypeScript
+      # ---------------------------------------------------------------
+      - name: "Publish TypeScript"
+        working-directory: workspace/release/typescript-npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --no-git-checks
+
+      # ---------------------------------------------------------------
+      # Publish Python
+      # ---------------------------------------------------------------
+      - name: "Publish Python"
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          uv publish workspace/release/python-pypi/*.whl
+
+      # ---------------------------------------------------------------
+      # Publish Docs
+      # ---------------------------------------------------------------
+      - name: "Publish Docs: Generate GitHub App token"
+        id: docs-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: trymirai
+          repositories: docs
+
+      - name: "Publish Docs: Checkout repo"
+        uses: actions/checkout@v6
+        with:
+          repository: trymirai/docs
+          ref: main
+          token: ${{ steps.docs-token.outputs.token }}
+          path: docs-repo
+          persist-credentials: false
+
+      - name: "Publish Docs: Sync"
+        run: |
+          set -euo pipefail
+          rsync -a --delete \
+            --exclude '.git' --exclude '.git/*' \
+            workspace/release/docs/ docs-repo/snippets/generated/
+
+      - name: "Publish Docs: Commit and push changes"
+        env:
+          GH_TOKEN: ${{ steps.docs-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          cd docs-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No docs changes to commit"
+          else
+            git commit -m "Release ${VERSION}"
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/trymirai/docs.git"
+            git push origin HEAD:main
+          fi
+
+      # ---------------------------------------------------------------
+      # Push the release commit and tag now that every publish has
+      # succeeded. The commit and tag were created locally before any
+      # publish step ran, so the workspace pollution from publishes
+      # never makes it into the commit.
+      # ---------------------------------------------------------------
+      - name: "Release: Push"
+        run: |
+          git push origin HEAD:main
+          git push origin "${VERSION}"

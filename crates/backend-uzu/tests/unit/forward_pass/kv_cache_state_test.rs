@@ -39,8 +39,7 @@ fn make_test_layer(
             ..
         } => window_length + suffix_capacity,
     };
-    let shape = [1, total_len.max(1), 1];
-
+    let shape = [total_len.max(1), 1, 1];
     let keys = context.create_array_zeros(&shape, DataType::F32, "kv_cache_keys");
     let values = context.create_array_zeros(&shape, DataType::F32, "kv_cache_values");
 

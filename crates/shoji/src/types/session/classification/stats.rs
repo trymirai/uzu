@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[bindings::export(ClassCloneable)]
+#[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClassificationStats {
     pub preprocessing_duration: f64,

@@ -45,32 +45,46 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
     pub(super) residual_out_bias: Array<B>,
 }
 
-/// Ping-pong scratch pool for the sequential decode pipeline.
-///
-/// At any point in the pipeline at most two data buffers are live (the current
-/// input and the current output). `next_scratch` alternates between two slots,
-/// re-using a buffer when its `Rc` strong-count shows it is exclusively owned
-/// by the pool and it is large enough. When a residual connection keeps an
-/// extra reference alive, a fresh buffer is allocated transparently.
+// TODO: once `Array<B>` is bridged to `backends::common::allocator::Allocation`
+// project-wide, replace this whole workspace with `Encoder::allocate_scratch`.
+// That pool already handles auto-expand on demand, range aliasing for
+// non-overlapping lifetimes, and free-on-drop tied to command-buffer
+// completion — i.e. everything this struct reimplements by hand.
 pub(super) struct DecodeWorkspace<B: Backend> {
-    slots: [RefCell<Option<Rc<RefCell<B::Buffer>>>>; 2],
-    toggle: Cell<bool>,
-    /// Pair of reusable I32 arrays for per-stage sequence lengths. Cached to
-    /// avoid allocating new GPU buffers on every decode call.
+    slots: RefCell<Vec<Rc<RefCell<B::Buffer>>>>,
+    next_search: Cell<usize>,
+    min_buffer_size: Cell<usize>,
     lengths_pair: [RefCell<Option<Array<B>>>; 2],
 }
 
 impl<B: Backend> DecodeWorkspace<B> {
     fn new() -> Self {
         Self {
-            slots: [RefCell::new(None), RefCell::new(None)],
-            toggle: Cell::new(false),
+            slots: RefCell::new(Vec::new()),
+            next_search: Cell::new(0),
+            min_buffer_size: Cell::new(0),
             lengths_pair: [RefCell::new(None), RefCell::new(None)],
         }
     }
 
-    /// Return a reusable I32 array of at least `min_elements` entries for
-    /// sequence length data. `index` must be 0 or 1 (ping-pong pair).
+    pub(super) fn prime_for(
+        &self,
+        context: &B::Context,
+        bytes: usize,
+    ) -> AudioResult<()> {
+        if bytes <= self.min_buffer_size.get() {
+            return Ok(());
+        }
+        self.min_buffer_size.set(bytes);
+        let mut slots = self.slots.borrow_mut();
+        for slot in slots.iter_mut() {
+            if Rc::strong_count(slot) == 1 && slot.borrow().length() < bytes {
+                *slot = create_labelled_buffer::<B>(context, bytes, "structured_audio_scratch")?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn lengths_array(
         &self,
         context: &B::Context,
@@ -94,49 +108,61 @@ impl<B: Backend> DecodeWorkspace<B> {
         array
     }
 
-    /// Return a scratch [`Array`] backed by the next slot in the ping-pong
-    /// pair. The underlying GPU buffer is reused when possible.
     pub(super) fn next_scratch(
         &self,
         context: &B::Context,
         shape: &[usize],
         data_type: DataType,
         label: &str,
-    ) -> Array<B> {
-        let idx = usize::from(self.toggle.get());
-        self.toggle.set(!self.toggle.get());
+    ) -> AudioResult<Array<B>> {
+        let needed = size_for_shape(shape, data_type).max(self.min_buffer_size.get());
+        let mut slots = self.slots.borrow_mut();
+        let slot_count = slots.len();
 
-        let needed = size_for_shape(shape, data_type);
-        let mut slot = self.slots[idx].borrow_mut();
-
-        // Try to reuse the existing buffer if nobody else holds a reference
-        // and it is large enough.
-        if let Some(buf_rc) = slot.as_ref() {
-            if Rc::strong_count(buf_rc) == 1 && buf_rc.borrow().length() >= needed {
-                let array = unsafe { Array::from_parts(buf_rc.clone(), 0, shape, data_type) };
-                return array;
+        if slot_count > 0 {
+            let start = self.next_search.get() % slot_count;
+            for offset in 0..slot_count {
+                let slot_index = (start + offset) % slot_count;
+                if Rc::strong_count(&slots[slot_index]) == 1 && slots[slot_index].borrow().length() >= needed {
+                    self.next_search.set((slot_index + 1) % slot_count);
+                    return Ok(unsafe { Array::from_parts(slots[slot_index].clone(), 0, shape, data_type) });
+                }
+            }
+            for offset in 0..slot_count {
+                let slot_index = (start + offset) % slot_count;
+                if Rc::strong_count(&slots[slot_index]) == 1 {
+                    slots[slot_index] = create_labelled_buffer::<B>(context, needed, label)?;
+                    self.next_search.set((slot_index + 1) % slot_count);
+                    return Ok(unsafe { Array::from_parts(slots[slot_index].clone(), 0, shape, data_type) });
+                }
             }
         }
 
-        // Allocate a fresh buffer and cache it.
-        let mut buffer = context.create_buffer(needed).expect("Failed to create scratch buffer");
-        buffer.set_label(Some(label));
-        let buf_rc = Rc::new(RefCell::new(buffer));
-        *slot = Some(buf_rc.clone());
-        unsafe { Array::from_parts(buf_rc, 0, shape, data_type) }
+        let buffer_rc = create_labelled_buffer::<B>(context, needed, label)?;
+        slots.push(buffer_rc.clone());
+        self.next_search.set(0);
+        Ok(unsafe { Array::from_parts(buffer_rc, 0, shape, data_type) })
     }
 
-    /// Clear both scratch slots, forcing the next call to allocate fresh
-    /// buffers. This must be called after submitting a command buffer that
-    /// references scratch intermediates so that the in-flight GPU work is
-    /// not corrupted by a subsequent decode pass reusing the same buffers.
     pub(super) fn reset(&self) {
-        *self.slots[0].borrow_mut() = None;
-        *self.slots[1].borrow_mut() = None;
-        self.toggle.set(false);
+        self.slots.borrow_mut().clear();
+        self.next_search.set(0);
+        self.min_buffer_size.set(0);
         *self.lengths_pair[0].borrow_mut() = None;
         *self.lengths_pair[1].borrow_mut() = None;
     }
+}
+
+fn create_labelled_buffer<B: Backend>(
+    context: &B::Context,
+    bytes: usize,
+    label: &str,
+) -> AudioResult<Rc<RefCell<B::Buffer>>> {
+    let mut buffer = context
+        .create_buffer(bytes)
+        .map_err(|err| AudioError::Runtime(format!("failed to create scratch buffer '{label}': {err}")))?;
+    buffer.set_label(Some(label));
+    Ok(Rc::new(RefCell::new(buffer)))
 }
 
 pub(in crate::audio::nanocodec::runtime) struct StructuredAudioRuntimeResources<B: Backend> {

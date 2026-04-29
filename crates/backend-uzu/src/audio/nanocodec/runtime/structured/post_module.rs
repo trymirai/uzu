@@ -19,10 +19,10 @@ impl StructuredAudioCodecGraph {
         let data_type = input.data_type();
 
         let residual = input.clone();
-        let x = causal_conv1d_grouped_enqueue(
+        let mut x = causal_conv1d_grouped_enqueue(
             encoder,
             input,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_dw"),
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_dw")?,
             &layer.depthwise_conv,
             SequenceLayout::Ncs,
             lengths,
@@ -31,10 +31,10 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x = norm_ncs_enqueue(
+        x = norm_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_norm"),
+            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_norm")?,
             &layer.norm,
             lengths,
             lengths_array,
@@ -43,10 +43,10 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x = conv1d_pointwise_ncs_enqueue(
+        x = conv1d_pointwise_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, layer.pwconv1.cout, seq_len], data_type, "cnxt_pw1"),
+            ws.next_scratch(ctx, &[batch_size, layer.pwconv1.cout, seq_len], data_type, "cnxt_pw1")?,
             &layer.pwconv1,
             lengths,
             lengths_array,
@@ -54,11 +54,11 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        let x = gelu_enqueue(encoder, &x, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu"), kernels)?;
-        let x = conv1d_pointwise_ncs_enqueue(
+        x = gelu_enqueue(encoder, &x, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu")?, kernels)?;
+        x = conv1d_pointwise_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, layer.pwconv2.cout, seq_len], data_type, "cnxt_pw2"),
+            ws.next_scratch(ctx, &[batch_size, layer.pwconv2.cout, seq_len], data_type, "cnxt_pw2")?,
             &layer.pwconv2,
             lengths,
             lengths_array,
@@ -66,7 +66,7 @@ impl StructuredAudioCodecGraph {
             seq_len,
             kernels,
         )?;
-        add_enqueue(encoder, &x, &residual, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add"), kernels)
+        add_enqueue(encoder, &x, &residual, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add")?, kernels)
     }
 
     pub(super) fn build_post_module_runtime<B: Backend>(

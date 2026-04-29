@@ -22,7 +22,7 @@ impl EngineCallback {
 
 #[bindings::export(Implementation)]
 impl EngineCallback {
-    #[bindings::export(FactoryWithCallback)]
+    #[bindings::export(Method(FactoryWithCallback))]
     pub fn create(callback: Box<dyn Fn() + Send + Sync>) -> Self {
         Self::new(callback)
     }

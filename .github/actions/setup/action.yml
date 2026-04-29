@@ -22,12 +22,8 @@ inputs:
     description: "Additional Rust target to install"
     required: false
     default: ''
-  node:
-    description: "Install Node + pnpm"
-    required: false
-    default: 'false'
-  swift:
-    description: "Install cargo-swift CLI"
+  bindings:
+    description: "Install bindings requirements"
     required: false
     default: 'false'
 
@@ -70,7 +66,7 @@ runs:
     - if: inputs.nextest == 'true'
       uses: taiki-e/install-action@nextest
 
-    - if: inputs.test_data == 'true'
+    - if: inputs.test_data == 'true' || inputs.bindings == 'true'
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
@@ -90,18 +86,13 @@ runs:
         uv run export tokenizers
       shell: bash
 
-    - if: inputs.node == 'true'
+    - if: inputs.bindings == 'true'
       uses: actions/setup-node@v4
       with:
         node-version: "20"
+        registry-url: "https://registry.npmjs.org"
 
-    - if: inputs.node == 'true'
+    - if: inputs.bindings == 'true'
       uses: pnpm/action-setup@v4
       with:
         version: 10.33.0
-
-    # Please make sure to use compatible versions of the cargo-swift / uniffi pair.
-    # See: https://github.com/antoniusnaumann/cargo-swift?tab=readme-ov-file#installing-for-a-different-uniffi-version
-    - if: inputs.swift == 'true'
-      run: cargo install cargo-swift@0.11.0 -f
-      shell: bash

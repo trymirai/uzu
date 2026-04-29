@@ -21,7 +21,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.table import Table
-from typer import Argument, Typer
+from typer import Argument, Option, Typer
 from .utils import download_file_with_resume
 
 ROOT_PATH = Path(__file__).parent.parent.parent
@@ -68,7 +68,12 @@ def load_registry() -> Registry:
 
 
 @app.command(help="List models")
-def list():
+def list(
+    repos_only: Annotated[
+        bool,
+        Option("--repos", help="Print only model repository IDs."),
+    ] = False,
+) -> None:
     try:
         with Progress(
             SpinnerColumn(),
@@ -79,6 +84,11 @@ def list():
             task = progress.add_task("Loading registry...", total=None)
             registry = load_registry()
             progress.update(task, completed=True)
+
+        if repos_only:
+            for model in registry.models:
+                console.print(model.repod_id, markup=False, highlight=False)
+            return
 
         table = Table()
         table.add_column("Repo", style="cyan")
