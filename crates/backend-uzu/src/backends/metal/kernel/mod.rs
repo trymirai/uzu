@@ -1,4 +1,5 @@
 pub mod matmul;
+pub mod unified_matmul;
 
 use crate::backends::common::kernel::ManualKernels;
 
