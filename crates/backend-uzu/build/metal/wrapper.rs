@@ -182,6 +182,9 @@ fn kernel_wrappers(
             wrapper_arguments.push("uint __dsl_simd_group_idx [[simdgroup_index_in_threadgroup]]".into());
             wrapper_arguments.push("uint __dsl_simd_group_size [[threads_per_simdgroup]]".into());
             wrapper_arguments.push("uint __dsl_simd_group_per_threadgroup [[simdgroups_per_threadgroup]]".into());
+            wrapper_arguments.push("uint3 __dsl_threadgroup_size [[threads_per_threadgroup]]".into());
+            wrapper_arguments.push("uint3 __dsl_threadgroup_count [[threadgroups_per_grid]]".into());
+            wrapper_arguments.push("uint3 __dsl_grid_size [[threads_per_grid]]".into());
         }
 
         let wrapper_arguments = wrapper_arguments.join(", ");
@@ -217,7 +220,7 @@ fn kernel_wrappers(
                     MetalArgumentType::Threads(_) => {
                         format!("__dsl_thread_idx.{}", thread_axis_letters.next().unwrap())
                     },
-                    MetalArgumentType::ThreadContext => "ThreadContext { .simdgroup_index = __dsl_simd_lane_idx, .threadgroup_index = __dsl_simd_group_idx, .simdgroup_size = __dsl_simd_group_size, .simdgroups_per_threadgroup = __dsl_simd_group_per_threadgroup }".into(),
+                    MetalArgumentType::ThreadContext => "ThreadContext { .simdgroup_index = __dsl_simd_lane_idx, .threadgroup_index = __dsl_simd_group_idx, .simdgroup_size = __dsl_simd_group_size, .simdgroups_per_threadgroup = __dsl_simd_group_per_threadgroup, .threadgroup_size = __dsl_threadgroup_size, .threadgroup_count = __dsl_threadgroup_count, .grid_size = __dsl_grid_size }".into(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
