@@ -12,11 +12,12 @@ license.workspace = true
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
-default = ["backend-metal", "capability-grammar"]
+default = ["backend-metal", "capability-grammar", "capability-cli"]
 backend-cpu = []
 backend-metal = ["backend-uzu/metal"]
 capability-grammar = ["backend-uzu/grammar"]
 capability-tracing = ["backend-uzu/tracing"]
+capability-cli = ["dep:iocraft", "dep:indoc"]
 bindings = [
     "bindings-uniffi",
     "bindings-napi",
@@ -62,6 +63,10 @@ bindings-types.workspace = true
 bindings.workspace = true
 backend-uzu.workspace = true
 shoji.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }
@@ -73,6 +78,8 @@ wasm-bindgen = { workspace = true, optional = true }
 serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
+iocraft = { workspace = true, optional = true }
+indoc = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 backend-remote.workspace = true
@@ -108,7 +115,6 @@ tracing-appender.workspace = true
 chrono.workspace = true
 tempfile.workspace = true
 indicatif.workspace = true
-dotenvy.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
 mock-registry.workspace = true
