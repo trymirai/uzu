@@ -10,6 +10,7 @@ impl Backend for Cpu {
     type Context = CpuContext;
     type CommandBuffer = CpuCommandBuffer;
     type Buffer = UnsafeCell<Pin<Box<[u8]>>>;
+    type SparseBuffer = UnsafeCell<Pin<Box<[u8]>>>;
     type Event = Pin<Box<AtomicU64>>;
     type Kernels = CpuKernels;
     type Error = CpuError;

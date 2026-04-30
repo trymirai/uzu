@@ -1,10 +1,10 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
-use backend_uzu::backends::common::{Backend, SparsePages};
+use backend_uzu::backends::common::Backend;
 use metal::{
     MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
     MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLGPUFamily, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTLGPUFamily, MTLLibrary, MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -18,10 +18,7 @@ use super::{
 use crate::{
     backends::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
-        metal::{
-            command_buffer::MetalCommandBufferInitial,
-            sparse_pages::{MetalSparsePages, get_page_size_bytes},
-        },
+        metal::command_buffer::MetalCommandBufferInitial,
     },
     utils::model_size::ModelSize,
 };
@@ -153,17 +150,6 @@ impl Context for MetalContext {
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
         self.device.new_event().ok_or(MetalError::CannotCreateEvent)
-    }
-
-    fn create_sparse_pages(
-        &self,
-        capacity: usize,
-    ) -> Result<Box<impl SparsePages<Backend = Self::Backend> + 'static>, <Self::Backend as Backend>::Error> {
-        let page_size = MTLSparsePageSize::KB256;
-        let page_size_bytes = get_page_size_bytes(page_size);
-        let pages_count = capacity.div_ceil(page_size_bytes);
-        let pages = MetalSparsePages::new(self, page_size, pages_count)?;
-        Ok(Box::new(pages))
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {

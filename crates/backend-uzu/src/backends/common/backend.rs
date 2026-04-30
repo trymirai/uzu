@@ -6,6 +6,7 @@ pub trait Backend: Debug + Clone + 'static {
     type Context: Context<Backend = Self>;
     type CommandBuffer: CommandBuffer<Backend = Self>;
     type Buffer: Buffer<Backend = Self>;
+    type SparseBuffer: Buffer<Backend = Self>;
     type Event: Event<Backend = Self>;
     type Kernels: Kernels<Backend = Self> + ManualKernels;
     type Error: Error + Debug;

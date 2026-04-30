@@ -7,7 +7,7 @@ mod error;
 mod event;
 mod kernel;
 mod metal_extensions;
-mod sparse_pages;
+mod sparse_buffer;
 
 pub use backend::Metal;
 pub use context::MetalContext;
