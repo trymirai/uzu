@@ -7,6 +7,8 @@ use super::Metal;
 use crate::backends::common::{Buffer, DenseBuffer};
 
 impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
+    type Backend = Metal;
+
     fn gpu_ptr(&self) -> usize {
         self.gpu_address() as usize
     }
@@ -24,8 +26,6 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
 }
 
 impl DenseBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
-    type Backend = Metal;
-
     fn cpu_ptr(&self) -> NonNull<c_void> {
         self.contents()
     }

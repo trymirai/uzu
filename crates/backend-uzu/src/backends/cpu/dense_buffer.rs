@@ -4,6 +4,8 @@ use super::Cpu;
 use crate::backends::common::{Buffer, DenseBuffer};
 
 impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
+    type Backend = Cpu;
+
     fn gpu_ptr(&self) -> usize {
         unsafe { &*self.get() }.as_ptr().addr()
     }
@@ -20,8 +22,6 @@ impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
 }
 
 impl DenseBuffer for UnsafeCell<Pin<Box<[u8]>>> {
-    type Backend = Cpu;
-
     fn cpu_ptr(&self) -> NonNull<c_void> {
         unsafe { NonNull::new_unchecked((&*self.get()).as_ptr() as *mut c_void) }
     }

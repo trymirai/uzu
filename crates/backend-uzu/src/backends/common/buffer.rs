@@ -1,8 +1,10 @@
 use std::{fmt::Debug, ops::Range};
 
-use backend_uzu::backends::common::DenseBuffer;
+use crate::backends::common::Backend;
 
 pub trait Buffer: Debug {
+    type Backend: Backend;
+
     fn gpu_ptr(&self) -> usize;
 
     fn size(&self) -> usize;
@@ -13,7 +15,7 @@ pub trait Buffer: Debug {
     );
 }
 
-pub trait BufferGpuAddressRangeExt: DenseBuffer {
+pub trait BufferGpuAddressRangeExt: Buffer {
     fn gpu_address_range(&self) -> Range<usize> {
         self.gpu_ptr()..(self.gpu_ptr() + self.size())
     }
@@ -28,4 +30,4 @@ pub trait BufferGpuAddressRangeExt: DenseBuffer {
     }
 }
 
-impl<B: DenseBuffer> BufferGpuAddressRangeExt for B {}
+impl<B: Buffer> BufferGpuAddressRangeExt for B {}
