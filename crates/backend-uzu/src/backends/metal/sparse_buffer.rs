@@ -81,14 +81,6 @@ impl MetalSparseBuffer {
 impl SparseBuffer for MetalSparseBuffer {
     type Backend = Metal;
 
-    fn buffer(&self) -> &<Self::Backend as Backend>::Buffer {
-        &self.buffer
-    }
-
-    fn buffer_mut(&mut self) -> &mut <Self::Backend as Backend>::Buffer {
-        &mut self.buffer
-    }
-
     fn set_label(
         &mut self,
         label: Option<&str>,

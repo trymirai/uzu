@@ -11,10 +11,6 @@ pub struct SparseBufferOperation {
 pub trait SparseBuffer {
     type Backend: Backend<SparseBuffer = Self>;
 
-    fn buffer(&self) -> &<Self::Backend as Backend>::Buffer;
-
-    fn buffer_mut(&mut self) -> &mut <Self::Backend as Backend>::Buffer;
-
     fn set_label(
         &mut self,
         label: Option<&str>,
