@@ -54,8 +54,9 @@ pub fn TextInput(
             KeyCode::Home => state.write().move_position_to_start(),
             KeyCode::End => state.write().move_position_to_end(),
             KeyCode::Enter if modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
+                let text = state.read().original_text.clone();
                 state.write().reset();
-                on_submit(state.read().original_text.clone());
+                on_submit(text);
             },
             KeyCode::Enter => {
                 state.write().add_character('\n');

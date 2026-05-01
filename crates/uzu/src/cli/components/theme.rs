@@ -15,7 +15,7 @@ pub struct Theme {
 impl Theme {
     #[allow(unused)]
     pub fn all() -> Vec<Self> {
-        vec![Self::blue(), Self::green()]
+        vec![Self::blue(), Self::green(), Self::yellow(), Self::red()]
     }
 
     pub fn blue() -> Self {
@@ -30,6 +30,22 @@ impl Theme {
         Self {
             name: "green".to_string(),
             accent_color: Color::Green,
+            subtitle_color: Color::DarkGrey,
+        }
+    }
+
+    pub fn yellow() -> Self {
+        Self {
+            name: "yellow".to_string(),
+            accent_color: Color::Yellow,
+            subtitle_color: Color::DarkGrey,
+        }
+    }
+
+    pub fn red() -> Self {
+        Self {
+            name: "red".to_string(),
+            accent_color: Color::Red,
             subtitle_color: Color::DarkGrey,
         }
     }
@@ -79,5 +95,9 @@ impl Theme {
             lines.push(path);
         }
         lines.join("\n")
+    }
+
+    pub fn default_hint(&self) -> String {
+        "shift+enter to send\n/ for commands".to_string()
     }
 }
