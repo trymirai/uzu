@@ -1,16 +1,14 @@
 //! Attention kernel encodable.
 
-use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-};
+use std::collections::HashMap;
 
 use itertools::iproduct;
 
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::ring::RingParams,
         kernel::{
             AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel,
@@ -18,11 +16,7 @@ use crate::{
             attention::{AttentionGemmArguments, AttentionGemmBlock},
         },
     },
-    encodable_block::EncodingParameters,
-    forward_pass::{
-        kv_cache_layer::KVCacheLayerState,
-        state::{ArrayId, ForwardPassState},
-    },
+    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
 
 fn env_gemm_attention_enabled() -> bool {
@@ -49,18 +43,23 @@ pub struct Attention<B: Backend> {
     update_kv_cache_inplace_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
     gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
     gemm_block: AttentionGemmBlock<B>,
-    layer_index: usize,
+    data_type: DataType,
     attention_scale: Option<f32>,
-    has_sinks: bool,
     is_causal: bool,
     sliding_window_size: Option<usize>,
+}
+
+pub struct AttentionArguments<'a, B: Backend> {
+    pub projection_step: usize,
+    pub token_subtrie_ranges: Option<&'a Allocation<B>>,
+    pub attention_sinks: Option<&'a Allocation<B>>,
+    pub kv_cache_layer: Option<&'a mut KVCacheLayer<B>>,
 }
 
 impl<B: Backend> Attention<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        layer_index: usize,
         attention_scale: Option<f32>,
         has_sinks: bool,
         is_causal: bool,
@@ -125,9 +124,8 @@ impl<B: Backend> Attention<B> {
             update_kv_cache_inplace_kernel,
             gate_kernel,
             gemm_block,
-            layer_index,
+            data_type,
             attention_scale,
-            has_sinks,
             is_causal,
             sliding_window_size,
         })
@@ -164,55 +162,40 @@ impl<B: Backend> Attention<B> {
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters,
+        mut args: AttentionArguments<B>,
+        qkv: &Allocation<B>,
+        queries: &Allocation<B>,
+        mut rotated_keys: Allocation<B>,
+        gate: Option<&Allocation<B>>,
+        suffix_length: usize,
+        num_heads: usize,
+        num_groups: usize,
+        head_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let qkv_array = state.array(ArrayId::QKV);
-        let queries_array = state.array(ArrayId::RotatedQueries);
-        let rotated_keys_array = state.array(ArrayId::RotatedKeys);
-        let attention_output_array = state.array(ArrayId::AttentionOutput);
-        let partials_array = state.array(ArrayId::AttentionPartials);
-        let sums_array = state.array(ArrayId::AttentionSums);
-        let maxs_array = state.array(ArrayId::AttentionMaxs);
+    ) -> Result<Allocation<B>, B::Error> {
+        let is_trie = args.token_subtrie_ranges.is_some();
 
-        let suffix_length = qkv_array.shape()[0];
-        let num_heads = queries_array.shape()[0];
-        let head_dim = queries_array.shape()[2];
-        let num_groups = rotated_keys_array.shape()[0];
-        let max_sequence_length = if state.cache_layers().is_some() {
-            state.array(ArrayId::Keys(self.layer_index)).shape()[1]
-        } else {
-            // For classifiers without KV cache, max_sequence_length is just suffix_length
-            suffix_length
-        };
-
-        let is_trie = state.token_subtrie_ranges.is_some();
-
-        let (segment_prefix_length, ring_params) = if let Some(cache_layers) = state.cache_layers() {
-            let projection_step = parameters.projection_step.unwrap_or(0);
-            let cache = cache_layers.borrow();
-            let layer = cache.data[self.layer_index]
-                .as_transformer()
-                .expect("Attention kernel expects transformer layer state");
-            let ring_params = match layer.state {
-                KVCacheLayerState::Windowed {
-                    ring_offset,
-                    ring_length,
-                    window_length,
-                } => {
-                    let overflow = (ring_length + projection_step).saturating_sub(window_length);
-                    Some(RingParams {
-                        ring_offset: ((ring_offset + overflow) % window_length) as u32,
-                        ring_length: (ring_length + projection_step).min(window_length) as u32,
-                    })
-                },
-                _ => None,
+        let (max_sequence_length, segment_prefix_length, ring_params) =
+            if let Some(layer) = args.kv_cache_layer.as_deref() {
+                let max_sequence_length = layer.shape[0];
+                let ring_params = match layer.state {
+                    KVCacheLayerState::Windowed {
+                        ring_offset,
+                        ring_length,
+                        window_length,
+                    } => {
+                        let overflow = (ring_length + args.projection_step).saturating_sub(window_length);
+                        Some(RingParams {
+                            ring_offset: ((ring_offset + overflow) % window_length) as u32,
+                            ring_length: (ring_length + args.projection_step).min(window_length) as u32,
+                        })
+                    },
+                    _ => None,
+                };
+                (max_sequence_length, layer.projected_segment_prefix_length(args.projection_step), ring_params)
+            } else {
+                (suffix_length, 0, None)
             };
-            (layer.projected_segment_prefix_length(projection_step), ring_params)
-        } else {
-            (0, None)
-        };
 
         let is_kv_cache_ring = ring_params.is_some();
 
@@ -231,99 +214,31 @@ impl<B: Backend> Attention<B> {
         let variant =
             self.select_variant(gemm_enabled, suffix_length, head_dim, sequence_length, is_trie, is_kv_cache_ring);
 
-        let gate_array = self.gate_kernel.as_ref().map(|_| state.array(ArrayId::Gate));
-
-        let sinks_array = self.has_sinks.then(|| state.array(ArrayId::AttentionSinks(self.layer_index)));
-
-        let rotated_keys_buf_rc = rotated_keys_array.buffer();
-        let mut rotated_keys_buf_borrow = rotated_keys_buf_rc.borrow_mut();
-
-        let qkv_buf_rc = qkv_array.buffer();
-        let qkv_buf_borrow = qkv_buf_rc.borrow();
+        let sinks_allocation = args.attention_sinks;
+        let trie_allocation = args.token_subtrie_ranges;
 
         // Get KV cache buffers only if KV cache exists (LLM mode)
-        let has_kv_cache = state.cache_layers().is_some();
-
-        let key_cache_array = has_kv_cache.then(|| state.array(ArrayId::Keys(self.layer_index)));
-        let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
-        let mut key_cache_buf_borrow = key_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
-
-        let value_cache_array = has_kv_cache.then(|| state.array(ArrayId::Values(self.layer_index)));
-        let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
-        let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
-
-        let extracted_values_array = (!has_kv_cache).then(|| state.array(ArrayId::ExtractedValues));
-        let extracted_values_buf_rc = extracted_values_array.as_ref().map(|a| a.buffer());
-        let mut extracted_values_buf_borrow = extracted_values_buf_rc.as_ref().map(|rc| rc.borrow_mut());
-
-        // For classifiers (no KV cache): extract values from QKV into a dedicated extracted_values buffer.
-        if !has_kv_cache {
-            self.update_kv_cache_inplace_kernel.encode(
-                None::<&B::Buffer>,
-                qkv_buf_borrow.deref(),
-                // keys already in desired layout; harmless overwrite
-                rotated_keys_buf_borrow.deref_mut(),
-                extracted_values_buf_borrow.as_mut().unwrap().deref_mut(),
-                num_groups as u32,
-                num_heads as u32,
-                head_dim as u32,
-                suffix_length as u32,
-                0u32,
-                max_sequence_length as u32,
-                encoder,
-            );
-        }
-
-        let queries_buf_rc = queries_array.buffer();
-        let queries_buf_borrow = queries_buf_rc.borrow();
-
-        let attention_output_buf_rc = attention_output_array.buffer();
-        let mut attention_output_buf_borrow = attention_output_buf_rc.borrow_mut();
-
-        let trie_buf_rc = state.token_subtrie_ranges.as_ref().map(|a| a.buffer());
-        let trie_buf_borrow = trie_buf_rc.as_ref().map(|rc| rc.borrow());
-        let trie_buffer: Option<&B::Buffer> = trie_buf_borrow.as_ref().map(|b| b.deref());
-
-        let partials_buf_rc = partials_array.buffer();
-        let mut partials_buf_borrow = partials_buf_rc.borrow_mut();
-
-        let sums_buf_rc = sums_array.buffer();
-        let mut sums_buf_borrow = sums_buf_rc.borrow_mut();
-
-        let maxs_buf_rc = maxs_array.buffer();
-        let mut maxs_buf_borrow = maxs_buf_rc.borrow_mut();
-
-        let sinks_buf_rc = sinks_array.as_ref().map(|b| b.buffer());
-        let sinks_buf_borrow = sinks_buf_rc.as_ref().map(|rc| rc.borrow());
-        let sinks_buffer: Option<&B::Buffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
-
-        // Only update KV cache for LLM mode (not for classifiers)
-        if has_kv_cache {
-            self.update_kv_cache_kernel.encode(
-                Some(rotated_keys_buf_borrow.deref()),
-                qkv_buf_borrow.deref(),
-                key_cache_buf_borrow.as_mut().unwrap().deref_mut(),
-                value_cache_buf_borrow.as_mut().unwrap().deref_mut(),
-                num_groups as u32,
-                num_heads as u32,
-                head_dim as u32,
-                suffix_length as u32,
-                segment_prefix_length as u32,
-                max_sequence_length as u32,
-                encoder,
-            );
-        }
-
-        let key_cache_buffer: &B::Buffer = if has_kv_cache {
-            key_cache_buf_borrow.as_ref().unwrap().deref()
-        } else {
-            rotated_keys_buf_borrow.deref()
-        };
-        let value_cache_buffer: &B::Buffer = if has_kv_cache {
-            value_cache_buf_borrow.as_ref().unwrap().deref()
-        } else {
-            extracted_values_buf_borrow.as_ref().unwrap().deref()
-        };
+        let has_kv_cache = args.kv_cache_layer.is_some();
+        let extracted_values = (!has_kv_cache)
+            .then(|| {
+                let mut values =
+                    encoder.allocate_scratch(size_for_shape(&[num_groups, suffix_length, head_dim], self.data_type))?;
+                self.update_kv_cache_inplace_kernel.encode(
+                    None::<&Allocation<B>>,
+                    qkv,
+                    &mut rotated_keys,
+                    &mut values,
+                    num_groups as u32,
+                    num_heads as u32,
+                    head_dim as u32,
+                    suffix_length as u32,
+                    0u32,
+                    max_sequence_length as u32,
+                    encoder,
+                );
+                Ok(values)
+            })
+            .transpose()?;
 
         // KV cache layout: [max_sequence_length, num_groups, head_dim] (token-major)
         // For classifier mode (no KV cache) keys/values still come in group-major layout
@@ -345,15 +260,100 @@ impl<B: Backend> Attention<B> {
             is_kv_cache_ring,
         };
 
+        let mut attention_output =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads * head_dim], self.data_type))?;
+
+        let (keys, values) = if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
+            self.update_kv_cache_kernel.encode(
+                Some(&rotated_keys),
+                qkv,
+                &mut layer.keys,
+                &mut layer.values,
+                num_groups as u32,
+                num_heads as u32,
+                head_dim as u32,
+                suffix_length as u32,
+                segment_prefix_length as u32,
+                max_sequence_length as u32,
+                encoder,
+            );
+            (&layer.keys, &layer.values)
+        } else {
+            (&rotated_keys, extracted_values.as_ref().expect("Missing extracted values for classifier attention"))
+        };
+
+        Self::encode_attention_variant(
+            self,
+            variant,
+            &kernel_key,
+            queries,
+            keys,
+            values,
+            &mut attention_output,
+            trie_allocation,
+            sinks_allocation,
+            gqa_factor,
+            sequence_length,
+            k_head_stride,
+            k_seq_stride,
+            v_head_stride,
+            v_seq_stride,
+            ring_params,
+            scale,
+            num_heads,
+            num_groups,
+            suffix_length,
+            segment_prefix_length,
+            max_sequence_length,
+            head_dim,
+            encoder,
+        )?;
+
+        if let Some(gate_kernel) = &self.gate_kernel {
+            let total_elements = (suffix_length * num_heads * head_dim) as u32;
+            let gate = gate.expect("Gate allocation not initialized");
+            gate_kernel.encode(gate, &mut attention_output, total_elements, encoder);
+        }
+
+        Ok(attention_output)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_attention_variant(
+        &self,
+        variant: KernelVariant,
+        kernel_key: &KernelKey,
+        queries: &Allocation<B>,
+        keys: &Allocation<B>,
+        values: &Allocation<B>,
+        attention_output: &mut Allocation<B>,
+        trie_allocation: Option<&Allocation<B>>,
+        sinks_allocation: Option<&Allocation<B>>,
+        gqa_factor: usize,
+        sequence_length: usize,
+        k_head_stride: u32,
+        k_seq_stride: u32,
+        v_head_stride: u32,
+        v_seq_stride: u32,
+        ring_params: Option<RingParams>,
+        scale: f32,
+        num_heads: usize,
+        num_groups: usize,
+        suffix_length: usize,
+        segment_prefix_length: usize,
+        max_sequence_length: usize,
+        head_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<(), B::Error> {
         match variant {
             KernelVariant::Gemm => {
                 let args = AttentionGemmArguments {
-                    queries_buffer: queries_buf_borrow.deref(),
-                    keys_buffer: key_cache_buffer,
-                    values_buffer: value_cache_buffer,
-                    output_buffer: attention_output_buf_borrow.deref_mut(),
-                    trie_buffer,
-                    sinks_buffer,
+                    queries_buffer: queries,
+                    keys_buffer: keys,
+                    values_buffer: values,
+                    output_buffer: attention_output,
+                    trie_buffer: trie_allocation,
+                    sinks_buffer: sinks_allocation,
                     num_heads,
                     num_groups,
                     suffix_length,
@@ -370,18 +370,18 @@ impl<B: Backend> Attention<B> {
                     v_head_stride: v_head_stride as u64,
                     v_seq_stride: v_seq_stride as u64,
                 };
-                self.gemm_block.encode(state.context(), encoder, args).expect("Failed to encode AttentionGemmBlock");
+                self.gemm_block.encode(encoder, args)?;
             },
             KernelVariant::SinglePass => {
-                let kernel = match self.single_pass_kernels.get(&kernel_key) {
-                    Some(k) => k,
-                    None => panic!("Can not find AttentionSinglePassKernel for key {:?}", kernel_key),
-                };
+                let kernel = self
+                    .single_pass_kernels
+                    .get(kernel_key)
+                    .unwrap_or_else(|| panic!("Can not find AttentionSinglePassKernel for key {:?}", kernel_key));
                 kernel.encode(
-                    queries_buf_borrow.deref(),
-                    key_cache_buffer,
-                    value_cache_buffer,
-                    attention_output_buf_borrow.deref_mut(),
+                    queries,
+                    keys,
+                    values,
+                    attention_output,
                     gqa_factor as u32,
                     sequence_length as u32,
                     k_head_stride,
@@ -390,30 +390,36 @@ impl<B: Backend> Attention<B> {
                     v_seq_stride,
                     ring_params,
                     scale,
-                    trie_buffer,
+                    trie_allocation,
                     self.sliding_window_size.map(|s| s as u32),
-                    sinks_buffer,
+                    sinks_allocation,
                     num_heads as u32,
                     suffix_length as u32,
                     encoder,
-                )
+                );
             },
             KernelVariant::TwoPass => {
-                let kernel_pass1 = match self.two_pass_1_kernels.get(&kernel_key) {
-                    Some(k) => k,
-                    None => panic!("Can not find AttentionTwoPass1Kernel for key {:?}", kernel_key),
-                };
-                let kernel_pass2 = match self.two_pass_2_kernels.get(&(head_dim as u32)) {
-                    Some(k) => k,
-                    None => panic!("Can not find AttentionTwoPass2Kernel for key {:?}", kernel_key),
-                };
+                let kernel_pass1 = self
+                    .two_pass_1_kernels
+                    .get(kernel_key)
+                    .unwrap_or_else(|| panic!("Can not find AttentionTwoPass1Kernel for key {:?}", kernel_key));
+                let kernel_pass2 = self
+                    .two_pass_2_kernels
+                    .get(&(head_dim as u32))
+                    .unwrap_or_else(|| panic!("Can not find AttentionTwoPass2Kernel for key {:?}", kernel_key));
+                let mut partials = encoder
+                    .allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32 * head_dim], DataType::F32))?;
+                let mut sums =
+                    encoder.allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))?;
+                let mut maxs =
+                    encoder.allocate_scratch(size_for_shape(&[num_heads * suffix_length * 32], DataType::F32))?;
                 kernel_pass1.encode(
-                    queries_buf_borrow.deref(),
-                    key_cache_buffer,
-                    value_cache_buffer,
-                    partials_buf_borrow.deref_mut(),
-                    sums_buf_borrow.deref_mut(),
-                    maxs_buf_borrow.deref_mut(),
+                    queries,
+                    keys,
+                    values,
+                    &mut partials,
+                    &mut sums,
+                    &mut maxs,
                     gqa_factor as u32,
                     sequence_length as u32,
                     k_head_stride,
@@ -424,40 +430,28 @@ impl<B: Backend> Attention<B> {
                     scale,
                     num_heads as u32,
                     suffix_length as u32,
-                    trie_buffer,
+                    trie_allocation,
                     self.sliding_window_size.map(|s| s as u32),
-                    sinks_buffer,
+                    sinks_allocation,
                     encoder,
                 );
                 kernel_pass2.encode(
-                    partials_buf_borrow.deref(),
-                    sums_buf_borrow.deref(),
-                    maxs_buf_borrow.deref(),
-                    attention_output_buf_borrow.deref_mut(),
+                    &partials,
+                    &sums,
+                    &maxs,
+                    attention_output,
                     num_heads as u32,
                     suffix_length as u32,
                     encoder,
                 );
             },
-        }
-
-        if let Some(gate_kernel) = &self.gate_kernel {
-            let gate_array = gate_array.as_ref().unwrap();
-            let gate_buf_rc = gate_array.buffer();
-            let gate_buf_borrow = gate_buf_rc.borrow();
-            let total_elements = (suffix_length * num_heads * head_dim) as u32;
-            gate_kernel.encode(
-                gate_buf_borrow.deref(),
-                attention_output_buf_borrow.deref_mut(),
-                total_elements,
-                encoder,
-            );
         }
 
         Ok(())
     }
 }
 
+#[derive(Clone, Copy)]
 enum KernelVariant {
     Gemm,
     SinglePass,

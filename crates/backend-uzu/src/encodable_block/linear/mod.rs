@@ -10,18 +10,18 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Encoder},
+    backends::common::{Allocation, Backend, Encoder},
     config::LinearConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
 pub trait Linear<B: Backend> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error>;
+    ) -> Result<Allocation<B>, B::Error>;
 }
 
 #[derive(Debug, Error)]
@@ -30,10 +30,10 @@ pub enum LinearBlockError<B: Backend> {
     QuantizedLinearError(#[from] QuantizedLinearError<B>),
     #[error("FullPrecisionLinear error: {0}")]
     FullPrecisionLinearError(#[from] FullPrecisionLinearError<B>),
-    #[error("RHTLinearWrapper error: {0}")]
-    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
     #[error("QLoRALinearWrapper error: {0}")]
     QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
+    #[error("RHTLinearWrapper error: {0}")]
+    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
 }
@@ -41,13 +41,10 @@ pub enum LinearBlockError<B: Backend> {
 impl<B: Backend> dyn Linear<B> {
     pub fn new<const N: usize>(
         config: &LinearConfig,
-        _has_biases: bool,
         input_dimension: usize,
         output_dimensions: [usize; N],
         context: &B::Context,
         parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
         match config {
@@ -58,8 +55,6 @@ impl<B: Backend> dyn Linear<B> {
                     input_dimension,
                     output_dimension_sum,
                     parameter_tree,
-                    input_array_id,
-                    output_array_id,
                     None,
                 )?;
                 Ok(Box::new(block))
@@ -73,8 +68,6 @@ impl<B: Backend> dyn Linear<B> {
                     input_dimension,
                     output_dimension_sum,
                     parameter_tree,
-                    input_array_id,
-                    output_array_id,
                 )?;
                 Ok(Box::new(block))
             },
@@ -92,37 +85,28 @@ impl<B: Backend> dyn Linear<B> {
                     output_dimension_sum,
                     parameter_tree,
                     None,
-                    input_array_id,
-                    output_array_id,
                 )?;
                 Ok(Box::new(block))
             },
             LinearConfig::RHTLinearWrapper {
                 block_size,
                 inner_config,
-            } => {
-                let block = RHTLinearWrapper::new(
-                    context,
-                    *block_size,
-                    inner_config,
-                    input_dimension,
-                    output_dimension_sum,
-                    parameter_tree,
-                    input_array_id,
-                    output_array_id,
-                )?;
-                Ok(Box::new(block))
-            },
+            } => Ok(Box::new(RHTLinearWrapper::new(
+                context,
+                *block_size,
+                inner_config,
+                input_dimension,
+                output_dimension_sum,
+                parameter_tree,
+            )?)),
         }
     }
 
     pub fn new_with_output_hadamard(
         context: &B::Context,
         config: &LinearConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
-        output_factors: B::Buffer,
+        output_factors: Allocation<B>,
         input_dim: usize,
         output_dim: usize,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
@@ -133,8 +117,6 @@ impl<B: Backend> dyn Linear<B> {
                 input_dim,
                 output_dim,
                 parameter_tree,
-                input_array_id,
-                output_array_id,
                 Some(output_factors),
             )?)),
             LinearConfig::QLoRA {
@@ -150,8 +132,6 @@ impl<B: Backend> dyn Linear<B> {
                 output_dim,
                 parameter_tree,
                 Some(output_factors),
-                input_array_id,
-                output_array_id,
             )?)),
             inner_config => unimplemented!("{inner_config:?} doesn't support fused output hadamard"),
         }
@@ -159,28 +139,23 @@ impl<B: Backend> dyn Linear<B> {
 
     pub fn new_extracting_input_hadamard<const N: usize>(
         config: &LinearConfig,
-        _has_biases: bool,
         input_dimension: usize,
         output_dimensions: [usize; N],
         context: &B::Context,
         parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::Buffer>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
         match config {
             LinearConfig::RHTLinearWrapper {
                 inner_config,
                 ..
             } => {
-                let input_factors = parameter_tree.leaf("input_factors")?.read_buffer()?;
-                let output_factors = parameter_tree.leaf("output_factors")?.read_buffer()?;
+                let input_factors = parameter_tree.leaf("input_factors")?.read_allocation()?;
+                let output_factors = parameter_tree.leaf("output_factors")?.read_allocation()?;
                 let inner_tree = parameter_tree.subtree("inner_linear")?;
                 let inner_linear = Self::new_with_output_hadamard(
                     context,
                     inner_config,
-                    input_array_id,
-                    output_array_id,
                     &inner_tree,
                     output_factors,
                     input_dimension,
@@ -189,16 +164,7 @@ impl<B: Backend> dyn Linear<B> {
                 Ok((inner_linear, Some(input_factors)))
             },
             other => {
-                let linear = Self::new(
-                    other,
-                    _has_biases,
-                    input_dimension,
-                    output_dimensions,
-                    context,
-                    parameter_tree,
-                    input_array_id,
-                    output_array_id,
-                )?;
+                let linear = Self::new(other, input_dimension, output_dimensions, context, parameter_tree)?;
                 Ok((linear, None))
             },
         }

@@ -1,4 +1,4 @@
-use std::{cell::Cell, time::Duration};
+use std::{cell::Cell, ops::Range, time::Duration};
 
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
@@ -9,7 +9,7 @@ use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use super::Metal;
 use crate::backends::{
     common::{
-        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+        AccessFlags, Allocation, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferInitial, CommandBufferPending,
     },
     metal::error::MetalError,
@@ -120,11 +120,15 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        src_range: std::ops::Range<usize>,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
-        dst_range: std::ops::Range<usize>,
+        src: &Allocation<Metal>,
+        src_range: Range<usize>,
+        dst: &mut Allocation<Metal>,
+        dst_range: Range<usize>,
     ) {
+        let (src, src_allocation_range) = src.as_buffer_range();
+        let (dst, dst_allocation_range) = dst.as_buffer_range();
+        let src_range = src_allocation_range.start + src_range.start..src_allocation_range.start + src_range.end;
+        let dst_range = dst_allocation_range.start + dst_range.start..dst_allocation_range.start + dst_range.end;
         let size = src_range.end - src_range.start;
         assert_eq!(size, dst_range.end - dst_range.start);
         assert!(src.length() >= src_range.end && dst.length() >= dst_range.end);
@@ -134,10 +138,12 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_fill(
         &mut self,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
-        range: std::ops::Range<usize>,
+        dst: &mut Allocation<Metal>,
+        range: Range<usize>,
         value: u8,
     ) {
+        let (dst, allocation_range) = dst.as_buffer_range();
+        let range = allocation_range.start + range.start..allocation_range.start + range.end;
         assert!(range.end > range.start && range.end <= dst.length());
         assert!(range.start % 4 == 0 && range.end % 4 == 0);
 

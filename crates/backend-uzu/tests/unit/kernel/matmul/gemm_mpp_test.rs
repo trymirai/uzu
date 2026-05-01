@@ -1,15 +1,16 @@
 #![cfg(metal_backend)]
 
 use std::{
-    ops::{Deref, DerefMut},
     rc::Rc,
 };
 
+use criterion::{BenchmarkId, Criterion, Throughput};
+use half::bf16;
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -19,11 +20,13 @@ use backend_uzu::{
         metal::{DeviceExt, MatmulDispatchPath, Metal, MetalContext},
     },
 };
-use criterion::{BenchmarkId, Criterion, Throughput};
-use half::bf16;
 
 use crate::{
-    common::{assert::assert_eq_float, type_short_name},
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+        type_short_name,
+    },
     uzu_bench, uzu_test,
 };
 
@@ -66,20 +69,18 @@ fn get_test_data(
 fn get_cpu_output(input: &Input) -> Vec<bf16> {
     let cpu_context = <Cpu as Backend>::Context::new().expect("CPU context");
 
-    let left_array = cpu_context.create_array_from(&[input.batch_dim, input.input_dim], &input.left, "");
     let right_array = cpu_context.create_array_from(&[input.output_dim, input.input_dim], &input.right, "");
-    let destination_array = if let Some(ref prefill) = input.destination_prefill {
-        cpu_context.create_array_from(&[input.batch_dim, input.output_dim], prefill, "")
+    let left_allocation = alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &input.left);
+    let mut destination_allocation = if let Some(ref prefill) = input.destination_prefill {
+        alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, prefill)
     } else {
-        cpu_context.create_array_uninitialized(&[input.batch_dim, input.output_dim], bf16::data_type(), "")
+        cpu_context
+            .create_allocation(
+                input.batch_dim * input.output_dim * std::mem::size_of::<bf16>(),
+                AllocationType::Global,
+            )
+            .expect("Failed to create allocation")
     };
-
-    let left_buffer = left_array.buffer();
-    let left_ref = left_buffer.borrow();
-    let right_buffer = right_array.buffer();
-    let right_ref = right_buffer.borrow();
-    let destination_buffer = destination_array.buffer();
-    let mut destination_ref = destination_buffer.borrow_mut();
 
     let argument_c = if input.destination_prefill.is_some() {
         MatmulArgumentC::Accumulate
@@ -93,14 +94,13 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
 
     let mut encoder = Encoder::new(cpu_context.as_ref()).expect("encoder");
     matmul_kernel.encode(
-        &cpu_context,
         MatmulArguments {
-            a: left_ref.deref(),
+            a: &left_allocation,
             a_offset: 0,
-            b: right_ref.deref(),
+            b: right_array.allocation(),
             ab_scale: input.ab_scale,
             c: argument_c,
-            d: destination_ref.deref_mut(),
+            d: &mut destination_allocation,
             batch_dim: input.batch_dim as u32,
             input_dim: input.input_dim as u32,
             output_dim: input.output_dim as u32,
@@ -108,9 +108,7 @@ fn get_cpu_output(input: &Input) -> Vec<bf16> {
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(destination_ref);
-    destination_array.as_slice().to_vec()
+    allocation_to_vec(&destination_allocation)
 }
 
 fn get_mpp_output(
@@ -118,20 +116,18 @@ fn get_mpp_output(
     matmul_kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     input: &Input,
 ) -> Vec<bf16> {
-    let left_array = metal_context.create_array_from(&[input.batch_dim, input.input_dim], &input.left, "");
     let right_array = metal_context.create_array_from(&[input.output_dim, input.input_dim], &input.right, "");
-    let destination_array = if let Some(ref prefill) = input.destination_prefill {
-        metal_context.create_array_from(&[input.batch_dim, input.output_dim], prefill, "")
+    let left_allocation = alloc_allocation_with_data::<Metal, bf16>(metal_context, &input.left);
+    let mut destination_allocation = if let Some(ref prefill) = input.destination_prefill {
+        alloc_allocation_with_data::<Metal, bf16>(metal_context, prefill)
     } else {
-        metal_context.create_array_uninitialized(&[input.batch_dim, input.output_dim], bf16::data_type(), "")
+        metal_context
+            .create_allocation(
+                input.batch_dim * input.output_dim * std::mem::size_of::<bf16>(),
+                AllocationType::Global,
+            )
+            .expect("Failed to create allocation")
     };
-
-    let left_buffer = left_array.buffer();
-    let left_ref = left_buffer.borrow();
-    let right_buffer = right_array.buffer();
-    let right_ref = right_buffer.borrow();
-    let destination_buffer = destination_array.buffer();
-    let mut destination_ref = destination_buffer.borrow_mut();
 
     let argument_c = if input.destination_prefill.is_some() {
         MatmulArgumentC::Accumulate
@@ -141,14 +137,13 @@ fn get_mpp_output(
 
     let mut encoder = Encoder::new(metal_context).expect("encoder");
     matmul_kernel.encode_with_path(
-        metal_context,
         MatmulArguments {
-            a: left_ref.deref(),
+            a: &left_allocation,
             a_offset: 0,
-            b: right_ref.deref(),
+            b: right_array.allocation(),
             ab_scale: input.ab_scale,
             c: argument_c,
-            d: destination_ref.deref_mut(),
+            d: &mut destination_allocation,
             batch_dim: input.batch_dim as u32,
             input_dim: input.input_dim as u32,
             output_dim: input.output_dim as u32,
@@ -157,9 +152,7 @@ fn get_mpp_output(
         MatmulDispatchPath::GemmMpp,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(destination_ref);
-    destination_array.as_slice().to_vec()
+    allocation_to_vec(&destination_allocation)
 }
 
 fn create_metal_context_and_matmul_kernel()
@@ -291,10 +284,13 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
         criterion.benchmark_group(format!("{}/Kernel/Matmul/GEMM_MPP", type_short_name::<Metal>()));
 
     for &(batch_dim, input_dim, output_dim) in BENCHMARK_SHAPES {
-        let left_array = metal_context.create_array_uninitialized(&[batch_dim, input_dim], bf16::data_type(), "");
         let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type(), "");
-        let destination_array =
-            metal_context.create_array_uninitialized(&[batch_dim, output_dim], bf16::data_type(), "");
+        let left_allocation = metal_context
+            .create_allocation(batch_dim * input_dim * std::mem::size_of::<bf16>(), AllocationType::Global)
+            .expect("Failed to create allocation");
+        let mut destination_allocation = metal_context
+            .create_allocation(batch_dim * output_dim * std::mem::size_of::<bf16>(), AllocationType::Global)
+            .expect("Failed to create allocation");
 
         let floating_point_operations = 2 * batch_dim * input_dim * output_dim;
         benchmark_group.throughput(Throughput::Elements(floating_point_operations as u64));
@@ -302,26 +298,18 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
         benchmark_group.bench_function(
             BenchmarkId::new("BF16", format!("M[{batch_dim}]K[{input_dim}]N[{output_dim}]")),
             |bencher| {
-                let left_buffer = left_array.buffer();
-                let left_ref = left_buffer.borrow();
-                let right_buffer = right_array.buffer();
-                let right_ref = right_buffer.borrow();
-                let destination_buffer = destination_array.buffer();
-
                 bencher.iter_custom(|iteration_count| {
                     let mut encoder = Encoder::<Metal>::new(&metal_context).unwrap();
 
                     for _ in 0..iteration_count {
-                        let mut destination_ref = destination_buffer.borrow_mut();
                         matmul_kernel.encode_with_path(
-                            &metal_context,
                             MatmulArguments {
-                                a: left_ref.deref(),
+                                a: &left_allocation,
                                 a_offset: 0,
-                                b: right_ref.deref(),
+                                b: right_array.allocation(),
                                 ab_scale: 1.0,
                                 c: MatmulArgumentC::None,
-                                d: destination_ref.deref_mut(),
+                                d: &mut destination_allocation,
                                 batch_dim: batch_dim as u32,
                                 input_dim: input_dim as u32,
                                 output_dim: output_dim as u32,

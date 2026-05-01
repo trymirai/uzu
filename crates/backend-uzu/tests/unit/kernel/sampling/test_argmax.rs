@@ -1,18 +1,18 @@
-use std::mem::MaybeUninit;
+use std::mem::{MaybeUninit, size_of};
 
-use backend_uzu::{
-    ArrayElement,
-    backends::common::{
-        Backend, Buffer, Context, Encoder, Kernels,
-        gpu_types::ArgmaxPair,
-        kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
-    },
-};
 use criterion::{BenchmarkId, Criterion, Throughput};
 use num_traits::{Float, NumCast};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
+use backend_uzu::{
+    ArrayContextExt, ArrayElement, DataType,
+    backends::common::{
+        AllocationType, Backend, Context, Encoder, Kernels,
+        gpu_types::ArgmaxPair,
+        kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
+    },
+};
 
 use crate::{
     common::{
@@ -43,17 +43,15 @@ fn do_argmax_backend<B: Backend, T: ArrayElement + Float>(
     batch_size: usize,
     vocab_size: usize,
 ) -> Result<ArgmaxTestResults, TestCaseError> {
-    let logits_buffer = context.create_buffer(logits.len() * std::mem::size_of::<T>()).unwrap();
-    unsafe {
-        std::slice::from_raw_parts_mut::<T>(logits_buffer.cpu_ptr().as_ptr() as *mut T, logits.len())
-            .copy_from_slice(logits);
-    }
-
-    let mut twopass_partial_results_buffer =
-        context.create_buffer(batch_size * vocab_size.div_ceil(4096) * std::mem::size_of::<ArgmaxPair>()).unwrap();
-
-    let mut single_output_buffer = context.create_buffer(batch_size * 4).unwrap();
-    let mut twopass_output_buffer = context.create_buffer(batch_size * 4).unwrap();
+    let logits_buffer = context.create_array_from(&[logits.len()], logits, "").into_allocation();
+    let mut twopass_partial_results_buffer = context
+        .create_allocation(
+            batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(),
+            AllocationType::Global,
+        )
+        .unwrap();
+    let mut single_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32, "").into_allocation();
+    let mut twopass_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32, "").into_allocation();
 
     let single_kernel = <B::Kernels as Kernels>::ArgmaxSingleKernel::new(context, T::data_type()).unwrap();
     let twopass_kernel_main = <B::Kernels as Kernels>::ArgmaxMainKernel::new(context, T::data_type()).unwrap();
@@ -77,23 +75,12 @@ fn do_argmax_backend<B: Backend, T: ArrayElement + Float>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let single_output = unsafe {
-        std::slice::from_raw_parts(single_output_buffer.cpu_ptr().as_ptr() as *const u32, batch_size)
-            .iter()
-            .copied()
-            .collect()
-    };
-
-    let twopass_output = unsafe {
-        std::slice::from_raw_parts(twopass_output_buffer.cpu_ptr().as_ptr() as *const u32, batch_size)
-            .iter()
-            .copied()
-            .collect()
-    };
+    let single_output = crate::common::helpers::allocation_to_vec::<B, u32>(&single_output_buffer);
+    let twopass_output = crate::common::helpers::allocation_to_vec::<B, u32>(&twopass_output_buffer);
 
     prop_assert_eq!(&single_output, &twopass_output, "single and twopass argmax output differs");
 
-    Ok(ArgmaxTestResults(single_output))
+    Ok(ArgmaxTestResults(single_output.into_boxed_slice()))
 }
 
 fn get_argmax_data<T: ArrayElement + Float>(
@@ -143,7 +130,7 @@ fn bench_argmax(c: &mut Criterion) {
             <<B as Backend>::Kernels as Kernels>::ArgmaxMainKernel::new(&context, T::data_type()).unwrap();
         let twopass_kernel_final = <<B as Backend>::Kernels as Kernels>::ArgmaxFinalKernel::new(&context).unwrap();
 
-        let mut output_buffer = context.create_buffer(batch_size * std::mem::size_of::<u32>()).unwrap();
+        let mut output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32, "").into_allocation();
 
         let mut group = c.benchmark_group(format!("{}/Kernel/Sampling/Argmax", type_short_name::<B>()));
 
@@ -154,14 +141,12 @@ fn bench_argmax(c: &mut Criterion) {
             262144, // Gemma-3-1b
         ] {
             let logits_data = get_argmax_data::<T>(1337, batch_size, vocab_size);
-            let logits_buffer = context.create_buffer(logits_data.len() * std::mem::size_of::<T>()).unwrap();
-            unsafe {
-                std::slice::from_raw_parts_mut::<T>(logits_buffer.cpu_ptr().as_ptr() as *mut T, logits_data.len())
-                    .copy_from_slice(logits_data.as_ref());
-            }
-
+            let logits_buffer = context.create_array_from(&[logits_data.len()], logits_data.as_ref(), "").into_allocation();
             let mut twopass_partial_results_buffer = context
-                .create_buffer(batch_size * vocab_size.div_ceil(4096) * std::mem::size_of::<ArgmaxPair>())
+                .create_allocation(
+                    batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(),
+                    AllocationType::Global,
+                )
                 .unwrap();
 
             group.throughput(Throughput::Elements(vocab_size as u64));

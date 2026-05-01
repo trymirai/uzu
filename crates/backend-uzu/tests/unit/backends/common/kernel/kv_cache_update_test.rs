@@ -1,9 +1,9 @@
 #![cfg(metal_backend)]
 
-use std::{cell::RefCell, rc::Rc};
+#[macro_use]
+#[path = "../../../../common/mod.rs"]
+mod common;
 
-use bytemuck;
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use ndarray::{Array, Array3, s};
 
 use super::*;
@@ -64,56 +64,34 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
     apply_swaps_3d(&mut expected_keys, &swaps);
     apply_swaps_3d(&mut expected_values, &swaps);
 
-    let device = &context.device;
-
-    let key_buffer = Rc::new(RefCell::new(
-        device
-            .new_buffer_with_data(
-                bytemuck::cast_slice(key_data.as_slice().unwrap()),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
-            .expect("Failed to create buffer"),
-    ));
-
-    let value_buffer = Rc::new(RefCell::new(
-        device
-            .new_buffer_with_data(
-                bytemuck::cast_slice(value_data.as_slice().unwrap()),
-                MTLResourceOptions::STORAGE_MODE_SHARED,
-            )
-            .expect("Failed to create buffer"),
-    ));
-
-    let kv_layer_data = KVLayerData::<Metal> {
-        key_buffer: key_buffer.clone(),
-        key_shape: [seq_len, num_heads, head_dim],
-        value_buffer: value_buffer.clone(),
-        value_shape: [seq_len, num_heads, head_dim],
-    };
+    let mut key_allocation = common::helpers::alloc_allocation_with_data(context, key_data.as_slice().unwrap());
+    let mut value_allocation = common::helpers::alloc_allocation_with_data(context, value_data.as_slice().unwrap());
 
     let mut encoder = Encoder::new(context).unwrap();
-    match kv_cache_update.encode(&[kv_layer_data], &source_indices, &destination_indices, &mut encoder) {
-        Ok(_) => {},
-        Err(e) => {
-            println!("Warning: Failed to encode KV cache update: {:?}. Skipping test.", e);
-            return;
-        },
+    {
+        let mut kv_layers = [KVLayerData::<Metal> {
+            key_allocation: &mut key_allocation,
+            key_shape: [seq_len, num_heads, head_dim],
+            value_allocation: &mut value_allocation,
+            value_shape: [seq_len, num_heads, head_dim],
+        }];
+        match kv_cache_update.encode(&mut kv_layers, &source_indices, &destination_indices, &mut encoder) {
+            Ok(_) => {},
+            Err(e) => {
+                println!("Warning: Failed to encode KV cache update: {:?}. Skipping test.", e);
+                return;
+            },
+        }
     }
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let key_result_ptr = key_buffer.borrow().contents().as_ptr() as *const f32;
-    let value_result_ptr = value_buffer.borrow().contents().as_ptr() as *const f32;
-
-    let total_elems = num_heads * seq_len * head_dim;
-
-    let key_result_slice = unsafe { std::slice::from_raw_parts(key_result_ptr, total_elems) };
-    let value_result_slice = unsafe { std::slice::from_raw_parts(value_result_ptr, total_elems) };
-
-    let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_result_slice.to_vec())
+    let key_values: Vec<f32> = common::helpers::allocation_to_vec(&key_allocation);
+    let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_values)
         .expect("Failed to convert key result to ndarray");
 
-    let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_result_slice.to_vec())
+    let value_values: Vec<f32> = common::helpers::allocation_to_vec(&value_allocation);
+    let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_values)
         .expect("Failed to convert value result to ndarray");
 
     println!("Original keys tokens 0,14 head 0:");

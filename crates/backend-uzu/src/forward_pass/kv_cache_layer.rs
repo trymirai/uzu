@@ -1,12 +1,12 @@
 use crate::{
-    array::{Array, ArrayContextExt},
+    DataType,
+    array::{Array, ArrayContextExt, allocation_as_bytes, allocation_as_bytes_mut, size_for_shape},
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
 
-#[derive(Clone)]
 pub enum KVSlice<B: Backend> {
     Full {
         base_prefix_len: usize,
@@ -16,8 +16,8 @@ pub enum KVSlice<B: Backend> {
         base_ring_offset: usize,
         base_ring_length: usize,
         slots: Vec<usize>,
-        keys: Array<B>,   // [num_groups, slots.len(), head_dim]
-        values: Array<B>, // [num_groups, slots.len(), head_dim]
+        keys: Array<B>,   // [slots.len(), num_groups, head_dim]
+        values: Array<B>, // [slots.len(), num_groups, head_dim]
     },
 }
 
@@ -39,16 +39,60 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
-#[derive(Debug)]
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
-    /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub keys: Array<B>,
-    /// [num_groups, max_prefix_length + max_suffix_length, head_dim]
-    pub values: Array<B>,
+    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
+    pub keys: Allocation<B>,
+    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
+    pub values: Allocation<B>,
+    pub shape: [usize; 3],
+    pub data_type: DataType,
+}
+
+fn copy_rows(
+    source_keys_bytes: &[u8],
+    source_values_bytes: &[u8],
+    destination_keys_bytes: &mut [u8],
+    destination_values_bytes: &mut [u8],
+    row_size: usize,
+    row_pairs: impl IntoIterator<Item = (usize, usize)>,
+) {
+    for (source_row, destination_row) in row_pairs {
+        let source_offset = source_row * row_size;
+        let destination_offset = destination_row * row_size;
+        destination_keys_bytes[destination_offset..destination_offset + row_size]
+            .copy_from_slice(&source_keys_bytes[source_offset..source_offset + row_size]);
+        destination_values_bytes[destination_offset..destination_offset + row_size]
+            .copy_from_slice(&source_values_bytes[source_offset..source_offset + row_size]);
+    }
 }
 
 impl<B: Backend> KVCacheLayer<B> {
+    pub fn encode_copy_prefix_rows_to(
+        &self,
+        destination: &mut KVCacheLayer<B>,
+        row_count: usize,
+        encoder: &mut Encoder<B>,
+    ) {
+        if row_count == 0 {
+            return;
+        }
+
+        let [source_seq, num_groups, head_dim] = self.shape;
+        let [destination_seq, destination_groups, destination_head_dim] = destination.shape;
+        assert_eq!(num_groups, destination_groups, "KV cache group count mismatch");
+        assert_eq!(head_dim, destination_head_dim, "KV cache head dim mismatch");
+        assert_eq!(self.data_type, destination.data_type, "KV cache dtype mismatch");
+        assert!(row_count <= source_seq, "source KV cache copy exceeds source sequence");
+        assert!(row_count <= destination_seq, "source KV cache copy exceeds destination sequence");
+
+        let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
+        let copy_size = row_count * row_size;
+
+        encoder.encode_copy(&self.keys, 0..copy_size, &mut destination.keys, 0..copy_size);
+        encoder.encode_copy(&self.values, 0..copy_size, &mut destination.values, 0..copy_size);
+    }
+
     pub fn prefix_segment_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {
@@ -139,7 +183,7 @@ impl<B: Backend> KVCacheLayer<B> {
     }
 
     fn scatter_if_required(
-        &self,
+        &mut self,
         source_indices: &[usize],
         destination_indices: &[usize],
         encoder: &mut Encoder<B>,
@@ -149,17 +193,15 @@ impl<B: Backend> KVCacheLayer<B> {
             return;
         }
 
-        let k_shape = self.keys.shape();
-        let v_shape = self.values.shape();
-
-        let layer_data = KVLayerData {
-            key_buffer: self.keys.buffer(),
-            key_shape: [k_shape[0], k_shape[1], k_shape[2]],
-            value_buffer: self.values.buffer(),
-            value_shape: [v_shape[0], v_shape[1], v_shape[2]],
+        let mut layer_data = KVLayerData {
+            key_allocation: &mut self.keys,
+            key_shape: self.shape,
+            value_allocation: &mut self.values,
+            value_shape: self.shape,
         };
 
-        let _ = kv_cache_update.encode(&[layer_data], source_indices, destination_indices, encoder);
+        let _ =
+            kv_cache_update.encode(std::slice::from_mut(&mut layer_data), source_indices, destination_indices, encoder);
     }
 
     pub fn register_accepted_tokens(
@@ -204,16 +246,17 @@ impl<B: Backend> KVCacheLayer<B> {
                 if len == 0 || len > window_length {
                     return None;
                 }
-                let shape = self.keys.shape();
-                let num_groups = shape[1];
-                let head_dim = shape[2];
-                let dtype = self.keys.data_type();
+                let [_, num_groups, head_dim] = self.shape;
+                let dtype = self.data_type;
+                let row_size = size_for_shape(&[1, num_groups, head_dim], dtype);
 
                 let slice_shape = [len, num_groups, head_dim];
                 let mut slice_keys =
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
                 let mut slice_values =
                     context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
+                let source_keys_bytes = allocation_as_bytes(&self.keys);
+                let source_values_bytes = allocation_as_bytes(&self.values);
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
@@ -227,10 +270,17 @@ impl<B: Backend> KVCacheLayer<B> {
                     })
                     .collect();
 
-                for (i, &slot) in slots.iter().enumerate() {
-                    slice_keys.copy_slice(&self.keys, 0, slot..slot + 1, i);
-                    slice_values.copy_slice(&self.values, 0, slot..slot + 1, i);
-                }
+                let destination_keys_bytes = slice_keys.as_bytes_mut();
+                let destination_values_bytes = slice_values.as_bytes_mut();
+
+                copy_rows(
+                    source_keys_bytes,
+                    source_values_bytes,
+                    destination_keys_bytes,
+                    destination_values_bytes,
+                    row_size,
+                    slots.iter().enumerate().map(|(destination_row, &source_row)| (source_row, destination_row)),
+                );
 
                 Some(KVSlice::Window {
                     window_length,
@@ -281,15 +331,28 @@ impl<B: Backend> KVCacheLayer<B> {
                 },
             ) => {
                 *w_len = *window_length;
+                let [_, num_groups, head_dim] = self.shape;
+                let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
+                let source_keys_bytes = keys.as_bytes();
+                let source_values_bytes = values.as_bytes();
+                let destination_keys_bytes = allocation_as_bytes_mut(&mut self.keys);
+                let destination_values_bytes = allocation_as_bytes_mut(&mut self.values);
                 match range {
                     None => {
                         *ring_offset = *base_ring_offset;
                         *ring_length = *base_ring_length;
 
-                        for (i, &slot) in slots.iter().enumerate() {
-                            self.keys.copy_slice(keys, 0, i..i + 1, slot);
-                            self.values.copy_slice(values, 0, i..i + 1, slot);
-                        }
+                        copy_rows(
+                            source_keys_bytes,
+                            source_values_bytes,
+                            destination_keys_bytes,
+                            destination_values_bytes,
+                            row_size,
+                            slots
+                                .iter()
+                                .enumerate()
+                                .map(|(source_row, &destination_row)| (source_row, destination_row)),
+                        );
                     },
                     Some(r) => {
                         let len = r.end.saturating_sub(r.start);
@@ -316,11 +379,17 @@ impl<B: Backend> KVCacheLayer<B> {
                         *ring_offset = new_offset;
                         *ring_length = new_len;
 
-                        for (i, &slot) in slots[r.clone()].iter().enumerate() {
-                            let src_i = r.start + i;
-                            self.keys.copy_slice(keys, 0, src_i..src_i + 1, slot);
-                            self.values.copy_slice(values, 0, src_i..src_i + 1, slot);
-                        }
+                        copy_rows(
+                            source_keys_bytes,
+                            source_values_bytes,
+                            destination_keys_bytes,
+                            destination_values_bytes,
+                            row_size,
+                            slots[r.clone()]
+                                .iter()
+                                .enumerate()
+                                .map(|(index, &destination_row)| (r.start + index, destination_row)),
+                        );
                     },
                 }
             },

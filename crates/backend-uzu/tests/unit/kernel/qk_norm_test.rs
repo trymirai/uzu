@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -126,14 +125,14 @@ fn get_output<
     .expect("Failed to create QKNormKernel");
 
     let qkv_len = input.qkv.len();
-    let qkv_array = context.create_array_from(&[qkv_len], &input.qkv, "");
+    let mut qkv = context.create_array_from(&[qkv_len], &input.qkv, "").into_allocation();
     let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        None::<&B::Buffer>,
-        scales_array.buffer().borrow().deref(),
-        qkv_array.buffer().borrow_mut().deref_mut(),
+        None::<&backend_uzu::backends::common::Allocation<B>>,
+        scales_array.allocation(),
+        &mut qkv,
         input.batch_size,
         input.num_q_heads,
         input.num_kv_heads,
@@ -147,7 +146,7 @@ fn get_output<
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    qkv_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&qkv)
 }
 
 fn test_internal<

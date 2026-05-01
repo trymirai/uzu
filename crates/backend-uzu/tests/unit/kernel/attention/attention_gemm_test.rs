@@ -1,19 +1,25 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    ArrayElement, DataType,
     backends::{
-        common::{Backend, Context, Encoder, kernel::attention::AttentionGemmArguments},
+        common::{
+            Backend, Context, Encoder,
+            kernel::attention::{AttentionGemmArguments, AttentionGemmBlock},
+        },
         cpu::Cpu,
     },
 };
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     queries: Box<[T]>,
@@ -79,57 +85,46 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let block = backend_uzu::backends::common::kernel::attention::AttentionGemmBlock::<B>::new(T::data_type());
+    let block = AttentionGemmBlock::<B>::new(T::data_type());
 
-    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries, "");
-    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys, "");
-    let values_array = context.create_array_from(&[input.values.len()], &input.values, "");
+    let queries_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.queries);
+    let keys_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.keys);
+    let values_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.values);
 
     let output_size = input.suffix_length * input.num_heads * input.head_dim;
-    let output_array = context.create_array_uninitialized(&[output_size], T::data_type(), "");
+    let mut output_allocation = alloc_allocation::<B, T>(context.as_ref(), output_size);
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
 
-    {
-        let q_buf_rc = queries_array.buffer();
-        let q_buf = q_buf_rc.borrow();
-        let k_buf_rc = keys_array.buffer();
-        let k_buf = k_buf_rc.borrow();
-        let v_buf_rc = values_array.buffer();
-        let v_buf = v_buf_rc.borrow();
-        let o_buf_rc = output_array.buffer();
-        let mut o_buf = o_buf_rc.borrow_mut();
+    let args = AttentionGemmArguments::<B> {
+        queries_buffer: &queries_allocation,
+        keys_buffer: &keys_allocation,
+        values_buffer: &values_allocation,
+        output_buffer: &mut output_allocation,
+        trie_buffer: None,
+        sinks_buffer: None,
+        num_heads: input.num_heads,
+        num_groups: input.num_kv_heads,
+        suffix_length: input.suffix_length,
+        sequence_length: input.sequence_length,
+        segment_prefix_length,
+        max_sequence_length: input.sequence_length,
+        ring_params: None,
+        head_dim: input.head_dim,
+        sliding_window_size: None,
+        is_causal: input.do_causal,
+        scale: input.scale,
+        k_head_stride: (input.sequence_length * input.head_dim) as u64,
+        k_seq_stride: input.head_dim as u64,
+        v_head_stride: (input.sequence_length * input.head_dim) as u64,
+        v_seq_stride: input.head_dim as u64,
+    };
 
-        let args = AttentionGemmArguments::<B> {
-            queries_buffer: q_buf.deref(),
-            keys_buffer: k_buf.deref(),
-            values_buffer: v_buf.deref(),
-            output_buffer: o_buf.deref_mut(),
-            trie_buffer: None,
-            sinks_buffer: None,
-            num_heads: input.num_heads,
-            num_groups: input.num_kv_heads,
-            suffix_length: input.suffix_length,
-            sequence_length: input.sequence_length,
-            segment_prefix_length,
-            max_sequence_length: input.sequence_length,
-            ring_params: None,
-            head_dim: input.head_dim,
-            sliding_window_size: None,
-            is_causal: input.do_causal,
-            scale: input.scale,
-            k_head_stride: input.head_dim as u64,
-            k_seq_stride: (input.num_kv_heads * input.head_dim) as u64,
-            v_head_stride: input.head_dim as u64,
-            v_seq_stride: (input.num_kv_heads * input.head_dim) as u64,
-        };
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    block.encode(&mut encoder, args).expect("Failed to encode AttentionGemm");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-        let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-        block.encode(&context, &mut encoder, args).expect("Failed to encode AttentionGemm");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
-    }
-
-    output_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(

@@ -1,6 +1,5 @@
 use std::{
     fmt::Debug,
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -59,13 +58,15 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let token_ids_array = context.create_array_from(&[input.batch_size], &input.token_ids, "");
     let weights_array = context.create_array_from(&[input.vocab_size, input.model_dim], &input.weights, "");
-    let output_array = context.create_array_uninitialized(&[input.batch_size, input.model_dim], T::data_type(), "");
+    let mut output = context
+        .create_array_uninitialized(&[input.batch_size, input.model_dim], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
     kernel.encode(
-        token_ids_array.buffer().borrow().deref(),
-        weights_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        token_ids_array.allocation(),
+        weights_array.allocation(),
+        &mut output,
         input.batch_size as u32,
         input.vocab_size as u32,
         input.model_dim as u32,
@@ -74,7 +75,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn test<T: ArrayElement + Float + Debug>() {

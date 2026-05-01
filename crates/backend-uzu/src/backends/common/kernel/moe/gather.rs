@@ -1,17 +1,16 @@
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
     },
 };
 
-#[derive(Debug)]
 pub struct MoeGatherArguments<'a, B: Backend> {
-    pub x_buffer: &'a B::Buffer,
-    pub bucketed_ids_buffer: &'a B::Buffer,
-    pub x_perm_buffer: &'a mut B::Buffer,
-    pub sumk_buffer: &'a B::Buffer,
+    pub x: &'a Allocation<B>,
+    pub bucketed_ids: &'a Allocation<B>,
+    pub x_perm: &'a mut Allocation<B>,
+    pub sumk: &'a Allocation<B>,
     pub t: usize,
     pub k: usize,
     pub d_model: usize,
@@ -40,30 +39,30 @@ impl<B: Backend> MoeGatherKernels<B> {
     ) {
         match dtype {
             DataType::F32 => self.f32.encode(
-                args.x_buffer,
-                args.bucketed_ids_buffer,
-                args.x_perm_buffer,
-                args.sumk_buffer,
+                args.x,
+                args.bucketed_ids,
+                args.x_perm,
+                args.sumk,
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
                 encoder,
             ),
             DataType::F16 => self.f16.encode(
-                args.x_buffer,
-                args.bucketed_ids_buffer,
-                args.x_perm_buffer,
-                args.sumk_buffer,
+                args.x,
+                args.bucketed_ids,
+                args.x_perm,
+                args.sumk,
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,
                 encoder,
             ),
             DataType::BF16 => self.bf16.encode(
-                args.x_buffer,
-                args.bucketed_ids_buffer,
-                args.x_perm_buffer,
-                args.sumk_buffer,
+                args.x,
+                args.bucketed_ids,
+                args.x_perm,
+                args.sumk,
                 args.d_model as u32,
                 args.t as u32,
                 args.k as u32,

@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
@@ -20,10 +18,8 @@ fn create_layer_results<B: Backend>(
     context: &B::Context,
     model_shape: &ModelShape,
     suffix_length: usize,
-) -> Vec<Rc<RefCell<LayerActivationTrace<B>>>> {
-    (0..model_shape.num_layers)
-        .map(|_| Rc::new(RefCell::new(LayerActivationTrace::new(context, model_shape, suffix_length))))
-        .collect()
+) -> Box<[LayerActivationTrace<B>]> {
+    (0..model_shape.num_layers).map(|_| LayerActivationTrace::new(context, model_shape, suffix_length)).collect()
 }
 
 pub struct LayerActivationTrace<B: Backend> {
@@ -64,7 +60,7 @@ impl<B: Backend> LayerActivationTrace<B> {
 
 pub struct ActivationTrace<B: Backend> {
     pub embedding_norm: Option<Array<B>>,
-    pub layer_results: Vec<Rc<RefCell<LayerActivationTrace<B>>>>,
+    pub layer_results: Box<[LayerActivationTrace<B>]>,
     pub output_norm: Array<B>,
     pub output_pooling: Option<Array<B>>,
     pub logits: Array<B>,
@@ -124,11 +120,11 @@ impl<B: Backend> ActivationTrace<B> {
         }
     }
 
-    pub fn embedding_norm(&self) -> &Array<B> {
-        self.embedding_norm.as_ref().expect("embedding_norm is only available for classifier traces")
+    pub fn embedding_norm_mut(&mut self) -> &mut Array<B> {
+        self.embedding_norm.as_mut().expect("embedding_norm is only available for classifier traces")
     }
 
-    pub fn output_pooling(&self) -> &Array<B> {
-        self.output_pooling.as_ref().expect("output_pooling is only available for classifier traces")
+    pub fn output_pooling_mut(&mut self) -> &mut Array<B> {
+        self.output_pooling.as_mut().expect("output_pooling is only available for classifier traces")
     }
 }

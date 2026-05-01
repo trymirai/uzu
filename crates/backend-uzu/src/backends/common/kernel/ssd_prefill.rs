@@ -1,7 +1,7 @@
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{SSDPrefill64Kernel, SSDPrefillKernel, SSDPrefillSequentialKernel},
     },
 };
@@ -13,14 +13,14 @@ pub enum SSDPrefillMode {
 }
 
 pub struct SSDPrefillArguments<'a, B: Backend> {
-    pub x: &'a B::Buffer,
-    pub dt: &'a B::Buffer, // raw dt values
-    pub b: &'a B::Buffer,
-    pub c: &'a B::Buffer,
-    pub d: &'a B::Buffer,
-    pub z: &'a B::Buffer,
-    pub state: &'a mut B::Buffer,
-    pub y: &'a mut B::Buffer,
+    pub x: &'a Allocation<B>,
+    pub dt: &'a Allocation<B>,
+    pub b: &'a Allocation<B>,
+    pub c: &'a Allocation<B>,
+    pub d: &'a Allocation<B>,
+    pub z: &'a Allocation<B>,
+    pub state: &'a mut Allocation<B>,
+    pub y: &'a mut Allocation<B>,
     pub suffix_len: usize,
     pub group_size: u32,
     pub state_size: u32,

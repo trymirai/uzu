@@ -1,16 +1,16 @@
-use std::{
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-};
+use std::fmt::Debug;
 
-use backend_uzu::{
-    ArrayContextExt, ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorCopyKernel},
-};
 use half::{bf16, f16};
 use num_traits::Float;
+use backend_uzu::{
+    ArrayElement,
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorCopyKernel},
+};
 
-use crate::uzu_test;
+use crate::{
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     src: Box<[T]>,
@@ -43,19 +43,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .expect("Failed to create TensorCopyKernel");
 
     let size = input.length as usize;
-    let src_array = context.create_array_from(&[size], &input.src, "");
-    let dst_array = context.create_array_uninitialized(&[size], T::data_type(), "");
+    let src_allocation = alloc_allocation_with_data::<B, T>(&context, &input.src[..size]);
+    let mut dst_allocation = alloc_allocation::<B, T>(&context, size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        src_array.buffer().borrow().deref(),
-        dst_array.buffer().borrow_mut().deref_mut(),
-        input.length,
-        &mut encoder,
-    );
+    kernel.encode(&src_allocation, &mut dst_allocation, input.length, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    dst_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&dst_allocation)
 }
 
 fn test<T: ArrayElement + Float + Debug>() {

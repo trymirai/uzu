@@ -1,5 +1,5 @@
 use crate::backends::common::{
-    Backend, Encoder, Kernels,
+    Allocation, Backend, Encoder, Kernels,
     kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
 };
 
@@ -25,7 +25,7 @@ impl<B: Backend> MoeTileMapKernels<B> {
         encoder: &mut Encoder<B>,
         args: MoeTileCountsArguments<B>,
     ) {
-        self.counts.encode(args.offsets_buffer, args.tile_counts_buffer, args.e as u32, encoder);
+        self.counts.encode(args.offsets, args.tile_counts, args.e as u32, encoder);
     }
 
     pub fn encode_scan(
@@ -33,13 +33,7 @@ impl<B: Backend> MoeTileMapKernels<B> {
         encoder: &mut Encoder<B>,
         args: MoeTileScanArguments<B>,
     ) {
-        self.scan.encode(
-            args.tile_counts_buffer,
-            args.tile_offsets_buffer,
-            args.total_tiles_buffer,
-            args.e as u32,
-            encoder,
-        );
+        self.scan.encode(args.tile_counts, args.tile_offsets, args.total_tiles, args.e as u32, encoder);
     }
 
     pub fn encode_build_map(
@@ -67,30 +61,28 @@ impl<B: Backend> MoeTileMapKernels<B> {
 }
 
 pub struct MoeTileCountsArguments<'a, B: Backend> {
-    pub offsets_buffer: &'a B::Buffer,         // [E+1]
-    pub tile_counts_buffer: &'a mut B::Buffer, // [E]
+    pub offsets: &'a Allocation<B>,         // [E+1]
+    pub tile_counts: &'a mut Allocation<B>, // [E]
     pub e: usize,
 }
 
 pub struct MoeTileScanArguments<'a, B: Backend> {
-    pub tile_counts_buffer: &'a B::Buffer,      // [E]
-    pub tile_offsets_buffer: &'a mut B::Buffer, // [E+1]
-    pub total_tiles_buffer: &'a mut B::Buffer,  // [>=2]
+    pub tile_counts: &'a Allocation<B>,      // [E]
+    pub tile_offsets: &'a mut Allocation<B>, // [E+1]
+    pub total_tiles: &'a mut Allocation<B>,  // [>=2]
     pub e: usize,
 }
 
-#[derive(Debug)]
 pub struct MoeTileMapBuildArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::Buffer, // [E+1]
-    pub tile_offsets: &'a B::Buffer,   // [E+1]
-    pub tile_counts: &'a B::Buffer,    // [E]
-    pub tile_map: &'a mut B::Buffer,   // [total_tiles * 3]
+    pub expert_offsets: &'a Allocation<B>, // [E+1]
+    pub tile_offsets: &'a Allocation<B>,   // [E+1]
+    pub tile_counts: &'a Allocation<B>,    // [E]
+    pub tile_map: &'a mut Allocation<B>,   // [total_tiles * 3]
     pub e: usize,
 }
 
-#[derive(Debug)]
 pub struct MoeTileDispatchArguments<'a, B: Backend> {
-    pub total_tiles: &'a B::Buffer,       // [>=1]
-    pub dispatch_args: &'a mut B::Buffer, // [3]
-    pub num_tiles_x: u32,                 // x dimension for indirect dispatch
+    pub total_tiles: &'a Allocation<B>,       // [>=1]
+    pub dispatch_args: &'a mut Allocation<B>, // [3]
+    pub num_tiles_x: u32,                     // x dimension for indirect dispatch
 }

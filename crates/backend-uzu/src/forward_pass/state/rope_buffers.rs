@@ -1,15 +1,15 @@
 use crate::{
-    array::{Array, ArrayContextExt},
-    backends::common::Backend,
+    array::ArrayContextExt,
+    backends::common::{Allocation, Backend},
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
 
 pub struct RopeBuffers<B: Backend> {
     /// [rope_max_sequence_length, rope_dim]
-    pub cosines: Array<B>,
+    pub cosines: Allocation<B>,
     /// [rope_max_sequence_length, rope_dim]
-    pub sines: Array<B>,
+    pub sines: Allocation<B>,
 }
 
 impl<B: Backend> RopeBuffers<B> {
@@ -21,16 +21,20 @@ impl<B: Backend> RopeBuffers<B> {
         let rope_max_sequence_length = model_shape.context_length();
 
         Self {
-            cosines: context.create_array_uninitialized(
-                &[rope_max_sequence_length, rope_dim],
-                model_shape.activation_data_type(),
-                "rope_buffers_cosines",
-            ),
-            sines: context.create_array_uninitialized(
-                &[rope_max_sequence_length, rope_dim],
-                model_shape.activation_data_type(),
-                "rope_buffers_sines",
-            ),
+            cosines: context
+                .create_array_uninitialized(
+                    &[rope_max_sequence_length, rope_dim],
+                    model_shape.activation_data_type(),
+                    "rope_cosines",
+                )
+                .into_allocation(),
+            sines: context
+                .create_array_uninitialized(
+                    &[rope_max_sequence_length, rope_dim],
+                    model_shape.activation_data_type(),
+                    "rope_sines",
+                )
+                .into_allocation(),
         }
     }
 
@@ -43,10 +47,7 @@ impl<B: Backend> RopeBuffers<B> {
             return;
         };
 
-        let cosines_view = rope_tree.leaf_array("cosines").unwrap();
-        self.cosines.copy_from_array(&cosines_view);
-
-        let sines_view = rope_tree.leaf_array("sines").unwrap();
-        self.sines.copy_from_array(&sines_view);
+        self.cosines = rope_tree.leaf_allocation("cosines").unwrap();
+        self.sines = rope_tree.leaf_allocation("sines").unwrap();
     }
 }

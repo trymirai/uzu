@@ -1,6 +1,5 @@
 use std::{
     fmt::Debug,
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -105,20 +104,22 @@ fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<
         .expect("Failed to create HadamardTransformKernel");
 
     let total_elements = input.batch_count * input.channel_count;
-    let data_array = context.create_array_from(&[total_elements], &input.data, "data");
+    let mut data = context
+        .create_array_from(&[total_elements], &input.data, "data")
+        .into_allocation();
     let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors, "factors");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        data_array.buffer().borrow_mut().deref_mut(),
-        factors_array.buffer().borrow().deref(),
+        &mut data,
+        factors_array.allocation(),
         input.channel_count as u32,
         input.batch_count as u32,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    data_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&data)
 }
 
 fn test_hadamard_transform<T: ArrayElement + Float + Debug>(tolerance: f64) {

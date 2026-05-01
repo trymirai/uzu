@@ -1,5 +1,5 @@
 use std::{
-    cell::UnsafeCell,
+    ops::Range,
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -12,8 +12,8 @@ use std::{
 use crate::{
     backends::{
         common::{
-            AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-            CommandBufferInitial, CommandBufferPending,
+            AccessFlags, Allocation, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
+            CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
         cpu::{Cpu, error::CpuError},
     },
@@ -76,18 +76,22 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &UnsafeCell<Pin<Box<[u8]>>>,
-        src_range: std::ops::Range<usize>,
-        dst: &mut UnsafeCell<Pin<Box<[u8]>>>,
-        dst_range: std::ops::Range<usize>,
+        src: &Allocation<Cpu>,
+        src_range: Range<usize>,
+        dst: &mut Allocation<Cpu>,
+        dst_range: Range<usize>,
     ) {
+        let (src, src_allocation_range) = src.as_buffer_range();
+        let (dst, dst_allocation_range) = dst.as_buffer_range();
+        let src_range = src_allocation_range.start + src_range.start..src_allocation_range.start + src_range.end;
+        let dst_range = dst_allocation_range.start + dst_range.start..dst_allocation_range.start + dst_range.end;
         let size = src_range.end - src_range.start;
         assert_eq!(size, dst_range.end - dst_range.start);
         assert!(unsafe { &*src.get() }.len() >= src_range.end);
-        assert!(dst.get_mut().len() >= dst_range.end);
+        assert!(unsafe { &*dst.get() }.len() >= dst_range.end);
 
         let src_ptr = SendPtr(unsafe { (&*src.get()).as_ptr().add(src_range.start) });
-        let dst_ptr = SendPtrMut(unsafe { dst.get_mut().as_mut_ptr().add(dst_range.start) });
+        let dst_ptr = SendPtrMut(unsafe { (&mut *dst.get()).as_mut_ptr().add(dst_range.start) });
         self.push_command(move || unsafe {
             std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), size);
         });
@@ -95,12 +99,14 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn encode_fill(
         &mut self,
-        dst: &mut UnsafeCell<Pin<Box<[u8]>>>,
-        range: std::ops::Range<usize>,
+        dst: &mut Allocation<Cpu>,
+        range: Range<usize>,
         value: u8,
     ) {
+        let (dst, allocation_range) = dst.as_buffer_range();
+        let range = allocation_range.start + range.start..allocation_range.start + range.end;
         let size = range.end - range.start;
-        let dst = SendPtrMut(dst.get_mut()[range].as_ptr() as *mut u8);
+        let dst = SendPtrMut(unsafe { (&mut *dst.get()).as_mut_ptr().add(range.start) });
         self.push_command(move || unsafe {
             dst.as_ptr().write_bytes(value, size);
         });

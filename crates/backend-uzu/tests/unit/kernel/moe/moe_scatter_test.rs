@@ -1,10 +1,11 @@
-use std::ops::{Deref, DerefMut};
-
+use half::bf16;
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use backend_uzu::{
-    Array, ArrayContextExt, ArrayElement, DataType,
+    ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Encoder, Kernels,
+            Allocation, Backend, Encoder, Kernels,
             kernel::{
                 MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeRouterTopKKernel,
                 MoeScatterBucketsKernel,
@@ -13,9 +14,6 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
-use half::bf16;
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{common::helpers::create_context, uzu_test};
 
@@ -67,22 +65,22 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
     d_model: usize,
     e: usize,
     k: usize,
-) -> (Array<B>, Array<B>) {
+) -> (Allocation<B>, Allocation<B>) {
     let input_array = ctx.create_array_from(&[input.len()], input, "");
     let weights_array = ctx.create_array_from(&[weights.len()], weights, "");
     let bias_array = ctx.create_array_from(&[bias.len()], bias, "");
-    let topk_ids_array = ctx.create_array_uninitialized(&[t * k], DataType::I32, "");
-    let topk_probs_array = ctx.create_array_uninitialized(&[t * k], T::data_type(), "");
+    let mut topk_ids = ctx.create_array_uninitialized(&[t * k], DataType::I32, "").into_allocation();
+    let mut topk_probs = ctx.create_array_uninitialized(&[t * k], T::data_type(), "").into_allocation();
 
     let topk_kernel =
         <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, T::data_type()).expect("router_topk");
     let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
     topk_kernel.encode(
-        input_array.buffer().borrow().deref(),
-        weights_array.buffer().borrow().deref(),
-        bias_array.buffer().borrow().deref(),
-        topk_ids_array.buffer().borrow_mut().deref_mut(),
-        topk_probs_array.buffer().borrow_mut().deref_mut(),
+        input_array.allocation(),
+        weights_array.allocation(),
+        bias_array.allocation(),
+        &mut topk_ids,
+        &mut topk_probs,
         t as u32,
         d_model as u32,
         e as u32,
@@ -92,7 +90,7 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (topk_ids_array, topk_probs_array)
+    (topk_ids, topk_probs)
 }
 
 fn get_output<B: Backend, T: ArrayElement + Float>(
@@ -103,26 +101,26 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     d_model: usize,
     e: usize,
     k: usize,
-) -> (Vec<i32>, Vec<T>, Array<B>) {
+) -> (Vec<i32>, Vec<T>, Vec<u32>) {
     let ctx = create_context::<B>();
 
     // top-k
-    let (topk_ids_array, topk_probs_array) =
+    let (topk_ids, topk_probs) =
         get_output_topk::<B, T>(ctx.as_ref(), input, weights, bias, t, d_model, e, k);
 
     // fused
-    let offsets_array = ctx.create_array_uninitialized(&[e + 1], DataType::U32, "");
-    let sumk_array = ctx.create_array_uninitialized(&[1], DataType::U32, "");
+    let mut offsets = ctx.create_array_uninitialized(&[e + 1], DataType::U32, "").into_allocation();
+    let mut sumk = ctx.create_array_uninitialized(&[1], DataType::U32, "").into_allocation();
     let num_tiles = e.div_ceil(512).max(1);
-    let partials_array = ctx.create_array_uninitialized(&[num_tiles * 512], DataType::U32, "");
+    let mut partials = ctx.create_array_uninitialized(&[num_tiles * 512], DataType::U32, "").into_allocation();
     let fused_kernel =
         <<B as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     fused_kernel.encode(
-        topk_ids_array.buffer().borrow().deref(),
-        offsets_array.buffer().borrow_mut().deref_mut(),
-        sumk_array.buffer().borrow_mut().deref_mut(),
-        partials_array.buffer().borrow_mut().deref_mut(),
+        &topk_ids,
+        &mut offsets,
+        &mut sumk,
+        &mut partials,
         t as u32,
         e as u32,
         k as u32,
@@ -134,15 +132,15 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     // Partials already created by fused kernel above
     let num_blocks = 1; // Fused kernel uses single block
     let entries = num_blocks * num_tiles * 512usize;
-    let block_bases_array = ctx.create_array_uninitialized(&[entries], DataType::U32, "");
-    let block_alloc_array = ctx.create_array_uninitialized(&[entries], DataType::U32, "");
+    let mut block_bases = ctx.create_array_uninitialized(&[entries], DataType::U32, "").into_allocation();
+    let mut block_alloc = ctx.create_array_uninitialized(&[entries], DataType::U32, "").into_allocation();
     let scatter_bases_kernel = <<B as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(ctx.as_ref())
         .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     scatter_bases_kernel.encode(
-        partials_array.buffer().borrow().deref(),
-        block_bases_array.buffer().borrow_mut().deref_mut(),
-        block_alloc_array.buffer().borrow_mut().deref_mut(),
+        &partials,
+        &mut block_bases,
+        &mut block_alloc,
         e as u32,
         num_blocks as u32,
         num_tiles as u32,
@@ -150,22 +148,22 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-    let sumk = unsafe { std::slice::from_raw_parts(sumk_array.cpu_ptr().as_ptr() as *const u32, 1) }[0] as usize;
+    let sumk = crate::common::helpers::allocation_to_vec::<B, u32>(&sumk)[0] as usize;
 
     // scatter
     let scatter_kernel = <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel::new(&ctx, T::data_type())
         .expect("Failed to create <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel");
-    let out_ids_array = ctx.create_array_uninitialized(&[sumk], DataType::I32, "");
-    let out_probs_array = ctx.create_array_uninitialized(&[sumk], T::data_type(), "");
+    let mut out_ids = ctx.create_array_uninitialized(&[sumk], DataType::I32, "").into_allocation();
+    let mut out_probs = ctx.create_array_uninitialized(&[sumk], T::data_type(), "").into_allocation();
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     scatter_kernel.encode(
-        topk_ids_array.buffer().borrow().deref(),
-        topk_probs_array.buffer().borrow().deref(),
-        offsets_array.buffer().borrow().deref(),
-        block_bases_array.buffer().borrow().deref(),
-        block_alloc_array.buffer().borrow().deref(),
-        out_ids_array.buffer().borrow_mut().deref_mut(),
-        out_probs_array.buffer().borrow_mut().deref_mut(),
+        &topk_ids,
+        &topk_probs,
+        &offsets,
+        &block_bases,
+        &block_alloc,
+        &mut out_ids,
+        &mut out_probs,
         t as u32,
         e as u32,
         k as u32,
@@ -175,7 +173,11 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (out_ids_array.as_slice().to_vec(), out_probs_array.as_slice().to_vec(), offsets_array)
+    (
+        crate::common::helpers::allocation_to_vec(&out_ids),
+        crate::common::helpers::allocation_to_vec(&out_probs),
+        crate::common::helpers::allocation_to_vec(&offsets),
+    )
 }
 
 fn test_scatter_internal<B: Backend, T: ArrayElement + Float>(
@@ -207,10 +209,10 @@ fn test_scatter_internal<B: Backend, T: ArrayElement + Float>(
         e,
         k,
     );
-    let (cpu_ids, _cpu_probs, offsets_cpu) =
-        cpu_expert_buckets(topk_ids_cpu.as_slice(), &topk_probs_cpu.as_slice::<T>(), t, e, k);
-    let offsets_gpu = unsafe { std::slice::from_raw_parts(out_offsets_array.cpu_ptr().as_ptr() as *const u32, e + 1) };
-    assert_eq!(offsets_gpu, &offsets_cpu[..]);
+    let cpu_topk_ids: Vec<i32> = crate::common::helpers::allocation_to_vec(&topk_ids_cpu);
+    let cpu_topk_probs: Vec<T> = crate::common::helpers::allocation_to_vec(&topk_probs_cpu);
+    let (cpu_ids, _cpu_probs, offsets_cpu) = cpu_expert_buckets(&cpu_topk_ids, &cpu_topk_probs, t, e, k);
+    assert_eq!(out_offsets_array, offsets_cpu);
 
     // Compare per-expert multisets of ids
     for ei in 0..e {

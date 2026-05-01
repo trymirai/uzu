@@ -6,7 +6,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::{AttnParams, ring::RingParams},
         kernel::AttentionGemmKernel,
     },
@@ -15,12 +15,12 @@ use crate::{
 const BQ: usize = 32;
 
 pub struct AttentionGemmArguments<'a, B: Backend> {
-    pub queries_buffer: &'a B::Buffer,
-    pub keys_buffer: &'a B::Buffer,
-    pub values_buffer: &'a B::Buffer,
-    pub output_buffer: &'a mut B::Buffer,
-    pub trie_buffer: Option<&'a B::Buffer>,
-    pub sinks_buffer: Option<&'a B::Buffer>,
+    pub queries_buffer: &'a Allocation<B>,
+    pub keys_buffer: &'a Allocation<B>,
+    pub values_buffer: &'a Allocation<B>,
+    pub output_buffer: &'a mut Allocation<B>,
+    pub trie_buffer: Option<&'a Allocation<B>>,
+    pub sinks_buffer: Option<&'a Allocation<B>>,
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL
@@ -58,7 +58,6 @@ impl<B: Backend> AttentionGemmBlock<B> {
 
     pub fn encode(
         &self,
-        context: &B::Context,
         encoder: &mut Encoder<B>,
         args: AttentionGemmArguments<B>,
     ) -> Result<(), B::Error> {
@@ -92,7 +91,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let kernel = <B::Kernels as Kernels>::AttentionGemmKernel::new(
-                    context,
+                    encoder.context(),
                     self.data_type,
                     bk as u32,
                     head_dim as u32,

@@ -73,6 +73,7 @@ impl<B: Backend> Allocator<B> {
         size: usize,
         allocation_type: AllocationType<B>,
     ) -> Result<Allocation<B>, B::Error> {
+        assert!(size > 0, "allocation size must be greater than 0");
         let alignment = usize::clamp(size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, 16_384);
         let allocation_type = match allocation_type {
             AllocationType::Global => RangeAllocationType::Global,

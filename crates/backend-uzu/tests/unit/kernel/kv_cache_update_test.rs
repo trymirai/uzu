@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::DerefMut,
 };
 
 use backend_uzu::{
@@ -45,13 +44,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         .expect("Failed to create KVCacheUpdateKernel");
 
     let total = input.num_heads as usize * input.max_sequence_length as usize * input.head_dim as usize;
-    let keys_array = context.create_array_from(&[total], &input.keys, "");
-    let values_array = context.create_array_from(&[total], &input.values, "");
+    let mut keys = context.create_array_from(&[total], &input.keys, "").into_allocation();
+    let mut values = context.create_array_from(&[total], &input.values, "").into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
     kernel.encode(
-        keys_array.buffer().borrow_mut().deref_mut(),
-        values_array.buffer().borrow_mut().deref_mut(),
+        &mut keys,
+        &mut values,
         &input.swaps,
         input.swaps.len() as u32,
         input.num_heads,
@@ -60,7 +59,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (keys_array.as_slice().to_vec(), values_array.as_slice().to_vec())
+    (
+        crate::common::helpers::allocation_to_vec(&keys),
+        crate::common::helpers::allocation_to_vec(&values),
+    )
 }
 
 /// Single swap between two different positions.

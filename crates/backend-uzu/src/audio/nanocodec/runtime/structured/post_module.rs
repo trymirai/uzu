@@ -1,4 +1,10 @@
 use super::*;
+use crate::{
+    array::{Array, ArrayContextExt},
+    backends::common::Allocation,
+    encodable_block::LayerArguments,
+    forward_pass::token_inputs::TokenInputs,
+};
 
 impl StructuredAudioCodecGraph {
     pub(super) fn apply_convnext_ncs_enqueued<B: Backend>(
@@ -15,58 +21,65 @@ impl StructuredAudioCodecGraph {
         kernels: &StructuredAudioKernelCache<B>,
     ) -> AudioResult<Array<B>> {
         let ws = &resources.decode_workspace;
-        let ctx = resources.context();
-        let data_type = input.data_type();
 
-        let residual = input.clone();
-        let mut x = causal_conv1d_grouped_enqueue(
+        let cnxt_dw = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
+        let x = causal_conv1d_grouped_enqueue(
             encoder,
             input,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_dw")?,
+            cnxt_dw,
             &layer.depthwise_conv,
             SequenceLayout::Ncs,
             lengths,
             lengths_array,
             batch_size,
             seq_len,
+            self.vocoder_data_type,
             kernels,
         )?;
-        x = norm_ncs_enqueue(
+        let cnxt_norm = ws.next_scratch(encoder, &[batch_size, channels, seq_len], self.vocoder_data_type);
+        let x = norm_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, channels, seq_len], data_type, "cnxt_norm")?,
+            cnxt_norm,
             &layer.norm,
             lengths,
             lengths_array,
             batch_size,
             channels,
             seq_len,
+            self.vocoder_data_type,
             kernels,
         )?;
-        x = conv1d_pointwise_ncs_enqueue(
+        let cnxt_pw1 = ws.next_scratch(encoder, &[batch_size, layer.pwconv1.cout, seq_len], self.vocoder_data_type);
+        let x = conv1d_pointwise_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, layer.pwconv1.cout, seq_len], data_type, "cnxt_pw1")?,
+            cnxt_pw1,
             &layer.pwconv1,
             lengths,
             lengths_array,
             batch_size,
             seq_len,
+            self.vocoder_data_type,
             kernels,
         )?;
-        x = gelu_enqueue(encoder, &x, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_gelu")?, kernels)?;
-        x = conv1d_pointwise_ncs_enqueue(
+        let cnxt_gelu = ws.next_scratch(encoder, &[batch_size, layer.pwconv1.cout, seq_len], self.vocoder_data_type);
+        let x = gelu_enqueue(encoder, &x, cnxt_gelu, kernels)?;
+        let cnxt_pw2 = ws.next_scratch(encoder, &[batch_size, layer.pwconv2.cout, seq_len], self.vocoder_data_type);
+        let x = conv1d_pointwise_ncs_enqueue(
             encoder,
             &x,
-            ws.next_scratch(ctx, &[batch_size, layer.pwconv2.cout, seq_len], data_type, "cnxt_pw2")?,
+            cnxt_pw2,
             &layer.pwconv2,
             lengths,
             lengths_array,
             batch_size,
             seq_len,
+            self.vocoder_data_type,
             kernels,
         )?;
-        add_enqueue(encoder, &x, &residual, ws.next_scratch(ctx, x.shape(), data_type, "cnxt_add")?, kernels)
+        let cnxt_add = ws.next_scratch(encoder, &[batch_size, layer.pwconv2.cout, seq_len], self.vocoder_data_type);
+        add_enqueue(encoder, &x, input, cnxt_add, kernels)
     }
 
     pub(super) fn build_post_module_runtime<B: Backend>(
@@ -103,12 +116,11 @@ impl StructuredAudioCodecGraph {
             .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
 
         let max_sequence_length = decoder_config.context_length.max(required_sequence_length.max(1));
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
         {
             let transformer_tree = root_loader_view
                 .subtree(transformer_subtree_name)
                 .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
-            let mut shared_buffers = shared_buffers.borrow_mut();
             if let Some(global_rope) = &mut shared_buffers.global_rope {
                 global_rope.update_data(&transformer_tree, "global_rope");
             }
@@ -116,7 +128,7 @@ impl StructuredAudioCodecGraph {
                 local_rope.update_data(&transformer_tree, "local_rope");
             }
         }
-        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_sequence_length);
+        let shared_buffers = Rc::new(shared_buffers);
         let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(
             context.as_ref(),
             &decoder_config,
@@ -127,7 +139,6 @@ impl StructuredAudioCodecGraph {
         Ok(StructuredAudioPostModuleRuntime {
             context,
             model_shape,
-            scratch_buffers,
             shared_buffers,
             layers,
             output_norm,
@@ -180,7 +191,7 @@ impl StructuredAudioCodecGraph {
             self.config.codebook_dim,
             data_type,
         )?;
-        let codebook_dim = semantic_codebook.shape()[1];
+        let codebook_dim = self.config.codebook_dim;
         let semantic_out_proj = read_float_matrix_exact::<B>(
             &semantic_tree.subtree("out_proj")?,
             "weights",
@@ -194,17 +205,17 @@ impl StructuredAudioCodecGraph {
         let residual_quantizers = self.config.n_codebooks;
         let residual_count_for_shape = residual_quantizers.max(1);
         let residual_codebook_rows_for_shape = self.codebook_size.max(1);
-        let residual_codebooks = context.create_array_zeros(
+        let mut residual_codebooks = context.create_array_zeros(
             &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
             data_type,
             "structured_audio_quantizer_residual_codebooks",
         );
-        let residual_out_proj = context.create_array_zeros(
+        let mut residual_out_proj = context.create_array_zeros(
             &[residual_count_for_shape, self.input_dim, codebook_dim],
             data_type,
             "structured_audio_quantizer_residual_out_proj",
         );
-        let residual_out_bias = context.create_array_zeros(
+        let mut residual_out_bias = context.create_array_zeros(
             &[residual_count_for_shape, self.input_dim],
             data_type,
             "structured_audio_quantizer_residual_out_bias",
@@ -234,12 +245,9 @@ impl StructuredAudioCodecGraph {
                 data_type,
             )?;
 
-            let mut dst_codebook = outer_axis_view(&residual_codebooks, index, &[self.codebook_size, codebook_dim])?;
-            dst_codebook.copy_from_array(&codebook);
-            let mut dst_out_proj = outer_axis_view(&residual_out_proj, index, &[self.input_dim, codebook_dim])?;
-            dst_out_proj.copy_from_array(&out_proj);
-            let mut dst_out_bias = outer_axis_view(&residual_out_bias, index, &[self.input_dim])?;
-            dst_out_bias.copy_from_array(&out_bias);
+            copy_to_outer_axis_slice(&mut residual_codebooks, index, &codebook, &[self.codebook_size, codebook_dim])?;
+            copy_to_outer_axis_slice(&mut residual_out_proj, index, &out_proj, &[self.input_dim, codebook_dim])?;
+            copy_to_outer_axis_slice(&mut residual_out_bias, index, &out_bias, &[self.input_dim])?;
         }
 
         Ok(FishAudioQuantizerResources {
@@ -298,100 +306,82 @@ impl StructuredAudioCodecGraph {
 
     pub(super) fn encode_post_module_layers<B: Backend>(
         runtime: &StructuredAudioPostModuleRuntime<B>,
-        state: &mut ForwardPassState<B>,
+        token_inputs: &TokenInputs<B>,
+        batch_dim: usize,
+        main: Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> AudioResult<()> {
+    ) -> AudioResult<Allocation<B>> {
         let encoding_parameters = EncodingParameters::new();
+        let mut main = main;
+        let mut shortcut = encoder
+            .allocate_scratch(main.as_buffer_range().1.len())
+            .map_err(|err| AudioError::Runtime(format!("post_module shortcut allocation failed: {err}")))?;
         for layer in runtime.layers.iter() {
-            layer
-                .encode(state, &encoding_parameters, encoder)
+            let rope_type = layer.rope_type();
+            main = layer
+                .encode(
+                    LayerArguments {
+                        batch_dim,
+                        token_positions: token_inputs.token_positions(),
+                        token_parents: token_inputs.token_parents(),
+                        token_subtrie_ranges: None,
+                        attention_sinks: runtime.shared_buffers.attention_sinks(layer.layer_index),
+                        rope_cosines: rope_type.and_then(|rope_type| runtime.shared_buffers.rope_cosines(rope_type)),
+                        rope_sines: rope_type.and_then(|rope_type| runtime.shared_buffers.rope_sines(rope_type)),
+                        rope_max_sequence_length: runtime.model_shape.context_length(),
+                        rope_dim: runtime.model_shape.rope_dim(),
+                        sampling_start: 0,
+                        sampling_length: batch_dim,
+                        cache_layer: None,
+                        #[cfg(feature = "tracing")]
+                        trace: None,
+                    },
+                    &encoding_parameters,
+                    main,
+                    &mut shortcut,
+                    encoder,
+                )
                 .map_err(|err| AudioError::Runtime(format!("post_module layer encode failed: {err}")))?;
         }
         runtime
             .output_norm
-            .encode(state, encoder)
-            .map_err(|err| AudioError::Runtime(format!("post_module output norm encode failed: {err}")))?;
-        Ok(())
+            .encode(&main, 0, batch_dim, Some(&mut shortcut), encoder)
+            .map_err(|err| AudioError::Runtime(format!("post_module output norm encode failed: {err}")))
     }
 
     pub(super) fn apply_post_module_single_batch_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
         encoder: &mut Encoder<B>,
-        latent_nsc: &Array<B>,
+        latent_nsc: Array<B>,
         frames: usize,
     ) -> AudioResult<Array<B>> {
         if frames == 0 {
-            return Ok(latent_nsc.clone());
+            return Ok(latent_nsc);
         }
 
-        let expected_elements = checked_product(&[frames, self.input_dim])?;
-        if latent_nsc.num_elements() != expected_elements {
+        let expected_size = size_for_shape(&[frames, self.input_dim], self.vocoder_data_type);
+        if latent_nsc.size() != expected_size {
             return Err(AudioError::InvalidTokenShape {
-                expected_tokens: expected_elements,
-                actual_tokens: latent_nsc.num_elements(),
+                expected_tokens: expected_size,
+                actual_tokens: latent_nsc.size(),
             });
         }
 
         let runtime = self.post_module_runtime(resources, frames.max(1))?;
         let token_ids = vec![0_u64; frames];
         let token_positions = (0..frames).collect::<Vec<_>>();
-        let mut state = ForwardPassState::new_classifier(
-            runtime.context.clone(),
-            &runtime.model_shape,
-            &runtime.scratch_buffers,
-            runtime.shared_buffers.clone(),
-            &token_ids,
-            &token_positions,
-            1,
-        );
-
-        let main = state.array(ArrayId::Main);
-        let main_output = {
-            if main.shape() != [frames, self.input_dim] {
-                return Err(AudioError::Runtime(format!(
-                    "post_module main shape mismatch: expected [{frames}, {}], got {:?}",
-                    self.input_dim,
-                    main.shape()
-                )));
-            }
-            if main.data_type() != latent_nsc.data_type() {
-                return Err(AudioError::Runtime(format!(
-                    "post_module dtype mismatch: main={:?}, latent={:?}",
-                    main.data_type(),
-                    latent_nsc.data_type()
-                )));
-            }
-            main.clone()
-        };
-
-        let copy_bytes = latent_nsc
-            .num_elements()
-            .checked_mul(latent_nsc.data_type().size_in_bytes())
-            .ok_or(AudioError::Runtime("post_module copy size overflow".to_string()))?;
-        {
-            let latent_buffer = latent_nsc.buffer();
-            let main_output_buffer = main_output.buffer();
-            let latent_buffer = latent_buffer.borrow();
-            let mut main_output_buffer = main_output_buffer.borrow_mut();
-            encoder.encode_copy(
-                &latent_buffer,
-                latent_nsc.offset()..latent_nsc.offset() + copy_bytes,
-                &mut main_output_buffer,
-                main_output.offset()..main_output.offset() + copy_bytes,
-            );
-        }
-        Self::encode_post_module_layers(&runtime, &mut state, encoder)?;
-
-        Ok(main_output)
+        let token_inputs = TokenInputs::new_classifier(runtime.context.as_ref(), &token_ids, &token_positions);
+        let main =
+            Self::encode_post_module_layers(&runtime, &token_inputs, frames, latent_nsc.into_allocation(), encoder)?;
+        Ok(unsafe { Array::from_allocation(main, 0, &[frames, self.input_dim], self.vocoder_data_type) })
     }
 
     pub(super) fn apply_post_module_enqueued<B: Backend>(
         &self,
         resources: &StructuredAudioRuntimeResources<B>,
-        context: &Rc<B::Context>,
         encoder: &mut Encoder<B>,
-        latent_nsc: &Array<B>,
+        latent_nsc: Array<B>,
         lengths: &[usize],
         batch_size: usize,
         frames: usize,
@@ -402,22 +392,13 @@ impl StructuredAudioCodecGraph {
                 actual_lengths: lengths.len(),
             });
         }
-        let expected_elements = checked_product(&[batch_size, frames, self.input_dim])?;
-        if latent_nsc.num_elements() != expected_elements {
+        let expected_size = size_for_shape(&[batch_size, frames, self.input_dim], self.vocoder_data_type);
+        if latent_nsc.size() != expected_size {
             return Err(AudioError::InvalidTokenShape {
-                expected_tokens: expected_elements,
-                actual_tokens: latent_nsc.num_elements(),
+                expected_tokens: expected_size,
+                actual_tokens: latent_nsc.size(),
             });
         }
-        if batch_size == 1 && lengths.first().copied() == Some(frames) {
-            return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
-        }
-
-        let output = context.create_array_zeros(
-            &[batch_size, frames, self.input_dim],
-            latent_nsc.data_type(),
-            "structured_audio_post_module_output_nsc",
-        );
         let mut batch_indices_by_length = BTreeMap::<usize, Vec<usize>>::new();
         for (batch_index, &active_len) in lengths.iter().enumerate() {
             if active_len == 0 {
@@ -431,94 +412,84 @@ impl StructuredAudioCodecGraph {
             }
             batch_indices_by_length.entry(active_len).or_default().push(batch_index);
         }
+        if frames == 0 {
+            return Ok(latent_nsc);
+        }
+        if batch_size == 1 && lengths.first().copied() == Some(frames) {
+            return self.apply_post_module_single_batch_enqueued(resources, encoder, latent_nsc, frames);
+        }
 
+        let mut output = encoder.allocate_scratch(expected_size).map_err(|err| {
+            AudioError::Runtime(format!("failed to allocate structured audio post_module output: {err}"))
+        })?;
         if batch_indices_by_length.is_empty() {
-            let mut output = output;
-            output.copy_from_array(latent_nsc);
-            return Ok(output);
+            encoder.encode_copy(
+                latent_nsc.allocation(),
+                latent_nsc.offset()..latent_nsc.offset() + latent_nsc.size(),
+                &mut output,
+                0..latent_nsc.size(),
+            );
+            return Ok(unsafe {
+                Array::from_allocation(output, 0, &[batch_size, frames, self.input_dim], self.vocoder_data_type)
+            });
         }
 
         let full_copy_bytes = latent_nsc.size();
+        let batch_stride_bytes = size_for_shape(&[frames, self.input_dim], self.vocoder_data_type);
         let mut copied_output_prefix = false;
         for (active_len, batch_indices) in batch_indices_by_length {
             let runtime = self.post_module_runtime(resources, active_len.max(1))?;
             let token_ids = vec![0_u64; active_len];
             let token_positions = (0..active_len).collect::<Vec<_>>();
-            let mut state = ForwardPassState::new_classifier(
-                runtime.context.clone(),
-                &runtime.model_shape,
-                &runtime.scratch_buffers,
-                runtime.shared_buffers.clone(),
-                &token_ids,
-                &token_positions,
-                1,
-            );
+            let token_inputs = TokenInputs::new_classifier(runtime.context.as_ref(), &token_ids, &token_positions);
 
-            let main = state.array(ArrayId::Main);
-            let main_output = {
-                if main.shape() != [active_len, self.input_dim] {
-                    return Err(AudioError::Runtime(format!(
-                        "post_module main shape mismatch: expected [{active_len}, {}], got {:?}",
-                        self.input_dim,
-                        main.shape()
-                    )));
-                }
-                if main.data_type() != latent_nsc.data_type() {
-                    return Err(AudioError::Runtime(format!(
-                        "post_module dtype mismatch: main={:?}, latent={:?}",
-                        main.data_type(),
-                        latent_nsc.data_type()
-                    )));
-                }
-                main.clone()
-            };
+            let main_shape = runtime.model_shape.main_shape(active_len);
+            if main_shape != [active_len, self.input_dim] {
+                return Err(AudioError::Runtime(format!(
+                    "post_module main shape mismatch: expected [{active_len}, {}], got [{}, {}]",
+                    self.input_dim, main_shape[0], main_shape[1]
+                )));
+            }
+            if runtime.model_shape.activation_data_type() != self.vocoder_data_type {
+                return Err(AudioError::Runtime(format!(
+                    "post_module dtype mismatch: main={:?}, latent={:?}",
+                    runtime.model_shape.activation_data_type(),
+                    self.vocoder_data_type
+                )));
+            }
 
             for &batch_index in &batch_indices {
                 if !copied_output_prefix {
-                    {
-                        let latent_buffer = latent_nsc.buffer();
-                        let output_buffer = output.buffer();
-                        let latent_buffer = latent_buffer.borrow();
-                        let mut output_buffer = output_buffer.borrow_mut();
-                        encoder.encode_copy(
-                            &latent_buffer,
-                            latent_nsc.offset()..latent_nsc.offset() + full_copy_bytes,
-                            &mut output_buffer,
-                            output.offset()..output.offset() + full_copy_bytes,
-                        );
-                    }
+                    encoder.encode_copy(
+                        latent_nsc.allocation(),
+                        latent_nsc.offset()..latent_nsc.offset() + full_copy_bytes,
+                        &mut output,
+                        0..full_copy_bytes,
+                    );
                     copied_output_prefix = true;
                 }
-                let source = array_batch_view(latent_nsc, batch_index, frames, self.input_dim, active_len)?;
-                {
-                    let source_buffer = source.buffer();
-                    let main_output_buffer = main_output.buffer();
-                    let source_buffer = source_buffer.borrow();
-                    let mut main_output_buffer = main_output_buffer.borrow_mut();
-                    encoder.encode_copy(
-                        &source_buffer,
-                        source.offset()..source.offset() + source.size(),
-                        &mut main_output_buffer,
-                        main_output.offset()..main_output.offset() + source.size(),
-                    );
-                }
-                Self::encode_post_module_layers(&runtime, &mut state, encoder)?;
-                let destination = array_batch_view(&output, batch_index, frames, self.input_dim, active_len)?;
-                {
-                    let main_output_buffer = main_output.buffer();
-                    let destination_buffer = destination.buffer();
-                    let main_output_buffer = main_output_buffer.borrow();
-                    let mut destination_buffer = destination_buffer.borrow_mut();
-                    encoder.encode_copy(
-                        &main_output_buffer,
-                        main_output.offset()..main_output.offset() + destination.size(),
-                        &mut destination_buffer,
-                        destination.offset()..destination.offset() + destination.size(),
-                    );
-                }
+                let source_range =
+                    array_batch_byte_range(&latent_nsc, batch_index, frames, self.input_dim, active_len)?;
+                let main_array = resources.decode_workspace.next_scratch(
+                    encoder,
+                    &[active_len, self.input_dim],
+                    self.vocoder_data_type,
+                );
+                let mut main = main_array.into_allocation();
+                let source_size = source_range.end - source_range.start;
+                encoder.encode_copy(latent_nsc.allocation(), source_range, &mut main, 0..source_size);
+                let main = Self::encode_post_module_layers(&runtime, &token_inputs, active_len, main, encoder)?;
+                let destination_offset = batch_index * batch_stride_bytes;
+                let active_bytes = active_len * self.input_dim * self.vocoder_data_type.size_in_bytes();
+                encoder.encode_copy(
+                    &main,
+                    0..active_bytes,
+                    &mut output,
+                    destination_offset..destination_offset + active_bytes,
+                );
             }
         }
 
-        Ok(output)
+        Ok(unsafe { Array::from_allocation(output, 0, &[batch_size, frames, self.input_dim], self.vocoder_data_type) })
     }
 }

@@ -1,13 +1,14 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
+use half::{bf16, f16};
+use num_traits::Float;
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -16,10 +17,11 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
-use half::{bf16, f16};
-use num_traits::Float;
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{assert::assert_eq_float, helpers::{alloc_allocation_with_data, allocation_to_vec}},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -56,30 +58,24 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let k = input.k as u32;
     let n = input.n as u32;
 
-    let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
     let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
-
-    let a_buf = a_array.buffer();
-    let a_ref = a_buf.borrow();
-    let b_buf = b_array.buffer();
-    let b_ref = b_buf.borrow();
-    let d_buf = d_array.buffer();
-    let mut d_ref = d_buf.borrow_mut();
+    let a_allocation = alloc_allocation_with_data::<B, T>(&context, &input.a);
+    let mut d_allocation = context
+        .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        &context,
         MatmulArguments {
-            a: a_ref.deref(),
+            a: &a_allocation,
             a_offset: 0,
-            b: b_ref.deref(),
+            b: b_array.allocation(),
             ab_scale: 1.0,
             c: MatmulArgumentC::None,
-            d: d_ref.deref_mut(),
+            d: &mut d_allocation,
             batch_dim: m,
             input_dim: k,
             output_dim: n,
@@ -87,9 +83,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(d_ref);
-    d_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&d_allocation)
 }
 
 fn test<T: ArrayElement + Float + Debug + Display>(

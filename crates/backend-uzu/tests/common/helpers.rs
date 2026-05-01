@@ -1,32 +1,58 @@
-use std::rc::Rc;
+use std::{mem::size_of, rc::Rc};
 
-use backend_uzu::backends::common::{Backend, Buffer, Context};
+use backend_uzu::{
+    ArrayElement, allocation_copy_from_slice,
+    backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
+};
 
-#[allow(dead_code)]
-pub fn alloc_buffer<B: Backend, T>(
+pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
+    elements_count * size_of::<T>()
+}
+
+pub fn alloc_allocation<B: Backend, T>(
     context: &B::Context,
     elements_count: usize,
-) -> B::Buffer {
-    context.create_buffer(elements_count * size_of::<T>()).expect("Failed to create buffer")
+) -> Allocation<B> {
+    context
+        .create_allocation(allocation_size_bytes::<T>(elements_count), AllocationType::Global)
+        .expect("Failed to create allocation")
 }
 
-pub fn alloc_buffer_with_data<B: Backend, T: bytemuck::NoUninit>(
+pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
-) -> B::Buffer {
-    if data.len() == 0 {
-        // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
-        return context.create_buffer(1).expect("Failed to create buffer");
-    }
-
-    let slice: &[u8] = bytemuck::cast_slice(data);
-    let buffer = context.create_buffer(slice.len()).expect("Failed to create buffer");
-    let bytes = unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, buffer.length()) };
-    bytes.copy_from_slice(slice);
-    buffer
+) -> Allocation<B> {
+    let mut allocation = context
+        .create_allocation(allocation_size_bytes::<T>(data.len()), AllocationType::Global)
+        .expect("Failed to create allocation");
+    allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
+    allocation
 }
 
-#[allow(dead_code)]
+pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
+    backend_uzu::allocation_to_vec(allocation)
+}
+
+pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
+    allocation: &Allocation<B>,
+    elements_count: usize,
+) -> Vec<T> {
+    let mut values = allocation_to_vec::<B, T>(allocation);
+    values.truncate(elements_count);
+    values
+}
+
+pub fn write_allocation<B: Backend, T: ArrayElement>(
+    allocation: &mut Allocation<B>,
+    data: &[T],
+) {
+    allocation_copy_from_slice(allocation, data).expect("Failed to write allocation")
+}
+
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
     B::Context::new().expect(format!("Failed to create context for {}", std::any::type_name::<B>()).as_str())
+}
+
+pub fn submit_encoder<B: Backend>(encoder: Encoder<B>) {
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
 }

@@ -1,14 +1,12 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{
             ManualKernels,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
@@ -19,7 +17,6 @@ use crate::{
         Linear,
         linear::{LinearBlockError, QuantizedLinear, QuantizedLinearError},
     },
-    forward_pass::state::{ArrayId, ForwardPassState},
     prelude::{ParameterLeaf, ParameterLoaderError, ParameterTree},
 };
 
@@ -45,14 +42,13 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: QuantizedLinear<B>,
     adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    adapter_down: B::Buffer,
-    adapter_up: B::Buffer,
+    adapter_down: Allocation<B>,
+    adapter_up: Allocation<B>,
     input_dim: usize,
     output_dim: usize,
     lora_rank: usize,
     lora_scale: f32,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
+    data_type: DataType,
 }
 
 // TODO: figure out how to make this generic over QLoRAWrapperError::InvalidTensor or make one global "Invalid Tensor" error and make this a common helper
@@ -85,9 +81,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
-        output_quantized_hadamard_factors: Option<B::Buffer>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
+        output_quantized_hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let data_type = quantization.activation_precision.into();
 
@@ -97,8 +91,6 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             input_dim,
             output_dim,
             parameter_tree,
-            input_array_id,
-            output_array_id,
             output_quantized_hadamard_factors,
         )?;
         let adapter_kernel =
@@ -106,11 +98,11 @@ impl<B: Backend> QLoRALinearWrapper<B> {
 
         let adapter_down_leaf = parameter_tree.leaf("down_weights")?;
         validate_tensor(&adapter_down_leaf, [lora_rank as usize, input_dim as usize], data_type)?;
-        let adapter_down = adapter_down_leaf.read_buffer()?;
+        let adapter_down = adapter_down_leaf.read_allocation()?;
 
         let adapter_up_leaf = parameter_tree.leaf("up_weights")?;
         validate_tensor(&adapter_up_leaf, [output_dim, lora_rank as usize], data_type)?;
-        let adapter_up = adapter_up_leaf.read_buffer()?;
+        let adapter_up = adapter_up_leaf.read_allocation()?;
 
         Ok(Self {
             base_linear,
@@ -121,8 +113,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             output_dim,
             lora_rank,
             lora_scale,
-            input_array_id,
-            output_array_id,
+            data_type,
         })
     }
 }
@@ -130,27 +121,22 @@ impl<B: Backend> QLoRALinearWrapper<B> {
 impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), <B as Backend>::Error> {
-        self.base_linear.encode(state, encoder)?;
-
+    ) -> Result<Allocation<B>, <B as Backend>::Error> {
         let mut adapter_kernel = self.adapter_kernel.borrow_mut();
-        let batch_dim = state.active_row_count();
-
-        let intermediate_array = state.common_aux.lora_intermediate.as_ref().unwrap();
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
+        let mut intermediate =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
 
         adapter_kernel.encode(
-            state.context(),
             MatmulArguments {
-                a: input_array.buffer().borrow().deref(),
+                a: &input,
                 a_offset: 0,
                 b: &self.adapter_down,
                 ab_scale: 1.0,
                 c: MatmulArgumentC::None,
-                d: intermediate_array.buffer().borrow_mut().deref_mut(),
+                d: &mut intermediate,
                 batch_dim: batch_dim as u32,
                 input_dim: self.input_dim as u32,
                 output_dim: self.lora_rank as u32,
@@ -158,15 +144,16 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             encoder,
         );
 
+        let mut output = self.base_linear.encode(input, batch_dim, encoder)?;
+
         adapter_kernel.encode(
-            state.context(),
             MatmulArguments {
-                a: intermediate_array.buffer().borrow().deref(),
+                a: &intermediate,
                 a_offset: 0,
                 b: &self.adapter_up,
                 ab_scale: self.lora_scale,
                 c: MatmulArgumentC::Accumulate,
-                d: output_array.buffer().borrow_mut().deref_mut(),
+                d: &mut output,
                 batch_dim: batch_dim as u32,
                 input_dim: self.lora_rank as u32,
                 output_dim: self.output_dim as u32,
@@ -174,6 +161,6 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             encoder,
         );
 
-        Ok(())
+        Ok(output)
     }
 }

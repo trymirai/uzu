@@ -1,16 +1,16 @@
-use std::{
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-};
+use std::fmt::Debug;
 
-use backend_uzu::{
-    ArrayContextExt, ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
-};
 use half::{bf16, f16};
 use num_traits::Float;
+use backend_uzu::{
+    ArrayElement,
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
+};
 
-use crate::uzu_test;
+use crate::{
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     input: Box<[T]>,
@@ -64,30 +64,25 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         .expect("Failed to create TensorAddBiasKernel");
 
     let size = input.length as usize;
-    let input_array = context.create_array_from(&[size], &input.input, "");
-    let input_array_buffer_rc = input_array.buffer();
-    let input_array_borrow = input_array_buffer_rc.borrow();
-    let input_array_deref = input_array_borrow.deref();
-    let input_buffer = (!in_place).then(|| input_array_deref);
-
-    let bias_array = context.create_array_from(&[input.num_cols as usize], &input.bias, "");
-    let output_array = match in_place {
-        true => context.create_array_from(&[size], &input.output, ""),
-        false => context.create_array_uninitialized(&[size], T::data_type(), ""),
+    let input_allocation = (!in_place).then(|| alloc_allocation_with_data::<B, T>(&context, &input.input));
+    let bias_allocation = alloc_allocation_with_data::<B, T>(&context, &input.bias);
+    let mut output_allocation = match in_place {
+        true => alloc_allocation_with_data::<B, T>(&context, &input.output),
+        false => alloc_allocation::<B, T>(&context, size),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_buffer,
-        bias_array.buffer().borrow_mut().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        input_allocation.as_ref(),
+        &bias_allocation,
+        &mut output_allocation,
         input.num_cols,
         input.length,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn test<T: ArrayElement + Float + Debug>(in_place: bool) {

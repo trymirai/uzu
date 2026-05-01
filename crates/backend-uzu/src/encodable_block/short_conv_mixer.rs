@@ -1,20 +1,17 @@
-use std::ops::{Deref, DerefMut};
-
 use crate::{
     DataType,
-    array::Array,
+    array::size_for_shape,
     backends::common::{
-        Backend, Context, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::{DecoderLayerType, ShortConvConfig},
     encodable_block::linear::Linear,
-    forward_pass::state::{ArrayId, ForwardPassState},
+    forward_pass::short_conv_layer::ShortConvLayer,
     parameters::{ParameterTree, resolve_subtree},
 };
 
 pub struct ShortConvMixer<B: Backend> {
-    layer_index: usize,
     config: ShortConvConfig,
     model_dim: usize,
     in_projection: Box<dyn Linear<B>>,
@@ -23,8 +20,17 @@ pub struct ShortConvMixer<B: Backend> {
     short_conv_prefill: <B::Kernels as Kernels>::ShortConvPrefillKernel,
     short_conv_decode: <B::Kernels as Kernels>::ShortConvDecodeKernel,
     short_conv_trie: <B::Kernels as Kernels>::ShortConvTrieKernel,
-    conv_weight: Array<B>,
-    conv_bias: Option<Array<B>>,
+    conv_weight: Allocation<B>,
+    conv_bias: Option<Allocation<B>>,
+    data_type: DataType,
+}
+
+pub(crate) struct ShortConvArguments<'a, B: Backend> {
+    pub active_row_count: usize,
+    pub sampling_start: usize,
+    pub sampling_length: usize,
+    pub token_parents: &'a Allocation<B>,
+    pub layer: &'a mut ShortConvLayer<B>,
 }
 
 impl<B: Backend> ShortConvMixer<B> {
@@ -35,10 +41,15 @@ impl<B: Backend> ShortConvMixer<B> {
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> (Self, Option<B::Buffer>) {
+    ) -> (Self, Option<Allocation<B>>) {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
         }
+        assert!(
+            short_conv_config.kernel_size >= 2,
+            "ShortConv kernel_size must be >= 2, got {}",
+            short_conv_config.kernel_size
+        );
 
         let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
         let conv_tree = resolve_subtree(&mixer_tree, &["conv"]);
@@ -47,31 +58,25 @@ impl<B: Backend> ShortConvMixer<B> {
 
         let (in_projection, in_proj_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &short_conv_config.in_projection_config,
-            false,
             model_dim,
             [model_dim * 3],
             context,
             &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
-            ArrayId::Main,
-            ArrayId::SsmInProj,
         )
         .expect("Failed to create in-projection kernel");
 
         let out_projection = <dyn Linear<B>>::new(
             &short_conv_config.out_projection_config,
-            false,
             model_dim,
             [model_dim],
             context,
             &resolve_subtree(&mixer_tree, &["out_projection", "out_proj"]),
-            ArrayId::AttentionOutput,
-            ArrayId::Main,
         )
         .expect("Failed to create out-projection kernel");
 
-        let conv_weight = conv_tree.leaf_array("weights").unwrap().clone();
+        let conv_weight = conv_tree.leaf("weights").unwrap().read_allocation().unwrap();
         let conv_bias = if short_conv_config.conv_config.has_biases {
-            Some(conv_tree.leaf_array("biases").unwrap().clone())
+            Some(conv_tree.leaf("biases").unwrap().read_allocation().unwrap())
         } else {
             None
         };
@@ -88,7 +93,6 @@ impl<B: Backend> ShortConvMixer<B> {
 
         (
             Self {
-                layer_index,
                 config: short_conv_config,
                 model_dim,
                 in_projection,
@@ -99,169 +103,128 @@ impl<B: Backend> ShortConvMixer<B> {
                 short_conv_trie,
                 conv_weight,
                 conv_bias,
+                data_type,
             },
             in_proj_input_hadamard_factors,
         )
     }
 
-    fn clear_suffix_state_valid_range(
-        &self,
-        state: &ForwardPassState<B>,
-    ) {
-        let Some(cache_layers) = state.cache_layers() else {
-            return;
-        };
-        let cache = cache_layers.borrow();
-        let layer = cache.data[self.layer_index].as_short_conv().expect("Expected ShortConv layer");
-        layer.clear_suffix_state_valid_range();
-    }
-
-    fn set_suffix_state_valid_range(
-        &self,
-        state: &ForwardPassState<B>,
-        start: usize,
-        len: usize,
-    ) {
-        let Some(cache_layers) = state.cache_layers() else {
-            return;
-        };
-        let cache = cache_layers.borrow();
-        let layer = cache.data[self.layer_index].as_short_conv().expect("Expected ShortConv layer");
-        layer.set_suffix_state_valid_range(start, len);
-    }
-
     fn run_conv(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut ShortConvLayer<B>,
+        token_parents: &Allocation<B>,
+        sampling_start: usize,
+        sampling_length: usize,
+        in_proj: &Allocation<B>,
+        out: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         active_row_count: usize,
-    ) {
-        self.clear_suffix_state_valid_range(state);
+    ) -> Result<(), B::Error> {
+        layer.clear_suffix_state_valid_range();
 
         if active_row_count == 1 {
-            self.run_decode_conv(state, encoder, 1);
-            return;
+            self.run_decode_conv(layer, in_proj, out, encoder, 1)?;
+            return Ok(());
         }
 
-        let sampling_len = state.sampling_length();
-        if sampling_len == 0 {
-            self.run_prefill_conv(state, encoder, active_row_count);
-            return;
+        if sampling_length == 0 {
+            return self.run_prefill_conv(layer, in_proj, out, encoder, active_row_count);
         }
 
-        let sampling_start = state.sampling_start();
-        let trie_len = sampling_len;
+        let trie_len = sampling_length;
 
         if trie_len <= 1 {
-            self.run_prefill_conv(state, encoder, active_row_count);
-            return;
+            return self.run_prefill_conv(layer, in_proj, out, encoder, active_row_count);
         }
 
         if sampling_start > 0 {
             if sampling_start == 1 {
-                self.run_decode_conv(state, encoder, 1);
+                self.run_decode_conv(layer, in_proj, out, encoder, 1)?;
             } else {
-                self.run_prefill_conv(state, encoder, sampling_start);
+                self.run_prefill_conv(layer, in_proj, out, encoder, sampling_start)?;
             }
         }
 
-        self.run_trie_conv(state, encoder, sampling_start, trie_len);
-        self.set_suffix_state_valid_range(state, sampling_start, trie_len);
+        self.run_trie_conv(layer, token_parents, in_proj, out, encoder, sampling_start, trie_len)?;
+        layer.set_suffix_state_valid_range(sampling_start, trie_len);
+        Ok(())
     }
 
     fn run_prefill_conv(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut ShortConvLayer<B>,
+        in_proj: &Allocation<B>,
+        out: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.model_dim == 0 || suffix_length == 0 {
-            return;
+            return Ok(());
         }
 
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let conv_state = state.array(ArrayId::ShortConvState(self.layer_index));
-        let out = state.array(ArrayId::AttentionOutput);
-
-        let bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
         let kernel_size = self.config.kernel_size;
-        let state_stride = kernel_size.saturating_sub(1);
+        let state_stride = kernel_size - 1;
 
-        // Allocate temporary padded buffer
-        let data_type: DataType = self.config.in_projection_config.activation_precision().into();
-        let element_size = data_type.size_in_bytes();
         let padded_rows = state_stride + suffix_length;
-        let padded_size = padded_rows * self.model_dim * element_size;
-        let mut padded_buf = state.context().create_buffer(padded_size).expect("Failed to create padded buffer");
+        let mut padded = encoder.allocate_scratch(size_for_shape(&[padded_rows, self.model_dim], self.data_type))?;
         self.short_conv_pack.encode(
-            conv_state.buffer().borrow().deref(),
-            in_proj.buffer().borrow().deref(),
-            &mut padded_buf,
+            (&layer.conv_state, 0),
+            in_proj,
+            &mut padded,
             state_stride as u32,
             suffix_length as u32,
             self.model_dim as u32 * 3,
             self.model_dim as u32,
             encoder,
         );
-
         self.short_conv_prefill.encode(
-            &padded_buf,
-            in_proj.buffer().borrow().deref(),
-            self.conv_weight.buffer().borrow().deref(),
-            bias_buf_borrow.as_deref(),
-            out.buffer().borrow_mut().deref_mut(),
-            conv_state.buffer().borrow_mut().deref_mut(),
+            &padded,
+            in_proj,
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
+            out,
+            &mut layer.conv_state,
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,
             state_stride as u32,
             self.model_dim as u32,
             encoder,
-        )
+        );
+        Ok(())
     }
 
     fn run_trie_conv(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut ShortConvLayer<B>,
+        token_parents: &Allocation<B>,
+        in_proj: &Allocation<B>,
+        out: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         sampling_start: usize,
         trie_len: usize,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.model_dim == 0 || trie_len == 0 {
-            return;
+            return Ok(());
         }
 
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let parents = state.array(ArrayId::TokenParents);
-        let conv_state = state.array(ArrayId::ShortConvState(self.layer_index));
-        let suffix_state = state.array(ArrayId::ShortConvSuffixState(self.layer_index));
-        let out = state.array(ArrayId::AttentionOutput);
-
-        let data_type: DataType = self.config.in_projection_config.activation_precision().into();
-        let elem_bytes = data_type.size_in_bytes();
+        let elem_bytes = DataType::from(self.config.in_projection_config.activation_precision()).size_in_bytes();
 
         let kernel_size = self.config.kernel_size;
-        let state_stride = kernel_size.saturating_sub(1);
+        let state_stride = kernel_size - 1;
         let in_proj_stride = self.model_dim * 3;
 
-        let in_proj_offset = in_proj.offset() + sampling_start * in_proj_stride * elem_bytes;
-        let out_offset = out.offset() + sampling_start * self.model_dim * elem_bytes;
-        let suffix_state_offset = suffix_state.offset() + sampling_start * self.model_dim * state_stride * elem_bytes;
-        let base_state_offset = conv_state.offset();
-        let parents_offset = parents.offset() + sampling_start * std::mem::size_of::<i32>();
-        let trie_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let trie_bias_buf_borrow = trie_bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
+        let in_proj_view = (in_proj, sampling_start * in_proj_stride * elem_bytes);
+        let parents_view = (token_parents, sampling_start * std::mem::size_of::<i32>());
+        let out_view = (&mut *out, sampling_start * self.model_dim * elem_bytes);
         self.short_conv_trie.encode(
-            (in_proj.buffer().borrow().deref(), in_proj_offset),
-            self.conv_weight.buffer().borrow().deref(),
-            trie_bias_buf_borrow.as_deref(),
-            (conv_state.buffer().borrow().deref(), base_state_offset),
-            (parents.buffer().borrow().deref(), parents_offset),
-            (out.buffer().borrow_mut().deref_mut(), out_offset),
-            (suffix_state.buffer().borrow_mut().deref_mut(), suffix_state_offset),
+            in_proj_view,
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
+            (&layer.conv_state, 0),
+            parents_view,
+            out_view,
+            (&mut layer.suffix_state, sampling_start * self.model_dim * state_stride * elem_bytes),
             trie_len as u32,
             kernel_size as u32,
             in_proj_stride as u32,
@@ -269,60 +232,71 @@ impl<B: Backend> ShortConvMixer<B> {
             self.model_dim as u32,
             encoder,
         );
+        Ok(())
     }
 
     fn run_decode_conv(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut ShortConvLayer<B>,
+        in_proj: &Allocation<B>,
+        out: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
+    ) -> Result<(), B::Error> {
         if self.model_dim == 0 || suffix_length == 0 {
-            return;
+            return Ok(());
         }
 
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let conv_state = state.array(ArrayId::ShortConvState(self.layer_index));
-        let out = state.array(ArrayId::AttentionOutput);
-
-        let decode_bias_buf_rc = self.conv_bias.as_ref().map(|b| b.buffer());
-        let decode_bias_buf_borrow = decode_bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
         let kernel_size = self.config.kernel_size;
-        let state_stride = kernel_size.saturating_sub(1);
+        let state_stride = kernel_size - 1;
 
         self.short_conv_decode.encode(
-            in_proj.buffer().borrow().deref(),
-            self.conv_weight.buffer().borrow().deref(),
-            decode_bias_buf_borrow.as_deref(),
-            None::<&B::Buffer>,
-            out.buffer().borrow_mut().deref_mut(),
-            conv_state.buffer().borrow_mut().deref_mut(),
+            in_proj,
+            &self.conv_weight,
+            self.conv_bias.as_ref(),
+            None::<&Allocation<B>>,
+            out,
+            &mut layer.conv_state,
             suffix_length as u32,
             kernel_size as u32,
             self.model_dim as u32 * 3,
             state_stride as u32,
             self.model_dim as u32,
             encoder,
-        )
+        );
+        Ok(())
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        args: ShortConvArguments<B>,
+        input: Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let active_row_count = state.active_row_count();
-        if active_row_count == 0 {
-            return Ok(());
-        }
+    ) -> Result<Allocation<B>, B::Error> {
+        let ShortConvArguments {
+            active_row_count,
+            sampling_start,
+            sampling_length,
+            token_parents,
+            layer,
+        } = args;
+        assert!(active_row_count > 0, "ShortConv mixer requires at least one active row");
 
-        self.in_projection.encode(state, encoder)?;
+        let in_proj = self.in_projection.encode(input, active_row_count, encoder)?;
+        let mut conv_output =
+            encoder.allocate_scratch(size_for_shape(&[active_row_count, self.model_dim], self.data_type))?;
 
-        self.run_conv(state, encoder, active_row_count);
+        self.run_conv(
+            layer,
+            token_parents,
+            sampling_start,
+            sampling_length,
+            &in_proj,
+            &mut conv_output,
+            encoder,
+            active_row_count,
+        )?;
 
-        self.out_projection.encode(state, encoder)?;
-
-        Ok(())
+        self.out_projection.encode(conv_output, active_row_count, encoder)
     }
 }

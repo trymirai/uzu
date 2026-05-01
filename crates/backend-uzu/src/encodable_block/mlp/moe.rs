@@ -1,17 +1,12 @@
 //! MoE (Mixture of Experts) block encodable.
 
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
-
 use thiserror::Error;
 
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
@@ -24,21 +19,19 @@ use crate::{
     },
     config::{LinearConfig, MixtureOfExpertsConfig, RoutingFunctionConfig},
     encodable_block::mlp::Mlp,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
 struct RouterBlock<B: Backend> {
-    weights_buf: Rc<RefCell<B::Buffer>>,
-    biases_buf: Rc<RefCell<B::Buffer>>,
+    weights: Allocation<B>,
+    biases: Allocation<B>,
 }
 
-#[derive(Clone)]
 struct SharedMoeWeights<B: Backend> {
-    pub w13_buf: Rc<RefCell<B::Buffer>>,
-    pub w2_buf: Rc<RefCell<B::Buffer>>,
-    pub up_biases_buf: Rc<RefCell<B::Buffer>>,
-    pub down_biases_buf: Rc<RefCell<B::Buffer>>,
+    pub w13: Allocation<B>,
+    pub w2: Allocation<B>,
+    pub up_biases: Allocation<B>,
+    pub down_biases: Allocation<B>,
 }
 
 pub struct MoeBlock<B: Backend> {
@@ -64,7 +57,9 @@ pub enum MoeBlockError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
-    ParameterLoaderError(#[source] ParameterLoaderError<B>),
+    ParameterLoaderError(#[from] ParameterLoaderError<B>),
+    #[error("MoE num_active_routed_experts must be greater than 0")]
+    InvalidActiveExpertCount,
 }
 
 impl<B: Backend> MoeBlock<B> {
@@ -75,6 +70,9 @@ impl<B: Backend> MoeBlock<B> {
         hidden_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, MoeBlockError<B>> {
+        if moe_config.num_active_routed_experts == 0 {
+            return Err(MoeBlockError::InvalidActiveExpertCount);
+        }
         let data_type: DataType = moe_config.expert_config.linear_config.activation_precision().into();
 
         let router_data_type: DataType = moe_config.router_config.activation_precision().into();
@@ -93,11 +91,13 @@ impl<B: Backend> MoeBlock<B> {
             LinearConfig::FullPrecision {
                 ..
             } => {
-                let weights_arr = router_tree.leaf_array("weights").map_err(MoeBlockError::ParameterLoaderError)?;
-                let biases_arr = router_tree.leaf_array("biases").map_err(MoeBlockError::ParameterLoaderError)?;
+                let weights =
+                    router_tree.leaf("weights").map_err(MoeBlockError::ParameterLoaderError)?.read_allocation()?;
+                let biases =
+                    router_tree.leaf("biases").map_err(MoeBlockError::ParameterLoaderError)?.read_allocation()?;
                 RouterBlock {
-                    weights_buf: weights_arr.buffer(),
-                    biases_buf: biases_arr.buffer(),
+                    weights,
+                    biases,
                 }
             },
             LinearConfig::QLoRA {
@@ -131,35 +131,39 @@ impl<B: Backend> MoeBlock<B> {
 
         let experts_tree = parameter_tree.subtree("experts").map_err(MoeBlockError::ParameterLoaderError)?;
 
-        let w13_arr = experts_tree
+        let w13 = experts_tree
             .subtree("up_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("weights")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("weights")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
-        let w2_arr = experts_tree
+        let w2 = experts_tree
             .subtree("down_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("weights")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("weights")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
-        let up_biases_arr = experts_tree
+        let up_biases = experts_tree
             .subtree("up_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("biases")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
-        let down_biases_arr = experts_tree
+        let down_biases = experts_tree
             .subtree("down_projection")
             .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf_array("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?;
+            .leaf("biases")
+            .map_err(MoeBlockError::ParameterLoaderError)?
+            .read_allocation()?;
 
         let shared_weights = SharedMoeWeights {
-            w13_buf: w13_arr.buffer(),
-            w2_buf: w2_arr.buffer(),
-            up_biases_buf: up_biases_arr.buffer(),
-            down_biases_buf: down_biases_arr.buffer(),
+            w13,
+            w2,
+            up_biases,
+            down_biases,
         };
 
         Ok(Self {
@@ -197,68 +201,21 @@ impl<B: Backend> MoeBlock<B> {
 impl<B: Backend> Mlp<B> for MoeBlock<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let suffix_length = state.active_row_count();
-
-        let main_buf = state.array(ArrayId::Main).buffer();
-        let topk_ids_buf = state.array(ArrayId::MoeTopkIds).buffer();
-        let topk_probs_buf = state.array(ArrayId::MoeTopkProbs).buffer();
-        let offsets_buf = state.array(ArrayId::MoeOffsets).buffer();
-        let sumk_buf = state.array(ArrayId::MoeSumK).buffer();
-        let bucketed_ids_buf = state.array(ArrayId::MoeBucketedTokenIds).buffer();
-        let bucketed_probs_buf = state.array(ArrayId::MoeBucketedProbs).buffer();
-        let x_perm_buf = state.array(ArrayId::MoeXPerm).buffer();
-        let tok2row_buf = state.array(ArrayId::MoeTok2Row).buffer();
-        let y_partial_buf = state.array(ArrayId::MoeYPartial).buffer();
-        let tile_counts_buf = state.array(ArrayId::MoeTileCounts).buffer();
-        let tile_offsets_buf = state.array(ArrayId::MoeTileOffsets).buffer();
-        let tile_map_buf = state.array(ArrayId::MoeTileMap).buffer();
-        let total_tiles_buf = state.array(ArrayId::MoeTotalTiles).buffer();
-        let dispatch_args_buf = state.array(ArrayId::MoeDispatchArgs).buffer();
-        let partials_buf = state.array(ArrayId::MoeScatterPartials).buffer();
-        let block_bases_buf = state.array(ArrayId::MoeScatterBlockBases).buffer();
-        let block_alloc_buf = state.array(ArrayId::MoeBlockAlloc).buffer();
-        let hidden_buf = state.array(ArrayId::MoeHidden).buffer();
-        let row_expert_map_buf = state.array(ArrayId::MoeTwoPassRowExpertMap).buffer();
+    ) -> Result<Allocation<B>, B::Error> {
+        let suffix_length = batch_dim;
+        if suffix_length == 0 {
+            return Ok(input);
+        }
 
         let e = self.moe_config.num_routed_experts;
         let k = self.moe_config.num_active_routed_experts;
         let k_tile = 128;
-
-        // Clear internal MoE buffers
-        if suffix_length > 0 && k > 0 {
-            let entries = suffix_length * k;
-            let topk_bytes = entries * std::mem::size_of::<u32>();
-            let tok2row_bytes = entries * std::mem::size_of::<i32>();
-
-            // Clear topk_ids and tok2row buffers
-            if topk_bytes > 0 {
-                encoder.encode_fill(topk_ids_buf.borrow_mut().deref_mut(), 0..topk_bytes, 0xFF);
-            }
-            if tok2row_bytes > 0 {
-                encoder.encode_fill(tok2row_buf.borrow_mut().deref_mut(), 0..tok2row_bytes, 0xFF);
-            }
-
-            // Clear hidden buffer
-            let hidden_bytes = suffix_length * k * self.hidden_dim * self.data_type.size_in_bytes();
-            if hidden_bytes > 0 {
-                encoder.encode_fill(hidden_buf.borrow_mut().deref_mut(), 0..hidden_bytes, 0);
-            }
-
-            // Clear y_partial buffer
-            let y_partial_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
-            if y_partial_bytes > 0 {
-                encoder.encode_fill(y_partial_buf.borrow_mut().deref_mut(), 0..y_partial_bytes, 0);
-            }
-
-            // Clear x_perm buffer
-            let x_perm_bytes = suffix_length * k * self.model_dim * self.data_type.size_in_bytes();
-            if x_perm_bytes > 0 {
-                encoder.encode_fill(x_perm_buf.borrow_mut().deref_mut(), 0..x_perm_bytes, 0);
-            }
-        }
+        let total_rows = suffix_length * k;
+        let num_blocks = suffix_length.div_ceil(256).max(1);
+        let num_tiles = e.div_ceil(512).max(1);
 
         // Use fused Router+TopK kernel for non-quantized routers
         if self.model_dim % 4 != 0 {
@@ -271,14 +228,20 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             panic!("MoE fused router+bottomk failed: {k} > 128");
         }
 
+        let mut topk_ids = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], DataType::I32))?;
+        let mut topk_probs = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], self.data_type))?;
+
+        if suffix_length > 0 && k > 0 {
+            encoder.encode_fill(&mut topk_ids, 0xFF);
+        }
+
         if suffix_length > 0 && e > 0 && k > 0 {
-            // Use the fused router+topk kernel
             self.router_topk_kernel.encode(
-                main_buf.borrow().deref(),
-                self.router.weights_buf.borrow().deref(),
-                self.router.biases_buf.borrow().deref(),
-                topk_ids_buf.borrow_mut().deref_mut(),
-                topk_probs_buf.borrow_mut().deref_mut(),
+                &input,
+                &self.router.weights,
+                &self.router.biases,
+                &mut topk_ids,
+                &mut topk_probs,
                 suffix_length as u32,
                 self.model_dim as u32,
                 e as u32,
@@ -288,23 +251,35 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             );
         }
 
+        let mut offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
+        let mut sumk = encoder.allocate_scratch(size_for_shape(&[1], DataType::U32))?;
+        let scatter_entries = num_blocks * num_tiles * 512;
+        let mut partials = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
         self.counts_offsets_kernel.encode(
-            topk_ids_buf.borrow().deref(),
-            offsets_buf.borrow_mut().deref_mut(),
-            sumk_buf.borrow_mut().deref_mut(),
-            partials_buf.borrow_mut().deref_mut(),
+            &topk_ids,
+            &mut offsets,
+            &mut sumk,
+            &mut partials,
             suffix_length as u32,
             e as u32,
             k as u32,
             encoder,
         );
 
-        let num_blocks = ((suffix_length + 255) / 256).max(1);
-        let num_tiles = ((e + 512 - 1) / 512).max(1);
+        let mut block_bases = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
+        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[num_blocks * num_tiles], DataType::U32))?;
+        let mut bucketed_ids = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
+        let mut bucketed_probs = encoder.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
+        let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
+
+        if suffix_length > 0 && k > 0 {
+            encoder.encode_fill(&mut tok2row, 0xFF);
+        }
+
         self.scatter_bases_kernel.encode(
-            partials_buf.borrow().deref(),
-            block_bases_buf.borrow_mut().deref_mut(),
-            block_alloc_buf.borrow_mut().deref_mut(),
+            &partials,
+            &mut block_bases,
+            &mut block_alloc,
             e as u32,
             num_blocks as u32,
             num_tiles as u32,
@@ -312,30 +287,35 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             encoder,
         );
         self.scatter_map_kernel.encode(
-            topk_ids_buf.borrow().deref(),
-            topk_probs_buf.borrow().deref(),
-            offsets_buf.borrow().deref(),
-            block_bases_buf.borrow().deref(),
-            block_alloc_buf.borrow().deref(),
-            bucketed_ids_buf.borrow_mut().deref_mut(),
-            bucketed_probs_buf.borrow_mut().deref_mut(),
+            &topk_ids,
+            &topk_probs,
+            &offsets,
+            &block_bases,
+            &block_alloc,
+            &mut bucketed_ids,
+            &mut bucketed_probs,
             suffix_length as u32,
             e as u32,
             k as u32,
             num_blocks as u32,
             num_tiles as u32,
-            tok2row_buf.borrow_mut().deref_mut(),
+            &mut tok2row,
             encoder,
         );
+
+        let mut x_perm = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
+        if suffix_length > 0 && k > 0 {
+            encoder.encode_fill(&mut x_perm, 0);
+        }
 
         self.gather_kernels.encode(
             encoder,
             self.data_type,
             MoeGatherArguments {
-                x_buffer: main_buf.borrow().deref(),
-                bucketed_ids_buffer: bucketed_ids_buf.borrow().deref(),
-                x_perm_buffer: x_perm_buf.borrow_mut().deref_mut(),
-                sumk_buffer: sumk_buf.borrow().deref(),
+                x: &input,
+                bucketed_ids: &bucketed_ids,
+                x_perm: &mut x_perm,
+                sumk: &sumk,
                 t: suffix_length,
                 k,
                 d_model: self.model_dim,
@@ -350,28 +330,43 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let up_clip_min = self.moe_config.expert_config.up_clipping[0];
         let up_clip_max = self.moe_config.expert_config.up_clipping[1];
         let silu_alpha = self.moe_config.expert_config.activation.alpha();
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[total_rows, self.hidden_dim], DataType::F32))?;
+        let mut y_partial = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
+
+        if suffix_length > 0 && k > 0 {
+            encoder.encode_fill(&mut hidden, 0);
+            encoder.encode_fill(&mut y_partial, 0);
+        }
+
+        let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;
+        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[e], DataType::U32))?;
+        let mut tile_offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
+        let h_blocks = self.hidden_dim.div_ceil(4);
+        let mut tile_map =
+            encoder.allocate_scratch(size_for_shape(&[total_rows * h_blocks.max(1) * 3], DataType::U32))?;
+        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
+        let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
 
         if suffix_length == 1 {
-            let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_decode_kernel.encode(
                 encoder,
                 MoeExpertsTwoPassArguments {
-                    x_perm_buffer: x_perm_buf.borrow().deref(),
-                    expert_offsets: offsets_buf.borrow().deref(),
-                    row_expert_map: row_expert_map_buf.borrow_mut().deref_mut(),
-                    hidden_buffer: hidden_buf.borrow_mut().deref_mut(),
-                    output_buffer: y_partial_buf.borrow_mut().deref_mut(),
-                    w13_all: self.shared_weights.w13_buf.borrow().deref(),
-                    w2_all: self.shared_weights.w2_buf.borrow().deref(),
-                    up_biases: self.shared_weights.up_biases_buf.borrow().deref(),
-                    down_biases: self.shared_weights.down_biases_buf.borrow().deref(),
-                    tile_counts: tile_counts_buf.borrow_mut().deref_mut(),
-                    tile_offsets: tile_offsets_buf.borrow_mut().deref_mut(),
-                    tile_map: tile_map_buf.borrow_mut().deref_mut(),
-                    total_tiles: total_tiles_buf.borrow_mut().deref_mut(),
-                    dispatch_args: dispatch_args_buf.borrow_mut().deref_mut(),
+                    x_perm: &x_perm,
+                    expert_offsets: &offsets,
+                    row_expert_map: &mut row_expert_map,
+                    hidden: &mut hidden,
+                    output: &mut y_partial,
+                    w13_all: &self.shared_weights.w13,
+                    w2_all: &self.shared_weights.w2,
+                    up_biases: &self.shared_weights.up_biases,
+                    down_biases: &self.shared_weights.down_biases,
+                    tile_counts: &mut tile_counts,
+                    tile_offsets: &mut tile_offsets,
+                    tile_map: &mut tile_map,
+                    total_tiles: &mut total_tiles,
+                    dispatch_args: &mut dispatch_args,
                     total_rows,
                     d_model: self.model_dim,
                     d_ff: self.hidden_dim,
@@ -387,39 +382,22 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                 },
             );
         } else {
-            let total_rows = suffix_length * k;
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
-
-            let x_perm_borrow = x_perm_buf.borrow();
-            let offsets_borrow = offsets_buf.borrow();
-            let mut row_expert_map_borrow = row_expert_map_buf.borrow_mut();
-            let mut hidden_borrow = hidden_buf.borrow_mut();
-            let mut y_partial_borrow = y_partial_buf.borrow_mut();
-            let w13_borrow = self.shared_weights.w13_buf.borrow();
-            let w2_borrow = self.shared_weights.w2_buf.borrow();
-            let up_biases_borrow = self.shared_weights.up_biases_buf.borrow();
-            let down_biases_borrow = self.shared_weights.down_biases_buf.borrow();
-            let mut tile_counts_borrow = tile_counts_buf.borrow_mut();
-            let mut tile_offsets_borrow = tile_offsets_buf.borrow_mut();
-            let mut tile_map_borrow = tile_map_buf.borrow_mut();
-            let mut total_tiles_borrow = total_tiles_buf.borrow_mut();
-            let mut dispatch_args_borrow = dispatch_args_buf.borrow_mut();
-
             let args = MoeExpertsTwoPassArguments {
-                x_perm_buffer: x_perm_borrow.deref(),
-                expert_offsets: offsets_borrow.deref(),
-                row_expert_map: row_expert_map_borrow.deref_mut(),
-                hidden_buffer: hidden_borrow.deref_mut(),
-                output_buffer: y_partial_borrow.deref_mut(),
-                w13_all: w13_borrow.deref(),
-                w2_all: w2_borrow.deref(),
-                up_biases: up_biases_borrow.deref(),
-                down_biases: down_biases_borrow.deref(),
-                tile_counts: tile_counts_borrow.deref_mut(),
-                tile_offsets: tile_offsets_borrow.deref_mut(),
-                tile_map: tile_map_borrow.deref_mut(),
-                total_tiles: total_tiles_borrow.deref_mut(),
-                dispatch_args: dispatch_args_borrow.deref_mut(),
+                x_perm: &x_perm,
+                expert_offsets: &offsets,
+                row_expert_map: &mut row_expert_map,
+                hidden: &mut hidden,
+                output: &mut y_partial,
+                w13_all: &self.shared_weights.w13,
+                w2_all: &self.shared_weights.w2,
+                up_biases: &self.shared_weights.up_biases,
+                down_biases: &self.shared_weights.down_biases,
+                tile_counts: &mut tile_counts,
+                tile_offsets: &mut tile_offsets,
+                tile_map: &mut tile_map,
+                total_tiles: &mut total_tiles,
+                dispatch_args: &mut dispatch_args,
                 total_rows,
                 d_model: self.model_dim,
                 d_ff: self.hidden_dim,
@@ -436,18 +414,19 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             self.experts_two_pass_prefill_kernel.encode(encoder, args);
         }
 
+        let mut output = encoder.allocate_scratch(size_for_shape(&[suffix_length, self.model_dim], self.data_type))?;
         self.finalize_kernel.encode(
-            tok2row_buf.borrow().deref(),
-            topk_probs_buf.borrow().deref(),
-            y_partial_buf.borrow().deref(),
-            main_buf.borrow_mut().deref_mut(),
+            &tok2row,
+            &topk_probs,
+            &y_partial,
+            &mut output,
             suffix_length as u32,
             self.model_dim as u32,
             k as u32,
             encoder,
         );
 
-        Ok(())
+        Ok(output)
     }
 }
 

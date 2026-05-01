@@ -1,6 +1,5 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
 };
 
 use backend_uzu::{
@@ -51,12 +50,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let output_len = (input.batch_size * input.hidden_dim) as usize;
 
     let input_array = context.create_array_from(&[input_len], &input.input, "");
-    let output_array = context.create_array_uninitialized(&[output_len], T::data_type(), "");
+    let mut output = context
+        .create_array_uninitialized(&[output_len], T::data_type(), "")
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        input_array.allocation(),
+        &mut output,
         input.seq_len,
         input.hidden_dim,
         input.batch_size,
@@ -64,7 +65,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(
