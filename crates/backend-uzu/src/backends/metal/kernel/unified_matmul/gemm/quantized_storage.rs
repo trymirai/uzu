@@ -6,7 +6,6 @@ use crate::backends::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct QuantizedStorageFormat {
     pub(crate) bits_per_weight: u8,
-    pub(crate) signed: bool,
     pub(crate) group_size: u32,
     pub(crate) metadata_kind: QuantizedMetadataKind,
 }
