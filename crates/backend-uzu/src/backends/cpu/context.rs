@@ -84,7 +84,7 @@ impl Context for CpuContext {
 
     fn create_sparse_buffer(
         &self,
-        capacity: usize,
+        _capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         Err(CpuError::NotSupported)
     }

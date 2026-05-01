@@ -10,10 +10,11 @@ use metal::{
 };
 use objc2::__framework_prelude::{ProtocolObject, Retained};
 use objc2_foundation::NSRange;
+use rangemap::RangeMap;
 
 use crate::{
     backends::{
-        common::{SparseBuffer, SparseBufferOperation},
+        common::{SparseBuffer, SparseBufferMappedPages, SparseBufferOperation},
         metal::error::MetalError,
     },
     prelude::MetalContext,
@@ -23,6 +24,8 @@ use crate::{
 pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
+    mapped_pages: SparseBufferMappedPages,
+    page_size: MTLSparsePageSize,
 }
 
 impl MetalSparseBuffer {
@@ -54,11 +57,13 @@ impl MetalSparseBuffer {
         Ok(Self {
             buffer,
             heap,
+            mapped_pages: SparseBufferMappedPages::new(),
+            page_size,
         })
     }
 
     fn execute(
-        &self,
+        &mut self,
         context: &MetalContext,
         operations: &[MTL4UpdateSparseBufferMappingOperation],
     ) -> Result<(), MetalError> {
@@ -103,8 +108,16 @@ impl SparseBuffer for MetalSparseBuffer {
         self.buffer.length()
     }
 
+    fn get_mapped_pages(&self) -> &RangeMap<usize, ()> {
+        &self.mapped_pages.get_map()
+    }
+
+    fn get_page_size(&self) -> usize {
+        get_page_size_bytes(self.page_size)
+    }
+
     fn execute(
-        &self,
+        &mut self,
         context: &<Self::Backend as Backend>::Context,
         operations: &[SparseBufferOperation],
     ) -> Result<(), MetalError> {
@@ -118,12 +131,16 @@ impl SparseBuffer for MetalSparseBuffer {
                 };
                 MTL4UpdateSparseBufferMappingOperation {
                     mode,
-                    buffer_range: NSRange::new(op.pages.start, op.pages.len()),
-                    heap_offset: op.heap_page_offset,
+                    buffer_range: NSRange::new(op.range.start, op.range.len()),
+                    heap_offset: op.range.start,
                 }
             })
             .collect::<Vec<MTL4UpdateSparseBufferMappingOperation>>();
-        self.execute(context, &mtl_operations)
+
+        self.execute(context, &mtl_operations)?;
+        self.mapped_pages.execute(operations);
+
+        Ok(())
     }
 }
 

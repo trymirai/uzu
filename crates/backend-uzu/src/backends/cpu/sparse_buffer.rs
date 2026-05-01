@@ -1,6 +1,7 @@
 use std::{cell::UnsafeCell, pin::Pin};
 
 use backend_uzu::backends::common::{Backend, Buffer, SparseBufferOperation};
+use rangemap::RangeMap;
 
 use crate::backends::{
     common::SparseBuffer,
@@ -10,12 +11,14 @@ use crate::backends::{
 #[derive(Debug)]
 pub struct CpuSparseBuffer {
     buffer: UnsafeCell<Pin<Box<[u8]>>>,
+    mapped_pages: RangeMap<usize, ()>,
 }
 
 impl CpuSparseBuffer {
     pub fn new(capacity: usize) -> Self {
         Self {
             buffer: UnsafeCell::new(Pin::new(vec![0; capacity].into_boxed_slice())),
+            mapped_pages: RangeMap::new(),
         }
     }
 }
@@ -39,17 +42,25 @@ impl SparseBuffer for CpuSparseBuffer {
     }
 
     fn gpu_ptr(&self) -> usize {
-        self.buffer.gpu_ptr()
+        0
     }
 
     fn length(&self) -> usize {
-        self.buffer.length()
+        0
+    }
+
+    fn get_mapped_pages(&self) -> &RangeMap<usize, ()> {
+        &self.mapped_pages
+    }
+
+    fn get_page_size(&self) -> usize {
+        0
     }
 
     fn execute(
-        &self,
-        context: &<Self::Backend as Backend>::Context,
-        operations: &[SparseBufferOperation],
+        &mut self,
+        _context: &<Self::Backend as Backend>::Context,
+        _operations: &[SparseBufferOperation],
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         Err(CpuError::NotSupported)
     }
