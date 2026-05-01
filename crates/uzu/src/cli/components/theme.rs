@@ -10,6 +10,7 @@ pub struct Theme {
     pub name: String,
     pub accent_color: Color,
     pub subtitle_color: Color,
+    pub symbol_heart: String,
 }
 
 impl Theme {
@@ -23,6 +24,7 @@ impl Theme {
             name: "blue".to_string(),
             accent_color: Color::Blue,
             subtitle_color: Color::DarkGrey,
+            symbol_heart: "💙".to_string(),
         }
     }
 
@@ -31,6 +33,7 @@ impl Theme {
             name: "green".to_string(),
             accent_color: Color::Green,
             subtitle_color: Color::DarkGrey,
+            symbol_heart: "💚".to_string(),
         }
     }
 
@@ -39,6 +42,7 @@ impl Theme {
             name: "yellow".to_string(),
             accent_color: Color::Yellow,
             subtitle_color: Color::DarkGrey,
+            symbol_heart: "💛".to_string(),
         }
     }
 
@@ -47,6 +51,7 @@ impl Theme {
             name: "red".to_string(),
             accent_color: Color::Red,
             subtitle_color: Color::DarkGrey,
+            symbol_heart: "❤️".to_string(),
         }
     }
 }

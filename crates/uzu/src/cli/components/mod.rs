@@ -15,5 +15,5 @@ pub use history_cell::{HistoryCell, HistoryCellType};
 pub use logo::Logo;
 pub use rendered_text::RenderedText;
 pub use selector::{Selector, SelectorItem, SelectorStyle};
-pub use text_input::TextInput;
+pub use text_input::{TextInput, TextInputFocus};
 pub use theme::Theme;

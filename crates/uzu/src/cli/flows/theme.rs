@@ -41,8 +41,10 @@ fn ThemeFlowView(
         Selector(
             items: items,
             style: SelectorStyle::Plain,
-            maximal_height: (themes.len() as u16).max(5),
+            maximal_height: (themes.len() as u16).min(5),
             accent_color: state.read().theme.accent_color,
+            subtitle_color: state.read().theme.subtitle_color,
+            columns_padding: state.read().theme.padding_wide(),
             on_submit: move |index: usize| {
                 let mut state = state;
                 if let Some(theme) = themes.get(index) {

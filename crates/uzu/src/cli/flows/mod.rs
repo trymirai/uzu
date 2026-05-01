@@ -1,8 +1,10 @@
+mod exit;
 mod registry;
 mod theme;
 
+pub use exit::ExitFlow;
 use iocraft::prelude::*;
-pub use registry::FlowRegistry;
+pub use registry::{Command, FlowRegistry};
 pub use theme::ThemeFlow;
 
 pub struct FlowEvent {

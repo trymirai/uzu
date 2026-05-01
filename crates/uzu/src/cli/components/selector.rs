@@ -1,6 +1,10 @@
 use iocraft::prelude::*;
+use unicode_width::UnicodeWidthStr;
 
 use crate::cli::{components::Gradient, helpers::ColorRgb};
+
+const ICON_SELECTED: &str = "[x]";
+const ICON_UNSELECTED: &str = "[ ]";
 
 #[derive(Clone)]
 pub struct SelectorItem {
@@ -22,6 +26,8 @@ pub struct SelectorProps {
     pub style: SelectorStyle,
     pub maximal_height: u16,
     pub accent_color: Option<Color>,
+    pub subtitle_color: Option<Color>,
+    pub columns_padding: u16,
     pub on_submit: HandlerMut<'static, usize>,
 }
 
@@ -34,6 +40,8 @@ pub fn Selector(
     let style = props.style;
     let maximal_height = (props.maximal_height as usize).max(1);
     let accent_color = props.accent_color;
+    let subtitle_color = props.subtitle_color;
+    let columns_padding = props.columns_padding;
     let mut on_submit = props.on_submit.take();
 
     let mut selected_index = hooks.use_state(|| 0usize);
@@ -88,11 +96,28 @@ pub fn Selector(
         }
     });
 
+    let icon_width = match style {
+        SelectorStyle::WithIcon => UnicodeWidthStr::width(ICON_SELECTED) as u16 + 1,
+        SelectorStyle::Plain => 0,
+    };
+    let title_column_width =
+        items.iter().map(|item| UnicodeWidthStr::width(item.title.as_str()) as u16).max().unwrap_or(0) + icon_width;
+
     let selected = selected_index.get();
     let rows: Vec<AnyElement<'static>> = items
         .into_iter()
         .enumerate()
-        .map(|(index, item)| item_component(item, index == selected, style, accent_color))
+        .map(|(index, item)| {
+            item_component(
+                item,
+                index == selected,
+                style,
+                accent_color,
+                subtitle_color,
+                columns_padding,
+                title_column_width,
+            )
+        })
         .collect();
 
     element! {
@@ -115,39 +140,60 @@ fn item_component(
     is_selected: bool,
     style: SelectorStyle,
     accent_color: Option<Color>,
+    subtitle_color: Option<Color>,
+    columns_padding: u16,
+    title_column_width: u16,
 ) -> AnyElement<'static> {
     let icon = match style {
         SelectorStyle::WithIcon => Some(if is_selected {
-            "[x]"
+            ICON_SELECTED
         } else {
-            "[ ]"
+            ICON_UNSELECTED
         }),
         SelectorStyle::Plain => None,
     };
-    let label = match (icon, item.description.as_deref()) {
-        (Some(icon), Some(description)) => format!("{} {} {}", icon, item.title, description),
-        (Some(icon), None) => format!("{} {}", icon, item.title),
-        (None, Some(description)) => format!("{} {}", item.title, description),
-        (None, None) => item.title.clone(),
+    let title_text = match icon {
+        Some(icon) => format!("{} {}", icon, item.title),
+        None => item.title.clone(),
+    };
+
+    let title_color = match (is_selected, item.color) {
+        (true, Some(_)) => None,
+        (true, None) => accent_color,
+        (false, _) => item.color,
+    };
+    let title_weight = if is_selected {
+        Weight::Bold
+    } else {
+        Weight::Normal
+    };
+
+    let description_view: Option<AnyElement<'static>> = item.description.as_ref().map(|description| {
+        element! {
+            Text(content: description.clone(), color: subtitle_color)
+        }
+        .into()
+    });
+
+    let row = element! {
+        View(flex_direction: FlexDirection::Row, column_gap: columns_padding, width: 100pct) {
+            View(width: title_column_width as u16) {
+                Text(content: title_text, color: title_color, weight: title_weight)
+            }
+            #(description_view.into_iter())
+        }
     };
 
     if is_selected {
         if let Some(color) = item.color {
             return element! {
                 Gradient(from_color: Some(color.darker(0.25)), to_color: Some(color), width: 100pct) {
-                    Text(content: label, weight: Weight::Bold)
+                    #(row)
                 }
             }
             .into();
         }
-        return element! {
-            Text(content: label, weight: Weight::Bold, color: accent_color)
-        }
-        .into();
     }
 
-    element! {
-        Text(content: label, color: item.color)
-    }
-    .into()
+    row.into()
 }

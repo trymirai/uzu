@@ -4,21 +4,35 @@ use super::Flow;
 
 pub type FlowFactory = Arc<dyn Fn() -> Box<dyn Flow> + Send + Sync>;
 
+#[derive(Clone)]
+pub struct Command {
+    pub name: String,
+    pub description: String,
+    pub factory: FlowFactory,
+}
+
 #[derive(Clone, Default)]
 pub struct FlowRegistry {
-    factories: HashMap<String, FlowFactory>,
+    commands: HashMap<String, Command>,
 }
 
 impl FlowRegistry {
     pub fn register<F>(
         mut self,
-        name: &str,
+        name: impl Into<String>,
+        description: impl Into<String>,
         factory: F,
     ) -> Self
     where
         F: Fn() -> Box<dyn Flow> + Send + Sync + 'static,
     {
-        self.factories.insert(name.to_string(), Arc::new(factory));
+        let name = name.into();
+        let command = Command {
+            name: name.clone(),
+            description: description.into(),
+            factory: Arc::new(factory),
+        };
+        self.commands.insert(name, command);
         self
     }
 
@@ -26,10 +40,12 @@ impl FlowRegistry {
         &self,
         name: &str,
     ) -> Option<Box<dyn Flow>> {
-        self.factories.get(name).map(|f| f())
+        self.commands.get(name).map(|command| (command.factory)())
     }
 
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.factories.keys().map(|s| s.as_str())
+    pub fn commands(&self) -> Vec<Command> {
+        let mut commands: Vec<Command> = self.commands.values().cloned().collect();
+        commands.sort_by(|first, second| first.name.cmp(&second.name));
+        commands
     }
 }

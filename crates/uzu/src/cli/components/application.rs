@@ -3,7 +3,7 @@ use iocraft::prelude::*;
 use crate::{
     cli::{
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Theme},
-        flows::{Flow, FlowEvent, FlowRegistry, ThemeFlow},
+        flows::{ExitFlow, Flow, FlowEvent, FlowRegistry, ThemeFlow},
         helpers::SYMBOL_COMMAND,
     },
     engine::Engine,
@@ -34,7 +34,11 @@ pub fn Application(
         theme: Theme::default(),
         flow: None,
         history: Vec::new(),
-        registry: FlowRegistry::default().register("theme", || Box::new(ThemeFlow)),
+        registry: FlowRegistry::default().register("theme", "Change the theme", || Box::new(ThemeFlow)).register(
+            "exit",
+            "Exit the CLI",
+            || Box::new(ExitFlow),
+        ),
     });
     let (width, _) = hooks.use_terminal_size();
 
@@ -84,7 +88,22 @@ pub fn Application(
     });
 
     let input_component: AnyElement<'static> = match state.read().flow.as_ref() {
-        Some(flow) => flow.render(on_flow_event),
+        Some(flow) => {
+            let flow_component = flow.render(on_flow_event);
+            element! {
+                View(flex_direction: FlexDirection::Column) {
+                    View(
+                        width: 100pct,
+                        height: 1u16,
+                        border_style: BorderStyle::Single,
+                        border_color: state.read().theme.accent_color,
+                        border_edges: Some(Edges::Top),
+                    )
+                    #(flow_component)
+                }
+            }
+            .into()
+        },
         None => element! { CommandInput(on_submit: on_command) }.into(),
     };
 
