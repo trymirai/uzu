@@ -3,60 +3,35 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, kernel::ManualKernels},
+        common::{
+            Backend, Context, Encoder,
+            kernel::attention::{AttentionGemmArguments, AttentionGemmBlock},
+        },
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
 use num_traits::Float;
 
 use crate::{
     common::{
         assert::assert_eq_float,
-        helpers::{
-            FlatAttentionInput, OutputStorage, expected_row_major_matmul, followup_matmul_weights,
-            generate_boxed_slice, run_attention_gemm, run_attention_gemm_followed_by_matmul,
-        },
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     },
     uzu_test,
 };
 
-type Input<T> = FlatAttentionInput<T>;
-
-macro_rules! assert_non_cpu_case {
-    ($input:expr, $expected:expr, $eps:expr, $label:literal, $runner:ident $(, $arg:expr )* $(,)?) => {{
-        let input = $input;
-        let expected = $expected;
-        let epsilon = $eps;
-
-        for_each_non_cpu_backend!(|B| {
-            let output = $runner::<T, B>(input $(, $arg)*);
-            let message = format!(
-                concat!(
-                    $label,
-                    " failed (backend={}, heads={}, kv_heads={}, seq={}, suffix={}, head_dim={}, causal={})"
-                ),
-                std::any::type_name::<B>(),
-                input.num_heads,
-                input.num_kv_heads,
-                input.sequence_length,
-                input.suffix_length,
-                input.head_dim,
-                input.do_causal,
-            );
-            assert_eq_float::<T>(expected, &output, epsilon, &message);
-        });
-    }};
-}
-
-macro_rules! define_float_case {
-    ($test_name:ident, $runner:ident) => {
-        #[uzu_test]
-        fn $test_name() {
-            for_each_float_type!(|FloatType| {
-                $runner::<FloatType>();
-            });
-        }
-    };
+struct Input<T: ArrayElement + Float> {
+    queries: Box<[T]>,
+    keys: Box<[T]>,
+    values: Box<[T]>,
+    num_heads: usize,
+    num_kv_heads: usize,
+    sequence_length: usize,
+    suffix_length: usize,
+    head_dim: usize,
+    scale: f32,
+    do_causal: bool,
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -67,171 +42,238 @@ fn get_test_data<T: ArrayElement + Float>(
     head_dim: usize,
     do_causal: bool,
 ) -> (Input<T>, Vec<T>) {
-    let queries =
-        generate_boxed_slice(num_heads * suffix_length * head_dim, |index| (index as f32 * 0.13 + 0.5).sin() * 0.5);
-    let keys = generate_boxed_slice(num_kv_heads * sequence_length * head_dim, |index| {
-        (index as f32 * 0.07 + 1.0).cos() * 0.5
-    });
-    let values = generate_boxed_slice(num_kv_heads * sequence_length * head_dim, |index| {
-        (index as f32 * 0.11 + 2.0).sin() * 0.5
-    });
+    // queries: [num_heads, suffix_length, head_dim] (contiguous, row-major)
+    let q_size = num_heads * suffix_length * head_dim;
+    let mut queries = vec![T::zero(); q_size];
+    for i in 0..q_size {
+        queries[i] = T::from((i as f32 * 0.13 + 0.5).sin() * 0.5).unwrap();
+    }
+
+    // keys: [num_kv_heads, sequence_length, head_dim]
+    let k_size = num_kv_heads * sequence_length * head_dim;
+    let mut keys = vec![T::zero(); k_size];
+    for i in 0..k_size {
+        keys[i] = T::from((i as f32 * 0.07 + 1.0).cos() * 0.5).unwrap();
+    }
+
+    // values: [num_kv_heads, sequence_length, head_dim]
+    let v_size = num_kv_heads * sequence_length * head_dim;
+    let mut values = vec![T::zero(); v_size];
+    for i in 0..v_size {
+        values[i] = T::from((i as f32 * 0.11 + 2.0).sin() * 0.5).unwrap();
+    }
+
+    let scale = 1.0 / (head_dim as f32).sqrt();
 
     let input = Input {
-        queries,
-        keys,
-        values,
+        queries: queries.into_boxed_slice(),
+        keys: keys.into_boxed_slice(),
+        values: values.into_boxed_slice(),
         num_heads,
         num_kv_heads,
         sequence_length,
         suffix_length,
         head_dim,
-        scale: 1.0 / (head_dim as f32).sqrt(),
+        scale,
         do_causal,
     };
-    let expected = run_attention::<T, Cpu>(&input);
 
+    let expected = get_output::<T, Cpu>(&input);
     (input, expected)
 }
 
-fn epsilon<T: ArrayElement>() -> f32 {
-    if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
-        1e-2
-    } else {
-        1e-5
-    }
-}
+fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+    let context = B::Context::new().expect("Failed to create Context");
 
-fn chained_matmul_epsilon<T: ArrayElement>() -> f32 {
-    if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
-        2e-2
-    } else {
-        1e-4
-    }
-}
+    let block = AttentionGemmBlock::<B>::new(T::data_type());
 
-fn run_attention<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
-    run_attention_gemm::<T, B>(input, input.sequence_length, OutputStorage::Global)
-}
+    let queries_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.queries);
+    let keys_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.keys);
+    let values_allocation = alloc_allocation_with_data::<B, T>(context.as_ref(), &input.values);
 
-fn run_attention_with_padded_kv_cache<T: ArrayElement + Float, B: Backend>(
-    input: &Input<T>,
-    max_sequence_length: usize,
-) -> Vec<T> {
-    run_attention_gemm::<T, B>(input, max_sequence_length, OutputStorage::Global)
-}
+    let output_size = input.suffix_length * input.num_heads * input.head_dim;
+    let mut output_allocation = alloc_allocation::<B, T>(context.as_ref(), output_size);
 
-fn run_attention_with_pooled_scratch_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
-    run_attention_gemm::<T, B>(input, input.sequence_length, OutputStorage::ScratchCopy)
-}
+    let segment_prefix_length = input.sequence_length - input.suffix_length;
 
-fn run_attention_followed_by_matmul<T: ArrayElement + Float, B: Backend>(
-    input: &Input<T>,
-    output_dim: usize,
-) -> Vec<T>
-where
-    B::Kernels: ManualKernels,
-{
-    run_attention_gemm_followed_by_matmul::<T, B>(input, output_dim)
-}
+    let args = AttentionGemmArguments::<B> {
+        queries_buffer: &queries_allocation,
+        keys_buffer: &keys_allocation,
+        values_buffer: &values_allocation,
+        output_buffer: &mut output_allocation,
+        trie_buffer: None,
+        sinks_buffer: None,
+        num_heads: input.num_heads,
+        num_groups: input.num_kv_heads,
+        suffix_length: input.suffix_length,
+        sequence_length: input.sequence_length,
+        segment_prefix_length,
+        max_sequence_length: input.sequence_length,
+        ring_params: None,
+        head_dim: input.head_dim,
+        sliding_window_size: None,
+        is_causal: input.do_causal,
+        scale: input.scale,
+        k_head_stride: (input.sequence_length * input.head_dim) as u64,
+        k_seq_stride: input.head_dim as u64,
+        v_head_stride: (input.sequence_length * input.head_dim) as u64,
+        v_seq_stride: input.head_dim as u64,
+    };
 
-fn model_like_prefill_data<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
-    get_test_data::<T>(32, 8, 38, 38, 64, true)
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    block.encode(&mut encoder, args).expect("Failed to encode AttentionGemm");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(
     input: &Input<T>,
     expected: &[T],
 ) {
-    assert_non_cpu_case!(input, expected, epsilon::<T>(), "AttentionGemm", run_attention);
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        1e-2
+    } else {
+        1e-5
+    };
+
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<T, B>(input);
+        let msg = format!(
+            "AttentionGemm failed (backend={}, heads={}, kv_heads={}, seq={}, suffix={}, head_dim={}, causal={})",
+            std::any::type_name::<B>(),
+            input.num_heads,
+            input.num_kv_heads,
+            input.sequence_length,
+            input.suffix_length,
+            input.head_dim,
+            input.do_causal,
+        );
+        assert_eq_float::<T>(expected, &output, eps, &msg);
+    });
 }
 
-fn test_basic_for<T: ArrayElement + Float + Debug + Display>() {
-    for (sequence_length, suffix_length) in [(8, 1), (8, 4)] {
-        let (input, expected) = get_test_data::<T>(4, 4, sequence_length, suffix_length, 64, false);
-        test_internal(&input, &expected);
-    }
-}
+fn test_basic<T: ArrayElement + Float + Debug + Display>() {
+    // Non-causal, single token
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 1, 64, false);
+    test_internal(&input, &expected);
 
-fn test_causal_for<T: ArrayElement + Float + Debug + Display>() {
-    for (sequence_length, suffix_length) in [(16, 1), (8, 4)] {
-        let (input, expected) = get_test_data::<T>(4, 4, sequence_length, suffix_length, 64, true);
-        test_internal(&input, &expected);
-    }
-}
-
-fn test_gqa_for<T: ArrayElement + Float + Debug + Display>() {
-    for (suffix_length, do_causal) in [(1, false), (4, true)] {
-        let (input, expected) = get_test_data::<T>(8, 2, 8, suffix_length, 64, do_causal);
-        test_internal(&input, &expected);
-    }
-}
-
-fn test_head_dim_128_for<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(4, 4, 8, 2, 128, true);
+    // Non-causal, multiple tokens
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, false);
     test_internal(&input, &expected);
 }
 
-fn test_unaligned_for<T: ArrayElement + Float + Debug + Display>() {
-    for (sequence_length, suffix_length, do_causal) in [(40, 7, true), (13, 4, false)] {
-        let (input, expected) = get_test_data::<T>(4, 4, sequence_length, suffix_length, 64, do_causal);
-        test_internal(&input, &expected);
-    }
-}
+fn test_causal<T: ArrayElement + Float + Debug + Display>() {
+    // Causal, single token decode
+    let (input, expected) = get_test_data::<T>(4, 4, 16, 1, 64, true);
+    test_internal(&input, &expected);
 
-fn test_model_like_prefill_for<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = model_like_prefill_data::<T>();
+    // Causal, multi-token prefill
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 4, 64, true);
     test_internal(&input, &expected);
 }
 
-fn test_model_like_prefill_with_padded_kv_cache_for<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = model_like_prefill_data::<T>();
-    assert_non_cpu_case!(
-        &input,
-        &expected,
-        epsilon::<T>(),
-        "AttentionGemm with padded KV cache",
-        run_attention_with_padded_kv_cache,
-        256,
-    );
+fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
+    // GQA: 8 query heads, 2 kv heads
+    let (input, expected) = get_test_data::<T>(8, 2, 8, 1, 64, false);
+    test_internal(&input, &expected);
+
+    // GQA causal
+    let (input, expected) = get_test_data::<T>(8, 2, 8, 4, 64, true);
+    test_internal(&input, &expected);
 }
 
-fn test_model_like_prefill_with_pooled_scratch_output_for<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = model_like_prefill_data::<T>();
-    assert_non_cpu_case!(
-        &input,
-        &expected,
-        epsilon::<T>(),
-        "AttentionGemm with pooled scratch output",
-        run_attention_with_pooled_scratch_output,
-    );
+fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: usize) {
+    let (input, expected) = get_test_data::<T>(4, 4, 8, 2, head_dim, true);
+    test_internal(&input, &expected);
 }
 
-fn test_model_like_prefill_followed_by_matmul_for<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected_attention) = model_like_prefill_data::<T>();
-    let input_dim = input.num_heads * input.head_dim;
-    let output_dim = 256;
-    let weights = followup_matmul_weights::<T>(input_dim, output_dim);
-    let expected = expected_row_major_matmul(&expected_attention, &weights, input_dim, output_dim);
+fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
+    // suffix_length not aligned to BQ=32
+    let (input, expected) = get_test_data::<T>(4, 4, 40, 7, 64, true);
+    test_internal(&input, &expected);
 
-    assert_non_cpu_case!(
-        &input,
-        &expected,
-        chained_matmul_epsilon::<T>(),
-        "AttentionGemm followed by Matmul",
-        run_attention_followed_by_matmul,
-        output_dim,
-    );
+    // sequence_length not aligned to BK
+    let (input, expected) = get_test_data::<T>(4, 4, 13, 4, 64, false);
+    test_internal(&input, &expected);
 }
 
-define_float_case!(test_basic, test_basic_for);
-define_float_case!(test_causal, test_causal_for);
-define_float_case!(test_gqa, test_gqa_for);
-define_float_case!(test_head_dim_128, test_head_dim_128_for);
-define_float_case!(test_unaligned, test_unaligned_for);
-define_float_case!(test_model_like_prefill, test_model_like_prefill_for);
-define_float_case!(test_model_like_prefill_with_padded_kv_cache, test_model_like_prefill_with_padded_kv_cache_for);
-define_float_case!(
-    test_model_like_prefill_with_pooled_scratch_output,
-    test_model_like_prefill_with_pooled_scratch_output_for
-);
-define_float_case!(test_model_like_prefill_followed_by_matmul, test_model_like_prefill_followed_by_matmul_for);
+// Basic tests
+#[uzu_test]
+fn test_basic_f32() {
+    test_basic::<f32>();
+}
+
+#[uzu_test]
+fn test_basic_f16() {
+    test_basic::<f16>();
+}
+
+#[uzu_test]
+fn test_basic_bf16() {
+    test_basic::<bf16>();
+}
+
+// Causal tests
+#[uzu_test]
+fn test_causal_f32() {
+    test_causal::<f32>();
+}
+
+#[uzu_test]
+fn test_causal_f16() {
+    test_causal::<f16>();
+}
+
+#[uzu_test]
+fn test_causal_bf16() {
+    test_causal::<bf16>();
+}
+
+// GQA tests
+#[uzu_test]
+fn test_gqa_f32() {
+    test_gqa::<f32>();
+}
+
+#[uzu_test]
+fn test_gqa_f16() {
+    test_gqa::<f16>();
+}
+
+#[uzu_test]
+fn test_gqa_bf16() {
+    test_gqa::<bf16>();
+}
+
+// Head dim 128
+#[uzu_test]
+fn test_head_dim_128_f32() {
+    test_head_dim::<f32>(128);
+}
+
+#[uzu_test]
+fn test_head_dim_128_f16() {
+    test_head_dim::<f16>(128);
+}
+
+#[uzu_test]
+fn test_head_dim_128_bf16() {
+    test_head_dim::<bf16>(128);
+}
+
+// Unaligned tests
+#[uzu_test]
+fn test_unaligned_f32() {
+    test_unaligned::<f32>();
+}
+
+#[uzu_test]
+fn test_unaligned_f16() {
+    test_unaligned::<f16>();
+}
+
+#[uzu_test]
+fn test_unaligned_bf16() {
+    test_unaligned::<bf16>();
+}

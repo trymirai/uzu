@@ -41,8 +41,15 @@ impl<B: Backend> Rope<B> {
         head_dim: usize,
         rope_max_seq_len: usize,
         rope_dim: usize,
+        use_rope: bool,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
+        let applied_rope_dim = if use_rope {
+            assert!(rope_dim > 0, "enabled RoPE dimension must be greater than zero");
+            rope_dim
+        } else {
+            0
+        };
         let mut rotated_queries =
             encoder.allocate_scratch(size_for_shape(&[num_heads, suffix_length, head_dim], self.data_type))?;
         let mut rotated_keys =
@@ -55,7 +62,7 @@ impl<B: Backend> Rope<B> {
             &mut rotated_queries,
             &mut rotated_keys,
             head_dim as u32,
-            rope_dim as u32,
+            applied_rope_dim as u32,
             num_heads as u32,
             num_groups as u32,
             suffix_length as u32,

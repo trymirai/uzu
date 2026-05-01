@@ -49,13 +49,18 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let mut out = context.create_array_uninitialized(&[out_size], T::data_type(), "").into_allocation();
 
     let state_size = input.model_dim as usize * input.state_stride as usize;
+    let state_allocation_size = state_size.max(1);
+    let state_data: Vec<T> =
+        input.state.iter().copied().chain(std::iter::repeat(T::zero())).take(state_allocation_size).collect();
+
     let mut next_state = if state_in_place {
-        context.create_array_from(&[state_size], &input.state, "").into_allocation()
+        context.create_array_from(&[state_allocation_size], &state_data, "").into_allocation()
     } else {
-        context.create_array_uninitialized(&[state_size], T::data_type(), "").into_allocation()
+        context.create_array_uninitialized(&[state_allocation_size], T::data_type(), "").into_allocation()
     };
 
-    let state_array = (!state_in_place).then(|| context.create_array_from(&[state_size], &input.state, ""));
+    let state_array =
+        (!state_in_place).then(|| context.create_array_from(&[state_allocation_size], &state_data, ""));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -271,6 +276,15 @@ fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
+fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
+    for has_bias in [false, true] {
+        for state_in_place in [false, true] {
+            let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 1, has_bias);
+            test_internal(&input, &expected_out, &expected_state, state_in_place);
+        }
+    }
+}
+
 // basic tests
 #[uzu_test]
 fn test_basic_f32() {
@@ -317,4 +331,20 @@ fn test_edge_small_f16() {
 #[uzu_test]
 fn test_edge_small_bf16() {
     test_edge_small::<bf16>();
+}
+
+// edge: kernel_size=1 (no state taps)
+#[uzu_test]
+fn test_edge_kernel_f32() {
+    test_edge_kernel::<f32>();
+}
+
+#[uzu_test]
+fn test_edge_kernel_f16() {
+    test_edge_kernel::<f16>();
+}
+
+#[uzu_test]
+fn test_edge_kernel_bf16() {
+    test_edge_kernel::<bf16>();
 }

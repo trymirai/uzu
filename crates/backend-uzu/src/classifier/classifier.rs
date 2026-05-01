@@ -129,7 +129,7 @@ impl<B: Backend> Classifier<B> {
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
-            let embedding_norm = trace.embedding_norm_mut();
+            let embedding_norm = trace.embedding_norm_mut().allocation_mut();
             encoder.encode_copy(&main, .., embedding_norm, ..);
         }
 
@@ -169,7 +169,7 @@ impl<B: Backend> Classifier<B> {
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut trace.output_norm, ..);
+            encoder.encode_copy(&main, .., trace.output_norm.allocation_mut(), ..);
         }
         let pooling = self
             .context
@@ -178,14 +178,14 @@ impl<B: Backend> Classifier<B> {
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
-            let output_pooling = trace.output_pooling_mut();
+            let output_pooling = trace.output_pooling_mut().allocation_mut();
             encoder.encode_copy(&pooling, .., output_pooling, ..);
         }
         let logits =
             self.context.prediction_head.encode(pooling, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
-            encoder.encode_copy(&logits, .., &mut trace.logits, ..);
+            encoder.encode_copy(&logits, .., trace.logits.allocation_mut(), ..);
         }
 
         let completed = encoder

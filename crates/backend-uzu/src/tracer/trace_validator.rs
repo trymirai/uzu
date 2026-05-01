@@ -12,7 +12,7 @@ use std::{
 };
 
 use half::{bf16, f16};
-use ndarray::{ArrayView, IxDyn, s};
+use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
@@ -415,8 +415,7 @@ impl<B: Backend> TraceValidator<B> {
         // LLM-specific: Token comparison
         let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf_array("logits") {
             let expected_tokens = Self::get_tokens_from_logits(&expected_logits);
-            let produced_tokens =
-                Self::get_tokens_from_allocation_logits(data_type, &traces.logits, expected_logits.shape());
+            let produced_tokens = Self::get_tokens_from_logits(&traces.logits);
             expected_tokens
                 .iter()
                 .zip(produced_tokens.iter())
@@ -536,11 +535,11 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
 
-        let validate = |path: &str, allocation: &Allocation<B>| -> Option<TracerValidationResult> {
+        let validate = |path: &str, array: &Array<B>| -> Option<TracerValidationResult> {
             if let Ok(expected) = traces_view.leaf_array(path) {
                 Some(TracerValidationResult {
                     name: path.to_string(),
-                    metrics: Self::validate_allocation(data_type, &expected, allocation, expected.shape(), None),
+                    metrics: Self::validate_allocation(data_type, &expected, array.allocation(), array.shape(), None),
                 })
             } else {
                 None
@@ -610,7 +609,13 @@ impl<B: Backend> TraceValidator<B> {
             if let Ok(expected) = traces_view.leaf_array("activation_trace.output_pooling") {
                 results.push(TracerValidationResult {
                     name: "activation_trace.output_pooling".to_string(),
-                    metrics: Self::validate_allocation(data_type, &expected, output_pooling, expected.shape(), None),
+                    metrics: Self::validate_allocation(
+                        data_type,
+                        &expected,
+                        output_pooling.allocation(),
+                        output_pooling.shape(),
+                        None,
+                    ),
                 });
             }
         }
@@ -958,28 +963,5 @@ impl<B: Backend> TraceValidator<B> {
     fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<B>) -> Vec<u64> {
         let sampler = ArgmaxSampler {};
         sampler.sample(logits.as_view::<Precision>())
-    }
-
-    fn get_tokens_from_allocation_logits(
-        data_type: DataType,
-        logits: &Allocation<B>,
-        shape: &[usize],
-    ) -> Vec<u64> {
-        match data_type {
-            DataType::F16 => Self::get_tokens_from_allocation_logits_of_type::<f16>(logits, shape),
-            DataType::BF16 => Self::get_tokens_from_allocation_logits_of_type::<bf16>(logits, shape),
-            DataType::F32 => Self::get_tokens_from_allocation_logits_of_type::<f32>(logits, shape),
-            _ => panic!("Unsupported data type: {:?}", data_type),
-        }
-    }
-
-    fn get_tokens_from_allocation_logits_of_type<Precision: ArrayElement>(
-        logits: &Allocation<B>,
-        shape: &[usize],
-    ) -> Vec<u64> {
-        let sampler = ArgmaxSampler {};
-        let logits = try_allocation_to_vec::<B, Precision>(logits).expect("Failed to read logits allocation");
-        let logits = ArrayView::from_shape(IxDyn(shape), &logits).expect("invalid logits trace shape");
-        sampler.sample(logits)
     }
 }

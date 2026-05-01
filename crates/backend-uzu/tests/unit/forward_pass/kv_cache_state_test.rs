@@ -1,24 +1,18 @@
 #![cfg(metal_backend)]
 
 use crate::{
-    DataType, allocation_copy_from_slice, allocation_to_vec,
+    DataType,
     backends::{
-        common::{Allocation, AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+        common::{Allocation, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
         metal::Metal,
     },
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
 
-fn alloc_allocation_with_data<T: crate::ArrayElement>(
-    context: &<Metal as Backend>::Context,
-    data: &[T],
-) -> Allocation<Metal> {
-    let mut allocation = context
-        .create_allocation(data.len() * std::mem::size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
-    allocation
-}
+#[path = "../../common/mod.rs"]
+mod common;
+
+use common::helpers::{alloc_allocation_with_data, allocation_to_vec, write_allocation};
 
 #[derive(Debug)]
 struct Scenario {
@@ -73,21 +67,21 @@ fn overwrite_allocation(
     for (index, value) in updates {
         data[*index] = *value;
     }
-    allocation_copy_from_slice(allocation, &data).expect("Failed to seed allocation");
+    write_allocation(allocation, &data);
 }
 
 fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 1_000.0 + idx as f32).collect();
-        allocation_copy_from_slice(&mut layer.keys, &data).expect("Failed to seed key allocation");
+        write_allocation(&mut layer.keys, &data);
         data
     };
 
     let initial_values = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 2_000.0 + idx as f32).collect();
-        allocation_copy_from_slice(&mut layer.values, &data).expect("Failed to seed value allocation");
+        write_allocation(&mut layer.values, &data);
         data
     };
 

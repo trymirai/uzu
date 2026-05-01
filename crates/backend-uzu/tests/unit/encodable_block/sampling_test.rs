@@ -4,10 +4,10 @@ use rand::seq::SliceRandom;
 
 // for Vec::shuffle
 use crate::{
-    ArrayElement, DataType, allocation_to_vec,
+    DataType,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+            Backend, Context, Encoder, Kernels,
             kernel::{
                 MinPKernel, TemperatureKernel,
                 sampling::{ArgmaxStrategy, SamplingKernel},
@@ -18,26 +18,13 @@ use crate::{
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
+#[path = "../../common/mod.rs"]
+mod common;
+
+use common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
+
 // Constant seed for reproducible test results
 const TEST_SAMPLING_SEED: u64 = 42;
-
-fn empty_allocation<T: ArrayElement>(
-    context: &<Metal as Backend>::Context,
-    len: usize,
-) -> Allocation<Metal> {
-    context
-        .create_allocation(len * std::mem::size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation")
-}
-
-fn alloc_allocation_with_data<T: ArrayElement>(
-    context: &<Metal as Backend>::Context,
-    data: &[T],
-) -> Allocation<Metal> {
-    let mut allocation = empty_allocation::<T>(context, data.len());
-    crate::allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
-    allocation
-}
 
 fn cpu_reference_min_p(
     row_logits: &[f32],
@@ -81,9 +68,9 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
         0.1, 0.5, 2.5, 1.0, // batch 1
     ];
 
-    let mut logits_buffer = alloc_allocation_with_data(context.as_ref(), &test_logits);
-    let seeds_buffer = alloc_allocation_with_data(context.as_ref(), &[0_u64, 0_u64]);
-    let mut output_buffer = empty_allocation::<u32>(context.as_ref(), batch_size);
+    let mut logits_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &test_logits);
+    let seeds_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &[0_u64, 0_u64]);
+    let mut output_buffer = alloc_allocation::<Metal, u32>(context.as_ref(), batch_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel
@@ -154,12 +141,12 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let mut logits_buf = alloc_allocation_with_data(context.as_ref(), &logits);
+    let mut logits_buf = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &logits);
 
     let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-    let seeds_buf = alloc_allocation_with_data(context.as_ref(), &seeds);
+    let seeds_buf = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &seeds);
 
-    let mut output_buf = empty_allocation::<u32>(context.as_ref(), BATCH);
+    let mut output_buf = alloc_allocation::<Metal, u32>(context.as_ref(), BATCH);
 
     // ---- Launch once and time ----
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -251,7 +238,7 @@ fn test_categorical_sampling() {
         0.0, 1.0, 0.0, 0.0, // batch 1
     ];
 
-    let mut output_buffer = empty_allocation::<u32>(context.as_ref(), batch_size);
+    let mut output_buffer = alloc_allocation::<Metal, u32>(context.as_ref(), batch_size);
 
     // Run sampling multiple times to check distribution
     let num_samples = 1000;
@@ -259,10 +246,10 @@ fn test_categorical_sampling() {
 
     for sample_idx in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buffer = alloc_allocation_with_data(context.as_ref(), &test_logits);
+        let mut logits_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &test_logits);
 
         let seeds_vec = vec![TEST_SAMPLING_SEED + sample_idx as u64; batch_size];
-        let seeds_buffer = alloc_allocation_with_data(context.as_ref(), &seeds_vec);
+        let seeds_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &seeds_vec);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -376,17 +363,17 @@ fn test_categorical_sampling_statistical() {
         }
     }
 
-    let mut output_buffer = empty_allocation::<u32>(context.as_ref(), BATCH);
+    let mut output_buffer = alloc_allocation::<Metal, u32>(context.as_ref(), BATCH);
 
     let mut counts = vec![0; BATCH * VOCAB];
 
     // Sample many times
     for sample_idx in 0..NUM_SAMPLES {
         // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buffer = alloc_allocation_with_data(context.as_ref(), &logits);
+        let mut logits_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &logits);
 
         let seeds_vec = vec![TEST_SAMPLING_SEED + sample_idx as u64; BATCH];
-        let seeds_buffer = alloc_allocation_with_data(context.as_ref(), &seeds_vec);
+        let seeds_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &seeds_vec);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -469,12 +456,12 @@ fn perf_categorical_128k_vocab() {
         *x = rng.random_range(-6.0f32..6.0f32);
     }
 
-    let mut logits_buf = alloc_allocation_with_data(context.as_ref(), &logits);
+    let mut logits_buf = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &logits);
 
     let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED; BATCH];
-    let seeds_buf = alloc_allocation_with_data(context.as_ref(), &seeds);
+    let seeds_buf = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &seeds);
 
-    let mut output_buf = empty_allocation::<u32>(context.as_ref(), BATCH);
+    let mut output_buf = alloc_allocation::<Metal, u32>(context.as_ref(), BATCH);
 
     // Launch and time
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -538,8 +525,8 @@ fn test_temperature_gpu_cpu_match() {
 
     let logits: Vec<f32> = (0..BATCH * VOCAB).map(|i| ((i * 37 % 1000) as f32 - 500.0) * 0.01).collect();
 
-    let logits_buffer = alloc_allocation_with_data(context.as_ref(), &logits);
-    let mut processed_buffer = empty_allocation::<f32>(context.as_ref(), logits.len());
+    let logits_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &logits);
+    let mut processed_buffer = alloc_allocation::<Metal, f32>(context.as_ref(), logits.len());
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, TEMPERATURE, &mut encoder);
@@ -590,8 +577,8 @@ fn test_minp_gpu_cpu_match() {
         *x = rng.random_range(-16.0f32..16.0f32);
     }
 
-    let logits_buffer = alloc_allocation_with_data(context.as_ref(), &logits);
-    let mut processed_buffer = empty_allocation::<f32>(context.as_ref(), logits.len());
+    let logits_buffer = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &logits);
+    let mut processed_buffer = alloc_allocation::<Metal, f32>(context.as_ref(), logits.len());
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(Some(&logits_buffer), &mut processed_buffer, BATCH as u32, VOCAB as u32, MINP, &mut encoder);
@@ -653,17 +640,17 @@ fn test_minp_sampling_exact_match(
         high_prob_token_sets.push(high_prob_tokens);
     }
 
-    let mut output_buf = empty_allocation::<u32>(context.as_ref(), batch_size);
+    let mut output_buf = alloc_allocation::<Metal, u32>(context.as_ref(), batch_size);
 
     let num_samples = 1000;
     let mut counter = vec![0i32; batch_size * vocab_size];
 
     for draw in 0..num_samples {
         // Create fresh logits buffer since kernel mutates in-place
-        let mut logits_buf = alloc_allocation_with_data(context.as_ref(), &logits);
+        let mut logits_buf = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &logits);
 
         let seeds: Vec<u64> = vec![TEST_SAMPLING_SEED + draw as u64; batch_size];
-        let seeds_buf = alloc_allocation_with_data(context.as_ref(), &seeds);
+        let seeds_buf = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &seeds);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel

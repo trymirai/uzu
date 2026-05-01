@@ -1,15 +1,13 @@
 #![cfg(metal_backend)]
 
-use std::mem::size_of;
-
 use ndarray::{Array4, s};
 use test_tag::tag;
 
 use crate::{
-    DataType, allocation_to_vec,
+    DataType,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+            Allocation, Backend, Context, Encoder, Kernels,
             kernel::{
                 AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
                 attention::{AttentionGemmArguments, AttentionGemmBlock},
@@ -19,29 +17,10 @@ use crate::{
     },
 };
 
-fn alloc_allocation_with_data<T: crate::ArrayElement>(
-    context: &<Metal as Backend>::Context,
-    data: &[T],
-) -> Allocation<Metal> {
-    let mut allocation = context
-        .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    crate::allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
-    allocation
-}
+#[path = "../../common/mod.rs"]
+mod common;
 
-fn alloc_allocation<B: Backend, T>(
-    context: &B::Context,
-    elements_count: usize,
-) -> Allocation<B> {
-    context
-        .create_allocation(elements_count * size_of::<T>(), crate::backends::common::AllocationType::Global)
-        .expect("Failed to create allocation")
-}
-
-fn submit_encoder<B: Backend>(encoder: Encoder<B>) {
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
-}
+use common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder};
 
 fn reference_attention(
     queries: &Array4<f32>,

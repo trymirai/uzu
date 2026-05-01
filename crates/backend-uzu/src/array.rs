@@ -82,8 +82,8 @@ impl<B: Backend> Array<B> {
         self.allocation.as_ref().expect("Empty Array has no backing allocation")
     }
 
-    fn allocation_mut(&mut self) -> Option<&mut Allocation<B>> {
-        self.allocation.as_mut()
+    pub fn allocation_mut(&mut self) -> &mut Allocation<B> {
+        self.allocation.as_mut().expect("Empty Array has no backing allocation")
     }
 
     pub fn into_allocation(self) -> Allocation<B> {
@@ -138,7 +138,7 @@ impl<B: Backend> Array<B> {
         let size = self.size();
         let offset = self.offset;
         let data_type = self.data_type;
-        let Some(allocation) = self.allocation_mut() else {
+        let Some(allocation) = self.allocation.as_mut() else {
             assert_eq!(size, 0, "Empty Array has no backing allocation");
             let pointer = NonNull::new(data_type.size_in_bytes() as *mut c_void).expect("dtype-aligned empty pointer");
             return unsafe { std::slice::from_raw_parts_mut(pointer.as_ptr() as *mut u8, size) };

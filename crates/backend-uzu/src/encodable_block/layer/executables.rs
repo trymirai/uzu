@@ -337,8 +337,8 @@ impl<B: Backend> LayerExecutables<B> {
         let mut hidden = self.pre_attention_norm.encode(&input, 0, batch_dim, Some(shortcut), encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(shortcut, .., &mut layer_traces.inputs, ..);
-            encoder.encode_copy(&hidden, .., &mut layer_traces.pre_attention_norm, ..);
+            encoder.encode_copy(shortcut, .., layer_traces.inputs.allocation_mut(), ..);
+            encoder.encode_copy(&hidden, .., layer_traces.pre_attention_norm.allocation_mut(), ..);
         }
 
         hidden = match &self.mixer {
@@ -382,11 +382,8 @@ impl<B: Backend> LayerExecutables<B> {
                     *num_groups,
                     *head_dim,
                     rope_max_sequence_length,
-                    if *use_rope {
-                        rope_dim
-                    } else {
-                        0
-                    },
+                    rope_dim,
+                    *use_rope,
                     encoder,
                 )?;
                 let kv_cache_layer = cache_layer
@@ -468,42 +465,49 @@ impl<B: Backend> LayerExecutables<B> {
         };
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&hidden, .., &mut layer_traces.attention, ..);
+            encoder.encode_copy(&hidden, .., layer_traces.attention.allocation_mut(), ..);
         }
 
         if let Some(post_attention_norm) = &self.post_attention_norm {
             hidden = post_attention_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(layer_traces) = layer_traces.as_deref_mut() {
-                encoder.encode_copy(&hidden, .., &mut layer_traces.post_attention_norm, ..);
+                encoder.encode_copy(&hidden, .., layer_traces.post_attention_norm.allocation_mut(), ..);
             }
         }
 
         hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim, Some(shortcut), encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(shortcut, .., &mut layer_traces.mlp_inputs, ..);
-            encoder.encode_copy(&hidden, .., &mut layer_traces.pre_mlp_norm, ..);
+            encoder.encode_copy(shortcut, .., layer_traces.mlp_inputs.allocation_mut(), ..);
+            encoder.encode_copy(&hidden, .., layer_traces.pre_mlp_norm.allocation_mut(), ..);
         }
 
         hidden = self.mlp.encode(hidden, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&hidden, .., &mut layer_traces.mlp, ..);
+            encoder.encode_copy(&hidden, .., layer_traces.mlp.allocation_mut(), ..);
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
             hidden = post_mlp_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(layer_traces) = layer_traces.as_deref_mut() {
-                encoder.encode_copy(&hidden, .., &mut layer_traces.post_mlp_norm, ..);
+                encoder.encode_copy(&hidden, .., layer_traces.post_mlp_norm.allocation_mut(), ..);
             }
         }
 
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             let size = (batch_dim * self.model_dim) as u32;
-            self.tensor_add.encode(Some(&hidden), &*shortcut, &mut layer_traces.outputs, size, size, encoder);
+            self.tensor_add.encode(
+                Some(&hidden),
+                &*shortcut,
+                layer_traces.outputs.allocation_mut(),
+                size,
+                size,
+                encoder,
+            );
         }
 
         Ok(hidden)

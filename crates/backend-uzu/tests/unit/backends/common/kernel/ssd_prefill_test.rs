@@ -1,9 +1,7 @@
-use std::mem::size_of;
-
 use crate::{
-    DataType, allocation_copy_from_slice, allocation_to_vec,
+    DataType, allocation_to_vec,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, Encoder, Kernels,
+        Allocation, Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
         kernel::{
             Conv1dScanKernel,
@@ -20,11 +18,7 @@ fn allocation_from_slice<B: Backend, T: crate::ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {
-    let mut allocation = context
-        .create_allocation(data.len() * size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
-    allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
-    allocation
+    common::helpers::alloc_allocation_with_data(context, data)
 }
 
 fn ssd_prefill_cpu_reference(
@@ -264,9 +258,7 @@ fn run_conv_scan_once<B: Backend>(
 
     if use_scratch && tap_count > 0 {
         let bytes = channels * tap_count * size_of::<f32>();
-        if bytes > 0 {
-            encoder.encode_copy(&scratch_buf, 0..bytes, &mut state_buf, 0..bytes);
-        }
+        encoder.encode_copy(&scratch_buf, 0..bytes, &mut state_buf, 0..bytes);
     }
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();

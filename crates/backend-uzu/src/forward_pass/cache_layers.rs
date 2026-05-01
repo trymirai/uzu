@@ -382,6 +382,81 @@ impl<B: Backend> CacheLayers<B> {
         }
     }
 
+    pub fn copy_from(
+        &mut self,
+        source: &Self,
+        context: &B::Context,
+    ) {
+        self.copy_metadata_and_windowed_data_from(source, context);
+
+        let mut encoder = Encoder::new(context).expect("Failed to create cache layer copy encoder");
+        self.encode_copy_data_from(source, &mut encoder);
+        encoder.end_encoding().submit().wait_until_completed().expect("Failed to copy cache layers");
+    }
+
+    fn copy_metadata_and_windowed_data_from(
+        &mut self,
+        source: &Self,
+        context: &B::Context,
+    ) {
+        assert_eq!(source.data.len(), self.data.len(), "cache layer count mismatch");
+
+        for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
+            match (source_layer, destination_layer) {
+                (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
+                    let copy_rows = source.prefix_segment_length();
+                    if copy_rows > 0 && matches!(source.state, KVCacheLayerState::Windowed { .. }) {
+                        let slice = source.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
+                        destination.apply_slice(&slice, None);
+                    }
+                    destination.state = source.state.clone();
+                },
+                (CacheLayer::StateSpace(_), CacheLayer::StateSpace(_)) => {},
+                (CacheLayer::ShortConv(_), CacheLayer::ShortConv(destination)) => {
+                    destination.clear_suffix_state_valid_range();
+                },
+                (CacheLayer::DeltaNet(_), CacheLayer::DeltaNet(_)) => {},
+                _ => panic!("cache layer type mismatch while copying cache layers"),
+            }
+        }
+    }
+
+    fn encode_copy_data_from(
+        &mut self,
+        source: &Self,
+        encoder: &mut Encoder<B>,
+    ) {
+        assert_eq!(source.data.len(), self.data.len(), "cache layer count mismatch");
+
+        for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
+            match (source_layer, destination_layer) {
+                (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
+                    if matches!(source.state, KVCacheLayerState::Full { .. }) {
+                        source.encode_copy_prefix_rows_to(destination, source.prefix_segment_length(), encoder);
+                    }
+                },
+                (CacheLayer::StateSpace(source), CacheLayer::StateSpace(destination)) => {
+                    match (source.conv_state.as_ref(), destination.conv_state.as_mut()) {
+                        (Some(source_conv_state), Some(destination_conv_state)) => {
+                            encoder.encode_copy(source_conv_state, .., destination_conv_state, ..);
+                        },
+                        (None, None) => {},
+                        _ => panic!("state-space conv_state presence mismatch while copying cache layers"),
+                    }
+                    encoder.encode_copy(&source.ssm_state, .., &mut destination.ssm_state, ..);
+                },
+                (CacheLayer::ShortConv(source), CacheLayer::ShortConv(destination)) => {
+                    encoder.encode_copy(&source.conv_state, .., &mut destination.conv_state, ..);
+                },
+                (CacheLayer::DeltaNet(source), CacheLayer::DeltaNet(destination)) => {
+                    encoder.encode_copy(&source.conv_state, .., &mut destination.conv_state, ..);
+                    encoder.encode_copy(&source.ssm_state, .., &mut destination.ssm_state, ..);
+                },
+                _ => panic!("cache layer type mismatch while copying cache layers"),
+            }
+        }
+    }
+
     pub fn clone(
         &self,
         context: &B::Context,
@@ -495,52 +570,12 @@ impl<B: Backend> CacheLayers<B> {
         }
         zero_encoder.end_encoding().submit().wait_until_completed().expect("Failed to zero cloned cache layers");
 
-        for (source_layer, destination_layer) in self.data.iter().zip(data.iter_mut()) {
-            if let (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) =
-                (source_layer, destination_layer)
-            {
-                let copy_rows = source.prefix_segment_length();
-                if copy_rows > 0 && matches!(source.state, KVCacheLayerState::Windowed { .. }) {
-                    let slice = source.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
-                    destination.apply_slice(&slice, None);
-                }
-            }
-        }
-
-        let mut encoder = Encoder::new(context).expect("Failed to create cache clone encoder");
-        for (source_layer, destination_layer) in self.data.iter().zip(data.iter_mut()) {
-            match (source_layer, destination_layer) {
-                (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
-                    if matches!(source.state, KVCacheLayerState::Full { .. }) {
-                        source.encode_copy_prefix_rows_to(destination, source.prefix_segment_length(), &mut encoder);
-                    }
-                },
-                (CacheLayer::StateSpace(source), CacheLayer::StateSpace(destination)) => {
-                    match (source.conv_state.as_ref(), destination.conv_state.as_mut()) {
-                        (Some(source_conv_state), Some(destination_conv_state)) => {
-                            encoder.encode_copy(source_conv_state, .., destination_conv_state, ..);
-                        },
-                        (None, None) => {},
-                        _ => panic!("state-space conv_state presence mismatch"),
-                    }
-                    encoder.encode_copy(&source.ssm_state, .., &mut destination.ssm_state, ..);
-                },
-                (CacheLayer::ShortConv(source), CacheLayer::ShortConv(destination)) => {
-                    encoder.encode_copy(&source.conv_state, .., &mut destination.conv_state, ..);
-                },
-                (CacheLayer::DeltaNet(source), CacheLayer::DeltaNet(destination)) => {
-                    encoder.encode_copy(&source.conv_state, .., &mut destination.conv_state, ..);
-                    encoder.encode_copy(&source.ssm_state, .., &mut destination.ssm_state, ..);
-                },
-                _ => {},
-            }
-        }
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to clone cache layers");
-
-        Self {
+        let mut cloned = Self {
             max_suffix_length: self.max_suffix_length,
             max_prefix_length: max_prefix_capacity_across_layers,
             data,
-        }
+        };
+        cloned.copy_from(self, context);
+        cloned
     }
 }

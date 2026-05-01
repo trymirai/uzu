@@ -367,13 +367,13 @@ impl<B: Backend> Decoder<B> {
         }
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
-            encoder.encode_copy(&output_norm, .., &mut trace.output_norm, ..);
+            encoder.encode_copy(&output_norm, .., trace.output_norm.allocation_mut(), ..);
         }
 
         let logits = self.embed.encode_readout(sampling_length, &output_norm, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(trace) = trace.as_deref_mut() {
-            encoder.encode_copy(&logits, .., &mut trace.logits, ..);
+            encoder.encode_copy(&logits, .., trace.logits.allocation_mut(), ..);
         }
         Ok(logits)
     }

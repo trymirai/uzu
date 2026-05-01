@@ -15,11 +15,7 @@ use crate::{
     },
     config::ModelMetadata,
     encodable_block::{DecoderDecodeInput, EncodingParameters, SamplingArguments, SamplingInputs},
-    forward_pass::{
-        cache_layers::{CacheLayer, CacheLayersSlice},
-        kv_cache_layer::{INVALID_POSITION, KVCacheLayerState},
-        token_inputs::TokenInputs,
-    },
+    forward_pass::{cache_layers::CacheLayersSlice, kv_cache_layer::INVALID_POSITION, token_inputs::TokenInputs},
     language_model::grammar::CompiledGrammar,
     session::{
         config::DecodingConfig,
@@ -44,15 +40,7 @@ struct Task<'a> {
     is_prefilling: bool,
 }
 
-struct EncodedForwardPass<'encoding, B: Backend> {
-    encoder: Encoder<'encoding, B>,
-    token_inputs: TokenInputs<B>,
-    logits: Option<Allocation<B>>,
-    sampling_output: Option<Allocation<B>>,
-    sampling_inputs: Option<SamplingInputs<B>>,
-}
-
-struct RetainedForwardPass<B: Backend> {
+struct ForwardPassResources<B: Backend> {
     token_inputs: TokenInputs<B>,
     logits: Option<Allocation<B>>,
     sampling_output: Option<Allocation<B>>,
@@ -60,7 +48,7 @@ struct RetainedForwardPass<B: Backend> {
 }
 
 struct InFlightForwardPass<B: Backend> {
-    retained: RetainedForwardPass<B>,
+    resources: ForwardPassResources<B>,
     pending: Pending<B>,
 }
 
@@ -509,8 +497,14 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let sampling_start = task.sampling_start;
         let sampling_length = task.sampling_length;
         let token_inputs = self.build_token_inputs(task, token_ids_allocation, None);
-        let mut encoded_forward_pass = Self::encode_forward_pass(
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
+        if is_continuation {
+            encoder.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
+        }
+        let resources = Self::encode_forward_pass_on(
             &self.context,
+            &mut encoder,
             token_inputs,
             batch_dim,
             sampling_start,
@@ -519,7 +513,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             Some(sampling_method),
             &EncodingParameters::new(),
             Some(sampling_inputs),
-            is_continuation.then_some(current_counter),
         )?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -536,9 +529,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 .add(async_token_ids_range.start / std::mem::size_of::<u64>())
         });
         self.context.token_copy_sampled.encode(
-            encoded_forward_pass.sampling_output.as_ref().expect("Sampling output must exist"),
+            resources.sampling_output.as_ref().expect("Sampling output must exist"),
             &mut async_token_ids_allocation,
-            &mut encoded_forward_pass.encoder,
+            &mut encoder,
         );
         self.async_token_ids = Some(unsafe {
             Array::from_allocation(async_token_ids_allocation, 0, &token_ids_shape, token_ids_data_type)
@@ -548,14 +541,14 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
-            &mut encoded_forward_pass.encoder,
+            &mut encoder,
             &self.context.kv_cache_update,
         );
         self.context.cache_layers.borrow_mut().register_accepted_tokens(1);
 
         // Signal event for next pass
         let next_counter = current_counter + 1;
-        encoded_forward_pass.encoder.encode_signal_event(&self.context.async_buffers.event, next_counter);
+        encoder.encode_signal_event(&self.context.async_buffers.event, next_counter);
         self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
@@ -565,19 +558,19 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             on_complete(token);
         };
 
-        encoded_forward_pass.encoder.add_completion_handler(handler);
+        encoder.add_completion_handler(handler);
 
-        let (retained, pending) = encoded_forward_pass.submit();
+        let pending = encoder.end_encoding().submit();
 
         if should_capture {
             let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
-            drop(retained);
+            drop(resources);
             drop(completed);
             self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         } else {
             assert!(self.async_in_flight[slot].is_none(), "async slot {slot} still holds an in-flight state");
             self.async_in_flight[slot] = Some(InFlightForwardPass {
-                retained,
+                resources,
                 pending,
             });
         }
@@ -592,10 +585,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let slot = pass_idx % self.context.async_buffers.batch_size;
         if let Some(in_flight) = self.async_in_flight[slot].take() {
             let InFlightForwardPass {
-                retained,
+                resources,
                 pending,
             } = in_flight;
-            drop((retained, pending));
+            drop((resources, pending));
         }
     }
 
@@ -662,52 +655,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         context: &dyn Any,
     ) {
         let ctx = context.downcast_ref::<LlmContext<B>>().unwrap();
-        let mut llm_state = self.context.cache_layers.borrow_mut();
-        for (ctx_layer, gen_layer) in ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut()) {
-            match (ctx_layer, gen_layer) {
-                (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
-                    let copy_rows = src.prefix_segment_length();
-                    if copy_rows > 0 && matches!(src.state, KVCacheLayerState::Windowed { .. }) {
-                        let slice =
-                            src.slice(&self.context.context, 0..copy_rows).expect("Failed to slice KV cache layer");
-                        dst.apply_slice(&slice, None);
-                    }
-                    dst.state = src.state.clone();
-                },
-                (CacheLayer::StateSpace(_), CacheLayer::StateSpace(_)) => {},
-                (CacheLayer::DeltaNet(_), CacheLayer::DeltaNet(_)) => {},
-                _ => panic!("Layer type mismatch when reconfiguring language model generator cache"),
-            }
-        }
-        let mut encoder =
-            Encoder::new(self.context.context.as_ref()).expect("Failed to create cache reconfigure encoder");
-        for (ctx_layer, gen_layer) in ctx.cache_layers.data.iter().zip(llm_state.data.iter_mut()) {
-            match (ctx_layer, gen_layer) {
-                (CacheLayer::Transformer(src), CacheLayer::Transformer(dst)) => {
-                    if matches!(src.state, KVCacheLayerState::Full { .. }) {
-                        src.encode_copy_prefix_rows_to(dst, src.prefix_segment_length(), &mut encoder);
-                    }
-                },
-                (CacheLayer::StateSpace(src), CacheLayer::StateSpace(dst)) => {
-                    match (src.conv_state.as_ref(), dst.conv_state.as_mut()) {
-                        (Some(src), Some(dst)) => {
-                            encoder.encode_copy(src, .., dst, ..);
-                        },
-                        (None, None) => {},
-                        _ => panic!("state-space conv state presence mismatch when reconfiguring cache"),
-                    }
-                    encoder.encode_copy(&src.ssm_state, .., &mut dst.ssm_state, ..);
-                },
-                (CacheLayer::DeltaNet(src), CacheLayer::DeltaNet(dst)) => {
-                    encoder.encode_copy(&src.conv_state, .., &mut dst.conv_state, ..);
-                    encoder.encode_copy(&src.ssm_state, .., &mut dst.ssm_state, ..);
-                },
-                _ => {},
-            }
-        }
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to reconfigure cache layers");
-        drop(llm_state);
-
+        self.context.cache_layers.borrow_mut().copy_from(&ctx.cache_layers, self.context.context.as_ref());
         self.tokens = ctx.tokens.clone();
         self.registered_prefix_len = self.tokens.len().saturating_sub(1);
     }
@@ -757,8 +705,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
         }
 
-        let encoded_forward_pass = Self::encode_forward_pass(
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
+        let resources = Self::encode_forward_pass_on(
             &self.context,
+            &mut encoder,
             token_inputs,
             batch_dim,
             sampling_start,
@@ -767,18 +718,17 @@ impl<B: Backend> LanguageModelGenerator<B> {
             sample.then_some(sampling_method),
             &EncodingParameters::new(),
             sampling_inputs,
-            None,
         )?;
 
-        let (retained, pending) = encoded_forward_pass.submit();
+        let pending = encoder.end_encoding().submit();
 
         let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
-        let RetainedForwardPass {
+        let ForwardPassResources {
             token_inputs,
             logits,
             sampling_output,
             sampling_inputs,
-        } = retained;
+        } = resources;
         drop((token_inputs, logits, sampling_inputs));
         drop(completed);
 
@@ -791,8 +741,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
         Ok((sampling_output, run_time))
     }
 
-    fn encode_forward_pass<'encoding>(
-        context: &'encoding LanguageModelGeneratorContext<B>,
+    fn encode_forward_pass_on(
+        context: &LanguageModelGeneratorContext<B>,
+        encoder: &mut Encoder<B>,
         token_inputs: TokenInputs<B>,
         batch_dim: usize,
         sampling_start: usize,
@@ -801,14 +752,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_method: Option<SamplingMethod>,
         parameters: &EncodingParameters,
         sampling_inputs: Option<SamplingInputs<B>>,
-        wait_event_counter: Option<u64>,
-    ) -> Result<EncodedForwardPass<'encoding, B>, Error> {
-        let mut encoder =
-            Encoder::<B>::new(context.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-        if let Some(counter) = wait_event_counter {
-            encoder.encode_wait_for_event(&context.async_buffers.event, counter);
-        }
-
+    ) -> Result<ForwardPassResources<B>, Error> {
         let mut sampling_output = sampling_method.map(|_| {
             context
                 .context
@@ -830,7 +774,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             );
             context
                 .executables
-                .encode_prefill(decoder_arguments, token_inputs.token_ids(), parameters, &mut encoder)
+                .encode_prefill(decoder_arguments, token_inputs.token_ids(), parameters, encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         } else {
             let mut cache_layers = context.cache_layers.borrow_mut();
@@ -851,7 +795,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                     DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
                     None,
                     parameters,
-                    &mut encoder,
+                    encoder,
                 )
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
@@ -866,14 +810,13 @@ impl<B: Backend> LanguageModelGenerator<B> {
                     batch_size: sampling_length,
                     vocab_size: context.model_config.model_config.vocab_size,
                 },
-                &mut encoder,
+                encoder,
             );
             sampling_result.map_err(|e| Error::EncodeFailed(Box::new(e)))?;
             logits = Some(retained_logits);
         }
 
-        Ok(EncodedForwardPass {
-            encoder,
+        Ok(ForwardPassResources {
             token_inputs,
             logits,
             sampling_output,
@@ -971,20 +914,5 @@ impl<B: Backend> LanguageModelGenerator<B> {
             self.context.cache_layers.borrow_mut().register_accepted_tokens(number_of_accepted_tokens);
             self.registered_prefix_len = desired_prefix_len;
         }
-    }
-}
-
-impl<'encoding, B: Backend> EncodedForwardPass<'encoding, B> {
-    fn submit(self) -> (RetainedForwardPass<B>, Pending<B>) {
-        let pending = self.encoder.end_encoding().submit();
-        (
-            RetainedForwardPass {
-                token_inputs: self.token_inputs,
-                logits: self.logits,
-                sampling_output: self.sampling_output,
-                sampling_inputs: self.sampling_inputs,
-            },
-            pending,
-        )
     }
 }

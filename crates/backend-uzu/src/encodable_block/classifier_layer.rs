@@ -215,7 +215,7 @@ impl<B: Backend> ClassifierLayer<B> {
 
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut layer_traces.inputs, ..);
+            encoder.encode_copy(&main, .., layer_traces.inputs.allocation_mut(), ..);
         }
 
         debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
@@ -228,7 +228,7 @@ impl<B: Backend> ClassifierLayer<B> {
         };
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut layer_traces.pre_attention_norm, ..);
+            encoder.encode_copy(&main, .., layer_traces.pre_attention_norm.allocation_mut(), ..);
         }
 
         let mut qkv = self.qkv_projection.encode(main, batch_dim, encoder)?;
@@ -247,11 +247,8 @@ impl<B: Backend> ClassifierLayer<B> {
             self.num_groups,
             self.head_dim,
             rope_max_sequence_length,
-            if self.use_rope {
-                rope_dim
-            } else {
-                0
-            },
+            rope_dim,
+            self.use_rope,
             encoder,
         )?;
         let attention_output = self.attention.encode(
@@ -274,21 +271,21 @@ impl<B: Backend> ClassifierLayer<B> {
         main = self.out_projection.encode(attention_output, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut layer_traces.attention, ..);
+            encoder.encode_copy(&main, .., layer_traces.attention.allocation_mut(), ..);
         }
 
         if let Some(ref post_attn_norm) = self.post_attention_norm {
             main = post_attn_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(layer_traces) = layer_traces.as_deref_mut() {
-                encoder.encode_copy(&main, .., &mut layer_traces.post_attention_norm, ..);
+                encoder.encode_copy(&main, .., layer_traces.post_attention_norm.allocation_mut(), ..);
             }
         }
 
         self.mixer_residual_add.encode(&mut *shortcut, &mut main, layer_len as u32, encoder);
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut layer_traces.mlp_inputs, ..);
+            encoder.encode_copy(&main, .., layer_traces.mlp_inputs.allocation_mut(), ..);
         }
 
         debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
@@ -297,27 +294,27 @@ impl<B: Backend> ClassifierLayer<B> {
         main = self.pre_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut layer_traces.pre_mlp_norm, ..);
+            encoder.encode_copy(&main, .., layer_traces.pre_mlp_norm.allocation_mut(), ..);
         }
 
         main = self.mlp.encode(main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut layer_traces.mlp, ..);
+            encoder.encode_copy(&main, .., layer_traces.mlp.allocation_mut(), ..);
         }
 
         if let Some(ref post_mlp_norm) = self.post_mlp_norm {
             main = post_mlp_norm.encode(&main, 0, batch_dim, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(layer_traces) = layer_traces.as_deref_mut() {
-                encoder.encode_copy(&main, .., &mut layer_traces.post_mlp_norm, ..);
+                encoder.encode_copy(&main, .., layer_traces.post_mlp_norm.allocation_mut(), ..);
             }
         }
 
         self.mlp_residual_add.encode(shortcut, &mut main, layer_len as u32, encoder);
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
-            encoder.encode_copy(&main, .., &mut layer_traces.outputs, ..);
+            encoder.encode_copy(&main, .., layer_traces.outputs.allocation_mut(), ..);
         }
 
         Ok(main)

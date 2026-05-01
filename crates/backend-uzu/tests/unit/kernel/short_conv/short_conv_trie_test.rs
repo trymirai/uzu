@@ -47,13 +47,21 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let suffix_len = input.suffix_len as usize;
 
     let base_state_size = model_dim * state_stride;
-    let base_state_array = context.create_array_from(&[base_state_size], &input.base_state, "");
+    let base_state_allocation_size = base_state_size.max(1);
+    let base_state_data: Vec<T> = input
+        .base_state
+        .iter()
+        .copied()
+        .chain(std::iter::repeat(T::zero()))
+        .take(base_state_allocation_size)
+        .collect();
+    let base_state_array = context.create_array_from(&[base_state_allocation_size], &base_state_data, "");
 
     let parents_array = context.create_array_from(&[input.parents.len()], &input.parents, "");
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
     let mut suffix_state = context
-        .create_array_uninitialized(&[suffix_state_size], T::data_type(), "")
+        .create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type(), "")
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -348,6 +356,13 @@ fn test_edge_small<T: ArrayElement + Float + Debug + Display>() {
     }
 }
 
+fn test_edge_kernel<T: ArrayElement + Float + Debug + Display>() {
+    for has_bias in [false, true] {
+        let (input, expected_out, expected_state) = get_test_data_edge::<T>(4, 1, has_bias);
+        test_internal(&input, &expected_out, &expected_state);
+    }
+}
+
 // basic tests (linear chain)
 #[uzu_test]
 fn test_basic_f32() {
@@ -410,4 +425,20 @@ fn test_edge_small_f16() {
 #[uzu_test]
 fn test_edge_small_bf16() {
     test_edge_small::<bf16>();
+}
+
+// edge: kernel_size=1 (no state taps)
+#[uzu_test]
+fn test_edge_kernel_f32() {
+    test_edge_kernel::<f32>();
+}
+
+#[uzu_test]
+fn test_edge_kernel_f16() {
+    test_edge_kernel::<f16>();
+}
+
+#[uzu_test]
+fn test_edge_kernel_bf16() {
+    test_edge_kernel::<bf16>();
 }
