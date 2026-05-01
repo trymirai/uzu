@@ -27,7 +27,6 @@ KERNEL(UnifiedGemm)(
     const GemmOutputTransformKind output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
-    const bool signed_weights SPECIALIZE,
     const uint group_size SPECIALIZE,
     const QuantizedMetadataKind metadata_kind SPECIALIZE,
     const uint group_x GROUPS(group_count_x),
@@ -49,7 +48,6 @@ KERNEL(UnifiedGemm)(
   (void)output_transform;
   (void)alignment;
   (void)bits_per_weight;
-  (void)signed_weights;
   (void)group_size;
   (void)metadata_kind;
   (void)group_x;
@@ -60,4 +58,3 @@ KERNEL(UnifiedGemm)(
   (void)thread_context;
   uzu::unified_gemm::GemmPipeline<T>::run();
 }
-

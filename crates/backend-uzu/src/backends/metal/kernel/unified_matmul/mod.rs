@@ -1,1 +1,1 @@
-mod gemm;
+pub(crate) mod gemm;
