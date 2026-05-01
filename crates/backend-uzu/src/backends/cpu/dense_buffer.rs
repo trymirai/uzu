@@ -8,7 +8,7 @@ impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
         unsafe { &*self.get() }.as_ptr().addr()
     }
 
-    fn length(&self) -> usize {
+    fn size(&self) -> usize {
         unsafe { &*self.get() }.len()
     }
 

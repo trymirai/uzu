@@ -43,7 +43,7 @@ fn read_buffer<B: Backend>(
 
 fn zero_buffer<B: Backend>(buf: &B::DenseBuffer) {
     unsafe {
-        std::ptr::write_bytes(buf.cpu_ptr().as_ptr(), 0, buf.length());
+        std::ptr::write_bytes(buf.cpu_ptr().as_ptr(), 0, buf.size());
     }
 }
 

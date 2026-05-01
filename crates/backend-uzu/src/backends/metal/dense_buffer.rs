@@ -11,7 +11,7 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
         self.gpu_address() as usize
     }
 
-    fn length(&self) -> usize {
+    fn size(&self) -> usize {
         (**self).length()
     }
 
