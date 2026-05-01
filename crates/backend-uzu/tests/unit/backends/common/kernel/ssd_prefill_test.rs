@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use backend_uzu::backends::common::DenseBuffer;
+use backend_uzu::backends::common::{Buffer, DenseBuffer};
 
 use crate::{
     ArrayContextExt, DataType,

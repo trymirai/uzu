@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use backend_uzu::backends::common::{Backend, Context, DenseBuffer};
+use backend_uzu::backends::common::{Backend, Buffer, Context, DenseBuffer};
 
 #[allow(dead_code)]
 pub fn alloc_buffer<B: Backend, T>(
