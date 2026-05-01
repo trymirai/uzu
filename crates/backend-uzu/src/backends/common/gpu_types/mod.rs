@@ -11,6 +11,7 @@ pub mod matmul;
 pub mod quantization;
 pub mod ring;
 pub mod trie;
+pub mod unified_gemm;
 
 pub use activation_type::*;
 pub use argmax::*;
@@ -18,3 +19,4 @@ pub use attention::*;
 pub use kv_cache_update::*;
 pub use matmul::*;
 pub use quantization::*;
+pub use unified_gemm::*;

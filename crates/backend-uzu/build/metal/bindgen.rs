@@ -134,7 +134,7 @@ pub fn bindgen(
         .map(|(i, a)| {
             let arg_name = format_ident!("{}", a.name.as_ref());
             let rust_type = match a.argument_type().unwrap() {
-                MetalArgumentType::Specialize(t) => format_ident!("{t}"),
+                MetalArgumentType::Specialize(t) => syn::parse_str::<Type>(&t).unwrap(),
                 _ => unreachable!(),
             };
             let idx = base_index.unwrap_or(0) + i;

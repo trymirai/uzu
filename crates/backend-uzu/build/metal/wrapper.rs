@@ -38,6 +38,26 @@ fn kernel_wrappers(
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
+    let specialize_constant_type = |c_type: &str| {
+        let c_type = c_type.trim_start_matches("const ");
+        if c_type.starts_with("uzu::") {
+            "uint"
+        } else {
+            c_type
+        }
+        .to_string()
+    };
+
+    let specialize_argument = |kernel_name: &str, argument_name: &str, c_type: &str| {
+        let c_type = c_type.trim_start_matches("const ");
+        let constant_name = format!("__dsl_specialize_{}_{}", kernel_name, argument_name);
+        if c_type.starts_with("uzu::") {
+            format!("{c_type}({constant_name})")
+        } else {
+            constant_name
+        }
+    };
+
     let specialize_constant_names = if let Some(&base) = base_index {
         kernel_wrappers.push(
             kernel
@@ -46,7 +66,7 @@ fn kernel_wrappers(
                 .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
                 .enumerate()
                 .map(|(i, a)| {
-                    let c_type = a.c_type.trim_start_matches("const ");
+                    let c_type = specialize_constant_type(&a.c_type);
                     let idx = base + i;
                     format!(
                         "constant {c_type} __dsl_specialize_{}_{} [[function_constant({idx})]];\n",
@@ -209,7 +229,7 @@ fn kernel_wrappers(
                         a.name.to_string()
                     },
                     MetalArgumentType::Specialize(_) => {
-                        format!("__dsl_specialize_{}_{}", kernel.name, a.name)
+                        specialize_argument(&kernel.name, &a.name, &a.c_type)
                     },
                     MetalArgumentType::Axis(..) => {
                         format!("__dsl_axis_idx.{}", group_axis_letters.next().unwrap())

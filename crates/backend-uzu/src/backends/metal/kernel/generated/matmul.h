@@ -1,4 +1,4 @@
-// Auto-generated from gpu_types/matmul.rs - do not edit manually
+// Auto-generated from gpu_types/matmul - do not edit manually
 #pragma once
 
 #include <metal_stdlib>

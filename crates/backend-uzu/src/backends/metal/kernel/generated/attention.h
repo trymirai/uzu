@@ -1,4 +1,4 @@
-// Auto-generated from gpu_types/attention.rs - do not edit manually
+// Auto-generated from gpu_types/attention - do not edit manually
 #pragma once
 
 #include <metal_stdlib>

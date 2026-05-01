@@ -1,4 +1,4 @@
-// Auto-generated from gpu_types/argmax.rs - do not edit manually
+// Auto-generated from gpu_types/argmax - do not edit manually
 #pragma once
 
 #include <metal_stdlib>

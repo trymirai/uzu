@@ -116,6 +116,7 @@ uuid = { version = "1.20", features = ["v4", "v5"] }
 comfy-table = { version = "7.2", default-features = false }
 autocxx = "0.30"
 cxx = "1.0"
+debug_display = "0.2"
 cmake = "0.1"
 autocxx-build = "0.30"
 test-tag = "0.1"
