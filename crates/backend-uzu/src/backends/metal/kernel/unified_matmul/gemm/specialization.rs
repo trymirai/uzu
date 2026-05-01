@@ -15,71 +15,23 @@ pub(crate) struct UnifiedGemmSpecialization {
 }
 
 impl UnifiedGemmSpecialization {
-    pub(crate) const fn full_precision_simdgroup(
+    pub(crate) const fn new(
         tile: GemmTile,
-        output: GemmOutputTransformKind,
-        alignment: GemmAlignment,
-    ) -> Self {
-        Self {
-            tile,
-            input_prologue: GemmInputPrologueKind::FullPrecision,
-            weight_prologue: GemmWeightPrologueKind::FullPrecision,
-            compute: GemmComputeKind::SimdgroupMma,
-            output,
-            alignment,
-            quantized_storage: None,
-        }
-    }
-
-    pub(crate) const fn full_precision_mxu_mma(
-        tile: GemmTile,
-        output: GemmOutputTransformKind,
-        alignment: GemmAlignment,
-    ) -> Self {
-        Self {
-            tile,
-            input_prologue: GemmInputPrologueKind::FullPrecision,
-            weight_prologue: GemmWeightPrologueKind::FullPrecision,
-            compute: GemmComputeKind::MxuMma,
-            output,
-            alignment,
-            quantized_storage: None,
-        }
-    }
-
-    pub(crate) const fn quantized_simdgroup(
-        tile: GemmTile,
+        input_prologue: GemmInputPrologueKind,
         weight_prologue: GemmWeightPrologueKind,
+        compute: GemmComputeKind,
         output: GemmOutputTransformKind,
         alignment: GemmAlignment,
-        quantized_storage: QuantizedStorageFormat,
+        quantized_storage: Option<QuantizedStorageFormat>,
     ) -> Self {
         Self {
             tile,
-            input_prologue: GemmInputPrologueKind::FullPrecision,
+            input_prologue,
             weight_prologue,
-            compute: GemmComputeKind::SimdgroupMma,
+            compute,
             output,
             alignment,
-            quantized_storage: Some(quantized_storage),
-        }
-    }
-
-    pub(crate) const fn quantized_mxu_mma(
-        tile: GemmTile,
-        weight_prologue: GemmWeightPrologueKind,
-        output: GemmOutputTransformKind,
-        alignment: GemmAlignment,
-        quantized_storage: QuantizedStorageFormat,
-    ) -> Self {
-        Self {
-            tile,
-            input_prologue: GemmInputPrologueKind::FullPrecision,
-            weight_prologue,
-            compute: GemmComputeKind::MxuMma,
-            output,
-            alignment,
-            quantized_storage: Some(quantized_storage),
+            quantized_storage,
         }
     }
 
