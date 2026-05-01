@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::Range, os::raw::c_void, ptr::NonNull};
 
-use crate::backends::common::Backend;
+use super::Backend;
 
 pub trait Buffer: Debug {
     type Backend: Backend<Buffer = Self>;

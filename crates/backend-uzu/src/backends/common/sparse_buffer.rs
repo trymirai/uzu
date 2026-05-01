@@ -77,7 +77,7 @@ pub trait SparseBufferExt: SparseBuffer {
 }
 
 #[derive(Debug)]
-pub struct SparseBufferMappedPages {
+pub(crate) struct SparseBufferMappedPages {
     map: RangeMap<usize, ()>,
 }
 

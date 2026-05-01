@@ -24,4 +24,5 @@ pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
-pub use sparse_buffer::{SparseBuffer, SparseBufferMappedPages, SparseBufferOperation};
+pub(crate) use sparse_buffer::SparseBufferMappedPages;
+pub use sparse_buffer::{SparseBuffer, SparseBufferOperation};

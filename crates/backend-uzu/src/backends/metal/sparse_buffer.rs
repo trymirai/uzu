@@ -33,7 +33,7 @@ impl MetalSparseBuffer {
         context: &MetalContext,
         capacity: usize,
     ) -> Result<Self, MetalError> {
-        let page_size = MTLSparsePageSize::KB16;
+        let page_size = MTLSparsePageSize::KB256;
         let page_size_bytes = get_page_size_bytes(page_size);
         let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
 
