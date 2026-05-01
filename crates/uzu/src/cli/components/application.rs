@@ -73,10 +73,18 @@ pub fn Application(
         if kind == KeyEventKind::Release {
             return;
         }
+
         let mut state = state;
-        if state.read().flow.is_some() {
-            state.write().flow = None;
+        let mut state = state.write();
+        if state.flow.is_none() {
+            return;
         }
+        if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
+            state.history.push(HistoryCellType::CommandResult {
+                result: "Cancelled".to_string(),
+            });
+        }
+        state.flow = None;
     });
 
     let on_flow_event: Handler<FlowEvent> = Handler::from(move |event: FlowEvent| {
@@ -107,8 +115,18 @@ pub fn Application(
         None => element! { CommandInput(on_submit: on_command) }.into(),
     };
 
-    let history_cell_components: Vec<AnyElement<'static>> =
-        state.read().history.iter().cloned().map(|cell| element! { HistoryCell(r#type: Some(cell)) }.into()).collect();
+    let history_cell_components: Vec<AnyElement<'static>> = state
+        .read()
+        .history
+        .iter()
+        .rev()
+        .take(10)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|r#type| element! { HistoryCell(r#type: Some(r#type)) }.into())
+        .collect();
 
     element! {
         ContextProvider(value: Context::owned(state)) {
