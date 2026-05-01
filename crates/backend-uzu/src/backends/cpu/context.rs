@@ -7,6 +7,8 @@ use std::{
     thread,
 };
 
+use backend_uzu::backends::common::Backend;
+
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
@@ -78,6 +80,13 @@ impl Context for CpuContext {
 
     fn create_event(&self) -> Result<Pin<Box<AtomicU64>>, CpuError> {
         Ok(Box::pin(AtomicU64::new(0)))
+    }
+
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        Err(CpuError::NotSupported)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {

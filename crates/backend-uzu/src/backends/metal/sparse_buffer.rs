@@ -1,9 +1,136 @@
-use backend_uzu::backends::metal::Metal;
-use metal::MTLBuffer;
+use std::{fmt::Debug, ptr::NonNull};
+
+use backend_uzu::backends::{
+    common::{Backend, Buffer},
+    metal::Metal,
+};
+use metal::{
+    MTL4CommandQueue, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor,
+    MTLHeapType, MTLResourceOptions, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
+};
 use objc2::__framework_prelude::{ProtocolObject, Retained};
+use objc2_foundation::NSRange;
 
-use crate::backends::common::SparseBuffer;
+use crate::{
+    backends::{
+        common::{SparseBuffer, SparseBufferOperation},
+        metal::error::MetalError,
+    },
+    prelude::MetalContext,
+};
 
-impl SparseBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
+#[derive(Debug)]
+pub struct MetalSparseBuffer {
+    buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    heap: Retained<ProtocolObject<dyn MTLHeap>>,
+}
+
+impl MetalSparseBuffer {
+    pub fn new(
+        context: &MetalContext,
+        capacity: usize,
+    ) -> Result<Self, MetalError> {
+        let page_size = MTLSparsePageSize::KB16;
+        let page_size_bytes = get_page_size_bytes(page_size);
+        let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
+
+        let Some(buffer) = context.device.new_buffer_with_length_options_placement_sparse_page_size(
+            aligned_capacity,
+            MTLResourceOptions::STORAGE_MODE_PRIVATE,
+            page_size,
+        ) else {
+            return Err(MetalError::SparseBufferAlloc(aligned_capacity));
+        };
+
+        let heap_desc = MTLHeapDescriptor::new();
+        heap_desc.set_type(MTLHeapType::Placement);
+        heap_desc.set_storage_mode(MTLStorageMode::Private);
+        heap_desc.set_size(aligned_capacity);
+        heap_desc.set_max_compatible_placement_sparse_page_size(page_size);
+        let Some(heap) = context.device.new_heap_with_descriptor(&heap_desc) else {
+            return Err(MetalError::SparseHeapAlloc(aligned_capacity, page_size_bytes));
+        };
+
+        Ok(Self {
+            buffer,
+            heap,
+        })
+    }
+
+    fn execute(
+        &self,
+        context: &MetalContext,
+        operations: &[MTL4UpdateSparseBufferMappingOperation],
+    ) -> Result<(), MetalError> {
+        let Some(queue) = context.command_queue4.as_ref().map(|q| q.clone()) else {
+            return Err(MetalError::SparseQueueNotAvailable);
+        };
+
+        queue.update_buffer_mappings_heap_operations_count(
+            &self.buffer,
+            Some(&self.heap),
+            NonNull::new(operations.as_ptr() as *mut _).unwrap(),
+            operations.len(),
+        );
+
+        Ok(())
+    }
+}
+
+impl SparseBuffer for MetalSparseBuffer {
     type Backend = Metal;
+
+    fn buffer(&self) -> &<Self::Backend as Backend>::Buffer {
+        &self.buffer
+    }
+
+    fn buffer_mut(&mut self) -> &mut <Self::Backend as Backend>::Buffer {
+        &mut self.buffer
+    }
+
+    fn set_label(
+        &mut self,
+        label: Option<&str>,
+    ) {
+        self.buffer.set_label(label)
+    }
+
+    fn gpu_ptr(&self) -> usize {
+        self.buffer.gpu_ptr()
+    }
+
+    fn length(&self) -> usize {
+        self.buffer.length()
+    }
+
+    fn execute(
+        &self,
+        context: &<Self::Backend as Backend>::Context,
+        operations: &[SparseBufferOperation],
+    ) -> Result<(), MetalError> {
+        let mtl_operations = operations
+            .iter()
+            .map(|op| {
+                let mode = if op.map {
+                    MTLSparseTextureMappingMode::Map
+                } else {
+                    MTLSparseTextureMappingMode::Unmap
+                };
+                MTL4UpdateSparseBufferMappingOperation {
+                    mode,
+                    buffer_range: NSRange::new(op.pages.start, op.pages.len()),
+                    heap_offset: op.heap_page_offset,
+                }
+            })
+            .collect::<Vec<MTL4UpdateSparseBufferMappingOperation>>();
+        self.execute(context, &mtl_operations)
+    }
+}
+
+fn get_page_size_bytes(size: MTLSparsePageSize) -> usize {
+    match size {
+        MTLSparsePageSize::KB16 => 16 * 1024,
+        MTLSparsePageSize::KB64 => 64 * 1024,
+        MTLSparsePageSize::KB256 => 256 * 1024,
+    }
 }

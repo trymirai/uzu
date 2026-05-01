@@ -28,6 +28,8 @@ pub enum MetalError {
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]
     SparseHeapAlloc(usize, usize),
+    #[error("Queue for sparse buffer is not available")]
+    SparseQueueNotAvailable,
     #[error("Sparse buffer requires Metal 4 queue")]
     SparseRequireMtl4Queue,
 }

@@ -18,7 +18,7 @@ use super::{
 use crate::{
     backends::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
-        metal::command_buffer::MetalCommandBufferInitial,
+        metal::{command_buffer::MetalCommandBufferInitial, sparse_buffer::MetalSparseBuffer},
     },
     utils::model_size::ModelSize,
 };
@@ -150,6 +150,16 @@ impl Context for MetalContext {
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
         self.device.new_event().ok_or(MetalError::CannotCreateEvent)
+    }
+
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        if self.command_queue4.is_none() {
+            return Err(MetalError::SparseQueueNotAvailable);
+        }
+        Ok(MetalSparseBuffer::new(self, capacity)?)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
