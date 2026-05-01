@@ -25,7 +25,7 @@ pub enum RHTLinearWrapperError<B: Backend> {
 
 pub struct RHTLinearWrapper<B: Backend> {
     input_hadamard_kernel: <B::Kernels as Kernels>::HadamardTransformKernel,
-    input_factors: B::Buffer,
+    input_factors: B::DenseBuffer,
     inner_linear: Box<dyn Linear<B>>,
     input_dimension: usize,
     input_array_id: ArrayId,

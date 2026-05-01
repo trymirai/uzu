@@ -8,9 +8,9 @@ use crate::{
 };
 
 pub struct KVLayerData<B: Backend> {
-    pub key_buffer: Rc<RefCell<B::Buffer>>,
+    pub key_buffer: Rc<RefCell<B::DenseBuffer>>,
     pub key_shape: [usize; 3],
-    pub value_buffer: Rc<RefCell<B::Buffer>>,
+    pub value_buffer: Rc<RefCell<B::DenseBuffer>>,
     pub value_shape: [usize; 3],
 }
 

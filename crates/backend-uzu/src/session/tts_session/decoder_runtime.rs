@@ -1,5 +1,5 @@
 use super::{decoder_support::*, *};
-use crate::{array::Array, backends::common::Buffer, session::types::TtsModelConfigError};
+use crate::{array::Array, backends::common::DenseBuffer, session::types::TtsModelConfigError};
 
 struct TokenDecoderLoadedModel<B: Backend> {
     shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
@@ -75,9 +75,9 @@ struct TokenDecoderContext<B: Backend> {
     kv_cache_update: KVCacheUpdate<B>,
     token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
     token_copy_results: <B::Kernels as Kernels>::TokenCopyToResultsKernel,
-    async_chain_positions: Rc<RefCell<B::Buffer>>,
-    async_chain_seeds: Rc<RefCell<B::Buffer>>,
-    async_chain_results: Rc<RefCell<B::Buffer>>,
+    async_chain_positions: Rc<RefCell<B::DenseBuffer>>,
+    async_chain_seeds: Rc<RefCell<B::DenseBuffer>>,
+    async_chain_results: Rc<RefCell<B::DenseBuffer>>,
     async_chain_capacity: usize,
     current_max_prefix_length: usize,
 }
@@ -170,7 +170,7 @@ impl<B: Backend> TokenDecoderContext<B> {
     fn build_async_chain_buffers(
         context: &Rc<B::Context>,
         async_chain_capacity: usize,
-    ) -> Result<(Rc<RefCell<B::Buffer>>, Rc<RefCell<B::Buffer>>, Rc<RefCell<B::Buffer>>), Error> {
+    ) -> Result<(Rc<RefCell<B::DenseBuffer>>, Rc<RefCell<B::DenseBuffer>>, Rc<RefCell<B::DenseBuffer>>), Error> {
         let positions = Rc::new(RefCell::new(
             context
                 .create_buffer(async_chain_capacity * std::mem::size_of::<i32>())
@@ -1047,7 +1047,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let main_output_buffer = main.buffer();
         let mut main_output_buffer = main_output_buffer.borrow_mut();
         // TensorAddScale is elementwise, so in-place read/write aliasing is valid here.
-        let main_input_buffer: &B::Buffer = unsafe { &*(&*main_output_buffer as *const B::Buffer) };
+        let main_input_buffer: &B::DenseBuffer = unsafe { &*(&*main_output_buffer as *const B::DenseBuffer) };
         self.tensor_add_scale.encode(
             (main_input_buffer, main.offset()),
             &*bias_buffer,
@@ -1125,7 +1125,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         &self,
         encoder: &mut Encoder<B>,
         src_slot: usize,
-        dst: (&mut B::Buffer, usize),
+        dst: (&mut B::DenseBuffer, usize),
         count: usize,
     ) -> Result<(), Error> {
         let src_offset = src_slot.checked_mul(std::mem::size_of::<u32>()).ok_or(

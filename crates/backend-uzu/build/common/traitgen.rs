@@ -42,10 +42,10 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                         Some(quote! { #buffer_lifetime }),
                         match access {
                             KernelBufferAccess::Read => {
-                                quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::Buffer> }
+                                quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::DenseBuffer> }
                             },
                             KernelBufferAccess::ReadWrite => {
-                                quote! { impl BufferArgMut<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::Buffer> }
+                                quote! { impl BufferArgMut<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::DenseBuffer> }
                             },
                         },
                     )
@@ -119,8 +119,8 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
             }
         }
 
-        impl<'a, B: crate::backends::common::Backend> BufferArg<'a, B::Buffer> for &'a crate::backends::common::Allocation<B> {
-            fn into_parts(self) -> (&'a B::Buffer, usize, usize) {
+        impl<'a, B: crate::backends::common::Backend> BufferArg<'a, B::DenseBuffer> for &'a crate::backends::common::Allocation<B> {
+            fn into_parts(self) -> (&'a B::DenseBuffer, usize, usize) {
                 let (buffer, range) = self.as_buffer_range();
                 (buffer, range.start, range.end - range.start)
             }
@@ -132,8 +132,8 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
             }
         }
 
-        impl<'a, B: crate::backends::common::Backend> BufferArg<'a, B::Buffer> for (&'a crate::backends::common::Allocation<B>, usize) {
-            fn into_parts(self) -> (&'a B::Buffer, usize, usize) {
+        impl<'a, B: crate::backends::common::Backend> BufferArg<'a, B::DenseBuffer> for (&'a crate::backends::common::Allocation<B>, usize) {
+            fn into_parts(self) -> (&'a B::DenseBuffer, usize, usize) {
                 let (buffer, range) = self.0.as_buffer_range();
                 (buffer, range.start + self.1, range.end - range.start - self.1)
             }
@@ -149,8 +149,8 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
             }
         }
 
-        impl<'a, B: crate::backends::common::Backend> BufferArgMut<'a, B::Buffer> for &'a mut crate::backends::common::Allocation<B> {
-            fn into_parts(self) -> (&'a B::Buffer, usize, usize) {
+        impl<'a, B: crate::backends::common::Backend> BufferArgMut<'a, B::DenseBuffer> for &'a mut crate::backends::common::Allocation<B> {
+            fn into_parts(self) -> (&'a B::DenseBuffer, usize, usize) {
                 let (buffer, range) = self.as_buffer_range();
                 (buffer, range.start, range.end - range.start)
             }
@@ -162,8 +162,8 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
             }
         }
 
-        impl<'a, B: crate::backends::common::Backend> BufferArgMut<'a, B::Buffer> for (&'a mut crate::backends::common::Allocation<B>, usize) {
-            fn into_parts(self) -> (&'a B::Buffer, usize, usize) {
+        impl<'a, B: crate::backends::common::Backend> BufferArgMut<'a, B::DenseBuffer> for (&'a mut crate::backends::common::Allocation<B>, usize) {
+            fn into_parts(self) -> (&'a B::DenseBuffer, usize, usize) {
                 let (buffer, range) = self.0.as_buffer_range();
                 (buffer, range.start + self.1, range.end - range.start - self.1)
             }

@@ -1,7 +1,7 @@
 use backend_uzu::{
     DataType,
     backends::common::{
-        Backend, Buffer, Encoder, Kernels,
+        Backend, DenseBuffer, Encoder, Kernels,
         gpu_types::{ActivationType, activation_silu_alpha},
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,

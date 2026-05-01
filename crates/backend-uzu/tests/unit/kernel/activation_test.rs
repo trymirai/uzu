@@ -41,7 +41,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         let output_array = context.create_array_from(&[n], &input.data, "");
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
         kernel.encode(
-            Option::<&B::Buffer>::None,
+            Option::<&B::DenseBuffer>::None,
             output_array.buffer().borrow_mut().deref_mut(),
             n as u32,
             input.act_type,

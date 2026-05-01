@@ -202,7 +202,7 @@ impl<B: Backend> MambaMixer<B> {
                     conv_inputs.buffer().borrow().deref(),
                     weight_buf_borrow.deref(),
                     bias_buf_borrow.as_deref(),
-                    None::<&B::Buffer>,
+                    None::<&B::DenseBuffer>,
                     x_arr.buffer().borrow_mut().deref_mut(),
                     b_arr.buffer().borrow_mut().deref_mut(),
                     c_arr.buffer().borrow_mut().deref_mut(),
@@ -243,7 +243,7 @@ impl<B: Backend> MambaMixer<B> {
                 let padded_borrow = padded_buf.as_ref().map(|b| b.borrow());
                 let conv_inputs_borrow = conv_inputs.buffer();
                 let conv_inputs_ref = conv_inputs_borrow.borrow();
-                let conv_source: &B::Buffer = padded_borrow.as_deref().unwrap_or(conv_inputs_ref.deref());
+                let conv_source: &B::DenseBuffer = padded_borrow.as_deref().unwrap_or(conv_inputs_ref.deref());
                 self.conv_scan.encode(
                     conv_source,
                     weight_buf_borrow.deref(),
@@ -338,7 +338,7 @@ impl<B: Backend> MambaMixer<B> {
             c.buffer().borrow().deref(),
             self.skip_connection_weight.buffer().borrow().deref(),
             z.buffer().borrow().deref(),
-            None::<&B::Buffer>,
+            None::<&B::DenseBuffer>,
             y.buffer().borrow_mut().deref_mut(),
             state_arr.buffer().borrow_mut().deref_mut(),
             group_size as u32,

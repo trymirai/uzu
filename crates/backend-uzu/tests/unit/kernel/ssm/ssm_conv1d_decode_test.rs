@@ -111,7 +111,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
 
     let b_buf = b_array.as_ref().map(|a| a.buffer());
     let b_borrow = b_buf.as_ref().map(|rc| rc.borrow());
-    let b_deref: Option<&B::Buffer> = b_borrow.as_ref().map(|b| b.deref());
+    let b_deref: Option<&B::DenseBuffer> = b_borrow.as_ref().map(|b| b.deref());
 
     if input.state_in_place {
         let next_state_array = context.create_array_from(&[state_size], &input.state, "next_state");
@@ -121,7 +121,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             x_array.buffer().borrow().deref(),
             w_array.buffer().borrow().deref(),
             b_deref,
-            None::<&B::Buffer>,
+            None::<&B::DenseBuffer>,
             x_out_array.buffer().borrow_mut().deref_mut(),
             b_out_array.buffer().borrow_mut().deref_mut(),
             c_out_array.buffer().borrow_mut().deref_mut(),

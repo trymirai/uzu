@@ -59,7 +59,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     kernel.encode(
         fused_up_array.buffer().borrow().deref(),
         hidden_array.buffer().borrow_mut().deref_mut(),
-        None::<&B::Buffer>,
+        None::<&B::DenseBuffer>,
         input.h,
         input.m,
         input.act_type,

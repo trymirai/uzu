@@ -1,4 +1,5 @@
 use super::*;
+use crate::backends::common::Buffer;
 
 pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
@@ -51,7 +52,7 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
 // non-overlapping lifetimes, and free-on-drop tied to command-buffer
 // completion — i.e. everything this struct reimplements by hand.
 pub(super) struct DecodeWorkspace<B: Backend> {
-    slots: RefCell<Vec<Rc<RefCell<B::Buffer>>>>,
+    slots: RefCell<Vec<Rc<RefCell<B::DenseBuffer>>>>,
     next_search: Cell<usize>,
     min_buffer_size: Cell<usize>,
     lengths_pair: [RefCell<Option<Array<B>>>; 2],
@@ -157,7 +158,7 @@ fn create_labelled_buffer<B: Backend>(
     context: &B::Context,
     bytes: usize,
     label: &str,
-) -> AudioResult<Rc<RefCell<B::Buffer>>> {
+) -> AudioResult<Rc<RefCell<B::DenseBuffer>>> {
     let mut buffer = context
         .create_buffer(bytes)
         .map_err(|err| AudioError::Runtime(format!("failed to create scratch buffer '{label}': {err}")))?;

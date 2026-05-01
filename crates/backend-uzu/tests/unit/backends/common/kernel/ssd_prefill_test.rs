@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use backend_uzu::backends::common::Buffer;
+use backend_uzu::backends::common::DenseBuffer;
 
 use crate::{
     ArrayContextExt, DataType,
@@ -22,7 +22,7 @@ use crate::{
 mod common;
 
 fn write_buffer<B: Backend>(
-    buf: &B::Buffer,
+    buf: &B::DenseBuffer,
     data: &[f32],
 ) {
     unsafe {
@@ -31,7 +31,7 @@ fn write_buffer<B: Backend>(
 }
 
 fn read_buffer<B: Backend>(
-    buf: &B::Buffer,
+    buf: &B::DenseBuffer,
     len: usize,
 ) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
@@ -41,7 +41,7 @@ fn read_buffer<B: Backend>(
     out
 }
 
-fn zero_buffer<B: Backend>(buf: &B::Buffer) {
+fn zero_buffer<B: Backend>(buf: &B::DenseBuffer) {
     unsafe {
         std::ptr::write_bytes(buf.cpu_ptr().as_ptr(), 0, buf.length());
     }

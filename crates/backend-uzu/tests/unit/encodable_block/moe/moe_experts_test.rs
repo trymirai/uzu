@@ -9,7 +9,7 @@
 use backend_uzu::{
     DataType,
     backends::common::{
-        Buffer, Encoder,
+        DenseBuffer, Encoder,
         gpu_types::{ActivationType, activation_silu_alpha},
         kernel::moe::{
             MoeExpertsSingleDecodeArguments, MoeExpertsSingleDecodeKernels, MoeExpertsTwoPassArguments,

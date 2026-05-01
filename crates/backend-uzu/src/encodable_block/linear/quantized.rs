@@ -88,11 +88,11 @@ pub enum QuantizedLinearError<B: Backend> {
 pub struct QuantizedLinear<B: Backend> {
     kernel: QuantizedMatmulKernelEncodable<B>,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
-    biases_buffer: Option<Rc<RefCell<B::Buffer>>>,
-    weights_buffer: Rc<RefCell<B::Buffer>>,
-    scales_buffer: Rc<RefCell<B::Buffer>>,
-    zero_points_or_biases_buffer: Rc<RefCell<B::Buffer>>,
-    output_hadamard_factors: Option<B::Buffer>,
+    biases_buffer: Option<Rc<RefCell<B::DenseBuffer>>>,
+    weights_buffer: Rc<RefCell<B::DenseBuffer>>,
+    scales_buffer: Rc<RefCell<B::DenseBuffer>>,
+    zero_points_or_biases_buffer: Rc<RefCell<B::DenseBuffer>>,
+    output_hadamard_factors: Option<B::DenseBuffer>,
     output_dim: usize,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
@@ -107,7 +107,7 @@ impl<B: Backend> QuantizedLinear<B> {
         parameter_tree: &ParameterTree<B::Context>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-        output_hadamard_factors: Option<B::Buffer>,
+        output_hadamard_factors: Option<B::DenseBuffer>,
     ) -> Result<Self, QuantizedLinearError<B>> {
         let kernel_data_type: DataType = config.activation_precision.into();
         if !matches!(kernel_data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
@@ -274,7 +274,7 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
         if let (Some(bias_add_kernel), Some(biases_buffer)) = (&self.bias_add_kernel, &self.biases_buffer) {
             let total_length = batch_dim * self.output_dim;
             bias_add_kernel.encode(
-                None::<&B::Buffer>,
+                None::<&B::DenseBuffer>,
                 biases_buffer.borrow().deref(),
                 output_buf_borrow.deref_mut(),
                 self.output_dim as u32,

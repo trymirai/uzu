@@ -116,7 +116,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             c_array.buffer().borrow().deref(),
             d_array.buffer().borrow().deref(),
             z_array.buffer().borrow().deref(),
-            None::<&<B as Backend>::Buffer>,
+            None::<&<B as Backend>::DenseBuffer>,
             y_array.buffer().borrow_mut().deref_mut(),
             ns_array.buffer().borrow_mut().deref_mut(),
             (h / g) as u32,

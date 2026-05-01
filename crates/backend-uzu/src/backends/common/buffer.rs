@@ -1,22 +1,19 @@
-use std::{fmt::Debug, ops::Range, os::raw::c_void, ptr::NonNull};
+use std::{fmt::Debug, ops::Range};
 
-use super::Backend;
+use backend_uzu::backends::common::DenseBuffer;
 
 pub trait Buffer: Debug {
-    type Backend: Backend<Buffer = Self>;
+    fn gpu_ptr(&self) -> usize;
+
+    fn length(&self) -> usize;
 
     fn set_label(
         &mut self,
         label: Option<&str>,
     );
-
-    fn cpu_ptr(&self) -> NonNull<c_void>;
-    fn gpu_ptr(&self) -> usize;
-
-    fn length(&self) -> usize;
 }
 
-pub trait BufferGpuAddressRangeExt: Buffer {
+pub trait BufferGpuAddressRangeExt: DenseBuffer {
     fn gpu_address_range(&self) -> Range<usize> {
         self.gpu_ptr()..(self.gpu_ptr() + self.length())
     }
@@ -31,4 +28,4 @@ pub trait BufferGpuAddressRangeExt: Buffer {
     }
 }
 
-impl<B: Buffer> BufferGpuAddressRangeExt for B {}
+impl<B: DenseBuffer> BufferGpuAddressRangeExt for B {}

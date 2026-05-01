@@ -35,7 +35,7 @@ impl<B: Backend> ShortConvMixer<B> {
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> (Self, Option<B::Buffer>) {
+    ) -> (Self, Option<B::DenseBuffer>) {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
             panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
         }
@@ -295,7 +295,7 @@ impl<B: Backend> ShortConvMixer<B> {
             in_proj.buffer().borrow().deref(),
             self.conv_weight.buffer().borrow().deref(),
             decode_bias_buf_borrow.as_deref(),
-            None::<&B::Buffer>,
+            None::<&B::DenseBuffer>,
             out.buffer().borrow_mut().deref_mut(),
             conv_state.buffer().borrow_mut().deref_mut(),
             suffix_length as u32,
