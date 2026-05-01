@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.4.4)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.4.4)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.4.4)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.4.4)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
 # uzu
 
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Add the dependency:
 
 ```bash
-uv add uzu==0.1.9
+uv add uzu==0.4.4
 ```
 
 Run the code below:
@@ -132,7 +132,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.1.9")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.4.4")
 ]
 ```
 
@@ -181,7 +181,7 @@ public func runQuickStart() async throws {
 Add the dependency:
 
 ```bash
-pnpm add @trymirai/uzu@0.1.9
+pnpm add @trymirai/uzu@0.4.4
 ```
 
 Run the code below:
@@ -227,6 +227,7 @@ main().catch((error) => {
 
 
 <br>
+
 Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
 
 ## Examples
@@ -1616,7 +1617,7 @@ uv run downloader list             # show the list of supported models
 uv run downloader download {REPO}  # download a specific model
 ```
 
-Models downloaded for development are stored at `./workspace/models/0.1.9/`.
+Models downloaded for development are stored at `./workspace/models/0.4.4/`.
 
 You can also export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
@@ -1650,7 +1651,7 @@ Commands:
 To run benchmarks:
 
 ```bash
-cargo run --release -p cli -- bench ./workspace/models/0.1.9/{MODEL_NAME} ./workspace/models/0.1.9/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.1.9/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench ./workspace/models/0.4.4/{MODEL_NAME} ./workspace/models/0.4.4/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.4.4/{MODEL_NAME}/benchmark_result.json
 ```
 
 `benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.

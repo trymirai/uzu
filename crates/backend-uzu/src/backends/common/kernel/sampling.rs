@@ -209,6 +209,7 @@ impl<B: Backend> SamplingKernel<B> {
             self.gumbel.encode(
                 None::<&Allocation<B>>,
                 seeds_buffer,
+                0,
                 &mut *logits_buffer,
                 batch_size as u32,
                 vocab_size as u32,

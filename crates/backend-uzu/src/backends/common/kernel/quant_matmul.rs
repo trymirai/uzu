@@ -244,7 +244,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             };
         }
 
-        if batch_dim >= 8 && self.output_dim > 1 {
+        if batch_dim >= 5 && self.output_dim > 1 {
             if let Some(kernel) = self.matrix_matrix.pick(batch_dim) {
                 encode_kernel!(kernel, hadamard_factors);
                 return;

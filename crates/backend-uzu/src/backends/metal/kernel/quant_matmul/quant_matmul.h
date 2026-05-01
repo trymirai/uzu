@@ -493,7 +493,7 @@ struct QuantizedBlockLoaderZp {
         const int byte_index =
             row_idx * zp_stride_total + (out_group_base >> 1);
         uint8_t zp_b = zps_row_start[byte_index];
-        zp_n = (out_group_base & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
+        zp_n = (uint(zp_b) >> (uint(out_group_base & 1) * 4u)) & 0x0Fu;
       } else {
         const int zp_index = row_idx * zp_stride_total + out_group_base;
         zp_n = zps_row_start[zp_index];
@@ -505,7 +505,7 @@ struct QuantizedBlockLoaderZp {
       if (bits == 4) {
         const device uint8_t* zp_ptr = zps_row_start + (g >> 1);
         uint8_t zp_b = *zp_ptr;
-        zp_n = (g & 1) ? ((zp_b >> 4) & 0x0F) : (zp_b & 0x0F);
+        zp_n = (uint(zp_b) >> (uint(g & 1) * 4u)) & 0x0Fu;
       } else {
         zp_n = zps_row_start[g];
       }

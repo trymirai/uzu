@@ -8,9 +8,12 @@ use download_manager::{FileDownloadManager, FileDownloadState, FileDownloadTask}
 use futures_util::future::join_all;
 use shoji::types::basic::File;
 use tokio::{
-    runtime::Handle,
-    sync::broadcast::{Sender, channel},
-    task::JoinHandle,
+    runtime::Handle as TokioHandle,
+    sync::{
+        broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
+        mpsc::channel as tokio_mpsc_channel,
+    },
+    task::JoinHandle as TokioJoinHandle,
 };
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -18,7 +21,7 @@ use crate::{
     helpers::SharedAccess,
     storage::{
         StorageError,
-        types::{CrcSnapshot, DownloadPhase, DownloadState, reduce_file_download_states},
+        types::{CrcSnapshot, DownloadPhase, DownloadState, StorageDownloadEventSender, reduce_file_download_states},
     },
 };
 
@@ -32,10 +35,10 @@ pub struct Item {
     file_download_tasks: SharedAccess<Vec<Arc<dyn FileDownloadTask>>>,
     file_download_states: SharedAccess<Vec<FileDownloadState>>,
 
-    handle: Handle,
-    broadcast_sender: Sender<DownloadState>,
-    storage_broadcast_sender: Sender<(String, DownloadState)>,
-    listener_task: SharedAccess<Option<JoinHandle<()>>>,
+    handle: TokioHandle,
+    broadcast_sender: TokioBroadcastSender<DownloadState>,
+    storage_broadcast_sender: StorageDownloadEventSender,
+    listener_task: SharedAccess<Option<TokioJoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for Item {
@@ -73,10 +76,10 @@ impl Item {
         download_state: DownloadState,
         file_download_manager: Arc<dyn FileDownloadManager>,
         file_download_tasks: Vec<Arc<dyn FileDownloadTask>>,
-        handle: Handle,
-        storage_broadcast_sender: Sender<(String, DownloadState)>,
+        handle: TokioHandle,
+        storage_broadcast_sender: StorageDownloadEventSender,
     ) -> Self {
-        let (broadcast_sender, _) = channel(64);
+        let (broadcast_sender, _) = tokio_broadcast_channel(64);
         let file_download_states = SharedAccess::new(Vec::new());
         Self {
             identifier,
@@ -351,6 +354,21 @@ impl Item {
         tracing::debug!("[MODEL] Calling ensure_paused");
 
         let result = self.ensure_paused().await;
+        if result.is_ok() {
+            let file_tasks_guard = self.file_download_tasks.lock().await;
+            let mut file_download_states = Vec::with_capacity(file_tasks_guard.len());
+            for file_task in file_tasks_guard.iter() {
+                file_download_states.push(file_task.state().await);
+            }
+            drop(file_tasks_guard);
+
+            let mut cache_guard = self.file_download_states.lock().await;
+            *cache_guard = file_download_states;
+            drop(cache_guard);
+
+            let paused_state = self.reduce_state().await;
+            self.update_state_and_broadcast(paused_state).await;
+        }
 
         tracing::debug!("[MODEL] pause() completed for model: {}", self.identifier);
 
@@ -557,7 +575,7 @@ impl Item {
 
             // Fan-in: per-stream forwarders into a single bounded channel
             let num_streams = streams.len();
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, FileDownloadState)>(1024);
+            let (tx, mut rx) = tokio_mpsc_channel::<(usize, FileDownloadState)>(1024);
 
             for (idx, mut stream) in streams {
                 let tx = tx.clone();

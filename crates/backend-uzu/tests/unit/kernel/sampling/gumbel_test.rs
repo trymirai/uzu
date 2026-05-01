@@ -69,6 +69,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     kernel.encode(
         logits_buffer.as_ref(),
         seeds_array.allocation(),
+        0,
         &mut output,
         input.batch_size,
         input.vocab_size,

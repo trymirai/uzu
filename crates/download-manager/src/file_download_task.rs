@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadState,
+    DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState,
     prelude::{TokioBroadcastSender, TokioBroadcastStream},
 };
 
@@ -20,7 +20,7 @@ pub trait FileDownloadTask: Send + Sync + std::fmt::Debug {
 
     async fn start_listening(
         &self,
-        global_broadcast: TokioBroadcastSender<(DownloadId, FileDownloadEvent)>,
+        global_broadcast: DownloadEventSender,
     );
     async fn stop_listening(&self);
 

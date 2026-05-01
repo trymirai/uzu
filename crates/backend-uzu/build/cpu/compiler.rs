@@ -394,7 +394,7 @@ impl CpuCompiler {
                         if argument.conditional.is_some() {
                             Some(quote! {
                                 let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
-                                    let (__dsl_buffer, __dsl_offset) = __dsl_buffer_impl.into_parts();
+                                    let (__dsl_buffer, __dsl_offset, _) = __dsl_buffer_impl.into_parts();
 
                                     #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
                                 });
@@ -402,7 +402,7 @@ impl CpuCompiler {
                         } else {
                             Some(quote! {
                                 let #argument_ident = unsafe {
-                                    let (__dsl_buffer, __dsl_offset) = #argument_ident.into_parts();
+                                    let (__dsl_buffer, __dsl_offset, _) = #argument_ident.into_parts();
 
                                     #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
                                 };

@@ -24,7 +24,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.1.9")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.4.4")
 ]
 ```
 
@@ -64,6 +64,7 @@ public func runQuickStart() async throws {
 
 
 <br>
+
 Everything from model downloading to inference configuration is handled automatically. Refer to the [documentation](https://docs.trymirai.com) for details on how to customize each step of the process.
 
 ## Examples

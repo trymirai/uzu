@@ -8,7 +8,6 @@ pub use tokio::{
     fs,
     runtime::Handle as TokioHandle,
     sync::{
-        Mutex as TokioMutex,
         broadcast::{Sender as TokioBroadcastSender, channel as tokio_broadcast_channel},
         oneshot::{Sender as TokioOneshotSender, channel as tokio_oneshot_channel},
     },
