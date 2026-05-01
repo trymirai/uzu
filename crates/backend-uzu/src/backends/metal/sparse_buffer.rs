@@ -67,11 +67,7 @@ impl MetalSparseBuffer {
         context: &MetalContext,
         operations: &[MTL4UpdateSparseBufferMappingOperation],
     ) -> Result<(), MetalError> {
-        let Some(queue) = context.command_queue4.as_ref().map(|q| q.clone()) else {
-            return Err(MetalError::SparseQueueNotAvailable);
-        };
-
-        queue.update_buffer_mappings_heap_operations_count(
+        context.command_queue4.update_buffer_mappings_heap_operations_count(
             &self.buffer,
             Some(&self.heap),
             NonNull::new(operations.as_ptr() as *mut _).unwrap(),

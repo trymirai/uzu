@@ -4,7 +4,7 @@ use backend_uzu::backends::common::Backend;
 use metal::{
     MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
     MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLGPUFamily, MTLLibrary, MTLResourceOptions,
+    MTLLibrary, MTLResourceOptions,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -26,7 +26,7 @@ use crate::{
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    pub command_queue4: Option<Retained<ProtocolObject<dyn MTL4CommandQueue>>>,
+    pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
@@ -67,11 +67,7 @@ impl Context for MetalContext {
         let command_queue =
             device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
 
-        let command_queue4 = if device.supports_family(MTLGPUFamily::Metal4) {
-            Some(device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?)
-        } else {
-            None
-        };
+        let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
         let library = device
             .new_library_with_data(kernel::MTLB)
@@ -156,9 +152,6 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        if self.command_queue4.is_none() {
-            return Err(MetalError::SparseQueueNotAvailable);
-        }
         Ok(MetalSparseBuffer::new(self, capacity)?)
     }
 
