@@ -2,8 +2,7 @@ use iocraft::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-const SYMBOL_CURSOR: &str = "█";
-const SYMBOL_NEW_LINE: &str = "\n";
+use crate::cli::helpers::{SYMBOL_CURSOR, SYMBOL_NEW_LINE};
 
 #[derive(Debug)]
 pub struct RenderedText {
