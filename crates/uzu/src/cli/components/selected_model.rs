@@ -3,7 +3,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     cli::components::{ApplicationState, ProgressBar},
-    storage::types::{DownloadPhase, DownloadState},
+    storage::types::DownloadPhase,
 };
 
 #[derive(Clone, Copy)]
@@ -20,57 +20,59 @@ pub fn SelectedModel(
     _props: &SelectedModelProps,
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
-    let mut state = *hooks.use_context::<State<ApplicationState>>();
-    let downloader_state = hooks.use_state(|| {
-        let engine = state.read().engine.clone();
-        let model = state.read().model.clone();
-        model.and_then(|model| {
-            if model.is_downloadable() {
-                Some(engine.downloader(&model))
-            } else {
-                None
-            }
-        })
-    });
-    let download_status_state = hooks.use_state(|| None::<DownloadState>);
+    let state = *hooks.use_context::<State<ApplicationState>>();
 
     hooks.use_future({
         let engine = state.read().engine.clone();
-        let identifier = state.read().model.as_ref().map(|model| model.identifier.clone());
-        let downloader = downloader_state.read().clone();
-        let mut download_status_state = download_status_state;
+        let model = state.read().model_state.as_ref().map(|model_state| model_state.model.clone());
+        let mut state = state;
         async move {
-            let (Some(identifier), Some(downloader)) = (identifier, downloader) else {
+            let Some(model) = model else {
                 return;
             };
+            if !model.is_downloadable() {
+                return;
+            }
+            let identifier = model.identifier.clone();
+            let downloader = engine.downloader(&model);
 
             let mut stream = engine.storage_subscribe().await;
 
-            if let Some(initial_status) = downloader.state().await {
-                download_status_state.set(Some(initial_status.clone()));
-                state.write().model_download_state = Some(initial_status);
+            if let Some(initial) = downloader.state().await {
+                if let Some(model_state) = state.write().model_state.as_mut() {
+                    model_state.download_state = initial;
+                }
             }
+
             if downloader.resume().await.is_err() {
                 return;
             }
+
             while let Some(Ok((event_identifier, event_state))) = stream.next().await {
                 if event_identifier != identifier {
                     continue;
                 }
-                download_status_state.set(Some(event_state.clone()));
-                state.write().model_download_state = Some(event_state);
+                if let Some(model_state) = state.write().model_state.as_mut() {
+                    model_state.download_state = event_state;
+                }
             }
         }
     });
 
     let on_action = hooks.use_async_handler({
-        let downloader = downloader_state.read().clone();
+        let engine = state.read().engine.clone();
+        let model = state.read().model_state.as_ref().map(|model_state| model_state.model.clone());
         move |action: StorageAction| {
-            let downloader = downloader.clone();
+            let engine = engine.clone();
+            let model = model.clone();
             async move {
-                let Some(downloader) = downloader else {
+                let Some(model) = model else {
                     return;
                 };
+                if !model.is_downloadable() {
+                    return;
+                }
+                let downloader = engine.downloader(&model);
                 match action {
                     StorageAction::Toggle => {
                         let Some(current) = downloader.state().await else {
@@ -99,9 +101,11 @@ pub fn SelectedModel(
         }
     });
 
-    let has_downloader = downloader_state.read().is_some();
+    let is_downloadable =
+        state.read().model_state.as_ref().map(|model_state| model_state.model.is_downloadable()).unwrap_or(false);
+
     hooks.use_terminal_events(move |event| {
-        if !has_downloader {
+        if !is_downloadable {
             return;
         }
         let TerminalEvent::Key(KeyEvent {
@@ -126,40 +130,39 @@ pub fn SelectedModel(
         }
     });
 
-    let model = state.read().model.clone();
     let theme = state.read().theme.clone();
-    let view: AnyElement<'static> = match model {
+    let snapshot = state
+        .read()
+        .model_state
+        .as_ref()
+        .map(|model_state| (model_state.model.clone(), model_state.download_state.clone()));
+
+    let view: AnyElement<'static> = match snapshot {
         None => element! { View }.into(),
-        Some(model) => {
-            let state = download_status_state.read().clone().unwrap_or(DownloadState::not_downloaded(0));
-
-            let status = match state.phase {
-                DownloadPhase::Downloading {} => {
-                    let percent = (state.progress() * 100.0).round() as u32;
-                    format!("{}%", percent)
-                },
-                _ => format!("{}", state.name()),
+        Some((model, download_state)) => {
+            let is_downloading = matches!(download_state.phase, DownloadPhase::Downloading {});
+            let status = if is_downloading {
+                let percent = (download_state.progress() * 100.0).round() as u32;
+                format!("{}%", percent)
+            } else {
+                download_state.name()
             };
-            let is_downloading = matches!(state.phase, DownloadPhase::Downloading {});
-
+            let progress_value = download_state.progress();
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();
+
             element! {
                 View(flex_direction: FlexDirection::Row, align_items: AlignItems::Center) {
                     Text(content: model.name(), color: theme.accent_color)
-                    #(model.is_downloadable().then(|| {
-                        element! {
-                            View(flex_direction: FlexDirection::Row) {
-                                View(width: padding as u32) {}
-                                Text(content: status, color: theme.subtitle_color)
-                            }
+                    #(model.is_downloadable().then(|| element! {
+                        View(flex_direction: FlexDirection::Row) {
+                            View(width: padding as u32)
+                            Text(content: status, color: theme.subtitle_color)
                         }
                     }))
-                    View(width: padding_wide as u32) {}
-                    #(is_downloading.then(|| {
-                        element! {
-                            ProgressBar(progress: state.progress())
-                        }
+                    View(width: padding_wide as u32)
+                    #(is_downloading.then(|| element! {
+                        ProgressBar(progress: progress_value)
                     }))
                 }
             }
