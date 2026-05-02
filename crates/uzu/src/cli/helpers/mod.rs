@@ -1,5 +1,7 @@
 mod color;
+mod hint;
 mod symbol;
 
 pub use color::ColorRgb;
+pub use hint::{HINT_COMMANDS, HINT_SEND, HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME};
 pub use symbol::{SYMBOL_COMMAND, SYMBOL_CURSOR, SYMBOL_INPUT, SYMBOL_INPUT_RESULT, SYMBOL_NEW_LINE};

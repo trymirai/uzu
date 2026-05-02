@@ -101,8 +101,4 @@ impl Theme {
         }
         lines.join("\n")
     }
-
-    pub fn default_hint(&self) -> String {
-        "ctrl+enter to send\n/ for commands".to_string()
-    }
 }

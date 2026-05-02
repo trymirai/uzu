@@ -8,6 +8,7 @@ use crate::{
         helpers::SYMBOL_COMMAND,
     },
     engine::Engine,
+    storage::types::DownloadState,
 };
 
 #[derive(Default, Props)]
@@ -22,6 +23,7 @@ pub struct ApplicationState {
     pub history: Vec<HistoryCellType>,
     pub registry: FlowRegistry,
     pub model: Option<Model>,
+    pub model_download_state: Option<DownloadState>,
 }
 
 #[component]
@@ -41,6 +43,7 @@ pub fn Application(
             .register("model", "Choose the model", || Box::new(ModelRegistriesFlow))
             .register("exit", "Exit the CLI", || Box::new(ExitFlow)),
         model: None,
+        model_download_state: None,
     });
     let (width, _) = hooks.use_terminal_size();
 

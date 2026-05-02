@@ -1,10 +1,15 @@
 use iocraft::prelude::*;
 use unicode_width::UnicodeWidthStr;
 
-use crate::cli::{
-    components::{ApplicationState, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
-    flows::Command,
-    helpers::{SYMBOL_COMMAND, SYMBOL_INPUT},
+use crate::{
+    cli::{
+        components::{ApplicationState, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
+        flows::Command,
+        helpers::{
+            HINT_COMMANDS, HINT_SEND, HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, SYMBOL_COMMAND, SYMBOL_INPUT,
+        },
+    },
+    storage::types::{DownloadPhase, DownloadState},
 };
 
 const SAFE_PADDING: u16 = 1;
@@ -80,10 +85,25 @@ fn hint_component(
     state: State<ApplicationState>,
     on_submit: Handler<String>,
 ) -> AnyElement<'static> {
+    let model = state.read().model.clone();
+    let model_download_state = state.read().model_download_state.clone().unwrap_or(DownloadState::not_downloaded(0));
+    let mut hints = Vec::new();
+    if model.as_ref().is_some_and(|model| model.is_downloadable()) {
+        if !matches!(model_download_state.phase, DownloadPhase::Downloaded {}) {
+            hints.push(HINT_STORAGE_PAUSE_RESUME.to_string());
+        } else {
+            hints.push(HINT_SEND.to_string());
+        }
+        hints.push(HINT_STORAGE_DELETE.to_string());
+    } else {
+        hints.push(HINT_SEND.to_string());
+    }
+    hints.push(HINT_COMMANDS.to_string());
+
     if commands.is_empty() {
         return element! {
             Text(
-                content: state.read().theme.default_hint(),
+                content: hints.join("\n"),
                 color: state.read().theme.subtitle_color,
             )
         }
