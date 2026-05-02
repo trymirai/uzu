@@ -71,8 +71,9 @@ pub fn Application(
 
     hooks.use_terminal_events(move |event| {
         let TerminalEvent::Key(KeyEvent {
-            code: KeyCode::Esc,
+            code,
             kind,
+            modifiers,
             ..
         }) = event
         else {
@@ -82,17 +83,28 @@ pub fn Application(
             return;
         }
 
-        let mut state = state;
-        let mut state = state.write();
-        if state.flow.is_none() {
+        let is_escape = matches!(code, KeyCode::Esc);
+        let is_ctrl_c = matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::CONTROL);
+        if !is_escape && !is_ctrl_c {
             return;
         }
-        if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
-            state.history.push(HistoryCellType::CommandResult {
-                result: "Cancelled".to_string(),
-            });
+
+        let mut state = state;
+        let mut state = state.write();
+
+        if state.flow.is_some() {
+            if is_escape {
+                if matches!(state.history.last(), Some(HistoryCellType::Command { .. })) {
+                    state.history.push(HistoryCellType::CommandResult {
+                        result: "Cancelled".to_string(),
+                    });
+                }
+                state.flow = None;
+            }
+            return;
         }
-        state.flow = None;
+
+        state.flow = Some(Box::new(ExitFlow));
     });
 
     let on_flow_event: Handler<FlowEvent> = Handler::from(move |event: FlowEvent| {
