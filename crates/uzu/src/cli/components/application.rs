@@ -3,7 +3,7 @@ use shoji::types::model::Model;
 
 use crate::{
     cli::{
-        components::{CommandInput, HistoryCell, HistoryCellType, Logo, Theme},
+        components::{CommandInput, HistoryCell, HistoryCellType, Logo, SelectedModel, Theme},
         flows::{ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
     },
@@ -131,15 +131,7 @@ pub fn Application(
         .collect();
 
     let selected_model_component: AnyElement<'static> = match state.read().model.as_ref() {
-        Some(model) => {
-            let capabilities =
-                model.specializations.iter().map(|specialization| specialization.name()).collect::<Vec<_>>().join(", ");
-            element! { View(flex_direction: FlexDirection::Row, column_gap: state.read().theme.padding()) {
-                Text(content: model.name(), weight: Weight::Bold, color: state.read().theme.accent_color)
-                Text(content: format!("({})", capabilities), color: state.read().theme.subtitle_color)
-            } }
-            .into()
-        },
+        Some(model) => element! { SelectedModel(key: model.identifier.clone()) }.into(),
         None => element! { View }.into(),
     };
 
