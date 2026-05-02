@@ -9,7 +9,7 @@ mod tile;
 
 #[allow(unused_imports)]
 pub(crate) use kernel::UnifiedGemmKernel;
-pub(crate) use quantized_storage::QuantizedStorageFormat;
+pub(crate) use quantized_storage::WeightsStorageFormat;
 pub(crate) use specialization::UnifiedGemmSpecialization;
 pub(crate) use specialization_error::UnifiedGemmSpecializationError;
 pub(crate) use tile::GemmTile;

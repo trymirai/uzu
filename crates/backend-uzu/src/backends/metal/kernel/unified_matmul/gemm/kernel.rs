@@ -5,9 +5,7 @@ use crate::{
     backends::{
         common::{
             Backend, Encoder,
-            gpu_types::unified_gemm::{
-                GemmFragmentTile, GemmSimdgroupTile, GemmThreadgroupTile, QuantizedMetadataKind,
-            },
+            gpu_types::unified_gemm::{GemmFragmentTile, GemmSimdgroupTile, GemmThreadgroupTile},
             kernel::{BufferArg, BufferArgMut},
         },
         metal::{
@@ -53,17 +51,13 @@ impl UnifiedGemmKernel {
                     specialization.tile.simdgroups_m,
                     specialization.tile.simdgroups_n,
                     specialization.input_prologue,
-                    specialization.weight_prologue,
+                    specialization.weights_storage.weight_prologue(),
                     specialization.compute,
                     specialization.output,
                     specialization.alignment,
-                    specialization.quantized_storage.map(|storage| storage.bits_per_weight as u32).unwrap_or(0),
-                    specialization.quantized_storage.map(|storage| storage.signed).unwrap_or(false),
-                    specialization.quantized_storage.map(|storage| storage.group_size).unwrap_or(0),
-                    specialization
-                        .quantized_storage
-                        .map(|storage| storage.metadata_kind)
-                        .unwrap_or(QuantizedMetadataKind::MlxScaleBias),
+                    specialization.weights_storage.bits_per_weight(),
+                    specialization.weights_storage.group_size(),
+                    specialization.weights_storage.metadata_kind(),
                 )?;
                 Ok(entry.insert(kernel))
             },
