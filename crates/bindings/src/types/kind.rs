@@ -3,7 +3,7 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-use super::{class_flavor::ClassFlavor, method_flavor::MethodFlavor, structure_flavor::StructureFlavor};
+use crate::types::{class_flavor::ClassFlavor, method_flavor::MethodFlavor, structure_flavor::StructureFlavor};
 
 pub enum Kind {
     Enumeration,

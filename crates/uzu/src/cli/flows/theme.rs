@@ -1,7 +1,9 @@
 use iocraft::prelude::*;
 
-use super::{Flow, FlowEvent};
-use crate::cli::components::{ApplicationState, Selector, SelectorItem, SelectorStyle, Theme};
+use crate::cli::{
+    components::{ApplicationState, Selector, SelectorItem, SelectorStyle, Theme},
+    flows::{Flow, FlowEvent},
+};
 
 pub struct ThemeFlow;
 

@@ -97,6 +97,20 @@ impl DownloadState {
     pub fn can_delete(&self) -> bool {
         self.phase.can_delete()
     }
+
+    #[bindings::export(Method(Getter))]
+    pub fn name(&self) -> String {
+        match &self.phase {
+            DownloadPhase::NotDownloaded {} => "Not Downloaded".to_string(),
+            DownloadPhase::Downloading {} => "Downloading".to_string(),
+            DownloadPhase::Paused {} => "Paused".to_string(),
+            DownloadPhase::Downloaded {} => "Downloaded".to_string(),
+            DownloadPhase::Locked {} => "Locked".to_string(),
+            DownloadPhase::Error {
+                ..
+            } => "Error".to_string(),
+        }
+    }
 }
 
 pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> DownloadState {
