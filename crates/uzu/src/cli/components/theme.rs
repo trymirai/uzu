@@ -103,6 +103,6 @@ impl Theme {
     }
 
     pub fn default_hint(&self) -> String {
-        "shift+enter to send\n/ for commands".to_string()
+        "ctrl+enter to send\n/ for commands".to_string()
     }
 }

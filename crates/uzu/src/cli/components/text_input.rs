@@ -62,7 +62,7 @@ pub fn TextInput(
         }
 
         match code {
-            KeyCode::Char(character) => {
+            KeyCode::Char(character) if modifiers.is_empty() => {
                 state.write().add_character(character);
                 notify_change();
             },
@@ -103,7 +103,7 @@ pub fn TextInput(
                 }
                 state.write().move_position_to_end();
             },
-            KeyCode::Enter if modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
+            KeyCode::Enter if modifiers.intersects(KeyModifiers::CONTROL) => {
                 if focus.is_minimal() {
                     return;
                 }
