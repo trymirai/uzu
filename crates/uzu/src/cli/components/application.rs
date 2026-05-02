@@ -1,9 +1,10 @@
 use iocraft::prelude::*;
+use shoji::types::model::Model;
 
 use crate::{
     cli::{
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, Theme},
-        flows::{ExitFlow, Flow, FlowEvent, FlowRegistry, ThemeFlow},
+        flows::{ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
     },
     engine::Engine,
@@ -20,6 +21,7 @@ pub struct ApplicationState {
     pub flow: Option<Box<dyn Flow>>,
     pub history: Vec<HistoryCellType>,
     pub registry: FlowRegistry,
+    pub model: Option<Model>,
 }
 
 #[component]
@@ -34,11 +36,11 @@ pub fn Application(
         theme: Theme::default(),
         flow: None,
         history: Vec::new(),
-        registry: FlowRegistry::default().register("theme", "Change the theme", || Box::new(ThemeFlow)).register(
-            "exit",
-            "Exit the CLI",
-            || Box::new(ExitFlow),
-        ),
+        registry: FlowRegistry::default()
+            .register("theme", "Choose the theme", || Box::new(ThemeFlow))
+            .register("model", "Choose the model", || Box::new(ModelRegistriesFlow))
+            .register("exit", "Exit the CLI", || Box::new(ExitFlow)),
+        model: None,
     });
     let (width, _) = hooks.use_terminal_size();
 
@@ -128,6 +130,19 @@ pub fn Application(
         .map(|r#type| element! { HistoryCell(r#type: Some(r#type)) }.into())
         .collect();
 
+    let selected_model_component: AnyElement<'static> = match state.read().model.as_ref() {
+        Some(model) => {
+            let capabilities =
+                model.specializations.iter().map(|specialization| specialization.name()).collect::<Vec<_>>().join(", ");
+            element! { View(flex_direction: FlexDirection::Row, column_gap: state.read().theme.padding()) {
+                Text(content: model.name(), weight: Weight::Bold, color: state.read().theme.accent_color)
+                Text(content: format!("({})", capabilities), color: state.read().theme.subtitle_color)
+            } }
+            .into()
+        },
+        None => element! { View }.into(),
+    };
+
     element! {
         ContextProvider(value: Context::owned(state)) {
             View(
@@ -146,7 +161,13 @@ pub fn Application(
                 ) {
                     #(history_cell_components.into_iter())
                 }
-                #(input_component)
+                View(
+                    flex_direction: FlexDirection::Column,
+                    column_gap: 0,
+                ) {
+                    #(selected_model_component)
+                    #(input_component)
+                }
             }
         }
     }

@@ -3,10 +3,7 @@ mod config;
 mod downloader;
 mod error;
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
@@ -14,6 +11,7 @@ pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
+use indexmap::IndexSet;
 use nagare::{chat::ChatSession, classification::ClassificationSession, text_to_speech::TextToSpeechSession};
 use shoji::{
     traits::{Backend, Registry},
@@ -250,29 +248,27 @@ impl Engine {
 
     #[bindings::export(Method(Getter))]
     pub async fn model_registries(&self) -> Result<Vec<ModelRegistry>, EngineError> {
-        let mut registries: Vec<_> = self
+        let registries: Vec<_> = self
             .models()
             .await?
             .into_iter()
             .map(|model| model.registry.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        registries.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(registries)
     }
 
     #[bindings::export(Method(Getter))]
     pub async fn model_vendors(&self) -> Result<Vec<ModelVendor>, EngineError> {
-        let mut vendors: Vec<_> = self
+        let vendors: Vec<_> = self
             .model_families()
             .await?
             .into_iter()
             .map(|family| family.vendor.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        vendors.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(vendors)
     }
 
@@ -293,15 +289,14 @@ impl Engine {
 
     #[bindings::export(Method(Getter))]
     pub async fn model_families(&self) -> Result<Vec<ModelFamily>, EngineError> {
-        let mut families: Vec<_> = self
+        let families: Vec<_> = self
             .models()
             .await?
             .into_iter()
             .filter_map(|model| model.family.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        families.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(families)
     }
 
