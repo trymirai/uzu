@@ -1,8 +1,15 @@
+use std::collections::HashMap;
+
 use iocraft::prelude::*;
 use shoji::types::model::Model;
 
-use super::{Flow, FlowEvent};
-use crate::cli::components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle};
+use crate::{
+    cli::{
+        components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
+        flows::{Flow, FlowEvent},
+    },
+    storage::types::DownloadState,
+};
 
 pub struct ModelsFlow {
     pub registry_id: Option<String>,
@@ -42,13 +49,14 @@ fn Models(
     let family_id = props.family_id.clone();
     let state = *hooks.use_context::<State<ApplicationState>>();
     let mut models_state = hooks.use_state(|| None::<Vec<Model>>);
+    let mut model_download_statuses_state = hooks.use_state(|| None::<HashMap<String, DownloadState>>);
 
     hooks.use_future({
         let engine = state.read().engine.clone();
         let registry_id = registry_id.clone();
         let family_id = family_id.clone();
         async move {
-            let loaded: Vec<Model> = engine
+            let models: Vec<Model> = engine
                 .models()
                 .await
                 .unwrap_or_default()
@@ -60,7 +68,10 @@ fn Models(
                         .map_or(true, |id| model.family.as_ref().map_or(false, |family| &family.identifier == id))
                 })
                 .collect();
-            models_state.set(Some(loaded));
+            let download_statuses = engine.download_states().await;
+
+            models_state.set(Some(models));
+            model_download_statuses_state.set(Some(download_statuses));
         }
     });
 
@@ -72,10 +83,17 @@ fn Models(
     let loaded = models_state.read().is_some();
     let items: Vec<SelectorItem> = list
         .iter()
-        .map(|model| SelectorItem {
-            title: model.name(),
-            description: Some(model.identifier.clone()),
-            color: None,
+        .map(|model| {
+            let download_status = model_download_statuses_state
+                .read()
+                .as_ref()
+                .and_then(|statuses| statuses.get(&model.identifier))
+                .map(|status| status.name());
+            SelectorItem {
+                title: model.name(),
+                description: download_status,
+                color: None,
+            }
         })
         .collect();
     let height = (items.len() as u16).min(5).max(1);

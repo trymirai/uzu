@@ -10,7 +10,7 @@ use shoji::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::ChatSessionError;
+use crate::chat::ChatSessionError;
 
 pub struct Session {
     instance: Box<dyn Instance>,

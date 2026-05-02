@@ -3,8 +3,10 @@ use std::sync::Arc;
 use iocraft::prelude::*;
 use shoji::types::model::{Model, ModelRegistry};
 
-use super::{Flow, FlowEvent, ModelFamiliesFlow, ModelsFlow};
-use crate::cli::components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle};
+use crate::cli::{
+    components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
+    flows::{Flow, FlowEvent, ModelFamiliesFlow, ModelsFlow},
+};
 
 pub struct ModelRegistriesFlow;
 

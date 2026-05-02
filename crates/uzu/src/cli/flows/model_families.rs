@@ -2,8 +2,10 @@ use indexmap::IndexSet;
 use iocraft::prelude::*;
 use shoji::types::model::ModelFamily;
 
-use super::{Flow, FlowEvent, ModelsFlow};
-use crate::cli::components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle};
+use crate::cli::{
+    components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
+    flows::{Flow, FlowEvent, ModelsFlow},
+};
 
 pub struct ModelFamiliesFlow {
     pub registry_id: Option<String>,
@@ -90,12 +92,12 @@ fn ModelFamilies(
                 columns_padding: columns_padding,
                 on_submit: move |index: usize| {
                     if let Some(family) = list.get(index) {
-                        let name = family.name();
+                        let name = format!("Family: {} ({})", family.name(), family.vendor.name());
                         let next: Box<dyn Flow> = Box::new(ModelsFlow {
                             registry_id: registry_id.clone(),
                             family_id: Some(family.identifier.clone()),
                         });
-                        on_event(FlowEvent::transition(format!("Family: {}", name), next));
+                        on_event(FlowEvent::transition(name, next));
                     }
                 },
             )

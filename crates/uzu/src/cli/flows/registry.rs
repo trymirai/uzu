@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use super::Flow;
+use crate::cli::flows::Flow;
 
 pub type FlowFactory = Arc<dyn Fn() -> Box<dyn Flow> + Send + Sync>;
 
