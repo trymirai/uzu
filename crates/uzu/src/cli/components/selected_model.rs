@@ -20,7 +20,7 @@ pub fn SelectedModel(
     _props: &SelectedModelProps,
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
-    let state = *hooks.use_context::<State<ApplicationState>>();
+    let mut state = *hooks.use_context::<State<ApplicationState>>();
     let downloader_state = hooks.use_state(|| {
         let engine = state.read().engine.clone();
         let model = state.read().model.clone();
@@ -47,7 +47,8 @@ pub fn SelectedModel(
             let mut stream = engine.storage_subscribe().await;
 
             if let Some(initial_status) = downloader.state().await {
-                download_status_state.set(Some(initial_status));
+                download_status_state.set(Some(initial_status.clone()));
+                state.write().model_download_state = Some(initial_status);
             }
             if downloader.resume().await.is_err() {
                 return;
@@ -56,7 +57,8 @@ pub fn SelectedModel(
                 if event_identifier != identifier {
                     continue;
                 }
-                download_status_state.set(Some(event_state));
+                download_status_state.set(Some(event_state.clone()));
+                state.write().model_download_state = Some(event_state);
             }
         }
     });
