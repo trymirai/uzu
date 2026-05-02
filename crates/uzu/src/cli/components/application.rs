@@ -16,14 +16,18 @@ pub struct ApplicationProps {
     pub engine: Option<Engine>,
 }
 
+pub struct ModelState {
+    pub model: Model,
+    pub download_state: DownloadState,
+}
+
 pub struct ApplicationState {
     pub engine: Engine,
     pub theme: Theme,
     pub flow: Option<Box<dyn Flow>>,
     pub history: Vec<HistoryCellType>,
     pub registry: FlowRegistry,
-    pub model: Option<Model>,
-    pub model_download_state: Option<DownloadState>,
+    pub model_state: Option<ModelState>,
 }
 
 #[component]
@@ -42,8 +46,7 @@ pub fn Application(
             .register("theme", "Choose the theme", || Box::new(ThemeFlow))
             .register("model", "Choose the model", || Box::new(ModelRegistriesFlow))
             .register("exit", "Exit the CLI", || Box::new(ExitFlow)),
-        model: None,
-        model_download_state: None,
+        model_state: None,
     });
     let (width, _) = hooks.use_terminal_size();
 
@@ -133,8 +136,8 @@ pub fn Application(
         .map(|r#type| element! { HistoryCell(r#type: Some(r#type)) }.into())
         .collect();
 
-    let selected_model_component: AnyElement<'static> = match state.read().model.as_ref() {
-        Some(model) => element! { SelectedModel(key: model.identifier.clone()) }.into(),
+    let selected_model_component: AnyElement<'static> = match state.read().model_state.as_ref() {
+        Some(model_state) => element! { SelectedModel(key: model_state.model.identifier.clone()) }.into(),
         None => element! { View }.into(),
     };
 

@@ -5,7 +5,7 @@ use shoji::types::model::Model;
 
 use crate::{
     cli::{
-        components::{ApplicationState, Loading, Selector, SelectorItem, SelectorStyle},
+        components::{ApplicationState, Loading, ModelState, Selector, SelectorItem, SelectorStyle},
         flows::{Flow, FlowEvent},
     },
     storage::types::DownloadState,
@@ -111,7 +111,10 @@ fn Models(
                     let mut state = state;
                     if let Some(model) = list.get(index) {
                         let summary = format!("Model: {}", model.name());
-                        state.write().model = Some(model.clone());
+                        state.write().model_state = Some(ModelState {
+                            model: model.clone(),
+                            download_state: DownloadState::not_downloaded(0),
+                        });
                         on_event(FlowEvent::finish(summary));
                     }
                 },

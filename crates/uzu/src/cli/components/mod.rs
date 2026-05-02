@@ -11,7 +11,7 @@ mod selector;
 mod text_input;
 mod theme;
 
-pub use application::{Application, ApplicationState};
+pub use application::{Application, ApplicationState, ModelState};
 pub use command_input::CommandInput;
 pub use gradient::Gradient;
 pub use history_cell::{HistoryCell, HistoryCellType};
