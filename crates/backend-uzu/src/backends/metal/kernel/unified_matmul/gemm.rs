@@ -1,21 +1,23 @@
 //! Isolated unified GEMM implementation.
 #![allow(dead_code)]
 
-mod kernel;
+mod gemm_tile;
 mod quantized_storage;
-mod specialization;
-mod specialization_error;
-mod tile;
+mod unified_gemm_kernel;
+mod unified_gemm_specialization;
+mod unified_gemm_specialization_error;
 
+pub(crate) use gemm_tile::GemmTile;
+pub(crate) use quantized_storage::{
+    GroupSize, QuantizationParams, QuantizedFormat, WeightsStorageFormat,
+};
 #[allow(unused_imports)]
-pub(crate) use kernel::UnifiedGemmKernel;
-pub(crate) use quantized_storage::WeightsStorageFormat;
-pub(crate) use specialization::UnifiedGemmSpecialization;
-pub(crate) use specialization_error::UnifiedGemmSpecializationError;
-pub(crate) use tile::GemmTile;
+pub(crate) use unified_gemm_kernel::UnifiedGemmKernel;
+pub(crate) use unified_gemm_specialization::UnifiedGemmSpecialization;
+pub(crate) use unified_gemm_specialization_error::UnifiedGemmSpecializationError;
 
 #[allow(unused_imports)]
 pub(crate) use crate::backends::common::gpu_types::unified_gemm::{
-    GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmWeightPrologueKind,
-    QuantizedMetadataKind,
+    BitsPerWeight, GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind,
+    GemmWeightPrologueKind,
 };

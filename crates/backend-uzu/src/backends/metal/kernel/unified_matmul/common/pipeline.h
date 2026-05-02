@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../common/dsl.h"
+#include "bits_per_weight.h"
 
 namespace uzu {
 namespace unified_gemm {

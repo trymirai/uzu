@@ -5,6 +5,11 @@
 using namespace metal;
 
 namespace uzu::unified_gemm {
+enum class BitsPerWeight : uint32_t {
+  Bits4 = 4,
+  Bits8 = 8,
+};
+
 struct alignas(4) GemmAlignment {
   bool m_aligned;
   bool n_aligned;
@@ -60,10 +65,5 @@ enum class GemmWeightPrologueKind : uint32_t {
   FullPrecision = 0,
   MlxDequant = 1,
   AwqDequant = 2,
-};
-
-enum class QuantizedMetadataKind : uint32_t {
-  MlxScaleBias = 0,
-  AwqScaleZeroPoint = 1,
 };
 } // namespace uzu::unified_gemm

@@ -28,7 +28,6 @@ KERNEL(UnifiedGemm)(
     const GemmAlignment alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
     const uint group_size SPECIALIZE,
-    const QuantizedMetadataKind metadata_kind SPECIALIZE,
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
@@ -49,7 +48,6 @@ KERNEL(UnifiedGemm)(
   (void)alignment;
   (void)bits_per_weight;
   (void)group_size;
-  (void)metadata_kind;
   (void)group_x;
   (void)group_y;
   (void)thread_x;

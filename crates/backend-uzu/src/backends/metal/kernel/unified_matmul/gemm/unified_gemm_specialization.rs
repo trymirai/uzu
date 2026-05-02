@@ -35,8 +35,6 @@ impl UnifiedGemmSpecialization {
     pub(crate) fn validate(&self) -> Result<(), UnifiedGemmSpecializationError> {
         self.tile.validate()?;
 
-        self.weights_storage.validate()?;
-
         let group_size = self.weights_storage.group_size();
         if group_size != 0 && self.tile.threadgroup_k > group_size {
             return Err(UnifiedGemmSpecializationError::ThreadgroupKExceedsGroupSize {
