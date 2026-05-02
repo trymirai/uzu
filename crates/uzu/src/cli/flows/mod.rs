@@ -1,9 +1,15 @@
 mod exit;
+mod model_families;
+mod model_registries;
+mod models;
 mod registry;
 mod theme;
 
 pub use exit::ExitFlow;
 use iocraft::prelude::*;
+pub use model_families::ModelFamiliesFlow;
+pub use model_registries::ModelRegistriesFlow;
+pub use models::ModelsFlow;
 pub use registry::{Command, FlowRegistry};
 pub use theme::ThemeFlow;
 

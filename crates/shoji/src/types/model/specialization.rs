@@ -10,3 +10,17 @@ pub enum ModelSpecialization {
     Translation {},
     Speculation {},
 }
+
+#[bindings::export(Implementation)]
+impl ModelSpecialization {
+    #[bindings::export(Method(Getter))]
+    pub fn name(&self) -> String {
+        match self {
+            ModelSpecialization::Chat {} => "Chat".to_string(),
+            ModelSpecialization::Classification {} => "Classification".to_string(),
+            ModelSpecialization::TextToSpeech {} => "Text to Speech".to_string(),
+            ModelSpecialization::Translation {} => "Translation".to_string(),
+            ModelSpecialization::Speculation {} => "Speculation".to_string(),
+        }
+    }
+}
