@@ -22,7 +22,7 @@ use crate::{
         },
     },
     config::{
-        ConfigDataType, DescriptAudioCodecConfig, DescriptAudioConvNeXtNormConfig, EmbeddingConfig,
+        DescriptAudioCodecConfig, DescriptAudioConvNeXtNormConfig, EmbeddingConfig,
         EmbeddingConfigCommon, InnerModelConfig, TtsAudioDecoderConfig, TtsConfig,
     },
     encodable_block::{Decoder, EncodingParameters, LayerExecutables, RMSNorm},

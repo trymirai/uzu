@@ -3,13 +3,13 @@ use serde_json::from_str;
 use super::{
     super::{
         attention::AttentionConfig,
-        common::ConfigDataType,
         linear::{LinearConfig, QuantizationConfig},
         normalization::UpcastMode,
     },
     *,
 };
 use crate::{
+    DataType,
     backends::common::{ActivationConfig, gpu_types::QuantizationMode},
     config::mlp,
 };
@@ -93,8 +93,8 @@ fn test_transformer_layer_config() {
 
     let ground_truth_config = TransformerLayerConfig {
         pre_attention_norm_config: Some(NormalizationConfig {
-            scale_precision: ConfigDataType::BFloat16,
-            accumulation_precision: ConfigDataType::Float32,
+            scale_precision: DataType::BF16,
+            accumulation_precision: DataType::F32,
             epsilon: 1e-5,
             scale_offset: None,
             upcast_mode: UpcastMode::OnlyNormalization,
@@ -102,8 +102,8 @@ fn test_transformer_layer_config() {
             use_bias: false,
         }),
         pre_mlp_norm_config: NormalizationConfig {
-            scale_precision: ConfigDataType::BFloat16,
-            accumulation_precision: ConfigDataType::Float32,
+            scale_precision: DataType::BF16,
+            accumulation_precision: DataType::F32,
             epsilon: 1e-5,
             scale_offset: None,
             upcast_mode: UpcastMode::OnlyNormalization,
@@ -114,9 +114,9 @@ fn test_transformer_layer_config() {
             qkv_projection_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UINT4,
-                    activation_quantization_mode: Some(QuantizationMode::INT8),
-                    activation_precision: ConfigDataType::BFloat16,
+                    weight_quantization_mode: QuantizationMode::U4,
+                    activation_quantization_mode: Some(QuantizationMode::I8),
+                    activation_precision: DataType::BF16,
                 },
                 lora_rank: 16,
                 lora_scale: 2.0,
@@ -124,9 +124,9 @@ fn test_transformer_layer_config() {
             out_projection_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UINT4,
-                    activation_quantization_mode: Some(QuantizationMode::INT8),
-                    activation_precision: ConfigDataType::BFloat16,
+                    weight_quantization_mode: QuantizationMode::U4,
+                    activation_quantization_mode: Some(QuantizationMode::I8),
+                    activation_precision: DataType::BF16,
                 },
                 lora_rank: 16,
                 lora_scale: 2.0,
@@ -152,9 +152,9 @@ fn test_transformer_layer_config() {
             linear_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UINT4,
-                    activation_quantization_mode: Some(QuantizationMode::INT8),
-                    activation_precision: ConfigDataType::BFloat16,
+                    weight_quantization_mode: QuantizationMode::U4,
+                    activation_quantization_mode: Some(QuantizationMode::I8),
+                    activation_precision: DataType::BF16,
                 },
                 lora_rank: 16,
                 lora_scale: 2.0,

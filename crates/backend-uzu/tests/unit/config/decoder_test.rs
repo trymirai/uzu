@@ -3,7 +3,6 @@ use serde_json5::from_str;
 use super::{
     super::{
         attention::AttentionConfig,
-        common::ConfigDataType,
         embedding::{EmbeddingConfig, EmbeddingConfigCommon},
         linear::{LinearConfig, QuantizationConfig},
         mlp::{DenseMLPConfig, MLPConfig},
@@ -12,7 +11,10 @@ use super::{
     },
     *,
 };
-use crate::backends::common::{ActivationConfig, gpu_types::QuantizationMode};
+use crate::{
+    DataType,
+    backends::common::{ActivationConfig, gpu_types::QuantizationMode},
+};
 
 #[test]
 fn test_decoder_config() {
@@ -130,13 +132,13 @@ fn test_decoder_config() {
                 logit_soft_cap: None,
             },
             group_size: 128,
-            embedding_quantization_mode: QuantizationMode::INT8,
-            activation_quantization_mode: Some(QuantizationMode::INT8),
-            activation_precision: ConfigDataType::BFloat16,
+            embedding_quantization_mode: QuantizationMode::I8,
+            activation_quantization_mode: Some(QuantizationMode::I8),
+            activation_precision: DataType::BF16,
         },
         global_rope_config: Some(RoPEConfig::Llama {
             common: RopeConfigCommon {
-                precision: ConfigDataType::BFloat16,
+                precision: DataType::BF16,
                 base: 500000.0,
                 max_sequence_length: 262144,
             },
@@ -148,8 +150,8 @@ fn test_decoder_config() {
         local_rope_config: None,
         layer_config: DecoderLayerConfig {
             pre_attention_norm_config: NormalizationConfig {
-                scale_precision: ConfigDataType::BFloat16,
-                accumulation_precision: ConfigDataType::Float32,
+                scale_precision: DataType::BF16,
+                accumulation_precision: DataType::F32,
                 epsilon: 1e-5,
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
@@ -157,8 +159,8 @@ fn test_decoder_config() {
                 use_bias: false,
             },
             pre_mlp_norm_config: NormalizationConfig {
-                scale_precision: ConfigDataType::BFloat16,
-                accumulation_precision: ConfigDataType::Float32,
+                scale_precision: DataType::BF16,
+                accumulation_precision: DataType::F32,
                 epsilon: 1e-5,
                 scale_offset: None,
                 upcast_mode: UpcastMode::OnlyNormalization,
@@ -169,9 +171,9 @@ fn test_decoder_config() {
                 qkv_projection_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UINT4,
-                        activation_quantization_mode: Some(QuantizationMode::INT8),
-                        activation_precision: ConfigDataType::BFloat16,
+                        weight_quantization_mode: QuantizationMode::U4,
+                        activation_quantization_mode: Some(QuantizationMode::I8),
+                        activation_precision: DataType::BF16,
                     },
                     lora_rank: 16,
                     lora_scale: 2.0,
@@ -179,9 +181,9 @@ fn test_decoder_config() {
                 out_projection_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UINT4,
-                        activation_quantization_mode: Some(QuantizationMode::INT8),
-                        activation_precision: ConfigDataType::BFloat16,
+                        weight_quantization_mode: QuantizationMode::U4,
+                        activation_quantization_mode: Some(QuantizationMode::I8),
+                        activation_precision: DataType::BF16,
                     },
                     lora_rank: 16,
                     lora_scale: 2.0,
@@ -207,9 +209,9 @@ fn test_decoder_config() {
                 linear_config: LinearConfig::QLoRA {
                     quantization: QuantizationConfig {
                         group_size: 32,
-                        weight_quantization_mode: QuantizationMode::UINT4,
-                        activation_quantization_mode: Some(QuantizationMode::INT8),
-                        activation_precision: ConfigDataType::BFloat16,
+                        weight_quantization_mode: QuantizationMode::U4,
+                        activation_quantization_mode: Some(QuantizationMode::I8),
+                        activation_precision: DataType::BF16,
                     },
                     lora_rank: 16,
                     lora_scale: 2.0,
@@ -225,8 +227,8 @@ fn test_decoder_config() {
             post_mlp_norm_config: None,
         },
         output_norm_config: NormalizationConfig {
-            scale_precision: ConfigDataType::BFloat16,
-            accumulation_precision: ConfigDataType::Float32,
+            scale_precision: DataType::BF16,
+            accumulation_precision: DataType::F32,
             epsilon: 1e-5,
             scale_offset: None,
             upcast_mode: UpcastMode::OnlyNormalization,

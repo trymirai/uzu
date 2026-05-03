@@ -19,7 +19,7 @@ fn test_rope_config() {
 
     let ground_truth_config = RoPEConfig::Llama {
         common: RopeConfigCommon {
-            precision: ConfigDataType::BFloat16,
+            precision: DataType::BF16,
             base: 500000.0,
             max_sequence_length: 131072,
         },

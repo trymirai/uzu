@@ -1,10 +1,10 @@
 use super::*;
 
 pub(super) fn resolve_descript_audio_codec_vocoder_data_type(
-    top_level_precision: Option<ConfigDataType>,
+    top_level_precision: Option<DataType>,
     config: &DescriptAudioCodecConfig,
 ) -> AudioResult<DataType> {
-    let mut resolved_precision: Option<ConfigDataType> = None;
+    let mut resolved_precision: Option<DataType> = None;
     for (field_name, precision) in [
         ("tts_config.activation_precision", top_level_precision),
         ("tts_config.audio_decoder_config.precision", Some(config.precision)),

@@ -1,25 +1,40 @@
 use bytemuck::Pod;
 use half::{bf16, f16};
 use num_traits::NumCast;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub enum DataType {
     // Floating point
+    #[serde(rename = "bfloat16")]
     BF16,
+    #[serde(rename = "float16")]
     F16,
+    #[serde(rename = "float32")]
     F32,
+    #[serde(rename = "float64")]
     F64,
     // Sub-byte integers
+    #[serde(rename = "int4")]
     I4,
+    #[serde(rename = "uint4")]
     U4,
     // Normal integers
+    #[serde(rename = "int8")]
     I8,
+    #[serde(rename = "uint8")]
     U8,
+    #[serde(rename = "int16")]
     I16,
+    #[serde(rename = "uint16")]
     U16,
+    #[serde(rename = "int32")]
     I32,
+    #[serde(rename = "uint32")]
     U32,
+    #[serde(rename = "int64")]
     I64,
+    #[serde(rename = "uint64")]
     U64,
 }
 

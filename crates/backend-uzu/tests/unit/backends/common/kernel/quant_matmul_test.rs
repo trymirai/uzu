@@ -337,8 +337,8 @@ fn execute_quantized_matmul<B: Backend>(
             input_dim,
             output_dim,
             mode: match bits {
-                4 => QuantizationMode::UINT4,
-                8 => QuantizationMode::INT8,
+                4 => QuantizationMode::U4,
+                8 => QuantizationMode::I8,
                 _ => panic!("Unsupported bits: {}", bits),
             },
             quantization_type,

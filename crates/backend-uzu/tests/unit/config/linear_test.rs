@@ -19,9 +19,9 @@ fn test_linear_config() {
     let ground_truth_config = LinearConfig::QLoRA {
         quantization: QuantizationConfig {
             group_size: 32,
-            weight_quantization_mode: QuantizationMode::UINT4,
-            activation_quantization_mode: Some(QuantizationMode::INT8),
-            activation_precision: ConfigDataType::BFloat16,
+            weight_quantization_mode: QuantizationMode::U4,
+            activation_quantization_mode: Some(QuantizationMode::I8),
+            activation_precision: DataType::BF16,
         },
         lora_rank: 16,
         lora_scale: 2.0,
@@ -51,9 +51,9 @@ fn test_rht_linear_wrapper_config() {
         block_size: 32,
         inner_config: Box::new(LinearConfig::Quantized(QuantizationConfig {
             group_size: 32,
-            weight_quantization_mode: QuantizationMode::UINT4,
+            weight_quantization_mode: QuantizationMode::U4,
             activation_quantization_mode: None,
-            activation_precision: ConfigDataType::BFloat16,
+            activation_precision: DataType::BF16,
         })),
     };
 

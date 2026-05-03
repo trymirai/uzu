@@ -15,8 +15,8 @@ fn test_normalization_config() {
         "#;
 
     let ground_truth_config = NormalizationConfig {
-        scale_precision: ConfigDataType::BFloat16,
-        accumulation_precision: ConfigDataType::Float32,
+        scale_precision: DataType::BF16,
+        accumulation_precision: DataType::F32,
         epsilon: 1e-05,
         scale_offset: None,
         upcast_mode: UpcastMode::OnlyNormalization,

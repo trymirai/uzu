@@ -6,8 +6,8 @@ using namespace metal;
 
 namespace uzu::quantization {
 enum class QuantizationMode : uint32_t {
-  UINT4 = 0,
-  INT8 = 1,
-  UINT8 = 2,
+  U4 = 0,
+  I8 = 1,
+  U8 = 2,
 };
 } // namespace uzu::quantization

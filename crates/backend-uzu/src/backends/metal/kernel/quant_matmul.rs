@@ -77,8 +77,8 @@ fn build_quantized_specialization(
     };
 
     let bits = match configuration.mode {
-        QuantizationMode::UINT4 => BitsPerWeight::Bits4,
-        QuantizationMode::INT8 | QuantizationMode::UINT8 => BitsPerWeight::Bits8,
+        QuantizationMode::U4 => BitsPerWeight::Bits4,
+        QuantizationMode::I8 | QuantizationMode::U8 => BitsPerWeight::Bits8,
     };
     let group_size = GroupSize::try_new(configuration.group_size as u32)
         .expect("group_size validated nonzero in QuantizedMatmulKernelEncodable::new");

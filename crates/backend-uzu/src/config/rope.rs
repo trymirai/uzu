@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ConfigDataType;
+use crate::DataType;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct RopeConfigCommon {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub base: f32,
     pub max_sequence_length: usize,
 }

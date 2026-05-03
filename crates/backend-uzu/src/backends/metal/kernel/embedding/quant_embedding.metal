@@ -38,12 +38,12 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
   const T bias = biases[token_id * num_groups + group_idx];
 
   const uint packing_divisor =
-      quantization_mode == QuantizationMode::UINT4 ? 2 : 1;
+      quantization_mode == QuantizationMode::U4 ? 2 : 1;
   const uint weights_stride = model_dim / packing_divisor;
 
   int quantized_value = 0;
   switch (quantization_mode) {
-  case QuantizationMode::UINT4: {
+  case QuantizationMode::U4: {
     const uint byte_idx = token_id * weights_stride + (dim_idx / 2);
     const uint8_t packed = weights[byte_idx];
     if ((dim_idx & 1) == 0) {
@@ -53,14 +53,14 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     }
     break;
   };
-  case QuantizationMode::INT8: {
+  case QuantizationMode::I8: {
     const uint elem_idx = token_id * weights_stride + dim_idx;
     const device int8_t* weights_i8 =
         reinterpret_cast<const device int8_t*>(weights);
     quantized_value = int(weights_i8[elem_idx]);
     break;
   };
-  case QuantizationMode::UINT8: {
+  case QuantizationMode::U8: {
     const uint elem_idx = token_id * weights_stride + dim_idx;
     quantized_value = int(weights[elem_idx]);
     break;

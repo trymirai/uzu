@@ -1,7 +1,7 @@
 use serde_json::from_str;
 
 use super::{super::linear::QuantizationConfig, *};
-use crate::{backends::common::gpu_types::QuantizationMode, config::ConfigDataType};
+use crate::{DataType, backends::common::gpu_types::QuantizationMode};
 
 #[test]
 fn test_dense_mlp_config() {
@@ -25,9 +25,9 @@ fn test_dense_mlp_config() {
         linear_config: LinearConfig::QLoRA {
             quantization: QuantizationConfig {
                 group_size: 32,
-                weight_quantization_mode: QuantizationMode::UINT4,
-                activation_quantization_mode: Some(QuantizationMode::INT8),
-                activation_precision: ConfigDataType::BFloat16,
+                weight_quantization_mode: QuantizationMode::U4,
+                activation_quantization_mode: Some(QuantizationMode::I8),
+                activation_precision: DataType::BF16,
             },
             lora_rank: 16,
             lora_scale: 2.0,
@@ -78,16 +78,16 @@ fn test_moe_mlp_config() {
         num_active_routed_experts: 4,
         routing_function: RoutingFunctionConfig::SoftmaxRouting,
         router_config: LinearConfig::FullPrecision {
-            precision: ConfigDataType::BFloat16,
+            precision: DataType::BF16,
         },
         router_has_biases: true,
         expert_config: MoeExpertConfig {
             linear_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UINT4,
-                    activation_quantization_mode: Some(QuantizationMode::INT8),
-                    activation_precision: ConfigDataType::BFloat16,
+                    weight_quantization_mode: QuantizationMode::U4,
+                    activation_quantization_mode: Some(QuantizationMode::I8),
+                    activation_precision: DataType::BF16,
                 },
                 lora_rank: 16,
                 lora_scale: 2.0,
@@ -141,16 +141,16 @@ fn test_moe_mlp_config_with_additional_fields() {
         num_active_routed_experts: 4,
         routing_function: RoutingFunctionConfig::SoftmaxRouting,
         router_config: LinearConfig::FullPrecision {
-            precision: ConfigDataType::BFloat16,
+            precision: DataType::BF16,
         },
         router_has_biases: true,
         expert_config: MoeExpertConfig {
             linear_config: LinearConfig::QLoRA {
                 quantization: QuantizationConfig {
                     group_size: 32,
-                    weight_quantization_mode: QuantizationMode::UINT4,
-                    activation_quantization_mode: Some(QuantizationMode::INT8),
-                    activation_precision: ConfigDataType::BFloat16,
+                    weight_quantization_mode: QuantizationMode::U4,
+                    activation_quantization_mode: Some(QuantizationMode::I8),
+                    activation_precision: DataType::BF16,
                 },
                 lora_rank: 16,
                 lora_scale: 2.0,

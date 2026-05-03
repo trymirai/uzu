@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::{EmbeddingConfig, EmbeddingConfigCommon, LinearConfig, TransformerConfig};
-use crate::ConfigDataType;
+use crate::DataType;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TtsMessageProcessorConfig {
@@ -47,7 +47,7 @@ pub struct TtsConfig {
     pub text_decoder_config: TtsTextDecoderConfig,
     pub audio_decoder_config: TtsAudioDecoderConfig,
     #[serde(default)]
-    pub activation_precision: Option<ConfigDataType>,
+    pub activation_precision: Option<DataType>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -80,7 +80,7 @@ pub struct FishAudioTextDecoderConfig {
     pub max_seq_len: usize,
     pub scale_codebook_embeddings: bool,
     #[serde(default)]
-    pub precision: Option<ConfigDataType>,
+    pub precision: Option<DataType>,
     pub short_logits_size: usize,
     pub repeat_window_size: usize,
 }
@@ -91,7 +91,7 @@ pub enum FishAudioLinearConfig {
     Tagged(LinearConfig),
     UntaggedFullPrecision {
         #[serde(rename = "precision")]
-        precision: ConfigDataType,
+        precision: DataType,
     },
 }
 
@@ -112,7 +112,7 @@ pub enum FishAudioEmbeddingConfig {
     UntaggedFullPrecision {
         input_scale: Option<f32>,
         logit_soft_cap: Option<f32>,
-        precision: ConfigDataType,
+        precision: DataType,
     },
 }
 
@@ -164,7 +164,7 @@ pub enum TtsAudioDecoderConfig {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DescriptAudioCodecConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub quantizer_config: DescriptAudioQuantizerConfig,
     pub decoder_config: DescriptAudioDacDecoderConfig,
     pub samplerate: u32,
@@ -183,7 +183,7 @@ pub struct DescriptAudioCodecConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptAudioDacDecoderConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub conv_config: DescriptAudioCausalConv1dConfig,
     pub snake_config: DescriptAudioSnake1dConfig,
     pub decoder_block_config: DescriptAudioDacDecoderBlockConfig,
@@ -193,7 +193,7 @@ pub struct DescriptAudioDacDecoderConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptAudioDacDecoderBlockConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub snake_config: DescriptAudioSnake1dConfig,
     pub trans_conv_config: DescriptAudioCausalTransposeConv1dConfig,
     pub res_unit_config: DescriptAudioResidualUnitConfig,
@@ -203,7 +203,7 @@ pub struct DescriptAudioDacDecoderBlockConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptAudioResidualUnitConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub snake_config: DescriptAudioSnake1dConfig,
     pub conv_config: DescriptAudioCausalConv1dConfig,
     pub causal: bool,
@@ -212,27 +212,27 @@ pub struct DescriptAudioResidualUnitConfig {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptAudioCausalConv1dConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub has_biases: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptAudioCausalTransposeConv1dConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub has_biases: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptAudioSnake1dConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct DescriptAudioQuantizerConfig {
     #[serde(default)]
-    pub precision: Option<ConfigDataType>,
+    pub precision: Option<DataType>,
     pub post_module_config: TransformerConfig,
     pub upsampler_config: DescriptAudioUpsamplerConfig,
 }

@@ -98,7 +98,7 @@ fn get_test_data_oob<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
         model_dim,
         input_scale,
         group_size,
-        quant_mode: QuantizationMode::UINT8,
+        quant_mode: QuantizationMode::U8,
     };
 
     let expected = get_output::<T, Cpu>(&input);
@@ -184,49 +184,49 @@ fn test_oob<T: ArrayElement + Float + Debug + Display>() {
 // UINT4 tests
 #[uzu_test]
 fn test_uint4_f32() {
-    test_quant_mode::<f32>(QuantizationMode::UINT4);
+    test_quant_mode::<f32>(QuantizationMode::U4);
 }
 
 #[uzu_test]
 fn test_uint4_f16() {
-    test_quant_mode::<f16>(QuantizationMode::UINT4);
+    test_quant_mode::<f16>(QuantizationMode::U4);
 }
 
 #[uzu_test]
 fn test_uint4_bf16() {
-    test_quant_mode::<bf16>(QuantizationMode::UINT4);
+    test_quant_mode::<bf16>(QuantizationMode::U4);
 }
 
 // INT8 tests
 #[uzu_test]
 fn test_int8_f32() {
-    test_quant_mode::<f32>(QuantizationMode::INT8);
+    test_quant_mode::<f32>(QuantizationMode::I8);
 }
 
 #[uzu_test]
 fn test_int8_f16() {
-    test_quant_mode::<f16>(QuantizationMode::INT8);
+    test_quant_mode::<f16>(QuantizationMode::I8);
 }
 
 #[uzu_test]
 fn test_int8_bf16() {
-    test_quant_mode::<bf16>(QuantizationMode::INT8);
+    test_quant_mode::<bf16>(QuantizationMode::I8);
 }
 
 // UINT8 tests
 #[uzu_test]
 fn test_uint8_f32() {
-    test_quant_mode::<f32>(QuantizationMode::UINT8);
+    test_quant_mode::<f32>(QuantizationMode::U8);
 }
 
 #[uzu_test]
 fn test_uint8_f16() {
-    test_quant_mode::<f16>(QuantizationMode::UINT8);
+    test_quant_mode::<f16>(QuantizationMode::U8);
 }
 
 #[uzu_test]
 fn test_uint8_bf16() {
-    test_quant_mode::<bf16>(QuantizationMode::UINT8);
+    test_quant_mode::<bf16>(QuantizationMode::U8);
 }
 
 // OOB tests

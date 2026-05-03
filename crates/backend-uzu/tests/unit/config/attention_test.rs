@@ -1,10 +1,7 @@
 use serde_json5::from_str;
 
-use super::{
-    super::{common::ConfigDataType, linear::QuantizationConfig},
-    *,
-};
-use crate::backends::common::gpu_types::QuantizationMode;
+use super::{super::linear::QuantizationConfig, *};
+use crate::{DataType, backends::common::gpu_types::QuantizationMode};
 
 #[test]
 fn test_attention_config() {
@@ -48,9 +45,9 @@ fn test_attention_config() {
         qkv_projection_config: LinearConfig::QLoRA {
             quantization: QuantizationConfig {
                 group_size: 32,
-                weight_quantization_mode: QuantizationMode::UINT4,
-                activation_quantization_mode: Some(QuantizationMode::INT8),
-                activation_precision: ConfigDataType::BFloat16,
+                weight_quantization_mode: QuantizationMode::U4,
+                activation_quantization_mode: Some(QuantizationMode::I8),
+                activation_precision: DataType::BF16,
             },
             lora_rank: 16,
             lora_scale: 2.0,
@@ -58,9 +55,9 @@ fn test_attention_config() {
         out_projection_config: LinearConfig::QLoRA {
             quantization: QuantizationConfig {
                 group_size: 32,
-                weight_quantization_mode: QuantizationMode::UINT4,
-                activation_quantization_mode: Some(QuantizationMode::INT8),
-                activation_precision: ConfigDataType::BFloat16,
+                weight_quantization_mode: QuantizationMode::U4,
+                activation_quantization_mode: Some(QuantizationMode::I8),
+                activation_precision: DataType::BF16,
             },
             lora_rank: 16,
             lora_scale: 2.0,

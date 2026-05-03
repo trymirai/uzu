@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ConfigDataType, backends::common::gpu_types::QuantizationMode};
+use crate::{DataType, backends::common::gpu_types::QuantizationMode};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct EmbeddingConfigCommon {
@@ -15,13 +15,13 @@ pub enum EmbeddingConfig {
     Tied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
-        precision: ConfigDataType,
+        precision: DataType,
     },
     #[serde(rename = "UntiedEmbeddingConfig")]
     Untied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
-        precision: ConfigDataType,
+        precision: DataType,
     },
     #[serde(rename = "MLXQuantizedTiedEmbeddingConfig")]
     MLXQuantizedTied {
@@ -30,7 +30,7 @@ pub enum EmbeddingConfig {
         group_size: usize,
         embedding_quantization_mode: QuantizationMode,
         activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
+        activation_precision: DataType,
     },
     #[serde(rename = "MLXQuantizedUntiedEmbeddingConfig")]
     MLXQuantizedUntied {
@@ -39,7 +39,7 @@ pub enum EmbeddingConfig {
         group_size: usize,
         embedding_quantization_mode: QuantizationMode,
         activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
+        activation_precision: DataType,
     },
     #[serde(rename = "MLXSemiQuantizedUntiedEmbeddingConfig")]
     MLXSemiQuantizedUntied {
@@ -48,7 +48,7 @@ pub enum EmbeddingConfig {
         group_size: usize,
         embedding_quantization_mode: QuantizationMode,
         activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
+        activation_precision: DataType,
     },
 }
 

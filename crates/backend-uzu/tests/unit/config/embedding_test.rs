@@ -22,9 +22,9 @@ fn test_embedding_config() {
             logit_soft_cap: None,
         },
         group_size: 128,
-        embedding_quantization_mode: QuantizationMode::UINT4,
+        embedding_quantization_mode: QuantizationMode::U4,
         activation_quantization_mode: None,
-        activation_precision: ConfigDataType::BFloat16,
+        activation_precision: DataType::BF16,
     };
 
     let deserialized: EmbeddingConfig = from_str(semi_config_str).unwrap();
@@ -48,9 +48,9 @@ fn test_embedding_config() {
             logit_soft_cap: None,
         },
         group_size: 128,
-        embedding_quantization_mode: QuantizationMode::UINT4,
+        embedding_quantization_mode: QuantizationMode::U4,
         activation_quantization_mode: None,
-        activation_precision: ConfigDataType::BFloat16,
+        activation_precision: DataType::BF16,
     };
 
     let deserialized: EmbeddingConfig = from_str(mlx_quant_untied_str).unwrap();

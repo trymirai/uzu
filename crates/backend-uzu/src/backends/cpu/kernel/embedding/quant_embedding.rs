@@ -25,7 +25,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
 ) {
     let quant_mode = QuantizationMode::from(quant_mode);
 
-    let packing_divisor: u32 = if quant_mode == QuantizationMode::UINT4 {
+    let packing_divisor: u32 = if quant_mode == QuantizationMode::U4 {
         2
     } else {
         1
@@ -50,7 +50,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                 let bias = *biases.add((token_id as u32 * num_groups + group_idx) as usize);
 
                 let quantized_value: i32 = match quant_mode {
-                    QuantizationMode::UINT4 => {
+                    QuantizationMode::U4 => {
                         let byte_idx = (token_id as u32 * weights_stride + dim_idx / 2) as usize;
                         let packed = *weights.add(byte_idx);
                         if (dim_idx & 1) == 0 {
@@ -59,12 +59,12 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                             ((packed >> 4) & 0x0F) as i32
                         }
                     },
-                    QuantizationMode::INT8 => {
+                    QuantizationMode::I8 => {
                         let elem_idx = (token_id as u32 * weights_stride + dim_idx) as usize;
                         let weights_i8 = weights as *const i8;
                         *weights_i8.add(elem_idx) as i32
                     },
-                    QuantizationMode::UINT8 => {
+                    QuantizationMode::U8 => {
                         let elem_idx = (token_id as u32 * weights_stride + dim_idx) as usize;
                         *weights.add(elem_idx) as i32
                     },

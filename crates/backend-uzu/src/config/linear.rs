@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ConfigDataType, backends::common::gpu_types::QuantizationMode};
+use crate::{DataType, backends::common::gpu_types::QuantizationMode};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct QuantizationConfig {
     pub group_size: usize,
     pub weight_quantization_mode: QuantizationMode,
     pub activation_quantization_mode: Option<QuantizationMode>,
-    pub activation_precision: ConfigDataType,
+    pub activation_precision: DataType,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -15,7 +15,7 @@ pub struct QuantizationConfig {
 pub enum LinearConfig {
     #[serde(rename = "FullPrecisionLinearConfig")]
     FullPrecision {
-        precision: ConfigDataType,
+        precision: DataType,
     },
     #[serde(rename = "GroupQuantizedLinearConfig")]
     Quantized(QuantizationConfig),
@@ -36,7 +36,7 @@ pub enum LinearConfig {
 }
 
 impl LinearConfig {
-    pub fn activation_precision(&self) -> ConfigDataType {
+    pub fn activation_precision(&self) -> DataType {
         match self {
             LinearConfig::FullPrecision {
                 precision,

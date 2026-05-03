@@ -105,8 +105,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         }
 
         let bits = match configuration.mode {
-            QuantizationMode::UINT4 => 4,
-            QuantizationMode::INT8 | QuantizationMode::UINT8 => 8,
+            QuantizationMode::U4 => 4,
+            QuantizationMode::I8 | QuantizationMode::U8 => 8,
         };
         let group_size = configuration.group_size as u32;
         let use_mlx_quant = matches!(configuration.quantization_type, QuantizedMatmulType::Mlx);

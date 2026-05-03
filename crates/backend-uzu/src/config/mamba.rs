@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use super::{common::ConfigDataType, linear::LinearConfig};
-use crate::backends::common::ActivationConfig;
+use super::linear::LinearConfig;
+use crate::{DataType, backends::common::ActivationConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct CausalConv1dConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub has_biases: bool,
 }
 
