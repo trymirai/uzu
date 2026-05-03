@@ -16,6 +16,7 @@ const SAFE_PADDING: u16 = 1;
 
 #[derive(Default, Props)]
 pub struct CommandInputProps {
+    pub disabled: bool,
     pub on_submit: Handler<String>,
 }
 
@@ -24,6 +25,7 @@ pub fn CommandInput(
     props: &CommandInputProps,
     mut hooks: Hooks,
 ) -> impl Into<AnyElement<'static>> {
+    let disabled = props.disabled;
     let on_submit = props.on_submit.clone();
 
     let state = *hooks.use_context::<State<ApplicationState>>();
@@ -32,7 +34,9 @@ pub fn CommandInput(
 
     let input_text = input.read().clone();
     let valid = valid_commands(&input_text, state);
-    let focus = if valid.is_empty() {
+    let focus = if disabled {
+        TextInputFocus::Disabled
+    } else if valid.is_empty() {
         TextInputFocus::Full
     } else {
         TextInputFocus::Minimal
@@ -41,13 +45,17 @@ pub fn CommandInput(
     let padding = state.read().theme.padding();
     let accent_color = state.read().theme.accent_color;
     let subtitle_color = state.read().theme.subtitle_color;
+    let overlay_color = state.read().theme.overlay_color();
     let maximal_width = width
         .saturating_sub(UnicodeWidthStr::width(SYMBOL_INPUT) as u16)
         .saturating_sub(padding)
         .saturating_sub(SAFE_PADDING);
 
     element! {
-        View(flex_direction: FlexDirection::Column) {
+        View(
+            flex_direction: FlexDirection::Column,
+            background_color: if disabled { Some(overlay_color) } else { None },
+        ) {
             View(
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexStart,

@@ -19,7 +19,7 @@ pub fn ProgressBar(
     let theme = state.read().theme.clone();
     let from_color = theme.accent_color.darker(0.5);
     let to_color = theme.accent_color;
-    let track_color = theme.subtitle_color;
+    let track_color = theme.overlay_color();
 
     element! {
         View(

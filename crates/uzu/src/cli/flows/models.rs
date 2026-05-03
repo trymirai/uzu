@@ -114,6 +114,7 @@ fn Models(
                         state.write().model_state = Some(ModelState {
                             model: model.clone(),
                             download_state: DownloadState::not_downloaded(0),
+                            session_state: None,
                         });
                         on_event(FlowEvent::finish(summary));
                     }

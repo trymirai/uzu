@@ -62,7 +62,7 @@ pub fn TextInput(
         }
 
         match code {
-            KeyCode::Char(character) if modifiers.is_empty() => {
+            KeyCode::Char(character) if !modifiers.intersects(KeyModifiers::CONTROL) => {
                 state.write().add_character(character);
                 notify_change();
             },

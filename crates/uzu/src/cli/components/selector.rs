@@ -67,11 +67,20 @@ pub fn Selector(
             if kind == KeyEventKind::Release || items_count == 0 {
                 return;
             }
+            let current = selected_index.get();
             let next = match code {
-                KeyCode::Up => Some(selected_index.get().saturating_sub(1)),
-                KeyCode::Down => Some((selected_index.get() + 1).min(items_count - 1)),
+                KeyCode::Up => Some(if current == 0 {
+                    items_count - 1
+                } else {
+                    current - 1
+                }),
+                KeyCode::Down => Some(if current + 1 >= items_count {
+                    0
+                } else {
+                    current + 1
+                }),
                 KeyCode::Enter => {
-                    on_submit(selected_index.get());
+                    on_submit(current);
                     None
                 },
                 _ => None,

@@ -1,6 +1,7 @@
 mod components;
 mod flows;
 mod helpers;
+mod sessions;
 
 use std::io::IsTerminal;
 
