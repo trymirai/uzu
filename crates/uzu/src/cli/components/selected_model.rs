@@ -62,6 +62,8 @@ pub fn SelectedModel(
     let on_action = hooks.use_async_handler({
         let engine = state.read().engine.clone();
         let model = state.read().model_state.as_ref().map(|model_state| model_state.model.clone());
+        let has_session =
+            state.read().model_state.as_ref().map(|model_state| model_state.session_state.is_some()).unwrap_or(false);
         move |action: StorageAction| {
             let engine = engine.clone();
             let model = model.clone();
@@ -70,6 +72,9 @@ pub fn SelectedModel(
                     return;
                 };
                 if !model.is_downloadable() {
+                    return;
+                }
+                if has_session {
                     return;
                 }
                 let downloader = engine.downloader(&model);
@@ -131,19 +136,26 @@ pub fn SelectedModel(
     });
 
     let theme = state.read().theme.clone();
-    let snapshot = state
-        .read()
-        .model_state
-        .as_ref()
-        .map(|model_state| (model_state.model.clone(), model_state.download_state.clone()));
+    let model_data = state.read().model_state.as_ref().map(|model_state| {
+        let session_status = model_state.session_state.as_deref().and_then(|session_state| session_state.status_text());
+        (model_state.model.clone(), model_state.download_state.clone(), session_status)
+    });
 
-    let view: AnyElement<'static> = match snapshot {
+    let view: AnyElement<'static> = match model_data {
         None => element! { View }.into(),
-        Some((model, download_state)) => {
+        Some((model, download_state, session_status)) => {
+            let is_downloaded = matches!(download_state.phase, DownloadPhase::Downloaded {});
             let is_downloading = matches!(download_state.phase, DownloadPhase::Downloading {});
             let status = if is_downloading {
                 let percent = (download_state.progress() * 100.0).round() as u32;
                 format!("{}%", percent)
+            } else if is_downloaded {
+                model
+                    .specializations
+                    .iter()
+                    .map(|specializations| specializations.name())
+                    .collect::<Vec<String>>()
+                    .join(", ")
             } else {
                 download_state.name()
             };
@@ -152,7 +164,11 @@ pub fn SelectedModel(
             let padding_wide = theme.padding_wide();
 
             element! {
-                View(flex_direction: FlexDirection::Row, align_items: AlignItems::Center) {
+                View(
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    width: 100pct,
+                ) {
                     Text(content: model.name(), color: theme.accent_color)
                     #(model.is_downloadable().then(|| element! {
                         View(flex_direction: FlexDirection::Row) {
@@ -163,6 +179,12 @@ pub fn SelectedModel(
                     View(width: padding_wide as u32)
                     #(is_downloading.then(|| element! {
                         ProgressBar(progress: progress_value)
+                    }))
+                    #((!is_downloading).then(|| element! {
+                        View(flex_grow: 1.0f32)
+                    }))
+                    #(session_status.map(|status| element! {
+                        Text(content: status, color: theme.subtitle_color)
                     }))
                 }
             }

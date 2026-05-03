@@ -2,7 +2,7 @@ use backend_uzu::VERSION;
 use indoc::indoc;
 use iocraft::prelude::*;
 
-use crate::device::Device;
+use crate::{cli::helpers::ColorRgb, device::Device};
 
 #[derive(Debug, Clone)]
 pub struct Theme {
@@ -69,6 +69,10 @@ impl Theme {
 
     pub fn padding_wide(&self) -> u16 {
         self.padding() * 4
+    }
+
+    pub fn overlay_color(&self) -> Color {
+        self.subtitle_color.darker(0.5)
     }
 }
 
