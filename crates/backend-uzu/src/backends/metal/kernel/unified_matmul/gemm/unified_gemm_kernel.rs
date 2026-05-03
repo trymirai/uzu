@@ -5,14 +5,16 @@ use crate::{
     backends::{
         common::{
             Backend, Encoder,
-            gpu_types::unified_gemm::{GemmFragmentTile, GemmSimdgroupTile, GemmThreadgroupTile},
             kernel::{BufferArg, BufferArgMut},
         },
         metal::{
             Metal,
             context::MetalContext,
             error::MetalError,
-            kernel::{UnifiedGemmMetalKernel, unified_matmul::gemm::UnifiedGemmSpecialization},
+            kernel::{
+                UnifiedGemmMetalKernel,
+                unified_matmul::gemm::{GemmWeightsBuffers, UnifiedGemmSpecialization},
+            },
         },
     },
 };
@@ -48,8 +50,8 @@ impl UnifiedGemmKernel {
                 let kernel = UnifiedGemmMetalKernel::new(
                     context,
                     self.data_type,
-                    specialization.tile.simdgroups_m,
-                    specialization.tile.simdgroups_n,
+                    specialization.tiling_config.simdgroups_m,
+                    specialization.tiling_config.simdgroups_n,
                     specialization.input_prologue,
                     specialization.weights_storage.weight_prologue(),
                     specialization.compute,
@@ -57,45 +59,53 @@ impl UnifiedGemmKernel {
                     specialization.alignment,
                     specialization.weights_storage.bits_per_weight(),
                     specialization.weights_storage.group_size(),
+                    specialization.weights_storage.use_mlx_quant(),
+                    specialization.weights_storage.use_zero_points(),
                 )?;
                 Ok(entry.insert(kernel))
             },
         }
     }
 
-    pub(crate) fn encode<'a, 'b, 'd>(
+    pub(crate) fn encode<'activations, 'weights, 'result>(
         &mut self,
         context: &MetalContext,
         specialization: UnifiedGemmSpecialization,
-        a: impl BufferArg<'a, <Metal as Backend>::DenseBuffer>,
-        b: impl BufferArg<'b, <Metal as Backend>::DenseBuffer>,
-        d: impl BufferArgMut<'d, <Metal as Backend>::DenseBuffer>,
+        activations: impl BufferArg<'activations, <Metal as Backend>::DenseBuffer>,
+        weights: GemmWeightsBuffers<'weights>,
+        result: impl BufferArgMut<'result, <Metal as Backend>::DenseBuffer>,
         group_count_x: u32,
         group_count_y: u32,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let kernel = self.get_or_create(context, specialization)?;
+        type Buf = <Metal as Backend>::DenseBuffer;
+        let (weights_buf, scales, biases, zero_points): (&Buf, Option<&Buf>, Option<&Buf>, Option<&Buf>) = match weights
+        {
+            GemmWeightsBuffers::FullPrecision {
+                weights,
+            } => (weights, None, None, None),
+            GemmWeightsBuffers::Mlx {
+                weights,
+                scales,
+                biases,
+            } => (weights, Some(scales), Some(biases), None),
+            GemmWeightsBuffers::Awq {
+                weights,
+                scales,
+                zero_points,
+            } => (weights, Some(scales), None, Some(zero_points)),
+        };
         kernel.encode(
-            a,
-            b,
-            d,
+            activations,
+            weights_buf,
+            result,
+            scales,
+            biases,
+            zero_points,
             group_count_x,
             group_count_y,
-            GemmThreadgroupTile {
-                m: specialization.tile.threadgroup_m,
-                n: specialization.tile.threadgroup_n,
-                k: specialization.tile.threadgroup_k,
-            },
-            GemmSimdgroupTile {
-                m: specialization.tile.simdgroup_m,
-                n: specialization.tile.simdgroup_n,
-                k: specialization.tile.simdgroup_k,
-            },
-            GemmFragmentTile {
-                m: specialization.tile.fragment_m,
-                n: specialization.tile.fragment_n,
-                k: specialization.tile.fragment_k,
-            },
+            specialization.tiling_config,
             encoder,
         );
         Ok(())

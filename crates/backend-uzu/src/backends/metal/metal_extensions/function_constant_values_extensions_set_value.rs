@@ -3,10 +3,9 @@ use std::ptr::NonNull;
 use metal::{MTLDataType, MTLFunctionConstantValues};
 
 use crate::backends::common::gpu_types::{
-    QuantizationMode,
+    QuantizationMode, QuantizedFormat,
     unified_gemm::{
-        BitsPerWeight, GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind,
-        GemmWeightPrologueKind,
+        GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmWeightPrologueKind,
     },
 };
 
@@ -50,11 +49,11 @@ impl FunctionConstantValueType for GemmAlignment {
     const DATA_TYPE: MTLDataType = MTLDataType::UInt;
 }
 
-impl FunctionConstantValueType for BitsPerWeight {
+impl FunctionConstantValueType for QuantizationMode {
     const DATA_TYPE: MTLDataType = MTLDataType::UInt;
 }
 
-impl FunctionConstantValueType for QuantizationMode {
+impl FunctionConstantValueType for QuantizedFormat {
     const DATA_TYPE: MTLDataType = MTLDataType::UInt;
 }
 

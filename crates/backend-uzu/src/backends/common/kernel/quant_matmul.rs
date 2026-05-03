@@ -2,7 +2,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Encoder, Kernels,
-        gpu_types::QuantizationMode,
+        gpu_types::{QuantizationMode, QuantizedFormat},
         kernel::{QuantizedMatmulQmmTransposedKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
     },
 };
@@ -19,12 +19,6 @@ pub enum QuantizedMatmulError<B: Backend> {
     UnsupportedHadamard,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuantizedMatmulType {
-    ZeroPoint,
-    Mlx,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct QuantizedMatmulConfiguration {
     pub data_type: DataType,
@@ -32,7 +26,7 @@ pub struct QuantizedMatmulConfiguration {
     pub input_dim: usize,
     pub output_dim: usize,
     pub mode: QuantizationMode,
-    pub quantization_type: QuantizedMatmulType,
+    pub quantized_format: QuantizedFormat,
     pub use_hadamard: bool,
 }
 
@@ -52,7 +46,7 @@ pub struct QuantizedMatmulKernelEncodable<B: Backend> {
     matrix_matrix: MatrixMatrixKernel<B>,
     input_dim: usize,
     output_dim: usize,
-    quantization_type: QuantizedMatmulType,
+    quantized_format: QuantizedFormat,
 }
 
 enum MatrixVectorKernel<B: Backend> {
@@ -109,7 +103,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             QuantizationMode::I8 | QuantizationMode::U8 => 8,
         };
         let group_size = configuration.group_size as u32;
-        let use_mlx_quant = matches!(configuration.quantization_type, QuantizedMatmulType::Mlx);
+        let use_mlx_quant = matches!(configuration.quantized_format, QuantizedFormat::MLX);
         let use_zero_points = !use_mlx_quant;
 
         // Matrix-vector
@@ -208,7 +202,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             matrix_matrix,
             input_dim: configuration.input_dim,
             output_dim: configuration.output_dim,
-            quantization_type: configuration.quantization_type,
+            quantized_format: configuration.quantized_format,
         })
     }
 
@@ -217,9 +211,9 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         encoder: &mut Encoder<B>,
         arguments: QuantizedMatmulArguments<B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
-        let (zero_points, biases) = match self.quantization_type {
-            QuantizedMatmulType::ZeroPoint => (Some(arguments.zero_points_or_biases_buffer), None),
-            QuantizedMatmulType::Mlx => (None, Some(arguments.zero_points_or_biases_buffer)),
+        let (zero_points, biases) = match self.quantized_format {
+            QuantizedFormat::AWQ => (Some(arguments.zero_points_or_biases_buffer), None),
+            QuantizedFormat::MLX => (None, Some(arguments.zero_points_or_biases_buffer)),
         };
 
         macro_rules! encode_kernel {

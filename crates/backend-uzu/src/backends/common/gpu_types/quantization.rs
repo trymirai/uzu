@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::DataType;
 
 #[repr(C)]
-#[derive(Debug, Display, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Display, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum QuantizationMode {
     #[serde(rename = "uint4")]
     U4,

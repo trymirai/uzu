@@ -13,7 +13,7 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-            QuantizedMatmulType, tests::common::helpers::alloc_buffer_with_data,
+            QuantizedFormat, tests::common::helpers::alloc_buffer_with_data,
         },
     },
 };
@@ -138,7 +138,7 @@ fn cpu_reference(
     group_size: usize,
     dtype: DataType,
     bits: usize,
-    quantization_type: QuantizedMatmulType,
+    quantized_format: QuantizedFormat,
     zero_points: &[u8],
     zero_points_stride: usize,
 ) -> Vec<f32> {
@@ -150,12 +150,12 @@ fn cpu_reference(
             let mut acc = 0.0f32;
             for g in 0..num_groups {
                 let scale = scales[j * num_groups + g];
-                let bias = match quantization_type {
-                    QuantizedMatmulType::ZeroPoint => {
+                let bias = match quantized_format {
+                    QuantizedFormat::AWQ => {
                         let zp = get_zp_value(zero_points, zero_points_stride, j, g, bits);
                         -scale * zp
                     },
-                    QuantizedMatmulType::Mlx => biases[j * num_groups + g],
+                    QuantizedFormat::MLX => biases[j * num_groups + g],
                 };
                 let l_start = g * group_size;
                 let l_end = (l_start + group_size).min(input_dim);
@@ -196,7 +196,7 @@ fn generate_test_quant_params(
     group_size: usize,
     data_type: DataType,
     bits: usize,
-    quantization_type: QuantizedMatmulType,
+    quantized_format: QuantizedFormat,
     randomize_zp: bool,
 ) -> TestQuantParams {
     let num_groups = (input_dim + group_size - 1) / group_size;
@@ -213,7 +213,7 @@ fn generate_test_quant_params(
     };
     let mut zero_points = vec![0u8; output_dim * zero_points_stride];
 
-    if quantization_type == QuantizedMatmulType::ZeroPoint && randomize_zp {
+    if quantized_format == QuantizedFormat::AWQ && randomize_zp {
         for j in 0..output_dim {
             for g in 0..num_groups {
                 let base_val = j + 3 * g;
@@ -242,7 +242,7 @@ fn generate_test_quant_params(
         }
     }
 
-    if quantization_type == QuantizedMatmulType::Mlx {
+    if quantized_format == QuantizedFormat::MLX {
         for j in 0..output_dim {
             for g in 0..num_groups {
                 let base_val = j * 7 + g * 3;
@@ -289,7 +289,7 @@ fn execute_quantized_matmul<B: Backend>(
     output_dim: usize,
     iterations: usize,
     validate: bool,
-    quantization_type: QuantizedMatmulType,
+    quantized_format: QuantizedFormat,
     randomize_zp: bool,
     group_size: usize,
     data_type: DataType,
@@ -303,7 +303,7 @@ fn execute_quantized_matmul<B: Backend>(
     };
 
     let params =
-        generate_test_quant_params(output_dim, input_dim, group_size, data_type, bits, quantization_type, randomize_zp);
+        generate_test_quant_params(output_dim, input_dim, group_size, data_type, bits, quantized_format, randomize_zp);
     // X is batch × input_dim
     let x_f32: Vec<f32> = if batch == 1 {
         // Vector case: 1 × input_dim
@@ -322,9 +322,9 @@ fn execute_quantized_matmul<B: Backend>(
     let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
     let s_buf = buffer_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
-    let b_buf = match quantization_type {
-        QuantizedMatmulType::ZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
-        QuantizedMatmulType::Mlx => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
+    let b_buf = match quantized_format {
+        QuantizedFormat::AWQ => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizedFormat::MLX => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
     let x_buf = buffer_from_f32_slice::<B>(ctx, data_type, &x_f32);
     let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
@@ -341,7 +341,7 @@ fn execute_quantized_matmul<B: Backend>(
                 8 => QuantizationMode::I8,
                 _ => panic!("Unsupported bits: {}", bits),
             },
-            quantization_type,
+            quantized_format,
             use_hadamard: false,
         },
     )
@@ -395,7 +395,7 @@ fn execute_quantized_matmul<B: Backend>(
             group_size,
             data_type,
             bits,
-            quantization_type,
+            quantized_format,
             &params.zero_points,
             params.zero_points_stride,
         );
@@ -465,7 +465,7 @@ fn execute_quantized_matmul<B: Backend>(
 }
 
 struct TestConfig {
-    quant_type: QuantizedMatmulType,
+    quant_type: QuantizedFormat,
     bits: usize,
     data_type: DataType,
     group_size: usize,
@@ -483,7 +483,7 @@ fn run_kernel_test<B: Backend>(
     validate: bool,
     iterations: usize,
 ) -> ExecutionResult {
-    let randomize_zp = config.quant_type == QuantizedMatmulType::ZeroPoint;
+    let randomize_zp = config.quant_type == QuantizedFormat::AWQ;
 
     execute_quantized_matmul::<B>(
         ctx,
@@ -511,25 +511,25 @@ fn test_quant_gmv_internal<B: Backend>() {
 
     let configs = vec![
         TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
+            quant_type: QuantizedFormat::AWQ,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
+            quant_type: QuantizedFormat::AWQ,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
+            quant_type: QuantizedFormat::MLX,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
+            quant_type: QuantizedFormat::MLX,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
@@ -554,25 +554,25 @@ fn test_quant_gmm_transposed_internal<B: Backend>() {
 
     let configs = vec![
         TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
+            quant_type: QuantizedFormat::AWQ,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
+            quant_type: QuantizedFormat::AWQ,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
+            quant_type: QuantizedFormat::MLX,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
+            quant_type: QuantizedFormat::MLX,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
@@ -608,28 +608,28 @@ fn test_quant_matmul_perf_internal<B: Backend>() {
     let configs = vec![
         // 4-bit Mlx BF16
         TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
+            quant_type: QuantizedFormat::MLX,
             bits: 4,
             data_type: DataType::BF16,
             group_size: 128,
         },
         // 8-bit Mlx BF16
         TestConfig {
-            quant_type: QuantizedMatmulType::Mlx,
+            quant_type: QuantizedFormat::MLX,
             bits: 8,
             data_type: DataType::BF16,
             group_size: 128,
         },
         // 4-bit ZP F16
         TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
+            quant_type: QuantizedFormat::AWQ,
             bits: 4,
             data_type: DataType::F16,
             group_size: 64,
         },
         // 8-bit ZP F16
         TestConfig {
-            quant_type: QuantizedMatmulType::ZeroPoint,
+            quant_type: QuantizedFormat::AWQ,
             bits: 8,
             data_type: DataType::F16,
             group_size: 64,

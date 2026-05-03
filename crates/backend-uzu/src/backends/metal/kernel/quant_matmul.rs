@@ -1,13 +1,10 @@
 use crate::backends::{
     common::{
         Encoder,
-        gpu_types::{
-            QuantizationMode,
-            unified_gemm::{GemmAlignment, GemmOutputTransformKind},
-        },
+        gpu_types::unified_gemm::{GemmAlignment, GemmOutputTransformKind},
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-            QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+            QuantizedMatmulKernelEncodable,
         },
     },
     metal::{
@@ -16,8 +13,7 @@ use crate::backends::{
         kernel::{
             matmul::MatmulMetalKernel,
             unified_matmul::gemm::{
-                BitsPerWeight, GemmComputeKind, GemmInputPrologueKind, GemmTile, GroupSize, QuantizationParams,
-                QuantizedFormat, UnifiedGemmSpecialization, WeightsStorageFormat,
+                GemmComputeKind, GemmInputPrologueKind, GemmTilingConfig, UnifiedGemmSpecialization, WeightsStorageFormat,
             },
         },
     },
@@ -55,6 +51,8 @@ pub fn encode_quantized_matmul_with_path(
                     arguments.a_buffer,
                     arguments.a_offset,
                     arguments.b_buffer,
+                    arguments.scales_buffer,
+                    arguments.zero_points_or_biases_buffer,
                     arguments.output_buffer,
                     group_count_x,
                     group_count_y,
@@ -68,7 +66,7 @@ pub fn encode_quantized_matmul_with_path(
 fn build_quantized_specialization(
     configuration: &QuantizedMatmulConfiguration,
     _batch_dim: u32,
-    tile: &GemmTile,
+    tile: &GemmTilingConfig,
 ) -> UnifiedGemmSpecialization {
     let alignment = GemmAlignment {
         m_aligned: (_batch_dim) % tile.threadgroup_m == 0,
@@ -76,22 +74,11 @@ fn build_quantized_specialization(
         k_aligned: (configuration.input_dim as u32) % tile.threadgroup_k == 0,
     };
 
-    let bits = match configuration.mode {
-        QuantizationMode::U4 => BitsPerWeight::Bits4,
-        QuantizationMode::I8 | QuantizationMode::U8 => BitsPerWeight::Bits8,
+    let weights_storage = WeightsStorageFormat::Quantized {
+        format: configuration.quantized_format,
+        mode: configuration.mode,
+        group_size: configuration.group_size as u32,
     };
-    let group_size = GroupSize::try_new(configuration.group_size as u32)
-        .expect("group_size validated nonzero in QuantizedMatmulKernelEncodable::new");
-    let params = QuantizationParams {
-        bits,
-        group_size,
-    };
-
-    let quantized = match configuration.quantization_type {
-        QuantizedMatmulType::Mlx => QuantizedFormat::MLX(params),
-        QuantizedMatmulType::ZeroPoint => QuantizedFormat::AWQ(params),
-    };
-    let weights_storage = WeightsStorageFormat::Quantized(quantized);
 
     UnifiedGemmSpecialization::new(
         *tile,
@@ -106,7 +93,7 @@ fn build_quantized_specialization(
 fn select_unified_quantized_tile(
     configuration: &QuantizedMatmulConfiguration,
     batch_dim: u32,
-) -> GemmTile {
+) -> GemmTilingConfig {
     // threadgroup_k must be ≤ group_size (validated by UnifiedGemmSpecialization).
     let group_size = configuration.group_size as u32;
     let threadgroup_k = group_size.min(32);
@@ -115,7 +102,7 @@ fn select_unified_quantized_tile(
     } else {
         (64u32, 64u32, 2u32, 2u32)
     };
-    GemmTile {
+    GemmTilingConfig {
         threadgroup_m,
         threadgroup_n,
         threadgroup_k,

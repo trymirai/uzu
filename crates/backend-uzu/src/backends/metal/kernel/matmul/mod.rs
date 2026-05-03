@@ -22,7 +22,10 @@ use crate::{
             context::MetalContext,
             kernel::{
                 MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
-                unified_matmul::gemm::{GemmTile, UnifiedGemmKernel, UnifiedGemmSpecialization, WeightsStorageFormat},
+                unified_matmul::gemm::{
+                    GemmTilingConfig, GemmWeightsBuffers, UnifiedGemmKernel, UnifiedGemmSpecialization,
+                    WeightsStorageFormat,
+                },
             },
             metal_extensions::DeviceExt,
         },
@@ -326,7 +329,9 @@ impl MatmulMetalKernel {
                 context,
                 specialization,
                 (arguments.a, arguments.a_offset as usize),
-                arguments.b,
+                GemmWeightsBuffers::FullPrecision {
+                    weights: arguments.b,
+                },
                 &mut *arguments.d,
                 group_count_x,
                 group_count_y,
@@ -352,15 +357,39 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         specialization: UnifiedGemmSpecialization,
-        a: &<Metal as crate::backends::common::Backend>::DenseBuffer,
-        a_offset: usize,
-        b: &<Metal as crate::backends::common::Backend>::DenseBuffer,
-        d: &mut <Metal as crate::backends::common::Backend>::DenseBuffer,
+        activations: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        activations_offset: usize,
+        weights: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        scales: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        zero_points_or_biases: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        result: &mut <Metal as crate::backends::common::Backend>::DenseBuffer,
         group_count_x: u32,
         group_count_y: u32,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), crate::backends::metal::error::MetalError> {
-        self.unified_gemm.encode(context, specialization, (a, a_offset), b, d, group_count_x, group_count_y, encoder)
+        let weights_buffers = if specialization.weights_storage.use_mlx_quant() {
+            GemmWeightsBuffers::Mlx {
+                weights,
+                scales,
+                biases: zero_points_or_biases,
+            }
+        } else {
+            GemmWeightsBuffers::Awq {
+                weights,
+                scales,
+                zero_points: zero_points_or_biases,
+            }
+        };
+        self.unified_gemm.encode(
+            context,
+            specialization,
+            (activations, activations_offset),
+            weights_buffers,
+            result,
+            group_count_x,
+            group_count_y,
+            encoder,
+        )
     }
 
     fn encode_unified_gemm_mxu_mma(
@@ -393,7 +422,9 @@ impl MatmulMetalKernel {
                 context,
                 specialization,
                 (arguments.a, arguments.a_offset as usize),
-                arguments.b,
+                GemmWeightsBuffers::FullPrecision {
+                    weights: arguments.b,
+                },
                 &mut *arguments.d,
                 group_count_x,
                 group_count_y,
@@ -419,7 +450,7 @@ impl MatmulMetalKernel {
 fn select_unified_gemm_simdgroup_tile(
     data_type: DataType,
     arguments: &MatmulArguments<Metal>,
-) -> GemmTile {
+) -> GemmTilingConfig {
     // Mirror existing simdgroup-MMA Gemm tile choices: 8×8×8 fragments, 2×2 simdgroups.
     let (threadgroup_m, threadgroup_n, threadgroup_k) = match data_type {
         DataType::F32 => (32u32, 64u32, 16u32),
@@ -433,7 +464,7 @@ fn select_unified_gemm_simdgroup_tile(
     };
     let simdgroups_m = 2u32;
     let simdgroups_n = 2u32;
-    GemmTile {
+    GemmTilingConfig {
         threadgroup_m,
         threadgroup_n,
         threadgroup_k,
@@ -448,7 +479,7 @@ fn select_unified_gemm_simdgroup_tile(
     }
 }
 
-fn select_unified_gemm_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTile {
+fn select_unified_gemm_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
     // Mirror gemm_mpp tile picks: 64×64 with 2×2 simdgroups by default.
     let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) =
         if arguments.batch_dim >= 128 && arguments.output_dim >= 128 {
@@ -461,7 +492,7 @@ fn select_unified_gemm_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTile 
             (64, 64, 2, 2)
         };
     let threadgroup_k = 32u32;
-    GemmTile {
+    GemmTilingConfig {
         threadgroup_m,
         threadgroup_n,
         threadgroup_k,
@@ -478,7 +509,7 @@ fn select_unified_gemm_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTile 
 
 fn unified_gemm_alignment(
     arguments: &MatmulArguments<Metal>,
-    tile: &GemmTile,
+    tile: &GemmTilingConfig,
 ) -> GemmAlignment {
     GemmAlignment {
         m_aligned: arguments.batch_dim % tile.threadgroup_m == 0,

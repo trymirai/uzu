@@ -5,11 +5,6 @@
 using namespace metal;
 
 namespace uzu::unified_gemm {
-enum class BitsPerWeight : uint32_t {
-  Bits4 = 4,
-  Bits8 = 8,
-};
-
 struct alignas(4) GemmAlignment {
   bool m_aligned;
   bool n_aligned;
@@ -26,12 +21,6 @@ enum class GemmComputeKind : uint32_t {
   SimdgroupMma = 0,
   MxuMma = 1,
 };
-
-typedef struct {
-  uint32_t m;
-  uint32_t n;
-  uint32_t k;
-} GemmFragmentTile;
 
 enum class GemmInputPrologueKind : uint32_t {
   FullPrecision = 0,
@@ -50,16 +39,18 @@ enum class GemmOutputTransformKind : uint32_t {
 };
 
 typedef struct {
-  uint32_t m;
-  uint32_t n;
-  uint32_t k;
-} GemmSimdgroupTile;
-
-typedef struct {
-  uint32_t m;
-  uint32_t n;
-  uint32_t k;
-} GemmThreadgroupTile;
+  uint32_t threadgroup_m;
+  uint32_t threadgroup_n;
+  uint32_t threadgroup_k;
+  uint32_t simdgroup_m;
+  uint32_t simdgroup_n;
+  uint32_t simdgroup_k;
+  uint32_t fragment_m;
+  uint32_t fragment_n;
+  uint32_t fragment_k;
+  uint32_t simdgroups_m;
+  uint32_t simdgroups_n;
+} GemmTilingConfig;
 
 enum class GemmWeightPrologueKind : uint32_t {
   FullPrecision = 0,

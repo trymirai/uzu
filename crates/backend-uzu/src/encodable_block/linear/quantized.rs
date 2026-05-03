@@ -11,11 +11,12 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Encoder,
+        gpu_types::QuantizedFormat,
         kernel::{
             Kernels, TensorAddBiasKernel,
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+                QuantizedMatmulKernelEncodable,
             },
         },
     },
@@ -135,7 +136,7 @@ impl<B: Backend> QuantizedLinear<B> {
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
         let weights_shape = weights.shape().to_vec();
         let scales_shape = scales.shape().to_vec();
-        let (quantization_type, zero_points_or_biases_buffer) = match parameter_tree.leaf_array("deq_biases") {
+        let (quantized_format, zero_points_or_biases_buffer) = match parameter_tree.leaf_array("deq_biases") {
             Ok(deq_biases) => {
                 let deq_biases_shape = deq_biases.shape().to_vec();
                 if !(weights_shape == [output_dim, input_dim / packing_divisor]
@@ -157,7 +158,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizedMatmulType::Mlx, deq_biases.buffer())
+                (QuantizedFormat::MLX, deq_biases.buffer())
             },
             Err(_) => {
                 let zero_points =
@@ -184,7 +185,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizedMatmulType::ZeroPoint, zero_points.buffer())
+                (QuantizedFormat::AWQ, zero_points.buffer())
             },
         };
 
@@ -221,7 +222,7 @@ impl<B: Backend> QuantizedLinear<B> {
                 input_dim,
                 output_dim,
                 mode: config.weight_quantization_mode,
-                quantization_type,
+                quantized_format,
                 use_hadamard: output_hadamard_factors.is_some(),
             },
         )
