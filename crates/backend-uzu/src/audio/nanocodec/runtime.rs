@@ -13,7 +13,7 @@ use crate::{
     array::{Array, ArrayContextExt, size_for_shape},
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     backends::common::{
-        Backend, Buffer, Context, Encoder, Kernels, Pending,
+        Backend, Context, Encoder, Kernels, Pending,
         kernel::{
             ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dGroupedResidualKernel,
             AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel,

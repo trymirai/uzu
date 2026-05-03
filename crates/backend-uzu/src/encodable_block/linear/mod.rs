@@ -122,7 +122,7 @@ impl<B: Backend> dyn Linear<B> {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
-        output_factors: B::Buffer,
+        output_factors: B::DenseBuffer,
         input_dim: usize,
         output_dim: usize,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
@@ -166,7 +166,7 @@ impl<B: Backend> dyn Linear<B> {
         parameter_tree: &ParameterTree<B::Context>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::Buffer>), LinearBlockError<B>> {
+    ) -> Result<(Box<dyn Linear<B>>, Option<B::DenseBuffer>), LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
         match config {
             LinearConfig::RHTLinearWrapper {

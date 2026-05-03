@@ -15,12 +15,12 @@ use crate::{
 const BQ: usize = 32;
 
 pub struct AttentionGemmArguments<'a, B: Backend> {
-    pub queries_buffer: &'a B::Buffer,
-    pub keys_buffer: &'a B::Buffer,
-    pub values_buffer: &'a B::Buffer,
-    pub output_buffer: &'a mut B::Buffer,
-    pub trie_buffer: Option<&'a B::Buffer>,
-    pub sinks_buffer: Option<&'a B::Buffer>,
+    pub queries_buffer: &'a B::DenseBuffer,
+    pub keys_buffer: &'a B::DenseBuffer,
+    pub values_buffer: &'a B::DenseBuffer,
+    pub output_buffer: &'a mut B::DenseBuffer,
+    pub trie_buffer: Option<&'a B::DenseBuffer>,
+    pub sinks_buffer: Option<&'a B::DenseBuffer>,
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL

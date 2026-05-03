@@ -4,6 +4,7 @@ mod backend;
 mod buffer;
 mod command_buffer;
 mod context;
+mod dense_buffer;
 mod encoder;
 mod event;
 pub mod gpu_types;
@@ -19,6 +20,7 @@ pub use command_buffer::{
     CommandBufferInitial, CommandBufferPending,
 };
 pub use context::Context;
+pub use dense_buffer::DenseBuffer;
 pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use event::Event;
 pub use hazard_tracker::Access;

@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmvKernel},
+        common::{Backend, Context, DenseBuffer, Encoder, Kernels, kernel::QuantizedMatmulQmvKernel},
         cpu::Cpu,
     },
 };

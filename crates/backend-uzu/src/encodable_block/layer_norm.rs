@@ -32,7 +32,7 @@ pub struct LayerNorm<B: Backend> {
     config: NormalizationConfig,
     input_array_id: ArrayId,
     output_array_id: ArrayId,
-    scales_buffer: Rc<RefCell<B::Buffer>>,
+    scales_buffer: Rc<RefCell<B::DenseBuffer>>,
 }
 
 impl<B: Backend> LayerNorm<B> {

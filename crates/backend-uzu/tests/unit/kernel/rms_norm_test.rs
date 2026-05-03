@@ -7,7 +7,7 @@ use std::{
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::RMSNormKernel},
+        common::{Backend, Context, DenseBuffer, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
 };
@@ -155,8 +155,8 @@ fn get_output<
         input_buffer,
         scales_array.buffer().borrow().deref(),
         output_array.buffer().borrow_mut().deref_mut(),
-        None::<&mut B::Buffer>,
-        None::<&B::Buffer>,
+        None::<&mut B::DenseBuffer>,
+        None::<&B::DenseBuffer>,
         input.batch_size,
         input.element_count,
         input.epsilon,
@@ -455,8 +455,8 @@ fn bench_rms_norm(c: &mut Criterion) {
                             Some(&input_buffer),
                             &scales_buffer,
                             &mut output_buffer,
-                            None::<&mut <B as Backend>::Buffer>,
-                            None::<&<B as Backend>::Buffer>,
+                            None::<&mut <B as Backend>::DenseBuffer>,
+                            None::<&<B as Backend>::DenseBuffer>,
                             batch_size as u32,
                             model_dim as u32,
                             epsilon,

@@ -1,4 +1,5 @@
 // needed for tests to resolve `backend_uzu::` imports
+#[cfg(test)]
 extern crate self as backend_uzu;
 
 mod array;

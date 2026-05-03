@@ -8,7 +8,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Buffer, Context, Kernels,
+        Backend, Context, DenseBuffer, Kernels,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel, kv_cache_update::KVCacheUpdate},
     },
     config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
@@ -30,13 +30,13 @@ use crate::{
 pub struct AsyncBuffers<B: Backend> {
     /// Positions buffer: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
-    pub positions: Rc<RefCell<B::Buffer>>,
+    pub positions: Rc<RefCell<B::DenseBuffer>>,
     /// Seeds buffer: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
-    pub seeds: Rc<RefCell<B::Buffer>>,
+    pub seeds: Rc<RefCell<B::DenseBuffer>>,
     /// Results buffer: [batch_size] u32
     /// Each pass writes its sampled token to results[pass_idx % batch_size]
-    pub results: Rc<RefCell<B::Buffer>>,
+    pub results: Rc<RefCell<B::DenseBuffer>>,
     /// Event for GPU-side synchronization between passes
     pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)

@@ -215,7 +215,7 @@ impl MatmulMetalKernel {
 
         if let MatmulArgumentC::Bias(bias) = arguments.c {
             self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
+                None::<&<Metal as crate::backends::common::Backend>::DenseBuffer>,
                 bias,
                 arguments.d,
                 arguments.output_dim,
@@ -288,7 +288,7 @@ impl MatmulMetalKernel {
 
         if let MatmulArgumentC::Bias(bias) = arguments.c {
             self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
+                None::<&<Metal as crate::backends::common::Backend>::DenseBuffer>,
                 bias,
                 arguments.d,
                 arguments.output_dim,

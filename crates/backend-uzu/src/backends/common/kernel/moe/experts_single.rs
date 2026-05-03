@@ -14,23 +14,23 @@ static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 #[derive(Debug)]
 pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     /// Input activation [d_model]
-    pub x: &'a B::Buffer,
+    pub x: &'a B::DenseBuffer,
     /// Top-K expert indices from router [K]
-    pub topk_ids: &'a B::Buffer,
+    pub topk_ids: &'a B::DenseBuffer,
     /// Top-K probabilities from router [K]
-    pub topk_probs: &'a B::Buffer,
+    pub topk_probs: &'a B::DenseBuffer,
     /// Up/gate projection weights [E, 2*d_ff, d_model]
-    pub w13_all: &'a B::Buffer,
+    pub w13_all: &'a B::DenseBuffer,
     /// Down projection weights [E, d_model, d_ff]
-    pub w2_all: &'a B::Buffer,
+    pub w2_all: &'a B::DenseBuffer,
     /// Up/gate biases [E, 2*d_ff]
-    pub up_biases: &'a B::Buffer,
+    pub up_biases: &'a B::DenseBuffer,
     /// Down biases [E, d_model]
-    pub down_biases: &'a B::Buffer,
+    pub down_biases: &'a B::DenseBuffer,
     /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: &'a mut B::Buffer,
+    pub hidden: &'a mut B::DenseBuffer,
     /// Final output [d_model]
-    pub y: &'a mut B::Buffer,
+    pub y: &'a mut B::DenseBuffer,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension

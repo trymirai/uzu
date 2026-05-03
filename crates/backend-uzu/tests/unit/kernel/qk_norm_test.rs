@@ -131,7 +131,7 @@ fn get_output<
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        None::<&B::Buffer>,
+        None::<&B::DenseBuffer>,
         scales_array.buffer().borrow().deref(),
         qkv_array.buffer().borrow_mut().deref_mut(),
         input.batch_size,

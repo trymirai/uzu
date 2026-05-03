@@ -3,7 +3,7 @@ use std::mem::MaybeUninit;
 use backend_uzu::{
     ArrayElement,
     backends::common::{
-        Backend, Buffer, Context, Encoder, Kernels,
+        Backend, Context, DenseBuffer, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },

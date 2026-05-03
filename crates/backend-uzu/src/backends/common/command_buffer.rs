@@ -72,15 +72,15 @@ pub trait CommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer,
         src_range: Range<usize>,
-        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer,
         dst_range: Range<usize>,
     );
 
     fn encode_fill(
         &mut self,
-        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Buffer,
+        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer,
         range: Range<usize>,
         value: u8,
     );

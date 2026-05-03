@@ -1,5 +1,5 @@
 use backend_uzu::backends::common::{
-    Buffer, Encoder,
+    DenseBuffer, Encoder,
     kernel::moe::{MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments},
 };
 use rand::{RngExt, SeedableRng, rngs::StdRng};
