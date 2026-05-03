@@ -65,9 +65,9 @@ impl FunctionArgument {
         Some(KernelParameter {
             name: self.name.to_string().into_boxed_str(),
             ty: match &self.ty {
-                FunctionArgumentType::Specialization(ty) => {
-                    KernelParameterType::Value(ty.to_token_stream().to_string().into_boxed_str())
-                },
+                FunctionArgumentType::Specialization(ty) => KernelParameterType::Value(
+                    ty.to_token_stream().to_string().replace(" :: ", "::").into_boxed_str(),
+                ),
                 _ => {
                     return None;
                 },
@@ -94,9 +94,9 @@ impl FunctionParameter {
             name: self.name.to_string().into_boxed_str(),
             ty: match &self.ty {
                 FunctionParameterType::Type => KernelParameterType::Type,
-                FunctionParameterType::Value(ty) => {
-                    KernelParameterType::Value(ty.to_token_stream().to_string().into_boxed_str())
-                },
+                FunctionParameterType::Value(ty) => KernelParameterType::Value(
+                    ty.to_token_stream().to_string().replace(" :: ", "::").into_boxed_str(),
+                ),
             },
         }
     }

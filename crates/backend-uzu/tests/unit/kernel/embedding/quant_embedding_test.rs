@@ -112,7 +112,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         &context,
         T::data_type(),
         input.group_size,
-        input.quant_mode.to_u32(),
+        input.quant_mode,
     )
     .expect("Failed to create QuantizedEmbeddingLookupKernel");
 

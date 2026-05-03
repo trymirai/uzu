@@ -17,13 +17,10 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
     constant uint32_t& model_dim,
     constant float& input_scale,
     const uint32_t group_size SPECIALIZE,
-    const uint32_t quant_mode SPECIALIZE,
+    const QuantizationMode quantization_mode SPECIALIZE,
     const uint dim_idx AXIS(model_dim, 16),
     const uint batch_idx AXIS(batch_size, 16)
 ) {
-  const QuantizationMode quantization_mode = QuantizationMode(
-      quant_mode
-  ); // TODO: should be accepted as a kernel argument
   const uint thread_position_in_grid = batch_idx * model_dim + dim_idx;
   const uint64_t token_id = token_ids[batch_idx];
   if (token_id >= vocab_size) {

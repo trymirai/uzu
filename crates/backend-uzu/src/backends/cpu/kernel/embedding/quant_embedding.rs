@@ -21,15 +21,9 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
     group_size: u32,
     #[allow(unused)]
     #[specialize]
-    quant_mode: u32,
+    quantization_mode: QuantizationMode,
 ) {
-    let quant_mode = QuantizationMode::from(quant_mode);
-
-    let packing_divisor: u32 = if quant_mode == QuantizationMode::U4 {
-        2
-    } else {
-        1
-    };
+    let packing_divisor = quantization_mode.packing_divisor() as u32;
     let weights_stride = model_dim / packing_divisor;
     let num_groups = (model_dim + group_size - 1) / group_size;
 
@@ -49,7 +43,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                 let scale = *scales.add((token_id as u32 * num_groups + group_idx) as usize);
                 let bias = *biases.add((token_id as u32 * num_groups + group_idx) as usize);
 
-                let quantized_value: i32 = match quant_mode {
+                let quantized_value: i32 = match quantization_mode {
                     QuantizationMode::U4 => {
                         let byte_idx = (token_id as u32 * weights_stride + dim_idx / 2) as usize;
                         let packed = *weights.add(byte_idx);
