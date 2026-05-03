@@ -21,7 +21,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
     group_size: u32,
     #[allow(unused)]
     #[specialize]
-    quantization_mode: QuantizationMode,
+    quantization_mode: crate::backends::common::gpu_types::quantization::QuantizationMode,
 ) {
     let packing_divisor = quantization_mode.packing_divisor() as u32;
     let weights_stride = model_dim / packing_divisor;
