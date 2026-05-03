@@ -336,7 +336,7 @@ impl MatmulMetalKernel {
 
         if let MatmulArgumentC::Bias(bias) = arguments.c {
             self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
+                None::<&<Metal as crate::backends::common::Backend>::DenseBuffer>,
                 bias,
                 arguments.d,
                 arguments.output_dim,
@@ -352,10 +352,10 @@ impl MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         specialization: UnifiedGemmSpecialization,
-        a: &<Metal as crate::backends::common::Backend>::Buffer,
+        a: &<Metal as crate::backends::common::Backend>::DenseBuffer,
         a_offset: usize,
-        b: &<Metal as crate::backends::common::Backend>::Buffer,
-        d: &mut <Metal as crate::backends::common::Backend>::Buffer,
+        b: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        d: &mut <Metal as crate::backends::common::Backend>::DenseBuffer,
         group_count_x: u32,
         group_count_y: u32,
         encoder: &mut Encoder<Metal>,
@@ -403,7 +403,7 @@ impl MatmulMetalKernel {
 
         if let MatmulArgumentC::Bias(bias) = arguments.c {
             self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::Buffer>,
+                None::<&<Metal as crate::backends::common::Backend>::DenseBuffer>,
                 bias,
                 arguments.d,
                 arguments.output_dim,

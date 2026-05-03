@@ -14,7 +14,7 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     }
 
     fn size(&self) -> usize {
-        (**self).length()
+        self.length()
     }
 
     fn set_label(
