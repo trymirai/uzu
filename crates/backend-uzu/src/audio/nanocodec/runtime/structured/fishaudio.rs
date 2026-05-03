@@ -1,4 +1,5 @@
 use super::*;
+use crate::backends::common::Buffer;
 
 pub(super) fn structured_audio_dtype_key(data_type: DataType) -> u8 {
     match data_type {
@@ -51,7 +52,7 @@ pub(super) struct FishAudioQuantizerResources<B: Backend> {
 // non-overlapping lifetimes, and free-on-drop tied to command-buffer
 // completion — i.e. everything this struct reimplements by hand.
 pub(super) struct DecodeWorkspace<B: Backend> {
-    slots: RefCell<Vec<Rc<RefCell<B::Buffer>>>>,
+    slots: RefCell<Vec<Rc<RefCell<B::DenseBuffer>>>>,
     next_search: Cell<usize>,
     min_buffer_size: Cell<usize>,
     lengths_pair: [RefCell<Option<Array<B>>>; 2],
@@ -78,7 +79,7 @@ impl<B: Backend> DecodeWorkspace<B> {
         self.min_buffer_size.set(bytes);
         let mut slots = self.slots.borrow_mut();
         for slot in slots.iter_mut() {
-            if Rc::strong_count(slot) == 1 && slot.borrow().length() < bytes {
+            if Rc::strong_count(slot) == 1 && slot.borrow().size() < bytes {
                 *slot = create_labelled_buffer::<B>(context, bytes, "structured_audio_scratch")?;
             }
         }
@@ -123,7 +124,7 @@ impl<B: Backend> DecodeWorkspace<B> {
             let start = self.next_search.get() % slot_count;
             for offset in 0..slot_count {
                 let slot_index = (start + offset) % slot_count;
-                if Rc::strong_count(&slots[slot_index]) == 1 && slots[slot_index].borrow().length() >= needed {
+                if Rc::strong_count(&slots[slot_index]) == 1 && slots[slot_index].borrow().size() >= needed {
                     self.next_search.set((slot_index + 1) % slot_count);
                     return Ok(unsafe { Array::from_parts(slots[slot_index].clone(), 0, shape, data_type) });
                 }
@@ -157,7 +158,7 @@ fn create_labelled_buffer<B: Backend>(
     context: &B::Context,
     bytes: usize,
     label: &str,
-) -> AudioResult<Rc<RefCell<B::Buffer>>> {
+) -> AudioResult<Rc<RefCell<B::DenseBuffer>>> {
     let mut buffer = context
         .create_buffer(bytes)
         .map_err(|err| AudioError::Runtime(format!("failed to create scratch buffer '{label}': {err}")))?;

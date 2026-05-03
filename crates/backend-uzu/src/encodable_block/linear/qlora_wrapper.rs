@@ -45,8 +45,8 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: QuantizedLinear<B>,
     adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    adapter_down: B::Buffer,
-    adapter_up: B::Buffer,
+    adapter_down: B::DenseBuffer,
+    adapter_up: B::DenseBuffer,
     input_dim: usize,
     output_dim: usize,
     lora_rank: usize,
@@ -85,7 +85,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         input_dim: usize,
         output_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
-        output_quantized_hadamard_factors: Option<B::Buffer>,
+        output_quantized_hadamard_factors: Option<B::DenseBuffer>,
         input_array_id: ArrayId,
         output_array_id: ArrayId,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {

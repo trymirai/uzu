@@ -1,7 +1,7 @@
 mod backend;
-mod buffer;
 mod command_buffer;
 mod context;
+mod dense_buffer;
 mod device_capabilities;
 mod error;
 mod event;

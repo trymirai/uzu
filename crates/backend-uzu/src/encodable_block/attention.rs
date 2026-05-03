@@ -259,7 +259,7 @@ impl<B: Backend> Attention<B> {
         // For classifiers (no KV cache): extract values from QKV into a dedicated extracted_values buffer.
         if !has_kv_cache {
             self.update_kv_cache_inplace_kernel.encode(
-                None::<&B::Buffer>,
+                None::<&B::DenseBuffer>,
                 qkv_buf_borrow.deref(),
                 // keys already in desired layout; harmless overwrite
                 rotated_keys_buf_borrow.deref_mut(),
@@ -282,7 +282,7 @@ impl<B: Backend> Attention<B> {
 
         let trie_buf_rc = state.token_subtrie_ranges.as_ref().map(|a| a.buffer());
         let trie_buf_borrow = trie_buf_rc.as_ref().map(|rc| rc.borrow());
-        let trie_buffer: Option<&B::Buffer> = trie_buf_borrow.as_ref().map(|b| b.deref());
+        let trie_buffer: Option<&B::DenseBuffer> = trie_buf_borrow.as_ref().map(|b| b.deref());
 
         let partials_buf_rc = partials_array.buffer();
         let mut partials_buf_borrow = partials_buf_rc.borrow_mut();
@@ -295,7 +295,7 @@ impl<B: Backend> Attention<B> {
 
         let sinks_buf_rc = sinks_array.as_ref().map(|b| b.buffer());
         let sinks_buf_borrow = sinks_buf_rc.as_ref().map(|rc| rc.borrow());
-        let sinks_buffer: Option<&B::Buffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
+        let sinks_buffer: Option<&B::DenseBuffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
 
         // Only update KV cache for LLM mode (not for classifiers)
         if has_kv_cache {
@@ -314,12 +314,12 @@ impl<B: Backend> Attention<B> {
             );
         }
 
-        let key_cache_buffer: &B::Buffer = if has_kv_cache {
+        let key_cache_buffer: &B::DenseBuffer = if has_kv_cache {
             key_cache_buf_borrow.as_ref().unwrap().deref()
         } else {
             rotated_keys_buf_borrow.deref()
         };
-        let value_cache_buffer: &B::Buffer = if has_kv_cache {
+        let value_cache_buffer: &B::DenseBuffer = if has_kv_cache {
             value_cache_buf_borrow.as_ref().unwrap().deref()
         } else {
             extracted_values_buf_borrow.as_ref().unwrap().deref()

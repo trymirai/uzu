@@ -44,7 +44,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let rotated_keys_array = input.rotated_keys.as_ref().map(|rk| context.create_array_from(&[rk.len()], rk, ""));
     let rotated_keys_buf_rc = rotated_keys_array.as_ref().map(|a| a.buffer());
     let rotated_keys_buf_borrow = rotated_keys_buf_rc.as_ref().map(|rc| rc.borrow());
-    let rotated_keys_buffer: Option<&B::Buffer> = rotated_keys_buf_borrow.as_ref().map(|b| b.deref());
+    let rotated_keys_buffer: Option<&B::DenseBuffer> = rotated_keys_buf_borrow.as_ref().map(|b| b.deref());
 
     let qkv_array = context.create_array_from(&[input.qkv.len()], &input.qkv, "");
     let key_cache_array = context.create_array_from(&[cache_size], &input.key_cache, "");

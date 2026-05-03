@@ -4,10 +4,18 @@ use metal::{MTLBuffer, MTLResourceExt};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
-use crate::backends::common::Buffer;
+use crate::backends::common::{Buffer, DenseBuffer};
 
 impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     type Backend = Metal;
+
+    fn gpu_ptr(&self) -> usize {
+        self.gpu_address() as usize
+    }
+
+    fn size(&self) -> usize {
+        (**self).length()
+    }
 
     fn set_label(
         &mut self,
@@ -15,16 +23,10 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     ) {
         (**self).set_label(label);
     }
+}
 
+impl DenseBuffer for Retained<ProtocolObject<dyn MTLBuffer>> {
     fn cpu_ptr(&self) -> NonNull<c_void> {
         self.contents()
-    }
-
-    fn gpu_ptr(&self) -> usize {
-        self.gpu_address() as usize
-    }
-
-    fn length(&self) -> usize {
-        (**self).length()
     }
 }

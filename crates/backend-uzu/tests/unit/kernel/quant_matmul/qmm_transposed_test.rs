@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Buffer, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
+        common::{Backend, Context, DenseBuffer, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
         cpu::Cpu,
     },
 };
@@ -660,9 +660,14 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
 ) {
     // Use the dispatcher-selected tile configs: BM=8 small tile for M<48, big tile for M>=48.
     // We always use the BM=8 small tile kernel for M in 4..=47 to match the dispatch threshold.
-    let block_size: usize = if bits == 4 { 512 } else { 256 };
+    let block_size: usize = if bits == 4 {
+        512
+    } else {
+        256
+    };
 
-    for (m, n, k) in iproduct!([4usize, 5, 6, 7, 8, 16, 32, 48, 64], [2048usize, 4096, 14336], [2048usize, 4096, 14336]) {
+    for (m, n, k) in iproduct!([4usize, 5, 6, 7, 8, 16, 32, 48, 64], [2048usize, 4096, 14336], [2048usize, 4096, 14336])
+    {
         if n % 32 != 0 || k % block_size != 0 {
             continue;
         }
@@ -708,7 +713,11 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
         );
         let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
 
-        let zp_stride = if bits == 4 { (num_groups + 1) / 2 } else { num_groups };
+        let zp_stride = if bits == 4 {
+            (num_groups + 1) / 2
+        } else {
+            num_groups
+        };
         let zp_buf = use_zero_points.then(|| {
             alloc_buffer_with_data::<B, u8>(
                 context,
@@ -735,7 +744,7 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
                         bias_buf.as_ref(),
                         &x_buf,
                         &mut y_buf,
-                        None::<&B::Buffer>,
+                        None::<&B::DenseBuffer>,
                         k as u32,
                         n as u32,
                         m as u32,

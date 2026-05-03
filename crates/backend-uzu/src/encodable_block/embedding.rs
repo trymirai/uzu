@@ -46,14 +46,14 @@ pub enum EmbeddingError<B: Backend> {
 
 enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: B::DenseBuffer,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: B::DenseBuffer,
+        scales: B::DenseBuffer,
+        biases: B::DenseBuffer,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
@@ -61,26 +61,26 @@ enum TiedEmbeddingType<B: Backend> {
 
 enum UntiedEmbeddingLookupType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: B::DenseBuffer,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: B::DenseBuffer,
+        scales: B::DenseBuffer,
+        biases: B::DenseBuffer,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
     },
 }
 
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: B::DenseBuffer,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: B::DenseBuffer,
+        scales: B::DenseBuffer,
+        biases: B::DenseBuffer,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
 }
