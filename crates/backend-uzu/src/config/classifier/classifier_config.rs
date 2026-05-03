@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{PoolingType, PredictionHeadConfig};
 use crate::config::{
     ConfigError, DecoderConfig, DecoderLayerConfig, EmbeddingConfig, LinearConfig, NormalizationConfig,
-    TransformerConfig,
+    TransformerConfig, resolve_rope_configs,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -49,6 +49,7 @@ impl ClassifierConfig {
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
+            rope_config: first_layer.rope_config.clone(),
         };
 
         let first_mixer = &first_layer.mixer_config;
@@ -63,10 +64,18 @@ impl ClassifierConfig {
             .or(first_mixer.head_dim())
             .ok_or_else(|| ConfigError::MissingField("head_dim".to_string()))?;
 
+        let (global_rope_config, local_rope_config) = resolve_rope_configs(
+            self.transformer_config.global_rope_config.clone(),
+            self.transformer_config.local_rope_config.clone(),
+            &layer_config,
+            None,
+        )
+        .map_err(ConfigError::Invalid)?;
+
         Ok(DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: self.transformer_config.global_rope_config.clone(),
-            local_rope_config: self.transformer_config.local_rope_config.clone(),
+            global_rope_config,
+            local_rope_config,
             layer_config,
             output_norm_config: self.transformer_config.output_norm_config.clone(),
             vocab_size: self.vocab_size,

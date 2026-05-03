@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    attention::AttentionConfig, delta_net::DeltaNetAttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
+    RoPEConfig, attention::AttentionConfig, delta_net::DeltaNetAttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
     normalization::NormalizationConfig, short_conv::ShortConvConfig,
 };
 
@@ -102,6 +102,8 @@ pub struct DecoderLayerConfig {
     pub mlp_config: MLPConfig,
     #[serde(alias = "post_mlp_norm_config")]
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+    #[serde(default)]
+    pub rope_config: Option<RoPEConfig>,
 }
 
 impl DecoderLayerConfig {

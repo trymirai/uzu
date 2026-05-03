@@ -168,6 +168,7 @@ fn test_transformer_layer_config() {
         }),
         post_attention_norm_config: None,
         post_mlp_norm_config: None,
+        rope_config: None,
     };
 
     let deserialized_config: TransformerLayerConfig = from_str(config_str).unwrap();

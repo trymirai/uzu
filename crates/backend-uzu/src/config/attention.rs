@@ -26,9 +26,14 @@ pub struct AttentionConfig {
     pub has_gate: bool,
     #[serde(default)]
     pub gate_projection_config: Option<LinearConfig>,
+    #[serde(default = "default_use_rope")]
     pub use_rope: bool,
     #[serde(default)]
     pub partial_rope_dim: Option<usize>,
+}
+
+fn default_use_rope() -> bool {
+    true
 }
 
 #[cfg(test)]

@@ -5,6 +5,8 @@ use super::{
         attention::AttentionConfig,
         common::ConfigDataType,
         embedding::{EmbeddingConfig, EmbeddingConfigCommon},
+        error::ConfigError,
+        language_model::InnerModelConfig,
         linear::{LinearConfig, QuantizationConfig},
         mlp::{DenseMLPConfig, MLPConfig},
         normalization::UpcastMode,
@@ -139,6 +141,8 @@ fn test_decoder_config() {
                 precision: ConfigDataType::BFloat16,
                 base: 500000.0,
                 max_sequence_length: 262144,
+                head_dim: None,
+                partial_rotary_dim: None,
             },
             scaling_factor: 32.0,
             original_context_length: 8192,
@@ -223,6 +227,7 @@ fn test_decoder_config() {
             }),
             post_attention_norm_config: None,
             post_mlp_norm_config: None,
+            rope_config: None,
         },
         output_norm_config: NormalizationConfig {
             scale_precision: ConfigDataType::BFloat16,
@@ -296,6 +301,13 @@ fn test_decoder_config_with_layer_configs() {
                             "has_out_biases": false,
                             "use_rope": true
                         },
+                        "rope_config": {
+                            "type": "UnscaledRoPEConfig",
+                            "precision": "bfloat16",
+                            "base": 10000.0,
+                            "max_sequence_length": 32768,
+                            "head_dim": 256
+                        },
                         "post_mixer_norm_config": null,
                         "pre_mlp_norm_config": {
                             "scale_precision": "bfloat16",
@@ -341,12 +353,20 @@ fn test_decoder_config_with_layer_configs() {
                             "head_dim": 256,
                             "is_causal": true,
                             "scale": 0.0625,
-                            "sliding_window_size": 256,
+                            "sliding_window_size": null,
                             "logit_soft_cap": null,
                             "has_sinks": false,
                             "has_qkv_biases": false,
                             "has_out_biases": false,
                             "use_rope": true
+                        },
+                        "rope_config": {
+                            "type": "UnscaledRoPEConfig",
+                            "precision": "bfloat16",
+                            "base": 500000.0,
+                            "max_sequence_length": 32768,
+                            "head_dim": 256,
+                            "partial_rotary_dim": 128
                         },
                         "post_mixer_norm_config": null,
                         "pre_mlp_norm_config": {
@@ -392,8 +412,128 @@ fn test_decoder_config_with_layer_configs() {
     let sliding_windows = config.sliding_window_sizes.unwrap();
     assert_eq!(sliding_windows.len(), 2);
     assert_eq!(sliding_windows[0], Some(512));
-    assert_eq!(sliding_windows[1], Some(256));
+    assert_eq!(sliding_windows[1], None);
+    let local_rope = config.local_rope_config.as_ref().unwrap();
+    assert_eq!(local_rope.common().base, 10000.0);
+    assert_eq!(local_rope.common().head_dim, Some(256));
+    let global_rope = config.global_rope_config.as_ref().unwrap();
+    assert_eq!(global_rope.common().base, 500000.0);
+    assert_eq!(global_rope.common().partial_rotary_dim, Some(128));
     let layer_types = config.layer_types.unwrap();
     assert!(matches!(layer_types[0], DecoderLayerType::Transformer));
     assert_eq!(config.layer_configs.unwrap().len(), 2);
+}
+
+#[test]
+fn test_language_model_config_rejects_conflicting_per_layer_rope_configs() {
+    let config = serde_json::from_value::<InnerModelConfig>(language_model_config_with_layer_rope_configs(&[
+        (None, 10000.0, None),
+        (None, 20000.0, None),
+    ]))
+    .unwrap();
+
+    assert!(matches!(config.to_decoder_config(), Err(ConfigError::Invalid(_))));
+}
+
+#[test]
+fn test_language_model_config_derives_global_and_local_rope_configs_from_layers() {
+    let config = serde_json::from_value::<InnerModelConfig>(language_model_config_with_layer_rope_configs(&[
+        (Some(512), 10000.0, None),
+        (None, 500000.0, Some(128)),
+    ]))
+    .unwrap();
+
+    let decoder_config = config.to_decoder_config().unwrap();
+    let local_rope = decoder_config.local_rope_config.as_ref().unwrap();
+    assert_eq!(local_rope.common().base, 10000.0);
+    assert_eq!(local_rope.common().partial_rotary_dim, None);
+    let global_rope = decoder_config.global_rope_config.as_ref().unwrap();
+    assert_eq!(global_rope.common().base, 500000.0);
+    assert_eq!(global_rope.common().partial_rotary_dim, Some(128));
+}
+
+fn language_model_config_with_layer_rope_configs(
+    layer_rope_configs: &[(Option<usize>, f64, Option<usize>)]
+) -> serde_json::Value {
+    let linear_config = serde_json::json!({
+        "type": "FullPrecisionLinearConfig",
+        "precision": "bfloat16"
+    });
+    let norm_config = serde_json::json!({
+        "scale_precision": "bfloat16",
+        "accumulation_precision": "float32",
+        "epsilon": 1e-06,
+        "scale_offset": null,
+        "upcast_mode": "full_layer"
+    });
+    let attention_config = serde_json::json!({
+        "type": "AttentionConfig",
+        "qkv_projection_config": linear_config.clone(),
+        "out_projection_config": linear_config.clone(),
+        "query_norm_config": null,
+        "key_norm_config": null,
+        "num_heads": 4,
+        "num_groups": 1,
+        "head_dim": 64,
+        "is_causal": true,
+        "scale": null,
+        "sliding_window_size": null,
+        "logit_soft_cap": null,
+        "has_sinks": false,
+        "has_qkv_biases": false,
+        "has_out_biases": false,
+        "use_rope": true
+    });
+    let layer_config = |sliding_window_size: Option<usize>, base: f64, partial_rotary_dim: Option<usize>| {
+        let mut mixer_config = attention_config.clone();
+        mixer_config["sliding_window_size"] = serde_json::json!(sliding_window_size);
+
+        serde_json::json!({
+            "pre_attention_norm_config": null,
+            "mixer_config": mixer_config,
+            "rope_config": {
+                "type": "UnscaledRoPEConfig",
+                "precision": "bfloat16",
+                "base": base,
+                "max_sequence_length": 1024,
+                "head_dim": 64,
+                "partial_rotary_dim": partial_rotary_dim
+            },
+            "post_attention_norm_config": null,
+            "pre_mlp_norm_config": norm_config.clone(),
+            "mlp_config": {
+                "type": "DenseMLPConfig",
+                "linear_config": linear_config.clone(),
+                "activation": {
+                    "type": "GELU"
+                }
+            },
+            "post_mlp_norm_config": null
+        })
+    };
+    let layer_configs = layer_rope_configs
+        .iter()
+        .map(|&(sliding_window_size, base, partial_rotary_dim)| {
+            layer_config(sliding_window_size, base, partial_rotary_dim)
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "embedding_config": {
+            "type": "UntiedEmbeddingConfig",
+            "input_scale": null,
+            "logit_soft_cap": null,
+            "precision": "bfloat16"
+        },
+        "transformer_config": {
+            "global_rope_config": null,
+            "local_rope_config": null,
+            "layer_configs": layer_configs,
+            "output_norm_config": norm_config,
+            "model_dim": 256,
+            "hidden_dim": 512,
+            "context_length": 1024
+        },
+        "vocab_size": 1024
+    })
 }

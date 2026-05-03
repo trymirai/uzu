@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{AttentionConfig, MLPConfig, MixerConfig, NormalizationConfig};
+use super::{AttentionConfig, MLPConfig, MixerConfig, NormalizationConfig, RoPEConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerLayerConfig {
@@ -12,6 +12,8 @@ pub struct TransformerLayerConfig {
     pub pre_mlp_norm_config: NormalizationConfig,
     pub mlp_config: MLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+    #[serde(default)]
+    pub rope_config: Option<RoPEConfig>,
 }
 
 impl TransformerLayerConfig {

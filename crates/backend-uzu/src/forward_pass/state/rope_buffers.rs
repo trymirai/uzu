@@ -1,6 +1,7 @@
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::Backend,
+    config::RoPEConfig,
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
@@ -15,10 +16,12 @@ pub struct RopeBuffers<B: Backend> {
 impl<B: Backend> RopeBuffers<B> {
     pub fn new(
         context: &B::Context,
+        rope_config: &RoPEConfig,
         model_shape: &ModelShape,
     ) -> Self {
-        let rope_dim = model_shape.rope_dim();
-        let rope_max_sequence_length = model_shape.context_length();
+        let common = rope_config.common();
+        let rope_dim = common.partial_rotary_dim.or(common.head_dim).unwrap_or_else(|| model_shape.rope_dim());
+        let rope_max_sequence_length = common.max_sequence_length;
 
         Self {
             cosines: context.create_array_uninitialized(

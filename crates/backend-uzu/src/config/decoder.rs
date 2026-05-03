@@ -109,7 +109,7 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             _ => derive_dims_from_layer(&layer_config_value).ok_or_else(|| {
                 de::Error::custom(
                     "num_heads/num_groups/head_dim missing and \
-                             cannot be derived from layer config",
+                         cannot be derived from layer config",
                 )
             })?,
         };
@@ -141,6 +141,13 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             None
         };
         let layer_types_value = explicit_layer_types.or(derived_layer_types);
+        let (global_rope_config, local_rope_config) = resolve_rope_configs(
+            global_rope_config,
+            local_rope_config,
+            &layer_config_value,
+            layer_configs_boxed.as_deref(),
+        )
+        .map_err(de::Error::custom)?;
 
         Ok(Self {
             embedding_config,
@@ -198,6 +205,39 @@ struct RawDecoderConfig {
 
 fn derive_dims_from_layer(layer: &DecoderLayerConfig) -> Option<(usize, usize, usize)> {
     Some((layer.mixer_config.num_heads()?, layer.mixer_config.num_groups()?, layer.mixer_config.head_dim()?))
+}
+
+pub(crate) fn resolve_rope_configs(
+    global_rope_config: Option<RoPEConfig>,
+    local_rope_config: Option<RoPEConfig>,
+    layer_config: &DecoderLayerConfig,
+    layer_configs: Option<&[DecoderLayerConfig]>,
+) -> Result<(Option<RoPEConfig>, Option<RoPEConfig>), String> {
+    let mut global = global_rope_config;
+    let mut local = local_rope_config;
+
+    let mut layer_iter =
+        layer_configs.map(|configs| configs.iter()).unwrap_or_else(|| std::slice::from_ref(layer_config).iter());
+
+    for layer in &mut layer_iter {
+        let Some(rope_config) = &layer.rope_config else {
+            continue;
+        };
+        let target = if layer.mixer_config.sliding_window_size().is_some() {
+            &mut local
+        } else {
+            &mut global
+        };
+        if let Some(existing) = target {
+            if existing != rope_config {
+                return Err("conflicting per-layer RoPE configs for the same global/local bucket".to_string());
+            }
+        } else {
+            *target = Some(rope_config.clone());
+        }
+    }
+
+    Ok((global, local))
 }
 
 fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {

@@ -22,9 +22,11 @@ impl<B: Backend> SharedBuffers<B> {
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
     ) -> Self {
-        let global_rope = decoder_config.global_rope_config.is_some().then(|| RopeBuffers::new(context, model_shape));
+        let global_rope =
+            decoder_config.global_rope_config.as_ref().map(|config| RopeBuffers::new(context, config, model_shape));
 
-        let local_rope = decoder_config.local_rope_config.is_some().then(|| RopeBuffers::new(context, model_shape));
+        let local_rope =
+            decoder_config.local_rope_config.as_ref().map(|config| RopeBuffers::new(context, config, model_shape));
 
         let attention_sinks = decoder_config.layer_config.attention_config().is_some_and(|c| c.has_sinks).then(|| {
             let num_heads = decoder_config.num_heads;

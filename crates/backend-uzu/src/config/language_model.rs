@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ConfigError, DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig, GenerationConfig,
-    MessageProcessorConfig, MixerConfig, TransformerConfig,
+    MessageProcessorConfig, MixerConfig, TransformerConfig, resolve_rope_configs,
 };
 
 struct AttentionDims {
@@ -38,6 +38,7 @@ impl InnerModelConfig {
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
+            rope_config: first_layer.rope_config.clone(),
         };
 
         let attention_dims = Self::derive_attention_dims(tf)?;
@@ -70,14 +71,23 @@ impl InnerModelConfig {
                 pre_mlp_norm_config: layer.pre_mlp_norm_config.clone(),
                 mlp_config: layer.mlp_config.clone(),
                 post_mlp_norm_config: layer.post_mlp_norm_config.clone(),
+                rope_config: layer.rope_config.clone(),
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
+        let (global_rope_config, local_rope_config) = resolve_rope_configs(
+            tf.global_rope_config.clone(),
+            tf.local_rope_config.clone(),
+            &layer_config,
+            Some(&layer_configs),
+        )
+        .map_err(ConfigError::Invalid)?;
+
         Ok(DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: tf.global_rope_config.clone(),
-            local_rope_config: tf.local_rope_config.clone(),
+            global_rope_config,
+            local_rope_config,
             layer_config,
             layer_configs: Some(layer_configs),
             output_norm_config: tf.output_norm_config.clone(),

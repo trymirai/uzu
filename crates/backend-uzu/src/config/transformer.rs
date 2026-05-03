@@ -4,7 +4,9 @@ use super::{NormalizationConfig, RoPEConfig, TransformerLayerConfig};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TransformerConfig {
+    #[serde(default)]
     pub global_rope_config: Option<RoPEConfig>,
+    #[serde(default)]
     pub local_rope_config: Option<RoPEConfig>,
     pub layer_configs: Vec<TransformerLayerConfig>,
     pub output_norm_config: NormalizationConfig,
