@@ -57,6 +57,13 @@ impl Context for CpuContext {
         Ok(UnsafeCell::new(Pin::new(vec![0; size].into_boxed_slice())))
     }
 
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
+        Ok(UnsafeCell::new(Pin::new(data.to_vec().into_boxed_slice())))
+    }
+
     fn create_allocation(
         &self,
         size: usize,

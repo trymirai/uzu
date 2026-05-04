@@ -24,14 +24,15 @@ impl<B: Backend> Array<B> {
         data_type: DataType,
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
+        let buffer_len = buffer.borrow().size().as_u64() as usize;
         assert!(
-            offset + required_bytes <= buffer.borrow().size(),
+            offset + required_bytes <= buffer_len,
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
             shape,
             data_type,
             offset,
             offset + required_bytes,
-            buffer.borrow().size()
+            buffer_len
         );
         Self {
             buffer: buffer.clone(),

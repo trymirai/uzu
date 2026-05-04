@@ -1,7 +1,10 @@
 use std::{cell::UnsafeCell, pin::Pin, sync::atomic::AtomicU64};
 
-use super::{command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels};
-use crate::backends::{common::Backend, cpu::sparse_buffer::CpuSparseBuffer};
+use super::{
+    command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels,
+    sparse_buffer::CpuSparseBuffer,
+};
+use crate::backends::common::Backend;
 
 #[derive(Debug, Clone)]
 pub struct Cpu;

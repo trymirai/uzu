@@ -1,6 +1,5 @@
 use bytesize::ByteSize;
-use metal::{MTLDevice, MTLDeviceExt as _};
-use objc2::runtime::ProtocolObject;
+use metal::prelude::*;
 
 use super::metal_extensions::{DeviceExt, DeviceGeneration};
 

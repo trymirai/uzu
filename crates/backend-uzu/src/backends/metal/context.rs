@@ -1,11 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
-use metal::{
-    MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
-    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLLibrary, MTLResourceOptions,
-};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use metal::prelude::*;
 
 use super::{
     Metal,
@@ -117,6 +112,19 @@ impl Context for MetalContext {
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
         let buffer =
             self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer);
+        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
+        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+        buffer
+    }
+
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
+        let buffer = self
+            .device
+            .new_buffer_with_data(data, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MetalError::CannotCreateBuffer);
         let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
         *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
         buffer

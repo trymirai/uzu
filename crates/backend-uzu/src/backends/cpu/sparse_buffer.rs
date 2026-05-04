@@ -1,3 +1,4 @@
+use bytesize::ByteSize;
 use rangemap::RangeMap;
 
 use crate::backends::{
@@ -22,7 +23,7 @@ impl SparseBuffer for CpuSparseBuffer {
         todo!()
     }
 
-    fn length(&self) -> usize {
+    fn length(&self) -> ByteSize {
         todo!()
     }
 
@@ -30,7 +31,7 @@ impl SparseBuffer for CpuSparseBuffer {
         todo!()
     }
 
-    fn get_page_size(&self) -> usize {
+    fn get_page_size(&self) -> ByteSize {
         todo!()
     }
 

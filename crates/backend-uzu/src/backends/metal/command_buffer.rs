@@ -1,10 +1,7 @@
 use std::{cell::Cell, time::Duration};
 
-use metal::{
-    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
-    MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
-};
-use objc2::{Message, rc::Retained, runtime::ProtocolObject};
+use metal::prelude::*;
+use objc2::Message;
 
 use super::Metal;
 use crate::backends::{

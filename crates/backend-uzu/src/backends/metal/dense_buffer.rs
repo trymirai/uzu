@@ -1,7 +1,7 @@
 use std::{os::raw::c_void, ptr::NonNull};
 
-use metal::{MTLBuffer, MTLResourceExt};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use bytesize::ByteSize;
+use metal::prelude::*;
 
 use super::Metal;
 use crate::backends::common::{Buffer, DenseBuffer};
@@ -13,8 +13,8 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
         self.gpu_address() as usize
     }
 
-    fn size(&self) -> usize {
-        (**self).length()
+    fn size(&self) -> ByteSize {
+        ByteSize((**self).length() as u64)
     }
 
     fn set_label(

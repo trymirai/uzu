@@ -1,13 +1,12 @@
 use core::mem::transmute;
 
 use bytesize::ByteSize;
-use metal::MTLDevice;
+use metal::prelude::*;
 use objc2::{
     Message,
     ffi::objc_msgSend,
     msg_send,
-    rc::Retained,
-    runtime::{NSObjectProtocol, ProtocolObject, Sel},
+    runtime::{NSObjectProtocol, Sel},
     sel,
 };
 use objc2_foundation::NSString;
