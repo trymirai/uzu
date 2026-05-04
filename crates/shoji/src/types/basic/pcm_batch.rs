@@ -37,6 +37,14 @@ impl PcmBatch {
     pub fn total_frames(&self) -> u32 {
         self.lengths.iter().sum::<_>()
     }
+
+    #[bindings::export(Method(Getter))]
+    pub fn duration(&self) -> f64 {
+        if self.sample_rate == 0 {
+            return 0.0;
+        }
+        self.total_frames() as f64 / self.sample_rate as f64
+    }
 }
 
 #[bindings::export(Implementation)]

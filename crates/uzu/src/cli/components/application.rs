@@ -124,6 +124,15 @@ pub fn Application(
                 return;
             };
             sessions::classification::run_session(state, session, text).await;
+        } else if model.is_text_to_speech_capable() {
+            let has_running_session = state.read().session_state().is_some_and(SessionState::is_busy);
+            if has_running_session {
+                return;
+            }
+            let Some(runtime) = sessions::text_to_speech::ensure_session(state, &model).await else {
+                return;
+            };
+            sessions::text_to_speech::run_session(state, runtime, text).await;
         } else {
             state.write().history.push(HistoryCellType::CommandResult {
                 result: "Model is not supported yet".to_string(),
