@@ -449,7 +449,7 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ChatSession::new(backend.as_ref(), config, model, path).await?;
+            let session = ChatSession::new(backend.clone(), config, model, path).await?;
             Ok(session)
         } else {
             return Err(EngineError::BackendNotFound {});
@@ -465,7 +465,7 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ClassificationSession::new(backend.as_ref(), model, path).await?;
+            let session = ClassificationSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
             return Err(EngineError::BackendNotFound {});
@@ -481,7 +481,7 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = TextToSpeechSession::new(backend.as_ref(), model, path).await?;
+            let session = TextToSpeechSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
             return Err(EngineError::BackendNotFound {});

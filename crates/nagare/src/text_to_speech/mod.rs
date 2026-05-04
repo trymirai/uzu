@@ -74,7 +74,7 @@ pub struct TextToSpeechSession {
 
 impl TextToSpeechSession {
     pub async fn new(
-        backend: &dyn Backend,
+        backend: Arc<dyn Backend>,
         model: Model,
         path: Option<String>,
     ) -> Result<Self, TextToSpeechSessionError> {
@@ -82,21 +82,30 @@ impl TextToSpeechSession {
             return Err(TextToSpeechSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
-        let text_to_speech_backend =
-            backend.as_text_to_speech_capable().ok_or(TextToSpeechSessionError::UnsupportedModel {})?;
-        let instance = text_to_speech_backend.instance(reference, ()).await.map_err(|error| {
-            TextToSpeechSessionError::Backend {
+
+        let holder = tokio::spawn(async move {
+            let text_to_speech_backend =
+                backend.as_text_to_speech_capable().ok_or(TextToSpeechSessionError::UnsupportedModel {})?;
+            let instance = text_to_speech_backend.instance(reference, ()).await.map_err(|error| {
+                TextToSpeechSessionError::Backend {
+                    message: error.to_string(),
+                }
+            })?;
+            let instance_state = instance.state().await.map_err(|error| TextToSpeechSessionError::Backend {
                 message: error.to_string(),
-            }
-        })?;
-        let instance_state = instance.state().await.map_err(|error| TextToSpeechSessionError::Backend {
-            message: error.to_string(),
-        })?;
-        Ok(Self {
-            holder: Arc::new(Mutex::new(InstanceHolder {
+            })?;
+            Ok(InstanceHolder {
                 instance,
                 state: instance_state,
-            })),
+            })
+        })
+        .await
+        .map_err(|error| TextToSpeechSessionError::Backend {
+            message: error.to_string(),
+        })??;
+
+        Ok(Self {
+            holder: Arc::new(Mutex::new(holder)),
             state: Arc::new(Mutex::new(TextToSpeechSessionState::Idle)),
         })
     }
