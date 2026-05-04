@@ -1,6 +1,6 @@
 use std::ptr::NonNull;
 
-use metal::{MTLDataType, MTLFunctionConstantValues};
+use metal::prelude::*;
 
 pub trait FunctionConstantValueType {
     const DATA_TYPE: MTLDataType;

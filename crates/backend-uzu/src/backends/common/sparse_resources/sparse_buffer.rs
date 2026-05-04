@@ -1,12 +1,10 @@
 use std::ops::Range;
 
-use backend_uzu::backends::common::Backend;
+use bytesize::ByteSize;
 use rangemap::RangeMap;
 
-pub struct SparseBufferOperation {
-    pub map: bool,
-    pub range: Range<usize>,
-}
+use super::{SparseBufferOperation, SparseResourceMappingMode};
+use crate::backends::common::Backend;
 
 pub trait SparseBuffer {
     type Backend: Backend<SparseBuffer = Self>;
@@ -18,11 +16,11 @@ pub trait SparseBuffer {
 
     fn gpu_ptr(&self) -> usize;
 
-    fn length(&self) -> usize;
+    fn length(&self) -> ByteSize;
 
     fn get_mapped_pages(&self) -> &RangeMap<usize, ()>;
 
-    fn get_page_size(&self) -> usize;
+    fn get_page_size(&self) -> ByteSize;
 
     fn execute(
         &mut self,
@@ -38,7 +36,7 @@ pub trait SparseBufferExt: SparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         bytes_ranges: &[Range<usize>],
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        let page_size_bytes = self.get_page_size();
+        let page_size_bytes = self.get_page_size().as_u64() as usize;
         let pages_ranges = bytes_ranges
             .iter()
             .map(|bytes_range| Range {
@@ -54,17 +52,15 @@ pub trait SparseBufferExt: SparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages_ranges: &[Range<usize>],
     ) -> Result<(), <Self::Backend as Backend>::Error> {
+        let page_size_bytes = self.get_page_size().as_u64() as usize;
         let curr_mapped_pages = self.get_mapped_pages();
 
         let mut operations = Vec::<SparseBufferOperation>::new();
         for page_range in pages_ranges {
-            let gaps = curr_mapped_pages.gaps(&page_range);
+            let byte_range = (page_range.start * page_size_bytes)..(page_range.end * page_size_bytes);
+            let gaps = curr_mapped_pages.gaps(&byte_range);
             for gap in gaps {
-                let operation = SparseBufferOperation {
-                    map: true,
-                    range: gap,
-                };
-                operations.push(operation);
+                operations.push(SparseBufferOperation::new(SparseResourceMappingMode::Map, gap));
             }
         }
 
@@ -88,12 +84,9 @@ impl SparseBufferMappedPages {
         &mut self,
         operations: &[SparseBufferOperation],
     ) {
-        operations.iter().for_each(|op| {
-            if op.map {
-                self.map.insert(op.range.clone(), ())
-            } else {
-                self.map.remove(op.range.clone())
-            }
+        operations.iter().for_each(|op| match op.mode {
+            SparseResourceMappingMode::Map => self.map.insert(op.range.clone(), ()),
+            SparseResourceMappingMode::Unmap => self.map.remove(op.range.clone()),
         });
     }
 

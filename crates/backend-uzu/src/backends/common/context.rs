@@ -25,6 +25,11 @@ pub trait Context: Sized {
         size: usize,
     ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
 
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
+
     fn create_allocation(
         &self,
         size: usize,

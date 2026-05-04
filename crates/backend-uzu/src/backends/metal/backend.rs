@@ -1,5 +1,4 @@
-use metal::{MTLBuffer, MTLEvent};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use metal::prelude::*;
 
 use super::{command_buffer::MetalCommandBuffer, context::MetalContext, error::MetalError, kernel::MetalKernels};
 use crate::backends::{common::Backend, metal::sparse_buffer::MetalSparseBuffer};

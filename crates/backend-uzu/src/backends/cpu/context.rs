@@ -7,10 +7,8 @@ use std::{
     thread,
 };
 
-use backend_uzu::backends::common::Backend;
-
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
 };
 
@@ -57,6 +55,13 @@ impl Context for CpuContext {
         size: usize,
     ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
         Ok(UnsafeCell::new(Pin::new(vec![0; size].into_boxed_slice())))
+    }
+
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
+        Ok(UnsafeCell::new(Pin::new(data.to_vec().into_boxed_slice())))
     }
 
     fn create_allocation(

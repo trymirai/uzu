@@ -1,7 +1,10 @@
-use backend_uzu::backends::common::{Backend, SparseBufferOperation};
+use bytesize::ByteSize;
 use rangemap::RangeMap;
 
-use crate::backends::{common::SparseBuffer, cpu::Cpu};
+use crate::backends::{
+    common::{Backend, SparseBuffer, SparseBufferOperation},
+    cpu::Cpu,
+};
 
 #[derive(Debug)]
 pub struct CpuSparseBuffer {}
@@ -20,7 +23,7 @@ impl SparseBuffer for CpuSparseBuffer {
         todo!()
     }
 
-    fn length(&self) -> usize {
+    fn length(&self) -> ByteSize {
         todo!()
     }
 
@@ -28,7 +31,7 @@ impl SparseBuffer for CpuSparseBuffer {
         todo!()
     }
 
-    fn get_page_size(&self) -> usize {
+    fn get_page_size(&self) -> ByteSize {
         todo!()
     }
 

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt::Debug};
 
-use super::{CommandBuffer, Context, DenseBuffer, Event, Kernels, kernel::ManualKernels};
+use super::{CommandBuffer, Context, DenseBuffer, Event, Kernels, SparseBuffer, kernel::ManualKernels};
 
 pub trait Backend: Debug + Clone + 'static {
     type Context: Context<Backend = Self>;
