@@ -1,7 +1,9 @@
-use backend_uzu::backends::common::{Backend, SparseBufferOperation};
 use rangemap::RangeMap;
 
-use crate::backends::{common::SparseBuffer, cpu::Cpu};
+use crate::backends::{
+    common::{Backend, SparseBuffer, SparseBufferOperation},
+    cpu::Cpu,
+};
 
 #[derive(Debug)]
 pub struct CpuSparseBuffer {}

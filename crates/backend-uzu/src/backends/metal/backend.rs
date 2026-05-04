@@ -10,7 +10,7 @@ pub struct Metal;
 impl Backend for Metal {
     type Context = MetalContext;
     type CommandBuffer = MetalCommandBuffer;
-    type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+    type DenseBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
     type SparseBuffer = MetalSparseBuffer;
     type Event = Retained<ProtocolObject<dyn MTLEvent>>;
     type Kernels = MetalKernels;

@@ -33,8 +33,8 @@ pub struct QKNorm<B: Backend> {
     query_config: Option<NormalizationConfig>,
     key_config: Option<NormalizationConfig>,
     qkv_array_id: ArrayId,
-    query_scales_buffer: Option<Rc<RefCell<B::Buffer>>>,
-    key_scales_buffer: Option<Rc<RefCell<B::Buffer>>>,
+    query_scales_buffer: Option<Rc<RefCell<B::DenseBuffer>>>,
+    key_scales_buffer: Option<Rc<RefCell<B::DenseBuffer>>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -134,7 +134,7 @@ impl<B: Backend> QKNorm<B> {
             (&self.query_kernel, &self.query_scales_buffer, &self.query_config)
         {
             query_kernel.encode(
-                None::<&B::Buffer>,
+                None::<&B::DenseBuffer>,
                 query_scales_buffer.borrow().deref(),
                 qkv_array.buffer().borrow_mut().deref_mut(),
                 batch_dim,
@@ -155,7 +155,7 @@ impl<B: Backend> QKNorm<B> {
             (&self.key_kernel, &self.key_scales_buffer, &self.key_config)
         {
             key_kernel.encode(
-                None::<&B::Buffer>,
+                None::<&B::DenseBuffer>,
                 key_scales_buffer.borrow().deref(),
                 qkv_array.buffer().borrow_mut().deref_mut(),
                 batch_dim,

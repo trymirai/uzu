@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     backends::common::{
-        Backend, Buffer, CommandBuffer, Context, Encoder, Executable,
+        Backend, CommandBuffer, Context, DenseBuffer, Encoder, Executable,
         kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
     },
     config::ModelMetadata,

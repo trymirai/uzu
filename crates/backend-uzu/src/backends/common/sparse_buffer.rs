@@ -1,7 +1,8 @@
 use std::ops::Range;
 
-use backend_uzu::backends::common::Backend;
 use rangemap::RangeMap;
+
+use crate::backends::common::Backend;
 
 pub struct SparseBufferOperation {
     pub map: bool,

@@ -1,9 +1,5 @@
 use std::{fmt::Debug, ptr::NonNull};
 
-use backend_uzu::backends::{
-    common::{Backend, Buffer},
-    metal::Metal,
-};
 use metal::{
     MTL4CommandQueue, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor,
     MTLHeapType, MTLResourceOptions, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
@@ -14,8 +10,8 @@ use rangemap::RangeMap;
 
 use crate::{
     backends::{
-        common::{SparseBuffer, SparseBufferMappedPages, SparseBufferOperation},
-        metal::error::MetalError,
+        common::{Backend, Buffer, SparseBuffer, SparseBufferMappedPages, SparseBufferOperation},
+        metal::{Metal, error::MetalError},
     },
     prelude::MetalContext,
 };

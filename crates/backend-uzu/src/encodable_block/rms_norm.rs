@@ -33,8 +33,8 @@ pub struct RMSNorm<B: Backend> {
     input_array_id: ArrayId,
     output_array_id: ArrayId,
     shortcut_array_id: Option<ArrayId>,
-    scales_buffer: Rc<RefCell<B::Buffer>>,
-    hadamard_factors_buffer: Option<B::Buffer>,
+    scales_buffer: Rc<RefCell<B::DenseBuffer>>,
+    hadamard_factors_buffer: Option<B::DenseBuffer>,
     use_sampling_range: bool,
 }
 
@@ -46,7 +46,7 @@ impl<B: Backend> RMSNorm<B> {
         input_array_id: ArrayId,
         output_array_id: ArrayId,
         parameter_tree: &ParameterTree<B::Context>,
-        hadamard_factors_buffer: Option<B::Buffer>,
+        hadamard_factors_buffer: Option<B::DenseBuffer>,
         shortcut_array_id: Option<ArrayId>,
         residual_add: bool,
     ) -> Result<Self, RMSNormError<B>> {

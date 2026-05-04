@@ -157,8 +157,8 @@ impl<B: Backend> ForwardPassState<B> {
         sampling_length: usize,
         is_prefilling: bool,
         skip_token_ids_copy: bool,
-        async_positions: Option<(Rc<RefCell<B::Buffer>>, usize)>,
-        async_seeds: Option<(Rc<RefCell<B::Buffer>>, usize)>,
+        async_positions: Option<(Rc<RefCell<B::DenseBuffer>>, usize)>,
+        async_seeds: Option<(Rc<RefCell<B::DenseBuffer>>, usize)>,
     ) -> Self {
         let suffix_length = token_ids.len();
         assert_eq!(suffix_length, token_positions.len(), "Tokens and positions must have same length");

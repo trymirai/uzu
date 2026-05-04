@@ -10,12 +10,12 @@ use crate::backends::common::{Backend, Buffer, Context};
 
 pub struct Allocation<B: Backend> {
     allocator: Rc<Allocator<B>>,
-    buffer: *const B::Buffer,
+    buffer: *const B::DenseBuffer,
     range: Range<usize>,
 }
 
 impl<B: Backend> Allocation<B> {
-    pub fn as_buffer_range<'a>(&'a self) -> (&'a B::Buffer, Range<usize>) {
+    pub fn as_buffer_range<'a>(&'a self) -> (&'a B::DenseBuffer, Range<usize>) {
         (unsafe { &*self.buffer }, self.range.clone())
     }
 }
@@ -47,7 +47,7 @@ pub enum AllocationType<'a, B: Backend> {
 }
 
 struct AllocatorBuffer<B: Backend> {
-    buffer: Pin<Box<B::Buffer>>,
+    buffer: Pin<Box<B::DenseBuffer>>,
     range_allocator: RangeAllocator<usize>,
 }
 
@@ -88,13 +88,13 @@ impl<B: Backend> Allocator<B> {
 
         let mut allocator_buffers = self.allocator_buffers.borrow_mut();
 
-        let mut found: Option<(*const B::Buffer, Range<usize>)> = None;
+        let mut found: Option<(*const B::DenseBuffer, Range<usize>)> = None;
 
         for allocator_buffer in allocator_buffers.iter_mut() {
             if let Some(range) =
                 allocator_buffer.range_allocator.allocate_range_aligned(size, alignment, allocation_type.clone())
             {
-                found = Some((allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer, range));
+                found = Some((allocator_buffer.buffer.as_ref().get_ref() as *const B::DenseBuffer, range));
                 break;
             }
         }
@@ -109,14 +109,14 @@ impl<B: Backend> Allocator<B> {
                 range_allocator: RangeAllocator::new(0..new_allocator_buffer_size),
             };
 
-            let buffer = allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer;
+            let buffer = allocator_buffer.buffer.as_ref().get_ref() as *const B::DenseBuffer;
             let range =
                 allocator_buffer.range_allocator.allocate_range_aligned(size, alignment, allocation_type).unwrap(); // Can never fail
 
             allocator_buffers.push(allocator_buffer);
 
             *self.peak_memory_usage.borrow_mut() =
-                allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.length()).sum();
+                allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.size()).sum();
 
             (buffer, range)
         };
@@ -161,7 +161,7 @@ impl<B: Backend> Allocator<B> {
             .iter_mut()
             .enumerate()
             .find(|(_allocator_buffer_index, allocator_buffer)| {
-                (allocator_buffer.buffer.as_ref().get_ref() as *const B::Buffer) == allocation.buffer
+                (allocator_buffer.buffer.as_ref().get_ref() as *const B::DenseBuffer) == allocation.buffer
             })
             .unwrap(); // Can never fail
 

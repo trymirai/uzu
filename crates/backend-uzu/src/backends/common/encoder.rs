@@ -58,9 +58,9 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
     pub fn encode_copy(
         &mut self,
-        src: &B::Buffer,
+        src: &B::DenseBuffer,
         src_range: Range<usize>,
-        dst: &mut B::Buffer,
+        dst: &mut B::DenseBuffer,
         dst_range: Range<usize>,
     ) {
         let size = src_range.end - src_range.start;
@@ -80,7 +80,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
     pub fn encode_fill(
         &mut self,
-        dst: &mut B::Buffer,
+        dst: &mut B::DenseBuffer,
         range: Range<usize>,
         value: u8,
     ) {

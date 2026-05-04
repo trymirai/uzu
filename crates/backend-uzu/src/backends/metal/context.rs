@@ -1,6 +1,5 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
-use backend_uzu::backends::common::Backend;
 use metal::{
     MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
     MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
@@ -17,7 +16,7 @@ use super::{
 };
 use crate::{
     backends::{
-        common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+        common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
         metal::{command_buffer::MetalCommandBufferInitial, sparse_buffer::MetalSparseBuffer},
     },
     utils::model_size::ModelSize,

@@ -7,10 +7,8 @@ use std::{
     thread,
 };
 
-use backend_uzu::backends::common::Backend;
-
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
 };
 

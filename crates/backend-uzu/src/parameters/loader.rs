@@ -9,7 +9,7 @@ use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
-    backends::common::{Backend, Buffer, Context},
+    backends::common::{Backend, Buffer, Context, DenseBuffer},
     utils::fs::file_read_exact_at,
 };
 
@@ -169,7 +169,7 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
         self.metadata.size
     }
 
-    pub fn read_buffer(&self) -> Result<<C::Backend as Backend>::Buffer, ParameterLoaderError<C::Backend>> {
+    pub fn read_buffer(&self) -> Result<<C::Backend as Backend>::DenseBuffer, ParameterLoaderError<C::Backend>> {
         let mut buffer =
             self.loader.context.create_buffer(self.metadata.size).map_err(ParameterLoaderError::BackendError)?;
         buffer.set_label(Some(&format!("parameter_loader_{}", self.key.replace(".", "_"))));

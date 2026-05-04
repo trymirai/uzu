@@ -101,7 +101,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
 
     let b_buf = b_array.as_ref().map(|a| a.buffer());
     let b_borrow = b_buf.as_ref().map(|rc| rc.borrow());
-    let b_deref: Option<&B::Buffer> = b_borrow.as_ref().map(|b| b.deref());
+    let b_deref: Option<&B::DenseBuffer> = b_borrow.as_ref().map(|b| b.deref());
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

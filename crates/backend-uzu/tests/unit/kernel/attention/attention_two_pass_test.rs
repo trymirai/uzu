@@ -131,9 +131,9 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
         input.scale,
         input.num_heads,
         input.suffix_length,
-        None::<&B::Buffer>,
+        None::<&B::DenseBuffer>,
         None,
-        None::<&B::Buffer>,
+        None::<&B::DenseBuffer>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
