@@ -16,7 +16,7 @@ pub struct Theme {
 impl Theme {
     #[allow(unused)]
     pub fn all() -> Vec<Self> {
-        vec![Self::blue(), Self::green(), Self::yellow(), Self::red()]
+        vec![Self::blue(), Self::green(), Self::yellow(), Self::red(), Self::purple()]
     }
 
     pub fn blue() -> Self {
@@ -52,6 +52,15 @@ impl Theme {
             accent_color: Color::Red,
             subtitle_color: Color::DarkGrey,
             symbol_heart: "❤️".to_string(),
+        }
+    }
+
+    pub fn purple() -> Self {
+        Self {
+            name: "purple".to_string(),
+            accent_color: Color::Magenta,
+            subtitle_color: Color::DarkGrey,
+            symbol_heart: "💜".to_string(),
         }
     }
 }
