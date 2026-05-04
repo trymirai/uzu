@@ -147,7 +147,7 @@ pub fn Application(
 
         let consumed_by_session = if let Some(session_state) = state.session_state() {
             if is_escape {
-                session_state.cancel() || session_state.is_busy()
+                session_state.interrupt() || session_state.is_busy()
             } else {
                 session_state.is_busy()
             }
