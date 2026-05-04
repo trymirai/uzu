@@ -88,6 +88,8 @@ pub struct MetalCompiler {
     build_dir: PathBuf,
     out_dir: PathBuf,
     toolchain: MetalToolchain,
+    enum_type_names: std::sync::OnceLock<std::collections::HashSet<Box<str>>>,
+    enum_type_paths: std::sync::OnceLock<std::collections::HashMap<Box<str>, Box<str>>>,
 }
 
 impl MetalCompiler {
@@ -110,6 +112,8 @@ impl MetalCompiler {
             build_dir,
             out_dir,
             toolchain,
+            enum_type_names: std::sync::OnceLock::new(),
+            enum_type_paths: std::sync::OnceLock::new(),
         })
     }
 
@@ -164,7 +168,9 @@ impl MetalCompiler {
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
 
-        let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos).context("cannot generate kernel wrappers")?;
+        let enum_type_names = self.enum_type_names.get().expect("enum_type_names must be populated before compile()");
+        let (wrapper_strs, specialize_indices) =
+            wrappers(&kernel_infos, enum_type_names).context("cannot generate kernel wrappers")?;
 
         let mut footer = String::new();
         for wrapper in wrapper_strs.iter() {
@@ -270,11 +276,12 @@ impl MetalCompiler {
 
         debug_log!("bindgen start");
 
+        let enum_type_paths = self.enum_type_paths.get().expect("enum_type_paths must be populated before bindgen()");
         let (bindings, associated_types) = objects
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
             .map(|(k, specialize_indices)| {
-                super::bindgen::bindgen(k, specialize_indices)
+                super::bindgen::bindgen(k, specialize_indices, enum_type_paths)
                     .with_context(|| format!("cannot generate bindings for {}", k.name))
             })
             .collect::<anyhow::Result<(Vec<TokenStream>, Vec<Option<TokenStream>>)>>()?;
@@ -323,6 +330,29 @@ impl Compiler for MetalCompiler {
         gpu_types: &GpuTypes,
     ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
+
+        let mut enum_type_names: std::collections::HashSet<Box<str>> = std::collections::HashSet::new();
+        let mut enum_type_paths: std::collections::HashMap<Box<str>, Box<str>> =
+            std::collections::HashMap::new();
+        for file in gpu_types.files.iter() {
+            for ty in file.types.iter() {
+                if let crate::common::gpu_types::GpuType::Enum(e) = ty {
+                    enum_type_names.insert(e.name.clone());
+                    let full_path = format!(
+                        "crate::backends::common::gpu_types::{}::{}",
+                        file.name, e.name
+                    )
+                    .into_boxed_str();
+                    enum_type_paths.insert(e.name.clone(), full_path);
+                }
+            }
+        }
+        self.enum_type_names
+            .set(enum_type_names)
+            .map_err(|_| anyhow::anyhow!("enum_type_names already populated"))?;
+        self.enum_type_paths
+            .set(enum_type_paths)
+            .map_err(|_| anyhow::anyhow!("enum_type_paths already populated"))?;
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()
