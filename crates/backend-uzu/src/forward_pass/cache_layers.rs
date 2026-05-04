@@ -274,13 +274,20 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
+        generated_suffix_length: Option<usize>,
         encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
         for layer in self.data.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
+                layer.update_after_acceptance(
+                    accepted_suffix_indices,
+                    suffix_start,
+                    generated_suffix_length,
+                    encoder,
+                    kv_cache_update,
+                );
             } else if let Some(layer) = layer.as_short_conv_mut() {
                 layer.commit_from_suffix_state_if_valid(short_conv_commit_index);
             }

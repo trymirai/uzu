@@ -92,6 +92,7 @@ impl<B: Backend> KVCacheLayer<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
+        generated_suffix_length: Option<usize>,
         encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
@@ -119,13 +120,23 @@ impl<B: Backend> KVCacheLayer<B> {
                 ring_length,
                 window_length,
             } => {
+                let source_start = generated_suffix_length
+                    .map(|suffix_length| {
+                        Self::windowed_suffix_source_start_from_state(
+                            *ring_offset,
+                            *ring_length,
+                            *window_length,
+                            suffix_length,
+                        )
+                    })
+                    .unwrap_or(*window_length);
                 let suffix_indices: Vec<usize> = if accepted_suffix_indices.is_empty() {
                     vec![0]
                 } else {
                     accepted_suffix_indices.to_vec()
                 };
 
-                let source_indices: Vec<usize> = suffix_indices.iter().map(|i| i + *window_length).collect();
+                let source_indices: Vec<usize> = suffix_indices.iter().map(|i| i + source_start).collect();
 
                 let mut destination_indices = Vec::with_capacity(suffix_indices.len());
 
@@ -135,6 +146,40 @@ impl<B: Backend> KVCacheLayer<B> {
 
                 self.scatter_if_required(&source_indices, &destination_indices, encoder, kv_cache_update);
             },
+        }
+    }
+
+    pub fn windowed_suffix_source_start(
+        &self,
+        suffix_length: usize,
+    ) -> Option<usize> {
+        match self.state {
+            KVCacheLayerState::Full {
+                ..
+            } => None,
+            KVCacheLayerState::Windowed {
+                ring_offset,
+                ring_length,
+                window_length,
+            } => Some(Self::windowed_suffix_source_start_from_state(
+                ring_offset,
+                ring_length,
+                window_length,
+                suffix_length,
+            )),
+        }
+    }
+
+    fn windowed_suffix_source_start_from_state(
+        ring_offset: usize,
+        ring_length: usize,
+        window_length: usize,
+        suffix_length: usize,
+    ) -> usize {
+        if ring_offset == 0 && ring_length > 0 && ring_length + suffix_length <= window_length {
+            ring_length
+        } else {
+            window_length
         }
     }
 

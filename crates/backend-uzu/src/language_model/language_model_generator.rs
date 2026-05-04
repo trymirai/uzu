@@ -299,7 +299,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             }
 
             if tokens_processed_this_step > 0 {
-                self.update_cache_layers(&(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, true)?;
+                self.update_cache_layers(&(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, None, true)?;
 
                 self.context.cache_layers.borrow_mut().register_accepted_tokens(tokens_processed_this_step);
 
@@ -329,6 +329,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.update_cache_layers(
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
             Some(last_suffix_start),
+            None,
             false,
         )?;
 
@@ -419,7 +420,12 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let speculator_proposed = active_row_count.saturating_sub(1);
         let speculator_accepted = accepted_tokens.len().saturating_sub(1);
 
-        self.update_cache_layers(&accepted_token_indices, None, false)?;
+        self.update_cache_layers(
+            &accepted_token_indices,
+            None,
+            Some(self.decoding_config.generate_suffix_length()),
+            false,
+        )?;
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -564,6 +570,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
+            Some(1),
             &mut encoder,
             &self.context.kv_cache_update,
         );
@@ -838,6 +845,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         &mut self,
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
+        generated_suffix_length: Option<usize>,
         wait_until_completed: bool,
     ) -> Result<(), Error> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
@@ -848,6 +856,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
+                generated_suffix_length,
                 &mut encoder,
                 &self.context.kv_cache_update,
             );
