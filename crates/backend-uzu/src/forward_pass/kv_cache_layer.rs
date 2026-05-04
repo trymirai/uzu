@@ -37,6 +37,50 @@ pub enum KVCacheLayerState {
     },
 }
 
+impl KVCacheLayerState {
+    pub fn shared_kv_suffix_source_start(&self) -> Option<usize> {
+        match self {
+            Self::Full {
+                ..
+            } => None,
+            Self::Windowed {
+                window_length,
+                ..
+            } => Some(*window_length),
+        }
+    }
+
+    pub fn windowed_suffix_write_start(
+        &self,
+        suffix_length: usize,
+        projection_step: usize,
+        is_prefilling: bool,
+        sampling_start: usize,
+    ) -> Option<usize> {
+        match self {
+            Self::Full {
+                ..
+            } => None,
+            Self::Windowed {
+                ring_offset,
+                ring_length,
+                window_length,
+            } => {
+                if !is_prefilling
+                    && sampling_start == 0
+                    && *ring_offset == 0
+                    && *ring_length > 0
+                    && *ring_length + projection_step + suffix_length <= *window_length
+                {
+                    Some(*ring_length + projection_step)
+                } else {
+                    Some(*window_length)
+                }
+            },
+        }
+    }
+}
+
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
 #[derive(Debug)]

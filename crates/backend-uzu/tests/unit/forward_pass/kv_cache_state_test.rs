@@ -348,6 +348,9 @@ fn kv_cache_layer_windowed_suffix_source_start_uses_layer_state() {
         3,
     );
     assert_eq!(compact_layer.windowed_suffix_source_start(3), Some(2));
+    assert_eq!(compact_layer.state.windowed_suffix_write_start(3, 0, false, 0), Some(2));
+    assert_eq!(compact_layer.state.windowed_suffix_write_start(3, 0, true, 0), Some(6));
+    assert_eq!(compact_layer.state.shared_kv_suffix_source_start(), Some(6));
 
     let offset_layer = make_test_layer(
         &context,

@@ -54,6 +54,10 @@ pub struct Attention<B: Backend> {
     has_sinks: bool,
     is_causal: bool,
     sliding_window_size: Option<usize>,
+    kv_source_layer: Option<usize>,
+    num_heads: usize,
+    num_groups: usize,
+    head_dim: usize,
 }
 
 impl<B: Backend> Attention<B> {
@@ -65,13 +69,19 @@ impl<B: Backend> Attention<B> {
         has_sinks: bool,
         is_causal: bool,
         sliding_window_size: Option<usize>,
+        kv_source_layer: Option<usize>,
         has_gate: bool,
+        num_heads: usize,
+        num_groups: usize,
+        head_dim: usize,
     ) -> Result<Self, B::Error> {
         let mut single_pass_kernels = HashMap::new();
         let mut two_pass_1_kernels = HashMap::new();
         let mut two_pass_2_kernels = HashMap::new();
 
-        for (head_dim, is_trie, is_kv_cache_ring) in iproduct!([64u32, 128u32, 256u32], [false, true], [false, true]) {
+        for (head_dim, is_trie, is_kv_cache_ring) in
+            iproduct!([64u32, 128u32, 256u32, 512u32], [false, true], [false, true])
+        {
             let key = KernelKey {
                 head_dim,
                 is_trie,
@@ -130,6 +140,10 @@ impl<B: Backend> Attention<B> {
             has_sinks,
             is_causal,
             sliding_window_size,
+            kv_source_layer,
+            num_heads,
+            num_groups,
+            head_dim,
         })
     }
 
@@ -177,11 +191,114 @@ impl<B: Backend> Attention<B> {
         let maxs_array = state.array(ArrayId::AttentionMaxs);
 
         let suffix_length = qkv_array.shape()[0];
-        let num_heads = queries_array.shape()[0];
-        let head_dim = queries_array.shape()[2];
-        let num_groups = rotated_keys_array.shape()[0];
-        let max_sequence_length = if state.cache_layers().is_some() {
-            state.array(ArrayId::Keys(self.layer_index)).shape()[1]
+        let num_heads = self.num_heads;
+        let num_groups = self.num_groups;
+        let head_dim = self.head_dim;
+        let has_kv_cache = state.cache_layers().is_some();
+        let projection_step = parameters.projection_step.unwrap_or(0);
+        if has_kv_cache && let Some(source_layer_index) = self.kv_source_layer {
+            let cache_layers = state.cache_layers().unwrap();
+            let (source_keys, source_values, target_keys, target_values, source_state) = {
+                let mut cache = cache_layers.borrow_mut();
+                let source_layer =
+                    cache.data[source_layer_index].as_transformer().expect("KV source layer must be transformer");
+                let source_keys = source_layer.keys.clone();
+                let source_values = source_layer.values.clone();
+                let source_state = source_layer.state.clone();
+                let source_prefix_length = match source_state {
+                    KVCacheLayerState::Full {
+                        prefix_len,
+                    } => prefix_len,
+                    KVCacheLayerState::Windowed {
+                        ring_length,
+                        ..
+                    } => ring_length,
+                };
+
+                let target_layer = cache.data[self.layer_index]
+                    .as_transformer_mut()
+                    .expect("Shared KV target layer must be transformer");
+                target_layer.state = KVCacheLayerState::Full {
+                    prefix_len: source_prefix_length + suffix_length,
+                };
+                let target_keys = target_layer.keys.clone();
+                let target_values = target_layer.values.clone();
+                (source_keys, source_values, target_keys, target_values, source_state)
+            };
+
+            let row_size = num_groups * head_dim * target_keys.data_type().size_in_bytes();
+            match source_state {
+                KVCacheLayerState::Full {
+                    prefix_len,
+                } => {
+                    let rows_to_copy = prefix_len + suffix_length;
+                    let bytes_to_copy = rows_to_copy * row_size;
+                    debug_assert!(target_keys.size() >= bytes_to_copy);
+                    debug_assert!(target_values.size() >= bytes_to_copy);
+                    encoder.encode_copy(
+                        source_keys.buffer().borrow().deref(),
+                        source_keys.offset()..source_keys.offset() + bytes_to_copy,
+                        target_keys.buffer().borrow_mut().deref_mut(),
+                        target_keys.offset()..target_keys.offset() + bytes_to_copy,
+                    );
+                    encoder.encode_copy(
+                        source_values.buffer().borrow().deref(),
+                        source_values.offset()..source_values.offset() + bytes_to_copy,
+                        target_values.buffer().borrow_mut().deref_mut(),
+                        target_values.offset()..target_values.offset() + bytes_to_copy,
+                    );
+                },
+                KVCacheLayerState::Windowed {
+                    ring_offset,
+                    ring_length,
+                    window_length,
+                } => {
+                    for logical_index in 0..ring_length {
+                        let source_row = (ring_offset + logical_index) % window_length;
+                        let source_start = source_keys.offset() + source_row * row_size;
+                        let target_start = target_keys.offset() + logical_index * row_size;
+                        encoder.encode_copy(
+                            source_keys.buffer().borrow().deref(),
+                            source_start..source_start + row_size,
+                            target_keys.buffer().borrow_mut().deref_mut(),
+                            target_start..target_start + row_size,
+                        );
+                        encoder.encode_copy(
+                            source_values.buffer().borrow().deref(),
+                            source_start..source_start + row_size,
+                            target_values.buffer().borrow_mut().deref_mut(),
+                            target_start..target_start + row_size,
+                        );
+                    }
+
+                    let target_suffix_start = ring_length;
+                    let source_suffix_start = source_state
+                        .shared_kv_suffix_source_start()
+                        .expect("Windowed shared KV source layer must have suffix source");
+                    for token_index in 0..suffix_length {
+                        let source_row = source_suffix_start + token_index;
+                        let target_row = target_suffix_start + token_index;
+                        let source_start = source_keys.offset() + source_row * row_size;
+                        let target_start = target_keys.offset() + target_row * row_size;
+                        encoder.encode_copy(
+                            source_keys.buffer().borrow().deref(),
+                            source_start..source_start + row_size,
+                            target_keys.buffer().borrow_mut().deref_mut(),
+                            target_start..target_start + row_size,
+                        );
+                        encoder.encode_copy(
+                            source_values.buffer().borrow().deref(),
+                            source_start..source_start + row_size,
+                            target_values.buffer().borrow_mut().deref_mut(),
+                            target_start..target_start + row_size,
+                        );
+                    }
+                },
+            }
+        }
+
+        let max_sequence_length = if has_kv_cache {
+            state.array(ArrayId::Keys(self.layer_index)).shape()[0]
         } else {
             // For classifiers without KV cache, max_sequence_length is just suffix_length
             suffix_length
@@ -190,17 +307,29 @@ impl<B: Backend> Attention<B> {
         let is_trie = state.token_subtrie_ranges.is_some();
 
         let (segment_prefix_length, ring_params) = if let Some(cache_layers) = state.cache_layers() {
-            let projection_step = parameters.projection_step.unwrap_or(0);
             let cache = cache_layers.borrow();
             let layer = cache.data[self.layer_index]
                 .as_transformer()
                 .expect("Attention kernel expects transformer layer state");
-            let ring_params = match layer.state {
-                KVCacheLayerState::Windowed {
-                    ring_offset,
-                    ring_length,
-                    window_length,
-                } => {
+            let compact_window_prefix_length = layer
+                .state
+                .windowed_suffix_write_start(
+                    suffix_length,
+                    projection_step,
+                    state.is_prefilling(),
+                    state.sampling_start(),
+                )
+                .filter(|source_start| *source_start != layer.prefix_segment_length());
+            let ring_params = match (compact_window_prefix_length, layer.state.clone()) {
+                (Some(_), _) => None,
+                (
+                    None,
+                    KVCacheLayerState::Windowed {
+                        ring_offset,
+                        ring_length,
+                        window_length,
+                    },
+                ) => {
                     let overflow = (ring_length + projection_step).saturating_sub(window_length);
                     Some(RingParams {
                         ring_offset: ((ring_offset + overflow) % window_length) as u32,
@@ -209,7 +338,9 @@ impl<B: Backend> Attention<B> {
                 },
                 _ => None,
             };
-            (layer.projected_segment_prefix_length(projection_step), ring_params)
+            let segment_prefix_length =
+                compact_window_prefix_length.unwrap_or_else(|| layer.projected_segment_prefix_length(projection_step));
+            (segment_prefix_length, ring_params)
         } else {
             (0, None)
         };
@@ -240,9 +371,6 @@ impl<B: Backend> Attention<B> {
 
         let qkv_buf_rc = qkv_array.buffer();
         let qkv_buf_borrow = qkv_buf_rc.borrow();
-
-        // Get KV cache buffers only if KV cache exists (LLM mode)
-        let has_kv_cache = state.cache_layers().is_some();
 
         let key_cache_array = has_kv_cache.then(|| state.array(ArrayId::Keys(self.layer_index)));
         let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
