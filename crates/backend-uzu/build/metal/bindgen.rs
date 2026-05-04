@@ -1,13 +1,18 @@
-use std::{collections::BTreeSet, iter::repeat_n};
+use std::{
+    collections::{BTreeSet, HashMap},
+    iter::repeat_n,
+};
 
 use anyhow::Context;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Expr, Ident, Lifetime, LitInt, Type, fold::Fold};
+use syn::{Expr, Ident, Lifetime, LitInt, Type};
 
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
+    expr_rewrite::rewrite_paths_with,
+    optional_expr,
     wrapper::SpecializeBaseIndices,
 };
 use crate::{
@@ -20,46 +25,32 @@ fn variant_field_ident(name: &str) -> Ident {
 }
 
 fn fold_variant_idents(
-    expr: Expr,
+    mut expr: Expr,
     variant_names: &[&str],
     referenced: &mut BTreeSet<String>,
 ) -> Expr {
-    struct VariantFolder<'a> {
-        names: &'a [&'a str],
-        referenced: &'a mut BTreeSet<String>,
-    }
-    impl syn::fold::Fold for VariantFolder<'_> {
-        fn fold_expr(
-            &mut self,
-            e: Expr,
-        ) -> Expr {
-            if let Expr::Path(ref ep) = e {
-                if ep.qself.is_none()
-                    && ep.path.leading_colon.is_none()
-                    && ep.path.segments.len() == 1
-                    && matches!(ep.path.segments[0].arguments, syn::PathArguments::None)
-                {
-                    let name = ep.path.segments[0].ident.to_string();
-                    if self.names.contains(&name.as_str()) {
-                        self.referenced.insert(name.clone());
-                        let field = variant_field_ident(&name);
-                        return syn::parse_quote! { self.#field };
-                    }
-                }
-            }
-            syn::fold::fold_expr(self, e)
+    rewrite_paths_with(&mut expr, |path| {
+        if path.leading_colon.is_some()
+            || path.segments.len() != 1
+            || !matches!(path.segments[0].arguments, syn::PathArguments::None)
+        {
+            return None;
         }
-    }
-    VariantFolder {
-        names: variant_names,
-        referenced,
-    }
-    .fold_expr(expr)
+        let name = path.segments[0].ident.to_string();
+        if !variant_names.contains(&name.as_str()) {
+            return None;
+        }
+        referenced.insert(name.clone());
+        let field = variant_field_ident(&name);
+        Some(syn::parse_quote! { self.#field })
+    });
+    expr
 }
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
+    enum_type_paths: &HashMap<Box<str>, Box<str>>,
 ) -> anyhow::Result<(TokenStream, Option<TokenStream>)> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{kernel_name}Kernel");
@@ -261,7 +252,8 @@ pub fn bindgen(
                     let (conditional_buffer_field, conditional_buffer_set) =
                         if let Some(condition) = ka.argument_condition().unwrap() {
                             let conditional_field_name = format_ident!("has_{}", ka.name.as_ref());
-                            let condition = parse_expr(condition.as_ref()).unwrap();
+                            let qualified_condition = optional_expr::rewrite_for_rust(condition.as_ref(), enum_type_paths);
+                            let condition = parse_expr(&qualified_condition).unwrap();
 
                             ty = quote! { Option<#ty> };
                             access = access.map(|access| quote! { #arg_name.as_ref().map(|#arg_name| #access)});
