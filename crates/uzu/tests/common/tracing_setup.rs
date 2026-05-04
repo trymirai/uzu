@@ -27,6 +27,7 @@ pub fn init_test_tracing() {
         tracing_subscriber::registry()
             .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
             .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
+            .with(fmt::layer().with_test_writer())
             .init();
 
         tracing::info!("Test logging initialized, writing to test_logs/");

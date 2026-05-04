@@ -23,3 +23,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 dotenvy.workspace = true
+clap.workspace = true
+download-manager.workspace = true

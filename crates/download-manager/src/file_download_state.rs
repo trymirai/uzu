@@ -1,12 +1,11 @@
+use serde::{Deserialize, Serialize};
+
 use crate::FileDownloadPhase;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FileDownloadState {
-    /// Total size of the file in bytes.
     pub total_bytes: u64,
-    /// Bytes already downloaded (meaningful in Downloading / Paused).
     pub downloaded_bytes: u64,
-    /// Current phase of the download.
     pub phase: FileDownloadPhase,
 }
 
@@ -49,11 +48,19 @@ impl FileDownloadState {
         }
     }
 
-    pub fn error(err: String) -> Self {
+    pub fn locked_by_other(manager_id: String) -> Self {
         Self {
             total_bytes: 0,
             downloaded_bytes: 0,
-            phase: FileDownloadPhase::Error(err),
+            phase: FileDownloadPhase::LockedByOther(manager_id),
+        }
+    }
+
+    pub fn error(message: String) -> Self {
+        Self {
+            total_bytes: 0,
+            downloaded_bytes: 0,
+            phase: FileDownloadPhase::Error(message),
         }
     }
 }

@@ -9,9 +9,7 @@ use std::{
 };
 
 pub use config::Config;
-use download_manager::{
-    FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
-};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadPhase};
 pub use error::StorageError;
 use futures_util::future::join_all;
 use shoji::types::{
@@ -44,7 +42,7 @@ impl Storage {
         })?;
 
         let download_manager = SharedAccess::new(Arc::from(
-            create_download_manager(FileDownloadManagerType::default(), tokio_handle.clone()).await.map_err(
+            <dyn FileDownloadManager>::new(config.download_manager_type, tokio_handle.clone()).await.map_err(
                 |error| StorageError::DownloadManager {
                     message: error.to_string(),
                 },
@@ -84,7 +82,9 @@ impl Storage {
         for task in existing_file_tasks {
             let task_state = task.state().await;
             if matches!(task_state.phase, FileDownloadPhase::Error(_)) {
+                let download_id = task.download_id();
                 let _ = task.cancel().await;
+                let _ = download_manager.remove_file_task(download_id).await;
             } else {
                 active_file_tasks.push(task);
             }
@@ -98,6 +98,7 @@ impl Storage {
             .collect();
         for identifier in stale_model_identifiers {
             if let Some(item) = items.remove(&identifier) {
+                let _ = item.cancel().await;
                 item.stop_listening().await;
             }
         }
