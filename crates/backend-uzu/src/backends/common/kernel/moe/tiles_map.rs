@@ -67,30 +67,30 @@ impl<B: Backend> MoeTileMapKernels<B> {
 }
 
 pub struct MoeTileCountsArguments<'a, B: Backend> {
-    pub offsets_buffer: &'a B::Buffer,         // [E+1]
-    pub tile_counts_buffer: &'a mut B::Buffer, // [E]
+    pub offsets_buffer: &'a B::DenseBuffer,         // [E+1]
+    pub tile_counts_buffer: &'a mut B::DenseBuffer, // [E]
     pub e: usize,
 }
 
 pub struct MoeTileScanArguments<'a, B: Backend> {
-    pub tile_counts_buffer: &'a B::Buffer,      // [E]
-    pub tile_offsets_buffer: &'a mut B::Buffer, // [E+1]
-    pub total_tiles_buffer: &'a mut B::Buffer,  // [>=2]
+    pub tile_counts_buffer: &'a B::DenseBuffer,      // [E]
+    pub tile_offsets_buffer: &'a mut B::DenseBuffer, // [E+1]
+    pub total_tiles_buffer: &'a mut B::DenseBuffer,  // [>=2]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoeTileMapBuildArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::Buffer, // [E+1]
-    pub tile_offsets: &'a B::Buffer,   // [E+1]
-    pub tile_counts: &'a B::Buffer,    // [E]
-    pub tile_map: &'a mut B::Buffer,   // [total_tiles * 3]
+    pub expert_offsets: &'a B::DenseBuffer, // [E+1]
+    pub tile_offsets: &'a B::DenseBuffer,   // [E+1]
+    pub tile_counts: &'a B::DenseBuffer,    // [E]
+    pub tile_map: &'a mut B::DenseBuffer,   // [total_tiles * 3]
     pub e: usize,
 }
 
 #[derive(Debug)]
 pub struct MoeTileDispatchArguments<'a, B: Backend> {
-    pub total_tiles: &'a B::Buffer,       // [>=1]
-    pub dispatch_args: &'a mut B::Buffer, // [3]
-    pub num_tiles_x: u32,                 // x dimension for indirect dispatch
+    pub total_tiles: &'a B::DenseBuffer,       // [>=1]
+    pub dispatch_args: &'a mut B::DenseBuffer, // [3]
+    pub num_tiles_x: u32,                      // x dimension for indirect dispatch
 }

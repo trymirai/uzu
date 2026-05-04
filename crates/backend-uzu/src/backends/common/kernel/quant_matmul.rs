@@ -37,13 +37,13 @@ pub struct QuantizedMatmulConfiguration {
 }
 
 pub struct QuantizedMatmulArguments<'a, B: Backend> {
-    pub a_buffer: &'a B::Buffer,
+    pub a_buffer: &'a B::DenseBuffer,
     pub a_offset: usize,
-    pub b_buffer: &'a B::Buffer,
-    pub scales_buffer: &'a B::Buffer,
-    pub zero_points_or_biases_buffer: &'a B::Buffer,
-    pub output_buffer: &'a mut B::Buffer,
-    pub hadamard_factors: Option<&'a B::Buffer>,
+    pub b_buffer: &'a B::DenseBuffer,
+    pub scales_buffer: &'a B::DenseBuffer,
+    pub zero_points_or_biases_buffer: &'a B::DenseBuffer,
+    pub output_buffer: &'a mut B::DenseBuffer,
+    pub hadamard_factors: Option<&'a B::DenseBuffer>,
     pub batch_dim: usize,
 }
 

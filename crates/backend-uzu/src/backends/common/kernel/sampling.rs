@@ -32,7 +32,7 @@ enum ArgmaxImplementation<B: Backend> {
     TwoPass {
         main_kernel: <B::Kernels as Kernels>::ArgmaxMainKernel,
         final_kernel: <B::Kernels as Kernels>::ArgmaxFinalKernel,
-        partial_results_buffer: RefCell<B::Buffer>,
+        partial_results_buffer: RefCell<B::DenseBuffer>,
     },
 }
 
@@ -141,12 +141,12 @@ impl<B: Backend> SamplingKernel<B> {
 
     pub fn encode(
         &self,
-        mut logits_buffer: &mut B::Buffer,
-        seeds_buffer: &B::Buffer,
+        mut logits_buffer: &mut B::DenseBuffer,
+        seeds_buffer: &B::DenseBuffer,
         seeds_offset: usize,
-        bitmask_buffer: Option<&B::Buffer>,
+        bitmask_buffer: Option<&B::DenseBuffer>,
         bitmask_offset: usize,
-        sampled_tokens_buffer: &mut B::Buffer,
+        sampled_tokens_buffer: &mut B::DenseBuffer,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
@@ -161,7 +161,7 @@ impl<B: Backend> SamplingKernel<B> {
 
         if let Some(bitmask_buffer) = bitmask_buffer {
             self.bitmask.encode(
-                None::<&B::Buffer>,
+                None::<&B::DenseBuffer>,
                 (bitmask_buffer, bitmask_offset),
                 logits_buffer.deref_mut(),
                 batch_size as u32,
@@ -182,7 +182,7 @@ impl<B: Backend> SamplingKernel<B> {
                 && processing_order == SamplingProcessingOrder::TemperatureThenFilters
             {
                 self.temperature.encode(
-                    None::<&B::Buffer>,
+                    None::<&B::DenseBuffer>,
                     logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
@@ -193,7 +193,7 @@ impl<B: Backend> SamplingKernel<B> {
 
             if let Some(top_k) = top_k {
                 self.topk.encode(
-                    None::<&B::Buffer>,
+                    None::<&B::DenseBuffer>,
                     logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
@@ -203,7 +203,7 @@ impl<B: Backend> SamplingKernel<B> {
             }
             if let Some(top_p) = top_p {
                 self.topp.encode(
-                    None::<&B::Buffer>,
+                    None::<&B::DenseBuffer>,
                     logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
@@ -213,7 +213,7 @@ impl<B: Backend> SamplingKernel<B> {
             }
             if let Some(min_p) = min_p {
                 self.minp.encode(
-                    None::<&B::Buffer>,
+                    None::<&B::DenseBuffer>,
                     logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
@@ -226,7 +226,7 @@ impl<B: Backend> SamplingKernel<B> {
                 && processing_order == SamplingProcessingOrder::FiltersThenTemperature
             {
                 self.temperature.encode(
-                    None::<&B::Buffer>,
+                    None::<&B::DenseBuffer>,
                     logits_buffer.deref_mut(),
                     batch_size as u32,
                     vocab_size as u32,
@@ -236,7 +236,7 @@ impl<B: Backend> SamplingKernel<B> {
             }
 
             self.gumbel.encode(
-                None::<&B::Buffer>,
+                None::<&B::DenseBuffer>,
                 seeds_buffer,
                 (seeds_offset / size_of::<u64>()) as u32,
                 logits_buffer.deref_mut(),

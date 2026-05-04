@@ -8,10 +8,10 @@ use crate::{
 
 #[derive(Debug)]
 pub struct MoeGatherArguments<'a, B: Backend> {
-    pub x_buffer: &'a B::Buffer,
-    pub bucketed_ids_buffer: &'a B::Buffer,
-    pub x_perm_buffer: &'a mut B::Buffer,
-    pub sumk_buffer: &'a B::Buffer,
+    pub x_buffer: &'a B::DenseBuffer,
+    pub bucketed_ids_buffer: &'a B::DenseBuffer,
+    pub x_perm_buffer: &'a mut B::DenseBuffer,
+    pub sumk_buffer: &'a B::DenseBuffer,
     pub t: usize,
     pub k: usize,
     pub d_model: usize,

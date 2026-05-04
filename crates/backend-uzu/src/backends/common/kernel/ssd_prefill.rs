@@ -13,14 +13,14 @@ pub enum SSDPrefillMode {
 }
 
 pub struct SSDPrefillArguments<'a, B: Backend> {
-    pub x: &'a B::Buffer,
-    pub dt: &'a B::Buffer, // raw dt values
-    pub b: &'a B::Buffer,
-    pub c: &'a B::Buffer,
-    pub d: &'a B::Buffer,
-    pub z: &'a B::Buffer,
-    pub state: &'a mut B::Buffer,
-    pub y: &'a mut B::Buffer,
+    pub x: &'a B::DenseBuffer,
+    pub dt: &'a B::DenseBuffer, // raw dt values
+    pub b: &'a B::DenseBuffer,
+    pub c: &'a B::DenseBuffer,
+    pub d: &'a B::DenseBuffer,
+    pub z: &'a B::DenseBuffer,
+    pub state: &'a mut B::DenseBuffer,
+    pub y: &'a mut B::DenseBuffer,
     pub suffix_len: usize,
     pub group_size: u32,
     pub state_size: u32,

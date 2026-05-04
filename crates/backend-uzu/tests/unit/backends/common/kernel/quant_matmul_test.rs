@@ -9,7 +9,7 @@ use half::{bf16, f16};
 use crate::{
     DataType,
     backends::common::{
-        Backend, Buffer, Context, Encoder,
+        Backend, Context, DenseBuffer, Encoder,
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
@@ -265,7 +265,7 @@ fn buffer_from_f32_slice<B: Backend>(
     ctx: &B::Context,
     dtype: DataType,
     values: &[f32],
-) -> B::Buffer {
+) -> B::DenseBuffer {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();

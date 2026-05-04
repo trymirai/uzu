@@ -44,11 +44,11 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
     delta_net_prefill: <B::Kernels as Kernels>::DeltaNetPrefillKernel,
     norm_gate: <B::Kernels as Kernels>::DeltaNetNormGateKernel,
     // Parameters
-    conv_weight: B::Buffer,
-    conv_bias: Option<B::Buffer>,
-    a_log: B::Buffer,
-    dt_bias: B::Buffer,
-    norm_weight: B::Buffer,
+    conv_weight: B::DenseBuffer,
+    conv_bias: Option<B::DenseBuffer>,
+    a_log: B::DenseBuffer,
+    dt_bias: B::DenseBuffer,
+    norm_weight: B::DenseBuffer,
 }
 
 impl<B: Backend> DeltaNetMixer<B> {

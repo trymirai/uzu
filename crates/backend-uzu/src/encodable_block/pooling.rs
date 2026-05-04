@@ -20,8 +20,8 @@ enum PoolingKernel<B: Backend> {
 impl<B: Backend> PoolingKernel<B> {
     fn encode(
         &self,
-        input: &B::Buffer,
-        output: &mut B::Buffer,
+        input: &B::DenseBuffer,
+        output: &mut B::DenseBuffer,
         seq_len: u32,
         hidden_dim: u32,
         batch_dim: u32,

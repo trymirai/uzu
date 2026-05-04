@@ -53,8 +53,8 @@ pub enum FullPrecisionLinearError<B: Backend> {
 
 pub struct FullPrecisionLinear<B: Backend> {
     kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    bias_buffer: Option<Rc<RefCell<B::Buffer>>>,
-    weights_buffer: Rc<RefCell<B::Buffer>>,
+    bias_buffer: Option<Rc<RefCell<B::DenseBuffer>>>,
+    weights_buffer: Rc<RefCell<B::DenseBuffer>>,
     input_dim: usize,
     output_dim: usize,
     input_array_id: ArrayId,

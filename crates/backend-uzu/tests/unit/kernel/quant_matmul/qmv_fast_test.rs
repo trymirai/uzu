@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Buffer, Context, Encoder, Kernels,
+            Backend, Context, DenseBuffer, Encoder, Kernels,
             kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
         },
         cpu::Cpu,
@@ -93,7 +93,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         bias_buf.as_ref(),
         &x_buf,
         &mut y_buf,
-        None::<&B::Buffer>,
+        None::<&B::DenseBuffer>,
         input.k,
         input.n,
         input.m,
@@ -397,7 +397,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                             bias_buf.as_ref(),
                             &x_buf,
                             &mut y_buf,
-                            None::<&B::Buffer>,
+                            None::<&B::DenseBuffer>,
                             k as u32,
                             n as u32,
                             m as u32,

@@ -41,7 +41,7 @@ impl<B: Backend> dyn Mlp<B> {
         hidden_dimension: usize,
         context: &B::Context,
         parameter_tree: &ParameterTree<B::Context>,
-    ) -> Result<(Box<dyn Mlp<B>>, Option<B::Buffer>), MlpBlockError<B>> {
+    ) -> Result<(Box<dyn Mlp<B>>, Option<B::DenseBuffer>), MlpBlockError<B>> {
         if let MLPConfig::Dense(dense_config) = config {
             let data_type: DataType = dense_config.linear_config.activation_precision().into();
 

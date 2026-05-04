@@ -29,16 +29,16 @@ use crate::{
 };
 
 struct RouterBlock<B: Backend> {
-    weights_buf: Rc<RefCell<B::Buffer>>,
-    biases_buf: Rc<RefCell<B::Buffer>>,
+    weights_buf: Rc<RefCell<B::DenseBuffer>>,
+    biases_buf: Rc<RefCell<B::DenseBuffer>>,
 }
 
 #[derive(Clone)]
 struct SharedMoeWeights<B: Backend> {
-    pub w13_buf: Rc<RefCell<B::Buffer>>,
-    pub w2_buf: Rc<RefCell<B::Buffer>>,
-    pub up_biases_buf: Rc<RefCell<B::Buffer>>,
-    pub down_biases_buf: Rc<RefCell<B::Buffer>>,
+    pub w13_buf: Rc<RefCell<B::DenseBuffer>>,
+    pub w2_buf: Rc<RefCell<B::DenseBuffer>>,
+    pub up_biases_buf: Rc<RefCell<B::DenseBuffer>>,
+    pub down_biases_buf: Rc<RefCell<B::DenseBuffer>>,
 }
 
 pub struct MoeBlock<B: Backend> {
