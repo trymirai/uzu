@@ -33,6 +33,7 @@ use crate::{
         mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
+    settings::Settings,
     storage::{
         Config as StorageConfig, Storage,
         types::{DownloadPhase, DownloadState},
@@ -42,6 +43,7 @@ use crate::{
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct Engine {
+    settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
@@ -54,6 +56,16 @@ impl Engine {
             message: error.to_string(),
         })?;
 
+        let settings = if let Some(application_identifier) = &config.application_identifier {
+            Some(Settings::new(application_identifier.clone())?)
+        } else {
+            None
+        };
+        let mut config = config;
+        if let Some(settings) = &settings {
+            config.synchronize_with_settings(settings)?;
+        }
+
         let device = Device::new()?;
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string());
@@ -62,6 +74,7 @@ impl Engine {
         let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);
 
         let engine = Self {
+            settings: SharedAccess::new(settings),
             storage,
             registry,
             backends: SharedAccess::new(HashMap::new()),
@@ -486,6 +499,14 @@ impl Engine {
         } else {
             return Err(EngineError::BackendNotFound {});
         }
+    }
+}
+
+#[bindings::export(Implementation)]
+impl Engine {
+    #[bindings::export(Method)]
+    pub async fn settings(&self) -> Result<Settings, EngineError> {
+        Ok(self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)?)
     }
 }
 

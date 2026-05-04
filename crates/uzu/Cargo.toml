@@ -103,12 +103,14 @@ uuid.workspace = true
 futures-util.workspace = true
 async-openai.workspace = true
 fancy-regex.workspace = true
-keyring.workspace = true
+confy.workspace = true
+keyring-core.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
 objc2-security.workspace = true
+apple-native-keyring-store.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
