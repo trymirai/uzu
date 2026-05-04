@@ -1,5 +1,8 @@
 use iocraft::prelude::*;
-use shoji::types::session::chat::{ChatReply, ChatReplyStats};
+use shoji::types::session::{
+    chat::{ChatReply, ChatReplyStats},
+    classification::ClassificationOutput,
+};
 
 use crate::cli::{
     components::ApplicationState,
@@ -19,6 +22,9 @@ pub enum HistoryCellType {
     },
     ChatReply {
         reply: ChatReply,
+    },
+    ClassificationOutput {
+        output: ClassificationOutput,
     },
 }
 
@@ -80,6 +86,9 @@ pub fn HistoryCell(
             chat_reply_component(reply, theme.subtitle_color, theme.overlay_color(), theme.padding())
                 .into()
         },
+        Some(HistoryCellType::ClassificationOutput {
+            output,
+        }) => classification_output_component(output, theme.subtitle_color, theme.padding()).into(),
         None => element! { View }.into(),
     };
     view
@@ -117,6 +126,46 @@ fn chat_reply_component(
                 Text(content: content)
             }))
             #(chat_reply_stats_component(&stats, subtitle_color))
+        }
+    }
+    .into()
+}
+
+fn classification_output_component(
+    output: ClassificationOutput,
+    subtitle_color: Color,
+    padding: u16,
+) -> AnyElement<'static> {
+    let feature_scores: Vec<(String, f64)> = output.probabilities.values.into_iter().collect();
+    let duration = format!("{:.2} s", output.stats.total_duration);
+
+    element! {
+        View(
+            width: 100pct,
+            border_style: BorderStyle::Single,
+            border_color: subtitle_color,
+            flex_direction: FlexDirection::Column,
+            row_gap: padding,
+            padding_left: padding,
+            padding_right: padding,
+        ) {
+            View(
+                width: 100pct,
+                flex_direction: FlexDirection::Column,
+            ) {
+                #(feature_scores.into_iter().map(|(feature, score)| element! {
+                    Text(content: format!("{feature}: {score:.4}"))
+                }))
+            }
+            View(
+                width: 100pct,
+                flex_direction: FlexDirection::Column,
+            ) {
+                Text(
+                    content: format!("duration: {duration}"),
+                    color: subtitle_color,
+                )
+            }
         }
     }
     .into()

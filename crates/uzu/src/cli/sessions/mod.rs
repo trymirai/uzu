@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod classification;
 
 use std::any::Any;
 

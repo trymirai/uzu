@@ -115,6 +115,15 @@ pub fn Application(
                 return;
             };
             sessions::chat::run_session(state, session, text).await;
+        } else if model.is_classification_capable() {
+            let has_running_session = state.read().session_state().is_some_and(SessionState::is_busy);
+            if has_running_session {
+                return;
+            }
+            let Some(session) = sessions::classification::ensure_session(state, &model).await else {
+                return;
+            };
+            sessions::classification::run_session(state, session, text).await;
         } else {
             state.write().history.push(HistoryCellType::CommandResult {
                 result: "Model is not supported yet".to_string(),
