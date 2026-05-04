@@ -17,54 +17,54 @@ maturin = { provider = "uv", version = "1.13.1" }
 [targets."aarch64-apple-darwin"]
 backend = "metal"
 aliases = ["apple", "macos"]
-capabilities_supported = ["grammar", "tracing"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "tracing", "cli"]
+capabilities_default = ["grammar", "cli"]
 required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 
 [targets."x86_64-apple-darwin"]
 backend = "cpu"
 aliases = ["apple", "macos-intel"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "cli"]
+capabilities_default = ["grammar", "cli"]
 required_envs = ["MACOSX_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios"]
 backend = "metal"
 aliases = ["apple", "ios"]
-capabilities_supported = ["grammar", "tracing"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "tracing", "cli"]
+capabilities_default = ["grammar", "cli"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-apple-ios-sim"]
 backend = "metal"
 aliases = ["apple", "ios-sim", "ios-simulator"]
-capabilities_supported = ["grammar", "tracing"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "tracing", "cli"]
+capabilities_default = ["grammar", "cli"]
 required_envs = ["IPHONEOS_DEPLOYMENT_TARGET"]
 
 [targets."aarch64-unknown-linux-gnu"]
 backend = "cpu"
 aliases = ["linux"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "cli"]
+capabilities_default = ["grammar", "cli"]
 
 [targets."x86_64-unknown-linux-gnu"]
 backend = "cpu"
 aliases = ["linux"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "cli"]
+capabilities_default = ["grammar", "cli"]
 
 [targets."aarch64-pc-windows-msvc"]
 backend = "cpu"
 aliases = ["windows"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "cli"]
+capabilities_default = ["grammar", "cli"]
 
 [targets."x86_64-pc-windows-msvc"]
 backend = "cpu"
 aliases = ["windows"]
-capabilities_supported = ["grammar"]
-capabilities_default = ["grammar"]
+capabilities_supported = ["grammar", "cli"]
+capabilities_default = ["grammar", "cli"]
 
 [targets."wasm32-wasip1-threads"]
 backend = "cpu"

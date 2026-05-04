@@ -2,11 +2,16 @@ use backend_uzu::VERSION;
 use indoc::indoc;
 use iocraft::prelude::*;
 
-use crate::{cli::helpers::ColorRgb, device::Device};
+use crate::{
+    cli::helpers::ColorRgb,
+    device::Device,
+    settings::{SettingType, Settings, SettingsError},
+};
+
+const SETTINGS_THEME: &str = "theme";
 
 #[derive(Debug, Clone)]
 pub struct Theme {
-    #[allow(unused)]
     pub name: String,
     pub accent_color: Color,
     pub subtitle_color: Color,
@@ -14,7 +19,6 @@ pub struct Theme {
 }
 
 impl Theme {
-    #[allow(unused)]
     pub fn all() -> Vec<Self> {
         vec![Self::blue(), Self::green(), Self::yellow(), Self::red(), Self::purple()]
     }
@@ -113,5 +117,21 @@ impl Theme {
             lines.push(path);
         }
         lines.join("\n")
+    }
+}
+
+impl Theme {
+    pub fn load(settings: &Settings) -> Result<Option<Self>, SettingsError> {
+        let Some(name) = settings.load(SettingType::Config, SETTINGS_THEME)? else {
+            return Ok(None);
+        };
+        Ok(Self::all().into_iter().find(|theme| theme.name == name))
+    }
+
+    pub fn save(
+        &self,
+        settings: &Settings,
+    ) -> Result<(), SettingsError> {
+        settings.save(SettingType::Config, SETTINGS_THEME, Some(self.name.clone()))
     }
 }

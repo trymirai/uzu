@@ -539,12 +539,3 @@ impl Engine {
         });
     }
 }
-
-#[cfg(feature = "capability-cli")]
-use crate::cli::CliApplication;
-#[cfg(feature = "capability-cli")]
-impl Engine {
-    pub fn cli(&self) -> CliApplication {
-        CliApplication::new(self.clone())
-    }
-}
