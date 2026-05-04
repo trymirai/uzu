@@ -26,6 +26,4 @@ pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
-#[cfg(metal_backend)]
-pub(crate) use sparse_resources::SparseBufferMappedPages;
 pub use sparse_resources::{SparseBuffer, SparseBufferExt, SparseBufferOperation, SparseResourceMappingMode};

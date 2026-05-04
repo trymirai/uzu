@@ -1,12 +1,15 @@
+mod sparse_buffer_mapped_pages;
+
 use std::fmt::Debug;
 
 use bytesize::ByteSize;
 use metal::prelude::*;
 use rangemap::RangeMap;
 
+use self::sparse_buffer_mapped_pages::SparseBufferMappedPages;
 use crate::{
     backends::{
-        common::{Backend, Buffer, SparseBuffer, SparseBufferMappedPages, SparseBufferOperation},
+        common::{Backend, Buffer, SparseBuffer, SparseBufferOperation},
         metal::{Metal, error::MetalError, metal_extensions::SparsePageSizeExt},
     },
     prelude::MetalContext,
@@ -38,7 +41,10 @@ impl MetalSparseBuffer {
         };
 
         let heap_desc = MTLHeapDescriptor::new();
-        heap_desc.set_type(MTLHeapType::Sparse);
+        // Sparse buffers must be backed by a Placement heap with a sparse page size set;
+        // `MTLHeapType::Sparse` is for sparse textures and trips a runtime assertion when
+        // passed to updateBufferMappings.
+        heap_desc.set_type(MTLHeapType::Placement);
         heap_desc.set_storage_mode(MTLStorageMode::Private);
         heap_desc.set_size(aligned_capacity);
         heap_desc.set_max_compatible_placement_sparse_page_size(page_size);

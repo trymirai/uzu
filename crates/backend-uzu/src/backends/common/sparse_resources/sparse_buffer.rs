@@ -67,32 +67,3 @@ pub trait SparseBufferExt: SparseBuffer {
         self.execute(context, &operations)
     }
 }
-
-#[cfg(metal_backend)]
-#[derive(Debug)]
-pub(crate) struct SparseBufferMappedPages {
-    map: RangeMap<usize, ()>,
-}
-
-#[cfg(metal_backend)]
-impl SparseBufferMappedPages {
-    pub fn new() -> Self {
-        Self {
-            map: RangeMap::new(),
-        }
-    }
-
-    pub fn execute(
-        &mut self,
-        operations: &[SparseBufferOperation],
-    ) {
-        operations.iter().for_each(|op| match op.mode {
-            SparseResourceMappingMode::Map => self.map.insert(op.range.clone(), ()),
-            SparseResourceMappingMode::Unmap => self.map.remove(op.range.clone()),
-        });
-    }
-
-    pub fn get_map(&self) -> &RangeMap<usize, ()> {
-        &self.map
-    }
-}
