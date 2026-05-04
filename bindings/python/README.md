@@ -417,8 +417,8 @@ async def main() -> None:
     )
     output_path = Path.home() / "Desktop" / "output.wav"
     session = await engine.text_to_speech(model)
-    pcm_batch = await session.synthesize(text)
-    pcm_batch.save_as_wav(str(output_path))
+    output = await session.synthesize(text)
+    output.pcm_batch.save_as_wav(str(output_path))
     print(f"Output saved to: {output_path}")
 
 
