@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, DenseBuffer, Encoder, Kernels,
+            Backend, Context, DenseBuffer, Encoder, Kernels, gpu_types::QuantizationMethod,
             kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
         },
         cpu::Cpu,
@@ -39,8 +39,7 @@ fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
         input.group_size,
         input.bits,
-        input.use_zero_points,
-        input.use_mlx_quant,
+        input.quant_method,
     )
     .expect("Failed to create QuantizedMatmulQmvKernel");
     kernel.encode(
@@ -81,8 +80,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
         input.group_size,
         input.bits,
-        input.use_zero_points,
-        input.use_mlx_quant,
+        input.quant_method,
         false,
     )
     .expect("Failed to create QuantizedMatmulQmvFastKernel");
@@ -113,8 +111,7 @@ fn get_test_data<T: ArrayElement + Float>(
     n: usize,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) -> (Input<T>, Vec<T>) {
     let num_groups_k = (k + group_size as usize - 1) / group_size as usize;
 
@@ -145,34 +142,35 @@ fn get_test_data<T: ArrayElement + Float>(
         num_groups_k
     };
 
-    let (zero_points, biases) = if use_zero_points {
-        let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
-        for j in 0..n {
-            for g in 0..num_groups_k {
-                let zp_val = ((j * 2 + g * 3) % (max_val as usize + 1)) as u8;
-                zp_raw.push(zp_val);
+    let (zero_points, biases) = match quant_method {
+        QuantizationMethod::AWQ => {
+            let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
+            for j in 0..n {
+                for g in 0..num_groups_k {
+                    let zp_val = ((j * 2 + g * 3) % (max_val as usize + 1)) as u8;
+                    zp_raw.push(zp_val);
+                }
             }
-        }
-        let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
-        for j in 0..n {
-            let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
-            let packed_row = pack_zero_points(row, bits);
-            let mut padded = packed_row;
-            padded.resize(zp_stride, 0);
-            zp_packed.extend_from_slice(&padded);
-        }
-        (Some(zp_packed), None)
-    } else if use_mlx_quant {
-        let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
-        for j in 0..n {
-            for g in 0..num_groups_k {
-                biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
+            let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
+            for j in 0..n {
+                let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
+                let packed_row = pack_zero_points(row, bits);
+                let mut padded = packed_row;
+                padded.resize(zp_stride, 0);
+                zp_packed.extend_from_slice(&padded);
             }
-        }
-        let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
-        (None, Some(biases))
-    } else {
-        unreachable!("Must use either zero_points or mlx_quant");
+            (Some(zp_packed), None)
+        },
+        QuantizationMethod::MLX => {
+            let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
+            for j in 0..n {
+                for g in 0..num_groups_k {
+                    biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
+                }
+            }
+            let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+            (None, Some(biases))
+        },
     };
 
     let mut x_f32: Vec<f32> = Vec::with_capacity(m * k);
@@ -194,8 +192,7 @@ fn get_test_data<T: ArrayElement + Float>(
         m: m as u32,
         group_size,
         bits,
-        use_zero_points,
-        use_mlx_quant,
+        quant_method,
     };
 
     let expected = get_expected::<T>(&input);
@@ -230,15 +227,14 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
         assert_eq!(
             errors,
             0,
-            "QMV fast kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+            "QMV fast kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, format={:?}: {} mismatches",
             std::any::type_name::<B>(),
             input.m,
             input.k,
             input.n,
             input.group_size,
             input.bits,
-            input.use_zero_points,
-            input.use_mlx_quant,
+            input.quant_method,
             errors,
         );
     });
@@ -267,41 +263,40 @@ fn get_test_dims(
 fn test_basic<T: ArrayElement + Float + Debug + Display>(
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
     let is_half = matches!(T::data_type(), DataType::F16 | DataType::BF16);
     let dims = get_test_dims(group_size, bits, is_half);
 
     for (m, k, n) in dims {
-        let (input, expected) = get_test_data::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
+        let (input, expected) = get_test_data::<T>(m, k, n, group_size, bits, quant_method);
         test_internal::<T>(&input, &expected);
     }
 }
 
 macro_rules! qmv_fast_test {
-    ($name:ident, gs=$gs:expr, bits=$bits:expr, zp=$zp:expr, mlx=$mlx:expr) => {
+    ($name:ident, gs=$gs:expr, bits=$bits:expr, format=$format:expr) => {
         #[uzu_test]
         fn $name() {
             for_each_float_type!(|F| {
-                test_basic::<F>($gs, $bits, $zp, $mlx);
+                test_basic::<F>($gs, $bits, $format);
             })
         }
     };
 }
 
-qmv_fast_test!(test_gs32_4bit_zp, gs = 32, bits = 4, zp = true, mlx = false);
-qmv_fast_test!(test_gs64_4bit_zp, gs = 64, bits = 4, zp = true, mlx = false);
-qmv_fast_test!(test_gs128_4bit_zp, gs = 128, bits = 4, zp = true, mlx = false);
-qmv_fast_test!(test_gs32_8bit_zp, gs = 32, bits = 8, zp = true, mlx = false);
-qmv_fast_test!(test_gs64_8bit_zp, gs = 64, bits = 8, zp = true, mlx = false);
-qmv_fast_test!(test_gs128_8bit_zp, gs = 128, bits = 8, zp = true, mlx = false);
-qmv_fast_test!(test_gs32_4bit_mlx, gs = 32, bits = 4, zp = false, mlx = true);
-qmv_fast_test!(test_gs64_4bit_mlx, gs = 64, bits = 4, zp = false, mlx = true);
-qmv_fast_test!(test_gs128_4bit_mlx, gs = 128, bits = 4, zp = false, mlx = true);
-qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, zp = false, mlx = true);
-qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, zp = false, mlx = true);
-qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, zp = false, mlx = true);
+qmv_fast_test!(test_gs32_4bit_zp, gs = 32, bits = 4, format = QuantizationMethod::AWQ);
+qmv_fast_test!(test_gs64_4bit_zp, gs = 64, bits = 4, format = QuantizationMethod::AWQ);
+qmv_fast_test!(test_gs128_4bit_zp, gs = 128, bits = 4, format = QuantizationMethod::AWQ);
+qmv_fast_test!(test_gs32_8bit_zp, gs = 32, bits = 8, format = QuantizationMethod::AWQ);
+qmv_fast_test!(test_gs64_8bit_zp, gs = 64, bits = 8, format = QuantizationMethod::AWQ);
+qmv_fast_test!(test_gs128_8bit_zp, gs = 128, bits = 8, format = QuantizationMethod::AWQ);
+qmv_fast_test!(test_gs32_4bit_mlx, gs = 32, bits = 4, format = QuantizationMethod::MLX);
+qmv_fast_test!(test_gs64_4bit_mlx, gs = 64, bits = 4, format = QuantizationMethod::MLX);
+qmv_fast_test!(test_gs128_4bit_mlx, gs = 128, bits = 4, format = QuantizationMethod::MLX);
+qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, format = QuantizationMethod::MLX);
+qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, format = QuantizationMethod::MLX);
+qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, format = QuantizationMethod::MLX);
 
 fn gen_random<T: rand::distr::uniform::SampleUniform + PartialOrd + Copy, R: rand::Rng>(
     rng: &mut R,
@@ -317,8 +312,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
     label: &str,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
     let mut group = c.benchmark_group(format!("{}/Kernel/QmvFast/{}", type_short_name::<B>(), label));
     let block_size: usize = if bits == 4 {
@@ -341,8 +335,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                 T::data_type(),
                 group_size,
                 bits,
-                use_zero_points,
-                use_mlx_quant,
+                quant_method,
                 false,
             )
             .unwrap();
@@ -367,7 +360,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
             );
             let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
 
-            let zp_buf = use_zero_points.then(|| {
+            let zp_buf = (quant_method == QuantizationMethod::AWQ).then(|| {
                 let zp_stride = if bits == 4 {
                     (num_groups + 1) / 2
                 } else {
@@ -375,7 +368,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                 };
                 alloc_buffer_with_data::<B, u8>(context, &gen_random::<u8, _>(&mut rng, 0..u8::MAX, n * zp_stride))
             });
-            let bias_buf = use_mlx_quant.then(|| {
+            let bias_buf = (quant_method == QuantizationMethod::MLX).then(|| {
                 alloc_buffer_with_data::<B, T>(
                     context,
                     &gen_random::<f32, _>(&mut rng, -0.5..0.5, n * num_groups)
@@ -415,13 +408,13 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
 fn bench_qmv_fast(c: &mut Criterion) {
     for_each_backend!(|B| {
         let context = <B as Backend>::Context::new().unwrap();
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs32", 32, 4, false, true);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, true, false);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, false, true);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, true, false);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, false, true);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, true, false);
-        bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, true, false);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, true, false);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs32", 32, 4, QuantizationMethod::MLX);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, QuantizationMethod::AWQ);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, QuantizationMethod::MLX);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::AWQ);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, QuantizationMethod::MLX);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::AWQ);
+        bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::AWQ);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::AWQ);
     });
 }

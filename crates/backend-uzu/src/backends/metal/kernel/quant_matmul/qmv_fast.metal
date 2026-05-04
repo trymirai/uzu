@@ -1,7 +1,10 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
 #include "../hadamard_transform/hadamard_transform.h"
+#include "../generated/quantization_method.h"
 #include "quant_matmul.h"
+
+using namespace uzu::quantization_method;
 
 template <typename T, uint GROUP_SIZE, uint BITS>
 VARIANTS(T, float, half, bfloat)
@@ -10,16 +13,15 @@ VARIANTS(BITS, 4, 8)
 PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const device uint32_t* weights,
     const device T* scales,
-    const device uint8_t* zero_points OPTIONAL(use_zero_points),
-    const device T* biases OPTIONAL(use_mlx_quant),
+    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::AWQ),
+    const device T* biases OPTIONAL(quant_method == QuantizationMethod::MLX),
     const device T* input,
     device T* output,
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& batch_size,
-    const bool use_zero_points SPECIALIZE,
-    const bool use_mlx_quant SPECIALIZE,
+    const QuantizationMethod quant_method SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint batch_idx GROUPS(batch_size),
@@ -52,7 +54,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   const device uint8_t* zps = nullptr;
   bool high_nibble = false;
 
-  if (use_mlx_quant) {
+  if (quant_method == QuantizationMethod::MLX) {
     biases += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
   } else {
     if (BITS == 4) {
@@ -85,7 +87,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
       U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
       U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
 
-      if (use_mlx_quant) {
+      if (quant_method == QuantizationMethod::MLX) {
         U b0 = static_cast<U>(biases[0]);
         U b1 = static_cast<U>(biases[in_vec_size_g]);
         U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
@@ -145,7 +147,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
 
     ws += block_size * bytes_per_pack / pack_factor;
     scales += block_size / GROUP_SIZE;
-    if (use_mlx_quant) {
+    if (quant_method == QuantizationMethod::MLX) {
       biases += block_size / GROUP_SIZE;
     } else {
       if (BITS == 4) {

@@ -1,7 +1,10 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
+#include "../generated/quantization_method.h"
 #include "../hadamard_transform/hadamard_transform.h"
 #include "quant_matmul.h"
+
+using namespace uzu::quantization_method;
 
 // Transposed QMM kernel. BM = batch tile rows, BK = K-axis tile, BN = output
 // tile cols. WM, WN = simdgroup tile counts along M and N axes.
@@ -25,8 +28,8 @@ CONSTRAINT(T != "float" || BK < 64)
 PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const device uint32_t* weights,
     const device T* scales,
-    const device uint8_t* zero_points OPTIONAL(use_zero_points),
-    const device T* biases OPTIONAL(use_mlx_quant),
+    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::AWQ),
+    const device T* biases OPTIONAL(quant_method == QuantizationMethod::MLX),
     const device T* input,
     device T* output,
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
@@ -35,8 +38,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const constant uint& batch_size,
     threadgroup T Xs[BM * (BK + 16 / sizeof(T))],
     threadgroup T Ws[BN * (BK + 16 / sizeof(T))],
-    const bool use_zero_points SPECIALIZE,
-    const bool use_mlx_quant SPECIALIZE,
+    const QuantizationMethod quant_method SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     const bool aligned_n SPECIALIZE,
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(BN)),
@@ -44,9 +46,9 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const uint simd_lane THREADS(32),
     const uint simd_group THREADS(WM * WN)
 ) {
-  if (use_mlx_quant) {
+  if (quant_method == QuantizationMethod::MLX) {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, true, WM, WN>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, QuantizationMethod::MLX, WM, WN>(
           weights,
           scales,
           zero_points,
@@ -64,7 +66,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lane
       );
     } else {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, BM, BK, BN, true, WM, WN>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, BM, BK, BN, QuantizationMethod::MLX, WM, WN>(
           weights,
           scales,
           zero_points,
@@ -84,7 +86,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     }
   } else {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, false, WM, WN>(
+      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, QuantizationMethod::AWQ, WM, WN>(
           weights,
           scales,
           zero_points,
@@ -110,7 +112,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           BM,
           BK,
           BN,
-          false,
+          QuantizationMethod::AWQ,
           WM,
           WN>(
           weights,

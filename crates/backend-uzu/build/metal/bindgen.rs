@@ -124,8 +124,9 @@ pub fn bindgen(
         .enumerate()
         .map(|(i, a)| {
             let arg_name = format_ident!("{}", a.name.as_ref());
-            let rust_type = match a.argument_type().unwrap() {
-                MetalArgumentType::Specialize(t) => format_ident!("{t}"),
+            let rust_type: Type = match a.argument_type().unwrap() {
+                MetalArgumentType::Specialize(t) => syn::parse_str(&t)
+                    .unwrap_or_else(|_| panic!("cannot parse specialize type `{}` in kernel `{}`", t, kernel_name)),
                 _ => unreachable!(),
             };
             let idx = base_index.unwrap_or(0) + i;

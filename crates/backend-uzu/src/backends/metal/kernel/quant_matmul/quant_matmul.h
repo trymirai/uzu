@@ -5,7 +5,10 @@
 
 using namespace metal;
 
+#include "../generated/quantization_method.h"
 #include "mma.h"
+
+using QuantizationMethod = uzu::quantization_method::QuantizationMethod;
 
 // Avoids air.convert (SFU) for int → float which is slower on Apple GPU.
 template <typename U>
@@ -703,7 +706,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32,
-    const bool use_mlx_quant = false,
+    const QuantizationMethod quant_method = QuantizationMethod::AWQ,
     const int WM = 2,
     const int WN = 2>
 void qmm_transposed_impl(
@@ -753,7 +756,7 @@ void qmm_transposed_impl(
   loader_x_t loader_x(x_block, in_vec_size, Xs, simd_group, simd_lane);
   mma_t mma_op(simd_group, simd_lane);
 
-  if (use_mlx_quant) {
+  if (quant_method == QuantizationMethod::MLX) {
     using loader_w_t = QuantizedBlockLoaderMlx<
         T,
         BN,

@@ -3,7 +3,10 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Context, DenseBuffer, Encoder, Kernels, kernel::QuantizedMatmulQmvKernel},
+        common::{
+            Backend, Context, DenseBuffer, Encoder, Kernels, gpu_types::QuantizationMethod,
+            kernel::QuantizedMatmulQmvKernel,
+        },
         cpu::Cpu,
     },
 };
@@ -32,8 +35,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
         input.group_size,
         input.bits,
-        input.use_zero_points,
-        input.use_mlx_quant,
+        input.quant_method,
     )
     .expect("Failed to create QuantizedMatmulQmvKernel");
     kernel.encode(
@@ -66,8 +68,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     n: usize,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) -> (Input<T>, Vec<T>) {
     let num_groups_k = (k + group_size as usize - 1) / group_size as usize;
 
@@ -101,35 +102,36 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         num_groups_k
     };
 
-    let (zero_points, biases) = if use_zero_points {
-        let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
-        for j in 0..n {
-            for g in 0..num_groups_k {
-                let zp_val = ((j * 2 + g * 3) % (max_val as usize + 1)) as u8;
-                zp_raw.push(zp_val);
+    let (zero_points, biases) = match quant_method {
+        QuantizationMethod::AWQ => {
+            let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
+            for j in 0..n {
+                for g in 0..num_groups_k {
+                    let zp_val = ((j * 2 + g * 3) % (max_val as usize + 1)) as u8;
+                    zp_raw.push(zp_val);
+                }
             }
-        }
-        // Pack zero points per row (row = output neuron)
-        let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
-        for j in 0..n {
-            let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
-            let packed_row = pack_zero_points(row, bits);
-            let mut padded = packed_row;
-            padded.resize(zp_stride, 0);
-            zp_packed.extend_from_slice(&padded);
-        }
-        (Some(zp_packed), None)
-    } else if use_mlx_quant {
-        let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
-        for j in 0..n {
-            for g in 0..num_groups_k {
-                biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
+            // Pack zero points per row (row = output neuron)
+            let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
+            for j in 0..n {
+                let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
+                let packed_row = pack_zero_points(row, bits);
+                let mut padded = packed_row;
+                padded.resize(zp_stride, 0);
+                zp_packed.extend_from_slice(&padded);
             }
-        }
-        let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
-        (None, Some(biases))
-    } else {
-        unreachable!("Must use either zero_points or mlx_quant");
+            (Some(zp_packed), None)
+        },
+        QuantizationMethod::MLX => {
+            let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
+            for j in 0..n {
+                for g in 0..num_groups_k {
+                    biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
+                }
+            }
+            let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+            (None, Some(biases))
+        },
     };
 
     // X: [m × k]
@@ -152,8 +154,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         m: m as u32,
         group_size,
         bits,
-        use_zero_points,
-        use_mlx_quant,
+        quant_method,
     };
 
     let expected = get_output::<Cpu, T>(&input);
@@ -164,8 +165,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
 fn get_test_data_edge<T: ArrayElement + Float>(
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) -> (Input<T>, Vec<T>) {
     let m = 1usize;
     let k = 4usize;
@@ -185,15 +185,16 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         num_groups_k
     };
 
-    let (zero_points, biases) = if use_zero_points {
-        // Zero points all 0 → bias = 0
-        let zp_packed = vec![0u8; n * zp_stride];
-        (Some(zp_packed), None)
-    } else if use_mlx_quant {
-        let biases: Vec<T> = vec![T::zero(); n * num_groups_k];
-        (None, Some(biases))
-    } else {
-        unreachable!("Must use either zero_points or mlx_quant");
+    let (zero_points, biases) = match quant_method {
+        QuantizationMethod::AWQ => {
+            // Zero points all 0 → bias = 0
+            let zp_packed = vec![0u8; n * zp_stride];
+            (Some(zp_packed), None)
+        },
+        QuantizationMethod::MLX => {
+            let biases: Vec<T> = vec![T::zero(); n * num_groups_k];
+            (None, Some(biases))
+        },
     };
 
     // X: simple increasing values
@@ -211,8 +212,7 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         m: m as u32,
         group_size,
         bits,
-        use_zero_points,
-        use_mlx_quant,
+        quant_method,
     };
 
     let expected = get_output::<Cpu, T>(&input);
@@ -247,15 +247,14 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
         assert_eq!(
             errors,
             0,
-            "QMV kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+            "QMV kernel: backend={}, m={}, k={}, n={}, gs={}, bits={}, format={:?}: {} mismatches",
             std::any::type_name::<B>(),
             input.m,
             input.k,
             input.n,
             input.group_size,
             input.bits,
-            input.use_zero_points,
-            input.use_mlx_quant,
+            input.quant_method,
             errors,
         );
     });
@@ -281,14 +280,13 @@ fn get_test_dims(
 fn test_basic<T: ArrayElement + Float + Debug + Display>(
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
     let is_half = matches!(T::data_type(), DataType::F16 | DataType::BF16);
     let dims = get_test_dims(group_size, bits, is_half);
 
     for (m, k, n) in dims {
-        let (input, expected) = get_test_data_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
+        let (input, expected) = get_test_data_basic::<T>(m, k, n, group_size, bits, quant_method);
         test_internal::<T>(&input, &expected);
     }
 }
@@ -296,10 +294,9 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>(
 fn test_edge<T: ArrayElement + Float + Debug + Display>(
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
-    let (input, expected) = get_test_data_edge::<T>(group_size, bits, use_zero_points, use_mlx_quant);
+    let (input, expected) = get_test_data_edge::<T>(group_size, bits, quant_method);
     test_internal::<T>(&input, &expected);
 }
 
@@ -307,21 +304,21 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
 #[uzu_test]
 fn test_gs32_4bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 4, true, false);
+        test_basic::<F>(32, 4, QuantizationMethod::AWQ);
     })
 }
 
 #[uzu_test]
 fn test_gs64_4bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 4, true, false);
+        test_basic::<F>(64, 4, QuantizationMethod::AWQ);
     })
 }
 
 #[uzu_test]
 fn test_gs128_4bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 4, true, false);
+        test_basic::<F>(128, 4, QuantizationMethod::AWQ);
     })
 }
 
@@ -330,21 +327,21 @@ fn test_gs128_4bit_zp() {
 #[uzu_test]
 fn test_gs32_8bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 8, true, false);
+        test_basic::<F>(32, 8, QuantizationMethod::AWQ);
     })
 }
 
 #[uzu_test]
 fn test_gs64_8bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 8, true, false);
+        test_basic::<F>(64, 8, QuantizationMethod::AWQ);
     })
 }
 
 #[uzu_test]
 fn test_gs128_8bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 8, true, false);
+        test_basic::<F>(128, 8, QuantizationMethod::AWQ);
     })
 }
 
@@ -353,21 +350,21 @@ fn test_gs128_8bit_zp() {
 #[uzu_test]
 fn test_gs32_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 4, false, true);
+        test_basic::<F>(32, 4, QuantizationMethod::MLX);
     })
 }
 
 #[uzu_test]
 fn test_gs64_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 4, false, true);
+        test_basic::<F>(64, 4, QuantizationMethod::MLX);
     })
 }
 
 #[uzu_test]
 fn test_gs128_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 4, false, true);
+        test_basic::<F>(128, 4, QuantizationMethod::MLX);
     })
 }
 
@@ -376,21 +373,21 @@ fn test_gs128_4bit_mlx() {
 #[uzu_test]
 fn test_gs32_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 8, false, true);
+        test_basic::<F>(32, 8, QuantizationMethod::MLX);
     })
 }
 
 #[uzu_test]
 fn test_gs64_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 8, false, true);
+        test_basic::<F>(64, 8, QuantizationMethod::MLX);
     })
 }
 
 #[uzu_test]
 fn test_gs128_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 8, false, true);
+        test_basic::<F>(128, 8, QuantizationMethod::MLX);
     })
 }
 
@@ -399,27 +396,27 @@ fn test_gs128_8bit_mlx() {
 #[uzu_test]
 fn test_edge_4bit_zp() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 4, true, false);
+        test_edge::<F>(32, 4, QuantizationMethod::AWQ);
     })
 }
 
 #[uzu_test]
 fn test_edge_8bit_zp() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 8, true, false);
+        test_edge::<F>(32, 8, QuantizationMethod::AWQ);
     })
 }
 
 #[uzu_test]
 fn test_edge_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 4, false, true);
+        test_edge::<F>(32, 4, QuantizationMethod::MLX);
     })
 }
 
 #[uzu_test]
 fn test_edge_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 8, false, true);
+        test_edge::<F>(32, 8, QuantizationMethod::MLX);
     })
 }

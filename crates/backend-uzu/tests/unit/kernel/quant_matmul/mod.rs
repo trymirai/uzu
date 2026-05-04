@@ -6,7 +6,7 @@ mod qmm_transposed_test;
 mod qmv_fast_test;
 mod qmv_test;
 
-use backend_uzu::ArrayElement;
+use backend_uzu::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
 use num_traits::Float;
 
 pub(super) struct Input<T: ArrayElement + Float> {
@@ -20,8 +20,7 @@ pub(super) struct Input<T: ArrayElement + Float> {
     pub m: u32,
     pub group_size: u32,
     pub bits: u32,
-    pub use_zero_points: bool,
-    pub use_mlx_quant: bool,
+    pub quant_method: QuantizationMethod,
 }
 
 pub(super) fn pack_weights_u32(
