@@ -10,6 +10,7 @@ use shoji::types::{
 
 use crate::cli::{
     components::{ApplicationState, HistoryCellType},
+    helpers::HINT_SESSION_INTERRUPT,
     sessions::SessionState,
 };
 
@@ -46,10 +47,6 @@ impl ChatSessionState {
             status: ChatSessionStatus::Idle,
         }
     }
-
-    fn is_busy(&self) -> bool {
-        matches!(self.status, ChatSessionStatus::Loading | ChatSessionStatus::Generating)
-    }
 }
 
 impl SessionState for ChatSessionState {
@@ -62,10 +59,10 @@ impl SessionState for ChatSessionState {
     }
 
     fn is_busy(&self) -> bool {
-        self.is_busy()
+        matches!(self.status, ChatSessionStatus::Loading | ChatSessionStatus::Generating)
     }
 
-    fn cancel(&self) -> bool {
+    fn interrupt(&self) -> bool {
         let Some(cancel_token) = self.cancel_token.as_ref() else {
             return false;
         };
@@ -76,8 +73,8 @@ impl SessionState for ChatSessionState {
     fn status_text(&self) -> Option<String> {
         let status = match self.status {
             ChatSessionStatus::Idle => "loaded",
-            ChatSessionStatus::Loading => "loading...",
-            ChatSessionStatus::Generating => "generating...",
+            ChatSessionStatus::Loading => "loading",
+            ChatSessionStatus::Generating => &format!("generating ({})", HINT_SESSION_INTERRUPT),
         };
         Some(status.to_string())
     }
