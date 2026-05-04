@@ -1,4 +1,3 @@
-//! Isolated unified GEMM implementation.
 #![allow(dead_code)]
 
 mod gemm_weights_buffers;

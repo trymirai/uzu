@@ -16,9 +16,12 @@ KERNEL(UnifiedGemm)(
     const device T* activations,
     const device uint8_t* weights,
     device T* result,
-    const device T* scales OPTIONAL(use_mlx_quant || use_zero_points),
-    const device T* biases OPTIONAL(use_mlx_quant),
-    const device uint8_t* zero_points OPTIONAL(use_zero_points),
+    const device T* scales
+        OPTIONAL(weight_prologue != GemmWeightPrologueKind::FullPrecision),
+    const device T* biases
+        OPTIONAL(weight_prologue == GemmWeightPrologueKind::MlxDequant),
+    const device uint8_t* zero_points
+        OPTIONAL(weight_prologue == GemmWeightPrologueKind::AwqDequant),
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const constant GemmTilingConfig& tile,
@@ -29,8 +32,6 @@ KERNEL(UnifiedGemm)(
     const GemmAlignment alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
     const uint group_size SPECIALIZE,
-    const bool use_mlx_quant SPECIALIZE,
-    const bool use_zero_points SPECIALIZE,
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
@@ -52,8 +53,6 @@ KERNEL(UnifiedGemm)(
   (void)alignment;
   (void)bits_per_weight;
   (void)group_size;
-  (void)use_mlx_quant;
-  (void)use_zero_points;
   (void)group_x;
   (void)group_y;
   (void)thread_x;

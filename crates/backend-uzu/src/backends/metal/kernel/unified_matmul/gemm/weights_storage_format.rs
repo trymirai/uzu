@@ -51,23 +51,4 @@ impl WeightsStorageFormat {
         }
     }
 
-    pub(crate) const fn use_mlx_quant(self) -> bool {
-        matches!(
-            self,
-            Self::Quantized {
-                format: QuantizedFormat::MLX,
-                ..
-            }
-        )
-    }
-
-    pub(crate) const fn use_zero_points(self) -> bool {
-        matches!(
-            self,
-            Self::Quantized {
-                format: QuantizedFormat::AWQ,
-                ..
-            }
-        )
-    }
 }

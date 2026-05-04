@@ -367,18 +367,24 @@ impl MatmulMetalKernel {
         group_count_y: u32,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), crate::backends::metal::error::MetalError> {
-        let weights_buffers = if specialization.weights_storage.use_mlx_quant() {
-            GemmWeightsBuffers::Mlx {
-                weights,
-                scales,
-                biases: zero_points_or_biases,
-            }
-        } else {
-            GemmWeightsBuffers::Awq {
-                weights,
-                scales,
-                zero_points: zero_points_or_biases,
-            }
+        let weights_buffers = match specialization.weights_storage.weight_prologue() {
+            crate::backends::common::gpu_types::unified_gemm::GemmWeightPrologueKind::MlxDequant => {
+                GemmWeightsBuffers::Mlx {
+                    weights,
+                    scales,
+                    biases: zero_points_or_biases,
+                }
+            },
+            crate::backends::common::gpu_types::unified_gemm::GemmWeightPrologueKind::AwqDequant => {
+                GemmWeightsBuffers::Awq {
+                    weights,
+                    scales,
+                    zero_points: zero_points_or_biases,
+                }
+            },
+            crate::backends::common::gpu_types::unified_gemm::GemmWeightPrologueKind::FullPrecision => {
+                unreachable!("encode_unified_gemm_quantized called with FullPrecision specialization")
+            },
         };
         self.unified_gemm.encode(
             context,
@@ -451,7 +457,6 @@ fn select_unified_gemm_simdgroup_tile(
     data_type: DataType,
     arguments: &MatmulArguments<Metal>,
 ) -> GemmTilingConfig {
-    // Mirror existing simdgroup-MMA Gemm tile choices: 8×8×8 fragments, 2×2 simdgroups.
     let (threadgroup_m, threadgroup_n, threadgroup_k) = match data_type {
         DataType::F32 => (32u32, 64u32, 16u32),
         _ => {
@@ -480,7 +485,6 @@ fn select_unified_gemm_simdgroup_tile(
 }
 
 fn select_unified_gemm_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
-    // Mirror gemm_mpp tile picks: 64×64 with 2×2 simdgroups by default.
     let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) =
         if arguments.batch_dim >= 128 && arguments.output_dim >= 128 {
             (128u32, 128u32, 4u32, 4u32)

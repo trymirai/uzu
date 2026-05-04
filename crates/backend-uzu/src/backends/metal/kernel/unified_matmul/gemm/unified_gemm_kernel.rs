@@ -59,8 +59,6 @@ impl UnifiedGemmKernel {
                     specialization.alignment,
                     specialization.weights_storage.bits_per_weight(),
                     specialization.weights_storage.group_size(),
-                    specialization.weights_storage.use_mlx_quant(),
-                    specialization.weights_storage.use_zero_points(),
                 )?;
                 Ok(entry.insert(kernel))
             },

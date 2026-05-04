@@ -19,15 +19,12 @@ use crate::backends::{
     },
 };
 
-/// Explicit dispatch paths for testing quantized matmul kernels independent of production routing.
 #[derive(Debug, Clone, Copy)]
 pub enum QuantizedMatmulDispatchPath {
     Auto,
     UnifiedGemm,
 }
 
-/// Test-only dispatcher for quantized matmul. The `matmul` cache is borrowed for its
-/// embedded unified-gemm kernel cache, used only by the `UnifiedGemm` path.
 pub fn encode_quantized_matmul_with_path(
     context: &MetalContext,
     matmul: &mut MatmulMetalKernel,
@@ -94,7 +91,6 @@ fn select_unified_quantized_tile(
     configuration: &QuantizedMatmulConfiguration,
     batch_dim: u32,
 ) -> GemmTilingConfig {
-    // threadgroup_k must be ≤ group_size (validated by UnifiedGemmSpecialization).
     let group_size = configuration.group_size as u32;
     let threadgroup_k = group_size.min(32);
     let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) = if batch_dim < 32 {
