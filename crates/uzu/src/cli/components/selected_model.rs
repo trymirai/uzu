@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use iocraft::prelude::*;
 use tokio_stream::StreamExt;
 
@@ -5,6 +7,8 @@ use crate::{
     cli::components::{ApplicationState, ProgressBar},
     storage::types::DownloadPhase,
 };
+
+const DOWNLOAD_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Copy)]
 enum StorageAction {
@@ -48,10 +52,23 @@ pub fn SelectedModel(
                 return;
             }
 
+            let mut last_progress_rendered_at: Option<Instant> = None;
             while let Some(Ok((event_identifier, event_state))) = stream.next().await {
                 if event_identifier != identifier {
                     continue;
                 }
+
+                if matches!(event_state.phase, DownloadPhase::Downloading {}) {
+                    if last_progress_rendered_at
+                        .is_some_and(|rendered_at| rendered_at.elapsed() < DOWNLOAD_PROGRESS_UPDATE_INTERVAL)
+                    {
+                        continue;
+                    }
+                    last_progress_rendered_at = Some(Instant::now());
+                } else {
+                    last_progress_rendered_at = None;
+                }
+
                 if let Some(model_state) = state.write().model_state.as_mut() {
                     model_state.download_state = event_state;
                 }
