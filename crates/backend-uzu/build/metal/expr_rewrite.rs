@@ -27,7 +27,8 @@ impl<F: FnMut(&Path) -> Option<Expr>> VisitMut for Walker<F> {
         visit_mut::visit_expr_mut(self, expr);
 
         if let Expr::Path(ExprPath {
-            path, ..
+            path,
+            ..
         }) = expr
         {
             if let Some(replacement) = (self.rewriter)(path) {

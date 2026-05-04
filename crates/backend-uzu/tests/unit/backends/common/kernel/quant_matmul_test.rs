@@ -10,7 +10,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Context, DenseBuffer, Encoder,
-        gpu_types::{QuantizationMode, QuantizationMethod},
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
             tests::common::helpers::alloc_buffer_with_data,
@@ -302,8 +302,15 @@ fn execute_quantized_matmul<B: Backend>(
         weights_quant.clone()
     };
 
-    let params =
-        generate_test_quant_params(output_dim, input_dim, group_size, data_type, bits, quantization_method, randomize_zp);
+    let params = generate_test_quant_params(
+        output_dim,
+        input_dim,
+        group_size,
+        data_type,
+        bits,
+        quantization_method,
+        randomize_zp,
+    );
     // X is batch × input_dim
     let x_f32: Vec<f32> = if batch == 1 {
         // Vector case: 1 × input_dim

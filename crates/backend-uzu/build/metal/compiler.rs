@@ -332,27 +332,19 @@ impl Compiler for MetalCompiler {
         gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
 
         let mut enum_type_names: std::collections::HashSet<Box<str>> = std::collections::HashSet::new();
-        let mut enum_type_paths: std::collections::HashMap<Box<str>, Box<str>> =
-            std::collections::HashMap::new();
+        let mut enum_type_paths: std::collections::HashMap<Box<str>, Box<str>> = std::collections::HashMap::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 if let crate::common::gpu_types::GpuType::Enum(e) = ty {
                     enum_type_names.insert(e.name.clone());
-                    let full_path = format!(
-                        "crate::backends::common::gpu_types::{}::{}",
-                        file.name, e.name
-                    )
-                    .into_boxed_str();
+                    let full_path =
+                        format!("crate::backends::common::gpu_types::{}::{}", file.name, e.name).into_boxed_str();
                     enum_type_paths.insert(e.name.clone(), full_path);
                 }
             }
         }
-        self.enum_type_names
-            .set(enum_type_names)
-            .map_err(|_| anyhow::anyhow!("enum_type_names already populated"))?;
-        self.enum_type_paths
-            .set(enum_type_paths)
-            .map_err(|_| anyhow::anyhow!("enum_type_paths already populated"))?;
+        self.enum_type_names.set(enum_type_names).map_err(|_| anyhow::anyhow!("enum_type_names already populated"))?;
+        self.enum_type_paths.set(enum_type_paths).map_err(|_| anyhow::anyhow!("enum_type_paths already populated"))?;
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()

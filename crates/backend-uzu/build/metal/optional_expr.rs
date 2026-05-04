@@ -2,9 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
 use quote::ToTokens;
-use syn::{
-    Expr, Path, PathSegment, parse_quote, punctuated::Punctuated,
-};
+use syn::{Expr, Path, PathSegment, parse_quote, punctuated::Punctuated};
 
 use super::expr_rewrite::rewrite_paths_with;
 

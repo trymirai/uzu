@@ -48,7 +48,17 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
 ) {
   if (quant_method == QuantizationMethod::MLX) {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, QuantizationMethod::MLX, WM, WN>(
+      qmm_transposed_impl<
+          T,
+          GROUP_SIZE,
+          BITS,
+          true,
+          BM,
+          BK,
+          BN,
+          QuantizationMethod::MLX,
+          WM,
+          WN>(
           weights,
           scales,
           zero_points,
@@ -66,7 +76,17 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           simd_lane
       );
     } else {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, false, BM, BK, BN, QuantizationMethod::MLX, WM, WN>(
+      qmm_transposed_impl<
+          T,
+          GROUP_SIZE,
+          BITS,
+          false,
+          BM,
+          BK,
+          BN,
+          QuantizationMethod::MLX,
+          WM,
+          WN>(
           weights,
           scales,
           zero_points,
@@ -86,7 +106,17 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     }
   } else {
     if (aligned_n) {
-      qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, QuantizationMethod::AWQ, WM, WN>(
+      qmm_transposed_impl<
+          T,
+          GROUP_SIZE,
+          BITS,
+          true,
+          BM,
+          BK,
+          BN,
+          QuantizationMethod::AWQ,
+          WM,
+          WN>(
           weights,
           scales,
           zero_points,

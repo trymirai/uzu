@@ -2,7 +2,7 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Encoder, Kernels,
-        gpu_types::{QuantizationMode, QuantizationMethod},
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{QuantizedMatmulQmmTransposedKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
     },
 };
