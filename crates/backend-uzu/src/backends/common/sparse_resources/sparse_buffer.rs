@@ -68,11 +68,13 @@ pub trait SparseBufferExt: SparseBuffer {
     }
 }
 
+#[cfg(metal_backend)]
 #[derive(Debug)]
 pub(crate) struct SparseBufferMappedPages {
     map: RangeMap<usize, ()>,
 }
 
+#[cfg(metal_backend)]
 impl SparseBufferMappedPages {
     pub fn new() -> Self {
         Self {
