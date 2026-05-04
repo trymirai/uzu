@@ -1,5 +1,5 @@
 mod callback;
-mod config;
+pub mod config;
 mod downloader;
 mod error;
 

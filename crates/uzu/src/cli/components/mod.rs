@@ -21,5 +21,5 @@ pub use progress_bar::ProgressBar;
 pub use rendered_text::RenderedText;
 pub use selected_model::SelectedModel;
 pub use selector::{Selector, SelectorItem, SelectorStyle};
-pub use text_input::{TextInput, TextInputFocus};
+pub use text_input::{InputType, TextInput, TextInputFocus};
 pub use theme::Theme;

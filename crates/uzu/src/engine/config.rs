@@ -4,15 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::settings::{SettingType, Settings, SettingsError};
 
-const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
-const KEY_LALAMO_PATH: &str = "LALAMO_PATH";
-const KEY_HF_TOKEN: &str = "HF_TOKEN";
-const KEY_OPENAI_API_KEY: &str = "OPENAI_API_KEY";
-const KEY_ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";
-const KEY_GEMINI_API_KEY: &str = "GEMINI_API_KEY";
-const KEY_XAI_API_KEY: &str = "XAI_API_KEY";
-const KEY_BASETEN_API_KEY: &str = "BASETEN_API_KEY";
-const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
+pub const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
+pub const KEY_LALAMO_PATH: &str = "LALAMO_PATH";
+pub const KEY_HF_TOKEN: &str = "HF_TOKEN";
+pub const KEY_OPENAI_API_KEY: &str = "OPENAI_API_KEY";
+pub const KEY_ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";
+pub const KEY_GEMINI_API_KEY: &str = "GEMINI_API_KEY";
+pub const KEY_XAI_API_KEY: &str = "XAI_API_KEY";
+pub const KEY_BASETEN_API_KEY: &str = "BASETEN_API_KEY";
+pub const KEY_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
 
 #[bindings::export(Structure(Class))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,16 +58,14 @@ impl EngineConfig {
     ) -> Result<(), SettingsError> {
         macro_rules! synchronize_field {
             ($setting_type:path, $field:ident, $key:expr) => {
-                if let Some(value) = &self.$field {
-                    settings.save($setting_type, $key, Some(value.clone()))?;
-                } else if let Some(value) = settings.load($setting_type, $key)? {
+                if let Some(value) = settings.load($setting_type, $key)? {
                     self.$field = Some(value);
                 }
             };
         }
 
         synchronize_field!(SettingType::Secret, mirai_api_key, KEY_MIRAI_API_KEY);
-        synchronize_field!(SettingType::Secret, lalamo_path, KEY_LALAMO_PATH);
+        synchronize_field!(SettingType::Config, lalamo_path, KEY_LALAMO_PATH);
         synchronize_field!(SettingType::Secret, huggingface_api_key, KEY_HF_TOKEN);
         synchronize_field!(SettingType::Secret, openai_api_key, KEY_OPENAI_API_KEY);
         synchronize_field!(SettingType::Secret, anthropic_api_key, KEY_ANTHROPIC_API_KEY);

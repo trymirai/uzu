@@ -3,7 +3,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     cli::{
-        components::{ApplicationState, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
+        components::{ApplicationState, InputType, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
         flows::Command,
         helpers::{
             HINT_COMMANDS, HINT_SEND, HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, SYMBOL_COMMAND, SYMBOL_INPUT,
@@ -69,6 +69,7 @@ pub fn CommandInput(
                 TextInput(
                     maximal_width: maximal_width,
                     focus: focus,
+                    r#type: InputType::Text,
                     on_change: move |text: String| input.set(text),
                     on_submit: on_submit.clone(),
                 )
