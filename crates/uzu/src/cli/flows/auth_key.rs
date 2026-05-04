@@ -7,7 +7,7 @@ use crate::{
         flows::{Flow, FlowEvent},
         helpers::SYMBOL_INPUT_RESULT,
     },
-    settings::SettingType,
+    settings::SettingKind,
 };
 
 const SAFE_PADDING: u16 = 1;
@@ -18,7 +18,7 @@ pub struct AuthProvider {
     pub key: String,
     pub value_title: String,
     pub input_type: InputType,
-    pub setting_type: SettingType,
+    pub setting_kind: SettingKind,
 }
 
 impl AuthProvider {
@@ -31,7 +31,7 @@ impl AuthProvider {
             key: key.into(),
             value_title: "API_KEY".to_string(),
             input_type: InputType::Secret,
-            setting_type: SettingType::Secret,
+            setting_kind: SettingKind::Secret,
         }
     }
 
@@ -44,7 +44,7 @@ impl AuthProvider {
             key: key.into(),
             value_title: "PATH".to_string(),
             input_type: InputType::Secret,
-            setting_type: SettingType::Config,
+            setting_kind: SettingKind::Config,
         }
     }
 }
@@ -56,7 +56,7 @@ impl Default for AuthProvider {
             key: String::new(),
             value_title: String::new(),
             input_type: InputType::Text,
-            setting_type: SettingType::Config,
+            setting_kind: SettingKind::Config,
         }
     }
 }
@@ -125,7 +125,7 @@ fn AuthKeyFlowView(
                     let settings = state.read().settings.clone();
                     let result = match settings {
                         Some(settings) => settings
-                            .save(provider.setting_type.clone(), &provider.key, Some(value))
+                            .save(provider.setting_kind.clone(), provider.key.clone(), Some(value))
                             .map(|()| "Saved, please restart to apply changes".to_string())
                             .unwrap_or_else(|error| format!("Error: {}", error)),
                         None => "Error: settings are not available".to_string(),

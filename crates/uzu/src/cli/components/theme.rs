@@ -5,7 +5,7 @@ use iocraft::prelude::*;
 use crate::{
     cli::helpers::ColorRgb,
     device::Device,
-    settings::{SettingType, Settings, SettingsError},
+    settings::{SettingKind, Settings, SettingsError},
 };
 
 const SETTINGS_THEME: &str = "theme";
@@ -122,7 +122,7 @@ impl Theme {
 
 impl Theme {
     pub fn load(settings: &Settings) -> Result<Option<Self>, SettingsError> {
-        let Some(name) = settings.load(SettingType::Config, SETTINGS_THEME)? else {
+        let Some(name) = settings.load(SettingKind::Config, SETTINGS_THEME.to_string())? else {
             return Ok(None);
         };
         Ok(Self::all().into_iter().find(|theme| theme.name == name))
@@ -132,6 +132,6 @@ impl Theme {
         &self,
         settings: &Settings,
     ) -> Result<(), SettingsError> {
-        settings.save(SettingType::Config, SETTINGS_THEME, Some(self.name.clone()))
+        settings.save(SettingKind::Config, SETTINGS_THEME.to_string(), Some(self.name.clone()))
     }
 }

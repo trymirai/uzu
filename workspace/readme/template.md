@@ -111,31 +111,13 @@ uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 
 ## CLI
 
-You can run `uzu` in [CLI](https://docs.trymirai.com/overview/cli) mode:
+You can run `uzu` in CLI mode:
 
 ```bash
-cargo run --release -p cli -- help
+cargo run --release -p cli
 ```
 
-```text
-Usage: cli [COMMAND]
-
-Commands:
-  run    Run a model with the specified path
-  serve  Start a server with the specified model path
-  bench  Run benchmarks for the specified model
-  help   Print this message or the help of the given subcommand(s)
-```
-
-## Benchmarks
-
-To run benchmarks:
-
-```bash
-cargo run --release -p cli -- bench ./workspace/models/{{ version }}/{MODEL_NAME} ./workspace/models/{{ version }}/{MODEL_NAME}/benchmark_task.json ./workspace/models/{{ version }}/{MODEL_NAME}/benchmark_result.json
-```
-
-`benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.
+This launches an interactive app where you can browse, download, and interact with models.
 
 {% endif %}
 
