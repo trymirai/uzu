@@ -4,7 +4,7 @@ use shoji::types::model::Model;
 use crate::{
     cli::{
         components::{CommandInput, HistoryCell, HistoryCellType, Logo, SelectedModel, Theme},
-        flows::{ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, ThemeFlow},
+        flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
         sessions::{self, SessionState},
     },
@@ -58,6 +58,7 @@ pub fn Application(
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()
+            .register("auth", "Add models from a specific provider", || Box::new(AuthFlow))
             .register("theme", "Choose the theme", || Box::new(ThemeFlow))
             .register("model", "Choose the model", || Box::new(ModelRegistriesFlow))
             .register("exit", "Exit the CLI", || Box::new(ExitFlow)),

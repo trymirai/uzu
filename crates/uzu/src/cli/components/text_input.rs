@@ -2,6 +2,19 @@ use iocraft::prelude::*;
 
 use crate::cli::components::RenderedText;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputType {
+    #[default]
+    Text,
+    Secret,
+}
+
+impl InputType {
+    fn is_secret(&self) -> bool {
+        *self == Self::Secret
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextInputFocus {
     #[default]
@@ -24,6 +37,7 @@ impl TextInputFocus {
 pub struct TextInputProps {
     pub maximal_width: u16,
     pub focus: TextInputFocus,
+    pub r#type: InputType,
     pub on_change: HandlerMut<'static, String>,
     pub on_submit: HandlerMut<'static, String>,
 }
@@ -35,6 +49,7 @@ pub fn TextInput(
 ) -> impl Into<AnyElement<'static>> {
     let maximal_width = props.maximal_width;
     let focus = props.focus;
+    let r#type = props.r#type;
     let mut on_change = props.on_change.take();
     let mut on_submit = props.on_submit.take();
 
@@ -112,6 +127,12 @@ pub fn TextInput(
                 notify_change();
                 on_submit(text);
             },
+            KeyCode::Enter if r#type.is_secret() => {
+                let text = state.read().original_text.clone();
+                state.write().reset();
+                notify_change();
+                on_submit(text);
+            },
             KeyCode::Enter => {
                 if focus.is_minimal() {
                     return;
@@ -123,7 +144,17 @@ pub fn TextInput(
         }
     });
 
-    let segments = state.read().segments(maximal_width as usize);
+    let segments = if r#type.is_secret() {
+        let state = state.read();
+        let hidden_text: String = state.original_text.chars().map(|_| '*').collect();
+        RenderedText {
+            original_text: hidden_text,
+            position: state.position,
+        }
+        .segments(maximal_width as usize)
+    } else {
+        state.read().segments(maximal_width as usize)
+    };
     element! {
         View(width: maximal_width, height: segments.len().max(1) as u16, flex_direction: FlexDirection::Column) {
             #(segments.into_iter().map(|segment| element! {
