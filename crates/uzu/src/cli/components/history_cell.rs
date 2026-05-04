@@ -2,6 +2,7 @@ use iocraft::prelude::*;
 use shoji::types::session::{
     chat::{ChatReply, ChatReplyStats},
     classification::ClassificationOutput,
+    text_to_speech::TextToSpeechStats,
 };
 
 use crate::cli::{
@@ -25,6 +26,9 @@ pub enum HistoryCellType {
     },
     ClassificationOutput {
         output: ClassificationOutput,
+    },
+    TextToSpeechOutput {
+        stats: TextToSpeechStats,
     },
 }
 
@@ -89,6 +93,9 @@ pub fn HistoryCell(
         Some(HistoryCellType::ClassificationOutput {
             output,
         }) => classification_output_component(output, theme.subtitle_color, theme.padding()).into(),
+        Some(HistoryCellType::TextToSpeechOutput {
+            stats,
+        }) => text_to_speech_output_component(stats, theme.subtitle_color, theme.padding()).into(),
         None => element! { View }.into(),
     };
     view
@@ -202,6 +209,42 @@ fn chat_reply_stats_component(
                 content: format!("duration: {duration}"),
                 color: subtitle_color,
             )
+        }
+    }
+    .into()
+}
+
+fn text_to_speech_output_component(
+    stats: TextToSpeechStats,
+    subtitle_color: Color,
+    padding: u16,
+) -> AnyElement<'static> {
+    let text_length = stats.text_length;
+    let first_chunk_seconds = format!("{:.2} s", stats.first_chunk_seconds);
+    let generation_duration = format!("{:.2} s", stats.generation_duration);
+    let audio_duration = format!("{:.2} s", stats.audio_duration);
+    let real_time_factor = format!("{:.2}x", stats.real_time_factor());
+
+    element! {
+        View(
+            width: 100pct,
+            border_style: BorderStyle::Single,
+            border_color: subtitle_color,
+            flex_direction: FlexDirection::Column,
+            row_gap: padding,
+            padding_left: padding,
+            padding_right: padding,
+        ) {
+            View(
+                width: 100pct,
+                flex_direction: FlexDirection::Column,
+            ) {
+                Text(content: format!("text length: {text_length}"), color: subtitle_color)
+                Text(content: format!("first chunk: {first_chunk_seconds}"), color: subtitle_color)
+                Text(content: format!("generation duration: {generation_duration}"), color: subtitle_color)
+                Text(content: format!("audio duration: {audio_duration}"), color: subtitle_color)
+                Text(content: format!("real-time factor: {real_time_factor}"), color: subtitle_color)
+            }
         }
     }
     .into()

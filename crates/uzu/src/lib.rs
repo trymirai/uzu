@@ -41,6 +41,8 @@ pub mod keyring;
 #[cfg(not(target_family = "wasm"))]
 pub mod logs;
 #[cfg(not(target_family = "wasm"))]
+pub mod player;
+#[cfg(not(target_family = "wasm"))]
 pub mod registry;
 #[cfg(not(target_family = "wasm"))]
 pub mod storage;
