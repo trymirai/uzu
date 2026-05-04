@@ -567,7 +567,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         );
 
         // Scatter + register for all transformer layers
-        self.context.cache_layers.borrow_mut().update_after_acceptance(
+        self.context.cache_layers.borrow_mut().update_after_acceptance_with_generated_suffix_length(
             &[0],
             None,
             Some(1),
@@ -853,7 +853,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
-            cache_layers.update_after_acceptance(
+            cache_layers.update_after_acceptance_with_generated_suffix_length(
                 accepted_token_indices,
                 suffix_start,
                 generated_suffix_length,

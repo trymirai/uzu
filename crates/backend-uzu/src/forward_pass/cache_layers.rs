@@ -274,6 +274,22 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
+        encoder: &mut Encoder<B>,
+        kv_cache_update: &KVCacheUpdate<B>,
+    ) {
+        self.update_after_acceptance_with_generated_suffix_length(
+            accepted_suffix_indices,
+            suffix_start,
+            None,
+            encoder,
+            kv_cache_update,
+        );
+    }
+
+    pub fn update_after_acceptance_with_generated_suffix_length(
+        &mut self,
+        accepted_suffix_indices: &[usize],
+        suffix_start: Option<usize>,
         generated_suffix_length: Option<usize>,
         encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
