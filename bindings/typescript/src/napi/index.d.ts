@@ -37,7 +37,7 @@ export declare class ClassificationSession {
 
 export declare class TextToSpeechSession {
   get state(): Promise<TextToSpeechSessionState>
-  synthesize(input: string): Promise<PcmBatch>
+  synthesize(input: string): Promise<TextToSpeechOutput>
   synthesizeStream(input: string): Promise<TextToSpeechSessionStream>
 }
 
@@ -58,9 +58,9 @@ export declare class TextToSpeechSessionStreamChunkError {
   constructor(error: TextToSpeechSessionError)
 }
 
-export declare class TextToSpeechSessionStreamChunkPcmBatch {
-  batch: PcmBatch
-  constructor(batch: PcmBatch)
+export declare class TextToSpeechSessionStreamChunkOutput {
+  output: TextToSpeechOutput
+  constructor(output: TextToSpeechOutput)
 }
 
 export type ChatSessionError =
@@ -102,7 +102,7 @@ export declare const enum TextToSpeechSessionState {
 }
 
 export type TextToSpeechSessionStreamChunk =
-  TextToSpeechSessionStreamChunkPcmBatch | TextToSpeechSessionStreamChunkError
+  TextToSpeechSessionStreamChunkOutput | TextToSpeechSessionStreamChunkError
 export declare class CancelToken {
   cancel(): void
   get isCancelled(): boolean
@@ -570,6 +570,7 @@ export declare class PcmBatch {
   constructor(samples: Array<number>, sampleRate: number, channels: number, lengths: Array<number>)
   get batchSize(): number
   get totalFrames(): number
+  get duration(): number
   saveAsWav(path: string): void
 }
 
@@ -611,6 +612,12 @@ export declare class SamplingSeedCustom {
 export declare class SamplingSeedDefault {
 
   constructor()
+}
+
+export declare class TextToSpeechOutput {
+  pcmBatch: PcmBatch
+  stats: TextToSpeechStats
+  constructor(pcmBatch: PcmBatch, stats: TextToSpeechStats)
 }
 
 export declare class TextToSpeechStats {
@@ -861,6 +868,7 @@ export declare class DownloadState {
   get isInProgress(): boolean
   get canPause(): boolean
   get canDelete(): boolean
+  get name(): string
 }
 
 export declare class Engine {
@@ -935,6 +943,12 @@ export declare class Keyring {
   static create(): Keyring
 }
 
+export declare class Player {
+  appendPcmBatch(batch: PcmBatch): void
+  stop(): void
+  static create(): Promise<Player>
+}
+
 export type DeviceError =
   | { type: 'UnsupportedDevice' }
 
@@ -957,6 +971,10 @@ export type EngineError =
 export type KeyringError =
   | { type: 'BackendError', message: string }
   | { type: 'Device', field0: DeviceError }
+
+export type PlayerError =
+  | { type: 'RodioError', message: string }
+  | { type: 'InvalidPcmBatch', message: string }
 
 export type RegistryError =
   | { type: 'UnableToCreate', message: string }

@@ -102,6 +102,12 @@ extension Model {
     }
 }
 
+extension Player {
+    public static func create() async throws -> Player {
+        try await playerCreate()
+    }
+}
+
 extension EngineCallback {
     public typealias Closure = @Sendable () -> Void
 

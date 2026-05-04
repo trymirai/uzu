@@ -949,7 +949,7 @@ public protocol TextToSpeechSessionProtocol: AnyObject, Sendable {
     
     func state() async  -> TextToSpeechSessionState
     
-    func synthesize(input: String) async throws  -> PcmBatch
+    func synthesize(input: String) async throws  -> TextToSpeechOutput
     
     func synthesizeStream(input: String) async  -> TextToSpeechSessionStream
     
@@ -1025,7 +1025,7 @@ open func state()async  -> TextToSpeechSessionState  {
         )
 }
     
-open func synthesize(input: String)async throws  -> PcmBatch  {
+open func synthesize(input: String)async throws  -> TextToSpeechOutput  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1037,7 +1037,7 @@ open func synthesize(input: String)async throws  -> PcmBatch  {
             pollFunc: ffi_nagare_rust_future_poll_rust_buffer,
             completeFunc: ffi_nagare_rust_future_complete_rust_buffer,
             freeFunc: ffi_nagare_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypePcmBatch_lift,
+            liftFunc: FfiConverterTypeTextToSpeechOutput_lift,
             errorHandler: FfiConverterTypeTextToSpeechSessionError_lift
         )
 }
@@ -1812,7 +1812,7 @@ public func FfiConverterTypeTextToSpeechSessionState_lower(_ value: TextToSpeech
 
 public enum TextToSpeechSessionStreamChunk: Equatable, Hashable, Codable {
     
-    case pcmBatch(batch: PcmBatch
+    case output(output: TextToSpeechOutput
     )
     case error(error: TextToSpeechSessionError
     )
@@ -1837,7 +1837,7 @@ public struct FfiConverterTypeTextToSpeechSessionStreamChunk: FfiConverterRustBu
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .pcmBatch(batch: try FfiConverterTypePcmBatch.read(from: &buf)
+        case 1: return .output(output: try FfiConverterTypeTextToSpeechOutput.read(from: &buf)
         )
         
         case 2: return .error(error: try FfiConverterTypeTextToSpeechSessionError.read(from: &buf)
@@ -1851,9 +1851,9 @@ public struct FfiConverterTypeTextToSpeechSessionStreamChunk: FfiConverterRustBu
         switch value {
         
         
-        case let .pcmBatch(batch):
+        case let .output(output):
             writeInt(&buf, Int32(1))
-            FfiConverterTypePcmBatch.write(batch, into: &buf)
+            FfiConverterTypeTextToSpeechOutput.write(output, into: &buf)
             
         
         case let .error(error):
@@ -2096,7 +2096,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_nagare_checksum_method_texttospeechsession_state() != 12535) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nagare_checksum_method_texttospeechsession_synthesize() != 10886) {
+    if (uniffi_nagare_checksum_method_texttospeechsession_synthesize() != 37717) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_nagare_checksum_method_texttospeechsession_synthesize_stream() != 498) {

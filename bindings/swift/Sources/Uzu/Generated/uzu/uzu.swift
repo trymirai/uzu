@@ -1753,6 +1753,131 @@ public func FfiConverterTypeKeyring_lower(_ value: Keyring) -> UInt64 {
 
 
 
+
+
+public protocol PlayerProtocol: AnyObject, Sendable {
+    
+    func appendPcmBatch(batch: PcmBatch) throws 
+    
+    func stop() 
+    
+}
+open class Player: PlayerProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_uzu_fn_clone_player(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_uzu_fn_free_player(handle, $0) }
+    }
+
+    
+
+    
+open func appendPcmBatch(batch: PcmBatch)throws   {try rustCallWithError(FfiConverterTypePlayerError_lift) {
+    uniffi_uzu_fn_method_player_append_pcm_batch(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePcmBatch_lower(batch),$0
+    )
+}
+}
+    
+open func stop()  {try! rustCall() {
+    uniffi_uzu_fn_method_player_stop(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlayer: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = Player
+
+    public static func lift(_ handle: UInt64) throws -> Player {
+        return Player(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: Player) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Player {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: Player, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlayer_lift(_ handle: UInt64) throws -> Player {
+    return try FfiConverterTypePlayer.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlayer_lower(_ value: Player) -> UInt64 {
+    return FfiConverterTypePlayer.lower(value)
+}
+
+
+
+
 public struct Device: Equatable, Hashable, Codable {
     public var osName: String?
     public var cpuName: String?
@@ -1860,6 +1985,14 @@ public func canPause() -> Bool  {
 public func isInProgress() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_uzu_fn_method_downloadstate_is_in_progress(
+            FfiConverterTypeDownloadState_lower(self),$0
+    )
+})
+}
+    
+public func name() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_uzu_fn_method_downloadstate_name(
             FfiConverterTypeDownloadState_lower(self),$0
     )
 })
@@ -2582,6 +2715,90 @@ public func FfiConverterTypeKeyringError_lower(_ value: KeyringError) -> RustBuf
 }
 
 
+public enum PlayerError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
+
+    
+    
+    case RodioError(message: String
+    )
+    case InvalidPcmBatch(message: String
+    )
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
+}
+
+#if compiler(>=6)
+extension PlayerError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlayerError: FfiConverterRustBuffer {
+    typealias SwiftType = PlayerError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlayerError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .RodioError(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .InvalidPcmBatch(
+            message: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PlayerError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .RodioError(message):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .InvalidPcmBatch(message):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(message, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlayerError_lift(_ buf: RustBuffer) throws -> PlayerError {
+    return try FfiConverterTypePlayerError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlayerError_lower(_ value: PlayerError) -> RustBuffer {
+    return FfiConverterTypePlayerError.lower(value)
+}
+
+
 public enum RegistryError: Swift.Error, Equatable, Hashable, Codable, Foundation.LocalizedError {
 
     
@@ -3256,6 +3473,20 @@ public func keyringCreate()throws  -> Keyring  {
     )
 })
 }
+public func playerCreate()async throws  -> Player  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_uzu_fn_func_player_create(
+                )
+            },
+            pollFunc: ffi_uzu_rust_future_poll_u64,
+            completeFunc: ffi_uzu_rust_future_complete_u64,
+            freeFunc: ffi_uzu_rust_future_free_u64,
+            liftFunc: FfiConverterTypePlayer_lift,
+            errorHandler: FfiConverterTypePlayerError_lift
+        )
+}
 
 private enum InitializationResult {
     case ok
@@ -3282,6 +3513,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_func_keyring_create() != 18990) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_func_player_create() != 61496) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_engine_chat() != 2862) {
@@ -3396,6 +3630,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_method_keyring_store() != 51749) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_player_append_pcm_batch() != 29421) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_uzu_checksum_method_player_stop() != 11919) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_uzu_checksum_constructor_enginecallback_create() != 1654) {
