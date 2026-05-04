@@ -84,7 +84,7 @@ pub struct ChatSession {
 
 impl ChatSession {
     pub async fn new(
-        backend: &dyn Backend,
+        backend: Arc<dyn Backend>,
         config: ChatConfig,
         model: Model,
         path: Option<String>,
@@ -94,13 +94,19 @@ impl ChatSession {
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
-        let instance = if let Some(token_backend) = backend.as_chat_via_token_capable() {
-            Instance::Token(token::Session::new(token_backend, config, reference).await?)
-        } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
-            Instance::Message(message::Session::new(message_backend, config, reference).await?)
-        } else {
-            return Err(ChatSessionError::UnsupportedModel {});
-        };
+        let instance = tokio::spawn(async move {
+            if let Some(token_backend) = backend.as_chat_via_token_capable() {
+                token::Session::new(token_backend, config, reference).await.map(Instance::Token)
+            } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
+                message::Session::new(message_backend, config, reference).await.map(Instance::Message)
+            } else {
+                Err(ChatSessionError::UnsupportedModel {})
+            }
+        })
+        .await
+        .map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })??;
 
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
