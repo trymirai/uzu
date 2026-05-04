@@ -1,14 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet},
-    iter::once,
-};
+use std::{collections::HashMap, iter::once};
 
 use anyhow::bail;
 use itertools::Itertools;
 
 use super::{
     ast::{MetalArgumentType, MetalKernelInfo},
-    optional_expr,
+    optional_expr::{self, OptionalExprRewriter},
 };
 use crate::common::mangling::static_mangle;
 
@@ -16,7 +13,7 @@ pub type SpecializeBaseIndices = HashMap<Box<str>, usize>;
 
 pub fn wrappers(
     kernels: &[MetalKernelInfo],
-    enum_type_names: &HashSet<Box<str>>,
+    rewriter: &OptionalExprRewriter,
 ) -> anyhow::Result<(Box<[Box<str>]>, SpecializeBaseIndices)> {
     let mut all_wrappers = Vec::new();
     let mut base_indices = SpecializeBaseIndices::new();
@@ -34,7 +31,7 @@ pub fn wrappers(
             next_index += specialize_count;
         }
 
-        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), enum_type_names)?;
+        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), rewriter)?;
         all_wrappers.extend(kernel_wrappers.into_vec());
     }
 
@@ -44,7 +41,7 @@ pub fn wrappers(
 fn kernel_wrappers(
     kernel: &MetalKernelInfo,
     base_index: Option<&usize>,
-    enum_type_names: &HashSet<Box<str>>,
+    rewriter: &OptionalExprRewriter,
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
@@ -173,7 +170,7 @@ fn kernel_wrappers(
                     let condition = a.argument_condition().unwrap();
 
                     if let Some(condition) = condition {
-                        let cpp_condition = optional_expr::rewrite_for_cpp(condition, enum_type_names);
+                        let metal_condition = optional_expr::rewrite(condition, rewriter.metal_target());
                         (
                             format!(
                                 "{} {} [[buffer({}), function_constant(__dsl_buffer_condition_{}_{})]]",
@@ -181,7 +178,7 @@ fn kernel_wrappers(
                             ),
                             Some(format!(
                                 "constant bool __dsl_buffer_condition_{}_{} = {};",
-                                wrapper_name, a.name, cpp_condition
+                                wrapper_name, a.name, metal_condition
                             )),
                         )
                     } else {

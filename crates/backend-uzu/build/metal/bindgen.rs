@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    iter::repeat_n,
-};
+use std::{collections::BTreeSet, iter::repeat_n};
 
 use anyhow::Context;
 use itertools::Itertools;
@@ -12,7 +9,7 @@ use syn::{Expr, Ident, Lifetime, LitInt, Type};
 use super::{
     ast::{MetalArgumentType, MetalConstantType, MetalKernelInfo},
     expr_rewrite::rewrite_paths_with,
-    optional_expr,
+    optional_expr::{self, OptionalExprRewriter},
     wrapper::SpecializeBaseIndices,
 };
 use crate::{
@@ -50,7 +47,7 @@ fn fold_variant_idents(
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
-    enum_type_paths: &HashMap<Box<str>, Box<str>>,
+    rewriter: &OptionalExprRewriter,
 ) -> anyhow::Result<(TokenStream, Option<TokenStream>)> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{kernel_name}Kernel");
@@ -253,7 +250,7 @@ pub fn bindgen(
                     let (conditional_buffer_field, conditional_buffer_set) =
                         if let Some(condition) = ka.argument_condition().unwrap() {
                             let conditional_field_name = format_ident!("has_{}", ka.name.as_ref());
-                            let qualified_condition = optional_expr::rewrite_for_rust(condition.as_ref(), enum_type_paths);
+                            let qualified_condition = optional_expr::rewrite(condition.as_ref(), rewriter.rust_target());
                             let condition = parse_expr(&qualified_condition).unwrap();
 
                             ty = quote! { Option<#ty> };
