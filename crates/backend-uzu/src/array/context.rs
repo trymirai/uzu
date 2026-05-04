@@ -14,14 +14,14 @@ pub trait ArrayContextExt {
         shape: &[usize],
         data_type: DataType,
         label: &str,
-    ) -> Array<Self::Backend>;
+    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer>;
 
     fn create_array_zeros(
         &self,
         shape: &[usize],
         data_type: DataType,
         label: &str,
-    ) -> Array<Self::Backend> {
+    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
         let mut array = self.create_array_uninitialized(shape, data_type, label);
         array.as_bytes_mut().fill(0);
         array
@@ -32,7 +32,7 @@ pub trait ArrayContextExt {
         shape: &[usize],
         data: &[T],
         label: &str,
-    ) -> Array<Self::Backend> {
+    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
         let size_from_shape: usize = shape.iter().product();
         assert_eq!(
             data.len(),
@@ -56,7 +56,7 @@ impl<C: Context> ArrayContextExt for C {
         shape: &[usize],
         data_type: DataType,
         label: &str,
-    ) -> Array<Self::Backend> {
+    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
         let buffer_size_bytes = size_for_shape(shape, data_type);
 
         let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");

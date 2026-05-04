@@ -1,5 +1,6 @@
 mod common;
 mod context;
+mod dense;
 mod util;
 
 pub use common::Array;
