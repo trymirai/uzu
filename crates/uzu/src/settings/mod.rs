@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use keyring_core::{CredentialStore, Entry, Error as KeyringError, mock, set_default_store};
 use serde::{Deserialize, Serialize};
 
-const CONFIG_NAME: &str = "settings.toml";
+const CONFIG_NAME: &str = "settings";
 const BASE_KEY: &str = "settings";
 
 #[derive(Default, Debug, Serialize, Deserialize)]

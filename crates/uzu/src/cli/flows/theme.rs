@@ -50,8 +50,16 @@ fn ThemeFlowView(
             on_submit: move |index: usize| {
                 let mut state = state;
                 if let Some(theme) = themes.get(index) {
+                    let settings_result = match state.read().settings.as_ref() {
+                        Some(settings) => theme.save(settings),
+                        None => Ok(()),
+                    };
                     state.write().theme = theme.clone();
-                    on_event(FlowEvent::finish(format!("Theme set to {}", theme.name)));
+                    let result = match settings_result {
+                        Ok(()) => format!("Theme set to {}", theme.name),
+                        Err(error) => format!("Theme set to {}, unable to save preference: {}", theme.name, error),
+                    };
+                    on_event(FlowEvent::finish(result));
                 }
             },
         )

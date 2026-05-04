@@ -9,6 +9,7 @@ use crate::{
         sessions::{self, SessionState},
     },
     engine::Engine,
+    settings::Settings,
     storage::types::{DownloadPhase, DownloadState},
 };
 
@@ -17,6 +18,8 @@ const HISTORY_LIMIT: usize = 20;
 #[derive(Default, Props)]
 pub struct ApplicationProps {
     pub engine: Option<Engine>,
+    pub settings: Option<Settings>,
+    pub theme: Option<Theme>,
 }
 
 pub struct ModelState {
@@ -27,6 +30,7 @@ pub struct ModelState {
 
 pub struct ApplicationState {
     pub engine: Engine,
+    pub settings: Option<Settings>,
     pub theme: Theme,
     pub flow: Option<Box<dyn Flow>>,
     pub history: Vec<HistoryCellType>,
@@ -49,7 +53,8 @@ pub fn Application(
 
     let state = hooks.use_state(|| ApplicationState {
         engine,
-        theme: Theme::default(),
+        settings: props.settings.clone(),
+        theme: props.theme.clone().unwrap_or_default(),
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()
