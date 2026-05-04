@@ -1,15 +1,12 @@
-mod sparse_buffer_mapped_pages;
-
 use std::fmt::Debug;
 
 use bytesize::ByteSize;
 use metal::prelude::*;
 use rangemap::RangeMap;
 
-use self::sparse_buffer_mapped_pages::SparseBufferMappedPages;
 use crate::{
     backends::{
-        common::{Backend, Buffer, SparseBuffer, SparseBufferOperation},
+        common::{Backend, Buffer, SparseBuffer, SparseBufferMappedPages, SparseBufferOperation},
         metal::{Metal, error::MetalError, metal_extensions::SparsePageSizeExt},
     },
     prelude::MetalContext,

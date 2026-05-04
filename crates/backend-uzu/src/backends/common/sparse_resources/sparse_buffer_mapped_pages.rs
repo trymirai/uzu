@@ -1,20 +1,22 @@
 use rangemap::RangeMap;
 
-use crate::backends::common::{SparseBufferOperation, SparseResourceMappingMode};
+use super::{SparseBufferOperation, SparseResourceMappingMode};
 
+#[allow(dead_code)]
 #[derive(Debug)]
-pub(super) struct SparseBufferMappedPages {
+pub(crate) struct SparseBufferMappedPages {
     map: RangeMap<usize, ()>,
 }
 
+#[allow(dead_code)]
 impl SparseBufferMappedPages {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             map: RangeMap::new(),
         }
     }
 
-    pub(super) fn execute(
+    pub(crate) fn execute(
         &mut self,
         operations: &[SparseBufferOperation],
     ) {
@@ -24,7 +26,7 @@ impl SparseBufferMappedPages {
         });
     }
 
-    pub(super) fn get_map(&self) -> &RangeMap<usize, ()> {
+    pub(crate) fn get_map(&self) -> &RangeMap<usize, ()> {
         &self.map
     }
 }
