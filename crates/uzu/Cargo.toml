@@ -109,7 +109,15 @@ keyring-core.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
 objc2-security.workspace = true
-apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { workspace = true, features = [
+    "protected",
+    "keychain",
+] }
+
+[target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dependencies]
+apple-native-keyring-store = { workspace = true, features = ["protected"] }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

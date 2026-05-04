@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum Capability {
     Grammar,
     Tracing,
+    #[serde(rename = "cli")]
+    CLI,
 }
 
 impl Capability {
@@ -13,6 +15,7 @@ impl Capability {
         match self {
             Capability::Grammar => "capability-grammar".to_string(),
             Capability::Tracing => "capability-tracing".to_string(),
+            Capability::CLI => "capability-cli".to_string(),
         }
     }
 }

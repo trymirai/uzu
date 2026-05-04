@@ -66,6 +66,12 @@ extension ClassificationMessage {
     }
 }
 
+extension CliApplication {
+    public static func create(config: EngineConfig) async throws -> CliApplication {
+        try await cliApplicationCreate(config: config)
+    }
+}
+
 extension Device {
     public static func create() throws -> Device {
         try deviceCreate()
@@ -81,12 +87,6 @@ extension Engine {
 extension EngineConfig {
     public static func create() -> EngineConfig {
         engineConfigCreate()
-    }
-}
-
-extension Keyring {
-    public static func create() throws -> Keyring {
-        try keyringCreate()
     }
 }
 

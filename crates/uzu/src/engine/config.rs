@@ -2,7 +2,7 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-use crate::settings::{SettingType, Settings, SettingsError};
+use crate::settings::{SettingKind, Settings, SettingsError};
 
 pub const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
 pub const KEY_LALAMO_PATH: &str = "LALAMO_PATH";
@@ -57,22 +57,22 @@ impl EngineConfig {
         settings: &Settings,
     ) -> Result<(), SettingsError> {
         macro_rules! synchronize_field {
-            ($setting_type:path, $field:ident, $key:expr) => {
-                if let Some(value) = settings.load($setting_type, $key)? {
+            ($setting_kind:path, $field:ident, $key:expr) => {
+                if let Some(value) = settings.load($setting_kind, $key)? {
                     self.$field = Some(value);
                 }
             };
         }
 
-        synchronize_field!(SettingType::Secret, mirai_api_key, KEY_MIRAI_API_KEY);
-        synchronize_field!(SettingType::Config, lalamo_path, KEY_LALAMO_PATH);
-        synchronize_field!(SettingType::Secret, huggingface_api_key, KEY_HF_TOKEN);
-        synchronize_field!(SettingType::Secret, openai_api_key, KEY_OPENAI_API_KEY);
-        synchronize_field!(SettingType::Secret, anthropic_api_key, KEY_ANTHROPIC_API_KEY);
-        synchronize_field!(SettingType::Secret, gemini_api_key, KEY_GEMINI_API_KEY);
-        synchronize_field!(SettingType::Secret, xai_api_key, KEY_XAI_API_KEY);
-        synchronize_field!(SettingType::Secret, baseten_api_key, KEY_BASETEN_API_KEY);
-        synchronize_field!(SettingType::Secret, openrouter_api_key, KEY_OPENROUTER_API_KEY);
+        synchronize_field!(SettingKind::Secret, mirai_api_key, KEY_MIRAI_API_KEY.to_string());
+        synchronize_field!(SettingKind::Config, lalamo_path, KEY_LALAMO_PATH.to_string());
+        synchronize_field!(SettingKind::Secret, huggingface_api_key, KEY_HF_TOKEN.to_string());
+        synchronize_field!(SettingKind::Secret, openai_api_key, KEY_OPENAI_API_KEY.to_string());
+        synchronize_field!(SettingKind::Secret, anthropic_api_key, KEY_ANTHROPIC_API_KEY.to_string());
+        synchronize_field!(SettingKind::Secret, gemini_api_key, KEY_GEMINI_API_KEY.to_string());
+        synchronize_field!(SettingKind::Secret, xai_api_key, KEY_XAI_API_KEY.to_string());
+        synchronize_field!(SettingKind::Secret, baseten_api_key, KEY_BASETEN_API_KEY.to_string());
+        synchronize_field!(SettingKind::Secret, openrouter_api_key, KEY_OPENROUTER_API_KEY.to_string());
 
         Ok(())
     }

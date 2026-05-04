@@ -18,7 +18,7 @@ struct SettingsConfig {
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SettingType {
+pub enum SettingKind {
     Config,
     Secret,
 }
@@ -74,17 +74,17 @@ impl Settings {
     #[bindings::export(Method)]
     pub fn save(
         &self,
-        r#type: SettingType,
-        key: &str,
+        kind: SettingKind,
+        key: String,
         value: Option<String>,
     ) -> Result<(), SettingsError> {
-        match r#type {
-            SettingType::Config => {
+        match kind {
+            SettingKind::Config => {
                 let mut config = self.config_entry()?;
                 if let Some(value) = value {
-                    config.settings.insert(key.to_string(), value);
+                    config.settings.insert(key, value);
                 } else {
-                    config.settings.shift_remove(key);
+                    config.settings.shift_remove(&key);
                 }
                 confy::store(&self.application_identifier, CONFIG_NAME, config).map_err(|error| {
                     SettingsError::BackendError {
@@ -92,14 +92,14 @@ impl Settings {
                     }
                 })?;
             },
-            SettingType::Secret => {
+            SettingKind::Secret => {
                 let entry = self.keyring_entry()?;
 
                 let mut settings = self.keyring_load_or_create(&entry)?;
                 if let Some(value) = value {
-                    settings.insert(key.to_string(), value);
+                    settings.insert(key, value);
                 } else {
-                    settings.shift_remove(key);
+                    settings.shift_remove(&key);
                 }
 
                 let value = serde_json::to_string(&settings).map_err(|error| SettingsError::BackendError {
@@ -116,18 +116,18 @@ impl Settings {
     #[bindings::export(Method)]
     pub fn load(
         &self,
-        r#type: SettingType,
-        key: &str,
+        kind: SettingKind,
+        key: String,
     ) -> Result<Option<String>, SettingsError> {
-        match r#type {
-            SettingType::Config => {
+        match kind {
+            SettingKind::Config => {
                 let config = self.config_entry()?;
-                Ok(config.settings.get(key).cloned())
+                Ok(config.settings.get(&key).cloned())
             },
-            SettingType::Secret => {
+            SettingKind::Secret => {
                 let entry = self.keyring_entry()?;
                 let settings = self.keyring_load_or_create(&entry)?;
-                Ok(settings.get(key).cloned())
+                Ok(settings.get(&key).cloned())
             },
         }
     }
@@ -151,7 +151,7 @@ impl Settings {
 
 #[allow(unreachable_code)]
 fn create_keyring_store() -> Result<Arc<CredentialStore>, SettingsError> {
-    #[cfg(target_vendor = "apple")]
+    #[cfg(target_os = "macos")]
     {
         use objc2_foundation::NSBundle;
         if let Some(_) = NSBundle::mainBundle().bundleIdentifier().map(|identifier| identifier.to_string()) {
@@ -165,6 +165,14 @@ fn create_keyring_store() -> Result<Arc<CredentialStore>, SettingsError> {
                 message: error.to_string(),
             })?);
         }
+    }
+
+    #[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
+    {
+        use apple_native_keyring_store::protected::Store;
+        return Ok(Store::new().map_err(|error| SettingsError::BackendError {
+            message: error.to_string(),
+        })?);
     }
 
     let mock_store = mock::Store::new().map_err(|error| SettingsError::BackendError {
