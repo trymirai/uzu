@@ -8,7 +8,9 @@ use crate::{
     DataType,
     backends::common::{Backend, Encoder},
     config::{DecoderConfig, DecoderLayerType, MixerConfig},
-    encodable_block::{Embedding, EncodingParameters, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
+    encodable_block::{
+        Embedding, EncodingParameters, LayerExecutables, PerLayerEmbedding, RMSNorm, Rope, embedding::EmbeddingError,
+    },
     forward_pass::{
         model_shape::ModelShape,
         state::{ArrayId, ForwardPassState, RopeType},
@@ -27,6 +29,7 @@ pub enum DecoderError<B: Backend> {
 /// Full decoder executable with all layers and components.
 pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
+    pub per_layer_embedding: Option<PerLayerEmbedding<B>>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
 }
@@ -37,6 +40,13 @@ impl<B: Backend> Decoder<B> {
         decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B::Context>,
     ) -> Self {
+        let unsupported_features = decoder_config.unsupported_runtime_features();
+        assert!(
+            unsupported_features.is_empty(),
+            "decoder config uses runtime features that are not implemented yet: {}",
+            unsupported_features.join(", ")
+        );
+
         let embedding_weight_loader = root_weight_loader.subtree("embedding").expect("Failed to get embedding subtree");
 
         let embed = Embedding::new(
@@ -48,11 +58,19 @@ impl<B: Backend> Decoder<B> {
         )
         .expect("Failed to create embedding");
 
+        let per_layer_embedding = decoder_config.ple_model_config.as_ref().map(|config| {
+            let ple_weight_loader =
+                root_weight_loader.subtree("per_layer_embedding").expect("Failed to get PLE subtree");
+            PerLayerEmbedding::new(context, decoder_config.model_dim, config.clone(), &ple_weight_loader)
+                .expect("Failed to create PLE model extension")
+        });
+
         let (layers, norm) =
             Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, "transformer");
 
         Self {
             embed,
+            per_layer_embedding,
             layers,
             norm,
         }
@@ -68,6 +86,13 @@ impl<B: Backend> Decoder<B> {
         embedding_subtree: &str,
         readout_subtree: &str,
     ) -> Self {
+        let unsupported_features = decoder_config.unsupported_runtime_features();
+        assert!(
+            unsupported_features.is_empty(),
+            "decoder config uses runtime features that are not implemented yet: {}",
+            unsupported_features.join(", ")
+        );
+
         let embedding_weight_loader =
             root_weight_loader.subtree(embedding_subtree).expect("Failed to get embedding subtree");
         let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
@@ -82,11 +107,19 @@ impl<B: Backend> Decoder<B> {
         )
         .expect("Failed to create embedding");
 
+        let per_layer_embedding = decoder_config.ple_model_config.as_ref().map(|config| {
+            let ple_weight_loader =
+                root_weight_loader.subtree("per_layer_embedding").expect("Failed to get PLE subtree");
+            PerLayerEmbedding::new(context, decoder_config.model_dim, config.clone(), &ple_weight_loader)
+                .expect("Failed to create PLE model extension")
+        });
+
         let (layers, norm) =
             Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, transformer_subtree);
 
         Self {
             embed,
+            per_layer_embedding,
             layers,
             norm,
         }
@@ -174,6 +207,7 @@ impl<B: Backend> Decoder<B> {
                     decoder_config.head_dim,
                     decoder_config.num_groups,
                     decoder_config.attention_scale,
+                    decoder_config.num_layers,
                     &layer_loader,
                     rope_for_layer,
                 )
@@ -225,6 +259,9 @@ impl<B: Backend> Decoder<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(), DecoderError<B>> {
         self.embed.encode_lookup(state, encoder)?;
+        if let Some(per_layer_embedding) = &self.per_layer_embedding {
+            per_layer_embedding.encode(state, encoder);
+        }
 
         for layer in self.layers.iter() {
             layer.encode(state, parameters, encoder).map_err(DecoderError::BackendError)?;

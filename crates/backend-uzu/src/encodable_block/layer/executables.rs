@@ -12,7 +12,8 @@ use crate::{
     backends::common::{Backend, Encoder},
     config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
-        Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvMixer,
+        Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, PLELayer, QKNorm, RMSNorm, Rope,
+        ShortConvMixer, TensorFinalize, ValueNorm,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -30,6 +31,8 @@ pub struct LayerExecutables<B: Backend> {
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
+    pub ple: Option<PLELayer<B>>,
+    pub finalize: Option<TensorFinalize<B>>,
 }
 
 impl<B: Backend> LayerExecutables<B> {
@@ -45,6 +48,7 @@ impl<B: Backend> LayerExecutables<B> {
         head_dim: usize,
         num_groups: usize,
         attention_scale: Option<f32>,
+        num_layers: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
         rope: Option<Rc<Rope<B>>>,
     ) -> Self {
@@ -67,6 +71,12 @@ impl<B: Backend> LayerExecutables<B> {
                 let layer_num_heads = attention_config.num_heads.unwrap_or(num_heads);
                 let layer_num_groups = attention_config.num_groups.unwrap_or(num_groups);
                 let layer_head_dim = attention_config.head_dim.unwrap_or(head_dim);
+                let layer_rope_dim = layer_config
+                    .rope_config
+                    .as_ref()
+                    .and_then(|rope| rope.common().head_dim)
+                    .or(attention_config.partial_rope_dim)
+                    .unwrap_or(layer_head_dim);
 
                 let q_dim = layer_num_heads * layer_head_dim;
                 let kv_dim = layer_num_groups * layer_head_dim;
@@ -125,6 +135,10 @@ impl<B: Backend> LayerExecutables<B> {
                     } else {
                         None
                     };
+                let value_norm = attention_config.normalize_values.then(|| {
+                    ValueNorm::new(context, intermediate_data_type, layer_num_heads, layer_num_groups, layer_head_dim)
+                        .expect("Failed to create value norm")
+                });
 
                 let out_projection = <dyn Linear<B>>::new(
                     &attention_config.out_projection_config,
@@ -146,7 +160,11 @@ impl<B: Backend> LayerExecutables<B> {
                     attention_config.has_sinks,
                     attention_config.is_causal.unwrap_or(true),
                     attention_config.sliding_window_size,
+                    layer_config.kv_source_layer,
                     has_gate,
+                    layer_num_heads,
+                    layer_num_groups,
+                    layer_head_dim,
                 )
                 .expect("Failed to create AttentionWrapper kernel");
 
@@ -155,8 +173,13 @@ impl<B: Backend> LayerExecutables<B> {
                         qkv_projection,
                         gate_projection,
                         qk_norm,
+                        value_norm,
                         rope: rope_block,
                         use_rope,
+                        rope_dim: layer_rope_dim,
+                        num_heads: layer_num_heads,
+                        num_groups: layer_num_groups,
+                        head_dim: layer_head_dim,
                         attention,
                         out_projection,
                     },
@@ -246,7 +269,7 @@ impl<B: Backend> LayerExecutables<B> {
         let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             model_dim,
-            hidden_dim,
+            layer_config.hidden_dim.unwrap_or(hidden_dim),
             context,
             &decoder_layer_loader.subtree("mlp").unwrap(),
         )
@@ -284,6 +307,27 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
+        let ple = layer_config.ple_config.as_ref().map(|ple_config| {
+            PLELayer::new(
+                context,
+                intermediate_data_type,
+                ple_config,
+                layer_index,
+                model_dim,
+                num_layers,
+                &decoder_layer_loader.subtree("ple").expect("PLE layer weights missing"),
+            )
+            .expect("Failed to create PLE layer")
+        });
+
+        let scalar = layer_config.has_post_layer_scalar.then(|| {
+            PLELayer::<B>::validate_post_layer_scalar(intermediate_data_type, decoder_layer_loader)
+                .expect("Failed to load post layer scalar")
+        });
+        let finalize = (layer_config.ple_config.is_some() || layer_config.has_post_layer_scalar).then(|| {
+            TensorFinalize::new(context, intermediate_data_type, scalar).expect("Failed to create tensor finalizer")
+        });
+
         Self {
             #[cfg(feature = "tracing")]
             layer_index,
@@ -295,6 +339,8 @@ impl<B: Backend> LayerExecutables<B> {
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
+            ple,
+            finalize,
         }
     }
 
@@ -319,8 +365,13 @@ impl<B: Backend> LayerExecutables<B> {
                 qkv_projection,
                 gate_projection,
                 qk_norm,
+                value_norm,
                 rope,
                 use_rope,
+                rope_dim,
+                num_heads,
+                num_groups,
+                head_dim,
                 attention,
                 out_projection,
             } => {
@@ -331,7 +382,10 @@ impl<B: Backend> LayerExecutables<B> {
                 if let Some(norm) = qk_norm {
                     norm.encode(state, encoder)?;
                 }
-                rope.encode(state, *use_rope, encoder)?;
+                if let Some(norm) = value_norm {
+                    norm.encode(state, encoder);
+                }
+                rope.encode(state, *use_rope, *num_heads, *num_groups, *head_dim, *rope_dim, encoder)?;
                 attention.encode(state, parameters, encoder)?;
                 out_projection.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]
@@ -397,6 +451,13 @@ impl<B: Backend> LayerExecutables<B> {
             if let Some(ref layer_traces) = layer_traces {
                 state.encode_copy_array(encoder, ArrayId::Main, layer_traces.borrow().post_mlp_norm.clone());
             }
+        }
+
+        if let Some(ple) = &self.ple {
+            ple.encode(state, encoder)?;
+        }
+        if let Some(finalize) = &self.finalize {
+            finalize.encode(state, encoder);
         }
         // main = mlp_result
         // next layer's pre_attention_norm (or output_norm) fuses the residual add
