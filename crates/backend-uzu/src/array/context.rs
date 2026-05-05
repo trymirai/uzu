@@ -6,15 +6,20 @@ use crate::{
     backends::common::{Backend, Buffer, Context},
 };
 
-pub trait ArrayContextExt {
-    type Backend: Backend;
-
+pub trait ArrayContextExt: Context {
     fn create_array_uninitialized(
         &self,
         shape: &[usize],
         data_type: DataType,
         label: &str,
-    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer>;
+    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
+        let buffer_size_bytes = size_for_shape(shape, data_type);
+
+        let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
+        buffer.set_label(Some(label));
+
+        unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, shape, data_type) }
+    }
 
     fn create_array_zeros(
         &self,
@@ -48,20 +53,4 @@ pub trait ArrayContextExt {
     }
 }
 
-impl<C: Context> ArrayContextExt for C {
-    type Backend = C::Backend;
-
-    fn create_array_uninitialized(
-        &self,
-        shape: &[usize],
-        data_type: DataType,
-        label: &str,
-    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
-        let buffer_size_bytes = size_for_shape(shape, data_type);
-
-        let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
-        buffer.set_label(Some(label));
-
-        unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, shape, data_type) }
-    }
-}
+impl<C: Context> ArrayContextExt for C {}
