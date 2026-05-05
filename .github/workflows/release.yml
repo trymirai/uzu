@@ -69,6 +69,9 @@ jobs:
           fi
 
       - name: "Binaries: Import developer identity certificate"
+        shell: bash
+        env:
+          TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
         run: |
           set -euo pipefail
           CERT_P12="$RUNNER_TEMP/dev_id_app.p12"
@@ -77,16 +80,35 @@ jobs:
 
           echo "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" | base64 -D > "$CERT_P12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          existing_keychains=()
+          while IFS= read -r existing_keychain; do
+            existing_keychain=$(printf '%s\n' "$existing_keychain" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+            if [ -n "$existing_keychain" ] && [ "$existing_keychain" != "$KEYCHAIN_PATH" ]; then
+              existing_keychains+=("$existing_keychain")
+            fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "${existing_keychains[@]}"
+
           security import "$CERT_P12" \
             -k "$KEYCHAIN_PATH" \
             -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
             -T /usr/bin/codesign
           security set-key-partition-list \
-            -S apple-tool:,apple: \
+            -S apple-tool:,apple:,codesign: \
             -s \
             -k "$KEYCHAIN_PASSWORD" \
             "$KEYCHAIN_PATH"
+
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep 'Developer ID Application:' \
+            | grep "(${TEAM_ID})" >/dev/null; then
+            echo "Imported keychain does not contain a valid Developer ID Application identity for team $TEAM_ID" >&2
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+            exit 1
+          fi
 
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
@@ -117,6 +139,8 @@ jobs:
           TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
         run: |
           set -euo pipefail
+
+          security unlock-keychain -p "" "$SIGNING_KEYCHAIN_PATH"
 
           IDENTITY=$(security find-identity -v -p codesigning "$SIGNING_KEYCHAIN_PATH" \
             | grep 'Developer ID Application:' \
