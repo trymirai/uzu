@@ -79,6 +79,8 @@ jobs:
           KEYCHAIN_PASSWORD=""
 
           echo "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" | base64 -D > "$CERT_P12"
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f "$KEYCHAIN_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
