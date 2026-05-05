@@ -1,0 +1,59 @@
+use std::ops::Range;
+
+use bytesize::ByteSize;
+use rangemap::RangeMap;
+
+use super::{SparseBufferOperation, SparseResourceMappingMode};
+use crate::backends::common::{Backend, Buffer};
+
+pub trait SparseBuffer: Buffer<Backend: Backend<SparseBuffer = Self>> {
+    fn get_mapped_pages(&self) -> &RangeMap<usize, ()>;
+
+    fn get_page_size(&self) -> ByteSize;
+
+    /// `operations.range` must be in pages
+    fn execute(
+        &mut self,
+        context: &<Self::Backend as Backend>::Context,
+        operations: &[SparseBufferOperation],
+    ) -> Result<(), <Self::Backend as Backend>::Error>;
+}
+
+#[allow(dead_code)]
+pub trait SparseBufferExt: SparseBuffer {
+    fn map_bytes(
+        &mut self,
+        context: &<Self::Backend as Backend>::Context,
+        bytes_ranges: &[Range<usize>],
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
+        let page_size_bytes = self.get_page_size().as_u64() as usize;
+        let pages_ranges = bytes_ranges
+            .iter()
+            .map(|bytes_range| Range {
+                start: bytes_range.start / page_size_bytes,
+                end: bytes_range.end / page_size_bytes,
+            })
+            .collect::<Vec<Range<usize>>>();
+        self.map_pages(context, &pages_ranges)
+    }
+
+    fn map_pages(
+        &mut self,
+        context: &<Self::Backend as Backend>::Context,
+        pages_ranges: &[Range<usize>],
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
+        let page_size_bytes = self.get_page_size().as_u64() as usize;
+        let curr_mapped_pages = self.get_mapped_pages();
+
+        let mut operations = Vec::<SparseBufferOperation>::new();
+        for page_range in pages_ranges {
+            let byte_range = (page_range.start * page_size_bytes)..(page_range.end * page_size_bytes);
+            let gaps = curr_mapped_pages.gaps(&byte_range);
+            for gap in gaps {
+                operations.push(SparseBufferOperation::new(SparseResourceMappingMode::Map, gap));
+            }
+        }
+
+        self.execute(context, &operations)
+    }
+}

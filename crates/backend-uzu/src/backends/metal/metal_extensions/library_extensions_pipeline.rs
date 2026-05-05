@@ -1,5 +1,4 @@
-use metal::{MTLComputePipelineState, MTLDeviceExt, MTLFunctionConstantValues, MTLLibrary, MTLLibraryExt};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use metal::prelude::*;
 
 use crate::backends::metal::error::MetalError;
 

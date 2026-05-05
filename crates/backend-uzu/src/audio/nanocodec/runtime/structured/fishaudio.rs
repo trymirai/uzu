@@ -79,7 +79,7 @@ impl<B: Backend> DecodeWorkspace<B> {
         self.min_buffer_size.set(bytes);
         let mut slots = self.slots.borrow_mut();
         for slot in slots.iter_mut() {
-            if Rc::strong_count(slot) == 1 && slot.borrow().size() < bytes {
+            if Rc::strong_count(slot) == 1 && (slot.borrow().size().as_u64() as usize) < bytes {
                 *slot = create_labelled_buffer::<B>(context, bytes, "structured_audio_scratch")?;
             }
         }
@@ -124,7 +124,9 @@ impl<B: Backend> DecodeWorkspace<B> {
             let start = self.next_search.get() % slot_count;
             for offset in 0..slot_count {
                 let slot_index = (start + offset) % slot_count;
-                if Rc::strong_count(&slots[slot_index]) == 1 && slots[slot_index].borrow().size() >= needed {
+                if Rc::strong_count(&slots[slot_index]) == 1
+                    && (slots[slot_index].borrow().size().as_u64() as usize) >= needed
+                {
                     self.next_search.set((slot_index + 1) % slot_count);
                     return Ok(unsafe { Array::from_parts(slots[slot_index].clone(), 0, shape, data_type) });
                 }

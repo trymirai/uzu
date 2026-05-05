@@ -19,6 +19,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 rangemap.workspace = true
+bytesize.workspace = true
 bytemuck.workspace = true
 zerocopy = { workspace = true, features = ["derive"] }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
@@ -36,11 +37,10 @@ rustix.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 
-# metal on macos requires objc2, bytesize, metal
+# metal on macos requires objc2, metal
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
 objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
-bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
 # grammar on non-wasm requires xgrammar
@@ -94,7 +94,6 @@ metal = [
     "dep:clang-ast",
     "dep:objc2",
     "dep:objc2-foundation",
-    "dep:bytesize",
     "dep:metal",
 ]
 grammar = ["dep:xgrammar"]

@@ -1,5 +1,7 @@
 use std::{cell::UnsafeCell, os::raw::c_void, pin::Pin, ptr::NonNull};
 
+use bytesize::ByteSize;
+
 use super::Cpu;
 use crate::backends::common::{Buffer, DenseBuffer};
 
@@ -10,8 +12,8 @@ impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
         unsafe { &*self.get() }.as_ptr().addr()
     }
 
-    fn size(&self) -> usize {
-        unsafe { &*self.get() }.len()
+    fn size(&self) -> ByteSize {
+        ByteSize(unsafe { &*self.get() }.len() as u64)
     }
 
     fn set_label(

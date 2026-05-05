@@ -115,7 +115,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
 
         impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for &'a B {
             fn into_parts(self) -> (&'a B, usize, usize) {
-                (self, 0, self.size())
+                (self, 0, (self.size().as_u64() as usize))
             }
         }
 
@@ -128,7 +128,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
 
         impl<'a, B: crate::backends::common::Buffer> BufferArg<'a, B> for (&'a B, usize) {
             fn into_parts(self) -> (&'a B, usize, usize) {
-                (self.0, self.1, self.0.size() - self.1)
+                (self.0, self.1, (self.0.size().as_u64() as usize) - self.1)
             }
         }
 
@@ -145,7 +145,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
 
         impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for &'a mut B {
             fn into_parts(self) -> (&'a B, usize, usize) {
-                (self, 0, self.size())
+                (self, 0, (self.size().as_u64() as usize))
             }
         }
 
@@ -158,7 +158,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>
 
         impl<'a, B: crate::backends::common::Buffer> BufferArgMut<'a, B> for (&'a mut B, usize) {
             fn into_parts(self) -> (&'a B, usize, usize) {
-                (&*self.0, self.1, self.0.size() - self.1)
+                (&*self.0, self.1, (self.0.size().as_u64() as usize) - self.1)
             }
         }
 

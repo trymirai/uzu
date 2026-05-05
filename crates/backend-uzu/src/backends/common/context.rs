@@ -25,6 +25,11 @@ pub trait Context: Sized {
         size: usize,
     ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
 
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
+
     fn create_allocation(
         &self,
         size: usize,
@@ -37,6 +42,11 @@ pub trait Context: Sized {
     ) -> AllocationPool<Self::Backend>;
 
     fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
+
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
 
     fn peak_memory_usage(&self) -> Option<usize>;
 

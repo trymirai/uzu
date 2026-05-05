@@ -1,3 +1,4 @@
+use bytesize::ByteSize;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -10,6 +11,8 @@ pub enum MetalError {
     CannotCreateLibrary(String),
     #[error("Cannot create command queue")]
     CannotCreateCommandQueue,
+    #[error("Cannot create command Metal 4 queue")]
+    CannotCreateCommandQueueMtl4,
     #[error("Cannot create buffer")]
     CannotCreateBuffer,
     #[error("Cannot create command buffer")]
@@ -22,4 +25,12 @@ pub enum MetalError {
     CannotCreateFunction,
     #[error("Cannot create pipeline state: {0}")]
     CannotCreatePipelineState(String),
+    #[error("Can not allocate buffer with size={0}")]
+    SparseBufferAlloc(usize),
+    #[error("Can not allocate heap with size={0} and page size={1}")]
+    SparseHeapAlloc(usize, ByteSize),
+    #[error("Queue for sparse buffer is not available")]
+    SparseQueueNotAvailable,
+    #[error("Sparse buffer requires Metal 4 queue")]
+    SparseRequireMtl4Queue,
 }

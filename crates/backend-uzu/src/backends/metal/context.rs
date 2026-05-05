@@ -1,11 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
-use metal::{
-    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary,
-    MTLResourceOptions,
-};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use metal::prelude::*;
 
 use super::{
     Metal,
@@ -16,8 +11,8 @@ use super::{
 };
 use crate::{
     backends::{
-        common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
-        metal::command_buffer::MetalCommandBufferInitial,
+        common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+        metal::{command_buffer::MetalCommandBufferInitial, sparse_buffer::MetalSparseBuffer},
     },
     utils::model_size::ModelSize,
 };
@@ -25,6 +20,7 @@ use crate::{
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
@@ -60,10 +56,12 @@ impl Context for MetalContext {
 
     fn new() -> Result<Rc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn metal::MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
+            <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
         let command_queue =
             device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
+
+        let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
         let library = device
             .new_library_with_data(kernel::MTLB)
@@ -74,6 +72,7 @@ impl Context for MetalContext {
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
+            command_queue4,
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: RefCell::new(0),
             device_capabilities,
@@ -118,6 +117,19 @@ impl Context for MetalContext {
         buffer
     }
 
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
+        let buffer = self
+            .device
+            .new_buffer_with_data(data, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MetalError::CannotCreateBuffer);
+        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
+        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+        buffer
+    }
+
     fn create_allocation(
         &self,
         size: usize,
@@ -143,6 +155,13 @@ impl Context for MetalContext {
         self.device.new_event().ok_or(MetalError::CannotCreateEvent)
     }
 
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        Ok(MetalSparseBuffer::new(self, capacity)?)
+    }
+
     fn peak_memory_usage(&self) -> Option<usize> {
         Some(*self.peak_memory_usage.borrow())
     }
@@ -155,8 +174,8 @@ impl Context for MetalContext {
 
     fn start_capture(
         &self,
-        trace_path: &std::path::Path,
-    ) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+        trace_path: &Path,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
@@ -172,7 +191,7 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    fn stop_capture(&self) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+    fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error> {
         MTLCaptureManager::shared_capture_manager().stop_capture();
 
         Ok(())

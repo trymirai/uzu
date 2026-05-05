@@ -1,6 +1,9 @@
 use std::{cell::UnsafeCell, pin::Pin, sync::atomic::AtomicU64};
 
-use super::{command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels};
+use super::{
+    command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels,
+    sparse_buffer::CpuSparseBuffer,
+};
 use crate::backends::common::Backend;
 
 #[derive(Debug, Clone)]
@@ -10,6 +13,7 @@ impl Backend for Cpu {
     type Context = CpuContext;
     type CommandBuffer = CpuCommandBuffer;
     type DenseBuffer = UnsafeCell<Pin<Box<[u8]>>>;
+    type SparseBuffer = CpuSparseBuffer;
     type Event = Pin<Box<AtomicU64>>;
     type Kernels = CpuKernels;
     type Error = CpuError;

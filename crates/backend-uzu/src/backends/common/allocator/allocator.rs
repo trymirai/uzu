@@ -116,7 +116,7 @@ impl<B: Backend> Allocator<B> {
             allocator_buffers.push(allocator_buffer);
 
             *self.peak_memory_usage.borrow_mut() =
-                allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.size()).sum();
+                allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.size().as_u64() as usize).sum();
 
             (buffer, range)
         };
