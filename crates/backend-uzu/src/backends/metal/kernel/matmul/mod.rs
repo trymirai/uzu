@@ -22,10 +22,7 @@ use crate::{
             context::MetalContext,
             kernel::{
                 MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
-                unified_matmul::gemm::{
-                    GemmTilingConfig, GemmWeightsBuffers, UnifiedGemmKernel, UnifiedGemmSpecialization,
-                    WeightsStorageFormat,
-                },
+                unified_matmul::gemm::{GemmTilingConfig, GemmWeights, UnifiedGemmDispatch, UnifiedGemmKernel},
             },
             metal_extensions::DeviceExt,
         },
@@ -303,41 +300,32 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn encode_unified_gemm(
+    fn encode_unified_gemm_full_simdgroup(
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let tile = select_unified_gemm_simdgroup_tile(self.data_type, &arguments);
-        let alignment = unified_gemm_alignment(&arguments, &tile);
-        let output = unified_gemm_output_transform(&arguments);
-        let specialization = UnifiedGemmSpecialization::new(
-            tile,
-            GemmInputPrologueKind::FullPrecision,
-            GemmComputeKind::SimdgroupMma,
-            output,
-            alignment,
-            WeightsStorageFormat::FullPrecision,
-        );
-
         let group_count_x = arguments.output_dim.div_ceil(tile.threadgroup_n);
         let group_count_y = arguments.batch_dim.div_ceil(tile.threadgroup_m);
+        let dispatch = UnifiedGemmDispatch {
+            tiling_config: tile,
+            input_prologue: GemmInputPrologueKind::FullPrecision,
+            compute: GemmComputeKind::SimdgroupMma,
+            output_transform: unified_gemm_output_transform(&arguments),
+            alignment: unified_gemm_alignment(&arguments, &tile),
+            weights: GemmWeights::FullPrecision {
+                weights: arguments.b,
+            },
+            activations: arguments.a,
+            activations_offset: arguments.a_offset as usize,
+            result: &mut *arguments.d,
+            group_count_x,
+            group_count_y,
+        };
 
-        self.unified_gemm
-            .encode(
-                context,
-                specialization,
-                (arguments.a, arguments.a_offset as usize),
-                GemmWeightsBuffers::FullPrecision {
-                    weights: arguments.b,
-                },
-                &mut *arguments.d,
-                group_count_x,
-                group_count_y,
-                encoder,
-            )
-            .map_err(MatmulError::BackendError)?;
+        self.encode_unified_gemm(context, dispatch, encoder).map_err(MatmulError::BackendError)?;
 
         if let MatmulArgumentC::Bias(bias) = arguments.c {
             self.bias_add.encode(
@@ -353,52 +341,16 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    pub(crate) fn encode_unified_gemm_quantized(
+    pub(crate) fn encode_unified_gemm(
         &mut self,
         context: &MetalContext,
-        specialization: UnifiedGemmSpecialization,
-        activations: &<Metal as crate::backends::common::Backend>::DenseBuffer,
-        activations_offset: usize,
-        weights: &<Metal as crate::backends::common::Backend>::DenseBuffer,
-        scales: &<Metal as crate::backends::common::Backend>::DenseBuffer,
-        zero_points_or_biases: &<Metal as crate::backends::common::Backend>::DenseBuffer,
-        result: &mut <Metal as crate::backends::common::Backend>::DenseBuffer,
-        group_count_x: u32,
-        group_count_y: u32,
+        dispatch: UnifiedGemmDispatch<'_>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), crate::backends::metal::error::MetalError> {
-        let weights_buffers = match specialization.weights_storage.weight_prologue() {
-            crate::backends::common::gpu_types::unified_gemm::GemmWeightPrologueKind::MlxDequant => {
-                GemmWeightsBuffers::Mlx {
-                    weights,
-                    scales,
-                    biases: zero_points_or_biases,
-                }
-            },
-            crate::backends::common::gpu_types::unified_gemm::GemmWeightPrologueKind::AwqDequant => {
-                GemmWeightsBuffers::Awq {
-                    weights,
-                    scales,
-                    zero_points: zero_points_or_biases,
-                }
-            },
-            crate::backends::common::gpu_types::unified_gemm::GemmWeightPrologueKind::FullPrecision => {
-                unreachable!("encode_unified_gemm_quantized called with FullPrecision specialization")
-            },
-        };
-        self.unified_gemm.encode(
-            context,
-            specialization,
-            (activations, activations_offset),
-            weights_buffers,
-            result,
-            group_count_x,
-            group_count_y,
-            encoder,
-        )
+        self.unified_gemm.encode(context, dispatch, encoder)
     }
 
-    fn encode_unified_gemm_mxu_mma(
+    fn encode_unified_gemm_full_mxu(
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
@@ -409,34 +361,25 @@ impl MatmulMetalKernel {
         }
 
         let tile = select_unified_gemm_mxu_tile(&arguments);
-        let alignment = unified_gemm_alignment(&arguments, &tile);
-        let output = unified_gemm_output_transform(&arguments);
-        let specialization = UnifiedGemmSpecialization::new(
-            tile,
-            GemmInputPrologueKind::FullPrecision,
-            GemmComputeKind::MxuMma,
-            output,
-            alignment,
-            WeightsStorageFormat::FullPrecision,
-        );
-
         let group_count_x = arguments.output_dim.div_ceil(tile.threadgroup_n);
         let group_count_y = arguments.batch_dim.div_ceil(tile.threadgroup_m);
+        let dispatch = UnifiedGemmDispatch {
+            tiling_config: tile,
+            input_prologue: GemmInputPrologueKind::FullPrecision,
+            compute: GemmComputeKind::MxuMma,
+            output_transform: unified_gemm_output_transform(&arguments),
+            alignment: unified_gemm_alignment(&arguments, &tile),
+            weights: GemmWeights::FullPrecision {
+                weights: arguments.b,
+            },
+            activations: arguments.a,
+            activations_offset: arguments.a_offset as usize,
+            result: &mut *arguments.d,
+            group_count_x,
+            group_count_y,
+        };
 
-        self.unified_gemm
-            .encode(
-                context,
-                specialization,
-                (arguments.a, arguments.a_offset as usize),
-                GemmWeightsBuffers::FullPrecision {
-                    weights: arguments.b,
-                },
-                &mut *arguments.d,
-                group_count_x,
-                group_count_y,
-                encoder,
-            )
-            .map_err(MatmulError::BackendError)?;
+        self.encode_unified_gemm(context, dispatch, encoder).map_err(MatmulError::BackendError)?;
 
         if let MatmulArgumentC::Bias(bias) = arguments.c {
             self.bias_add.encode(
@@ -560,10 +503,10 @@ impl MatmulMetalKernel {
                 self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP")
             },
             MatmulDispatchPath::UnifiedGemm => {
-                self.encode_unified_gemm(context, encoder, arguments).expect("Failed to encode Unified GEMM")
+                self.encode_unified_gemm_full_simdgroup(context, encoder, arguments).expect("Failed to encode Unified GEMM")
             },
             MatmulDispatchPath::UnifiedGemmMxuMma => self
-                .encode_unified_gemm_mxu_mma(context, encoder, arguments)
+                .encode_unified_gemm_full_mxu(context, encoder, arguments)
                 .expect("Failed to encode Unified GEMM MXU MMA"),
         }
     }

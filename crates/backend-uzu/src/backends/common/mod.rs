@@ -10,6 +10,7 @@ mod event;
 pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
+pub mod storage;
 
 pub use activation_config::ActivationConfig;
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
@@ -25,3 +26,4 @@ pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
+pub use storage::{Borrowed, Storage};
