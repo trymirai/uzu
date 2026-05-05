@@ -9,12 +9,13 @@ use crate::{
     DataType,
     backends::common::{
         Backend, Encoder, Kernels,
+        gpu_types::QuantizationMethod,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+                QuantizedMatmulKernelEncodable,
             },
         },
     },
@@ -296,7 +297,7 @@ impl<B: Backend> Embedding<B> {
                         input_dim: model_dim as usize,
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
+                        quantization_method: QuantizationMethod::MLX,
                         use_hadamard: false,
                     },
                 )?;
@@ -376,7 +377,7 @@ impl<B: Backend> Embedding<B> {
                         input_dim: model_dim as usize,
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
+                        quantization_method: QuantizationMethod::MLX,
                         use_hadamard: false,
                     },
                 )?;
@@ -446,7 +447,7 @@ impl<B: Backend> Embedding<B> {
                         input_dim: model_dim as usize,
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
+                        quantization_method: QuantizationMethod::MLX,
                         use_hadamard: false,
                     },
                 )?;

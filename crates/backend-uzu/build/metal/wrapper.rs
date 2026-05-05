@@ -3,12 +3,18 @@ use std::{collections::HashMap, iter::once};
 use anyhow::bail;
 use itertools::Itertools;
 
-use super::ast::{MetalArgumentType, MetalKernelInfo};
+use super::{
+    ast::{MetalArgumentType, MetalKernelInfo},
+    enum_path_rewrite::EnumPathRewriter,
+};
 use crate::common::mangling::static_mangle;
 
 pub type SpecializeBaseIndices = HashMap<Box<str>, usize>;
 
-pub fn wrappers(kernels: &[MetalKernelInfo]) -> anyhow::Result<(Box<[Box<str>]>, SpecializeBaseIndices)> {
+pub fn wrappers(
+    kernels: &[MetalKernelInfo],
+    rewriter: &EnumPathRewriter,
+) -> anyhow::Result<(Box<[Box<str>]>, SpecializeBaseIndices)> {
     let mut all_wrappers = Vec::new();
     let mut base_indices = SpecializeBaseIndices::new();
     let mut next_index = 0usize;
@@ -25,7 +31,7 @@ pub fn wrappers(kernels: &[MetalKernelInfo]) -> anyhow::Result<(Box<[Box<str>]>,
             next_index += specialize_count;
         }
 
-        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name))?;
+        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), rewriter)?;
         all_wrappers.extend(kernel_wrappers.into_vec());
     }
 
@@ -35,8 +41,31 @@ pub fn wrappers(kernels: &[MetalKernelInfo]) -> anyhow::Result<(Box<[Box<str>]>,
 fn kernel_wrappers(
     kernel: &MetalKernelInfo,
     base_index: Option<&usize>,
+    rewriter: &EnumPathRewriter,
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
+
+    // For enum specialize types, the function-constant slot is declared as `uint`
+    // (the underlying repr) and reconstructed at the call site via `EnumName(constant)`.
+    // For all other types, the C type is used as-is.
+    let specialize_constant_type = |c_type: &str| {
+        let trimmed = c_type.trim_start_matches("const ");
+        if rewriter.is_enum_c_type(c_type) {
+            "uint".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    };
+
+    let specialize_argument = |kernel_name: &str, argument_name: &str, c_type: &str| {
+        let trimmed = c_type.trim_start_matches("const ");
+        let constant_name = format!("__dsl_specialize_{}_{}", kernel_name, argument_name);
+        if rewriter.is_enum_c_type(c_type) {
+            format!("{trimmed}({constant_name})")
+        } else {
+            constant_name
+        }
+    };
 
     let specialize_constant_names = if let Some(&base) = base_index {
         kernel_wrappers.push(
@@ -46,7 +75,7 @@ fn kernel_wrappers(
                 .filter(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Specialize(_))))
                 .enumerate()
                 .map(|(i, a)| {
-                    let c_type = a.c_type.trim_start_matches("const ");
+                    let c_type = specialize_constant_type(&a.c_type);
                     let idx = base + i;
                     format!(
                         "constant {c_type} __dsl_specialize_{}_{} [[function_constant({idx})]];\n",
@@ -143,23 +172,24 @@ fn kernel_wrappers(
                     let condition = a.argument_condition().unwrap();
 
                     if let Some(condition) = condition {
-                        (
+                        let metal_condition = rewriter.rewrite_for_metal(condition)?;
+                        Ok((
                             format!(
                                 "{} {} [[buffer({}), function_constant(__dsl_buffer_condition_{}_{})]]",
                                 &a.c_type, a.name, i, wrapper_name, a.name
                             ),
                             Some(format!(
                                 "constant bool __dsl_buffer_condition_{}_{} = {};",
-                                wrapper_name, a.name, condition
+                                wrapper_name, a.name, metal_condition
                             )),
-                        )
+                        ))
                     } else {
-                        (format!("{} {} [[buffer({})]]", &a.c_type, a.name, i), None)
+                        Ok((format!("{} {} [[buffer({})]]", &a.c_type, a.name, i), None))
                     }
                 },
                 _ => unreachable!(),
             })
-            .collect::<(Vec<_>, Vec<_>)>();
+            .collect::<anyhow::Result<(Vec<_>, Vec<_>)>>()?;
 
         if kernel.has_axis() {
             if kernel.has_groups() || kernel.has_threads() {
@@ -206,7 +236,7 @@ fn kernel_wrappers(
                         a.name.to_string()
                     },
                     MetalArgumentType::Specialize(_) => {
-                        format!("__dsl_specialize_{}_{}", kernel.name, a.name)
+                        specialize_argument(&kernel.name, &a.name, &a.c_type)
                     },
                     MetalArgumentType::Axis(..) => {
                         format!("__dsl_axis_idx.{}", group_axis_letters.next().unwrap())

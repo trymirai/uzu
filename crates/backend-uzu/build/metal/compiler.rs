@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 
 use super::{
     ast::MetalKernelInfo,
+    enum_path_rewrite::EnumPathRewriter,
     toolchain::MetalToolchain,
     wrapper::{SpecializeBaseIndices, wrappers},
 };
@@ -116,6 +117,7 @@ impl MetalCompiler {
     async fn compile(
         &self,
         source_path: PathBuf,
+        rewriter: &EnumPathRewriter,
     ) -> anyhow::Result<ObjectInfo> {
         let buildsystem_hash =
             caching::build_system_hash().context("cannot get build system cache")?.as_bytes().clone();
@@ -164,7 +166,8 @@ impl MetalCompiler {
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
 
-        let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos).context("cannot generate kernel wrappers")?;
+        let (wrapper_strs, specialize_indices) =
+            wrappers(&kernel_infos, rewriter).context("cannot generate kernel wrappers")?;
 
         let mut footer = String::new();
         for wrapper in wrapper_strs.iter() {
@@ -255,6 +258,7 @@ impl MetalCompiler {
     fn bindgen<'a>(
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
+        rewriter: &EnumPathRewriter,
     ) -> anyhow::Result<()> {
         let out_path = self.out_dir.join("dsl.rs");
         let hash_path = self.out_dir.join("dsl.rs.hash");
@@ -274,7 +278,7 @@ impl MetalCompiler {
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
             .map(|(k, specialize_indices)| {
-                super::bindgen::bindgen(k, specialize_indices)
+                super::bindgen::bindgen(k, specialize_indices, rewriter)
                     .with_context(|| format!("cannot generate bindings for {}", k.name))
             })
             .collect::<anyhow::Result<(Vec<TokenStream>, Vec<Option<TokenStream>>)>>()?;
@@ -324,6 +328,8 @@ impl Compiler for MetalCompiler {
     ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
 
+        let rewriter = EnumPathRewriter::from_gpu_types(gpu_types);
+
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -334,14 +340,14 @@ impl Compiler for MetalCompiler {
         let num_concurrent_compiles = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) * 2;
 
         let objects: Vec<ObjectInfo> = stream::iter(metal_sources)
-            .map(|p| self.compile(p))
+            .map(|p| self.compile(p, &rewriter))
             .buffer_unordered(num_concurrent_compiles)
             .try_collect()
             .await
             .context("cannot compile metal sources")?;
 
         self.link(&objects).await.context("cannot link objects")?;
-        self.bindgen(&objects).context("cannot generate bindings")?;
+        self.bindgen(&objects, &rewriter).context("cannot generate bindings")?;
 
         Ok(objects.iter().map(|o| o.kernels()).collect())
     }

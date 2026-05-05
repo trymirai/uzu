@@ -3,7 +3,10 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Backend, Context, DenseBuffer, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
+        common::{
+            Backend, Context, DenseBuffer, Encoder, Kernels, gpu_types::QuantizationMethod,
+            kernel::QuantizedMatmulQmmTransposedKernel,
+        },
         cpu::Cpu,
     },
 };
@@ -25,8 +28,7 @@ fn make_input_basic<T: ArrayElement + Float>(
     n: usize,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) -> Input<T> {
     let num_groups_k = (k + group_size as usize - 1) / group_size as usize;
 
@@ -57,34 +59,35 @@ fn make_input_basic<T: ArrayElement + Float>(
         num_groups_k
     };
 
-    let (zero_points, biases) = if use_zero_points {
-        let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
-        for j in 0..n {
-            for g in 0..num_groups_k {
-                let zp_val = ((j * 2 + g * 3) % (max_val as usize + 1)) as u8;
-                zp_raw.push(zp_val);
+    let (zero_points, biases) = match quant_method {
+        QuantizationMethod::AWQ => {
+            let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
+            for j in 0..n {
+                for g in 0..num_groups_k {
+                    let zp_val = ((j * 2 + g * 3) % (max_val as usize + 1)) as u8;
+                    zp_raw.push(zp_val);
+                }
             }
-        }
-        let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
-        for j in 0..n {
-            let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
-            let packed_row = pack_zero_points(row, bits);
-            let mut padded = packed_row;
-            padded.resize(zp_stride, 0);
-            zp_packed.extend_from_slice(&padded);
-        }
-        (Some(zp_packed), None)
-    } else if use_mlx_quant {
-        let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
-        for j in 0..n {
-            for g in 0..num_groups_k {
-                biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
+            let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
+            for j in 0..n {
+                let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
+                let packed_row = pack_zero_points(row, bits);
+                let mut padded = packed_row;
+                padded.resize(zp_stride, 0);
+                zp_packed.extend_from_slice(&padded);
             }
-        }
-        let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
-        (None, Some(biases))
-    } else {
-        unreachable!("Must use either zero_points or mlx_quant");
+            (Some(zp_packed), None)
+        },
+        QuantizationMethod::MLX => {
+            let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
+            for j in 0..n {
+                for g in 0..num_groups_k {
+                    biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
+                }
+            }
+            let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+            (None, Some(biases))
+        },
     };
 
     let mut x_f32: Vec<f32> = Vec::with_capacity(m * k);
@@ -106,8 +109,7 @@ fn make_input_basic<T: ArrayElement + Float>(
         m: m as u32,
         group_size,
         bits,
-        use_zero_points,
-        use_mlx_quant,
+        quant_method,
     }
 }
 
@@ -115,8 +117,7 @@ fn make_input_edge<T: ArrayElement + Float>(
     n: usize,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) -> Input<T> {
     let m = 2usize;
     let k = group_size as usize;
@@ -133,14 +134,15 @@ fn make_input_edge<T: ArrayElement + Float>(
         num_groups_k
     };
 
-    let (zero_points, biases) = if use_zero_points {
-        let zp_packed = vec![0u8; n * zp_stride];
-        (Some(zp_packed), None)
-    } else if use_mlx_quant {
-        let biases: Vec<T> = vec![T::zero(); n * num_groups_k];
-        (None, Some(biases))
-    } else {
-        unreachable!("Must use either zero_points or mlx_quant");
+    let (zero_points, biases) = match quant_method {
+        QuantizationMethod::AWQ => {
+            let zp_packed = vec![0u8; n * zp_stride];
+            (Some(zp_packed), None)
+        },
+        QuantizationMethod::MLX => {
+            let biases: Vec<T> = vec![T::zero(); n * num_groups_k];
+            (None, Some(biases))
+        },
     };
 
     let x_f32: Vec<f32> = (0..m * k).map(|i| (i + 1) as f32 * 0.1).collect();
@@ -157,8 +159,7 @@ fn make_input_edge<T: ArrayElement + Float>(
         m: m as u32,
         group_size,
         bits,
-        use_zero_points,
-        use_mlx_quant,
+        quant_method,
     }
 }
 
@@ -184,8 +185,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         bn,
         wm,
         wn,
-        input.use_zero_points,
-        input.use_mlx_quant,
+        input.quant_method,
         use_hadamard,
         aligned_n,
     )
@@ -259,7 +259,7 @@ fn check_against_expected<T: ArrayElement + Float + Debug + Display>(
         assert_eq!(
             errors,
             0,
-            "QMM transposed kernel: backend={}, shape=(BM={},BK={},BN={}), m={}, k={}, n={}, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+            "QMM transposed kernel: backend={}, shape=(BM={},BK={},BN={}), m={}, k={}, n={}, gs={}, bits={}, format={:?}: {} mismatches",
             std::any::type_name::<B>(),
             bm,
             bk,
@@ -269,8 +269,7 @@ fn check_against_expected<T: ArrayElement + Float + Debug + Display>(
             input.n,
             input.group_size,
             input.bits,
-            input.use_zero_points,
-            input.use_mlx_quant,
+            input.quant_method,
             errors,
         );
     });
@@ -335,8 +334,7 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>(
     cfg: &TileCfg,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
     let is_half = matches!(T::data_type(), DataType::F16 | DataType::BF16);
     let gs = group_size as usize;
@@ -349,7 +347,7 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>(
     };
 
     for (m, k, n) in dims {
-        let input = make_input_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
+        let input = make_input_basic::<T>(m, k, n, group_size, bits, quant_method);
         let aligned_n = pick_aligned_n(cfg, n);
         let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n, None);
         check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n);
@@ -360,12 +358,11 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
     cfg: &TileCfg,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
     // Edge N is one BN tile wide — smallest legal N for the shape.
     let n = cfg.bn as usize;
-    let input = make_input_edge::<T>(n, group_size, bits, use_zero_points, use_mlx_quant);
+    let input = make_input_edge::<T>(n, group_size, bits, quant_method);
     let aligned_n = pick_aligned_n(cfg, n);
     let expected = get_output::<Cpu, T>(&input, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n, None);
     check_against_expected::<T>(&input, &expected, cfg.bm, cfg.bk, cfg.bn, cfg.wm, cfg.wn, aligned_n);
@@ -375,15 +372,14 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
 fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
     // m=n=64 satisfies both BN=32 and BN=64 alignment; group_size >= 64 for BK=64.
     let m = 64usize;
     let k = group_size as usize * 2;
     let n = 64usize;
 
-    let input = make_input_basic::<T>(m, k, n, group_size, bits, use_zero_points, use_mlx_quant);
+    let input = make_input_basic::<T>(m, k, n, group_size, bits, quant_method);
 
     // ±1 factors: non-trivial Hadamard, bounded output across all dtypes.
     let factors: Vec<i32> = (0..n)
@@ -433,13 +429,12 @@ fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
             assert_eq!(
                 errors,
                 0,
-                "Hadamard cross-shape mismatch: backend={}, {} vs 32x32 reference, gs={}, bits={}, zp={}, mlx={}: {} mismatches",
+                "Hadamard cross-shape mismatch: backend={}, {} vs 32x32 reference, gs={}, bits={}, format={:?}: {} mismatches",
                 std::any::type_name::<B>(),
                 name,
                 group_size,
                 bits,
-                use_zero_points,
-                use_mlx_quant,
+                quant_method,
                 errors,
             );
         }
@@ -451,13 +446,13 @@ fn test_hadamard_consistency<T: ArrayElement + Float + Debug + Display>(
 macro_rules! basic_tests {
     ($cfg:expr; $(
         $(#[$attr:meta])*
-        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $zp:literal, $mlx:literal;
+        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $format:expr;
     )*) => {
         $(
             $(#[$attr])*
             #[uzu_test]
             fn $name() {
-                test_basic::<$t>($cfg, $gs, $bits, $zp, $mlx);
+                test_basic::<$t>($cfg, $gs, $bits, $format);
             }
         )*
     };
@@ -466,13 +461,13 @@ macro_rules! basic_tests {
 macro_rules! edge_tests {
     ($cfg:expr; $(
         $(#[$attr:meta])*
-        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $zp:literal, $mlx:literal;
+        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $format:expr;
     )*) => {
         $(
             $(#[$attr])*
             #[uzu_test]
             fn $name() {
-                test_edge::<$t>($cfg, $gs, $bits, $zp, $mlx);
+                test_edge::<$t>($cfg, $gs, $bits, $format);
             }
         )*
     };
@@ -481,13 +476,13 @@ macro_rules! edge_tests {
 macro_rules! hadamard_tests {
     ($(
         $(#[$attr:meta])*
-        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $zp:literal, $mlx:literal;
+        fn $name:ident : $t:ty, $gs:literal, $bits:literal, $format:expr;
     )*) => {
         $(
             $(#[$attr])*
             #[uzu_test]
             fn $name() {
-                test_hadamard_consistency::<$t>($gs, $bits, $zp, $mlx);
+                test_hadamard_consistency::<$t>($gs, $bits, $format);
             }
         )*
     };
@@ -498,20 +493,20 @@ mod tile_bm8 {
 
     basic_tests!(&CFG_BM8;
         // bf16 4-bit ZP has known precision limits
-        #[ignore] fn test_bf16_gs32_4bit_zp:  bf16, 32, 4, true,  false;
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16, 64, 4, true,  false;
-        fn test_bf16_gs32_8bit_zp:  bf16, 32, 8, true,  false;
-        fn test_bf16_gs64_8bit_zp:  bf16, 64, 8, true,  false;
-        fn test_bf16_gs32_4bit_mlx: bf16, 32, 4, false, true;
-        fn test_bf16_gs64_4bit_mlx: bf16, 64, 4, false, true;
-        fn test_bf16_gs32_8bit_mlx: bf16, 32, 8, false, true;
-        fn test_bf16_gs64_8bit_mlx: bf16, 64, 8, false, true;
+        #[ignore] fn test_bf16_gs32_4bit_zp:  bf16, 32, 4, QuantizationMethod::AWQ;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16, 64, 4, QuantizationMethod::AWQ;
+        fn test_bf16_gs32_8bit_zp:  bf16, 32, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs64_8bit_zp:  bf16, 64, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs32_4bit_mlx: bf16, 32, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs64_4bit_mlx: bf16, 64, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs32_8bit_mlx: bf16, 32, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs64_8bit_mlx: bf16, 64, 8, QuantizationMethod::MLX;
     );
 
     edge_tests!(&CFG_BM8;
-        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, false, true;
-        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, false, true;
-        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, true,  false;
+        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, QuantizationMethod::MLX;
+        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, QuantizationMethod::MLX;
+        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, QuantizationMethod::AWQ;
     );
 }
 
@@ -522,54 +517,54 @@ mod tile_32x32 {
 
     basic_tests!(&CFG_32X32;
         // 4-bit, zero points
-        fn test_f32_gs32_4bit_zp:    f32,  32, 4, true, false;
-        fn test_f32_gs64_4bit_zp:    f32,  64, 4, true, false;
-        fn test_f32_gs128_4bit_zp:   f32, 128, 4, true, false;
-        fn test_f16_gs32_4bit_zp:    f16,  32, 4, true, false;
-        fn test_f16_gs64_4bit_zp:    f16,  64, 4, true, false;
-        fn test_f16_gs128_4bit_zp:   f16, 128, 4, true, false;
-        fn test_bf16_gs32_4bit_zp:   bf16, 32, 4, true, false;
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, true, false;
-        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, true, false;
+        fn test_f32_gs32_4bit_zp:    f32,  32, 4, QuantizationMethod::AWQ;
+        fn test_f32_gs64_4bit_zp:    f32,  64, 4, QuantizationMethod::AWQ;
+        fn test_f32_gs128_4bit_zp:   f32, 128, 4, QuantizationMethod::AWQ;
+        fn test_f16_gs32_4bit_zp:    f16,  32, 4, QuantizationMethod::AWQ;
+        fn test_f16_gs64_4bit_zp:    f16,  64, 4, QuantizationMethod::AWQ;
+        fn test_f16_gs128_4bit_zp:   f16, 128, 4, QuantizationMethod::AWQ;
+        fn test_bf16_gs32_4bit_zp:   bf16, 32, 4, QuantizationMethod::AWQ;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::AWQ;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::AWQ;
         // 8-bit, zero points
-        fn test_f32_gs32_8bit_zp:    f32,  32, 8, true, false;
-        fn test_f32_gs64_8bit_zp:    f32,  64, 8, true, false;
-        fn test_f32_gs128_8bit_zp:   f32, 128, 8, true, false;
-        fn test_f16_gs32_8bit_zp:    f16,  32, 8, true, false;
-        fn test_f16_gs64_8bit_zp:    f16,  64, 8, true, false;
-        fn test_f16_gs128_8bit_zp:   f16, 128, 8, true, false;
-        fn test_bf16_gs32_8bit_zp:   bf16, 32, 8, true, false;
-        fn test_bf16_gs64_8bit_zp:   bf16, 64, 8, true, false;
-        fn test_bf16_gs128_8bit_zp:  bf16,128, 8, true, false;
+        fn test_f32_gs32_8bit_zp:    f32,  32, 8, QuantizationMethod::AWQ;
+        fn test_f32_gs64_8bit_zp:    f32,  64, 8, QuantizationMethod::AWQ;
+        fn test_f32_gs128_8bit_zp:   f32, 128, 8, QuantizationMethod::AWQ;
+        fn test_f16_gs32_8bit_zp:    f16,  32, 8, QuantizationMethod::AWQ;
+        fn test_f16_gs64_8bit_zp:    f16,  64, 8, QuantizationMethod::AWQ;
+        fn test_f16_gs128_8bit_zp:   f16, 128, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs32_8bit_zp:   bf16, 32, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs64_8bit_zp:   bf16, 64, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs128_8bit_zp:  bf16,128, 8, QuantizationMethod::AWQ;
         // 4-bit, mlx quant
-        fn test_f32_gs32_4bit_mlx:   f32,  32, 4, false, true;
-        fn test_f32_gs64_4bit_mlx:   f32,  64, 4, false, true;
-        fn test_f32_gs128_4bit_mlx:  f32, 128, 4, false, true;
-        fn test_f16_gs32_4bit_mlx:   f16,  32, 4, false, true;
-        fn test_f16_gs64_4bit_mlx:   f16,  64, 4, false, true;
-        fn test_f16_gs128_4bit_mlx:  f16, 128, 4, false, true;
-        fn test_bf16_gs32_4bit_mlx:  bf16, 32, 4, false, true;
-        fn test_bf16_gs64_4bit_mlx:  bf16, 64, 4, false, true;
-        fn test_bf16_gs128_4bit_mlx: bf16,128, 4, false, true;
+        fn test_f32_gs32_4bit_mlx:   f32,  32, 4, QuantizationMethod::MLX;
+        fn test_f32_gs64_4bit_mlx:   f32,  64, 4, QuantizationMethod::MLX;
+        fn test_f32_gs128_4bit_mlx:  f32, 128, 4, QuantizationMethod::MLX;
+        fn test_f16_gs32_4bit_mlx:   f16,  32, 4, QuantizationMethod::MLX;
+        fn test_f16_gs64_4bit_mlx:   f16,  64, 4, QuantizationMethod::MLX;
+        fn test_f16_gs128_4bit_mlx:  f16, 128, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs32_4bit_mlx:  bf16, 32, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs64_4bit_mlx:  bf16, 64, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs128_4bit_mlx: bf16,128, 4, QuantizationMethod::MLX;
         // 8-bit, mlx quant
-        fn test_f32_gs32_8bit_mlx:   f32,  32, 8, false, true;
-        fn test_f32_gs64_8bit_mlx:   f32,  64, 8, false, true;
-        fn test_f32_gs128_8bit_mlx:  f32, 128, 8, false, true;
-        fn test_f16_gs32_8bit_mlx:   f16,  32, 8, false, true;
-        fn test_f16_gs64_8bit_mlx:   f16,  64, 8, false, true;
-        fn test_f16_gs128_8bit_mlx:  f16, 128, 8, false, true;
-        fn test_bf16_gs32_8bit_mlx:  bf16, 32, 8, false, true;
-        fn test_bf16_gs64_8bit_mlx:  bf16, 64, 8, false, true;
-        fn test_bf16_gs128_8bit_mlx: bf16,128, 8, false, true;
+        fn test_f32_gs32_8bit_mlx:   f32,  32, 8, QuantizationMethod::MLX;
+        fn test_f32_gs64_8bit_mlx:   f32,  64, 8, QuantizationMethod::MLX;
+        fn test_f32_gs128_8bit_mlx:  f32, 128, 8, QuantizationMethod::MLX;
+        fn test_f16_gs32_8bit_mlx:   f16,  32, 8, QuantizationMethod::MLX;
+        fn test_f16_gs64_8bit_mlx:   f16,  64, 8, QuantizationMethod::MLX;
+        fn test_f16_gs128_8bit_mlx:  f16, 128, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs32_8bit_mlx:  bf16, 32, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs64_8bit_mlx:  bf16, 64, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs128_8bit_mlx: bf16,128, 8, QuantizationMethod::MLX;
     );
 
     edge_tests!(&CFG_32X32;
-        fn test_edge_f32_4bit_zp:  f32, 32, 4, true, false;
-        fn test_edge_f32_8bit_zp:  f32, 32, 8, true, false;
-        fn test_edge_f16_4bit_zp:  f16, 32, 4, true, false;
-        fn test_edge_f32_4bit_mlx: f32, 32, 4, false, true;
-        fn test_edge_f32_8bit_mlx: f32, 32, 8, false, true;
-        fn test_edge_f16_4bit_mlx: f16, 32, 4, false, true;
+        fn test_edge_f32_4bit_zp:  f32, 32, 4, QuantizationMethod::AWQ;
+        fn test_edge_f32_8bit_zp:  f32, 32, 8, QuantizationMethod::AWQ;
+        fn test_edge_f16_4bit_zp:  f16, 32, 4, QuantizationMethod::AWQ;
+        fn test_edge_f32_4bit_mlx: f32, 32, 4, QuantizationMethod::MLX;
+        fn test_edge_f32_8bit_mlx: f32, 32, 8, QuantizationMethod::MLX;
+        fn test_edge_f16_4bit_mlx: f16, 32, 4, QuantizationMethod::MLX;
     );
 }
 
@@ -580,28 +575,28 @@ mod tile_wide {
 
     basic_tests!(&CFG_WIDE;
         // 4-bit, zero points
-        fn test_bf16_gs32_4bit_zp:   bf16,  32, 4, true, false;
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, true, false;
-        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, true, false;
+        fn test_bf16_gs32_4bit_zp:   bf16,  32, 4, QuantizationMethod::AWQ;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::AWQ;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::AWQ;
         // 8-bit, zero points
-        fn test_bf16_gs32_8bit_zp:   bf16,  32, 8, true, false;
-        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, true, false;
-        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, true, false;
+        fn test_bf16_gs32_8bit_zp:   bf16,  32, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, QuantizationMethod::AWQ;
         // 4-bit, mlx quant
-        fn test_bf16_gs32_4bit_mlx:  bf16,  32, 4, false, true;
-        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, false, true;
-        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, false, true;
+        fn test_bf16_gs32_4bit_mlx:  bf16,  32, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::MLX;
         // 8-bit, mlx quant
-        fn test_bf16_gs32_8bit_mlx:  bf16,  32, 8, false, true;
-        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, false, true;
-        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, false, true;
+        fn test_bf16_gs32_8bit_mlx:  bf16,  32, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::MLX;
     );
 
     edge_tests!(&CFG_WIDE;
-        fn test_edge_bf16_4bit_zp:  bf16, 32, 4, true, false;
-        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, true, false;
-        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, false, true;
-        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, false, true;
+        fn test_edge_bf16_4bit_zp:  bf16, 32, 4, QuantizationMethod::AWQ;
+        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, QuantizationMethod::AWQ;
+        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, QuantizationMethod::MLX;
+        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, QuantizationMethod::MLX;
     );
 }
 
@@ -612,24 +607,24 @@ mod tile_64x64 {
 
     basic_tests!(&CFG_64X64;
         // 4-bit, zero points
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, true, false;
-        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, true, false;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::AWQ;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::AWQ;
         // 8-bit, zero points
-        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, true, false;
-        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, true, false;
+        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, QuantizationMethod::AWQ;
         // 4-bit, mlx quant
-        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, false, true;
-        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, false, true;
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::MLX;
         // 8-bit, mlx quant
-        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, false, true;
-        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, false, true;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::MLX;
     );
 
     edge_tests!(&CFG_64X64;
-        fn test_edge_bf16_4bit_zp:  bf16, 64, 4, true, false;
-        fn test_edge_bf16_8bit_zp:  bf16, 64, 8, true, false;
-        fn test_edge_bf16_4bit_mlx: bf16, 64, 4, false, true;
-        fn test_edge_bf16_8bit_mlx: bf16, 64, 8, false, true;
+        fn test_edge_bf16_4bit_zp:  bf16, 64, 4, QuantizationMethod::AWQ;
+        fn test_edge_bf16_8bit_zp:  bf16, 64, 8, QuantizationMethod::AWQ;
+        fn test_edge_bf16_4bit_mlx: bf16, 64, 4, QuantizationMethod::MLX;
+        fn test_edge_bf16_8bit_mlx: bf16, 64, 8, QuantizationMethod::MLX;
     );
 }
 
@@ -640,12 +635,12 @@ mod hadamard {
 
     // f32 at (64,64,64) overflows threadgroup memory (34816 > 32768 bytes).
     hadamard_tests!(
-        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, false, true;
-        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, false, true;
-        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, false, true;
-        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, false, true;
-        fn test_f16_gs64_4bit_mlx:   f16,   64, 4, false, true;
-        fn test_f16_gs128_4bit_mlx:  f16,  128, 4, false, true;
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::MLX;
+        fn test_f16_gs64_4bit_mlx:   f16,   64, 4, QuantizationMethod::MLX;
+        fn test_f16_gs128_4bit_mlx:  f16,  128, 4, QuantizationMethod::MLX;
     );
 }
 
@@ -655,8 +650,7 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
     label: &str,
     group_size: u32,
     bits: u32,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
 ) {
     // Use the dispatcher-selected tile configs: BM=8 small tile for M<48, big tile for M>=48.
     // We always use the BM=8 small tile kernel for M in 4..=47 to match the dispatch threshold.
@@ -692,8 +686,7 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
             bn,
             wm,
             wn,
-            use_zero_points,
-            use_mlx_quant,
+            quant_method,
             false,
             n % bn as usize == 0,
         )
@@ -718,13 +711,13 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
         } else {
             num_groups
         };
-        let zp_buf = use_zero_points.then(|| {
+        let zp_buf = (quant_method == QuantizationMethod::AWQ).then(|| {
             alloc_buffer_with_data::<B, u8>(
                 context,
                 &(0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect::<Vec<_>>(),
             )
         });
-        let bias_buf = use_mlx_quant.then(|| {
+        let bias_buf = (quant_method == QuantizationMethod::MLX).then(|| {
             alloc_buffer_with_data::<B, T>(
                 context,
                 &(0..n * num_groups).map(|_| T::from(rng.random_range(-0.5f32..0.5f32)).unwrap()).collect::<Vec<_>>(),
@@ -762,10 +755,10 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
 fn bench_qmm_transposed(c: &mut Criterion) {
     for_each_backend!(|B| {
         let context = <B as Backend>::Context::new().unwrap();
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, false, true);
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, true, false);
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, false, true);
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, true, false);
-        bench_qmm_transposed_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, true, false);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, QuantizationMethod::MLX);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::AWQ);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, QuantizationMethod::MLX);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::AWQ);
+        bench_qmm_transposed_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::AWQ);
     });
 }

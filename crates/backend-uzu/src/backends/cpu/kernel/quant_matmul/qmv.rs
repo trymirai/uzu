@@ -2,7 +2,7 @@ use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::ArrayElement;
+use crate::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
 
 /// CPU reference implementation of quantized matrix-vector multiply.
 ///
@@ -21,8 +21,7 @@ pub fn qmv<T: ArrayElement + Float>(
     in_vec_size: usize,
     out_vec_size: usize,
     batch_size: usize,
-    use_zero_points: bool,
-    use_mlx_quant: bool,
+    quant_method: QuantizationMethod,
     group_size: usize,
     bits: usize,
 ) {
@@ -65,26 +64,27 @@ pub fn qmv<T: ArrayElement + Float>(
                     let group_idx = l / group_size;
                     let scale = (*scales.add(j * num_groups_k + group_idx)).to_f32().unwrap();
 
-                    let bias = if use_zero_points {
-                        let zp = zero_points.unwrap();
-                        // Zero points are [N, zp_stride_k]
-                        let zp_val = if bits == 4 {
-                            let byte_index = j * zp_stride + (group_idx >> 1);
-                            let byte_val = *zp.add(byte_index);
-                            if (group_idx & 1) == 0 {
-                                (byte_val & 0x0F) as f32
+                    let bias = match quant_method {
+                        QuantizationMethod::AWQ => {
+                            let zp = zero_points.unwrap();
+                            // Zero points are [N, zp_stride_k]
+                            let zp_val = if bits == 4 {
+                                let byte_index = j * zp_stride + (group_idx >> 1);
+                                let byte_val = *zp.add(byte_index);
+                                if (group_idx & 1) == 0 {
+                                    (byte_val & 0x0F) as f32
+                                } else {
+                                    ((byte_val >> 4) & 0x0F) as f32
+                                }
                             } else {
-                                ((byte_val >> 4) & 0x0F) as f32
-                            }
-                        } else {
-                            *zp.add(j * zp_stride + group_idx) as f32
-                        };
-                        -scale * zp_val
-                    } else if use_mlx_quant {
-                        // Biases are [N, num_groups_k]
-                        (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap()
-                    } else {
-                        0.0f32
+                                *zp.add(j * zp_stride + group_idx) as f32
+                            };
+                            -scale * zp_val
+                        },
+                        QuantizationMethod::MLX => {
+                            // Biases are [N, num_groups_k]
+                            (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap()
+                        },
                     };
 
                     acc += val_a * (scale * val_q + bias);
@@ -103,15 +103,14 @@ pub fn qmv<T: ArrayElement + Float>(
 pub fn quantized_matmul_qmv<T: ArrayElement + Float, const GROUP_SIZE: u32, const BITS: u32>(
     weights: *const u32,
     scales: *const T,
-    #[optional(use_zero_points)] zero_points: Option<*const u8>,
-    #[optional(use_mlx_quant)] biases: Option<*const T>,
+    #[optional(quant_method == QuantizationMethod::AWQ)] zero_points: Option<*const u8>,
+    #[optional(quant_method == QuantizationMethod::MLX)] biases: Option<*const T>,
     input: *const T,
     output: *mut T,
     in_vec_size: u32,
     out_vec_size: u32,
     batch_size: u32,
-    #[specialize] use_zero_points: bool,
-    #[specialize] use_mlx_quant: bool,
+    #[specialize] quant_method: QuantizationMethod,
 ) {
     qmv::<T>(
         weights,
@@ -123,8 +122,7 @@ pub fn quantized_matmul_qmv<T: ArrayElement + Float, const GROUP_SIZE: u32, cons
         in_vec_size as usize,
         out_vec_size as usize,
         batch_size as usize,
-        use_zero_points,
-        use_mlx_quant,
+        quant_method,
         GROUP_SIZE as usize,
         BITS as usize,
     );

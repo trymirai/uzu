@@ -712,6 +712,7 @@ dependencies = [
  "comfy-table",
  "criterion",
  "criterion-macro",
+ "debug-display",
  "depfile",
  "dsl",
  "futures",
@@ -2002,6 +2003,15 @@ name = "deadpool-runtime"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
+
+[[package]]
+name = "debug-display"
+version = "0.4.4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "deltae"
