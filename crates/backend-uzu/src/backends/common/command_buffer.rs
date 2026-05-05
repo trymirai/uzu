@@ -12,8 +12,6 @@ pub trait CommandBuffer {
     type Completed: CommandBufferCompleted<CommandBuffer = Self>;
 }
 
-type CommandBufferBackend<C> = <C as CommandBuffer>::Backend;
-
 pub trait CommandBufferInitial {
     type CommandBuffer: CommandBuffer<Initial = Self>;
 
@@ -74,15 +72,15 @@ pub trait CommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &Allocation<CommandBufferBackend<Self::CommandBuffer>>,
+        src: &Allocation<<Self::CommandBuffer as CommandBuffer>::Backend>,
         src_range: Range<usize>,
-        dst: &mut Allocation<CommandBufferBackend<Self::CommandBuffer>>,
+        dst: &mut Allocation<<Self::CommandBuffer as CommandBuffer>::Backend>,
         dst_range: Range<usize>,
     );
 
     fn encode_fill(
         &mut self,
-        dst: &mut Allocation<CommandBufferBackend<Self::CommandBuffer>>,
+        dst: &mut Allocation<<Self::CommandBuffer as CommandBuffer>::Backend>,
         range: Range<usize>,
         value: u8,
     );

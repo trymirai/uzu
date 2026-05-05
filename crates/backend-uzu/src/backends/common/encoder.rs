@@ -86,15 +86,13 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         dst: &mut Allocation<B>,
         dst_range: impl RangeBounds<usize>,
     ) {
-        let (src_buffer, src_allocation_range) = src.as_buffer_range();
-        let (dst_buffer, dst_allocation_range) = dst.as_buffer_range();
-        let src_range = resolve_copy_range(src_range, src_allocation_range.len(), "source");
-        let dst_range = resolve_copy_range(dst_range, dst_allocation_range.len(), "destination");
+        let src_range = resolve_copy_range(src_range, src.as_buffer_range().1.len(), "source");
+        let dst_range = resolve_copy_range(dst_range, dst.as_buffer_range().1.len(), "destination");
         let byte_len = src_range.len();
         assert_eq!(byte_len, dst_range.len(), "copy range lengths must match");
         assert!(byte_len > 0, "zero-sized copies are not allowed");
-        let src_access_range = src_allocation_range.start + src_range.start..src_allocation_range.start + src_range.end;
-        let dst_access_range = dst_allocation_range.start + dst_range.start..dst_allocation_range.start + dst_range.end;
+        let (src_buffer, src_access_range) = src.as_buffer_subrange(&src_range);
+        let (dst_buffer, dst_access_range) = dst.as_buffer_subrange(&dst_range);
         self.access(&[
             Access {
                 range: src_buffer.gpu_address_subrange(src_access_range),
@@ -113,13 +111,14 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         dst: &mut Allocation<B>,
         value: u8,
     ) {
-        let (dst_buffer, range) = dst.as_buffer_range();
+        let range = 0..dst.as_buffer_range().1.len();
         assert!(!range.is_empty(), "zero-sized fills are not allowed");
+        let (dst_buffer, dst_access_range) = dst.as_buffer_subrange(&range);
         self.access(&[Access {
-            range: dst_buffer.gpu_address_subrange(range.clone()),
+            range: dst_buffer.gpu_address_subrange(dst_access_range),
             flags: AccessFlags::copy_write(),
         }]);
-        self.command_buffer.encode_fill(dst, 0..range.len(), value);
+        self.command_buffer.encode_fill(dst, range, value);
     }
 
     pub fn access(

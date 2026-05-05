@@ -26,7 +26,6 @@ fn build_decoding_config() -> DecodingConfig {
         SpeculatorConfig::default(),
         SamplingSeed::Custom(42),
         AsyncBatchSize::default(),
-        true,
     )
 }
 

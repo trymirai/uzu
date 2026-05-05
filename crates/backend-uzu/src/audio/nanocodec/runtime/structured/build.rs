@@ -3,7 +3,7 @@ use crate::array::{Array, ArrayContextExt};
 
 pub(super) type BackendParameterTree<'loader, B> = crate::parameters::ParameterTree<'loader, <B as Backend>::Context>;
 
-pub(super) fn read_float_allocation<B: Backend, const RANK: usize>(
+pub(super) fn read_float_array<B: Backend, const RANK: usize>(
     tree: &BackendParameterTree<B>,
     name: &str,
     expected_data_type: DataType,
@@ -32,14 +32,14 @@ pub(super) fn read_float_vector_exact<B: Backend>(
     expected_len: usize,
     expected_data_type: DataType,
 ) -> AudioResult<Array<B>> {
-    let (shape, allocation) = read_float_allocation::<B, 1>(tree, name, expected_data_type)?;
+    let (shape, array) = read_float_array::<B, 1>(tree, name, expected_data_type)?;
     if shape[0] != expected_len {
         return Err(AudioError::Runtime(format!(
             "tensor '{name}' shape mismatch: expected [{expected_len}], got {:?}",
             shape
         )));
     }
-    Ok(allocation)
+    Ok(array)
 }
 
 pub(super) fn read_float_matrix_exact<B: Backend>(
@@ -49,14 +49,14 @@ pub(super) fn read_float_matrix_exact<B: Backend>(
     expected_cols: usize,
     expected_data_type: DataType,
 ) -> AudioResult<Array<B>> {
-    let (shape, allocation) = read_float_allocation::<B, 2>(tree, name, expected_data_type)?;
+    let (shape, array) = read_float_array::<B, 2>(tree, name, expected_data_type)?;
     if shape != [expected_rows, expected_cols] {
         return Err(AudioError::Runtime(format!(
             "tensor '{name}' shape mismatch: expected [{expected_rows}, {expected_cols}], got {:?}",
             shape
         )));
     }
-    Ok(allocation)
+    Ok(array)
 }
 
 pub(super) fn copy_to_outer_axis_slice<B: Backend>(
@@ -86,7 +86,7 @@ pub(super) fn read_conv1d_layer<B: Backend>(
     dilation: usize,
     groups: usize,
 ) -> AudioResult<StructuredAudioConv1d<B>> {
-    let (shape, weight) = read_float_allocation::<B, 3>(tree, "weights", data_type)?;
+    let (shape, weight) = read_float_array::<B, 3>(tree, "weights", data_type)?;
     let bias = read_float_vector_exact::<B>(tree, "biases", shape[0], data_type)?;
     if groups == 0 || shape[0] == 0 || shape[1] == 0 || shape[2] == 0 {
         return Err(AudioError::InvalidTokenCardinality);
@@ -117,7 +117,7 @@ pub(super) fn read_conv_transpose1d_layer<B: Backend>(
     if stride == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    let (shape, weight) = read_float_allocation::<B, 3>(tree, "weights", data_type)?;
+    let (shape, weight) = read_float_array::<B, 3>(tree, "weights", data_type)?;
     if groups == 0 || shape[0] == 0 || shape[1] == 0 || shape[2] == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
@@ -193,7 +193,7 @@ pub(super) fn read_convnext_layer<B: Backend>(
     norm_config: &DescriptAudioConvNeXtNormConfig,
 ) -> AudioResult<StructuredAudioConvNeXt<B>> {
     let depthwise_tree = tree.subtree("dwconv")?;
-    let (depthwise_shape, depthwise_weight) = read_float_allocation::<B, 3>(&depthwise_tree, "weights", data_type)?;
+    let (depthwise_shape, depthwise_weight) = read_float_array::<B, 3>(&depthwise_tree, "weights", data_type)?;
     if depthwise_shape[1] != 1 {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt depthwise weight in_channels_per_group must be 1 at 'dwconv.weights', got {}",
@@ -228,7 +228,7 @@ pub(super) fn read_convnext_layer<B: Backend>(
         norm_config.subtract_mean,
         norm_config.use_bias,
     )?;
-    let (pwconv1_shape, _) = read_float_allocation::<B, 2>(&tree.subtree("pwconv1")?, "weights", data_type)?;
+    let (pwconv1_shape, _) = read_float_array::<B, 2>(&tree.subtree("pwconv1")?, "weights", data_type)?;
     if pwconv1_shape[1] != channels {
         return Err(AudioError::Runtime(format!(
             "ConvNeXt pwconv1 input mismatch at 'pwconv1.weights': expected {}, got {}",
@@ -252,7 +252,7 @@ pub(super) fn read_residual_unit_layer<B: Backend>(
 ) -> AudioResult<StructuredAudioResidualUnit<B>> {
     let snake1_alpha = {
         let snake1_tree = tree.subtree("snake1")?;
-        let (shape, alpha) = read_float_allocation::<B, 1>(&snake1_tree, "alpha", data_type)?;
+        let (shape, alpha) = read_float_array::<B, 1>(&snake1_tree, "alpha", data_type)?;
         if shape[0] == 0 {
             return Err(AudioError::InvalidTokenCardinality);
         }
@@ -261,7 +261,7 @@ pub(super) fn read_residual_unit_layer<B: Backend>(
     let conv1 = read_conv1d_layer::<B>(&tree.subtree("conv1")?, data_type, dilation, 1)?;
     let snake2_alpha = {
         let snake2_tree = tree.subtree("snake2")?;
-        let (shape, alpha) = read_float_allocation::<B, 1>(&snake2_tree, "alpha", data_type)?;
+        let (shape, alpha) = read_float_array::<B, 1>(&snake2_tree, "alpha", data_type)?;
         if shape[0] != conv1.cout {
             return Err(AudioError::Runtime(format!(
                 "residual snake2 alpha mismatch: expected {}, got {}",

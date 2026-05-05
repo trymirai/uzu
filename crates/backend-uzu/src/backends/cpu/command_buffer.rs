@@ -12,8 +12,8 @@ use std::{
 use crate::{
     backends::{
         common::{
-            AccessFlags, Allocation, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding,
-            CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+            AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+            CommandBufferInitial, CommandBufferPending,
         },
         cpu::{Cpu, error::CpuError},
     },
@@ -76,22 +76,18 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &Allocation<Cpu>,
+        src: &crate::backends::common::Allocation<Cpu>,
         src_range: Range<usize>,
-        dst: &mut Allocation<Cpu>,
+        dst: &mut crate::backends::common::Allocation<Cpu>,
         dst_range: Range<usize>,
     ) {
-        let (src, src_allocation_range) = src.as_buffer_range();
-        let (dst, dst_allocation_range) = dst.as_buffer_range();
-        let src_range = src_allocation_range.start + src_range.start..src_allocation_range.start + src_range.end;
-        let dst_range = dst_allocation_range.start + dst_range.start..dst_allocation_range.start + dst_range.end;
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
-        assert!(unsafe { &*src.get() }.len() >= src_range.end);
-        assert!(unsafe { &*dst.get() }.len() >= dst_range.end);
+        let (src, src_buffer_range) = src.as_buffer_subrange(&src_range);
+        let (dst, dst_buffer_range) = dst.as_buffer_subrange(&dst_range);
+        let size = src_buffer_range.end - src_buffer_range.start;
+        assert_eq!(size, dst_buffer_range.end - dst_buffer_range.start);
 
-        let src_ptr = SendPtr(unsafe { (&*src.get()).as_ptr().add(src_range.start) });
-        let dst_ptr = SendPtrMut(unsafe { (&mut *dst.get()).as_mut_ptr().add(dst_range.start) });
+        let src_ptr = SendPtr(unsafe { (&*src.get()).as_ptr().add(src_buffer_range.start) });
+        let dst_ptr = SendPtrMut(unsafe { (&mut *dst.get()).as_mut_ptr().add(dst_buffer_range.start) });
         self.push_command(move || unsafe {
             std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), size);
         });
@@ -99,12 +95,11 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn encode_fill(
         &mut self,
-        dst: &mut Allocation<Cpu>,
+        dst: &mut crate::backends::common::Allocation<Cpu>,
         range: Range<usize>,
         value: u8,
     ) {
-        let (dst, allocation_range) = dst.as_buffer_range();
-        let range = allocation_range.start + range.start..allocation_range.start + range.end;
+        let (dst, range) = dst.as_buffer_subrange(&range);
         let size = range.end - range.start;
         let dst = SendPtrMut(unsafe { (&mut *dst.get()).as_mut_ptr().add(range.start) });
         self.push_command(move || unsafe {

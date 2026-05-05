@@ -77,8 +77,6 @@ impl<B: Backend> DecodeWorkspace<B> {
             encoder.allocate_scratch(size_for_shape(shape, data_type)).expect("Failed to allocate scratch");
         unsafe { Array::from_allocation(allocation, 0, shape, data_type) }
     }
-
-    pub(super) fn reset(&self) {}
 }
 
 pub(in crate::audio::nanocodec::runtime) struct StructuredAudioRuntimeResources<B: Backend> {
@@ -104,12 +102,6 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
 
     pub(super) fn context(&self) -> &Rc<B::Context> {
         &self.context
-    }
-
-    /// Reset the decode workspace after submitting a command buffer whose
-    /// encoded work references the current buffers.
-    pub(in crate::audio::nanocodec::runtime) fn reset_for_pending(&self) {
-        self.decode_workspace.reset();
     }
 
     pub(super) fn kernels(

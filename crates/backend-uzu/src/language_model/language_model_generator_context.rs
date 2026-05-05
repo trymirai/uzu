@@ -24,13 +24,13 @@ use crate::{
     },
 };
 
-/// Pre-allocated buffers for async generation pipeline.
+/// Pre-allocated state for async generation pipeline.
 /// Indexed by pass_idx to avoid race conditions between GPU passes.
 pub struct AsyncBuffers<B: Backend> {
-    /// Positions buffer: [max_tokens] i32
+    /// Positions array: [max_tokens] i32
     /// Pre-populated with [prefill_count, prefill_count+1, ...]
     pub positions: Array<B>,
-    /// Seeds buffer: [max_tokens] u64
+    /// Seeds array: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
     pub seeds: Array<B>,
     /// Event for GPU-side synchronization between passes

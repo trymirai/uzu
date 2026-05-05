@@ -114,10 +114,10 @@ impl<B: Backend> SamplingKernel<B> {
 
     pub fn encode(
         &self,
-        logits_buffer: &mut Allocation<B>,
-        seeds_buffer: &Allocation<B>,
-        bitmask_buffer: Option<&Allocation<B>>,
-        sampled_tokens_buffer: &mut Allocation<B>,
+        logits: &mut Allocation<B>,
+        seeds: &Allocation<B>,
+        bitmask: Option<&Allocation<B>>,
+        sampled_tokens: &mut Allocation<B>,
         sampling_method: SamplingMethod,
         batch_size: usize,
         vocab_size: usize,
@@ -130,11 +130,11 @@ impl<B: Backend> SamplingKernel<B> {
             return Err(SamplingError::EmptyVocab);
         }
 
-        if let Some(bitmask_buffer) = bitmask_buffer {
+        if let Some(bitmask) = bitmask {
             self.bitmask.encode(
                 None::<&Allocation<B>>,
-                bitmask_buffer,
-                &mut *logits_buffer,
+                bitmask,
+                &mut *logits,
                 batch_size as u32,
                 vocab_size as u32,
                 encoder,
@@ -154,7 +154,7 @@ impl<B: Backend> SamplingKernel<B> {
             {
                 self.temperature.encode(
                     None::<&Allocation<B>>,
-                    &mut *logits_buffer,
+                    &mut *logits,
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
@@ -165,7 +165,7 @@ impl<B: Backend> SamplingKernel<B> {
             if let Some(top_k) = top_k {
                 self.topk.encode(
                     None::<&Allocation<B>>,
-                    &mut *logits_buffer,
+                    &mut *logits,
                     batch_size as u32,
                     vocab_size as u32,
                     top_k,
@@ -175,7 +175,7 @@ impl<B: Backend> SamplingKernel<B> {
             if let Some(top_p) = top_p {
                 self.topp.encode(
                     None::<&Allocation<B>>,
-                    &mut *logits_buffer,
+                    &mut *logits,
                     batch_size as u32,
                     vocab_size as u32,
                     top_p,
@@ -185,7 +185,7 @@ impl<B: Backend> SamplingKernel<B> {
             if let Some(min_p) = min_p {
                 self.minp.encode(
                     None::<&Allocation<B>>,
-                    &mut *logits_buffer,
+                    &mut *logits,
                     batch_size as u32,
                     vocab_size as u32,
                     min_p,
@@ -198,7 +198,7 @@ impl<B: Backend> SamplingKernel<B> {
             {
                 self.temperature.encode(
                     None::<&Allocation<B>>,
-                    &mut *logits_buffer,
+                    &mut *logits,
                     batch_size as u32,
                     vocab_size as u32,
                     temperature,
@@ -208,9 +208,9 @@ impl<B: Backend> SamplingKernel<B> {
 
             self.gumbel.encode(
                 None::<&Allocation<B>>,
-                seeds_buffer,
+                seeds,
                 0,
-                &mut *logits_buffer,
+                &mut *logits,
                 batch_size as u32,
                 vocab_size as u32,
                 encoder,
@@ -221,7 +221,7 @@ impl<B: Backend> SamplingKernel<B> {
             ArgmaxImplementation::SinglePass {
                 kernel,
             } => {
-                kernel.encode(&*logits_buffer, sampled_tokens_buffer, batch_size as u32, vocab_size as u32, encoder);
+                kernel.encode(&*logits, sampled_tokens, batch_size as u32, vocab_size as u32, encoder);
             },
             ArgmaxImplementation::TwoPass {
                 main_kernel,
@@ -235,20 +235,8 @@ impl<B: Backend> SamplingKernel<B> {
                 let mut partial_results = encoder
                     .allocate_scratch(partial_results_count * size_of::<ArgmaxPair>())
                     .map_err(SamplingError::BackendError)?;
-                main_kernel.encode(
-                    &*logits_buffer,
-                    &mut partial_results,
-                    batch_size as u32,
-                    vocab_size as u32,
-                    encoder,
-                );
-                final_kernel.encode(
-                    &partial_results,
-                    sampled_tokens_buffer,
-                    batch_size as u32,
-                    vocab_size as u32,
-                    encoder,
-                );
+                main_kernel.encode(&*logits, &mut partial_results, batch_size as u32, vocab_size as u32, encoder);
+                final_kernel.encode(&partial_results, sampled_tokens, batch_size as u32, vocab_size as u32, encoder);
             },
         }
 

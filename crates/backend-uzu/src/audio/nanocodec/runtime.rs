@@ -754,11 +754,6 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             codebooks,
             window_frames,
         )?;
-        // The scratch buffers inside the workspace were encoded into the
-        // submitted command buffer. Reset the workspace so the next decode
-        // pass allocates fresh buffers instead of reusing ones the in-flight
-        // command buffer may still be reading.
-        resources.reset_for_pending();
         let audio_offset_frames = window_start
             .checked_mul(fishaudio.upsample_factor)
             .ok_or(AudioError::Runtime("stream audio offset overflow".to_string()))?;

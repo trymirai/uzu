@@ -329,12 +329,12 @@ fn run_gemm_attention(
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
 
     let args = AttentionGemmArguments {
-        queries_buffer: &query_allocation,
-        keys_buffer: &key_allocation,
-        values_buffer: &value_allocation,
-        output_buffer: &mut output_allocation,
-        trie_buffer: None,
-        sinks_buffer: sinks_allocation.as_ref(),
+        queries: &query_allocation,
+        keys: &key_allocation,
+        values: &value_allocation,
+        output: &mut output_allocation,
+        trie: None,
+        sinks: sinks_allocation.as_ref(),
         num_heads,
         num_groups: num_kv_heads,
         suffix_length: seq_len,
@@ -700,7 +700,7 @@ fn perf_two_pass_attention() {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-    let sinks_buffer: Option<Allocation<Metal>> = None;
+    let sinks_allocation: Option<Allocation<Metal>> = None;
     kernel_pass1.encode(
         &queries_buffer,
         &keys_buffer,
@@ -720,7 +720,7 @@ fn perf_two_pass_attention() {
         suffix_length as u32,
         None::<&Allocation<Metal>>,
         None,
-        sinks_buffer.as_ref().map(|b| b),
+        sinks_allocation.as_ref().map(|b| b),
         &mut encoder,
     );
     kernel_pass2.encode(

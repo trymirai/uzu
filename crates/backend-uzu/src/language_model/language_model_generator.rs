@@ -480,8 +480,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             is_prefilling: false,
         };
 
-        let token_ids_allocation = if pass_idx > 0 {
-            Some(self.async_token_ids.take().expect("previous async pass must provide token_ids allocation"))
+        let token_ids_array = if pass_idx > 0 {
+            Some(self.async_token_ids.take().expect("previous async pass must provide token_ids array"))
         } else {
             None
         };
@@ -496,7 +496,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let batch_dim = task.active_row_count;
         let sampling_start = task.sampling_start;
         let sampling_length = task.sampling_length;
-        let token_inputs = self.build_token_inputs(task, token_ids_allocation, None);
+        let token_inputs = self.build_token_inputs(task, token_ids_array, None);
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
         if is_continuation {
@@ -827,8 +827,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
     fn build_token_inputs(
         &self,
         task: Task<'_>,
-        token_ids_allocation: Option<Array<B>>,
-        token_positions_allocation: Option<Array<B>>,
+        token_ids_array: Option<Array<B>>,
+        token_positions_array: Option<Array<B>>,
     ) -> TokenInputs<B> {
         TokenInputs::new_llm(
             self.context.context.as_ref(),
@@ -836,8 +836,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
             task.token_ids,
             task.token_subtrie_ranges,
             task.token_positions,
-            token_ids_allocation,
-            token_positions_allocation,
+            token_ids_array,
+            token_positions_array,
             task.sampling_start,
             task.sampling_length,
         )

@@ -348,12 +348,12 @@ impl<B: Backend> Attention<B> {
         match variant {
             KernelVariant::Gemm => {
                 let args = AttentionGemmArguments {
-                    queries_buffer: queries,
-                    keys_buffer: keys,
-                    values_buffer: values,
-                    output_buffer: attention_output,
-                    trie_buffer: trie_allocation,
-                    sinks_buffer: sinks_allocation,
+                    queries,
+                    keys,
+                    values,
+                    output: attention_output,
+                    trie: trie_allocation,
+                    sinks: sinks_allocation,
                     num_heads,
                     num_groups,
                     suffix_length,

@@ -18,6 +18,14 @@ impl<B: Backend> Allocation<B> {
     pub fn as_buffer_range<'a>(&'a self) -> (&'a B::Buffer, Range<usize>) {
         (unsafe { &*self.buffer }, self.range.clone())
     }
+
+    pub fn as_buffer_subrange<'a>(
+        &'a self,
+        range: &Range<usize>,
+    ) -> (&'a B::Buffer, Range<usize>) {
+        assert!(range.end <= self.range.len(), "allocation subrange exceeds allocation");
+        (unsafe { &*self.buffer }, self.range.start + range.start..self.range.start + range.end)
+    }
 }
 
 impl<B: Backend> Drop for Allocation<B> {

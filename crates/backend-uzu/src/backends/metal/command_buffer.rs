@@ -1,15 +1,15 @@
 use std::{cell::Cell, ops::Range, time::Duration};
 
 use metal::{
-    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
-    MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
+    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
+    MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
 use crate::backends::{
     common::{
-        AccessFlags, Allocation, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
         CommandBufferInitial, CommandBufferPending,
     },
     metal::error::MetalError,
@@ -120,31 +120,27 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &Allocation<Metal>,
+        src: &crate::backends::common::Allocation<Metal>,
         src_range: Range<usize>,
-        dst: &mut Allocation<Metal>,
+        dst: &mut crate::backends::common::Allocation<Metal>,
         dst_range: Range<usize>,
     ) {
-        let (src, src_allocation_range) = src.as_buffer_range();
-        let (dst, dst_allocation_range) = dst.as_buffer_range();
-        let src_range = src_allocation_range.start + src_range.start..src_allocation_range.start + src_range.end;
-        let dst_range = dst_allocation_range.start + dst_range.start..dst_allocation_range.start + dst_range.end;
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
-        assert!(src.length() >= src_range.end && dst.length() >= dst_range.end);
+        let (src, src_buffer_range) = src.as_buffer_subrange(&src_range);
+        let (dst, dst_buffer_range) = dst.as_buffer_subrange(&dst_range);
+        let size = src_buffer_range.end - src_buffer_range.start;
+        assert_eq!(size, dst_buffer_range.end - dst_buffer_range.start);
 
-        self.ensure_blit().copy_buffer_to_buffer(src, src_range.start, dst, dst_range.start, size);
+        self.ensure_blit().copy_buffer_to_buffer(src, src_buffer_range.start, dst, dst_buffer_range.start, size);
     }
 
     fn encode_fill(
         &mut self,
-        dst: &mut Allocation<Metal>,
+        dst: &mut crate::backends::common::Allocation<Metal>,
         range: Range<usize>,
         value: u8,
     ) {
-        let (dst, allocation_range) = dst.as_buffer_range();
-        let range = allocation_range.start + range.start..allocation_range.start + range.end;
-        assert!(range.end > range.start && range.end <= dst.length());
+        let (dst, range) = dst.as_buffer_subrange(&range);
+        assert!(range.end > range.start);
         assert!(range.start % 4 == 0 && range.end % 4 == 0);
 
         self.ensure_blit().fill_buffer_range_value(dst, range, value);

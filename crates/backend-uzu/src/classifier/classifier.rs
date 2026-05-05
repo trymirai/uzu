@@ -216,7 +216,6 @@ impl<B: Backend> Classifier<B> {
         &self,
         logits: &Allocation<B>,
     ) -> Result<Box<[f32]>, Error> {
-        let num_labels = self.context.model_config.model_config.num_labels;
         let logits_data_type: DataType =
             self.context.model_config.model_config.prediction_head_config.readout_config.activation_precision().into();
         let allocation_read_error = |err| {
@@ -224,21 +223,15 @@ impl<B: Backend> Classifier<B> {
         };
 
         match logits_data_type {
-            DataType::F32 => Ok(try_allocation_to_vec::<B, f32>(logits)
-                .map_err(allocation_read_error)?
-                .into_iter()
-                .take(num_labels)
-                .collect()),
+            DataType::F32 => Ok(try_allocation_to_vec::<B, f32>(logits).map_err(allocation_read_error)?.into()),
             DataType::F16 => Ok(try_allocation_to_vec::<B, half::f16>(logits)
                 .map_err(allocation_read_error)?
                 .into_iter()
-                .take(num_labels)
                 .map(|x| x.to_f32())
                 .collect::<Box<[_]>>()),
             DataType::BF16 => Ok(try_allocation_to_vec::<B, half::bf16>(logits)
                 .map_err(allocation_read_error)?
                 .into_iter()
-                .take(num_labels)
                 .map(|x| x.to_f32())
                 .collect::<Box<[_]>>()),
             _ => Err(Error::UnableToDecodeText),

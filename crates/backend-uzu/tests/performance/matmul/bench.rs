@@ -35,20 +35,20 @@ fn encode_and_run(
     context: &Ctx,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     shape: &TestShape,
-    a_buffer: &backend_uzu::backends::common::Allocation<Metal>,
-    b_buffer: &backend_uzu::backends::common::Allocation<Metal>,
-    d_buffer: &mut backend_uzu::backends::common::Allocation<Metal>,
+    a_allocation: &backend_uzu::backends::common::Allocation<Metal>,
+    b_allocation: &backend_uzu::backends::common::Allocation<Metal>,
+    d_allocation: &mut backend_uzu::backends::common::Allocation<Metal>,
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
     kernel.encode(
         MatmulArguments {
-            a: a_buffer,
+            a: a_allocation,
             a_offset: 0,
-            b: b_buffer,
+            b: b_allocation,
             ab_scale: 1.0,
             c: MatmulArgumentC::None,
-            d: d_buffer,
+            d: d_allocation,
             batch_dim: shape.batch as u32,
             input_dim: shape.input_dim as u32,
             output_dim: shape.output_dim as u32,
@@ -74,35 +74,33 @@ fn run_benchmark(
     let b_byte_count = shape.output_dim * shape.input_dim * elem_size;
     let d_byte_count = shape.batch * shape.output_dim * elem_size;
 
-    let a_buffer =
+    let a_allocation =
         context.create_allocation(a_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
-    let b_buffer =
+    let b_allocation =
         context.create_allocation(b_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
-    let mut d_buffer =
+    let mut d_allocation =
         context.create_allocation(d_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
 
-    let (a_raw, _) = a_buffer.as_buffer_range();
-    let (b_raw, _) = b_buffer.as_buffer_range();
+    let (a_raw, _) = a_allocation.as_buffer_range();
+    let (b_raw, _) = b_allocation.as_buffer_range();
     fill_buffer_random(a_raw, a_byte_count);
     fill_buffer_random(b_raw, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
-        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
-            BenchError::Warmup {
+        encode_and_run(context, &mut kernel, shape, &a_allocation, &b_allocation, &mut d_allocation).map_err(
+            |source| BenchError::Warmup {
                 iteration,
                 source: Box::new(source),
-            }
-        })?;
+            },
+        )?;
     }
 
     let mut gpu_time_total_ms = 0.0;
     for iteration in 0..BENCHMARK_ITERATIONS {
-        let gpu_ms =
-            encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
-                BenchError::Benchmark {
-                    iteration,
-                    source: Box::new(source),
-                }
+        let gpu_ms = encode_and_run(context, &mut kernel, shape, &a_allocation, &b_allocation, &mut d_allocation)
+            .map_err(|source| BenchError::Benchmark {
+                iteration,
+                source: Box::new(source),
             })?;
         gpu_time_total_ms += gpu_ms;
     }
