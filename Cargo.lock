@@ -1154,6 +1154,11 @@ name = "cli"
 version = "0.4.4"
 dependencies = [
  "anyhow",
+ "benchmarks",
+ "clap",
+ "comfy-table",
+ "indicatif",
+ "serde_json",
  "tokio",
  "uzu",
 ]

@@ -119,6 +119,16 @@ cargo run --release -p cli
 
 This launches an interactive app where you can browse, download, and interact with models.
 
+## Benchmarks
+
+To run benchmarks:
+
+```bash
+cargo run --release -p cli -- bench ./workspace/models/{{ version }}/{MODEL_NAME} ./workspace/models/{{ version }}/{MODEL_NAME}/benchmark_task.json ./workspace/models/{{ version }}/{MODEL_NAME}/benchmark_result.json
+```
+
+`benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.
+
 {% endif %}
 
 ## Troubleshooting

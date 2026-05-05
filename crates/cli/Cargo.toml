@@ -15,12 +15,17 @@ path = "src/main.rs"
 [features]
 default = ["backend-metal", "capability-grammar", "capability-cli"]
 backend-cpu = ["uzu/backend-cpu"]
-backend-metal = ["uzu/backend-metal"]
+backend-metal = ["uzu/backend-metal", "benchmarks/metal"]
 capability-grammar = ["uzu/capability-grammar"]
 capability-tracing = ["uzu/capability-tracing"]
 capability-cli = ["uzu/capability-cli"]
 
 [dependencies]
 uzu = { workspace = true, default-features = false }
+benchmarks = { workspace = true, default-features = false }
 tokio.workspace = true
 anyhow.workspace = true
+clap.workspace = true
+comfy-table.workspace = true
+indicatif.workspace = true
+serde_json.workspace = true
