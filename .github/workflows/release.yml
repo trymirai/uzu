@@ -89,10 +89,7 @@ jobs:
       - name: "Release: Build artifacts"
         run: cargo tools release "${VERSION}"
 
-      # ---------------------------------------------------------------
-      # Prepare Binary Artifacts
-      # ---------------------------------------------------------------
-      - name: "Prepare Binaries: Import Developer ID cert"
+      - name: "Binaries: Import developer identity certificate"
         run: |
           set -euo pipefail
           CERT_P12="$RUNNER_TEMP/dev_id_app.p12"
@@ -115,7 +112,7 @@ jobs:
 
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
-      - name: "Prepare Binaries: Codesign"
+      - name: "Binaries: Codesign"
         shell: bash
         env:
           TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
@@ -153,7 +150,7 @@ jobs:
             exit 1
           fi
 
-      - name: "Prepare Binaries: Package"
+      - name: "Binaries: Package"
         shell: bash
         run: |
           set -euo pipefail
@@ -184,7 +181,7 @@ jobs:
             exit 1
           fi
 
-      - name: "Prepare Binaries: Notarize zips"
+      - name: "Binaries: Notarize"
         shell: bash
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
