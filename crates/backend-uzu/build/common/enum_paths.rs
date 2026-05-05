@@ -32,6 +32,7 @@ impl EnumPaths {
         self.short_name_to_full_path.get(short_name).map(|path| path.as_ref())
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub fn contains(
         &self,
         short_name: &str,
