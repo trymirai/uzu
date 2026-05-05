@@ -150,6 +150,7 @@ fn test_decoder_config() {
             high_frequency_factor: 4.0,
         }),
         local_rope_config: None,
+        ple_model_config: None,
         layer_config: DecoderLayerConfig {
             pre_attention_norm_config: NormalizationConfig {
                 scale_precision: ConfigDataType::BFloat16,
@@ -199,6 +200,7 @@ fn test_decoder_config() {
                 scale: None,
                 sliding_window_size: None,
                 logit_soft_cap: None,
+                normalize_values: false,
                 has_sinks: false,
                 has_qkv_biases: false,
                 has_out_biases: false,
@@ -227,6 +229,10 @@ fn test_decoder_config() {
             }),
             post_attention_norm_config: None,
             post_mlp_norm_config: None,
+            hidden_dim: None,
+            ple_config: None,
+            has_post_layer_scalar: false,
+            kv_source_layer: None,
             rope_config: None,
         },
         output_norm_config: NormalizationConfig {
@@ -450,6 +456,164 @@ fn test_language_model_config_derives_global_and_local_rope_configs_from_layers(
     let global_rope = decoder_config.global_rope_config.as_ref().unwrap();
     assert_eq!(global_rope.common().base, 500000.0);
     assert_eq!(global_rope.common().partial_rotary_dim, Some(128));
+}
+
+#[test]
+fn test_decoder_config_surface_supports_per_layer_embedding_and_shared_kv() {
+    let config_str = r#"
+        {
+            "embedding_config": {
+                "type": "TiedEmbeddingConfig",
+                "input_scale": 48.0,
+                "logit_soft_cap": 30.0,
+                "precision": "bfloat16"
+            },
+            "ple_model_config": {
+                "ple_dim": 32,
+                "num_layers": 2,
+                "ple_vocab_size": 256,
+                "ple_embed_scale": 5.656854,
+                "model_projection_scale": 0.020833334,
+                "input_scale": 0.70710677,
+                "linear_config": {
+                    "type": "FullPrecisionLinearConfig",
+                    "precision": "bfloat16"
+                },
+                "norm_config": {
+                    "scale_precision": "bfloat16",
+                    "accumulation_precision": "float32",
+                    "epsilon": 1e-06,
+                    "scale_offset": null,
+                    "upcast_mode": "full_layer"
+                }
+            },
+            "global_rope_config": null,
+            "local_rope_config": null,
+            "layer_configs": [
+                {
+                    "pre_mixer_norm_config": {
+                        "scale_precision": "bfloat16",
+                        "accumulation_precision": "float32",
+                        "epsilon": 1e-06,
+                        "scale_offset": null,
+                        "upcast_mode": "full_layer"
+                    },
+                    "mixer_config": {
+                        "type": "AttentionConfig",
+                        "qkv_projection_config": {
+                            "type": "FullPrecisionLinearConfig",
+                            "precision": "bfloat16"
+                        },
+                        "out_projection_config": {
+                            "type": "FullPrecisionLinearConfig",
+                            "precision": "bfloat16"
+                        },
+                        "query_norm_config": {
+                            "scale_precision": "bfloat16",
+                            "accumulation_precision": "float32",
+                            "epsilon": 1e-06,
+                            "scale_offset": null,
+                            "upcast_mode": "full_layer"
+                        },
+                        "key_norm_config": {
+                            "scale_precision": "bfloat16",
+                            "accumulation_precision": "float32",
+                            "epsilon": 1e-06,
+                            "scale_offset": null,
+                            "upcast_mode": "full_layer"
+                        },
+                        "num_heads": 8,
+                        "num_groups": 2,
+                        "head_dim": 256,
+                        "is_causal": true,
+                        "scale": 1.0,
+                        "sliding_window_size": 512,
+                        "logit_soft_cap": null,
+                        "normalize_values": true,
+                        "has_sinks": false,
+                        "has_qkv_biases": false,
+                        "has_out_biases": false,
+                        "use_rope": true
+                    },
+                    "rope_config": {
+                        "type": "UnscaledRoPEConfig",
+                        "precision": "bfloat16",
+                        "base": 10000.0,
+                        "max_sequence_length": 8192,
+                        "head_dim": 256
+                    },
+                    "post_mixer_norm_config": {
+                        "scale_precision": "bfloat16",
+                        "accumulation_precision": "float32",
+                        "epsilon": 1e-06,
+                        "scale_offset": null,
+                        "upcast_mode": "full_layer"
+                    },
+                    "pre_mlp_norm_config": {
+                        "scale_precision": "bfloat16",
+                        "accumulation_precision": "float32",
+                        "epsilon": 1e-06,
+                        "scale_offset": null,
+                        "upcast_mode": "full_layer"
+                    },
+                    "mlp_config": {
+                        "type": "DenseMLPConfig",
+                        "linear_config": {
+                            "type": "FullPrecisionLinearConfig",
+                            "precision": "bfloat16"
+                        },
+                        "activation": {"type": "GELU"}
+                    },
+                    "post_mlp_norm_config": {
+                        "scale_precision": "bfloat16",
+                        "accumulation_precision": "float32",
+                        "epsilon": 1e-06,
+                        "scale_offset": null,
+                        "upcast_mode": "full_layer"
+                    },
+                    "hidden_dim": 6144,
+                    "ple_config": {
+                        "linear_config": {
+                            "type": "FullPrecisionLinearConfig",
+                            "precision": "bfloat16"
+                        },
+                        "norm_config": {
+                            "scale_precision": "bfloat16",
+                            "accumulation_precision": "float32",
+                            "epsilon": 1e-06,
+                            "scale_offset": null,
+                            "upcast_mode": "full_layer"
+                        },
+                        "ple_dim": 32,
+                        "activation": {"type": "GELU"}
+                    },
+                    "has_post_layer_scalar": true,
+                    "kv_source_layer": 0
+                }
+            ],
+            "output_norm_config": {
+                "scale_precision": "bfloat16",
+                "accumulation_precision": "float32",
+                "epsilon": 1e-06,
+                "scale_offset": null,
+                "upcast_mode": "full_layer"
+            },
+            "vocab_size": 262144,
+            "model_dim": 2304,
+            "hidden_dim": 6144,
+            "context_length": 8192
+        }
+    "#;
+
+    let config: DecoderConfig = from_str(config_str).unwrap();
+    assert!(config.ple_model_config.is_some());
+    assert_eq!(config.layer_configs.as_ref().unwrap()[0].hidden_dim, Some(6144));
+    assert_eq!(config.layer_configs.as_ref().unwrap()[0].kv_source_layer, Some(0));
+    let attention = config.layer_configs.as_ref().unwrap()[0].attention_config().unwrap();
+    assert!(attention.normalize_values);
+    assert_eq!(attention.scale, Some(1.0));
+
+    assert_eq!(config.unsupported_runtime_features(), Vec::<&'static str>::new());
 }
 
 fn language_model_config_with_layer_rope_configs(

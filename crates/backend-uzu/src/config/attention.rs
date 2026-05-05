@@ -19,6 +19,8 @@ pub struct AttentionConfig {
 
     pub logit_soft_cap: Option<f32>,
     #[serde(default)]
+    pub normalize_values: bool,
+    #[serde(default)]
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,

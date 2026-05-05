@@ -20,6 +20,10 @@ pub struct ClassifierLayer<B: Backend> {
     qk_norm: Option<QKNorm<B>>,
     rope: Rc<Rope<B>>,
     use_rope: bool,
+    rope_dim: usize,
+    num_heads: usize,
+    num_groups: usize,
+    head_dim: usize,
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
@@ -48,6 +52,12 @@ impl<B: Backend> ClassifierLayer<B> {
         let ctx = context.as_ref(); // Reference for functions expecting &B::Context
         let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
         let use_rope = attention_config.use_rope;
+        let rope_dim = layer_config
+            .rope_config
+            .as_ref()
+            .and_then(|rope| rope.common().head_dim)
+            .or(attention_config.partial_rope_dim)
+            .unwrap_or(head_dim);
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
 
         let copy_main_to_shortcut_mixer =
@@ -183,7 +193,11 @@ impl<B: Backend> ClassifierLayer<B> {
             attention_config.has_sinks,
             false,
             attention_config.sliding_window_size,
+            None,
             false,
+            num_heads,
+            num_groups,
+            head_dim,
         )
         .expect("Failed to create attention kernel");
 
@@ -198,6 +212,10 @@ impl<B: Backend> ClassifierLayer<B> {
             qk_norm,
             rope,
             use_rope,
+            rope_dim,
+            num_heads,
+            num_groups,
+            head_dim,
             attention,
             out_projection,
             post_attention_norm,
@@ -243,7 +261,15 @@ impl<B: Backend> ClassifierLayer<B> {
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(state, encoder)?;
         }
-        self.rope.encode(state, self.use_rope, encoder)?;
+        self.rope.encode(
+            state,
+            self.use_rope,
+            self.num_heads,
+            self.num_groups,
+            self.head_dim,
+            self.rope_dim,
+            encoder,
+        )?;
         self.attention.encode(state, parameters, encoder)?;
         self.out_projection.encode(state, encoder)?;
         #[cfg(feature = "tracing")]

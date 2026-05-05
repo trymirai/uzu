@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{env, path::Path};
 
 use crate::utils::memory::{get_free_ram, get_free_swap};
 
@@ -17,6 +17,10 @@ fn get_directory_size(path: &Path) -> std::io::Result<u64> {
 }
 
 pub fn is_directory_fits_ram(path: &Path) -> bool {
+    if env::var_os("UZU_SKIP_MODEL_MEMORY_CHECK").is_some() {
+        return true;
+    }
+
     let model_size_bytes = get_directory_size(path).unwrap_or(0);
     let available_total = get_free_ram() + get_free_swap();
     model_size_bytes <= available_total

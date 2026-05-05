@@ -49,6 +49,10 @@ impl ClassifierConfig {
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
+            hidden_dim: first_layer.hidden_dim,
+            ple_config: first_layer.ple_config.clone(),
+            has_post_layer_scalar: first_layer.has_post_layer_scalar,
+            kv_source_layer: first_layer.kv_source_layer,
             rope_config: first_layer.rope_config.clone(),
         };
 
@@ -76,6 +80,7 @@ impl ClassifierConfig {
             embedding_config: self.embedding_config.clone(),
             global_rope_config,
             local_rope_config,
+            ple_model_config: None,
             layer_config,
             output_norm_config: self.transformer_config.output_norm_config.clone(),
             vocab_size: self.vocab_size,

@@ -21,6 +21,12 @@ enum Commands {
         // Speculator
         #[arg(long)]
         speculator: Option<String>,
+        /// Maximum number of generated tokens
+        #[arg(long, default_value_t = 2048)]
+        tokens_limit: usize,
+        /// Use greedy sampling instead of model default sampling config
+        #[arg(long)]
+        greedy: bool,
         /// Non-interactive mode: run a single message and exit
         #[arg(long, short)]
         message: Option<String>,
@@ -54,10 +60,12 @@ fn main() {
             prefill_step_size,
             seed,
             speculator,
+            tokens_limit,
+            greedy,
             message,
             no_thinking,
         }) => {
-            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking);
+            handle_run(model_path, tokens_limit, prefill_step_size, seed, speculator, message, no_thinking, greedy);
         },
         Some(Commands::Serve {
             model_path,

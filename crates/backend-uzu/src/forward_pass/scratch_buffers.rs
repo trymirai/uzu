@@ -25,6 +25,10 @@ pub struct ScratchBuffers<B: Backend> {
     pub attention_output: Array<B>,
     pub mlp_fused_up: Array<B>,
     pub mlp_hidden: Array<B>,
+    pub ple_token: Option<Array<B>>,
+    pub ple_model: Option<Array<B>>,
+    pub ple_combined: Option<Array<B>>,
+    pub ple_gate: Option<Array<B>>,
     pub lora_intermediate: Option<Array<B>>,
     pub ssm_inproj: Option<Array<B>>,
     pub ssm_packed: Option<Array<B>>,
@@ -119,6 +123,12 @@ impl<B: Backend> ScratchBuffers<B> {
             attention_output: alloc(&model_shape.attention_output_shape(max_suffix_len), act_ty, "attention_output"),
             mlp_fused_up: alloc(&model_shape.mlp_fused_up_shape(max_suffix_len), act_ty, "mlp_fused_up"),
             mlp_hidden: alloc(&model_shape.mlp_hidden_shape(max_suffix_len), act_ty, "mlp_hidden"),
+            ple_token: model_shape.ple_token_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ple_token")),
+            ple_model: model_shape.ple_model_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ple_model")),
+            ple_combined: model_shape
+                .ple_combined_shape(max_suffix_len)
+                .map(|shape| alloc(&shape, act_ty, "ple_combined")),
+            ple_gate: model_shape.ple_gate_shape(max_suffix_len).map(|shape| alloc(&shape, act_ty, "ple_gate")),
             lora_intermediate: model_shape
                 .lora_intermediate(max_suffix_len)
                 .map(|shape| alloc(&shape, act_ty, "lora_intermediate")),

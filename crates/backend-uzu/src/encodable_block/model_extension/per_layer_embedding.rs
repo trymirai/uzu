@@ -9,7 +9,7 @@ use crate::{
     backends::common::{
         Backend, Encoder, Kernels,
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, ManualKernels, PLECombineKernel,
+            FullPrecisionEmbeddingLookupKernel, ManualKernels, PerLayerEmbeddingCombineKernel,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
         },
     },
@@ -25,7 +25,7 @@ pub struct PerLayerEmbedding<B: Backend> {
     model_projection_weights: Rc<RefCell<B::Buffer>>,
     projection_norm_scales: Rc<RefCell<B::Buffer>>,
     lookup_kernel: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-    combine_kernel: <B::Kernels as Kernels>::PLECombineKernel,
+    combine_kernel: <B::Kernels as Kernels>::PerLayerEmbeddingCombineKernel,
     config: PLEModelConfig,
     model_dim: usize,
 }
@@ -69,7 +69,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let lookup_kernel = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, activation_type)
             .map_err(ModelExtensionError::BackendError)?;
         let model_projection = <B::Kernels as ManualKernels>::MatmulKernel::new(context, activation_type)?;
-        let combine_kernel = <B::Kernels as Kernels>::PLECombineKernel::new(
+        let combine_kernel = <B::Kernels as Kernels>::PerLayerEmbeddingCombineKernel::new(
             context,
             activation_type,
             projection_norm_scales.data_type(),

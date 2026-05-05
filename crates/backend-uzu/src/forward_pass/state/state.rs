@@ -443,6 +443,20 @@ impl<B: Backend> ForwardPassState<B> {
                     .clone()
             },
 
+            // PLE for LLM
+            ArrayId::PleToken => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_token.clone()).expect("PLE token not initialized")
+            },
+            ArrayId::PleModel => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_model.clone()).expect("PLE model not initialized")
+            },
+            ArrayId::PleCombined => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_combined.clone()).expect("PLE combined not initialized")
+            },
+            ArrayId::PleGate => {
+                self.llm_aux.as_ref().and_then(|aux| aux.ple_gate.clone()).expect("PLE gate not initialized")
+            },
+
             // SSM arrays (LLM only)
             ArrayId::SsmInProj => {
                 self.llm_aux.as_ref().and_then(|aux| aux.ssm_inproj.clone()).expect("SSM inproj not initialized")

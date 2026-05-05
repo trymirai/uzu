@@ -7,6 +7,7 @@ mod embedding;
 mod hadamard_transform;
 mod kv_cache_update;
 mod layer_norm;
+mod model_extension;
 
 mod matmul;
 mod mlp;

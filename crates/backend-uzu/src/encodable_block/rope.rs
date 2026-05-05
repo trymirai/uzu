@@ -32,6 +32,10 @@ impl<B: Backend> Rope<B> {
         &self,
         state: &mut ForwardPassState<B>,
         use_rope: bool,
+        num_heads: usize,
+        num_groups: usize,
+        head_dim: usize,
+        rope_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
         let token_positions = state.array(ArrayId::TokenPositions);
@@ -45,15 +49,10 @@ impl<B: Backend> Rope<B> {
 
         let rope_max_seq_len = cosines.shape()[0];
         let rope_dim = if use_rope {
-            cosines.shape()[1]
+            rope_dim.min(cosines.shape()[1])
         } else {
             0
         };
-
-        let num_heads = rotated_queries.shape()[0];
-        let head_dim = rotated_queries.shape()[2];
-
-        let num_groups = rotated_keys.shape()[0];
 
         self.kernel.encode(
             qkv.buffer().borrow().deref(),

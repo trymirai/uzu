@@ -638,6 +638,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         &self,
         model_path: &Path,
     ) -> usize {
+        if self.requires_ordered_forward_passes() {
+            return 1;
+        }
+
         self.decoding_config.async_batch_size.resolve::<B>(model_path, self.context.context.as_ref())
     }
 
@@ -864,7 +868,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let pending = encoder.end_encoding().submit();
 
-        if wait_until_completed {
+        if wait_until_completed || self.requires_ordered_forward_passes() {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
         }
         Ok(())
@@ -873,9 +877,14 @@ impl<B: Backend> LanguageModelGenerator<B> {
     fn allow_pre_encode(&self) -> bool {
         let debug_active = self.context.context.debug_active();
 
-        let result = self.decoding_config.allow_pre_encode && !debug_active;
+        let result = self.decoding_config.allow_pre_encode && !debug_active && !self.requires_ordered_forward_passes();
 
         result
+    }
+
+    fn requires_ordered_forward_passes(&self) -> bool {
+        self.context.decoder_config.ple_model_config.is_some()
+            || self.context.model_shape.kv_source_layers.iter().any(Option::is_some)
     }
 
     fn sync_prefix(&mut self) {
