@@ -14,9 +14,8 @@ impl EnumPaths {
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 if let GpuType::Enum(enum_type) = ty {
-                    let full_path =
-                        format!("crate::backends::common::gpu_types::{}::{}", file.name, enum_type.name)
-                            .into_boxed_str();
+                    let full_path = format!("crate::backends::common::gpu_types::{}::{}", file.name, enum_type.name)
+                        .into_boxed_str();
                     short_name_to_full_path.insert(enum_type.name.clone(), full_path);
                 }
             }

@@ -3,11 +3,7 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{BinOp, Expr, ExprBinary, ExprLit, ExprParen, ExprPath, ExprUnary, Lit, Path, UnOp, parse_quote};
 
-use crate::common::{
-    enum_paths::EnumPaths,
-    expr_rewrite::rewrite_paths_with,
-    gpu_types::GpuTypes,
-};
+use crate::common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with, gpu_types::GpuTypes};
 
 pub struct EnumPathRewriter {
     enum_paths: EnumPaths,
@@ -111,11 +107,8 @@ fn emit_metal_path(
     rewriter: &EnumPathRewriter,
 ) -> String {
     let path_text = path_to_metal_string(&expr_path.path);
-    let head_is_enum = expr_path
-        .path
-        .segments
-        .first()
-        .is_some_and(|segment| rewriter.enum_paths.contains(&segment.ident.to_string()));
+    let head_is_enum =
+        expr_path.path.segments.first().is_some_and(|segment| rewriter.enum_paths.contains(&segment.ident.to_string()));
     if head_is_enum && expr_path.path.segments.len() >= 2 {
         format!("static_cast<uint>({path_text})")
     } else {

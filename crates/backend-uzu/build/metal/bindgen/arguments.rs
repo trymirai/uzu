@@ -62,8 +62,13 @@ pub fn parse(
                 next_buffer_index += 1;
             },
             MetalArgumentType::Constant((rust_type_text, constant_type)) => {
-                let constant =
-                    parse_constant_argument(argument, &rust_type_text, &constant_type, next_buffer_index, enum_path_rewriter)?;
+                let constant = parse_constant_argument(
+                    argument,
+                    &rust_type_text,
+                    &constant_type,
+                    next_buffer_index,
+                    enum_path_rewriter,
+                )?;
                 emissions.push(ArgumentEmission::Constant(constant));
                 next_buffer_index += 1;
             },
@@ -240,8 +245,7 @@ fn emit_buffer_argument_definition(buffer: &BufferArgument) -> TokenStream {
         MetalBufferAccess::Read => quote! { crate::backends::common::kernel::BufferArg },
         MetalBufferAccess::ReadWrite => quote! { crate::backends::common::kernel::BufferArgMut },
     };
-    let buffer_argument_type =
-        quote! { impl #trait_path<#lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> };
+    let buffer_argument_type = quote! { impl #trait_path<#lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> };
     if buffer.condition.is_some() {
         quote! { #name: Option<#buffer_argument_type> }
     } else {
@@ -312,7 +316,10 @@ fn emit_constant_set(constant: &ConstantArgument) -> TokenStream {
     let buffer_index = constant.buffer_index;
     let unconditional_set = match &constant.shape {
         ConstantShape::Scalar(_) => quote! { compute_encoder.set_value(&#name, #buffer_index); },
-        ConstantShape::UnsizedSlice(_) | ConstantShape::SizedArray { .. } => {
+        ConstantShape::UnsizedSlice(_)
+        | ConstantShape::SizedArray {
+            ..
+        } => {
             quote! { compute_encoder.set_slice(#name, #buffer_index); }
         },
     };
@@ -331,7 +338,8 @@ fn emit_constant_set(constant: &ConstantArgument) -> TokenStream {
 }
 
 pub fn encode_accesses_call(arguments: &[ArgumentEmission]) -> TokenStream {
-    let access_expressions: Vec<TokenStream> = arguments.iter().filter_map(|argument| argument.encode_access()).collect();
+    let access_expressions: Vec<TokenStream> =
+        arguments.iter().filter_map(|argument| argument.encode_access()).collect();
     if access_expressions.is_empty() {
         quote! {}
     } else {

@@ -44,16 +44,12 @@ impl FunctionArgument {
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
                 FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
-                FunctionArgumentType::Constant(ty, None) => {
-                    KernelArgumentType::Constant(format!("&[{}]", canonicalize_type_text(ty, enum_paths)).into_boxed_str())
-                },
+                FunctionArgumentType::Constant(ty, None) => KernelArgumentType::Constant(
+                    format!("&[{}]", canonicalize_type_text(ty, enum_paths)).into_boxed_str(),
+                ),
                 FunctionArgumentType::Constant(ty, Some(size)) => KernelArgumentType::Constant(
-                    format!(
-                        "&[{}; {}]",
-                        canonicalize_type_text(ty, enum_paths),
-                        size.to_token_stream().to_string(),
-                    )
-                    .into_boxed_str(),
+                    format!("&[{}; {}]", canonicalize_type_text(ty, enum_paths), size.to_token_stream().to_string(),)
+                        .into_boxed_str(),
                 ),
                 FunctionArgumentType::Scalar(ty) => {
                     KernelArgumentType::Constant(canonicalize_type_text(ty, enum_paths).into_boxed_str())
@@ -662,7 +658,9 @@ impl Compiler for CpuCompiler {
         let objects = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs"))
+            .filter(|entry| {
+                entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs")
+            })
             .map(|entry| self.compile(entry.into_path(), &enum_paths))
             .collect::<anyhow::Result<Vec<(Box<[Box<str>]>, Box<[Kernel]>)>>>()
             .context("cannot compile cpu sources")?;
