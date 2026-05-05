@@ -177,6 +177,11 @@ pub fn SelectedModel(
                 download_state.name()
             };
             let progress_value = download_state.progress();
+            let progress_size = format!(
+                "{:.2}/{:.2} GB",
+                download_state.downloaded_bytes.max(0) as f64 / 1_000_000_000.0,
+                download_state.total_bytes.max(0) as f64 / 1_000_000_000.0,
+            );
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();
 
@@ -195,7 +200,11 @@ pub fn SelectedModel(
                     }))
                     View(width: padding_wide as u32)
                     #(is_downloading.then(|| element! {
-                        ProgressBar(progress: progress_value)
+                        Fragment {
+                            ProgressBar(progress: progress_value)
+                            View(width: padding as u32)
+                            Text(content: progress_size, color: theme.subtitle_color)
+                        }
                     }))
                     #((!is_downloading).then(|| element! {
                         View(flex_grow: 1.0f32)
