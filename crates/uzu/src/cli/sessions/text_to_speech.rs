@@ -77,11 +77,11 @@ impl SessionState for TextToSpeechSessionState {
 
     fn status_text(&self) -> Option<String> {
         let status = match self.status {
-            TextToSpeechSessionStatus::Idle => "loaded",
-            TextToSpeechSessionStatus::Loading => "loading",
-            TextToSpeechSessionStatus::Synthesizing => &format!("synthesizing ({})", HINT_SESSION_INTERRUPT),
+            TextToSpeechSessionStatus::Idle => "loaded".to_string(),
+            TextToSpeechSessionStatus::Loading => "loading".to_string(),
+            TextToSpeechSessionStatus::Synthesizing => format!("synthesizing ({})", HINT_SESSION_INTERRUPT),
         };
-        Some(status.to_string())
+        Some(status)
     }
 
     fn pending_history_cell(&self) -> Option<HistoryCellType> {

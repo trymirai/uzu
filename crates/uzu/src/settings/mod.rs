@@ -154,7 +154,7 @@ fn create_keyring_store() -> Result<Arc<CredentialStore>, SettingsError> {
     #[cfg(target_os = "macos")]
     {
         use objc2_foundation::NSBundle;
-        if let Some(_) = NSBundle::mainBundle().bundleIdentifier().map(|identifier| identifier.to_string()) {
+        if NSBundle::mainBundle().bundleIdentifier().is_some() {
             use apple_native_keyring_store::protected::Store;
             return Ok(Store::new().map_err(|error| SettingsError::BackendError {
                 message: error.to_string(),

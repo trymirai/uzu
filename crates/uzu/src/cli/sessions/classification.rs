@@ -57,11 +57,11 @@ impl SessionState for ClassificationSessionState {
 
     fn status_text(&self) -> Option<String> {
         let status = match self.status {
-            ClassificationSessionStatus::Idle => "loaded",
-            ClassificationSessionStatus::Loading => "loading",
-            ClassificationSessionStatus::Classifying => "classifying",
+            ClassificationSessionStatus::Idle => "loaded".to_string(),
+            ClassificationSessionStatus::Loading => "loading".to_string(),
+            ClassificationSessionStatus::Classifying => "classifying".to_string(),
         };
-        Some(status.to_string())
+        Some(status)
     }
 
     fn pending_history_cell(&self) -> Option<HistoryCellType> {

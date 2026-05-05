@@ -72,11 +72,11 @@ impl SessionState for ChatSessionState {
 
     fn status_text(&self) -> Option<String> {
         let status = match self.status {
-            ChatSessionStatus::Idle => "loaded",
-            ChatSessionStatus::Loading => "loading",
-            ChatSessionStatus::Generating => &format!("generating ({})", HINT_SESSION_INTERRUPT),
+            ChatSessionStatus::Idle => "loaded".to_string(),
+            ChatSessionStatus::Loading => "loading".to_string(),
+            ChatSessionStatus::Generating => format!("generating ({})", HINT_SESSION_INTERRUPT),
         };
-        Some(status.to_string())
+        Some(status)
     }
 
     fn pending_history_cell(&self) -> Option<HistoryCellType> {
