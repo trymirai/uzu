@@ -90,6 +90,125 @@ jobs:
         run: cargo tools release "${VERSION}"
 
       # ---------------------------------------------------------------
+      # Prepare Binary Artifacts
+      # ---------------------------------------------------------------
+      - name: "Prepare Binaries: Import Developer ID cert"
+        run: |
+          set -euo pipefail
+          CERT_P12="$RUNNER_TEMP/dev_id_app.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          KEYCHAIN_PASSWORD=""
+
+          echo "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" | base64 -D > "$CERT_P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_P12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: "Prepare Binaries: Codesign"
+        shell: bash
+        env:
+          TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          IDENTITY=$(security find-identity -v -p codesigning "$SIGNING_KEYCHAIN_PATH" \
+            | grep 'Developer ID Application:' \
+            | grep "(${TEAM_ID})" \
+            | sed -nE 's/.*"(.*)".*/\1/p' \
+            | head -n1 || true)
+          if [ -z "$IDENTITY" ]; then
+            echo "Developer ID Application identity not found for team $TEAM_ID" >&2
+            security find-identity -v -p codesigning "$SIGNING_KEYCHAIN_PATH" || true
+            exit 1
+          fi
+
+          signed=0
+          while IFS= read -r -d '' binary_path; do
+            chmod +x "$binary_path"
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" \
+              "$binary_path"
+            codesign --verify --strict --verbose=2 "$binary_path"
+            signed=$((signed + 1))
+          done < <(find workspace/release/binaries \
+            -type f \
+            ! -name '.DS_Store' \
+            ! -name '*.zip' \
+            ! -name '*.tar.gz' \
+            -print0)
+
+          if [ "$signed" -eq 0 ]; then
+            echo "No binaries found under workspace/release/binaries" >&2
+            exit 1
+          fi
+
+      - name: "Prepare Binaries: Package"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          zip_root="workspace/release/notarization"
+          mkdir -p "$zip_root"
+
+          packaged=0
+          while IFS= read -r -d '' binary_path; do
+            binary_dir=$(dirname "$binary_path")
+            artifact_name=$(basename "$binary_path")
+            zip_path="$zip_root/${artifact_name}.zip"
+            tarball_path="$binary_dir/${artifact_name}.tar.gz"
+
+            rm -f "$zip_path" "$tarball_path"
+            ditto -c -k --sequesterRsrc --keepParent "$binary_path" "$zip_path"
+            tar -czf "$tarball_path" -C "$binary_dir" "$artifact_name"
+            packaged=$((packaged + 1))
+          done < <(find workspace/release/binaries \
+            -type f \
+            ! -name '.DS_Store' \
+            ! -name '*.zip' \
+            ! -name '*.tar.gz' \
+            -print0)
+
+          if [ "$packaged" -eq 0 ]; then
+            echo "No binaries found under workspace/release/binaries" >&2
+            exit 1
+          fi
+
+      - name: "Prepare Binaries: Notarize zips"
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          notarized=0
+          while IFS= read -r -d '' zip_path; do
+            xcrun notarytool submit "$zip_path" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait
+            notarized=$((notarized + 1))
+          done < <(find workspace/release/notarization -type f -name '*.zip' -print0)
+
+          if [ "$notarized" -eq 0 ]; then
+            echo "No notarization zips found under workspace/release/notarization" >&2
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------
       # Commit + tag locally now, while the workspace only contains
       # sync/build output. Publishes below write credential files and
       # clone other repos into the workspace, which would otherwise be
@@ -234,3 +353,12 @@ jobs:
         run: |
           git push origin HEAD:main
           git push origin "${VERSION}"
+
+      - name: "Release: Attach binaries"
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ steps.release-token.outputs.token }}
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
+          files: workspace/release/binaries/**/*.tar.gz
+          fail_on_unmatched_files: true
