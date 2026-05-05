@@ -19,6 +19,8 @@ pub struct AttentionConfig {
 
     pub logit_soft_cap: Option<f32>,
     #[serde(default)]
+    pub normalize_values: bool,
+    #[serde(default)]
     pub has_sinks: bool,
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
@@ -26,9 +28,14 @@ pub struct AttentionConfig {
     pub has_gate: bool,
     #[serde(default)]
     pub gate_projection_config: Option<LinearConfig>,
+    #[serde(default = "default_use_rope")]
     pub use_rope: bool,
     #[serde(default)]
     pub partial_rope_dim: Option<usize>,
+}
+
+fn default_use_rope() -> bool {
+    true
 }
 
 #[cfg(test)]

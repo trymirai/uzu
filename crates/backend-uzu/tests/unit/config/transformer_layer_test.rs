@@ -140,6 +140,7 @@ fn test_transformer_layer_config() {
             scale: None,
             sliding_window_size: None,
             logit_soft_cap: None,
+            normalize_values: false,
             has_sinks: false,
             has_qkv_biases: false,
             has_out_biases: false,
@@ -168,6 +169,11 @@ fn test_transformer_layer_config() {
         }),
         post_attention_norm_config: None,
         post_mlp_norm_config: None,
+        hidden_dim: None,
+        ple_config: None,
+        has_post_layer_scalar: false,
+        kv_source_layer: None,
+        rope_config: None,
     };
 
     let deserialized_config: TransformerLayerConfig = from_str(config_str).unwrap();

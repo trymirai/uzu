@@ -5,7 +5,7 @@ use std::sync::{
 
 use backend_uzu::session::{
     config::RunConfig,
-    parameter::SamplingPolicy,
+    parameter::{SamplingMethod, SamplingPolicy},
     types::{Input, Output},
 };
 use console::Style;
@@ -52,6 +52,7 @@ pub fn handle_run(
     speculator: Option<String>,
     mut message: Option<String>,
     no_thinking: bool,
+    greedy: bool,
 ) {
     let mut session = load_session(model_path, prefill_step_size, seed, speculator);
 
@@ -110,9 +111,17 @@ pub fn handle_run(
             return true;
         };
 
+        let sampling_policy = if greedy {
+            SamplingPolicy::Custom {
+                value: SamplingMethod::Greedy,
+            }
+        } else {
+            SamplingPolicy::Default
+        };
+
         let session_output = match session.run(
             Input::Text(input.to_string()),
-            RunConfig::new(tokens_limit as u64, !no_thinking, SamplingPolicy::Default, None),
+            RunConfig::new(tokens_limit as u64, !no_thinking, sampling_policy, None),
             Some(session_progress),
         ) {
             Ok(output) => output,

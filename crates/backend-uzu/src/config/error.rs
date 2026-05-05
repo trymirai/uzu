@@ -6,4 +6,6 @@ pub enum ConfigError {
     MissingField(String),
     #[error("No layers in transformer config")]
     NoLayers,
+    #[error("Invalid config: {0}")]
+    Invalid(String),
 }

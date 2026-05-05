@@ -22,6 +22,8 @@ fn test_rope_config() {
             precision: ConfigDataType::BFloat16,
             base: 500000.0,
             max_sequence_length: 131072,
+            head_dim: None,
+            partial_rotary_dim: None,
         },
         scaling_factor: 32.0,
         original_context_length: 8192,

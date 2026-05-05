@@ -18,6 +18,10 @@ pub enum ArrayId {
     AttentionOutput,
     MlpFusedUp,
     MlpHidden,
+    PleToken,
+    PleModel,
+    PleCombined,
+    PleGate,
     SsmInProj,
 
     Keys(usize),

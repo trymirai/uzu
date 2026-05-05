@@ -18,6 +18,7 @@ struct Scenario {
     accepted_suffix_indices: Vec<usize>,
     number_of_accepted_tokens: usize,
     suffix_start: Option<usize>,
+    generated_suffix_length: Option<usize>,
     expected_ring_offset: Option<usize>,
     expected_ring_length: Option<usize>,
     expected_prefix_len: Option<usize>,
@@ -73,6 +74,7 @@ fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
 fn expected_after_update(
     state: &KVCacheLayerState,
     accepted_indices: &[usize],
+    generated_suffix_length: Option<usize>,
     initial: &[f32],
 ) -> Vec<f32> {
     let mut expected = initial.to_vec();
@@ -100,8 +102,17 @@ fn expected_after_update(
             ring_length,
             window_length,
         } => {
+            let source_start = generated_suffix_length
+                .map(|suffix_length| {
+                    if *ring_offset == 0 && *ring_length > 0 && *ring_length + suffix_length <= *window_length {
+                        *ring_length
+                    } else {
+                        *window_length
+                    }
+                })
+                .unwrap_or(*window_length);
             for (offset, suffix_idx) in effective_indices.iter().enumerate() {
-                let src = window_length + *suffix_idx;
+                let src = source_start + *suffix_idx;
                 let dst = (ring_length + ring_offset + offset) % *window_length;
                 expected.swap(dst, src);
             }
@@ -121,9 +132,18 @@ fn run_scenario(
 
     let (initial_keys, initial_values) = fill_arrays(&mut layer);
 
-    let expected_keys = expected_after_update(&state_before_update, &scenario.accepted_suffix_indices, &initial_keys);
-    let expected_values =
-        expected_after_update(&state_before_update, &scenario.accepted_suffix_indices, &initial_values);
+    let expected_keys = expected_after_update(
+        &state_before_update,
+        &scenario.accepted_suffix_indices,
+        scenario.generated_suffix_length,
+        &initial_keys,
+    );
+    let expected_values = expected_after_update(
+        &state_before_update,
+        &scenario.accepted_suffix_indices,
+        scenario.generated_suffix_length,
+        &initial_values,
+    );
 
     let total_sequence_length = match &layer.state {
         KVCacheLayerState::Full {
@@ -146,6 +166,7 @@ fn run_scenario(
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
+        scenario.generated_suffix_length,
         &mut encoder,
         &kv_cache_update,
     );
@@ -209,6 +230,7 @@ fn kv_cache_state_scenarios() {
             accepted_suffix_indices: vec![0, 1, 2],
             number_of_accepted_tokens: 3,
             suffix_start: None,
+            generated_suffix_length: None,
             expected_ring_offset: Some(4),
             expected_ring_length: Some(6),
             expected_prefix_len: None,
@@ -226,6 +248,7 @@ fn kv_cache_state_scenarios() {
             accepted_suffix_indices: vec![0, 1, 2],
             number_of_accepted_tokens: 3,
             suffix_start: None,
+            generated_suffix_length: None,
             expected_ring_offset: Some(1),
             expected_ring_length: Some(6),
             expected_prefix_len: None,
@@ -243,6 +266,7 @@ fn kv_cache_state_scenarios() {
             accepted_suffix_indices: vec![0],
             number_of_accepted_tokens: 1,
             suffix_start: None,
+            generated_suffix_length: None,
             expected_ring_offset: Some(0),
             expected_ring_length: Some(6),
             expected_prefix_len: None,
@@ -258,16 +282,109 @@ fn kv_cache_state_scenarios() {
             accepted_suffix_indices: vec![0, 1, 2],
             number_of_accepted_tokens: 3,
             suffix_start: None,
+            generated_suffix_length: None,
             expected_ring_offset: None,
             expected_ring_length: None,
             expected_prefix_len: Some(7),
             expected_prefix_segment_length: 7,
+        },
+        Scenario {
+            name: "windowed_compact_suffix_uses_layer_ring_length",
+            state: KVCacheLayerState::Windowed {
+                ring_offset: 0,
+                ring_length: 2,
+                window_length: 6,
+            },
+            prefix_capacity: 6,
+            suffix_capacity: 3,
+            accepted_suffix_indices: vec![0, 1, 2],
+            number_of_accepted_tokens: 3,
+            suffix_start: None,
+            generated_suffix_length: Some(3),
+            expected_ring_offset: Some(0),
+            expected_ring_length: Some(5),
+            expected_prefix_len: None,
+            expected_prefix_segment_length: 6,
+        },
+        Scenario {
+            name: "windowed_noncompact_suffix_uses_layer_window_tail",
+            state: KVCacheLayerState::Windowed {
+                ring_offset: 1,
+                ring_length: 2,
+                window_length: 6,
+            },
+            prefix_capacity: 6,
+            suffix_capacity: 3,
+            accepted_suffix_indices: vec![0, 1, 2],
+            number_of_accepted_tokens: 3,
+            suffix_start: None,
+            generated_suffix_length: Some(3),
+            expected_ring_offset: Some(1),
+            expected_ring_length: Some(5),
+            expected_prefix_len: None,
+            expected_prefix_segment_length: 6,
         },
     ];
 
     for scenario in &scenarios {
         run_scenario(&context, scenario);
     }
+}
+
+#[test]
+fn kv_cache_layer_windowed_suffix_source_start_uses_layer_state() {
+    let Some(context) = <Metal as Backend>::Context::new().ok() else {
+        return;
+    };
+
+    let compact_layer = make_test_layer(
+        &context,
+        KVCacheLayerState::Windowed {
+            ring_offset: 0,
+            ring_length: 2,
+            window_length: 6,
+        },
+        6,
+        3,
+    );
+    assert_eq!(compact_layer.windowed_suffix_source_start(3), Some(2));
+    assert_eq!(compact_layer.state.windowed_suffix_write_start(3, 0, false, 0), Some(2));
+    assert_eq!(compact_layer.state.windowed_suffix_write_start(3, 0, true, 0), Some(6));
+    assert_eq!(compact_layer.state.shared_kv_suffix_source_start(), Some(6));
+
+    let offset_layer = make_test_layer(
+        &context,
+        KVCacheLayerState::Windowed {
+            ring_offset: 1,
+            ring_length: 2,
+            window_length: 6,
+        },
+        6,
+        3,
+    );
+    assert_eq!(offset_layer.windowed_suffix_source_start(3), Some(6));
+
+    let crossing_layer = make_test_layer(
+        &context,
+        KVCacheLayerState::Windowed {
+            ring_offset: 0,
+            ring_length: 5,
+            window_length: 6,
+        },
+        6,
+        3,
+    );
+    assert_eq!(crossing_layer.windowed_suffix_source_start(2), Some(6));
+
+    let full_layer = make_test_layer(
+        &context,
+        KVCacheLayerState::Full {
+            prefix_len: 2,
+        },
+        6,
+        3,
+    );
+    assert_eq!(full_layer.windowed_suffix_source_start(3), None);
 }
 
 #[test]

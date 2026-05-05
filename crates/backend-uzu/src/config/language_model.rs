@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ConfigError, DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig, GenerationConfig,
-    MessageProcessorConfig, MixerConfig, TransformerConfig,
+    MessageProcessorConfig, MixerConfig, PLEModelConfig, TransformerConfig, resolve_rope_configs,
 };
 
 struct AttentionDims {
@@ -19,9 +19,32 @@ pub struct InnerModelConfig {
     pub embedding_config: EmbeddingConfig,
     pub transformer_config: TransformerConfig,
     pub vocab_size: usize,
+    #[serde(default)]
+    pub ple_model_config: Option<PLEModelConfig>,
 }
 
 impl InnerModelConfig {
+    pub fn new(
+        embedding_config: EmbeddingConfig,
+        transformer_config: TransformerConfig,
+        vocab_size: usize,
+    ) -> Self {
+        Self {
+            embedding_config,
+            transformer_config,
+            vocab_size,
+            ple_model_config: None,
+        }
+    }
+
+    pub fn with_ple_model_config(
+        mut self,
+        ple_model_config: Option<PLEModelConfig>,
+    ) -> Self {
+        self.ple_model_config = ple_model_config;
+        self
+    }
+
     /// Convert to DecoderConfig for backward compatibility with the rest of the codebase.
     pub fn to_decoder_config(&self) -> Result<DecoderConfig, ConfigError> {
         let tf = &self.transformer_config;
@@ -38,6 +61,11 @@ impl InnerModelConfig {
             pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
             mlp_config: first_layer.mlp_config.clone(),
             post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
+            hidden_dim: first_layer.hidden_dim,
+            ple_config: first_layer.ple_config.clone(),
+            has_post_layer_scalar: first_layer.has_post_layer_scalar,
+            kv_source_layer: first_layer.kv_source_layer,
+            rope_config: first_layer.rope_config.clone(),
         };
 
         let attention_dims = Self::derive_attention_dims(tf)?;
@@ -70,14 +98,28 @@ impl InnerModelConfig {
                 pre_mlp_norm_config: layer.pre_mlp_norm_config.clone(),
                 mlp_config: layer.mlp_config.clone(),
                 post_mlp_norm_config: layer.post_mlp_norm_config.clone(),
+                hidden_dim: layer.hidden_dim,
+                ple_config: layer.ple_config.clone(),
+                has_post_layer_scalar: layer.has_post_layer_scalar,
+                kv_source_layer: layer.kv_source_layer,
+                rope_config: layer.rope_config.clone(),
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
+        let (global_rope_config, local_rope_config) = resolve_rope_configs(
+            tf.global_rope_config.clone(),
+            tf.local_rope_config.clone(),
+            &layer_config,
+            Some(&layer_configs),
+        )
+        .map_err(ConfigError::Invalid)?;
+
         Ok(DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config: tf.global_rope_config.clone(),
-            local_rope_config: tf.local_rope_config.clone(),
+            global_rope_config,
+            local_rope_config,
+            ple_model_config: self.ple_model_config.clone(),
             layer_config,
             layer_configs: Some(layer_configs),
             output_norm_config: tf.output_norm_config.clone(),
@@ -105,15 +147,28 @@ impl InnerModelConfig {
             });
         }
 
-        if let Some(attn) = tf.layer_configs.iter().find_map(|layer| layer.mixer_config.as_attention()) {
+        let mut attention_dims: Option<AttentionDims> = None;
+        for attn in tf.layer_configs.iter().filter_map(|layer| layer.mixer_config.as_attention()) {
             let num_heads = attn.num_heads.ok_or_else(|| ConfigError::MissingField("num_heads".to_string()))?;
             let head_dim = attn.head_dim.ok_or_else(|| ConfigError::MissingField("head_dim".to_string()))?;
-            return Ok(AttentionDims {
-                num_heads,
-                num_groups: attn.num_groups.unwrap_or(num_heads),
-                head_dim,
-                attention_scale: attn.scale,
+            let num_groups = attn.num_groups.unwrap_or(num_heads);
+            attention_dims = Some(match attention_dims {
+                Some(current) => AttentionDims {
+                    num_heads: current.num_heads.max(num_heads),
+                    num_groups: current.num_groups.max(num_groups),
+                    head_dim: current.head_dim.max(head_dim),
+                    attention_scale: current.attention_scale.or(attn.scale),
+                },
+                None => AttentionDims {
+                    num_heads,
+                    num_groups,
+                    head_dim,
+                    attention_scale: attn.scale,
+                },
             });
+        }
+        if let Some(attention_dims) = attention_dims {
+            return Ok(attention_dims);
         }
 
         if let Some(mamba) = tf.layer_configs.iter().find_map(|layer| layer.mixer_config.as_mamba()) {

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    attention::AttentionConfig, delta_net::DeltaNetAttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
-    normalization::NormalizationConfig, short_conv::ShortConvConfig,
+    RoPEConfig, attention::AttentionConfig, delta_net::DeltaNetAttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
+    normalization::NormalizationConfig, short_conv::ShortConvConfig, transformer_layer::PLELayerConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -102,6 +102,16 @@ pub struct DecoderLayerConfig {
     pub mlp_config: MLPConfig,
     #[serde(alias = "post_mlp_norm_config")]
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+    #[serde(default)]
+    pub hidden_dim: Option<usize>,
+    #[serde(default)]
+    pub ple_config: Option<PLELayerConfig>,
+    #[serde(default)]
+    pub has_post_layer_scalar: bool,
+    #[serde(default)]
+    pub kv_source_layer: Option<usize>,
+    #[serde(default)]
+    pub rope_config: Option<RoPEConfig>,
 }
 
 impl DecoderLayerConfig {

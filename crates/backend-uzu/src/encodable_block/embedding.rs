@@ -10,7 +10,7 @@ use crate::{
     backends::common::{
         Backend, Encoder, Kernels,
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
+            FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel, SoftCapKernel,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
@@ -21,6 +21,7 @@ use crate::{
     config::EmbeddingConfig,
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLeaf, ParameterLoaderError, ParameterTree},
+    session::parameter::SamplingMethod,
 };
 
 #[derive(Debug, Error)]
@@ -98,6 +99,8 @@ enum EmbeddingTying<B: Backend> {
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
+    logit_soft_cap: Option<f32>,
+    soft_cap_kernel: Option<<B::Kernels as Kernels>::SoftCapKernel>,
     vocab_size: u32,
     model_dim: u32,
 }
@@ -199,6 +202,28 @@ impl<B: Backend> Embedding<B> {
         untied_keys: &UntiedWeightKeys,
     ) -> Result<Self, EmbeddingError<B>> {
         let common = config.common();
+        let activation_data_type: DataType = match config {
+            EmbeddingConfig::Tied {
+                precision,
+                ..
+            }
+            | EmbeddingConfig::Untied {
+                precision,
+                ..
+            } => (*precision).into(),
+            EmbeddingConfig::MLXQuantizedTied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXQuantizedUntied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXSemiQuantizedUntied {
+                activation_precision,
+                ..
+            } => (*activation_precision).into(),
+        };
 
         let tying = match config {
             EmbeddingConfig::Tied {
@@ -473,14 +498,19 @@ impl<B: Backend> Embedding<B> {
         };
 
         let input_scale = common.input_scale.unwrap_or(1.0);
-
-        if let Some(logit_soft_cap) = common.logit_soft_cap {
-            return Err(EmbeddingError::UnsupportedConfiguration(format!("logit_soft_cap={logit_soft_cap:?}")));
-        }
+        let logit_soft_cap = common.logit_soft_cap;
+        let soft_cap_kernel = logit_soft_cap
+            .map(|_| {
+                <B::Kernels as Kernels>::SoftCapKernel::new(context, activation_data_type, true)
+                    .map_err(EmbeddingError::BackendError)
+            })
+            .transpose()?;
 
         Ok(Self {
             tying,
             input_scale,
+            logit_soft_cap,
+            soft_cap_kernel,
             vocab_size,
             model_dim,
         })
@@ -660,6 +690,17 @@ impl<B: Backend> Embedding<B> {
                 )?;
             },
         };
+
+        let should_soft_cap_logits = !matches!(state.sampling_method(), Some(SamplingMethod::Greedy));
+        if should_soft_cap_logits && let (Some(cap), Some(kernel)) = (self.logit_soft_cap, &self.soft_cap_kernel) {
+            kernel.encode(
+                None::<&B::Buffer>,
+                output_buffer_borrow.deref_mut(),
+                (batch_dim * self.vocab_size as usize) as u32,
+                cap,
+                encoder,
+            );
+        }
 
         Ok(())
     }

@@ -299,7 +299,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             }
 
             if tokens_processed_this_step > 0 {
-                self.update_cache_layers(&(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, true)?;
+                self.update_cache_layers(&(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, None, true)?;
 
                 self.context.cache_layers.borrow_mut().register_accepted_tokens(tokens_processed_this_step);
 
@@ -329,6 +329,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.update_cache_layers(
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
             Some(last_suffix_start),
+            None,
             false,
         )?;
 
@@ -419,7 +420,12 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let speculator_proposed = active_row_count.saturating_sub(1);
         let speculator_accepted = accepted_tokens.len().saturating_sub(1);
 
-        self.update_cache_layers(&accepted_token_indices, None, false)?;
+        self.update_cache_layers(
+            &accepted_token_indices,
+            None,
+            Some(self.decoding_config.generate_suffix_length()),
+            false,
+        )?;
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -561,9 +567,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         );
 
         // Scatter + register for all transformer layers
-        self.context.cache_layers.borrow_mut().update_after_acceptance(
+        self.context.cache_layers.borrow_mut().update_after_acceptance_with_generated_suffix_length(
             &[0],
             None,
+            Some(1),
             &mut encoder,
             &self.context.kv_cache_update,
         );
@@ -631,6 +638,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         &self,
         model_path: &Path,
     ) -> usize {
+        if self.requires_ordered_forward_passes() {
+            return 1;
+        }
+
         self.decoding_config.async_batch_size.resolve::<B>(model_path, self.context.context.as_ref())
     }
 
@@ -838,6 +849,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         &mut self,
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
+        generated_suffix_length: Option<usize>,
         wait_until_completed: bool,
     ) -> Result<(), Error> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
@@ -845,9 +857,10 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
-            cache_layers.update_after_acceptance(
+            cache_layers.update_after_acceptance_with_generated_suffix_length(
                 accepted_token_indices,
                 suffix_start,
+                generated_suffix_length,
                 &mut encoder,
                 &self.context.kv_cache_update,
             );
@@ -855,7 +868,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let pending = encoder.end_encoding().submit();
 
-        if wait_until_completed {
+        if wait_until_completed || self.requires_ordered_forward_passes() {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
         }
         Ok(())
@@ -864,9 +877,14 @@ impl<B: Backend> LanguageModelGenerator<B> {
     fn allow_pre_encode(&self) -> bool {
         let debug_active = self.context.context.debug_active();
 
-        let result = self.decoding_config.allow_pre_encode && !debug_active;
+        let result = self.decoding_config.allow_pre_encode && !debug_active && !self.requires_ordered_forward_passes();
 
         result
+    }
+
+    fn requires_ordered_forward_passes(&self) -> bool {
+        self.context.decoder_config.ple_model_config.is_some()
+            || self.context.model_shape.kv_source_layers.iter().any(Option::is_some)
     }
 
     fn sync_prefix(&mut self) {

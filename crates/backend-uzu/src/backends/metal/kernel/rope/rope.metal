@@ -59,7 +59,7 @@ PUBLIC KERNEL(Rope)(
   // Use actual token position from buffer
   const uint raw_position = token_positions[token_index];
   const uint absolutePosition =
-      raw_position > max_sequence_length ? 0 : raw_position;
+      raw_position >= max_sequence_length ? 0 : raw_position;
   const uint half_rope_dim = rope_dim / 2;
 
   TensorView3D<const T> qkv_tensor_view =

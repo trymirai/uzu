@@ -170,6 +170,12 @@ fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input);
 }
 
+fn test_out_of_range_positions<T: ArrayElement + Float + Debug + Display>() {
+    let mut input = get_test_data::<T>(4, 2, 8, 8, 3, 64);
+    input.token_positions = vec![63, 64, 65].into_boxed_slice();
+    test_internal(&input);
+}
+
 // f32 tests
 #[uzu_test]
 fn test_basic_f32() {
@@ -194,6 +200,11 @@ fn test_small_f32() {
 #[uzu_test]
 fn test_nonzero_positions_f32() {
     test_nonzero_positions::<f32>();
+}
+
+#[uzu_test]
+fn test_out_of_range_positions_f32() {
+    test_out_of_range_positions::<f32>();
 }
 
 // f16 tests

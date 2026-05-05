@@ -74,17 +74,17 @@ impl StructuredAudioCodecGraph {
         context: Rc<B::Context>,
         required_sequence_length: usize,
     ) -> AudioResult<StructuredAudioPostModuleRuntime<B>> {
-        let inner_model_config = InnerModelConfig {
-            embedding_config: EmbeddingConfig::Untied {
+        let inner_model_config = InnerModelConfig::new(
+            EmbeddingConfig::Untied {
                 common: EmbeddingConfigCommon {
                     input_scale: None,
                     logit_soft_cap: None,
                 },
                 precision: self.vocoder_data_type.into(),
             },
-            transformer_config: self.config.quantizer_config.post_module_config.clone(),
-            vocab_size: 1,
-        };
+            self.config.quantizer_config.post_module_config.clone(),
+            1,
+        );
         let decoder_config = Rc::new(inner_model_config.to_decoder_config().map_err(|_| {
             AudioError::Runtime("failed to build structured audio post_module decoder config".to_string())
         })?);

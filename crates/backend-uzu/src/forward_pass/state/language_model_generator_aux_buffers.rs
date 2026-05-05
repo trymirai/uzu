@@ -19,6 +19,11 @@ pub struct LanguageModelGeneratorAuxBuffers<B: Backend> {
     pub delta_net_prep_k_norm: Option<Array<B>>,
     pub delta_net_prep_beta: Option<Array<B>>,
     pub delta_net_prep_decay: Option<Array<B>>,
+    // PLE buffers
+    pub ple_token: Option<Array<B>>,
+    pub ple_model: Option<Array<B>>,
+    pub ple_combined: Option<Array<B>>,
+    pub ple_gate: Option<Array<B>>,
     // MoE buffers
     pub moe_topk_ids: Option<Array<B>>,
     pub moe_topk_probs: Option<Array<B>>,
@@ -117,6 +122,26 @@ impl<B: Backend> LanguageModelGeneratorAuxBuffers<B> {
                 .delta_net_prep_decay
                 .as_ref()
                 .zip(model_shape.delta_net_prep_beta_decay_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ple_token: scratch
+                .ple_token
+                .as_ref()
+                .zip(model_shape.ple_token_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ple_model: scratch
+                .ple_model
+                .as_ref()
+                .zip(model_shape.ple_model_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ple_combined: scratch
+                .ple_combined
+                .as_ref()
+                .zip(model_shape.ple_combined_shape(suffix_length))
+                .map(|(buf, shape)| buf.view(&shape)),
+            ple_gate: scratch
+                .ple_gate
+                .as_ref()
+                .zip(model_shape.ple_gate_shape(suffix_length))
                 .map(|(buf, shape)| buf.view(&shape)),
             moe_topk_ids: moe.zip(scratch.moe_topk_ids.as_ref()).map(|(moe, buf)| {
                 buf.view(&model_shape.moe_topk_ids_shape(suffix_length, moe.num_active_routed_experts))

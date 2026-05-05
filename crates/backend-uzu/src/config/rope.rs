@@ -7,6 +7,10 @@ pub struct RopeConfigCommon {
     pub precision: ConfigDataType,
     pub base: f32,
     pub max_sequence_length: usize,
+    #[serde(default)]
+    pub head_dim: Option<usize>,
+    #[serde(default)]
+    pub partial_rotary_dim: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

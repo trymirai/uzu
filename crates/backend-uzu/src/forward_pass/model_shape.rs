@@ -18,6 +18,7 @@ pub struct ModelShape {
     head_dim: usize,
     pub num_layers: usize,
     pub sliding_window_length_per_layer: Box<[Option<usize>]>,
+    pub kv_source_layers: Box<[Option<usize>]>,
     pub layer_types: Box<[DecoderLayerType]>,
     max_mamba_heads: usize,
     max_mamba_groups: usize,
@@ -32,6 +33,8 @@ pub struct ModelShape {
     max_delta_net_key_dim: usize,
     max_delta_net_num_heads: usize,
     max_qkv_dim: usize,
+    ple_dim: Option<usize>,
+    total_ple_dim: Option<usize>,
 }
 
 impl ModelShape {
@@ -55,6 +58,11 @@ impl ModelShape {
         } else {
             vec![DecoderLayerType::Transformer; num_layers].into_boxed_slice()
         };
+        let kv_source_layers = decoder_config
+            .layer_configs
+            .as_ref()
+            .map(|configs| configs.iter().map(|layer| layer.kv_source_layer).collect::<Vec<_>>().into_boxed_slice())
+            .unwrap_or_else(|| vec![decoder_config.layer_config.kv_source_layer; num_layers].into_boxed_slice());
         let mut max_mamba_heads = 0;
         let mut max_mamba_groups = 0;
         let mut max_mamba_head_dim = 0;
@@ -101,6 +109,7 @@ impl ModelShape {
         let mut max_rope_dim = 0usize;
         let mut max_lora_intermediate = None;
         let mut has_gate = false;
+        let mut max_hidden_dim = decoder_config.hidden_dim;
 
         let all_layer_configs = decoder_config
             .layer_configs
@@ -109,13 +118,24 @@ impl ModelShape {
             .unwrap_or_else(|| vec![&decoder_config.layer_config; num_layers]);
 
         let mut max_qkv_dim = 0usize;
+        let ple_dim = decoder_config.ple_model_config.as_ref().map(|config| config.ple_dim);
+        let total_ple_dim = decoder_config.ple_model_config.as_ref().map(|config| config.ple_dim * config.num_layers);
         for layer_config in &all_layer_configs {
             let mut linear_configs = Vec::new();
 
             match &layer_config.mixer_config {
                 MixerConfig::Attention(attn) => {
                     let hd = attn.head_dim.unwrap_or(decoder_config.head_dim);
-                    max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(hd));
+                    let rope_dim = layer_config
+                        .rope_config
+                        .as_ref()
+                        .and_then(|rope| rope.common().head_dim)
+                        .or(attn.partial_rope_dim)
+                        .unwrap_or(hd);
+                    max_rope_dim = max_rope_dim.max(rope_dim);
+                    let num_heads = attn.num_heads.unwrap_or(decoder_config.num_heads);
+                    let num_groups = attn.num_groups.unwrap_or(decoder_config.num_groups);
+                    max_qkv_dim = max_qkv_dim.max((num_heads + 2 * num_groups) * hd);
                     has_gate = has_gate || attn.has_gate || attn.gate_projection_config.is_some();
                     linear_configs.extend([&attn.qkv_projection_config, &attn.out_projection_config]);
                 },
@@ -133,6 +153,9 @@ impl ModelShape {
             match &layer_config.mlp_config {
                 MLPConfig::Dense(dense) => {
                     linear_configs.push(&dense.linear_config);
+                    if let Some(hidden_dim) = layer_config.hidden_dim {
+                        max_hidden_dim = max_hidden_dim.max(hidden_dim);
+                    }
                 },
                 MLPConfig::MixtureOfExperts(moe) => {
                     linear_configs.extend([&moe.router_config, &moe.expert_config.linear_config]);
@@ -170,7 +193,7 @@ impl ModelShape {
             kv_cache_type: activation_type,
             vocabulary_size: decoder_config.vocab_size,
             model_dim: decoder_config.model_dim,
-            hidden_dim: decoder_config.hidden_dim,
+            hidden_dim: max_hidden_dim,
             context_length: decoder_config.context_length,
             num_heads: decoder_config.num_heads,
             num_groups: decoder_config.num_groups,
@@ -180,6 +203,7 @@ impl ModelShape {
                 .sliding_window_sizes
                 .clone()
                 .unwrap_or(vec![None; num_layers].into_boxed_slice()),
+            kv_source_layers,
             layer_types,
             max_mamba_heads,
             max_mamba_groups,
@@ -194,6 +218,8 @@ impl ModelShape {
             max_delta_net_key_dim,
             max_delta_net_num_heads,
             max_qkv_dim,
+            ple_dim,
+            total_ple_dim,
         }
     }
 
@@ -272,6 +298,34 @@ impl ModelShape {
         [suffix_length, 2 * self.hidden_dim]
     }
 
+    pub fn ple_token_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.total_ple_dim.map(|dim| [suffix_length, dim])
+    }
+
+    pub fn ple_model_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.total_ple_dim.map(|dim| [suffix_length, dim])
+    }
+
+    pub fn ple_combined_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.total_ple_dim.map(|dim| [suffix_length, dim])
+    }
+
+    pub fn ple_gate_shape(
+        &self,
+        suffix_length: usize,
+    ) -> Option<[usize; 2]> {
+        self.ple_dim.map(|dim| [suffix_length, dim])
+    }
+
     pub fn qkv_shape(
         &self,
         suffix_length: usize,
@@ -341,9 +395,14 @@ impl ModelShape {
         max_prefix_length: usize,
         max_suffix_length: usize,
     ) -> impl Iterator<Item = [usize; 3]> {
-        self.sliding_window_length_per_layer.iter().map(move |length| {
+        self.sliding_window_length_per_layer.iter().enumerate().map(move |(layer_index, length)| {
             let length = length.unwrap_or(max_prefix_length);
-            [length + max_suffix_length, self.num_groups, self.head_dim]
+            let suffix_capacity = if self.kv_source_layers[layer_index].is_some() {
+                2 * max_suffix_length
+            } else {
+                max_suffix_length
+            };
+            [length + suffix_capacity, self.num_groups, self.head_dim]
         })
     }
 

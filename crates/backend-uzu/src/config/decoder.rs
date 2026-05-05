@@ -8,6 +8,7 @@ use super::{
     embedding::EmbeddingConfig,
     normalization::NormalizationConfig,
     rope::RoPEConfig,
+    transformer_layer::PLEModelConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -43,6 +44,7 @@ pub struct DecoderConfig {
     pub embedding_config: EmbeddingConfig,
     pub global_rope_config: Option<RoPEConfig>,
     pub local_rope_config: Option<RoPEConfig>,
+    pub ple_model_config: Option<PLEModelConfig>,
     pub layer_config: DecoderLayerConfig,
     pub layer_configs: Option<Box<[DecoderLayerConfig]>>,
     pub output_norm_config: NormalizationConfig,
@@ -70,6 +72,7 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             embedding_config,
             global_rope_config,
             local_rope_config,
+            ple_model_config,
             layer_config,
             layer_configs,
             output_norm_config,
@@ -106,6 +109,13 @@ impl<'de> Deserialize<'de> for DecoderConfig {
 
         let (num_heads_value, num_groups_value, head_dim_value) = match (num_heads, num_groups, head_dim) {
             (Some(h), Some(g), Some(d)) => (h, g, d),
+            _ if layer_configs_boxed.is_some() => derive_dims_from_layers(layer_configs_boxed.as_ref().unwrap())
+                .ok_or_else(|| {
+                    de::Error::custom(
+                        "num_heads/num_groups/head_dim missing and \
+                             cannot be derived from layer configs",
+                    )
+                })?,
             _ => derive_dims_from_layer(&layer_config_value).ok_or_else(|| {
                 de::Error::custom(
                     "num_heads/num_groups/head_dim missing and \
@@ -141,11 +151,19 @@ impl<'de> Deserialize<'de> for DecoderConfig {
             None
         };
         let layer_types_value = explicit_layer_types.or(derived_layer_types);
+        let (global_rope_config, local_rope_config) = resolve_rope_configs(
+            global_rope_config,
+            local_rope_config,
+            &layer_config_value,
+            layer_configs_boxed.as_deref(),
+        )
+        .map_err(de::Error::custom)?;
 
         Ok(Self {
             embedding_config,
             global_rope_config,
             local_rope_config,
+            ple_model_config,
             layer_config: layer_config_value,
             layer_configs: layer_configs_boxed,
             output_norm_config,
@@ -171,6 +189,8 @@ struct RawDecoderConfig {
     global_rope_config: Option<RoPEConfig>,
     #[serde(default)]
     local_rope_config: Option<RoPEConfig>,
+    #[serde(default)]
+    ple_model_config: Option<PLEModelConfig>,
     #[serde(default)]
     layer_config: Option<DecoderLayerConfig>,
     #[serde(default)]
@@ -200,6 +220,55 @@ fn derive_dims_from_layer(layer: &DecoderLayerConfig) -> Option<(usize, usize, u
     Some((layer.mixer_config.num_heads()?, layer.mixer_config.num_groups()?, layer.mixer_config.head_dim()?))
 }
 
+fn derive_dims_from_layers(layers: &[DecoderLayerConfig]) -> Option<(usize, usize, usize)> {
+    let mut result: Option<(usize, usize, usize)> = None;
+    for layer in layers {
+        let Some((num_heads, num_groups, head_dim)) = derive_dims_from_layer(layer) else {
+            continue;
+        };
+        result = Some(match result {
+            Some((max_heads, max_groups, max_head_dim)) => {
+                (max_heads.max(num_heads), max_groups.max(num_groups), max_head_dim.max(head_dim))
+            },
+            None => (num_heads, num_groups, head_dim),
+        });
+    }
+    result
+}
+
+pub(crate) fn resolve_rope_configs(
+    global_rope_config: Option<RoPEConfig>,
+    local_rope_config: Option<RoPEConfig>,
+    layer_config: &DecoderLayerConfig,
+    layer_configs: Option<&[DecoderLayerConfig]>,
+) -> Result<(Option<RoPEConfig>, Option<RoPEConfig>), String> {
+    let mut global = global_rope_config;
+    let mut local = local_rope_config;
+
+    let layers: Vec<&DecoderLayerConfig> =
+        layer_configs.map(|configs| configs.iter().collect()).unwrap_or_else(|| vec![layer_config]);
+
+    for layer in layers {
+        let Some(rope_config) = &layer.rope_config else {
+            continue;
+        };
+        let target = if layer.mixer_config.sliding_window_size().is_some() {
+            &mut local
+        } else {
+            &mut global
+        };
+        if let Some(existing) = target {
+            if existing != rope_config {
+                return Err("conflicting per-layer RoPE configs for the same global/local bucket".to_string());
+            }
+        } else {
+            *target = Some(rope_config.clone());
+        }
+    }
+
+    Ok((global, local))
+}
+
 fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
     match &layer.mixer_config {
         MixerConfig::Attention(_) => DecoderLayerType::Transformer,
@@ -225,6 +294,27 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
     }
 }
 impl DecoderConfig {
+    pub fn unsupported_runtime_features(&self) -> Vec<&'static str> {
+        let mut features = Vec::new();
+        let layer_configs = self
+            .layer_configs
+            .as_ref()
+            .map(|configs| configs.iter().collect::<Vec<_>>())
+            .unwrap_or_else(|| vec![&self.layer_config]);
+
+        for layer_config in layer_configs {
+            if let Some(attention_config) = layer_config.attention_config()
+                && attention_config.logit_soft_cap.is_some()
+            {
+                features.push("attention logit_soft_cap");
+            }
+        }
+
+        features.sort_unstable();
+        features.dedup();
+        features
+    }
+
     pub fn group_size(&self) -> usize {
         self.num_heads * self.num_groups
     }
