@@ -150,6 +150,10 @@ metadata = { image_url = "https://artifacts.trymirai.com/social/github/uzu-types
     "typescript_downloads",
 ] }
 
+[binaries.mirai]
+crate = "cli"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+
 [badges]
 discord = '<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a>'
 email = '<a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a>'

@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    configs::{LanguageConfig, Paths, TargetConfig, ToolConfig},
+    configs::{BinaryConfig, LanguageConfig, Paths, TargetConfig, ToolConfig},
     types::{Backend, Bindings, Capability, Language, Tool},
 };
 
@@ -29,6 +29,7 @@ pub struct PlatformsConfig {
     pub tools: IndexMap<String, ToolConfig>,
     pub targets: IndexMap<String, TargetConfig>,
     pub languages: IndexMap<Language, LanguageConfig>,
+    pub binaries: IndexMap<String, BinaryConfig>,
 }
 
 impl PlatformsConfig {
