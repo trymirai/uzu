@@ -1,14 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet},
-    iter::once,
-};
+use std::{collections::HashMap, iter::once};
 
 use anyhow::bail;
 use itertools::Itertools;
 
 use super::{
     ast::{MetalArgumentType, MetalKernelInfo},
-    optional_expr,
+    enum_path_rewrite::EnumPathRewriter,
 };
 use crate::common::mangling::static_mangle;
 
@@ -16,7 +13,7 @@ pub type SpecializeBaseIndices = HashMap<Box<str>, usize>;
 
 pub fn wrappers(
     kernels: &[MetalKernelInfo],
-    enum_type_names: &HashSet<Box<str>>,
+    rewriter: &EnumPathRewriter,
 ) -> anyhow::Result<(Box<[Box<str>]>, SpecializeBaseIndices)> {
     let mut all_wrappers = Vec::new();
     let mut base_indices = SpecializeBaseIndices::new();
@@ -34,7 +31,7 @@ pub fn wrappers(
             next_index += specialize_count;
         }
 
-        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), enum_type_names)?;
+        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), rewriter)?;
         all_wrappers.extend(kernel_wrappers.into_vec());
     }
 
@@ -44,25 +41,27 @@ pub fn wrappers(
 fn kernel_wrappers(
     kernel: &MetalKernelInfo,
     base_index: Option<&usize>,
-    enum_type_names: &HashSet<Box<str>>,
+    rewriter: &EnumPathRewriter,
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
+    // For enum specialize types, the function-constant slot is declared as `uint`
+    // (the underlying repr) and reconstructed at the call site via `EnumName(constant)`.
+    // For all other types, the C type is used as-is.
     let specialize_constant_type = |c_type: &str| {
-        let c_type = c_type.trim_start_matches("const ");
-        if c_type.starts_with("uzu::") {
-            "uint"
+        let trimmed = c_type.trim_start_matches("const ");
+        if rewriter.is_enum_c_type(c_type) {
+            "uint".to_string()
         } else {
-            c_type
+            trimmed.to_string()
         }
-        .to_string()
     };
 
     let specialize_argument = |kernel_name: &str, argument_name: &str, c_type: &str| {
-        let c_type = c_type.trim_start_matches("const ");
+        let trimmed = c_type.trim_start_matches("const ");
         let constant_name = format!("__dsl_specialize_{}_{}", kernel_name, argument_name);
-        if c_type.starts_with("uzu::") {
-            format!("{c_type}({constant_name})")
+        if rewriter.is_enum_c_type(c_type) {
+            format!("{trimmed}({constant_name})")
         } else {
             constant_name
         }
@@ -173,7 +172,7 @@ fn kernel_wrappers(
                     let condition = a.argument_condition().unwrap();
 
                     if let Some(condition) = condition {
-                        let cpp_condition = optional_expr::rewrite_for_cpp(condition, enum_type_names);
+                        let metal_condition = rewriter.rewrite_for_metal(condition);
                         (
                             format!(
                                 "{} {} [[buffer({}), function_constant(__dsl_buffer_condition_{}_{})]]",
@@ -181,7 +180,7 @@ fn kernel_wrappers(
                             ),
                             Some(format!(
                                 "constant bool __dsl_buffer_condition_{}_{} = {};",
-                                wrapper_name, a.name, cpp_condition
+                                wrapper_name, a.name, metal_condition
                             )),
                         )
                     } else {
@@ -213,9 +212,6 @@ fn kernel_wrappers(
             wrapper_arguments.push("uint __dsl_simd_group_idx [[simdgroup_index_in_threadgroup]]".into());
             wrapper_arguments.push("uint __dsl_simd_group_size [[threads_per_simdgroup]]".into());
             wrapper_arguments.push("uint __dsl_simd_group_per_threadgroup [[simdgroups_per_threadgroup]]".into());
-            wrapper_arguments.push("uint3 __dsl_threadgroup_size [[threads_per_threadgroup]]".into());
-            wrapper_arguments.push("uint3 __dsl_threadgroup_count [[threadgroups_per_grid]]".into());
-            wrapper_arguments.push("uint3 __dsl_grid_size [[threads_per_grid]]".into());
         }
 
         let wrapper_arguments = wrapper_arguments.join(", ");
@@ -251,7 +247,7 @@ fn kernel_wrappers(
                     MetalArgumentType::Threads(_) => {
                         format!("__dsl_thread_idx.{}", thread_axis_letters.next().unwrap())
                     },
-                    MetalArgumentType::ThreadContext => "ThreadContext { .simdgroup_index = __dsl_simd_lane_idx, .threadgroup_index = __dsl_simd_group_idx, .simdgroup_size = __dsl_simd_group_size, .simdgroups_per_threadgroup = __dsl_simd_group_per_threadgroup, .threadgroup_size = __dsl_threadgroup_size, .threadgroup_count = __dsl_threadgroup_count, .grid_size = __dsl_grid_size }".into(),
+                    MetalArgumentType::ThreadContext => "ThreadContext { .simdgroup_index = __dsl_simd_lane_idx, .threadgroup_index = __dsl_simd_group_idx, .simdgroup_size = __dsl_simd_group_size, .simdgroups_per_threadgroup = __dsl_simd_group_per_threadgroup }".into(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")

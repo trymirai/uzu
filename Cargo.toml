@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/dsl",
+    "crates/debug-display",
     "crates/bindings-types",
     "crates/bindings",
     "crates/shoji",
@@ -91,6 +92,7 @@ is_close = "0.1"
 serde_json5 = "0.2"
 anyhow = "1.0.102"
 async-trait = "0.1"
+debug-display = { path = "crates/debug-display" }
 bindgen = "0.72"
 walkdir = "2.5"
 depfile = "0.1"
