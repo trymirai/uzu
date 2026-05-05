@@ -11,6 +11,7 @@ pub trait SparseBuffer: Buffer<Backend: Backend<SparseBuffer = Self>> {
 
     fn get_page_size(&self) -> ByteSize;
 
+    /// `operations.range` must be in pages
     fn execute(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
