@@ -1,7 +1,7 @@
 mod array;
-mod context;
+mod context_ext;
 mod util;
 
 pub use array::Array;
-pub use context::ArrayContextExt;
+pub use context_ext::ArrayContextExt;
 pub use util::size_for_shape;
