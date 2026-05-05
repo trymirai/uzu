@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{Context, bail};
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{BinOp, Expr, ExprBinary, ExprLit, ExprParen, ExprPath, ExprUnary, Lit, Path, UnOp, parse_quote};
@@ -28,15 +28,12 @@ impl EnumPathRewriter {
     pub fn rewrite_for_metal(
         &self,
         condition: &str,
-    ) -> String {
-        let parsed = match syn::parse_str::<Expr>(condition) {
-            Ok(expr) => expr,
-            Err(_) => return format!("static_cast<bool>({condition})"),
-        };
-        match emit_metal_expr(&parsed, self) {
-            Ok(body) => format!("static_cast<bool>({body})"),
-            Err(_) => format!("static_cast<bool>({condition})"),
-        }
+    ) -> anyhow::Result<String> {
+        let parsed: Expr =
+            syn::parse_str(condition).with_context(|| format!("cannot parse Metal condition `{condition}`"))?;
+        let body =
+            emit_metal_expr(&parsed, self).with_context(|| format!("cannot emit Metal for condition `{condition}`"))?;
+        Ok(format!("static_cast<bool>({body})"))
     }
 
     pub fn rewrite_for_rust(

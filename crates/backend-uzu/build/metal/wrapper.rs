@@ -172,8 +172,8 @@ fn kernel_wrappers(
                     let condition = a.argument_condition().unwrap();
 
                     if let Some(condition) = condition {
-                        let metal_condition = rewriter.rewrite_for_metal(condition);
-                        (
+                        let metal_condition = rewriter.rewrite_for_metal(condition)?;
+                        Ok((
                             format!(
                                 "{} {} [[buffer({}), function_constant(__dsl_buffer_condition_{}_{})]]",
                                 &a.c_type, a.name, i, wrapper_name, a.name
@@ -182,14 +182,14 @@ fn kernel_wrappers(
                                 "constant bool __dsl_buffer_condition_{}_{} = {};",
                                 wrapper_name, a.name, metal_condition
                             )),
-                        )
+                        ))
                     } else {
-                        (format!("{} {} [[buffer({})]]", &a.c_type, a.name, i), None)
+                        Ok((format!("{} {} [[buffer({})]]", &a.c_type, a.name, i), None))
                     }
                 },
                 _ => unreachable!(),
             })
-            .collect::<(Vec<_>, Vec<_>)>();
+            .collect::<anyhow::Result<(Vec<_>, Vec<_>)>>()?;
 
         if kernel.has_axis() {
             if kernel.has_groups() || kernel.has_threads() {
