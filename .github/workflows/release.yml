@@ -68,6 +68,28 @@ jobs:
             echo "No previous tags; ${VERSION} is the first release"
           fi
 
+      - name: "Binaries: Import developer identity certificate"
+        run: |
+          set -euo pipefail
+          CERT_P12="$RUNNER_TEMP/dev_id_app.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          KEYCHAIN_PASSWORD=""
+
+          echo "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" | base64 -D > "$CERT_P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_P12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
       - name: "Release: Reset existing rustup toolchains on self-hosted runner"
         run: |
           if command -v rustup >/dev/null; then
@@ -88,29 +110,6 @@ jobs:
 
       - name: "Release: Build artifacts"
         run: cargo tools release "${VERSION}"
-
-      - name: "Binaries: Import developer identity certificate"
-        run: |
-          set -euo pipefail
-          CERT_P12="$RUNNER_TEMP/dev_id_app.p12"
-          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
-          KEYCHAIN_PASSWORD=""
-
-          echo "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" | base64 -D > "$CERT_P12"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security default-keychain -s "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_P12" \
-            -k "$KEYCHAIN_PATH" \
-            -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
-            -T /usr/bin/codesign
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s \
-            -k "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
-
-          echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       - name: "Binaries: Codesign"
         shell: bash
@@ -134,6 +133,7 @@ jobs:
           while IFS= read -r -d '' binary_path; do
             chmod +x "$binary_path"
             codesign --force --options runtime --timestamp \
+              --keychain "$SIGNING_KEYCHAIN_PATH" \
               --sign "$IDENTITY" \
               "$binary_path"
             codesign --verify --strict --verbose=2 "$binary_path"
