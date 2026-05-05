@@ -12,22 +12,20 @@ license.workspace = true
 name = "cli"
 path = "src/main.rs"
 
-[dependencies]
-clap.workspace = true
-backend-uzu.workspace = true
-benchmarks.workspace = true
-ctrlc.workspace = true
-indicatif.workspace = true
-inquire.workspace = true
-console.workspace = true
-rocket.workspace = true
-tokio.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-uuid.workspace = true
-comfy-table.workspace = true
-
 [features]
-default = ["metal"]
+default = ["backend-metal", "capability-grammar", "capability-cli"]
+backend-cpu = ["uzu/backend-cpu"]
+backend-metal = ["uzu/backend-metal", "benchmarks/metal"]
+capability-grammar = ["uzu/capability-grammar"]
+capability-tracing = ["uzu/capability-tracing"]
+capability-cli = ["uzu/capability-cli"]
 
-metal = ["benchmarks/metal", "backend-uzu/metal"]
+[dependencies]
+uzu = { workspace = true, default-features = false }
+benchmarks = { workspace = true, default-features = false }
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+comfy-table.workspace = true
+indicatif.workspace = true
+serde_json.workspace = true

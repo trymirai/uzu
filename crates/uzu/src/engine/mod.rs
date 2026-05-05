@@ -1,12 +1,9 @@
 mod callback;
-mod config;
+pub mod config;
 mod downloader;
 mod error;
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
@@ -14,6 +11,7 @@ pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
+use indexmap::IndexSet;
 use nagare::{chat::ChatSession, classification::ClassificationSession, text_to_speech::TextToSpeechSession};
 use shoji::{
     traits::{Backend, Registry},
@@ -35,6 +33,7 @@ use crate::{
         mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
+    settings::Settings,
     storage::{
         Config as StorageConfig, Storage,
         types::{DownloadPhase, DownloadState},
@@ -44,6 +43,7 @@ use crate::{
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct Engine {
+    settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
@@ -56,6 +56,16 @@ impl Engine {
             message: error.to_string(),
         })?;
 
+        let settings = if let Some(application_identifier) = &config.application_identifier {
+            Some(Settings::new(application_identifier.clone())?)
+        } else {
+            None
+        };
+        let mut config = config;
+        if let Some(settings) = &settings {
+            config.synchronize_with_settings(settings)?;
+        }
+
         let device = Device::new()?;
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string());
@@ -64,6 +74,7 @@ impl Engine {
         let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);
 
         let engine = Self {
+            settings: SharedAccess::new(settings),
             storage,
             registry,
             backends: SharedAccess::new(HashMap::new()),
@@ -250,29 +261,27 @@ impl Engine {
 
     #[bindings::export(Method(Getter))]
     pub async fn model_registries(&self) -> Result<Vec<ModelRegistry>, EngineError> {
-        let mut registries: Vec<_> = self
+        let registries: Vec<_> = self
             .models()
             .await?
             .into_iter()
             .map(|model| model.registry.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        registries.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(registries)
     }
 
     #[bindings::export(Method(Getter))]
     pub async fn model_vendors(&self) -> Result<Vec<ModelVendor>, EngineError> {
-        let mut vendors: Vec<_> = self
+        let vendors: Vec<_> = self
             .model_families()
             .await?
             .into_iter()
             .map(|family| family.vendor.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        vendors.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(vendors)
     }
 
@@ -293,15 +302,14 @@ impl Engine {
 
     #[bindings::export(Method(Getter))]
     pub async fn model_families(&self) -> Result<Vec<ModelFamily>, EngineError> {
-        let mut families: Vec<_> = self
+        let families: Vec<_> = self
             .models()
             .await?
             .into_iter()
             .filter_map(|model| model.family.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        families.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(families)
     }
 
@@ -454,7 +462,7 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ChatSession::new(backend.as_ref(), config, model, path).await?;
+            let session = ChatSession::new(backend.clone(), config, model, path).await?;
             Ok(session)
         } else {
             return Err(EngineError::BackendNotFound {});
@@ -470,7 +478,7 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ClassificationSession::new(backend.as_ref(), model, path).await?;
+            let session = ClassificationSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
             return Err(EngineError::BackendNotFound {});
@@ -486,11 +494,19 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = TextToSpeechSession::new(backend.as_ref(), model, path).await?;
+            let session = TextToSpeechSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
             return Err(EngineError::BackendNotFound {});
         }
+    }
+}
+
+#[bindings::export(Implementation)]
+impl Engine {
+    #[bindings::export(Method)]
+    pub async fn settings(&self) -> Result<Settings, EngineError> {
+        Ok(self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)?)
     }
 }
 

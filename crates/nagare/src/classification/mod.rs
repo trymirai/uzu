@@ -36,7 +36,7 @@ pub struct ClassificationSession {
 
 impl ClassificationSession {
     pub async fn new(
-        backend: &dyn Backend,
+        backend: Arc<dyn Backend>,
         model: Model,
         path: Option<String>,
     ) -> Result<Self, ClassificationSessionError> {
@@ -44,21 +44,30 @@ impl ClassificationSession {
             return Err(ClassificationSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
-        let classification_backend =
-            backend.as_classification_capable().ok_or(ClassificationSessionError::UnsupportedModel {})?;
-        let instance = classification_backend.instance(reference, ()).await.map_err(|error| {
-            ClassificationSessionError::Backend {
+
+        let holder = tokio::spawn(async move {
+            let classification_backend =
+                backend.as_classification_capable().ok_or(ClassificationSessionError::UnsupportedModel {})?;
+            let instance = classification_backend.instance(reference, ()).await.map_err(|error| {
+                ClassificationSessionError::Backend {
+                    message: error.to_string(),
+                }
+            })?;
+            let instance_state = instance.state().await.map_err(|error| ClassificationSessionError::Backend {
                 message: error.to_string(),
-            }
-        })?;
-        let instance_state = instance.state().await.map_err(|error| ClassificationSessionError::Backend {
-            message: error.to_string(),
-        })?;
-        Ok(Self {
-            holder: Arc::new(Mutex::new(InstanceHolder {
+            })?;
+            Ok(InstanceHolder {
                 instance,
                 state: instance_state,
-            })),
+            })
+        })
+        .await
+        .map_err(|error| ClassificationSessionError::Backend {
+            message: error.to_string(),
+        })??;
+
+        Ok(Self {
+            holder: Arc::new(Mutex::new(holder)),
             state: Arc::new(Mutex::new(ClassificationSessionState::Idle)),
         })
     }

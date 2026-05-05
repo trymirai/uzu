@@ -37,7 +37,7 @@ export declare class ClassificationSession {
 
 export declare class TextToSpeechSession {
   get state(): Promise<TextToSpeechSessionState>
-  synthesize(input: string): Promise<PcmBatch>
+  synthesize(input: string): Promise<TextToSpeechOutput>
   synthesizeStream(input: string): Promise<TextToSpeechSessionStream>
 }
 
@@ -58,9 +58,9 @@ export declare class TextToSpeechSessionStreamChunkError {
   constructor(error: TextToSpeechSessionError)
 }
 
-export declare class TextToSpeechSessionStreamChunkPcmBatch {
-  batch: PcmBatch
-  constructor(batch: PcmBatch)
+export declare class TextToSpeechSessionStreamChunkOutput {
+  output: TextToSpeechOutput
+  constructor(output: TextToSpeechOutput)
 }
 
 export type ChatSessionError =
@@ -102,7 +102,7 @@ export declare const enum TextToSpeechSessionState {
 }
 
 export type TextToSpeechSessionStreamChunk =
-  TextToSpeechSessionStreamChunkPcmBatch | TextToSpeechSessionStreamChunkError
+  TextToSpeechSessionStreamChunkOutput | TextToSpeechSessionStreamChunkError
 export declare class CancelToken {
   cancel(): void
   get isCancelled(): boolean
@@ -570,6 +570,7 @@ export declare class PcmBatch {
   constructor(samples: Array<number>, sampleRate: number, channels: number, lengths: Array<number>)
   get batchSize(): number
   get totalFrames(): number
+  get duration(): number
   saveAsWav(path: string): void
 }
 
@@ -611,6 +612,12 @@ export declare class SamplingSeedCustom {
 export declare class SamplingSeedDefault {
 
   constructor()
+}
+
+export declare class TextToSpeechOutput {
+  pcmBatch: PcmBatch
+  stats: TextToSpeechStats
+  constructor(pcmBatch: PcmBatch, stats: TextToSpeechStats)
 }
 
 export declare class TextToSpeechStats {
@@ -783,15 +790,17 @@ export type ToolDescription =
 
 export type TranslationPayload =
   TranslationPayloadText | TranslationPayloadImage
+export declare class CliApplication {
+  run(): Promise<void>
+  static create(config: EngineConfig): Promise<CliApplication>
+}
+
 export declare class Device {
   osName?: string
   cpuName?: string
   memoryTotal: number
   homePath: string
-  applicationIdentifier: string
-  isEnvironmentSandboxed: boolean
-  isKeyringAvailable: boolean
-  constructor(osName?: string, cpuName?: string, memoryTotal: number, homePath: string, applicationIdentifier: string, isEnvironmentSandboxed: boolean, isKeyringAvailable: boolean)
+  constructor(osName?: string, cpuName?: string, memoryTotal: number, homePath: string)
 
   static create(): Device
 }
@@ -861,6 +870,7 @@ export declare class DownloadState {
   get isInProgress(): boolean
   get canPause(): boolean
   get canDelete(): boolean
+  get name(): string
 }
 
 export declare class Engine {
@@ -894,6 +904,7 @@ export declare class Engine {
   chat(model: Model, config: ChatConfig): Promise<ChatSession>
   classification(model: Model): Promise<ClassificationSession>
   textToSpeech(model: Model): Promise<TextToSpeechSession>
+  settings(): Promise<Settings>
 }
 
 export declare class EngineCallback {
@@ -901,6 +912,7 @@ export declare class EngineCallback {
 }
 
 export declare class EngineConfig {
+  applicationIdentifier?: string
   miraiApiKey?: string
   lalamoPath?: string
   huggingfaceApiKey?: string
@@ -912,9 +924,10 @@ export declare class EngineConfig {
   openrouterApiKey?: string
   allowOllamaUsage: boolean
   allowLmstudioUsage: boolean
-  constructor(miraiApiKey?: string, lalamoPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean)
+  constructor(applicationIdentifier?: string, miraiApiKey?: string, lalamoPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean)
 
   static create(): EngineConfig
+  withApplicationIdentifier(applicationIdentifier: string): EngineConfig
   withMiraiApiKey(miraiApiKey: string): EngineConfig
   withLalamoPath(lalamoPath: string): EngineConfig
   withHuggingfaceApiKey(huggingfaceApiKey: string): EngineConfig
@@ -928,12 +941,22 @@ export declare class EngineConfig {
   withAllowLmstudioUsage(allowLmstudioUsage: boolean): EngineConfig
 }
 
-export declare class Keyring {
-  store(key: string, value: string): void
-  retrieve(key: string): string | null
-  remove(key: string): void
-  static create(): Keyring
+export declare class Player {
+  appendPcmBatch(batch: PcmBatch): void
+  stop(): void
+  static create(): Promise<Player>
 }
+
+export declare class Settings {
+  save(kind: SettingKind, key: string, value?: string | undefined | null): void
+  load(kind: SettingKind, key: string): string | null
+  clear(): void
+}
+
+export type CliError =
+  | { type: 'Engine', field0: EngineError }
+  | { type: 'Settigs', field0: SettingsError }
+  | { type: 'RenderingError', message: string }
 
 export type DeviceError =
   | { type: 'UnsupportedDevice' }
@@ -944,7 +967,7 @@ export type DownloadPhase =
 export type EngineError =
   | { type: 'TokioError', message: string }
   | { type: 'Device', field0: DeviceError }
-  | { type: 'Keyring', field0: KeyringError }
+  | { type: 'Settings', field0: SettingsError }
   | { type: 'Storage', field0: StorageError }
   | { type: 'Registry', field0: RegistryError }
   | { type: 'UnableToCreateBackend' }
@@ -953,15 +976,24 @@ export type EngineError =
   | { type: 'ChatSession', field0: ChatSessionError }
   | { type: 'ClassificationSession', field0: ClassificationSessionError }
   | { type: 'TextToSpeechSession', field0: TextToSpeechSessionError }
+  | { type: 'SettingsNotAvailable' }
 
-export type KeyringError =
-  | { type: 'BackendError', message: string }
-  | { type: 'Device', field0: DeviceError }
+export type PlayerError =
+  | { type: 'RodioError', message: string }
+  | { type: 'InvalidPcmBatch', message: string }
 
 export type RegistryError =
   | { type: 'UnableToCreate', message: string }
   | { type: 'UnableToGetModels', message: string }
   | { type: 'UnableToAddRegistry', identifier: string }
+
+export declare const enum SettingKind {
+  Config = 'Config',
+  Secret = 'Secret'
+}
+
+export type SettingsError =
+  | { type: 'BackendError', message: string }
 
 export type StorageError =
   | { type: 'UnableToCreateDirectory', path: string }

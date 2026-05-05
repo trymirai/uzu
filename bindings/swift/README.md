@@ -328,8 +328,8 @@ public func runTextToSpeech() async throws {
         .appendingPathComponent("Desktop")
         .appendingPathComponent("output.wav")
     let session = try await engine.textToSpeech(model: model)
-    let pcmBatch = try await session.synthesize(input: text)
-    try pcmBatch.saveAsWav(path: outputPath.path())
+    let output = try await session.synthesize(input: text)
+    try output.pcmBatch.saveAsWav(path: outputPath.path())
     print("Output saved to: \(outputPath.path())")
 }
 ```

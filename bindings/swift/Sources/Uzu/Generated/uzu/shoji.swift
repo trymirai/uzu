@@ -2497,6 +2497,14 @@ public func batchSize() -> UInt32  {
 })
 }
     
+public func duration() -> Double  {
+    return try!  FfiConverterDouble.lift(try! rustCall() {
+    uniffi_shoji_fn_method_pcmbatch_duration(
+            FfiConverterTypePcmBatch_lower(self),$0
+    )
+})
+}
+    
 public func saveAsWav(path: String)throws   {try rustCallWithError(FfiConverterTypePcmBatchError_lift) {
     uniffi_shoji_fn_method_pcmbatch_save_as_wav(
             FfiConverterTypePcmBatch_lower(self),
@@ -2614,6 +2622,60 @@ public func FfiConverterTypeRepository_lift(_ buf: RustBuffer) throws -> Reposit
 #endif
 public func FfiConverterTypeRepository_lower(_ value: Repository) -> RustBuffer {
     return FfiConverterTypeRepository.lower(value)
+}
+
+
+public struct TextToSpeechOutput: Equatable, Hashable, Codable {
+    public var pcmBatch: PcmBatch
+    public var stats: TextToSpeechStats
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(pcmBatch: PcmBatch, stats: TextToSpeechStats) {
+        self.pcmBatch = pcmBatch
+        self.stats = stats
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TextToSpeechOutput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTextToSpeechOutput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TextToSpeechOutput {
+        return
+            try TextToSpeechOutput(
+                pcmBatch: FfiConverterTypePcmBatch.read(from: &buf), 
+                stats: FfiConverterTypeTextToSpeechStats.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TextToSpeechOutput, into buf: inout [UInt8]) {
+        FfiConverterTypePcmBatch.write(value.pcmBatch, into: &buf)
+        FfiConverterTypeTextToSpeechStats.write(value.stats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTextToSpeechOutput_lift(_ buf: RustBuffer) throws -> TextToSpeechOutput {
+    return try FfiConverterTypeTextToSpeechOutput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTextToSpeechOutput_lower(_ value: TextToSpeechOutput) -> RustBuffer {
+    return FfiConverterTypeTextToSpeechOutput.lower(value)
 }
 
 

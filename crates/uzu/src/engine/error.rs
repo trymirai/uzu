@@ -9,7 +9,7 @@ pub enum EngineError {
     #[error(transparent)]
     Device(#[from] crate::device::DeviceError),
     #[error(transparent)]
-    Keyring(#[from] crate::keyring::KeyringError),
+    Settings(#[from] crate::settings::SettingsError),
     #[error(transparent)]
     Storage(#[from] crate::storage::StorageError),
     #[error(transparent)]
@@ -26,4 +26,6 @@ pub enum EngineError {
     ClassificationSession(#[from] nagare::classification::ClassificationSessionError),
     #[error(transparent)]
     TextToSpeechSession(#[from] nagare::text_to_speech::TextToSpeechSessionError),
+    #[error("Settings not available")]
+    SettingsNotAvailable,
 }

@@ -1,6 +1,6 @@
 mod error;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 pub use error::TextToSpeechSessionError;
 use futures::StreamExt;
@@ -10,6 +10,7 @@ use shoji::{
     types::{
         basic::{CancelToken, PcmBatch},
         model::{Model, ModelSpecialization},
+        session::text_to_speech::{TextToSpeechOutput, TextToSpeechStats},
     },
 };
 use tokio::sync::{Mutex, mpsc};
@@ -17,8 +18,8 @@ use tokio::sync::{Mutex, mpsc};
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TextToSpeechSessionStreamChunk {
-    PcmBatch {
-        batch: PcmBatch,
+    Output {
+        output: TextToSpeechOutput,
     },
     Error {
         error: TextToSpeechSessionError,
@@ -28,7 +29,7 @@ pub enum TextToSpeechSessionStreamChunk {
 #[bindings::export(Class(Stream))]
 #[derive(Clone)]
 pub struct TextToSpeechSessionStream {
-    receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<PcmBatch, TextToSpeechSessionError>>>>,
+    receiver: Arc<Mutex<mpsc::UnboundedReceiver<Result<TextToSpeechOutput, TextToSpeechSessionError>>>>,
     cancel_token: CancelToken,
 }
 
@@ -37,8 +38,8 @@ impl TextToSpeechSessionStream {
     #[bindings::export(Method(StreamNext))]
     pub async fn next(&self) -> Option<TextToSpeechSessionStreamChunk> {
         match self.receiver.lock().await.recv().await {
-            Some(Ok(batch)) => Some(TextToSpeechSessionStreamChunk::PcmBatch {
-                batch,
+            Some(Ok(output)) => Some(TextToSpeechSessionStreamChunk::Output {
+                output,
             }),
             Some(Err(error)) => Some(TextToSpeechSessionStreamChunk::Error {
                 error,
@@ -74,7 +75,7 @@ pub struct TextToSpeechSession {
 
 impl TextToSpeechSession {
     pub async fn new(
-        backend: &dyn Backend,
+        backend: Arc<dyn Backend>,
         model: Model,
         path: Option<String>,
     ) -> Result<Self, TextToSpeechSessionError> {
@@ -82,21 +83,30 @@ impl TextToSpeechSession {
             return Err(TextToSpeechSessionError::UnsupportedModel {});
         }
         let reference = path.unwrap_or_else(|| model.identifier.clone());
-        let text_to_speech_backend =
-            backend.as_text_to_speech_capable().ok_or(TextToSpeechSessionError::UnsupportedModel {})?;
-        let instance = text_to_speech_backend.instance(reference, ()).await.map_err(|error| {
-            TextToSpeechSessionError::Backend {
+
+        let holder = tokio::spawn(async move {
+            let text_to_speech_backend =
+                backend.as_text_to_speech_capable().ok_or(TextToSpeechSessionError::UnsupportedModel {})?;
+            let instance = text_to_speech_backend.instance(reference, ()).await.map_err(|error| {
+                TextToSpeechSessionError::Backend {
+                    message: error.to_string(),
+                }
+            })?;
+            let instance_state = instance.state().await.map_err(|error| TextToSpeechSessionError::Backend {
                 message: error.to_string(),
-            }
-        })?;
-        let instance_state = instance.state().await.map_err(|error| TextToSpeechSessionError::Backend {
-            message: error.to_string(),
-        })?;
-        Ok(Self {
-            holder: Arc::new(Mutex::new(InstanceHolder {
+            })?;
+            Ok(InstanceHolder {
                 instance,
                 state: instance_state,
-            })),
+            })
+        })
+        .await
+        .map_err(|error| TextToSpeechSessionError::Backend {
+            message: error.to_string(),
+        })??;
+
+        Ok(Self {
+            holder: Arc::new(Mutex::new(holder)),
             state: Arc::new(Mutex::new(TextToSpeechSessionState::Idle)),
         })
     }
@@ -113,25 +123,29 @@ impl TextToSpeechSession {
     pub async fn synthesize(
         &self,
         input: String,
-    ) -> Result<PcmBatch, TextToSpeechSessionError> {
+    ) -> Result<TextToSpeechOutput, TextToSpeechSessionError> {
         let stream = self.synthesize_stream(input).await;
-        let mut batches: Vec<PcmBatch> = Vec::new();
+        let mut outputs: Vec<TextToSpeechOutput> = Vec::new();
         while let Some(event) = stream.next().await {
             match event {
-                TextToSpeechSessionStreamChunk::PcmBatch {
-                    batch,
-                } => batches.push(batch),
+                TextToSpeechSessionStreamChunk::Output {
+                    output,
+                } => outputs.push(output),
                 TextToSpeechSessionStreamChunk::Error {
                     error,
                 } => return Err(error),
             }
         }
-        let first = batches.first().ok_or(TextToSpeechSessionError::NoResponse {})?;
-        Ok(PcmBatch {
-            sample_rate: first.sample_rate,
-            channels: first.channels,
-            lengths: vec![batches.iter().flat_map(|batch| batch.lengths.iter().copied()).sum()],
-            samples: batches.iter().flat_map(|batch| batch.samples.iter().copied()).collect(),
+        let last_output = outputs.last().ok_or(TextToSpeechSessionError::NoResponse {})?;
+        let pcm_batch = PcmBatch {
+            channels: last_output.pcm_batch.channels,
+            sample_rate: last_output.pcm_batch.sample_rate,
+            lengths: vec![outputs.iter().flat_map(|output| output.pcm_batch.lengths.iter().copied()).sum()],
+            samples: outputs.iter().flat_map(|output| output.pcm_batch.samples.iter().copied()).collect(),
+        };
+        Ok(TextToSpeechOutput {
+            pcm_batch,
+            stats: last_output.stats.clone(),
         })
     }
 
@@ -141,7 +155,7 @@ impl TextToSpeechSession {
         input: String,
     ) -> TextToSpeechSessionStream {
         let cancel_token_to_return = CancelToken::new();
-        let (sender, receiver) = mpsc::unbounded_channel::<Result<PcmBatch, TextToSpeechSessionError>>();
+        let (sender, receiver) = mpsc::unbounded_channel::<Result<TextToSpeechOutput, TextToSpeechSessionError>>();
 
         let holder = self.holder.clone();
         let state = self.state.clone();
@@ -168,11 +182,31 @@ impl TextToSpeechSession {
                     state: backend_state,
                 } = &mut *holder;
 
+                let text_length = input.len() as u32;
+                let generation_start_time = Instant::now();
+                let mut first_chunk_seconds: Option<f64> = None;
+                let mut audio_duration = 0.0;
+
                 let mut stream = instance.stream(&input, backend_state.as_mut(), (), cancel_token);
                 while let Some(event) = stream.next().await {
-                    let item = event.map_err(|error| TextToSpeechSessionError::Backend {
-                        message: error.to_string(),
-                    });
+                    let item = event
+                        .map(|pcm_batch| {
+                            let first_chunk_seconds = *first_chunk_seconds
+                                .get_or_insert_with(|| generation_start_time.elapsed().as_secs_f64());
+                            audio_duration += pcm_batch.duration();
+                            TextToSpeechOutput {
+                                pcm_batch,
+                                stats: TextToSpeechStats {
+                                    text_length,
+                                    first_chunk_seconds,
+                                    generation_duration: generation_start_time.elapsed().as_secs_f64(),
+                                    audio_duration,
+                                },
+                            }
+                        })
+                        .map_err(|error| TextToSpeechSessionError::Backend {
+                            message: error.to_string(),
+                        });
                     if sender.send(item).is_err() {
                         break;
                     }

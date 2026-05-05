@@ -28,6 +28,8 @@ fn uzu(m: &pyo3::Bound<'_, pyo3::types::PyModule>) -> pyo3::PyResult<()> {
 #[cfg(feature = "bindings-pyo3")]
 pyo3_stub_gen::define_stub_info_gatherer!(pyo3_bindings_annotations);
 
+#[cfg(feature = "capability-cli")]
+pub mod cli;
 #[cfg(not(target_family = "wasm"))]
 pub mod device;
 #[cfg(not(target_family = "wasm"))]
@@ -35,11 +37,13 @@ pub mod engine;
 #[cfg(not(target_family = "wasm"))]
 pub mod helpers;
 #[cfg(not(target_family = "wasm"))]
-pub mod keyring;
-#[cfg(not(target_family = "wasm"))]
 pub mod logs;
 #[cfg(not(target_family = "wasm"))]
+pub mod player;
+#[cfg(not(target_family = "wasm"))]
 pub mod registry;
+#[cfg(not(target_family = "wasm"))]
+pub mod settings;
 #[cfg(not(target_family = "wasm"))]
 pub mod storage;
 #[cfg(not(target_family = "wasm"))]

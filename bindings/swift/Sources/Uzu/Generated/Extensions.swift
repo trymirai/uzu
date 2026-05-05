@@ -66,6 +66,12 @@ extension ClassificationMessage {
     }
 }
 
+extension CliApplication {
+    public static func create(config: EngineConfig) async throws -> CliApplication {
+        try await cliApplicationCreate(config: config)
+    }
+}
+
 extension Device {
     public static func create() throws -> Device {
         try deviceCreate()
@@ -84,12 +90,6 @@ extension EngineConfig {
     }
 }
 
-extension Keyring {
-    public static func create() throws -> Keyring {
-        try keyringCreate()
-    }
-}
-
 extension Metadata {
     public static func external(name: String) -> Metadata {
         metadataExternal(name: name)
@@ -99,6 +99,12 @@ extension Metadata {
 extension Model {
     public static func external(identifier: String, registryIdentifier: String, registryName: String, backendIdentifier: String, backendName: String, backendVersion: String, specializations: [ModelSpecialization], accessibility: ModelAccessibility) -> Model {
         modelExternal(identifier: identifier, registryIdentifier: registryIdentifier, registryName: registryName, backendIdentifier: backendIdentifier, backendName: backendName, backendVersion: backendVersion, specializations: specializations, accessibility: accessibility)
+    }
+}
+
+extension Player {
+    public static func create() async throws -> Player {
+        try await playerCreate()
     }
 }
 
