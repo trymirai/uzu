@@ -1,4 +1,7 @@
-use std::{collections::HashMap, iter::once};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::once,
+};
 
 use anyhow::bail;
 use itertools::Itertools;
@@ -7,17 +10,23 @@ use super::{
     ast::{MetalArgumentType, MetalKernelInfo},
     enum_path_rewrite::EnumPathRewriter,
 };
-use crate::common::mangling::static_mangle;
+use crate::common::{
+    gpu_types::{GpuType, GpuTypes},
+    mangling::static_mangle,
+};
 
 pub type SpecializeBaseIndices = HashMap<Box<str>, usize>;
 
 pub fn wrappers(
     kernels: &[MetalKernelInfo],
     rewriter: &EnumPathRewriter,
+    gpu_types: &GpuTypes,
 ) -> anyhow::Result<(Box<[Box<str>]>, SpecializeBaseIndices)> {
     let mut all_wrappers = Vec::new();
     let mut base_indices = SpecializeBaseIndices::new();
     let mut next_index = 0usize;
+
+    let uint_packed_names = collect_uint_packed_type_names(gpu_types);
 
     for kernel in kernels {
         let specialize_count = kernel
@@ -31,26 +40,44 @@ pub fn wrappers(
             next_index += specialize_count;
         }
 
-        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), rewriter)?;
+        let kernel_wrappers = kernel_wrappers(kernel, base_indices.get(&kernel.name), rewriter, &uint_packed_names)?;
         all_wrappers.extend(kernel_wrappers.into_vec());
     }
 
     Ok((all_wrappers.into_boxed_slice(), base_indices))
 }
 
+fn collect_uint_packed_type_names(gpu_types: &GpuTypes) -> HashSet<Box<str>> {
+    gpu_types
+        .files
+        .iter()
+        .flat_map(|file| file.types.iter())
+        .filter_map(|ty| match ty {
+            GpuType::Enum(e) => Some(e.name.clone()),
+            GpuType::Struct(s) if s.is_uint_compatible() => Some(s.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn short_type_name(c_type: &str) -> &str {
+    let trimmed = c_type.trim_start_matches("const ").trim();
+    trimmed.rsplit("::").next().unwrap_or(trimmed)
+}
+
 fn kernel_wrappers(
     kernel: &MetalKernelInfo,
     base_index: Option<&usize>,
     rewriter: &EnumPathRewriter,
+    uint_packed_names: &HashSet<Box<str>>,
 ) -> anyhow::Result<Box<[Box<str>]>> {
     let mut kernel_wrappers = Vec::new();
 
-    // For enum specialize types, the function-constant slot is declared as `uint`
-    // (the underlying repr) and reconstructed at the call site via `EnumName(constant)`.
-    // For all other types, the C type is used as-is.
+    let is_uint_packed = |c_type: &str| uint_packed_names.contains(short_type_name(c_type));
+
     let specialize_constant_type = |c_type: &str| {
         let trimmed = c_type.trim_start_matches("const ");
-        if rewriter.is_enum_c_type(c_type) {
+        if is_uint_packed(c_type) {
             "uint".to_string()
         } else {
             trimmed.to_string()
@@ -60,7 +87,7 @@ fn kernel_wrappers(
     let specialize_argument = |kernel_name: &str, argument_name: &str, c_type: &str| {
         let trimmed = c_type.trim_start_matches("const ");
         let constant_name = format!("__dsl_specialize_{}_{}", kernel_name, argument_name);
-        if rewriter.is_enum_c_type(c_type) {
+        if is_uint_packed(c_type) {
             format!("{trimmed}({constant_name})")
         } else {
             constant_name

@@ -118,6 +118,7 @@ impl MetalCompiler {
         &self,
         source_path: PathBuf,
         rewriter: &EnumPathRewriter,
+        gpu_types: &GpuTypes,
     ) -> anyhow::Result<ObjectInfo> {
         let buildsystem_hash =
             caching::build_system_hash().context("cannot get build system cache")?.as_bytes().clone();
@@ -167,7 +168,7 @@ impl MetalCompiler {
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
 
         let (wrapper_strs, specialize_indices) =
-            wrappers(&kernel_infos, rewriter).context("cannot generate kernel wrappers")?;
+            wrappers(&kernel_infos, rewriter, gpu_types).context("cannot generate kernel wrappers")?;
 
         let mut footer = String::new();
         for wrapper in wrapper_strs.iter() {
@@ -340,7 +341,7 @@ impl Compiler for MetalCompiler {
         let num_concurrent_compiles = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) * 2;
 
         let objects: Vec<ObjectInfo> = stream::iter(metal_sources)
-            .map(|p| self.compile(p, &rewriter))
+            .map(|p| self.compile(p, &rewriter, gpu_types))
             .buffer_unordered(num_concurrent_compiles)
             .try_collect()
             .await

@@ -1,7 +1,7 @@
 use crate::{
     DataType,
     backends::common::gpu_types::{
-        QuantizationMode, QuantizedFormat,
+        QuantizationMode, QuantizationMethod,
         unified_gemm::GemmWeightPrologueKind,
     },
 };
@@ -10,7 +10,7 @@ use crate::{
 pub(crate) enum WeightsStorageFormat {
     FullPrecision,
     Quantized {
-        format: QuantizedFormat,
+        format: QuantizationMethod,
         mode: QuantizationMode,
         group_size: u32,
     },
@@ -21,11 +21,11 @@ impl WeightsStorageFormat {
         match self {
             Self::FullPrecision => GemmWeightPrologueKind::FullPrecision,
             Self::Quantized {
-                format: QuantizedFormat::MLX,
+                format: QuantizationMethod::MLX,
                 ..
             } => GemmWeightPrologueKind::MlxDequant,
             Self::Quantized {
-                format: QuantizedFormat::AWQ,
+                format: QuantizationMethod::AWQ,
                 ..
             } => GemmWeightPrologueKind::AwqDequant,
         }

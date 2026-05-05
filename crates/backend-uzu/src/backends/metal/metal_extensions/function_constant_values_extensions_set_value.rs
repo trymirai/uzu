@@ -3,9 +3,9 @@ use std::ptr::NonNull;
 use metal::{MTLDataType, MTLFunctionConstantValues};
 
 use crate::backends::common::gpu_types::{
-    QuantizationMode, QuantizedFormat,
+    QuantizationMethod, QuantizationMode,
     unified_gemm::{
-        GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmWeightPrologueKind, QuantizationMethod
+        GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmWeightPrologueKind,
     },
 };
 

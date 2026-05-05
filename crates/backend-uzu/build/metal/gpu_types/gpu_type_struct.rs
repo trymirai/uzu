@@ -23,17 +23,8 @@ fn r2c(ty: &str) -> anyhow::Result<&'static str> {
     }
 }
 
-fn is_byte_scalar(ty: &str) -> bool {
-    matches!(ty, "bool" | "i8" | "u8")
-}
-
 pub fn gpu_type_gen_struct(gpu_type_struct: &GpuTypeStruct) -> anyhow::Result<String> {
-    let all_bytes = gpu_type_struct.fields.iter().all(|f| match &f.ty {
-        GpuTypeStructFieldType::Scalar(ty) => is_byte_scalar(ty.as_ref()),
-        _ => false,
-    });
-    let uint_compatible =
-        all_bytes && gpu_type_struct.fields.len() <= 4 && gpu_type_struct.alignment == Some(4);
+    let uint_compatible = gpu_type_struct.is_uint_compatible();
 
     let name = gpu_type_struct.name.as_ref();
 

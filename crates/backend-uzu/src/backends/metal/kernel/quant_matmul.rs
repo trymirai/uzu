@@ -72,7 +72,7 @@ fn build_quantized_specialization(
     };
 
     let weights_storage = WeightsStorageFormat::Quantized {
-        format: configuration.quantized_format,
+        format: configuration.quantization_method,
         mode: configuration.mode,
         group_size: configuration.group_size as u32,
     };

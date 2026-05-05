@@ -1,4 +1,4 @@
-// Auto-generated from gpu_types/quantization_method.rs - do not edit manually
+// Auto-generated from gpu_types/quantization_method - do not edit manually
 #pragma once
 
 #include <metal_stdlib>

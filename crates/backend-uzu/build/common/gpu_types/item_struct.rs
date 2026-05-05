@@ -62,6 +62,14 @@ pub struct GpuTypeStruct {
 }
 
 impl GpuTypeStruct {
+    pub fn is_uint_compatible(&self) -> bool {
+        let all_bytes = self.fields.iter().all(|f| match &f.ty {
+            GpuTypeStructFieldType::Scalar(ty) => matches!(ty.as_ref(), "bool" | "i8" | "u8"),
+            _ => false,
+        });
+        all_bytes && self.fields.len() <= 4 && self.alignment == Some(4)
+    }
+
     pub fn parse(item: ItemStruct) -> anyhow::Result<Self> {
         ensure_repr_c(&item.attrs)?;
         let alignment = parse_repr_alignment(&item.attrs);

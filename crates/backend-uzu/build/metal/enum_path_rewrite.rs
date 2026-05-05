@@ -16,15 +16,6 @@ impl EnumPathRewriter {
         }
     }
 
-    pub fn is_enum_c_type(
-        &self,
-        c_type: &str,
-    ) -> bool {
-        let trimmed = c_type.trim_start_matches("const ").trim();
-        let type_name = trimmed.rsplit("::").next().unwrap_or(trimmed);
-        self.enum_paths.contains(type_name)
-    }
-
     pub fn rewrite_for_metal(
         &self,
         condition: &str,
