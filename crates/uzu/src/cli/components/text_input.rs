@@ -118,27 +118,21 @@ pub fn TextInput(
                 }
                 state.write().move_position_to_end();
             },
-            KeyCode::Enter if modifiers.intersects(KeyModifiers::CONTROL) => {
-                if focus.is_minimal() {
-                    return;
-                }
-                let text = state.read().original_text.clone();
-                state.write().reset();
-                notify_change();
-                on_submit(text);
-            },
-            KeyCode::Enter if r#type.is_secret() => {
-                let text = state.read().original_text.clone();
-                state.write().reset();
-                notify_change();
-                on_submit(text);
-            },
-            KeyCode::Enter => {
+            KeyCode::Enter if modifiers.intersects(KeyModifiers::SHIFT) => {
                 if focus.is_minimal() {
                     return;
                 }
                 state.write().add_character('\n');
                 notify_change();
+            },
+            KeyCode::Enter => {
+                if focus.is_minimal() {
+                    return;
+                }
+                let text = state.read().original_text.clone();
+                state.write().reset();
+                notify_change();
+                on_submit(text);
             },
             _ => {},
         }
