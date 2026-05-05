@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 
 use super::{
     ast::MetalKernelInfo,
-    optional_expr::OptionalExprRewriter,
+    enum_path_rewrite::EnumPathRewriter,
     toolchain::MetalToolchain,
     wrapper::{SpecializeBaseIndices, wrappers},
 };
@@ -117,7 +117,7 @@ impl MetalCompiler {
     async fn compile(
         &self,
         source_path: PathBuf,
-        rewriter: &OptionalExprRewriter,
+        rewriter: &EnumPathRewriter,
     ) -> anyhow::Result<ObjectInfo> {
         let buildsystem_hash =
             caching::build_system_hash().context("cannot get build system cache")?.as_bytes().clone();
@@ -258,7 +258,7 @@ impl MetalCompiler {
     fn bindgen<'a>(
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
-        rewriter: &OptionalExprRewriter,
+        rewriter: &EnumPathRewriter,
     ) -> anyhow::Result<()> {
         let out_path = self.out_dir.join("dsl.rs");
         let hash_path = self.out_dir.join("dsl.rs.hash");
@@ -328,7 +328,7 @@ impl Compiler for MetalCompiler {
     ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
 
-        let rewriter = OptionalExprRewriter::from_gpu_types(gpu_types);
+        let rewriter = EnumPathRewriter::from_gpu_types(gpu_types);
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()

@@ -10,6 +10,7 @@ license.workspace = true
 build = "build/main.rs"
 
 [dependencies]
+debug_display.workspace = true
 dsl.workspace = true
 shoji.workspace = true
 half.workspace = true

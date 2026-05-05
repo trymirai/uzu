@@ -196,7 +196,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             matrix_matrix,
             input_dim: configuration.input_dim,
             output_dim: configuration.output_dim,
-            quantization_method,
+            quantization_method: configuration.quantization_method,
         })
     }
 
