@@ -2,15 +2,23 @@ use bytesize::ByteSize;
 use rangemap::RangeMap;
 
 use crate::backends::{
-    common::{Backend, SparseBuffer, SparseBufferOperation},
+    common::{Backend, Buffer, SparseBuffer, SparseBufferOperation},
     cpu::Cpu,
 };
 
 #[derive(Debug)]
 pub struct CpuSparseBuffer {}
 
-impl SparseBuffer for CpuSparseBuffer {
+impl Buffer for CpuSparseBuffer {
     type Backend = Cpu;
+
+    fn gpu_ptr(&self) -> usize {
+        todo!()
+    }
+
+    fn size(&self) -> ByteSize {
+        todo!()
+    }
 
     fn set_label(
         &mut self,
@@ -18,15 +26,9 @@ impl SparseBuffer for CpuSparseBuffer {
     ) {
         todo!()
     }
+}
 
-    fn gpu_ptr(&self) -> usize {
-        todo!()
-    }
-
-    fn length(&self) -> ByteSize {
-        todo!()
-    }
-
+impl SparseBuffer for CpuSparseBuffer {
     fn get_mapped_pages(&self) -> &RangeMap<usize, ()> {
         todo!()
     }

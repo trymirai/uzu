@@ -68,8 +68,16 @@ impl MetalSparseBuffer {
     }
 }
 
-impl SparseBuffer for MetalSparseBuffer {
+impl Buffer for MetalSparseBuffer {
     type Backend = Metal;
+
+    fn gpu_ptr(&self) -> usize {
+        self.buffer.gpu_ptr()
+    }
+
+    fn size(&self) -> ByteSize {
+        self.buffer.size()
+    }
 
     fn set_label(
         &mut self,
@@ -77,15 +85,9 @@ impl SparseBuffer for MetalSparseBuffer {
     ) {
         self.buffer.set_label(label)
     }
+}
 
-    fn gpu_ptr(&self) -> usize {
-        self.buffer.gpu_ptr()
-    }
-
-    fn length(&self) -> ByteSize {
-        self.buffer.size()
-    }
-
+impl SparseBuffer for MetalSparseBuffer {
     fn get_mapped_pages(&self) -> &RangeMap<usize, ()> {
         &self.mapped_pages.get_map()
     }

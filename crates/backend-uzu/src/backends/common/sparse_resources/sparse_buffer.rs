@@ -4,20 +4,9 @@ use bytesize::ByteSize;
 use rangemap::RangeMap;
 
 use super::{SparseBufferOperation, SparseResourceMappingMode};
-use crate::backends::common::Backend;
+use crate::backends::common::{Backend, Buffer};
 
-pub trait SparseBuffer {
-    type Backend: Backend<SparseBuffer = Self>;
-
-    fn set_label(
-        &mut self,
-        label: Option<&str>,
-    );
-
-    fn gpu_ptr(&self) -> usize;
-
-    fn length(&self) -> ByteSize;
-
+pub trait SparseBuffer: Buffer<Backend: Backend<SparseBuffer = Self>> {
     fn get_mapped_pages(&self) -> &RangeMap<usize, ()>;
 
     fn get_page_size(&self) -> ByteSize;
