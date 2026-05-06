@@ -4,7 +4,7 @@ use backend_uzu::{
     DataType,
     backends::{
         common::{
-            AllocationType, Backend, Buffer, Context, Encoder,
+            AllocationType, Backend, Context, DenseBuffer, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -22,7 +22,7 @@ const WARMUP_ITERATIONS: usize = 3;
 const BENCHMARK_ITERATIONS: usize = 10;
 
 fn fill_buffer_random(
-    buffer: &<Metal as Backend>::Buffer,
+    buffer: &<Metal as Backend>::DenseBuffer,
     byte_count: usize,
 ) {
     let slice = unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, byte_count) };

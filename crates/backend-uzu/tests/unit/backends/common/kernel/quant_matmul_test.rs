@@ -9,7 +9,7 @@ use half::{bf16, f16};
 use crate::{
     DataType,
     backends::common::{
-        Allocation, AllocationType, Backend, Buffer, Context, Encoder,
+        Allocation, AllocationType, Backend, Context, DenseBuffer, Encoder,
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,

@@ -11,7 +11,7 @@ use super::{
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{
-        Allocation, Backend, Buffer, CommandBuffer, Context, Encoder, Pending, kernel::TokenCopySampledKernel,
+        Allocation, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending, kernel::TokenCopySampledKernel,
     },
     config::ModelMetadata,
     encodable_block::{DecoderDecodeInput, EncodingParameters, SamplingArguments, SamplingInputs},

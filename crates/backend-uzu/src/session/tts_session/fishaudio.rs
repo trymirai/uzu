@@ -5,7 +5,7 @@ use regex::Regex;
 use super::*;
 use crate::{
     array::ArrayContextExt,
-    backends::common::{Allocation, Buffer},
+    backends::common::{Allocation, DenseBuffer},
     config::TtsMessageProcessorConfig,
     encodable_block::SamplingInputs,
     forward_pass::token_inputs::TokenInputs,

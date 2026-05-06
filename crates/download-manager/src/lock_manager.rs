@@ -70,16 +70,26 @@ fn is_lock_stale(lock_info: &LockFileInfo) -> bool {
 /// Check if a process is still alive (Unix-specific)
 #[cfg(unix)]
 fn is_process_alive(pid: u32) -> bool {
-    use std::process::Command;
-    Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+    use std::process::{Command, Stdio};
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Check if a process is still alive (Windows-specific)
 #[cfg(windows)]
 fn is_process_alive(pid: u32) -> bool {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     Command::new("tasklist")
         .args(["/FI", &format!("PID eq {}", pid)])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .output()
         .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
         .unwrap_or(false)

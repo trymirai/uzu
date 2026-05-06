@@ -1,7 +1,7 @@
 use super::{decoder_support::*, *};
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Allocation, Buffer},
+    backends::common::{Allocation, DenseBuffer},
     encodable_block::{DecoderArguments, DecoderDecodeInput, SamplingInputs},
     forward_pass::token_inputs::TokenInputs,
     session::types::TtsModelConfigError,

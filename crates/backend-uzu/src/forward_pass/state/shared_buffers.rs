@@ -4,7 +4,7 @@ use super::{RopeBuffers, RopeType};
 use crate::{
     DataType,
     array::ArrayContextExt,
-    backends::common::{Allocation, Backend, Buffer},
+    backends::common::{Allocation, Backend, DenseBuffer},
     config::DecoderConfig,
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,

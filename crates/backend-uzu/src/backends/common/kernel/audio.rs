@@ -7,9 +7,9 @@ pub enum AudioPadMode {
 }
 
 pub struct AudioFsqDecodeArguments<'a, B: Backend> {
-    pub tokens: &'a B::Buffer,
-    pub lengths: &'a B::Buffer,
-    pub output: &'a B::Buffer,
+    pub tokens: &'a B::DenseBuffer,
+    pub lengths: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
     pub batch_size: usize,
     pub num_groups: usize,
     pub seq_len: usize,
@@ -18,9 +18,9 @@ pub struct AudioFsqDecodeArguments<'a, B: Backend> {
 }
 
 pub struct AudioFsqEncodeArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub tokens: &'a B::Buffer,
-    pub lengths: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub tokens: &'a B::DenseBuffer,
+    pub lengths: &'a B::DenseBuffer,
     pub batch_size: usize,
     pub num_groups: usize,
     pub seq_len: usize,
@@ -31,11 +31,11 @@ pub struct AudioFsqEncodeArguments<'a, B: Backend> {
 }
 
 pub struct AudioConv1dArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub weight: &'a B::Buffer,
-    pub bias: &'a B::Buffer,
-    pub output: &'a B::Buffer,
-    pub lengths: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub weight: &'a B::DenseBuffer,
+    pub bias: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
+    pub lengths: &'a B::DenseBuffer,
     pub batch_size: usize,
     pub cin: usize,
     pub cout: usize,
@@ -49,11 +49,11 @@ pub struct AudioConv1dArguments<'a, B: Backend> {
 }
 
 pub struct AudioCausalConv1dArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub weight: &'a B::Buffer,
-    pub bias: &'a B::Buffer,
-    pub output: &'a B::Buffer,
-    pub lengths: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub weight: &'a B::DenseBuffer,
+    pub bias: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
+    pub lengths: &'a B::DenseBuffer,
     pub batch_size: usize,
     pub cin: usize,
     pub cout: usize,
@@ -63,11 +63,11 @@ pub struct AudioCausalConv1dArguments<'a, B: Backend> {
 }
 
 pub struct AudioCausalConvTranspose1dArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub weight: &'a B::Buffer,
-    pub bias: &'a B::Buffer,
-    pub output: &'a B::Buffer,
-    pub lengths: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub weight: &'a B::DenseBuffer,
+    pub bias: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
+    pub lengths: &'a B::DenseBuffer,
     pub batch_size: usize,
     pub cin: usize,
     pub cout: usize,
@@ -78,9 +78,9 @@ pub struct AudioCausalConvTranspose1dArguments<'a, B: Backend> {
 }
 
 pub struct AudioHalfSnakeArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub alpha: &'a B::Buffer,
-    pub output: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub alpha: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
     pub batch_size: usize,
     pub channels: usize,
     pub seq_len: usize,
@@ -90,28 +90,28 @@ pub struct AudioHalfSnakeArguments<'a, B: Backend> {
 }
 
 pub struct AudioElementwiseArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub output: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
     pub n: usize,
 }
 
 pub struct AudioAddArguments<'a, B: Backend> {
-    pub a: &'a B::Buffer,
-    pub b: &'a B::Buffer,
-    pub output: &'a B::Buffer,
+    pub a: &'a B::DenseBuffer,
+    pub b: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
     pub n: usize,
 }
 
 pub struct AudioScaleArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub output: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
     pub n: usize,
     pub scale: f32,
 }
 
 pub struct AudioClampArguments<'a, B: Backend> {
-    pub input: &'a B::Buffer,
-    pub output: &'a B::Buffer,
+    pub input: &'a B::DenseBuffer,
+    pub output: &'a B::DenseBuffer,
     pub n: usize,
     pub min_value: f32,
     pub max_value: f32,

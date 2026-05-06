@@ -94,8 +94,8 @@ final class TextToSpeechModel {
                 if FileManager.default.fileExists(atPath: resultPath.path) {
                     try FileManager.default.removeItem(at: resultPath)
                 }
-                let pcmBatch = try await session.synthesize(input: input)
-                try pcmBatch.saveAsWav(path: resultPath.path)
+                let output = try await session.synthesize(input: input)
+                try output.pcmBatch.saveAsWav(path: resultPath.path)
                 if !FileManager.default.fileExists(atPath: resultPath.path) {
                     generationError = GenerationError(message: "Generation failed")
                 }

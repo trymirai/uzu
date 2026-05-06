@@ -9,7 +9,7 @@ use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
-    backends::common::{Allocation, AllocationType, Backend, Buffer, Context},
+    backends::common::{Allocation, AllocationType, Backend, Context, DenseBuffer},
     utils::fs::file_read_exact_at,
 };
 
