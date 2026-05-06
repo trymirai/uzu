@@ -1,5 +1,5 @@
 use std::{
-    fs::{create_dir_all, remove_dir_all, remove_file},
+    fs::{create_dir_all, remove_dir, remove_file},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -423,7 +423,7 @@ impl Item {
         }
 
         if self.cache_path.exists() {
-            let _ = remove_dir_all(&self.cache_path);
+            let _ = remove_dir(&self.cache_path);
         }
 
         let total_bytes: u64 = self.files.iter().map(|f| f.size as u64).sum();
@@ -434,6 +434,19 @@ impl Item {
 
     pub async fn progress(&self) -> Result<BroadcastStream<DownloadState>, StorageError> {
         Ok(BroadcastStream::new(self.broadcast_sender.subscribe()))
+    }
+
+    pub async fn detach_active_downloads(&self) {
+        let file_tasks_guard = self.file_download_tasks.lock().await;
+        for file_task in file_tasks_guard.iter() {
+            let download_id = file_task.download_id();
+            let _ = file_task.cancel().await;
+            let _ = self.file_download_manager.remove_file_task(download_id).await;
+        }
+        drop(file_tasks_guard);
+
+        *self.file_download_tasks.lock().await = Vec::new();
+        *self.file_download_states.lock().await = Vec::new();
     }
 
     /// Handle file task state update
@@ -475,15 +488,29 @@ impl Item {
     }
 
     async fn ensure_paused(&self) -> Result<(), StorageError> {
+        use download_manager::FileDownloadPhase;
         tracing::debug!("[MODEL] ensure_paused: model={}", self.identifier);
         let file_tasks_guard = self.file_download_tasks.lock().await;
         let pause_futures = file_tasks_guard.iter().map(|file_task| {
             let file_task = file_task.clone();
             async move {
-                let _ = file_task.pause().await;
+                if matches!(file_task.state().await.phase, FileDownloadPhase::Downloading) {
+                    file_task.pause().await
+                } else {
+                    Ok(())
+                }
             }
         });
-        join_all(pause_futures).await;
+        let pause_results = join_all(pause_futures).await;
+        drop(file_tasks_guard);
+
+        for result in pause_results {
+            if let Err(error) = result {
+                return Err(StorageError::DownloadManager {
+                    message: error.to_string(),
+                });
+            }
+        }
 
         tracing::debug!("[MODEL] ensure_paused: All file tasks paused");
         Ok(())

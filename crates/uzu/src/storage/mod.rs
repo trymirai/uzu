@@ -98,7 +98,7 @@ impl Storage {
             .collect();
         for identifier in stale_model_identifiers {
             if let Some(item) = items.remove(&identifier) {
-                let _ = item.cancel().await;
+                item.detach_active_downloads().await;
                 item.stop_listening().await;
             }
         }

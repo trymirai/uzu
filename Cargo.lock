@@ -8117,6 +8117,7 @@ name = "uzu"
 version = "0.4.4"
 dependencies = [
  "async-openai",
+ "async-trait",
  "backend-remote",
  "backend-uzu",
  "bindings",

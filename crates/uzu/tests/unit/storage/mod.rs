@@ -1,1 +1,4 @@
+mod cancel_destroys_cache_path_test;
 mod lifecycle_mock_registry_model_test;
+mod pause_error_swallow_test;
+mod refresh_deletes_stale_model_files_test;
