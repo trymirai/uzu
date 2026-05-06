@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 node scripts/utils/check-version.cjs
 
 # Generate NAPI wrappers automatically from TypeScript definitions
-# node scripts/utils/generate-napi-wrappers.cjs
+node scripts/utils/generate-napi-wrappers.cjs
 
 # Build into dist and will publish the package from there,
 # so that src/resources/foo.ts becomes <package root>/resources/foo.js

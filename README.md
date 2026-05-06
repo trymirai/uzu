@@ -1429,10 +1429,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pcm_batches: Vec<PcmBatch> = Vec::new();
     while let Some(event) = stream.next().await {
         match event {
-            TextToSpeechSessionStreamChunk::PcmBatch {
-                batch,
+            TextToSpeechSessionStreamChunk::Output {
+                output,
             } => {
-                pcm_batches.push(batch);
+                pcm_batches.push(output.pcm_batch);
             },
             TextToSpeechSessionStreamChunk::Error {
                 error,
@@ -1487,8 +1487,8 @@ async def main() -> None:
     )
     output_path = Path.home() / "Desktop" / "output.wav"
     session = await engine.text_to_speech(model)
-    pcm_batch = await session.synthesize(text)
-    pcm_batch.save_as_wav(str(output_path))
+    output = await session.synthesize(text)
+    output.pcm_batch.save_as_wav(str(output_path))
     print(f"Output saved to: {output_path}")
 
 
@@ -1521,8 +1521,8 @@ public func runTextToSpeech() async throws {
         .appendingPathComponent("Desktop")
         .appendingPathComponent("output.wav")
     let session = try await engine.textToSpeech(model: model)
-    let pcmBatch = try await session.synthesize(input: text)
-    try pcmBatch.saveAsWav(path: outputPath.path())
+    let output = try await session.synthesize(input: text)
+    try output.pcmBatch.saveAsWav(path: outputPath.path())
     print("Output saved to: \(outputPath.path())")
 }
 ```
@@ -1552,8 +1552,8 @@ async function main() {
     const text = "London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.";
     const outputPath = join(homedir(), "Desktop", "output.wav");
     let session = await engine.textToSpeech(model);
-    let pcmBatch = await session.synthesize(text);
-    pcmBatch.saveAsWav(outputPath);
+    let output = await session.synthesize(text);
+    output.pcmBatch.saveAsWav(outputPath);
     console.log('Output saved to: ', outputPath);
 }
 
@@ -1630,21 +1630,13 @@ uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 
 ## CLI
 
-You can run `uzu` in [CLI](https://docs.trymirai.com/overview/cli) mode:
+You can run `uzu` in CLI mode:
 
 ```bash
-cargo run --release -p cli -- help
+cargo run --release -p cli
 ```
 
-```text
-Usage: cli [COMMAND]
-
-Commands:
-  run    Run a model with the specified path
-  serve  Start a server with the specified model path
-  bench  Run benchmarks for the specified model
-  help   Print this message or the help of the given subcommand(s)
-```
+This launches an interactive app where you can browse, download, and interact with models.
 
 ## Benchmarks
 
