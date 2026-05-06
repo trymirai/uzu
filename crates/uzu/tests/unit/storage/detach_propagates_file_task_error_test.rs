@@ -3,12 +3,12 @@ use std::sync::Arc;
 use download_manager::{FileDownloadState, FileDownloadTask};
 use mock_registry::MockRegistry;
 use tokio::{runtime::Handle as TokioHandle, sync::broadcast::channel as tokio_broadcast_channel};
-use uzu::storage::types::{DownloadPhase, DownloadState, Item};
+use uzu::storage::types::{DownloadState, Item};
 
 use crate::common::failing_file_task::{FailingFileTask, StubManager};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn pause_propagates_file_task_error() -> Result<(), Box<dyn std::error::Error>> {
+async fn detach_active_downloads_propagates_file_task_error() -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let served_file = registry.file("config.json")?;
     let total_bytes = served_file.file.size as u64;
@@ -22,7 +22,7 @@ async fn pause_propagates_file_task_error() -> Result<(), Box<dyn std::error::Er
             cache_path.join(&served_file.file.name),
             FileDownloadState::downloading(downloaded_bytes, total_bytes),
         )
-        .with_pause_error("forced pause failure"),
+        .with_cancel_error("forced cancel failure"),
     );
 
     let (storage_broadcast_sender, _) = tokio_broadcast_channel(1);
@@ -37,15 +37,8 @@ async fn pause_propagates_file_task_error() -> Result<(), Box<dyn std::error::Er
         storage_broadcast_sender,
     );
 
-    let pause_result = item.pause().await;
-    assert!(pause_result.is_err(), "Item::pause must propagate file_task pause errors");
-
-    let state = item.state().await;
-    assert!(
-        !matches!(state.phase, DownloadPhase::Paused {}),
-        "Item::pause failed; public phase must not falsely report Paused; got {:?}",
-        state.phase,
-    );
+    let detach_result = item.detach_active_downloads().await;
+    assert!(detach_result.is_err(), "Item::detach_active_downloads must propagate file_task cancel errors");
 
     Ok(())
 }

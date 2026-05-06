@@ -98,7 +98,9 @@ impl Storage {
             .collect();
         for identifier in stale_model_identifiers {
             if let Some(item) = items.remove(&identifier) {
-                item.detach_active_downloads().await;
+                if let Err(error) = item.detach_active_downloads().await {
+                    tracing::warn!(?error, identifier, "failed to detach stale model file tasks");
+                }
                 item.stop_listening().await;
             }
         }

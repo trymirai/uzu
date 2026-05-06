@@ -113,26 +113,35 @@ impl DownloaderStream {
         let mut stream_guard = self.stream.lock().await;
         let stream = stream_guard.as_mut()?;
         while let Some(result) = stream.next().await {
-            if let Ok((identifier, state)) = result {
-                if identifier == self.identifier {
-                    let update = DownloaderStreamUpdate {
-                        bytes_total: state.total_bytes,
-                        bytes_downloaded: state.downloaded_bytes,
-                    };
-                    match state.phase {
-                        DownloadPhase::NotDownloaded {}
-                        | DownloadPhase::Downloading {}
-                        | DownloadPhase::Locked {}
-                        | DownloadPhase::Paused {} => {},
-                        DownloadPhase::Downloaded {}
-                        | DownloadPhase::Error {
-                            ..
-                        } => {
-                            *stream_guard = None;
-                        },
+            match result {
+                Ok((identifier, state)) => {
+                    if identifier == self.identifier {
+                        let update = DownloaderStreamUpdate {
+                            bytes_total: state.total_bytes,
+                            bytes_downloaded: state.downloaded_bytes,
+                        };
+                        match state.phase {
+                            DownloadPhase::NotDownloaded {}
+                            | DownloadPhase::Downloading {}
+                            | DownloadPhase::Locked {}
+                            | DownloadPhase::Paused {} => {},
+                            DownloadPhase::Downloaded {}
+                            | DownloadPhase::Error {
+                                ..
+                            } => {
+                                *stream_guard = None;
+                            },
+                        }
+                        return Some(update);
                     }
-                    return Some(update);
-                }
+                },
+                Err(error) => {
+                    tracing::warn!(
+                        identifier = self.identifier,
+                        ?error,
+                        "downloader progress stream lagged; some updates were dropped"
+                    );
+                },
             }
         }
         None
