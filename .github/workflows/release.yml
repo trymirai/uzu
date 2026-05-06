@@ -99,11 +99,14 @@ jobs:
             -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
             -T /usr/bin/codesign
 
-          security set-key-partition-list \
+          if ! security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s \
             -k "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
+            "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+            echo "Unable to set key partition list for imported signing identity" >&2
+            exit 1
+          fi
 
           if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
             | grep 'Developer ID Application:' \
@@ -148,7 +151,7 @@ jobs:
           IDENTITY=$(security find-identity -v -p codesigning "$SIGNING_KEYCHAIN_PATH" \
             | grep 'Developer ID Application:' \
             | grep "(${TEAM_ID})" \
-            | sed -nE 's/.*"(.*)".*/\1/p' \
+            | sed -nE 's/^[[:space:]]*[0-9]+\) ([[:xdigit:]]+) ".*$/\1/p' \
             | head -n1 || true)
           if [ -z "$IDENTITY" ]; then
             echo "Developer ID Application identity not found for team $TEAM_ID" >&2
