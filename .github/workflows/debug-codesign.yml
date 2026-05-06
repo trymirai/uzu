@@ -1,0 +1,133 @@
+name: "Debug Codesign"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug-codesign:
+    runs-on: [self-hosted, macos, mac, arm64, m4pro]
+
+    steps:
+      - name: "Codesign: Test temporary keychain signing"
+        shell: bash
+        env:
+          TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          CERT_P12="$RUNNER_TEMP/dev_id_app.p12"
+          echo "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" | base64 -D > "$CERT_P12"
+
+          ORIGINAL_KEYCHAINS="$RUNNER_TEMP/original-keychains.txt"
+          security list-keychains -d user > "$ORIGINAL_KEYCHAINS"
+
+          restore_keychains() {
+            local restored_keychains=()
+            while IFS= read -r keychain; do
+              keychain=$(printf '%s\n' "$keychain" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+              [ -n "$keychain" ] && restored_keychains+=("$keychain")
+            done < "$ORIGINAL_KEYCHAINS"
+
+            if [ "${#restored_keychains[@]}" -gt 0 ]; then
+              security list-keychains -d user -s "${restored_keychains[@]}" >/dev/null
+            fi
+          }
+          trap restore_keychains EXIT
+
+          prepend_keychain_to_search_list() {
+            local keychain_path="$1"
+            local existing_keychains=()
+            while IFS= read -r existing_keychain; do
+              existing_keychain=$(printf '%s\n' "$existing_keychain" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+              if [ -n "$existing_keychain" ] && [ "$existing_keychain" != "$keychain_path" ]; then
+                existing_keychains+=("$existing_keychain")
+              fi
+            done < <(security list-keychains -d user)
+            security list-keychains -d user -s "$keychain_path" "${existing_keychains[@]}"
+          }
+
+          create_dummy_binary() {
+            local binary_path="$1"
+            local source_path="${binary_path}.c"
+            printf 'int main(void) { return 0; }\n' > "$source_path"
+            xcrun clang -Os -o "$binary_path" "$source_path"
+          }
+
+          run_sign_test() {
+            local label="$1"
+            shift
+
+            local binary_path="$RUNNER_TEMP/${label//[^A-Za-z0-9]/_}"
+            local stderr_path="${binary_path}.stderr"
+            create_dummy_binary "$binary_path"
+
+            if "$@" "$binary_path" >/dev/null 2>"$stderr_path"; then
+              codesign --verify --strict --verbose=2 "$binary_path" >/dev/null 2>&1
+              echo "PASS $label"
+            else
+              echo "FAIL $label"
+              tail -n 5 "$stderr_path" || true
+            fi
+          }
+
+          test_partition_list() {
+            local label="$1"
+            local partition_list="$2"
+            local keychain_path="$RUNNER_TEMP/${label}.keychain-db"
+            local keychain_password=""
+
+            security delete-keychain "$keychain_path" 2>/dev/null || true
+            rm -f "$keychain_path"
+            security create-keychain -p "$keychain_password" "$keychain_path"
+            security set-keychain-settings -lut 21600 "$keychain_path"
+            security unlock-keychain -p "$keychain_password" "$keychain_path"
+            prepend_keychain_to_search_list "$keychain_path"
+
+            security import "$CERT_P12" \
+              -k "$keychain_path" \
+              -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
+              -T /usr/bin/codesign >/dev/null
+
+            if ! security set-key-partition-list \
+              -S "$partition_list" \
+              -s \
+              -k "$keychain_password" \
+              "$keychain_path" >/dev/null 2>&1; then
+              echo "FAIL $label partition-list"
+              return
+            fi
+
+            local identity
+            identity=$(security find-identity -v -p codesigning "$keychain_path" \
+              | grep 'Developer ID Application:' \
+              | grep "(${TEAM_ID})" \
+              | sed -nE 's/.*"(.*)".*/\1/p' \
+              | head -n1 || true)
+            if [ -z "$identity" ]; then
+              echo "FAIL $label find-identity"
+              return
+            fi
+
+            local identity_hash
+            identity_hash=$(security find-identity -v -p codesigning "$keychain_path" \
+              | grep -F "$identity" \
+              | sed -nE 's/^[[:space:]]*[0-9]+\) ([[:xdigit:]]+) ".*$/\1/p' \
+              | head -n1 || true)
+            if [ -z "$identity_hash" ]; then
+              echo "FAIL $label find-identity-hash"
+              return
+            fi
+
+            run_sign_test "$label explicit-keychain-name" \
+              codesign --force --options runtime --timestamp --keychain "$keychain_path" --sign "$identity"
+
+            run_sign_test "$label explicit-keychain-hash" \
+              codesign --force --options runtime --timestamp --keychain "$keychain_path" --sign "$identity_hash"
+
+            prepend_keychain_to_search_list "$keychain_path"
+            run_sign_test "$label search-list-name" \
+              codesign --force --options runtime --timestamp --sign "$identity"
+          }
+
+          test_partition_list "plus-partitions" "apple-tool:,apple:"
+          test_partition_list "uzu-partitions" "apple-tool:,apple:,codesign:"
