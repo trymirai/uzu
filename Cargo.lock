@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "backend-remote"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "async-openai",
  "futures",
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "backend-uzu"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -661,7 +661,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "benchmarks"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "backend-uzu",
  "mach2 0.6.0",
@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "bindings"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "bindings-types"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "inventory",
  "napi",
@@ -1106,7 +1106,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "benchmarks",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "cli-storage"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "clap",
  "crossterm",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "cli-tools"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -1916,7 +1916,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download-manager"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "dsl"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "hanashi"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3299,7 +3299,7 @@ dependencies = [
 
 [[package]]
 name = "json-transform"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.0",
@@ -3772,7 +3772,7 @@ dependencies = [
 
 [[package]]
 name = "mock-registry"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.11.1",
@@ -3847,7 +3847,7 @@ dependencies = [
 
 [[package]]
 name = "nagare"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -6189,7 +6189,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shoji"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "bindings",
  "bindings-types",
@@ -6847,7 +6847,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "token-stream-parser"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "indexmap 2.14.0",
  "json-transform",
@@ -7593,7 +7593,7 @@ dependencies = [
 
 [[package]]
 name = "uzu"
-version = "0.4.4"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
