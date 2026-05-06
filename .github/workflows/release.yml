@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: [self-hosted, macos, mac, arm64, m4pro]
+    runs-on: macos-26
     env:
       VERSION: ${{ inputs.version }}
 
@@ -121,13 +121,6 @@ jobs:
 
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
-
-      - name: "Release: Reset existing rustup toolchains on self-hosted runner"
-        run: |
-          if command -v rustup >/dev/null; then
-            rustup toolchain uninstall stable 2>/dev/null || true
-            rustup toolchain uninstall nightly 2>/dev/null || true
-          fi
 
       - name: "Release: Install tools"
         run: |
