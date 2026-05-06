@@ -59,30 +59,35 @@ impl FileDownloadTask for PauseFailingFileTask {
     fn file_check(&self) -> &FileCheck {
         &self.file_check
     }
-    async fn download(&self) -> Result<(), DownloadError> {
-        Ok(())
-    }
     async fn pause(&self) -> Result<(), DownloadError> {
         Err(DownloadError::Backend("forced pause failure".to_string()))
-    }
-    async fn cancel(&self) -> Result<(), DownloadError> {
-        Ok(())
     }
     async fn state(&self) -> FileDownloadState {
         self.state.lock().await.clone()
     }
+    async fn download(&self) -> Result<(), DownloadError> {
+        unreachable!("Item::pause must not invoke file_task.download()");
+    }
+    async fn cancel(&self) -> Result<(), DownloadError> {
+        unreachable!("Item::pause must not invoke file_task.cancel()");
+    }
     async fn progress(&self) -> Result<TokioBroadcastStream<FileDownloadState>, DownloadError> {
-        Ok(TokioBroadcastStream::new(self.broadcast_sender.subscribe()))
+        unreachable!("Item::pause must not invoke file_task.progress()");
     }
     async fn start_listening(
         &self,
         _: DownloadEventSender,
     ) {
+        unreachable!("Item::pause must not invoke file_task.start_listening() when file_tasks are pre-populated");
     }
-    async fn stop_listening(&self) {}
-    async fn wait(&self) {}
+    async fn stop_listening(&self) {
+        unreachable!("Item::pause must not invoke file_task.stop_listening()");
+    }
+    async fn wait(&self) {
+        unreachable!("Item::pause must not invoke file_task.wait()");
+    }
     fn broadcast_sender(&self) -> TokioBroadcastSender<FileDownloadState> {
-        self.broadcast_sender.clone()
+        unreachable!("Item::pause must not invoke file_task.broadcast_sender()");
     }
 }
 

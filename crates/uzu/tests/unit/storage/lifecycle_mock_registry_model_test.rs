@@ -39,24 +39,35 @@ async fn test_storage_mock_registry_model_download_lifecycle(
 
     tracing::info!(total_bytes, "starting first download");
     item.download().await?;
-    wait_for_item_state(&item, &mut progress, "first download reaches 25%", |state| {
-        has_reached_fraction(state, 1, 4) || matches!(state.phase, DownloadPhase::Downloaded {})
+    let pre_pause_state = wait_for_item_state(&item, &mut progress, "first download reaches 25%", |state| {
+        has_reached_fraction(state, 1, 4)
     })
     .await;
+    assert!(
+        matches!(pre_pause_state.phase, DownloadPhase::Downloading {}),
+        "must pause while download is still active to exercise pause/resume; got {:?}",
+        pre_pause_state.phase
+    );
 
     tracing::info!("pausing storage item");
     item.pause().await?;
     item.reconcile().await?;
     let paused_state = item.state().await;
     tracing::info!(?paused_state, "observed paused state");
-    assert!(matches!(paused_state.phase, DownloadPhase::Paused {} | DownloadPhase::Downloaded {}));
+    assert!(matches!(paused_state.phase, DownloadPhase::Paused {}), "pause must transition to Paused; got {:?}", paused_state.phase);
 
     tracing::info!("resuming storage item");
     item.download().await?;
-    wait_for_item_state(&item, &mut progress, "resumed download reaches 50%", |state| {
-        has_reached_fraction(state, 1, 2) || matches!(state.phase, DownloadPhase::Downloaded {})
-    })
-    .await;
+    let post_resume_state =
+        wait_for_item_state(&item, &mut progress, "resumed download reaches 50%", |state| {
+            has_reached_fraction(state, 1, 2) || matches!(state.phase, DownloadPhase::Downloaded {})
+        })
+        .await;
+    assert!(
+        matches!(post_resume_state.phase, DownloadPhase::Downloading {} | DownloadPhase::Downloaded {}),
+        "resumed model must transition through Downloading and reach Downloaded; got {:?}",
+        post_resume_state.phase
+    );
 
     tracing::info!("cancelling storage item");
     item.cancel().await?;
