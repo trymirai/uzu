@@ -18,7 +18,7 @@ pub struct Downloader {
 }
 
 impl Downloader {
-    pub(crate) fn new(
+    pub fn new(
         identifier: String,
         storage: SharedAccess<Storage>,
     ) -> Self {
