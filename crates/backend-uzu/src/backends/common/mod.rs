@@ -14,7 +14,9 @@ pub mod kernel;
 pub use activation_config::ActivationConfig;
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
-pub use buffer::{Buffer, BufferGpuAddressRangeExt};
+pub use buffer::{
+    AsBufferRangeMut, AsBufferRangeRef, Buffer, BufferGpuAddressRangeExt, BufferRangeMut, BufferRangeRef,
+};
 pub use command_buffer::{
     AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
     CommandBufferInitial, CommandBufferPending,
