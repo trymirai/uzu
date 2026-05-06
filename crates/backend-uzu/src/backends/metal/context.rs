@@ -12,7 +12,7 @@ use super::{
 use crate::{
     backends::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-        metal::{command_buffer::MetalCommandBufferInitial, sparse_buffer::MetalSparseBuffer},
+        metal::{command_buffer::MetalCommandBufferInitial, sparse::MetalSparseBuffer},
     },
     utils::model_size::ModelSize,
 };

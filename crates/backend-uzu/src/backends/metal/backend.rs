@@ -1,7 +1,7 @@
 use metal::prelude::*;
 
 use super::{command_buffer::MetalCommandBuffer, context::MetalContext, error::MetalError, kernel::MetalKernels};
-use crate::backends::{common::Backend, metal::sparse_buffer::MetalSparseBuffer};
+use crate::backends::{common::Backend, metal::sparse::MetalSparseBuffer};
 
 #[derive(Debug, Clone)]
 pub struct Metal;

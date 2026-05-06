@@ -5,7 +5,7 @@ mod dense_buffer;
 mod error;
 mod event;
 mod kernel;
-mod sparse_buffer;
+mod sparse;
 
 pub mod argmax;
 

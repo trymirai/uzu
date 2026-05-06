@@ -1,8 +1,7 @@
 use std::{cell::UnsafeCell, pin::Pin, sync::atomic::AtomicU64};
 
 use super::{
-    command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels,
-    sparse_buffer::CpuSparseBuffer,
+    command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels, sparse::CpuSparseBuffer,
 };
 use crate::backends::common::Backend;
 

@@ -10,7 +10,7 @@ mod event;
 pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
-mod sparse_resources;
+mod sparse;
 
 pub use activation_config::ActivationConfig;
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
@@ -27,5 +27,5 @@ pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
 #[cfg(metal_backend)]
-pub(crate) use sparse_resources::SparseBufferMappedPages;
-pub use sparse_resources::{SparseBuffer, SparseBufferExt, SparseBufferOperation, SparseResourceMappingMode};
+pub(crate) use sparse::SparseBufferMappedPages;
+pub use sparse::{SparseBuffer, SparseBufferExt, SparseBufferOperation, SparseResourceMappingMode};
