@@ -176,20 +176,13 @@ impl FileDownloadTask {
             new_bytes
         );
 
-        // Guard against backwards progress (stale NSURLSession events)
-        // Only accept updates that maintain or increase progress
-        if new_bytes < current_bytes
-            && !matches!(
-                new_state.phase,
-                FileDownloadPhase::Downloaded | FileDownloadPhase::Error(_) | FileDownloadPhase::NotDownloaded
-            )
+        if matches!(state_guard.phase, FileDownloadPhase::Downloading)
+            && matches!(new_state.phase, FileDownloadPhase::Downloading)
+            && new_bytes < current_bytes
         {
             tracing::debug!("[FILE_TASK] ⚠️ Rejected backwards progress: {} < {}", new_bytes, current_bytes);
             return;
         }
-
-        // Allow state transitions to proceed normally
-        // The guard against backwards progress above is sufficient
 
         *state_guard = new_state.clone();
         drop(state_guard);
