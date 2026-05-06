@@ -108,15 +108,19 @@ jobs:
             exit 1
           fi
 
-          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
             | grep 'Developer ID Application:' \
-            | grep "(${TEAM_ID})" >/dev/null; then
+            | grep "(${TEAM_ID})" \
+            | sed -nE 's/.*"(.*)".*/\1/p' \
+            | head -n1 || true)
+          if [ -z "$SIGNING_IDENTITY" ]; then
             echo "Imported keychain does not contain a valid Developer ID Application identity for team $TEAM_ID" >&2
             security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
             exit 1
           fi
 
           echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
       - name: "Release: Reset existing rustup toolchains on self-hosted runner"
         run: |
@@ -141,30 +145,16 @@ jobs:
 
       - name: "Binaries: Codesign"
         shell: bash
-        env:
-          TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
         run: |
           set -euo pipefail
 
           security unlock-keychain -p "" "$SIGNING_KEYCHAIN_PATH"
 
-          IDENTITY=$(security find-identity -v -p codesigning "$SIGNING_KEYCHAIN_PATH" \
-            | grep 'Developer ID Application:' \
-            | grep "(${TEAM_ID})" \
-            | sed -nE 's/^[[:space:]]*[0-9]+\) ([[:xdigit:]]+) ".*$/\1/p' \
-            | head -n1 || true)
-          if [ -z "$IDENTITY" ]; then
-            echo "Developer ID Application identity not found for team $TEAM_ID" >&2
-            security find-identity -v -p codesigning "$SIGNING_KEYCHAIN_PATH" || true
-            exit 1
-          fi
-
           signed=0
           while IFS= read -r -d '' binary_path; do
             chmod +x "$binary_path"
             codesign --force --options runtime --timestamp \
-              --keychain "$SIGNING_KEYCHAIN_PATH" \
-              --sign "$IDENTITY" \
+              --sign "$SIGNING_IDENTITY" \
               "$binary_path"
             codesign --verify --strict --verbose=2 "$binary_path"
             signed=$((signed + 1))
