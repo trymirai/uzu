@@ -22,9 +22,8 @@ impl<B: Backend> RopeBuffers<B> {
         rope_config: &RoPEConfig,
         model_shape: &ModelShape,
     ) -> Self {
-        let common = rope_config.common();
-        let rope_dim = common.head_dim.unwrap_or_else(|| model_shape.rope_dim());
-        let rope_max_sequence_length = common.max_sequence_length;
+        let rope_dim = model_shape.rope_dim();
+        let rope_max_sequence_length = model_shape.context_length();
 
         let mut buffers = Self {
             cosines: context.create_array_uninitialized(
