@@ -192,7 +192,6 @@ impl<B: Backend> TraceValidator<B> {
                 SpeculatorConfig::default(),
                 SamplingSeed::default(),
                 AsyncBatchSize::default(),
-                false,
             );
             let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config, &metadata)?;
             let desired_suffix_length = prefill_step_size.max(decoding_config.generate_suffix_length());
