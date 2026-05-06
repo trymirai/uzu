@@ -501,15 +501,13 @@ impl Item {
                 }
             }
         });
-        let pause_results = join_all(pause_futures).await;
+        let first_error = join_all(pause_futures).await.into_iter().find_map(Result::err);
         drop(file_tasks_guard);
 
-        for result in pause_results {
-            if let Err(error) = result {
-                return Err(StorageError::DownloadManager {
-                    message: error.to_string(),
-                });
-            }
+        if let Some(error) = first_error {
+            return Err(StorageError::DownloadManager {
+                message: error.to_string(),
+            });
         }
 
         tracing::debug!("[MODEL] ensure_paused: All file tasks paused");

@@ -69,15 +69,14 @@ impl Downloader {
 
     #[bindings::export(Method)]
     pub async fn progress(&self) -> Result<DownloaderStream, EngineError> {
-        let identifier = self.identifier.clone();
         let Some(state) = self.state().await else {
             return Err(EngineError::UnableToGetDownloaderProgressStream {});
         };
         if matches!(state.phase, DownloadPhase::Downloaded {}) {
-            return Ok(DownloaderStream::empty(identifier));
+            return Ok(DownloaderStream::empty(self.identifier.clone()));
         }
         let stream = self.storage.lock().await.subscribe();
-        Ok(DownloaderStream::new(identifier, stream))
+        Ok(DownloaderStream::new(self.identifier.clone(), stream))
     }
 }
 

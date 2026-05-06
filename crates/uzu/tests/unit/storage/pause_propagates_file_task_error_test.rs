@@ -5,7 +5,7 @@ use download_manager::{
     DownloadError, DownloadEvent, DownloadEventSender, DownloadId, FileCheck, FileDownloadManager, FileDownloadState,
     FileDownloadTask, SharedDownloadEventSender,
 };
-use mock_registry::MockRegistry;
+use shoji::types::basic::{File, Hash, HashMethod};
 use tokio::{
     runtime::Handle as TokioHandle,
     sync::{
@@ -17,29 +17,25 @@ use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 use uuid::Uuid;
 use uzu::storage::types::{DownloadPhase, DownloadState, Item};
 
+const TOTAL_BYTES: u64 = 1_024;
+const DOWNLOADED_BYTES: u64 = 1;
+
 #[derive(Debug)]
 struct PauseFailingFileTask {
     download_id: DownloadId,
     source_url: String,
     destination: PathBuf,
     state: TokioMutex<FileDownloadState>,
-    broadcast_sender: TokioBroadcastSender<FileDownloadState>,
     file_check: FileCheck,
 }
 
 impl PauseFailingFileTask {
-    fn new(
-        source_url: String,
-        destination: PathBuf,
-        total_bytes: u64,
-    ) -> Self {
-        let (broadcast_sender, _) = tokio_broadcast_channel(64);
+    fn new(destination: PathBuf) -> Self {
         Self {
             download_id: Uuid::new_v4(),
-            source_url,
+            source_url: "http://example.invalid/file".to_string(),
             destination,
-            state: TokioMutex::new(FileDownloadState::downloading(total_bytes / 2, total_bytes)),
-            broadcast_sender,
+            state: TokioMutex::new(FileDownloadState::downloading(DOWNLOADED_BYTES, TOTAL_BYTES)),
             file_check: FileCheck::None,
         }
     }
@@ -98,7 +94,7 @@ struct StubManager {
 
 impl StubManager {
     fn new() -> Self {
-        let (sender, _) = tokio_broadcast_channel(64);
+        let (sender, _) = tokio_broadcast_channel(1);
         Self {
             sender,
         }
@@ -132,32 +128,31 @@ impl FileDownloadManager for StubManager {
         _: FileCheck,
         _: Option<u64>,
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError> {
-        Err(DownloadError::Backend("not implemented in stub".to_string()))
+        unreachable!("Item::pause must not request a new file_task from the manager");
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_storage_pause_swallows_file_task_error_and_leaves_state_downloading()
--> Result<(), Box<dyn std::error::Error>> {
-    let registry = MockRegistry::start().await?;
-    let served_file = registry.file("config.json")?;
-
+async fn pause_propagates_file_task_error() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempfile::tempdir()?;
     let cache_path = temp_dir.path().join("model");
+    let file_info = File {
+        url: "http://example.invalid/file".to_string(),
+        name: "file".to_string(),
+        size: TOTAL_BYTES as i64,
+        hashes: vec![Hash {
+            method: HashMethod::CRC32C,
+            value: "AAAAAA==".to_string(),
+        }],
+    };
+    let file_task = Arc::new(PauseFailingFileTask::new(cache_path.join(&file_info.name)));
 
-    let total_bytes = served_file.file.size as u64;
-    let file_task = Arc::new(PauseFailingFileTask::new(
-        served_file.file.url.clone(),
-        cache_path.join(&served_file.file.name),
-        total_bytes,
-    ));
-
-    let (storage_broadcast_sender, _storage_broadcast_receiver) = tokio_broadcast_channel(64);
+    let (storage_broadcast_sender, _) = tokio_broadcast_channel(1);
     let item = Item::new(
         "test-model".to_string(),
-        Arc::new(vec![served_file.file.clone()]),
+        Arc::new(vec![file_info]),
         cache_path,
-        DownloadState::downloading((total_bytes / 2) as i64, total_bytes as i64),
+        DownloadState::downloading(DOWNLOADED_BYTES as i64, TOTAL_BYTES as i64),
         Arc::new(StubManager::new()),
         vec![file_task as Arc<dyn FileDownloadTask>],
         TokioHandle::current(),
@@ -170,7 +165,7 @@ async fn test_storage_pause_swallows_file_task_error_and_leaves_state_downloadin
     let state_after_pause = item.state().await;
     assert!(
         !matches!(state_after_pause.phase, DownloadPhase::Paused {}),
-        "Item::pause failed, public phase must not falsely report Paused; got {:?}",
+        "Item::pause failed; public phase must not falsely report Paused; got {:?}",
         state_after_pause.phase
     );
 

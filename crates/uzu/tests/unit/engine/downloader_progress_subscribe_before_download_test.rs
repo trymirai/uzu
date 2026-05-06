@@ -1,58 +1,39 @@
 use download_manager::FileDownloadManagerType;
-use mock_registry::{Behavior, MockRegistry};
+use mock_registry::Behavior;
 use rstest::rstest;
-use tokio::runtime::Handle as TokioHandle;
-use uzu::{
-    device::Device,
-    engine::Downloader,
-    helpers::SharedAccess,
-    storage::{Config, Storage, types::DownloadPhase},
-};
+use uzu::storage::types::DownloadPhase;
+
+use crate::common::test_engine_fixture::TestEngineFixture;
 
 #[rstest]
 #[case::universal(FileDownloadManagerType::Universal)]
 #[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_downloader_progress_subscribed_before_download_streams_through_completion(
+async fn progress_subscribed_before_download_streams_through_completion(
     #[case] download_manager_type: FileDownloadManagerType,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
-    let model = registry.models.first().expect("mock registry must include a model");
+    let fixture = TestEngineFixture::start_with(download_manager_type, Behavior::THROTTLED).await?;
 
-    let temp_dir = tempfile::tempdir()?;
-    let device = Device::new()?;
-    let config = Config::new(device, Some(temp_dir.path().to_path_buf()), "test_storage".to_string())
-        .with_download_manager_type(download_manager_type);
-    let storage = Storage::new(TokioHandle::current(), config).await?;
-    storage.refresh(vec![model.clone()]).await?;
-    let storage_shared = SharedAccess::new(storage);
+    let stream = fixture.downloader.progress().await?;
+    fixture.storage.lock().await.download(&fixture.model.identifier).await?;
 
-    let downloader = Downloader::new(model.identifier.clone(), storage_shared.clone());
-
-    let stream = downloader.progress().await?;
-    storage_shared.lock().await.download(&model.identifier).await?;
-
-    let mut update_count = 0;
-    let mut saw_in_progress_update = false;
-    let mut saw_downloaded = false;
+    let mut updates: Vec<(i64, i64)> = Vec::new();
     while let Some(update) = stream.next().await {
-        update_count += 1;
-        if update.bytes_total > 0 && update.bytes_downloaded < update.bytes_total {
-            saw_in_progress_update = true;
-        }
-        if update.bytes_total > 0 && update.bytes_downloaded == update.bytes_total {
-            saw_downloaded = true;
-        }
+        updates.push((update.bytes_downloaded, update.bytes_total));
     }
 
-    let final_phase = downloader.state().await.expect("state present").phase;
+    let final_phase = fixture.downloader.state().await.unwrap().phase;
     assert!(matches!(final_phase, DownloadPhase::Downloaded {}));
     assert!(
-        saw_in_progress_update,
-        "expected at least one in-progress update; stream produced {} updates and only terminal-or-zero ones",
-        update_count
+        updates.iter().any(|(downloaded, total)| *total > 0 && downloaded < total),
+        "expected an in-progress update; got {:?}",
+        updates,
     );
-    assert!(saw_downloaded, "expected the stream to surface the final Downloaded update");
+    assert!(
+        updates.iter().any(|(downloaded, total)| *total > 0 && downloaded == total),
+        "expected the stream to surface the final-byte update; got {:?}",
+        updates,
+    );
 
     Ok(())
 }
