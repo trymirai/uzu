@@ -12,7 +12,10 @@ use super::{
 use crate::{
     backends::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-        metal::{command_buffer::MetalCommandBufferInitial, sparse::MetalSparseBuffer},
+        metal::{
+            command_buffer::MetalCommandBufferInitial,
+            sparse::{MetalSparseBuffer, MetalSparseHeapsHolder},
+        },
     },
     utils::model_size::ModelSize,
 };
@@ -26,6 +29,7 @@ pub struct MetalContext {
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    sparse_heaps: MetalSparseHeapsHolder,
 }
 
 impl MetalContext {
@@ -48,6 +52,10 @@ impl MetalContext {
         self.pipeline_cache.borrow_mut().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
+    }
+
+    pub fn sparse_heaps(&self) -> &MetalSparseHeapsHolder {
+        &self.sparse_heaps
     }
 }
 
@@ -78,6 +86,7 @@ impl Context for MetalContext {
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
+            sparse_heaps: MetalSparseHeapsHolder::new(),
         }))
     }
 
@@ -159,7 +168,7 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        Ok(MetalSparseBuffer::new(self, capacity)?)
+        Ok(MetalSparseBuffer::new(self, capacity, self.sparse_heaps.page_size())?)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
