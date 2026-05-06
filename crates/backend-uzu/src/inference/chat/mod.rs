@@ -5,7 +5,7 @@ use std::{path::PathBuf, pin::Pin};
 
 use bridging::{build_decoding_config, build_input_and_run_config, build_output};
 use futures::{
-    Stream, StreamExt,
+    Stream,
     channel::mpsc::{self, UnboundedSender},
 };
 use shoji::{
@@ -85,7 +85,7 @@ impl InstanceTrait for Instance {
         std::thread::spawn(move || {
             run(session, input, run_config, cancel_token_for_run, sender);
         });
-        Box::pin(receiver.take_until(cancel_token.cancelled_owned()))
+        Box::pin(receiver)
     }
 }
 
