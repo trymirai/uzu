@@ -74,7 +74,7 @@ impl Downloader {
             return Err(EngineError::UnableToGetDownloaderProgressStream {});
         };
         if matches!(state.phase, DownloadPhase::Downloaded {}) {
-            return Err(EngineError::UnableToGetDownloaderProgressStream {});
+            return Ok(DownloaderStream::empty(identifier));
         }
         let stream = self.storage.lock().await.subscribe();
         Ok(DownloaderStream::new(identifier, stream))

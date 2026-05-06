@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use download_manager::FileDownloadManagerType;
 use mock_registry::{Behavior, MockRegistry};
+use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 use tokio::time::{Duration, timeout};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
@@ -9,14 +11,21 @@ use uzu::storage::types::{DownloadPhase, DownloadState, Item};
 
 use crate::common::{test_storage::TestStorage, tracing_setup::init_test_tracing};
 
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_storage_mock_registry_model_download_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_storage_mock_registry_model_download_lifecycle(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
     init_test_tracing();
     tracing::info!("starting storage mock registry lifecycle test");
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let model = registry.models.first().ok_or_else(|| std::io::Error::other("mock registry must include a model"))?;
     tracing::info!(model_identifier = %model.identifier, "loaded mock registry model");
-    let test_storage = TestStorage::with_models(TokioHandle::current(), vec![model.clone()]).await?;
+    let test_storage =
+        TestStorage::with_models_and_manager(TokioHandle::current(), vec![model.clone()], download_manager_type)
+            .await?;
     let model_identifier = model.identifier.clone();
     let item = Arc::new(
         test_storage
@@ -75,12 +84,19 @@ async fn test_storage_mock_registry_model_download_lifecycle() -> Result<(), Box
     Ok(())
 }
 
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_storage_cancel_does_not_delete_locked_files() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_storage_cancel_does_not_delete_locked_files(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
     init_test_tracing();
     let registry = MockRegistry::start().await?;
     let model = registry.models.first().ok_or_else(|| std::io::Error::other("mock registry must include a model"))?;
-    let test_storage = TestStorage::with_models(TokioHandle::current(), vec![model.clone()]).await?;
+    let test_storage =
+        TestStorage::with_models_and_manager(TokioHandle::current(), vec![model.clone()], download_manager_type)
+            .await?;
     let item = test_storage
         .storage
         .get(&model.identifier)

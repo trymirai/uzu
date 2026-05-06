@@ -1,1 +1,2 @@
 mod downloader_progress_after_completion_test;
+mod downloader_progress_during_download_test;

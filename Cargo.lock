@@ -7630,6 +7630,7 @@ dependencies = [
  "pyo3-stub-gen",
  "reqwest 0.13.3",
  "rodio",
+ "rstest",
  "schemars 1.2.1",
  "serde",
  "serde-wasm-bindgen",

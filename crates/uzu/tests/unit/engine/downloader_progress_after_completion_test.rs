@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+use download_manager::FileDownloadManagerType;
 use mock_registry::MockRegistry;
+use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 use tokio_stream::StreamExt;
 use uzu::{
@@ -10,15 +12,20 @@ use uzu::{
     storage::{Config, Storage, types::DownloadPhase},
 };
 
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_downloader_progress_after_completion_returns_empty_stream_not_error()
--> Result<(), Box<dyn std::error::Error>> {
+async fn test_downloader_progress_after_completion_returns_empty_stream_not_error(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let model = registry.models.first().expect("mock registry must include a model");
 
     let temp_dir = tempfile::tempdir()?;
     let device = Device::new()?;
-    let config = Config::new(device, Some(temp_dir.path().to_path_buf()), "test_storage".to_string());
+    let config = Config::new(device, Some(temp_dir.path().to_path_buf()), "test_storage".to_string())
+        .with_download_manager_type(download_manager_type);
     let storage = Storage::new(TokioHandle::current(), config).await?;
     storage.refresh(vec![model.clone()]).await?;
 
