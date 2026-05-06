@@ -98,6 +98,17 @@ jobs:
             -k "$KEYCHAIN_PATH" \
             -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
             -T /usr/bin/codesign
+
+          echo "Keychain contents after import:"
+          security dump-keychain "$KEYCHAIN_PATH" || true
+
+          echo "Certificates after import:"
+          security find-certificate -a -Z "$KEYCHAIN_PATH" || true
+
+          echo "Identities after import:"
+          security find-identity -v "$KEYCHAIN_PATH" || true
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s \
