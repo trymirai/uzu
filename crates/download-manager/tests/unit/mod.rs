@@ -1,3 +1,11 @@
+mod backends;
 mod lifecycle_test;
-mod pause_state_regression_test;
-mod universal;
+mod test_actor_task;
+mod test_corrupt_body;
+mod test_create_download_manager;
+mod test_fsm_transitions;
+mod test_manager_startup;
+mod test_pause_state_regression;
+mod test_public_state_projector;
+mod test_reducer_startup;
+mod test_state_and_lock_regression;

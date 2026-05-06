@@ -1,6 +1,6 @@
-use crate::chrono;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LockFileInfo {
     pub manager_id: String,
     pub acquired_at: chrono::DateTime<chrono::Utc>,

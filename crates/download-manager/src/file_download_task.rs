@@ -1,12 +1,12 @@
-use std::path::Path;
+use std::{fmt::Debug, path::Path};
 
-use crate::{
-    DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState,
-    prelude::{TokioBroadcastSender, TokioBroadcastStream},
-};
+use tokio::sync::broadcast::Sender as TokioBroadcastSender;
+use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
+
+use crate::{DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState};
 
 #[async_trait::async_trait]
-pub trait FileDownloadTask: Send + Sync + std::fmt::Debug {
+pub trait FileDownloadTask: Send + Sync + Debug {
     fn download_id(&self) -> DownloadId;
     fn source_url(&self) -> &str;
     fn destination(&self) -> &Path;
@@ -23,8 +23,6 @@ pub trait FileDownloadTask: Send + Sync + std::fmt::Debug {
         global_broadcast: DownloadEventSender,
     );
     async fn stop_listening(&self);
-
-    /// Wait for the task to fully complete (download finished, lock released, state updated).
     async fn wait(&self);
 
     fn broadcast_sender(&self) -> TokioBroadcastSender<FileDownloadState>;

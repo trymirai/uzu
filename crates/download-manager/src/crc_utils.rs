@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{Error as IoError, Read},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use base64::Engine;
@@ -22,10 +22,9 @@ pub fn calculate_and_verify_crc(
     }
 
     let expected_crc = u32::from_be_bytes([expected_bytes[0], expected_bytes[1], expected_bytes[2], expected_bytes[3]]);
-
     let mut file = File::open(file_path)?;
-    let mut buffer = vec![0u8; CHUNK_SIZE];
-    let mut crc: u32 = 0;
+    let mut buffer = vec![0_u8; CHUNK_SIZE];
+    let mut crc = 0_u32;
 
     loop {
         let bytes_read = file.read(&mut buffer)?;
@@ -38,12 +37,13 @@ pub fn calculate_and_verify_crc(
     Ok(crc == expected_crc)
 }
 
-#[allow(dead_code)]
 pub fn save_crc_file(
     file_path: &Path,
     crc_value: &str,
 ) -> Result<(), IoError> {
-    let crc_path_str = format!("{}.crc", file_path.display());
-    std::fs::write(&crc_path_str, crc_value)?;
-    Ok(())
+    std::fs::write(crc_path_for_file(file_path), crc_value)
+}
+
+pub fn crc_path_for_file(file_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.crc", file_path.display()))
 }
