@@ -28,22 +28,12 @@ jobs:
           metal: true
           bindings: true
 
-      - name: "Release: Generate GitHub App token"
-        id: release-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: trymirai
-          repositories: uzu
-
       - name: "Release: Checkout main"
         uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ steps.release-token.outputs.token }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: "Release: Validate version"
         run: |
@@ -359,8 +349,21 @@ jobs:
       # publish step ran, so the workspace pollution from publishes
       # never makes it into the commit.
       # ---------------------------------------------------------------
+      - name: "Release: Generate GitHub App token"
+        id: release-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: trymirai
+          repositories: uzu
+
       - name: "Release: Push"
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: |
+          set -euo pipefail
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/trymirai/uzu.git"
           git push origin HEAD:main
           git push origin "${VERSION}"
 
