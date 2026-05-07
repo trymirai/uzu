@@ -38,10 +38,7 @@ async fn test_concurrent_task_creation_returns_same_task(
     let first = first.unwrap();
     let second = second.unwrap();
 
-    assert!(
-        Arc::ptr_eq(&first, &second),
-        "same URL and destination should return the same task object"
-    );
+    assert!(Arc::ptr_eq(&first, &second));
     Ok(())
 }
 
@@ -76,10 +73,7 @@ async fn different_urls_targeting_same_destination_are_rejected(
         )
         .await;
 
-    assert!(
-        matches!(second, Err(DownloadError::ConflictingConfig(_))),
-        "second request with a different source URL or file_check must be rejected, got {second:?}",
-    );
+    assert!(matches!(second, Err(DownloadError::ConflictingConfig(_))));
     Ok(())
 }
 
@@ -114,10 +108,7 @@ async fn different_expected_bytes_targeting_same_destination_are_rejected(
         )
         .await;
 
-    assert!(
-        matches!(second, Err(DownloadError::ConflictingConfig(_))),
-        "mismatched expected_bytes must be rejected, got {second:?}",
-    );
+    assert!(matches!(second, Err(DownloadError::ConflictingConfig(_))));
     Ok(())
 }
 
@@ -158,18 +149,12 @@ async fn separate_managers_in_same_process_cannot_share_destination_lock(
         .await
         .unwrap();
 
-    assert!(
-        matches!(task_b.state().await.phase, FileDownloadPhase::LockedByOther(_)),
-        "second manager instance must observe the destination as locked by the first instance",
-    );
+    assert!(matches!(task_b.state().await.phase, FileDownloadPhase::LockedByOther(_)));
 
     drop(task_b);
     drop(manager_b);
 
     let progress_a_after_b_dropped = task_a.state().await.phase;
-    assert!(
-        !matches!(progress_a_after_b_dropped, FileDownloadPhase::Error(_)),
-        "manager A's active download must not be torn down when manager B's locked-out task is dropped, got {progress_a_after_b_dropped:?}",
-    );
+    assert!(!matches!(progress_a_after_b_dropped, FileDownloadPhase::Error(_)));
     Ok(())
 }

@@ -23,16 +23,14 @@ use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as Tok
 use crate::{
     DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadEvent, FileDownloadPhase, FileDownloadState,
     backends::common::{Backend, InitialTaskAttachment},
-    download_log_event::{DownloadLogEvent, record_download_log_event},
     file_download_task::{FileDownloadTask, ManagedFileDownloadTask},
     file_download_task_actor::{
-        DownloadFsm, DownloadLifecycleState, DownloadTaskActor, PendingProgressSlot, ProgressCounters,
-        PublicProjection, TaskCommand, TerminalOutcome, local_actor_scheduler::spawn_actor,
-        project_runtime_public_state,
+        DownloadActorState, DownloadTaskActor, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
+        TerminalOutcome, project_runtime_public_state,
     },
     lock_manager::DestinationLockLease,
     reducer::InitialLifecycleState,
-    traits::{BackendEventSender, DownloadBackend, DownloadConfig},
+    traits::{ActiveDownloadGenerationCounter, BackendEventSender, DownloadBackend, DownloadConfig},
 };
 
 pub struct GenericFileDownloadTask<B: DownloadBackend> {
@@ -67,8 +65,8 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         let (progress_sender, _) = tokio_broadcast_channel(64);
         let (terminal_sender, terminal_receiver) = tokio_watch_channel(TerminalOutcome::Pending);
 
-        let mut fsm = DownloadFsm::<B>::new(Arc::clone(&config), Arc::clone(&context), backend_event_sender.clone());
-        let attachment_generation = fsm.allocate_next_generation();
+        let mut generation_counter = ActiveDownloadGenerationCounter::default();
+        let attachment_generation = generation_counter.allocate_next();
         let attachment = if let Some(destination_lease) = startup_lease.as_ref() {
             match B::initial_task_attachment(
                 context.as_ref(),
@@ -107,43 +105,40 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
                     total_bytes,
                 },
                 _,
-            ) => (
-                DownloadLifecycleState::Downloading {
-                    active_task: Some(active_task),
-                    generation: attachment_generation,
-                },
-                ProgressCounters {
-                    downloaded_bytes: initial_downloaded_bytes,
-                    total_bytes: total_bytes.or(config.expected_bytes).unwrap_or(initial_downloaded_bytes),
-                },
-            ),
+            ) => {
+                let Some(destination_lease) = startup_lease.take() else {
+                    return Err(DownloadError::Backend(
+                        "backend returned an attached task without a startup lease".to_string(),
+                    ));
+                };
+                (
+                    DownloadActorState::Downloading {
+                        active_task,
+                        generation: attachment_generation,
+                        destination_lease,
+                    },
+                    ProgressCounters {
+                        downloaded_bytes: initial_downloaded_bytes,
+                        total_bytes: total_bytes.or(config.expected_bytes).unwrap_or(initial_downloaded_bytes),
+                    },
+                )
+            },
         };
 
-        match &lifecycle_state {
-            DownloadLifecycleState::Downloading {
-                ..
-            } => {
-                if let Some(lease) = startup_lease.take() {
-                    fsm.set_destination_lease(lease);
-                }
-            },
-            _ => {
-                if let Some(lease) = startup_lease.take() {
-                    lease.release().await?;
-                }
-            },
+        if let Some(lease) = startup_lease.take() {
+            lease.release().await?;
         }
 
         let initial_public_state =
             project_runtime_public_state(&lifecycle_state, &initial_projection, progress_counters, &config);
         let (public_state_sender, public_state_receiver) = tokio_watch_channel(initial_public_state);
-        let actor_needs_shutdown_on_spawn_failure =
-            matches!(&lifecycle_state, DownloadLifecycleState::Downloading { .. });
-        let lifecycle = fsm.into_state_machine(lifecycle_state);
 
         let actor = DownloadTaskActor::<B>::new(
             Arc::clone(&config),
-            lifecycle,
+            Arc::clone(&context),
+            backend_event_sender,
+            generation_counter,
+            lifecycle_state,
             initial_projection,
             progress_counters,
             command_receiver,
@@ -154,14 +149,7 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
             progress_sender.clone(),
             terminal_sender,
         );
-        if let Err(error) = spawn_actor(actor) {
-            let download_error = if actor_needs_shutdown_on_spawn_failure {
-                error.abort_actor_before_start().await
-            } else {
-                error.into_download_error()
-            };
-            return Err(download_error);
-        }
+        tokio::spawn(actor.run());
 
         Ok(Self {
             config,
@@ -295,10 +283,6 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
                             total_bytes_written: state.downloaded_bytes,
                             total_bytes_expected: state.total_bytes,
                         };
-                        record_download_log_event(DownloadLogEvent::PublicEventEmitted {
-                            download_id,
-                            event: event.clone(),
-                        });
                         let _ = global_broadcast.send((download_id, event));
                     },
                     FileDownloadPhase::Downloaded => {
@@ -306,10 +290,6 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
                             tmp_path: destination.clone(),
                             final_destination: destination.clone(),
                         };
-                        record_download_log_event(DownloadLogEvent::PublicEventEmitted {
-                            download_id,
-                            event: event.clone(),
-                        });
                         let _ = global_broadcast.send((download_id, event));
                         break;
                     },
@@ -317,10 +297,6 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
                         let event = FileDownloadEvent::Error {
                             message,
                         };
-                        record_download_log_event(DownloadLogEvent::PublicEventEmitted {
-                            download_id,
-                            event: event.clone(),
-                        });
                         let _ = global_broadcast.send((download_id, event));
                         break;
                     },
@@ -393,31 +369,5 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
 }
 
 impl<B: DownloadBackend> Drop for GenericFileDownloadTask<B> {
-    fn drop(&mut self) {
-        // Releasing the lock here would race with the backend task that may still be writing
-        // the destination. Dropping `command_sender` closes the actor's command channel,
-        // which triggers nondestructive actor teardown: active backends are paused when
-        // possible, resume artifacts are preserved, and the lock is released after the backend
-        // has stopped.
-    }
-}
-
-impl<B: DownloadBackend> From<InitialLifecycleState> for DownloadLifecycleState<B> {
-    fn from(initial_lifecycle_state: InitialLifecycleState) -> Self {
-        match initial_lifecycle_state {
-            InitialLifecycleState::NotDownloaded => Self::NotDownloaded {},
-            InitialLifecycleState::Paused {
-                part_path,
-            } => Self::Paused {
-                part_path,
-            },
-            InitialLifecycleState::Downloaded {
-                file_path,
-                crc_path,
-            } => Self::Downloaded {
-                file_path,
-                crc_path,
-            },
-        }
-    }
+    fn drop(&mut self) {}
 }

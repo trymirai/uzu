@@ -20,13 +20,10 @@ async fn acquire_lock_does_not_overwrite_other_managers_lock() -> Result<(), Box
     acquire_lock(&path, "manager-a", Uuid::new_v4()).await?;
     let acquired_by_b = acquire_lock(&path, "manager-b", Uuid::new_v4()).await;
 
-    assert!(
-        acquired_by_b.is_err(),
-        "acquire_lock must not silently overwrite an existing lock from another manager",
-    );
+    assert!(acquired_by_b.is_err());
 
     let info: LockFileInfo = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    assert_eq!(info.manager_id, "manager-a", "manager-a's lock must remain intact");
+    assert_eq!(info.manager_id, "manager-a");
     Ok(())
 }
 
@@ -46,7 +43,7 @@ async fn acquire_lock_reclaims_stale_locks() -> Result<(), Box<dyn std::error::E
     acquire_lock(&path, "manager-b", Uuid::new_v4()).await?;
 
     let info: LockFileInfo = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    assert_eq!(info.manager_id, "manager-b", "stale lock must be reclaimed");
+    assert_eq!(info.manager_id, "manager-b");
     Ok(())
 }
 
@@ -80,10 +77,7 @@ async fn acquire_lock_reclaims_old_unparseable_lock() -> Result<(), Box<dyn std:
     acquire_lock(&path, "manager-b", Uuid::new_v4()).await?;
 
     let info: LockFileInfo = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    assert_eq!(
-        info.manager_id, "manager-b",
-        "an old garbage lock file must be reclaimable instead of looping forever",
-    );
+    assert_eq!(info.manager_id, "manager-b");
     Ok(())
 }
 
@@ -96,10 +90,7 @@ async fn acquire_lock_does_not_steal_a_recent_unparseable_lock() -> Result<(), B
 
     let result = acquire_lock(&path, "manager-b", Uuid::new_v4()).await;
 
-    assert!(
-        result.is_err(),
-        "acquire_lock must treat a freshly-created unparseable lock as a conflict (another caller may be mid-acquire)",
-    );
+    assert!(result.is_err());
     Ok(())
 }
 
@@ -111,10 +102,7 @@ async fn acquire_lock_blocks_same_manager_id_with_different_instance_id() -> Res
     acquire_lock(&path, "manager-a", Uuid::new_v4()).await?;
     let result = acquire_lock(&path, "manager-a", Uuid::new_v4()).await;
 
-    assert!(
-        result.is_err(),
-        "two manager instances in the same process with different instance_ids must not share a destination lock",
-    );
+    assert!(result.is_err());
     Ok(())
 }
 
@@ -125,7 +113,7 @@ async fn check_lock_file_treats_disappearing_lock_as_missing() -> Result<(), Box
 
     let result = acquire_lock(&path, "self-manager", Uuid::new_v4()).await;
 
-    assert!(result.is_ok(), "acquire_lock must succeed when no lock file exists, got {result:?}");
+    assert!(result.is_ok());
     Ok(())
 }
 
@@ -144,9 +132,9 @@ async fn release_lock_if_owned_leaves_other_owners_lock_intact() -> Result<(), B
 
     let released = release_lock_if_owned(&path, "self-manager", Uuid::new_v4()).await?;
 
-    assert!(!released, "release must refuse to delete a lock owned by a different manager");
+    assert!(!released);
     let info: LockFileInfo = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    assert_eq!(info.manager_id, "other-manager", "the foreign owner's lock must remain on disk");
+    assert_eq!(info.manager_id, "other-manager");
     Ok(())
 }
 
@@ -159,8 +147,8 @@ async fn release_lock_if_owned_removes_our_own_lock() -> Result<(), Box<dyn std:
     acquire_lock(&path, "self-manager", instance_id).await?;
     let released = release_lock_if_owned(&path, "self-manager", instance_id).await?;
 
-    assert!(released, "release must succeed when we are the lock owner");
-    assert!(!path.exists(), "the lock file must be gone after a successful release");
+    assert!(released);
+    assert!(!path.exists());
     Ok(())
 }
 
@@ -179,12 +167,9 @@ async fn acquire_lock_does_not_steal_live_lock_from_other_manager() -> Result<()
 
     let result = acquire_lock(&path, "manager-b", Uuid::new_v4()).await;
 
-    assert!(
-        result.is_err(),
-        "a different manager's lock owned by a live process must never be reclaimed, even after the staleness timeout",
-    );
+    assert!(result.is_err());
     let info: LockFileInfo = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    assert_eq!(info.manager_id, "other-manager", "live owner's lock must remain intact");
+    assert_eq!(info.manager_id, "other-manager");
     Ok(())
 }
 
@@ -197,15 +182,9 @@ async fn reclaim_unparseable_snapshot_refuses_when_bytes_changed() -> Result<(),
     let stale_snapshot = b"old garbage that was observed earlier".to_vec();
     let reclaimed = reclaim_stale_lock(&path, ReclaimExpectation::UnparseableSnapshot(stale_snapshot)).await?;
 
-    assert!(
-        matches!(reclaimed, ReclaimOutcome::Changed),
-        "unparseable reclaim must refuse to delete bytes that no longer match the original snapshot",
-    );
+    assert!(matches!(reclaimed, ReclaimOutcome::Changed));
     let restored = std::fs::read(&path)?;
-    assert_eq!(
-        restored, b"different bytes than the original snapshot",
-        "the on-disk file must be restored after a snapshot mismatch",
-    );
+    assert_eq!(restored, b"different bytes than the original snapshot");
     Ok(())
 }
 
@@ -218,12 +197,8 @@ async fn reclaim_unparseable_snapshot_succeeds_when_bytes_match() -> Result<(), 
 
     let reclaimed = reclaim_stale_lock(&path, ReclaimExpectation::UnparseableSnapshot(snapshot)).await?;
 
-    assert_eq!(
-        reclaimed,
-        ReclaimOutcome::Reclaimed,
-        "unparseable reclaim must succeed when bytes still match the snapshot",
-    );
-    assert!(!path.exists(), "the lock file must be gone after a confirmed reclaim");
+    assert_eq!(reclaimed, ReclaimOutcome::Reclaimed);
+    assert!(!path.exists());
     Ok(())
 }
 
@@ -246,14 +221,8 @@ async fn try_restore_quarantine_does_not_overwrite_a_new_lock_at_destination()
     let restore_outcome = try_restore_quarantine(&quarantine, &lock_target).await?;
 
     assert_eq!(restore_outcome, RestoreOutcome::DestinationAlreadyExists);
-    assert!(
-        !quarantine.exists(),
-        "the quarantine path must be cleaned up regardless of whether the restore could be applied",
-    );
+    assert!(!quarantine.exists());
     let intact: LockFileInfo = serde_json::from_str(&std::fs::read_to_string(&lock_target)?)?;
-    assert_eq!(
-        intact.manager_id, "new-owner",
-        "restore must not overwrite a fresh lock that another owner created in the race window",
-    );
+    assert_eq!(intact.manager_id, "new-owner");
     Ok(())
 }

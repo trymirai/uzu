@@ -2,7 +2,7 @@ use download_manager::{FileCheck, FileDownloadManager, FileDownloadManagerType, 
 use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::common::{Behavior, MockRegistry, error_message, init_test_tracing, wait_for_phase};
+use crate::common::{Behavior, MockRegistry, error_message, wait_for_phase};
 
 #[rstest]
 #[case::universal(FileDownloadManagerType::Universal)]
@@ -11,8 +11,6 @@ use crate::common::{Behavior, MockRegistry, error_message, init_test_tracing, wa
 async fn test_corrupt_body_fails_crc(
     #[case] download_manager_type: FileDownloadManagerType
 ) -> Result<(), Box<dyn std::error::Error>> {
-    init_test_tracing();
-    tracing::info!(?download_manager_type, "starting corrupt body CRC test");
     let registry = MockRegistry::start_with(Behavior::CORRUPT_BODY).await?;
     let tokenizer = registry.file("tokenizer.json")?;
     let temp_dir = tempfile::tempdir().unwrap();
@@ -32,7 +30,6 @@ async fn test_corrupt_body_fails_crc(
     task.download().await.unwrap();
     let state = wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Error(_))).await;
     let message = error_message(state);
-    tracing::info!(message, "download failed as expected");
     assert!(
         message.contains("CRC") || message.contains("checksum"),
         "unexpected error: {message}"

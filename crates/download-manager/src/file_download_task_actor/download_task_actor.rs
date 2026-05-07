@@ -1,25 +1,29 @@
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use statig::awaitable::StateMachine;
 use tokio::sync::{
     Mutex as TokioMutex,
     broadcast::Sender as TokioBroadcastSender,
     mpsc::Receiver as TokioMpscReceiver,
+    oneshot::Sender as TokioOneshotSender,
     watch::{Receiver as TokioWatchReceiver, Sender as TokioWatchSender},
 };
 
 use crate::{
-    DownloadError, FileDownloadState,
-    download_log_event::{DownloadLogEvent, record_download_log_event},
+    DownloadError, FileCheck, FileDownloadState, LockFileState, check_lock_file,
+    crc_utils::{calculate_and_verify_crc, crc_path_for_file, save_crc_file},
     file_download_task_actor::{
-        BackendEvent, DownloadLifecycleState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
-        TerminalOutcome,
-        fsm::{DispatchContext, DownloadActorEffect, DownloadFsm, FsmEvent},
-        project_runtime_public_state,
+        BackendEvent, DownloadActorState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
+        TerminalOutcome, project_runtime_public_state,
     },
-    lock_manager::lock_path_for_destination,
+    lock_manager::{DestinationLockLease, lock_path_for_destination},
     release_lock_if_owned,
-    traits::{ActiveTask, DownloadBackend, DownloadConfig},
+    traits::{
+        ActiveDownloadGeneration, ActiveDownloadGenerationCounter, ActiveTask, BackendContext, BackendEventSender,
+        DownloadBackend, DownloadConfig,
+    },
 };
 
 enum ActorLoopExit {
@@ -29,7 +33,10 @@ enum ActorLoopExit {
 
 pub struct DownloadTaskActor<B: DownloadBackend> {
     config: Arc<DownloadConfig>,
-    lifecycle: StateMachine<DownloadFsm<B>>,
+    context: Arc<B::Context>,
+    backend_event_sender: BackendEventSender,
+    generation_counter: ActiveDownloadGenerationCounter,
+    state: DownloadActorState<B>,
     projection: PublicProjection,
     progress_counters: ProgressCounters,
     command_receiver: TokioMpscReceiver<TaskCommand>,
@@ -39,13 +46,17 @@ pub struct DownloadTaskActor<B: DownloadBackend> {
     public_state_sender: TokioWatchSender<FileDownloadState>,
     progress_sender: TokioBroadcastSender<FileDownloadState>,
     terminal_sender: TokioWatchSender<TerminalOutcome>,
+    pending_terminal_outcome: Option<TerminalOutcome>,
 }
 
 impl<B: DownloadBackend> DownloadTaskActor<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Arc<DownloadConfig>,
-        lifecycle: StateMachine<DownloadFsm<B>>,
+        context: Arc<B::Context>,
+        backend_event_sender: BackendEventSender,
+        generation_counter: ActiveDownloadGenerationCounter,
+        state: DownloadActorState<B>,
         projection: PublicProjection,
         progress_counters: ProgressCounters,
         command_receiver: TokioMpscReceiver<TaskCommand>,
@@ -58,7 +69,10 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
     ) -> Self {
         Self {
             config,
-            lifecycle,
+            context,
+            backend_event_sender,
+            generation_counter,
+            state,
             projection,
             progress_counters,
             command_receiver,
@@ -68,6 +82,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             public_state_sender,
             progress_sender,
             terminal_sender,
+            pending_terminal_outcome: None,
         }
     }
 
@@ -91,43 +106,63 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                         break;
                     };
                     self.handle_backend_event(backend_event).await;
+                    self.publish_current_state();
+                    self.flush_terminal_outcome();
                 }
                 progress_wake_result = self.progress_waker_receiver.changed() => {
                     if progress_wake_result.is_err() {
                         break;
                     }
                     self.handle_pending_progress().await;
+                    self.publish_current_state();
+                    self.flush_terminal_outcome();
                 }
             }
         }
 
         if matches!(loop_exit, ActorLoopExit::PreserveArtifacts) {
             self.stop_preserving_artifacts().await;
+            self.publish_current_state();
+            self.flush_terminal_outcome();
         }
-        let _ = self.terminal_sender.send(TerminalOutcome::ActorStopped);
-    }
-
-    pub(crate) async fn abort_before_start(mut self) {
-        // SAFETY: The actor was never scheduled, so no state handler can be active.
-        // We only take the backend task before discarding the whole state machine.
-        let lifecycle_state = unsafe { self.lifecycle.state_mut() };
-        let active_task = match lifecycle_state {
-            DownloadLifecycleState::Downloading {
-                active_task,
-                ..
-            } => active_task.take(),
-            _ => None,
-        };
-        if let Some(active_task) = active_task {
-            let _ = active_task.cancel(&self.config.destination).await;
-        }
-        let lock_path = lock_path_for_destination(&self.config.destination);
-        let _ = release_lock_if_owned(&lock_path, &self.config.manager_id, self.config.manager_instance_id).await;
         let _ = self.terminal_sender.send(TerminalOutcome::ActorStopped);
     }
 
     async fn stop_preserving_artifacts(&mut self) {
-        self.dispatch(FsmEvent::StopPreservingArtifacts, None).await;
+        let current_state = std::mem::replace(&mut self.state, DownloadActorState::NotDownloaded);
+        let from_state = current_state.name();
+        match current_state {
+            DownloadActorState::Downloading {
+                active_task,
+                destination_lease,
+                ..
+            } => match active_task.pause(&self.config.destination).await {
+                Ok(part_path) => {
+                    let downloaded_bytes = file_size(&part_path).unwrap_or(0);
+                    self.progress_counters = ProgressCounters {
+                        downloaded_bytes,
+                        total_bytes: self.config.expected_bytes.unwrap_or(downloaded_bytes),
+                    };
+                    release_destination_lease(destination_lease).await;
+                    self.finish_transition(
+                        from_state,
+                        DownloadActorState::Paused {
+                            part_path,
+                        },
+                    );
+                },
+                Err(error) => {
+                    tracing::debug!("failed to preserve resume data while stopping download actor: {error}");
+                    self.progress_counters = ProgressCounters::default();
+                    release_destination_lease(destination_lease).await;
+                    self.finish_transition(from_state, DownloadActorState::NotDownloaded);
+                },
+            },
+            state => {
+                self.state = state;
+            },
+        }
+
         let lock_path = lock_path_for_destination(&self.config.destination);
         let _ = release_lock_if_owned(&lock_path, &self.config.manager_id, self.config.manager_instance_id).await;
     }
@@ -140,26 +175,135 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             TaskCommand::Download {
                 reply_sender,
             } => {
-                self.dispatch(FsmEvent::Download, Some(reply_sender)).await;
+                let result = self.handle_download().await;
+                self.publish_current_state();
+                self.flush_terminal_outcome();
+                send_reply(reply_sender, result);
                 true
             },
             TaskCommand::Pause {
                 reply_sender,
             } => {
-                self.dispatch(FsmEvent::Pause, Some(reply_sender)).await;
+                let result = self.handle_pause().await;
+                self.publish_current_state();
+                self.flush_terminal_outcome();
+                send_reply(reply_sender, result);
                 true
             },
             TaskCommand::Cancel {
                 reply_sender,
             } => {
-                self.dispatch(FsmEvent::Cancel, Some(reply_sender)).await;
+                let result = self.handle_cancel_or_remove().await;
+                self.publish_current_state();
+                self.flush_terminal_outcome();
+                send_reply(reply_sender, result);
                 true
             },
             TaskCommand::Remove {
                 reply_sender,
             } => {
-                self.dispatch(FsmEvent::Remove, Some(reply_sender)).await;
+                let result = self.handle_cancel_or_remove().await;
+                self.publish_current_state();
+                self.flush_terminal_outcome();
+                send_reply(reply_sender, result);
                 false
+            },
+        }
+    }
+
+    async fn handle_download(&mut self) -> Result<(), DownloadError> {
+        match &self.state {
+            DownloadActorState::NotDownloaded => self.start_fresh_download().await,
+            DownloadActorState::Paused {
+                part_path,
+            } => self.resume_download(part_path.clone()).await,
+            DownloadActorState::Downloading {
+                ..
+            }
+            | DownloadActorState::Downloaded {
+                ..
+            } => Ok(()),
+        }
+    }
+
+    async fn handle_pause(&mut self) -> Result<(), DownloadError> {
+        let current_state = std::mem::replace(&mut self.state, DownloadActorState::NotDownloaded);
+        let from_state = current_state.name();
+        match current_state {
+            DownloadActorState::Downloading {
+                active_task,
+                destination_lease,
+                ..
+            } => {
+                let pause_result = active_task.pause(&self.config.destination).await;
+                release_destination_lease(destination_lease).await;
+                match pause_result {
+                    Ok(part_path) => {
+                        let downloaded_bytes = file_size(&part_path).unwrap_or(0);
+                        self.progress_counters = ProgressCounters {
+                            downloaded_bytes,
+                            total_bytes: self.config.expected_bytes.unwrap_or(downloaded_bytes),
+                        };
+                        self.finish_transition(
+                            from_state,
+                            DownloadActorState::Paused {
+                                part_path,
+                            },
+                        );
+                        Ok(())
+                    },
+                    Err(error) => {
+                        let message = error.to_string();
+                        self.projection = PublicProjection::StickyError(message.clone());
+                        self.progress_counters = ProgressCounters::default();
+                        self.pending_terminal_outcome = Some(TerminalOutcome::Error(message.clone()));
+                        self.finish_transition(from_state, DownloadActorState::NotDownloaded);
+                        Err(DownloadError::Backend(message))
+                    },
+                }
+            },
+            DownloadActorState::Paused {
+                ..
+            } => {
+                self.state = current_state;
+                Ok(())
+            },
+            state => {
+                self.state = state;
+                Err(DownloadError::InvalidStateTransition)
+            },
+        }
+    }
+
+    async fn handle_cancel_or_remove(&mut self) -> Result<(), DownloadError> {
+        let current_state = std::mem::replace(&mut self.state, DownloadActorState::NotDownloaded);
+        let from_state = current_state.name();
+        match current_state {
+            DownloadActorState::Downloading {
+                active_task,
+                destination_lease,
+                ..
+            } => {
+                let _ = active_task.cancel(&self.config.destination).await;
+                remove_resume_artifact(&self.config.destination);
+                self.progress_counters = ProgressCounters::default();
+                self.projection = PublicProjection::None;
+                release_destination_lease(destination_lease).await;
+                self.finish_transition(from_state, DownloadActorState::NotDownloaded);
+                Ok(())
+            },
+            DownloadActorState::Paused {
+                part_path,
+            } => {
+                remove_file(&part_path);
+                self.progress_counters = ProgressCounters::default();
+                self.projection = PublicProjection::None;
+                self.finish_transition(from_state, DownloadActorState::NotDownloaded);
+                Ok(())
+            },
+            state => {
+                self.state = state;
+                Ok(())
             },
         }
     }
@@ -171,28 +315,97 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         match backend_event {
             BackendEvent::Completed {
                 generation,
-            } => {
-                self.dispatch(
-                    FsmEvent::BackendCompleted {
-                        generation,
-                    },
-                    None,
-                )
-                .await
-            },
+            } => self.handle_backend_completed(generation).await,
             BackendEvent::Error {
-                message,
                 generation,
-            } => {
-                self.dispatch(
-                    FsmEvent::BackendError {
-                        generation,
-                        message,
-                    },
-                    None,
-                )
-                .await
-            },
+                message,
+            } => self.handle_backend_error(generation, message).await,
+        }
+    }
+
+    async fn handle_backend_completed(
+        &mut self,
+        completed_generation: ActiveDownloadGeneration,
+    ) {
+        let should_handle = matches!(
+            &self.state,
+            DownloadActorState::Downloading {
+                generation,
+                ..
+            } if *generation == completed_generation
+        );
+        if !should_handle {
+            return;
+        }
+
+        let current_state = std::mem::replace(&mut self.state, DownloadActorState::NotDownloaded);
+        let from_state = current_state.name();
+        if let DownloadActorState::Downloading {
+            destination_lease,
+            ..
+        } = current_state
+        {
+            match validate_completed_file(&self.config).await {
+                Ok(total_bytes) => {
+                    self.progress_counters = ProgressCounters {
+                        downloaded_bytes: total_bytes,
+                        total_bytes,
+                    };
+                    self.projection = PublicProjection::None;
+                    release_destination_lease(destination_lease).await;
+                    self.finish_transition(
+                        from_state,
+                        DownloadActorState::Downloaded {
+                            file_path: self.config.destination.clone(),
+                            crc_path: crc_path_for_destination(&self.config.destination),
+                        },
+                    );
+                    self.pending_terminal_outcome = Some(TerminalOutcome::Downloaded);
+                },
+                Err(message) => {
+                    remove_file(&self.config.destination);
+                    remove_resume_artifact(&self.config.destination);
+                    self.progress_counters = ProgressCounters::default();
+                    self.projection = PublicProjection::StickyError(message.clone());
+                    release_destination_lease(destination_lease).await;
+                    self.finish_transition(from_state, DownloadActorState::NotDownloaded);
+                    self.pending_terminal_outcome = Some(TerminalOutcome::Error(message));
+                },
+            }
+        }
+    }
+
+    async fn handle_backend_error(
+        &mut self,
+        error_generation: ActiveDownloadGeneration,
+        message: String,
+    ) {
+        let should_handle = matches!(
+            &self.state,
+            DownloadActorState::Downloading {
+                generation,
+                ..
+            } if *generation == error_generation
+        );
+        if !should_handle {
+            return;
+        }
+
+        let current_state = std::mem::replace(&mut self.state, DownloadActorState::NotDownloaded);
+        let from_state = current_state.name();
+        if let DownloadActorState::Downloading {
+            active_task,
+            destination_lease,
+            ..
+        } = current_state
+        {
+            let _ = active_task.cancel(&self.config.destination).await;
+            remove_resume_artifact(&self.config.destination);
+            self.projection = PublicProjection::StickyError(message.clone());
+            self.progress_counters = ProgressCounters::default();
+            release_destination_lease(destination_lease).await;
+            self.finish_transition(from_state, DownloadActorState::NotDownloaded);
+            self.pending_terminal_outcome = Some(TerminalOutcome::Error(message));
         }
     }
 
@@ -202,70 +415,240 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             return;
         };
 
-        self.dispatch(
-            FsmEvent::ProgressUpdate {
-                generation: progress.generation,
+        if let DownloadActorState::Downloading {
+            generation,
+            ..
+        } = &self.state
+            && *generation == progress.generation
+        {
+            self.progress_counters = ProgressCounters {
                 downloaded_bytes: progress.downloaded_bytes,
-                total_bytes: progress.total_bytes,
+                total_bytes: progress.total_bytes.or(self.config.expected_bytes).unwrap_or(progress.downloaded_bytes),
+            };
+        }
+    }
+
+    async fn start_fresh_download(&mut self) -> Result<(), DownloadError> {
+        let lease = self.acquire_destination_lease().await?;
+        let generation = self.generation_counter.allocate_next();
+        let active_task = match self
+            .context
+            .download(Arc::clone(&self.config), generation, self.backend_event_sender.clone(), &lease)
+            .await
+        {
+            Ok(active_task) => active_task,
+            Err(error) => {
+                release_destination_lease(lease).await;
+                return Err(DownloadError::Backend(error.to_string()));
             },
-            None,
-        )
-        .await;
+        };
+
+        self.projection = PublicProjection::None;
+        self.progress_counters = ProgressCounters {
+            downloaded_bytes: 0,
+            total_bytes: self.config.expected_bytes.unwrap_or(0),
+        };
+        self.transition_to(DownloadActorState::Downloading {
+            active_task,
+            generation,
+            destination_lease: lease,
+        });
+        Ok(())
+    }
+
+    async fn resume_download(
+        &mut self,
+        part_path: PathBuf,
+    ) -> Result<(), DownloadError> {
+        if !part_path.exists() {
+            remove_file(&part_path);
+            let message = "resume artifact is missing".to_string();
+            self.projection = PublicProjection::StickyError(message.clone());
+            self.progress_counters = ProgressCounters::default();
+            self.transition_to(DownloadActorState::NotDownloaded);
+            self.pending_terminal_outcome = Some(TerminalOutcome::Error(message.clone()));
+            return Err(DownloadError::Backend(message));
+        }
+
+        let lease = self.acquire_destination_lease().await?;
+        let generation = self.generation_counter.allocate_next();
+        let resume_bytes = file_size(&part_path).unwrap_or(0);
+        let active_task = match self
+            .context
+            .resume(Arc::clone(&self.config), generation, &part_path, self.backend_event_sender.clone(), &lease)
+            .await
+        {
+            Ok(active_task) => active_task,
+            Err(error) => {
+                release_destination_lease(lease).await;
+                remove_file(&part_path);
+                let message = error.to_string();
+                self.projection = PublicProjection::StickyError(message.clone());
+                self.progress_counters = ProgressCounters::default();
+                self.transition_to(DownloadActorState::NotDownloaded);
+                self.pending_terminal_outcome = Some(TerminalOutcome::Error(message.clone()));
+                return Err(DownloadError::Backend(message));
+            },
+        };
+
+        self.projection = PublicProjection::None;
+        self.progress_counters = ProgressCounters {
+            downloaded_bytes: resume_bytes,
+            total_bytes: self.config.expected_bytes.unwrap_or(resume_bytes),
+        };
+        self.transition_to(DownloadActorState::Downloading {
+            active_task,
+            generation,
+            destination_lease: lease,
+        });
+        Ok(())
+    }
+
+    async fn acquire_destination_lease(&mut self) -> Result<DestinationLockLease, DownloadError> {
+        let lock_path = lock_path_for_destination(&self.config.destination);
+        match check_lock_file(&lock_path, &self.config.manager_id, self.config.manager_instance_id, std::process::id())
+            .await
+        {
+            LockFileState::OwnedByOtherApp(lock_file_info) => {
+                self.projection = PublicProjection::LockedByOther(lock_file_info.manager_id.clone());
+                Err(DownloadError::LockedByOther(lock_file_info.manager_id))
+            },
+            LockFileState::Missing
+            | LockFileState::OwnedByUs(_)
+            | LockFileState::OwnedBySameAppOldProcess(_)
+            | LockFileState::Stale(_)
+            | LockFileState::StaleUnparseable(_) => {
+                match DestinationLockLease::acquire(
+                    &lock_path,
+                    &self.config.manager_id,
+                    self.config.manager_instance_id,
+                )
+                .await
+                {
+                    Ok(lease) => Ok(lease),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        match check_lock_file(
+                            &lock_path,
+                            &self.config.manager_id,
+                            self.config.manager_instance_id,
+                            std::process::id(),
+                        )
+                        .await
+                        {
+                            LockFileState::OwnedByOtherApp(lock_file_info) => {
+                                self.projection = PublicProjection::LockedByOther(lock_file_info.manager_id.clone());
+                                Err(DownloadError::LockedByOther(lock_file_info.manager_id))
+                            },
+                            _ => Err(DownloadError::from(error)),
+                        }
+                    },
+                    Err(error) => Err(DownloadError::from(error)),
+                }
+            },
+        }
     }
 
     fn publish_current_state(&self) {
-        let public_state = project_runtime_public_state(
-            self.lifecycle.state(),
-            &self.projection,
-            self.progress_counters,
-            &self.config,
-        );
+        let public_state =
+            project_runtime_public_state(&self.state, &self.projection, self.progress_counters, &self.config);
         let _ = self.public_state_sender.send(public_state.clone());
         let _ = self.progress_sender.send(public_state);
     }
 
-    async fn dispatch(
-        &mut self,
-        event: FsmEvent,
-        reply_sender: Option<tokio::sync::oneshot::Sender<Result<(), DownloadError>>>,
-    ) {
-        let mut dispatch_context = DispatchContext::new(reply_sender);
-        self.lifecycle.handle_with_context(&event, &mut dispatch_context).await;
-        let pending_reply = self.apply_non_reply_effects(&mut dispatch_context).await;
-        self.publish_current_state();
-        if let Some((reply_sender, result)) = pending_reply {
-            let _ = reply_sender.send(result);
+    fn flush_terminal_outcome(&mut self) {
+        if let Some(terminal_outcome) = self.pending_terminal_outcome.take() {
+            let _ = self.terminal_sender.send(terminal_outcome);
         }
     }
 
-    async fn apply_non_reply_effects(
+    fn transition_to(
         &mut self,
-        dispatch_context: &mut DispatchContext,
-    ) -> Option<(tokio::sync::oneshot::Sender<Result<(), DownloadError>>, Result<(), DownloadError>)> {
-        let mut pending_reply = None;
-        for effect in dispatch_context.effects.drain(..) {
-            match effect {
-                DownloadActorEffect::SetProjection(projection) => self.projection = projection,
-                DownloadActorEffect::SetProgress(progress_counters) => self.progress_counters = progress_counters,
-                DownloadActorEffect::CompleteWaiters(terminal_outcome) => {
-                    let _ = self.terminal_sender.send(terminal_outcome);
-                },
-                DownloadActorEffect::Reply(result) => {
-                    if let Some(reply_sender) = dispatch_context.pending_reply.take() {
-                        pending_reply = Some((reply_sender, result));
-                    }
-                },
-                DownloadActorEffect::LogFsmTransition {
-                    from,
-                    to,
-                } => {
-                    record_download_log_event(DownloadLogEvent::FsmTransition {
-                        from,
-                        to,
-                    });
-                },
-            }
+        next_state: DownloadActorState<B>,
+    ) {
+        let from_state = self.state.name();
+        self.finish_transition(from_state, next_state);
+    }
+
+    fn finish_transition(
+        &mut self,
+        from_state: &'static str,
+        next_state: DownloadActorState<B>,
+    ) {
+        let to_state = next_state.name();
+        self.state = next_state;
+        if from_state != to_state {
+            tracing::debug!(from = from_state, to = to_state, "download actor state transition");
         }
-        pending_reply
+    }
+}
+
+fn send_reply(
+    reply_sender: TokioOneshotSender<Result<(), DownloadError>>,
+    result: Result<(), DownloadError>,
+) {
+    let _ = reply_sender.send(result);
+}
+
+async fn release_destination_lease(destination_lease: DestinationLockLease) {
+    let _ = destination_lease.release().await;
+}
+
+fn file_size(path: &Path) -> Option<u64> {
+    path.metadata().ok().map(|metadata| metadata.len())
+}
+
+fn remove_file(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+fn remove_resume_artifact(destination: &Path) {
+    remove_file(&destination.with_extension("part"));
+    remove_file(&destination.with_extension("resume_data"));
+}
+
+fn crc_path_for_destination(destination: &Path) -> Option<PathBuf> {
+    let crc_path = crc_path_for_file(destination);
+    crc_path.exists().then_some(crc_path)
+}
+
+async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String> {
+    let mut metadata = config.destination.metadata().ok();
+    for _attempt in 0..10 {
+        if metadata.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        metadata = config.destination.metadata().ok();
+    }
+    let metadata = metadata.ok_or_else(|| "download completed but destination is missing".to_string())?;
+    let actual_bytes = metadata.len();
+
+    if let Some(expected_bytes) = config.expected_bytes
+        && expected_bytes != actual_bytes
+    {
+        return Err(format!("downloaded file is {actual_bytes} bytes but registry declared {expected_bytes}"));
+    }
+
+    let total_bytes = config.expected_bytes.unwrap_or(actual_bytes);
+
+    match &config.file_check {
+        FileCheck::None => Ok(total_bytes),
+        FileCheck::CRC(expected_crc) => {
+            let destination = config.destination.clone();
+            let expected = expected_crc.clone();
+            let crc_result = tokio::task::spawn_blocking(move || calculate_and_verify_crc(&destination, &expected))
+                .await
+                .map_err(|error| format!("CRC verification error: {error}"))?;
+            match crc_result {
+                Ok(true) => {
+                    let destination = config.destination.clone();
+                    let expected = expected_crc.clone();
+                    let _ = tokio::task::spawn_blocking(move || save_crc_file(&destination, &expected)).await;
+                    Ok(total_bytes)
+                },
+                Ok(false) => Err("CRC verification failed".to_string()),
+                Err(error) => Err(format!("CRC verification error: {error}")),
+            }
+        },
     }
 }

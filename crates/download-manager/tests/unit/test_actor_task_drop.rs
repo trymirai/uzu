@@ -30,15 +30,8 @@ async fn remove_paused_task_deletes_resume_artifact(
 
     manager.remove_file_task(task.download_id()).await?;
 
-    assert!(
-        !resume_artifact.exists(),
-        "manager removal must delete resume artifact at {}",
-        resume_artifact.display(),
-    );
-    assert!(
-        matches!(task.download().await, Err(DownloadError::TaskStopped)),
-        "old task handles must be permanently stopped after manager removal",
-    );
+    assert!(!resume_artifact.exists());
+    assert!(matches!(task.download().await, Err(DownloadError::TaskStopped)));
     Ok(())
 }
 
@@ -69,14 +62,11 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
     let mut progress = task.progress().await.unwrap();
     task.download().await.unwrap();
     wait_for_phase(&task, &mut progress, |phase| matches!(phase, FileDownloadPhase::Downloading)).await;
-    assert!(lock_path.exists(), "precondition: lock acquired during Downloading");
+    assert!(lock_path.exists());
 
     manager.remove_file_task(task.download_id()).await.unwrap();
 
-    assert!(
-        matches!(task.download().await, Err(DownloadError::TaskStopped)),
-        "old task handles must be permanently stopped after manager removal",
-    );
+    assert!(matches!(task.download().await, Err(DownloadError::TaskStopped)));
     let replacement_task = manager
         .file_download_task(
             &tokenizer.file.url,
@@ -86,10 +76,7 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
         )
         .await
         .unwrap();
-    assert!(
-        !Arc::ptr_eq(&task, &replacement_task),
-        "manager removal must evict the stopped task before allowing a replacement to be built",
-    );
+    assert!(!Arc::ptr_eq(&task, &replacement_task));
     drop(replacement_task);
 
     let mut lock_released = false;
@@ -100,24 +87,12 @@ async fn dropping_active_download_cancels_backend_before_releasing_lock(
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert!(
-        lock_released,
-        "lock at {} was not released within 2s after dropping an active download",
-        lock_path.display(),
-    );
-    assert!(
-        !resume_artifact.exists(),
-        "Cancel must remove the resume artifact at {} as part of shutdown — its presence proves the actor never \
-         dispatched Cancel and likely just unlinked the lock while the backend was still writing",
-        resume_artifact.display(),
-    );
+    assert!(lock_released);
+    assert!(!resume_artifact.exists());
 
     let destination_size_at_release = destination.metadata().map(|m| m.len()).unwrap_or(0);
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let destination_size_after = destination.metadata().map(|m| m.len()).unwrap_or(0);
-    assert_eq!(
-        destination_size_at_release, destination_size_after,
-        "destination changed after the lock was released — backend was still writing",
-    );
+    assert_eq!(destination_size_at_release, destination_size_after);
     Ok(())
 }

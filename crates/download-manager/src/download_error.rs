@@ -40,10 +40,6 @@ pub enum DownloadError {
     TaskStopped,
     #[error("channel closed")]
     ChannelClosed,
-    #[error("download actor scheduler failed to start: {0}")]
-    ActorSchedulerStartFailed(String),
-    #[error("download actor scheduler stopped")]
-    ActorSchedulerStopped,
     #[error("backend error: {0}")]
     Backend(String),
 }

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, mpsc::Sender as TokioMpscSender, watch::Sender as TokioWatchSender};
 
 use crate::{
-    download_log_event::{DownloadLogEvent, record_download_log_event},
     file_download_task_actor::{BackendEvent, BackendProgress, PendingProgressSlot},
     traits::ActiveDownloadGeneration,
 };
@@ -33,9 +32,6 @@ impl BackendEventSender {
         &self,
         event: BackendEvent,
     ) -> Result<(), BackendEvent> {
-        record_download_log_event(DownloadLogEvent::BackendTerminal {
-            event: event.clone(),
-        });
         self.terminal_event_sender.send(event).await.map_err(|error| error.0)
     }
 
@@ -45,11 +41,6 @@ impl BackendEventSender {
         downloaded_bytes: u64,
         total_bytes: Option<u64>,
     ) {
-        record_download_log_event(DownloadLogEvent::BackendProgress {
-            generation,
-            downloaded_bytes,
-            total_bytes,
-        });
         let mut pending_progress = self.progress_coalescer.pending_progress.lock().await;
         pending_progress.progress = Some(BackendProgress {
             generation,
