@@ -73,11 +73,7 @@ impl MetalSparseHeap {
                 } else {
                     MTLSparseTextureMappingMode::Unmap
                 };
-                let buffer_range = Range {
-                    start: op.buffer_pages.start,
-                    end: op.buffer_pages.end,
-                };
-                MTL4UpdateSparseBufferMappingOperation::new(mode, buffer_range, op.heap_page_offset)
+                MTL4UpdateSparseBufferMappingOperation::new(mode, op.buffer_pages.clone(), op.heap_page_offset)
             })
             .collect::<Vec<_>>();
 

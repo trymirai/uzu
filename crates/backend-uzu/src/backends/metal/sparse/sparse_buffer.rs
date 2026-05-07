@@ -2,6 +2,7 @@ use std::{fmt::Debug, ops::Range};
 
 use bytesize::ByteSize;
 use metal::prelude::*;
+use rangemap::RangeMap;
 
 use crate::{
     backends::{
@@ -14,6 +15,7 @@ use crate::{
 #[derive(Debug)]
 pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    mapped_pages: RangeMap<usize, ()>,
 }
 
 impl MetalSparseBuffer {
@@ -35,6 +37,7 @@ impl MetalSparseBuffer {
 
         Ok(Self {
             buffer,
+            mapped_pages: RangeMap::new(),
         })
     }
 }
@@ -64,7 +67,12 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        context.sparse_heaps_mapper_mut().mapping(context, &self.buffer, pages)
+        let gaps: Vec<Range<usize>> = self.mapped_pages.gaps(pages).collect();
+        for gap in gaps {
+            context.sparse_heaps_mapper_mut().mapping(context, &self.buffer, &gap)?;
+            self.mapped_pages.insert(gap, ());
+        }
+        Ok(())
     }
 
     fn unmapping(
@@ -72,7 +80,13 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        context.sparse_heaps_mapper_mut().unmapping(context, &self.buffer, pages)
+        let ranges: Vec<Range<usize>> =
+            self.mapped_pages.overlapping(pages).map(|(r, _)| r.start.max(pages.start)..r.end.min(pages.end)).collect();
+        for range in ranges {
+            context.sparse_heaps_mapper_mut().unmapping(context, &self.buffer, &range)?;
+            self.mapped_pages.remove(range);
+        }
+        Ok(())
     }
 }
 
