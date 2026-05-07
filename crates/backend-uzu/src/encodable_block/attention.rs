@@ -219,7 +219,7 @@ impl<B: Backend> Attention<B> {
                     .as_transformer_mut()
                     .expect("Shared KV target layer must be transformer");
                 target_layer.state = KVCacheLayerState::Full {
-                    prefix_len: source_prefix_length + suffix_length,
+                    prefix_len: source_prefix_length + projection_step + suffix_length,
                 };
                 let target_keys = target_layer.keys.clone();
                 let target_values = target_layer.values.clone();
@@ -231,7 +231,7 @@ impl<B: Backend> Attention<B> {
                 KVCacheLayerState::Full {
                     prefix_len,
                 } => {
-                    let rows_to_copy = prefix_len + suffix_length;
+                    let rows_to_copy = prefix_len + projection_step + suffix_length;
                     let bytes_to_copy = rows_to_copy * row_size;
                     debug_assert!(target_keys.size() >= bytes_to_copy);
                     debug_assert!(target_values.size() >= bytes_to_copy);
@@ -271,11 +271,17 @@ impl<B: Backend> Attention<B> {
                         );
                     }
 
+                    let extra_rows_to_copy = projection_step + suffix_length;
                     let target_suffix_start = ring_length;
                     let source_suffix_start = source_state
-                        .shared_kv_suffix_source_start()
+                        .shared_kv_suffix_source_start(
+                            extra_rows_to_copy,
+                            0,
+                            state.is_prefilling(),
+                            state.sampling_start(),
+                        )
                         .expect("Windowed shared KV source layer must have suffix source");
-                    for token_index in 0..suffix_length {
+                    for token_index in 0..extra_rows_to_copy {
                         let source_row = source_suffix_start + token_index;
                         let target_row = target_suffix_start + token_index;
                         let source_start = source_keys.offset() + source_row * row_size;

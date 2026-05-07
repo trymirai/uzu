@@ -157,12 +157,7 @@ impl<B: Backend> TokenDecoderContext<B> {
         let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), decoder_config, model_shape)));
         let transformer_tree = root_loader_view.subtree(transformer_subtree).map_err(|_| Error::UnableToLoadWeights)?;
         let mut shared_buffers_borrow = shared_buffers.borrow_mut();
-        if let Some(global_rope) = &mut shared_buffers_borrow.global_rope {
-            global_rope.update_data(&transformer_tree, "global_rope");
-        }
-        if let Some(local_rope) = &mut shared_buffers_borrow.local_rope {
-            local_rope.update_data(&transformer_tree, "local_rope");
-        }
+        shared_buffers_borrow.update_data_from_transformer_tree(&transformer_tree);
         drop(shared_buffers_borrow);
         Ok(shared_buffers)
     }

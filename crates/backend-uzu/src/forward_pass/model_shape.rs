@@ -16,6 +16,8 @@ pub struct ModelShape {
     num_heads: usize,
     num_groups: usize,
     head_dim: usize,
+    num_groups_per_layer: Box<[usize]>,
+    head_dim_per_layer: Box<[usize]>,
     pub num_layers: usize,
     pub sliding_window_length_per_layer: Box<[Option<usize>]>,
     pub kv_source_layers: Box<[Option<usize>]>,
@@ -120,6 +122,26 @@ impl ModelShape {
         let mut max_qkv_dim = 0usize;
         let ple_dim = decoder_config.ple_model_config.as_ref().map(|config| config.ple_dim);
         let total_ple_dim = decoder_config.ple_model_config.as_ref().map(|config| config.ple_dim * config.num_layers);
+        let attention_layer_dimensions = all_layer_configs
+            .iter()
+            .map(|layer_config| match &layer_config.mixer_config {
+                MixerConfig::Attention(attention_config) => (
+                    attention_config.num_groups.unwrap_or(decoder_config.num_groups),
+                    attention_config.head_dim.unwrap_or(decoder_config.head_dim),
+                ),
+                _ => (decoder_config.num_groups, decoder_config.head_dim),
+            })
+            .collect::<Vec<_>>();
+        let num_groups_per_layer = attention_layer_dimensions
+            .iter()
+            .map(|(num_groups, _)| *num_groups)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let head_dim_per_layer = attention_layer_dimensions
+            .iter()
+            .map(|(_, head_dim)| *head_dim)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         for layer_config in &all_layer_configs {
             let mut linear_configs = Vec::new();
 
@@ -129,7 +151,7 @@ impl ModelShape {
                     let rope_dim = layer_config
                         .rope_config
                         .as_ref()
-                        .and_then(|rope| rope.common().head_dim)
+                        .and_then(|rope| rope.rotary_dim())
                         .or(attn.partial_rope_dim)
                         .unwrap_or(hd);
                     max_rope_dim = max_rope_dim.max(rope_dim);
@@ -198,6 +220,8 @@ impl ModelShape {
             num_heads: decoder_config.num_heads,
             num_groups: decoder_config.num_groups,
             head_dim: decoder_config.head_dim,
+            num_groups_per_layer,
+            head_dim_per_layer,
             num_layers: num_layers,
             sliding_window_length_per_layer: decoder_config
                 .sliding_window_sizes
@@ -402,7 +426,7 @@ impl ModelShape {
             } else {
                 max_suffix_length
             };
-            [length + suffix_capacity, self.num_groups, self.head_dim]
+            [length + suffix_capacity, self.num_groups_per_layer[layer_index], self.head_dim_per_layer[layer_index]]
         })
     }
 

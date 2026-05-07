@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use super::RopeType;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ArrayId {
     TokenIds,
@@ -46,9 +44,6 @@ pub enum ArrayId {
     AttentionPartials,
     AttentionSums,
     AttentionMaxs,
-
-    RopeCosines(RopeType),
-    RopeSines(RopeType),
 
     AttentionSinks(usize),
 

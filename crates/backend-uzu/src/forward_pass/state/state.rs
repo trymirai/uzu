@@ -17,7 +17,7 @@ use crate::{
         cache_layers::CacheLayers,
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
-        state::{ArrayId, CommonAuxBuffers, LanguageModelGeneratorAuxBuffers, RopeType, SharedBuffers},
+        state::{ArrayId, CommonAuxBuffers, LanguageModelGeneratorAuxBuffers, SharedBuffers},
     },
     session::parameter::SamplingMethod,
 };
@@ -421,11 +421,6 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::AttentionSums => self.common_aux.attention_sums.clone(),
             ArrayId::AttentionMaxs => self.common_aux.attention_maxs.clone(),
 
-            // Shared buffer arrays
-            ArrayId::RopeCosines(_) | ArrayId::RopeSines(_) => {
-                self.shared_buffer_array(id).expect("Shared buffer array should be available")
-            },
-
             // LLM-specific arrays
             ArrayId::Logits => self.llm_state().logits.clone(),
             ArrayId::TokenSeeds => self.llm_state().token_seeds.clone(),
@@ -582,24 +577,6 @@ impl<B: Backend> ForwardPassState<B> {
             ArrayId::ClassifierPredictionHeadDense => self.classifier_state().dense.clone(),
             ArrayId::ClassifierPredictionHeadNorm => self.classifier_state().norm.clone(),
             ArrayId::ClassifierPredictionHeadLogits => self.classifier_state().classifier_logits.clone(),
-        }
-    }
-
-    fn shared_buffer_array(
-        &self,
-        id: ArrayId,
-    ) -> Option<Array<B>> {
-        let shared = self.shared_buffers.borrow();
-        match id {
-            ArrayId::RopeCosines(rope_type) => Some(match rope_type {
-                RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").cosines.clone(),
-                RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").cosines.clone(),
-            }),
-            ArrayId::RopeSines(rope_type) => Some(match rope_type {
-                RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").sines.clone(),
-                RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").sines.clone(),
-            }),
-            _ => None,
         }
     }
 

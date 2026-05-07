@@ -7,13 +7,13 @@ use thiserror::Error;
 use crate::{
     DataType,
     backends::common::{Backend, Encoder},
-    config::{DecoderConfig, DecoderLayerType, MixerConfig},
+    config::{DecoderConfig, DecoderLayerType, MixerConfig, RoPEConfig},
     encodable_block::{
         Embedding, EncodingParameters, LayerExecutables, PerLayerEmbedding, RMSNorm, Rope, embedding::EmbeddingError,
     },
     forward_pass::{
         model_shape::ModelShape,
-        state::{ArrayId, ForwardPassState, RopeType},
+        state::{ArrayId, ForwardPassState},
     },
     parameters::ParameterTree,
 };
@@ -148,19 +148,13 @@ impl<B: Backend> Decoder<B> {
             MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
         };
 
-        let global_rope = if decoder_config.global_rope_config.is_some() {
-            attention_data_type
-                .as_ref()
-                .map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Global))
-        } else {
-            None
-        };
+        let global_rope = decoder_config.global_rope_config.as_ref().and_then(|rope_config| {
+            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
+        });
 
-        let local_rope = if decoder_config.local_rope_config.is_some() {
-            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Local))
-        } else {
-            None
-        };
+        let local_rope = decoder_config.local_rope_config.as_ref().and_then(|rope_config| {
+            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
+        });
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
         let sliding_window_sizes = model_shape.sliding_window_length_per_layer.clone();
@@ -175,7 +169,13 @@ impl<B: Backend> Decoder<B> {
                 let layer_type = model_shape.layer_type(layer_index);
                 let rope_for_layer = match layer_type {
                     DecoderLayerType::Transformer => {
-                        if let Some(_) = sliding_window_sizes[layer_index]
+                        if layer_config.rope_config.is_some() {
+                            layer_config.rope_config.as_ref().and_then(|rope_config| {
+                                attention_data_type
+                                    .as_ref()
+                                    .map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
+                            })
+                        } else if let Some(_) = sliding_window_sizes[layer_index]
                             && let Some(local_rope_block) = local_rope.clone()
                         {
                             Some(local_rope_block)
@@ -234,9 +234,9 @@ impl<B: Backend> Decoder<B> {
     fn create_rope_block(
         context: &B::Context,
         data_type: DataType,
-        rope_type: RopeType,
+        rope_config: &RoPEConfig,
     ) -> Rc<Rope<B>> {
-        Rc::new(Rope::<B>::new(context, data_type, rope_type).expect("Failed to create Rope"))
+        Rc::new(Rope::<B>::new(context, data_type, rope_config).expect("Failed to create Rope"))
     }
 
     fn attention_data_type(decoder_config: &DecoderConfig) -> Option<DataType> {

@@ -224,7 +224,7 @@ fn bench_soft_cap(
                 let mut encoder = Encoder::<Metal>::new(context).expect("Failed to create encoder");
                 for _ in 0..iteration_count {
                     kernel.encode(
-                        None::<&<Metal as Backend>::Buffer>,
+                        None::<&<Metal as Backend>::DenseBuffer>,
                         logits_buffer.borrow_mut().deref_mut(),
                         (batch_size * vocabulary_size) as u32,
                         30.0,

@@ -74,9 +74,23 @@ impl<B: Backend> LayerExecutables<B> {
                 let layer_rope_dim = layer_config
                     .rope_config
                     .as_ref()
-                    .and_then(|rope| rope.common().head_dim)
+                    .and_then(|rope| rope.rotary_dim())
                     .or(attention_config.partial_rope_dim)
                     .unwrap_or(layer_head_dim);
+                let rotary_pair_stride = layer_config
+                    .rope_config
+                    .as_ref()
+                    .and_then(|rope| rope.rotary_pair_stride())
+                    .or_else(|| {
+                        attention_config.partial_rope_dim.map(|partial_rope_dim| {
+                            if partial_rope_dim < layer_head_dim {
+                                layer_head_dim / 2
+                            } else {
+                                partial_rope_dim / 2
+                            }
+                        })
+                    })
+                    .unwrap_or(layer_rope_dim / 2);
 
                 let q_dim = layer_num_heads * layer_head_dim;
                 let kv_dim = layer_num_groups * layer_head_dim;
@@ -177,6 +191,7 @@ impl<B: Backend> LayerExecutables<B> {
                         rope: rope_block,
                         use_rope,
                         rope_dim: layer_rope_dim,
+                        rotary_pair_stride,
                         num_heads: layer_num_heads,
                         num_groups: layer_num_groups,
                         head_dim: layer_head_dim,
@@ -369,6 +384,7 @@ impl<B: Backend> LayerExecutables<B> {
                 rope,
                 use_rope,
                 rope_dim,
+                rotary_pair_stride,
                 num_heads,
                 num_groups,
                 head_dim,
@@ -385,7 +401,16 @@ impl<B: Backend> LayerExecutables<B> {
                 if let Some(norm) = value_norm {
                     norm.encode(state, encoder);
                 }
-                rope.encode(state, *use_rope, *num_heads, *num_groups, *head_dim, *rope_dim, encoder)?;
+                rope.encode(
+                    state,
+                    *use_rope,
+                    *num_heads,
+                    *num_groups,
+                    *head_dim,
+                    *rope_dim,
+                    *rotary_pair_stride,
+                    encoder,
+                )?;
                 attention.encode(state, parameters, encoder)?;
                 out_projection.encode(state, encoder)?;
                 #[cfg(feature = "tracing")]

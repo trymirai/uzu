@@ -94,7 +94,7 @@ impl<B: Backend> PLELayer<B> {
     pub fn validate_post_layer_scalar(
         data_type: DataType,
         parameter_tree: &ParameterTree<B::Context>,
-    ) -> Result<Rc<RefCell<B::Buffer>>, ModelExtensionError<B>> {
+    ) -> Result<Rc<RefCell<B::DenseBuffer>>, ModelExtensionError<B>> {
         let scalar = parameter_tree.leaf_array("post_layer_scalar")?;
         validate_tensor::<B>(scalar.shape(), scalar.data_type(), &[1], data_type)?;
         Ok(scalar.buffer())

@@ -108,13 +108,7 @@ impl StructuredAudioCodecGraph {
             let transformer_tree = root_loader_view
                 .subtree(transformer_subtree_name)
                 .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
-            let mut shared_buffers = shared_buffers.borrow_mut();
-            if let Some(global_rope) = &mut shared_buffers.global_rope {
-                global_rope.update_data(&transformer_tree, "global_rope");
-            }
-            if let Some(local_rope) = &mut shared_buffers.local_rope {
-                local_rope.update_data(&transformer_tree, "local_rope");
-            }
+            shared_buffers.borrow_mut().update_data_from_transformer_tree(&transformer_tree);
         }
         let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_sequence_length);
         let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(

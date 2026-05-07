@@ -9,14 +9,14 @@ use crate::{
 
 pub struct TensorFinalize<B: Backend> {
     kernel: <B::Kernels as Kernels>::TensorFinalizeKernel,
-    scalar: Option<Rc<RefCell<B::Buffer>>>,
+    scalar: Option<Rc<RefCell<B::DenseBuffer>>>,
 }
 
 impl<B: Backend> TensorFinalize<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        scalar: Option<Rc<RefCell<B::Buffer>>>,
+        scalar: Option<Rc<RefCell<B::DenseBuffer>>>,
     ) -> Result<Self, ModelExtensionError<B>> {
         let kernel = <B::Kernels as Kernels>::TensorFinalizeKernel::new(context, data_type, scalar.is_some())
             .map_err(ModelExtensionError::BackendError)?;

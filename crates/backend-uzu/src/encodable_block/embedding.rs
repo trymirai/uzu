@@ -694,7 +694,7 @@ impl<B: Backend> Embedding<B> {
         let should_soft_cap_logits = !matches!(state.sampling_method(), Some(SamplingMethod::Greedy));
         if should_soft_cap_logits && let (Some(cap), Some(kernel)) = (self.logit_soft_cap, &self.soft_cap_kernel) {
             kernel.encode(
-                None::<&B::Buffer>,
+                None::<&B::DenseBuffer>,
                 output_buffer_borrow.deref_mut(),
                 (batch_dim * self.vocab_size as usize) as u32,
                 cap,

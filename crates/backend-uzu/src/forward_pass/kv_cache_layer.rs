@@ -38,16 +38,14 @@ pub enum KVCacheLayerState {
 }
 
 impl KVCacheLayerState {
-    pub fn shared_kv_suffix_source_start(&self) -> Option<usize> {
-        match self {
-            Self::Full {
-                ..
-            } => None,
-            Self::Windowed {
-                window_length,
-                ..
-            } => Some(*window_length),
-        }
+    pub fn shared_kv_suffix_source_start(
+        &self,
+        suffix_length: usize,
+        projection_step: usize,
+        is_prefilling: bool,
+        sampling_start: usize,
+    ) -> Option<usize> {
+        self.windowed_suffix_write_start(suffix_length, projection_step, is_prefilling, sampling_start)
     }
 
     pub fn windowed_suffix_write_start(

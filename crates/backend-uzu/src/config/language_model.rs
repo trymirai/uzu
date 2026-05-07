@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ConfigError, DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig, GenerationConfig,
-    MessageProcessorConfig, MixerConfig, PLEModelConfig, TransformerConfig, resolve_rope_configs,
+    MessageProcessorConfig, MixerConfig, PLEModelConfig, TransformerConfig,
 };
 
 struct AttentionDims {
@@ -107,18 +107,10 @@ impl InnerModelConfig {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        let (global_rope_config, local_rope_config) = resolve_rope_configs(
-            tf.global_rope_config.clone(),
-            tf.local_rope_config.clone(),
-            &layer_config,
-            Some(&layer_configs),
-        )
-        .map_err(ConfigError::Invalid)?;
-
         Ok(DecoderConfig {
             embedding_config: self.embedding_config.clone(),
-            global_rope_config,
-            local_rope_config,
+            global_rope_config: tf.global_rope_config.clone(),
+            local_rope_config: tf.local_rope_config.clone(),
             ple_model_config: self.ple_model_config.clone(),
             layer_config,
             layer_configs: Some(layer_configs),

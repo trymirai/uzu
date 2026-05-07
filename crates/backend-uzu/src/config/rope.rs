@@ -62,6 +62,19 @@ impl RoPEConfig {
             } => common,
         }
     }
+
+    pub fn rotary_dim(&self) -> Option<usize> {
+        let common = self.common();
+        common.partial_rotary_dim.or(common.head_dim)
+    }
+
+    pub fn rotary_pair_stride(&self) -> Option<usize> {
+        let common = self.common();
+        match (common.partial_rotary_dim, common.head_dim) {
+            (Some(partial_rotary_dim), Some(head_dim)) if partial_rotary_dim < head_dim => Some(head_dim / 2),
+            _ => self.rotary_dim().map(|rotary_dim| rotary_dim / 2),
+        }
+    }
 }
 
 #[cfg(test)]

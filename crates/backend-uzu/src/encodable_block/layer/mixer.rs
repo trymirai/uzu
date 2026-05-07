@@ -17,6 +17,7 @@ pub(crate) enum MixerExecutables<B: Backend> {
         rope: Rc<Rope<B>>,
         use_rope: bool,
         rope_dim: usize,
+        rotary_pair_stride: usize,
         num_heads: usize,
         num_groups: usize,
         head_dim: usize,

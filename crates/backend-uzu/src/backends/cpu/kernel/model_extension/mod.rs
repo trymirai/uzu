@@ -1,5 +1,5 @@
-mod per_layer_embedding_combine;
-mod soft_cap;
-mod tensor_finalize;
-mod tensor_mul_slice;
-mod value_norm;
+pub mod per_layer_embedding_combine;
+pub mod soft_cap;
+pub mod tensor_finalize;
+pub mod tensor_mul_slice;
+pub mod value_norm;

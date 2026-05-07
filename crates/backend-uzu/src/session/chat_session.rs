@@ -562,6 +562,7 @@ impl ChatSession {
         prefill_tokens: &[u64],
         generate_results: &[GenerateResult],
         eos_tokens: &[u64],
+        skip_special_tokens: bool,
     ) -> Result<String, Error> {
         let generated_tokens: Vec<u32> = prefill_tokens
             .iter()
@@ -574,7 +575,9 @@ impl ChatSession {
             .position(|token| eos_tokens.contains(&(*token as u64)))
             .unwrap_or(generated_tokens.len());
 
-        tokenizer.decode(&generated_tokens[..visible_token_count], true).map_err(|_| Error::UnableToDecodeText)
+        tokenizer
+            .decode(&generated_tokens[..visible_token_count], skip_special_tokens)
+            .map_err(|_| Error::UnableToDecodeText)
     }
 
     fn build_output(
@@ -586,18 +589,26 @@ impl ChatSession {
         generate_durations: &[f64],
         finish_reason: Option<FinishReason>,
     ) -> Result<Output, Error> {
-        let text = Self::decode_generated_tokens(
+        let raw_text = Self::decode_generated_tokens(
             tokenizer,
             &run_context.prefill_result.tokens,
             generate_results,
             &run_context.eos_tokens,
+            false,
         )?;
-        let parsed = output_parser.parse(text);
+        let visible_text = Self::decode_generated_tokens(
+            tokenizer,
+            &run_context.prefill_result.tokens,
+            generate_results,
+            &run_context.eos_tokens,
+            true,
+        )?;
+        let text = output_parser.parse_raw(raw_text, visible_text);
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens = language_model_generator.tokens_len().saturating_sub(start_idx);
 
         Ok(Output {
-            text: parsed,
+            text,
             stats: Self::build_stats(
                 run_context.prefill_result.clone(),
                 run_context.prefill_duration,

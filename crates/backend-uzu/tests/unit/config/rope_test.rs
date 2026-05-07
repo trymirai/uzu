@@ -34,3 +34,16 @@ fn test_rope_config() {
     let deserialized_config: RoPEConfig = from_str(config_str).unwrap();
     assert_eq!(deserialized_config, ground_truth_config);
 }
+
+#[test]
+fn test_rope_config_rotary_dim_prefers_partial_rotary_dim() {
+    let config = RoPEConfig::Unscaled(RopeConfigCommon {
+        precision: ConfigDataType::BFloat16,
+        base: 1000000.0,
+        max_sequence_length: 131072,
+        head_dim: Some(512),
+        partial_rotary_dim: Some(128),
+    });
+
+    assert_eq!(config.rotary_dim(), Some(128));
+}

@@ -21,6 +21,7 @@ pub struct ClassifierLayer<B: Backend> {
     rope: Rc<Rope<B>>,
     use_rope: bool,
     rope_dim: usize,
+    rotary_pair_stride: usize,
     num_heads: usize,
     num_groups: usize,
     head_dim: usize,
@@ -55,9 +56,23 @@ impl<B: Backend> ClassifierLayer<B> {
         let rope_dim = layer_config
             .rope_config
             .as_ref()
-            .and_then(|rope| rope.common().head_dim)
+            .and_then(|rope| rope.rotary_dim())
             .or(attention_config.partial_rope_dim)
             .unwrap_or(head_dim);
+        let rotary_pair_stride = layer_config
+            .rope_config
+            .as_ref()
+            .and_then(|rope| rope.rotary_pair_stride())
+            .or_else(|| {
+                attention_config.partial_rope_dim.map(|partial_rope_dim| {
+                    if partial_rope_dim < head_dim {
+                        head_dim / 2
+                    } else {
+                        partial_rope_dim / 2
+                    }
+                })
+            })
+            .unwrap_or(rope_dim / 2);
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
 
         let copy_main_to_shortcut_mixer =
@@ -213,6 +228,7 @@ impl<B: Backend> ClassifierLayer<B> {
             rope,
             use_rope,
             rope_dim,
+            rotary_pair_stride,
             num_heads,
             num_groups,
             head_dim,
@@ -268,6 +284,7 @@ impl<B: Backend> ClassifierLayer<B> {
             self.num_groups,
             self.head_dim,
             self.rope_dim,
+            self.rotary_pair_stride,
             encoder,
         )?;
         self.attention.encode(state, parameters, encoder)?;

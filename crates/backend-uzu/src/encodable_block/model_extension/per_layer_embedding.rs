@@ -20,10 +20,10 @@ use crate::{
 };
 
 pub struct PerLayerEmbedding<B: Backend> {
-    token_embedding: Rc<RefCell<B::Buffer>>,
+    token_embedding: Rc<RefCell<B::DenseBuffer>>,
     model_projection: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    model_projection_weights: Rc<RefCell<B::Buffer>>,
-    projection_norm_scales: Rc<RefCell<B::Buffer>>,
+    model_projection_weights: Rc<RefCell<B::DenseBuffer>>,
+    projection_norm_scales: Rc<RefCell<B::DenseBuffer>>,
     lookup_kernel: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
     combine_kernel: <B::Kernels as Kernels>::PerLayerEmbeddingCombineKernel,
     config: PLEModelConfig,
@@ -123,7 +123,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
                 a: main.buffer().borrow().deref(),
                 a_offset: 0,
                 b: self.model_projection_weights.borrow().deref(),
-                ab_scale: 1.0,
+                ab_scale: self.config.model_projection_scale,
                 c: MatmulArgumentC::None,
                 d: ple_model.buffer().borrow_mut().deref_mut(),
                 batch_dim: batch_dim as u32,
@@ -142,7 +142,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             batch_dim as u32,
             self.config.num_layers as u32,
             self.config.ple_dim as u32,
-            self.config.model_projection_scale,
+            1.0,
             self.config.input_scale,
             self.config.norm_config.epsilon,
             self.config.norm_config.scale_offset.unwrap_or(0.0),
