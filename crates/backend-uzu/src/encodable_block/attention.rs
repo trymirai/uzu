@@ -260,9 +260,6 @@ impl<B: Backend> Attention<B> {
             is_kv_cache_ring,
         };
 
-        let mut attention_output =
-            encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads * head_dim], self.data_type))?;
-
         let (keys, values) = if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
             self.update_kv_cache_kernel.encode(
                 Some(&rotated_keys),
@@ -282,14 +279,12 @@ impl<B: Backend> Attention<B> {
             (&rotated_keys, extracted_values.as_ref().expect("Missing extracted values for classifier attention"))
         };
 
-        Self::encode_attention_variant(
-            self,
+        let mut attention_output = self.encode_attention_variant(
             variant,
             &kernel_key,
             queries,
             keys,
             values,
-            &mut attention_output,
             trie_allocation,
             sinks_allocation,
             gqa_factor,
@@ -326,7 +321,6 @@ impl<B: Backend> Attention<B> {
         queries: &Allocation<B>,
         keys: &Allocation<B>,
         values: &Allocation<B>,
-        attention_output: &mut Allocation<B>,
         trie_allocation: Option<&Allocation<B>>,
         sinks_allocation: Option<&Allocation<B>>,
         gqa_factor: usize,
@@ -344,14 +338,16 @@ impl<B: Backend> Attention<B> {
         max_sequence_length: usize,
         head_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut attention_output =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads * head_dim], self.data_type))?;
         match variant {
             KernelVariant::Gemm => {
                 let args = AttentionGemmArguments {
                     queries,
                     keys,
                     values,
-                    output: attention_output,
+                    output: &mut attention_output,
                     trie: trie_allocation,
                     sinks: sinks_allocation,
                     num_heads,
@@ -381,7 +377,7 @@ impl<B: Backend> Attention<B> {
                     queries,
                     keys,
                     values,
-                    attention_output,
+                    &mut attention_output,
                     gqa_factor as u32,
                     sequence_length as u32,
                     k_head_stride,
@@ -439,7 +435,7 @@ impl<B: Backend> Attention<B> {
                     &partials,
                     &sums,
                     &maxs,
-                    attention_output,
+                    &mut attention_output,
                     num_heads as u32,
                     suffix_length as u32,
                     encoder,
@@ -447,7 +443,7 @@ impl<B: Backend> Attention<B> {
             },
         }
 
-        Ok(())
+        Ok(attention_output)
     }
 }
 

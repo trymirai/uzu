@@ -250,14 +250,14 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
     }
 }
 
-pub fn resolve_subtree<'tree, C: Context>(
+pub fn try_resolve_subtree<'tree, C: Context>(
     tree: &'tree ParameterTree<C>,
     candidates: &[&str],
-) -> ParameterTree<'tree, C> {
+) -> Result<ParameterTree<'tree, C>, ParameterLoaderError<C::Backend>> {
     for candidate in candidates {
         if let Ok(subtree) = tree.subtree(candidate) {
-            return subtree;
+            return Ok(subtree);
         }
     }
-    panic!("Could not find any of {:?} in parameter tree", candidates);
+    Err(ParameterLoaderError::SubtreeNotFound(candidates.join(" or ")))
 }

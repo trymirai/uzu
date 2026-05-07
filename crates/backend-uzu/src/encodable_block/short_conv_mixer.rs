@@ -1,3 +1,5 @@
+use thiserror::Error;
+
 use crate::{
     DataType,
     array::size_for_shape,
@@ -6,10 +8,22 @@ use crate::{
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::{DecoderLayerType, ShortConvConfig},
-    encodable_block::linear::Linear,
+    encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::short_conv_layer::ShortConvLayer,
-    parameters::{ParameterTree, resolve_subtree},
+    parameters::{ParameterLoaderError, ParameterTree, try_resolve_subtree},
 };
+
+#[derive(Debug, Error)]
+pub enum ShortConvMixerError<B: Backend> {
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
+    #[error("Unsupported configuration: {0}")]
+    UnsupportedConfiguration(String),
+    #[error("Linear error: {0}")]
+    LinearError(#[from] Box<LinearBlockError<B>>),
+    #[error("Parameter loader error: {0}")]
+    ParameterLoaderError(#[from] ParameterLoaderError<B>),
+}
 
 pub struct ShortConvMixer<B: Backend> {
     config: ShortConvConfig,
@@ -41,18 +55,21 @@ impl<B: Backend> ShortConvMixer<B> {
         layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> (Self, Option<Allocation<B>>) {
+    ) -> Result<(Self, Option<Allocation<B>>), ShortConvMixerError<B>> {
         if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
-            panic!("Layer {} marked as non-ShortConv but ShortConv config provided", layer_index);
+            return Err(ShortConvMixerError::UnsupportedConfiguration(format!(
+                "layer {layer_index} marked as non-ShortConv but ShortConv config provided"
+            )));
         }
-        assert!(
-            short_conv_config.kernel_size >= 2,
-            "ShortConv kernel_size must be >= 2, got {}",
-            short_conv_config.kernel_size
-        );
+        if short_conv_config.kernel_size < 2 {
+            return Err(ShortConvMixerError::UnsupportedConfiguration(format!(
+                "kernel_size must be >= 2, got {}",
+                short_conv_config.kernel_size
+            )));
+        }
 
-        let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
-        let conv_tree = resolve_subtree(&mixer_tree, &["conv"]);
+        let mixer_tree = try_resolve_subtree(decoder_layer_loader, &["mixer"])?;
+        let conv_tree = try_resolve_subtree(&mixer_tree, &["conv"])?;
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
 
@@ -61,37 +78,37 @@ impl<B: Backend> ShortConvMixer<B> {
             model_dim,
             [model_dim * 3],
             context,
-            &resolve_subtree(&mixer_tree, &["in_projection", "in_proj"]),
+            &try_resolve_subtree(&mixer_tree, &["in_projection", "in_proj"])?,
         )
-        .expect("Failed to create in-projection kernel");
+        .map_err(|err| ShortConvMixerError::LinearError(Box::new(err)))?;
 
         let out_projection = <dyn Linear<B>>::new(
             &short_conv_config.out_projection_config,
             model_dim,
             [model_dim],
             context,
-            &resolve_subtree(&mixer_tree, &["out_projection", "out_proj"]),
+            &try_resolve_subtree(&mixer_tree, &["out_projection", "out_proj"])?,
         )
-        .expect("Failed to create out-projection kernel");
+        .map_err(|err| ShortConvMixerError::LinearError(Box::new(err)))?;
 
-        let conv_weight = conv_tree.leaf("weights").unwrap().read_allocation().unwrap();
+        let conv_weight = conv_tree.leaf("weights")?.read_allocation()?;
         let conv_bias = if short_conv_config.conv_config.has_biases {
-            Some(conv_tree.leaf("biases").unwrap().read_allocation().unwrap())
+            Some(conv_tree.leaf("biases")?.read_allocation()?)
         } else {
             None
         };
 
         let has_bias = short_conv_config.conv_config.has_biases;
         let short_conv_pack = <B::Kernels as Kernels>::ShortConvPackKernel::new(context, data_type)
-            .expect("Failed to create short conv pack kernel");
+            .map_err(ShortConvMixerError::BackendError)?;
         let short_conv_prefill = <B::Kernels as Kernels>::ShortConvPrefillKernel::new(context, data_type, has_bias)
-            .expect("Failed to create short conv prefill kernel");
+            .map_err(ShortConvMixerError::BackendError)?;
         let short_conv_decode = <B::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, has_bias, true)
-            .expect("Failed to create short conv decode kernel");
+            .map_err(ShortConvMixerError::BackendError)?;
         let short_conv_trie = <B::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
-            .expect("Failed to create short conv trie kernel");
+            .map_err(ShortConvMixerError::BackendError)?;
 
-        (
+        Ok((
             Self {
                 config: short_conv_config,
                 model_dim,
@@ -106,7 +123,7 @@ impl<B: Backend> ShortConvMixer<B> {
                 data_type,
             },
             in_proj_input_hadamard_factors,
-        )
+        ))
     }
 
     fn run_conv(
@@ -116,38 +133,40 @@ impl<B: Backend> ShortConvMixer<B> {
         sampling_start: usize,
         sampling_length: usize,
         in_proj: &Allocation<B>,
-        out: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         active_row_count: usize,
-    ) -> Result<(), B::Error> {
+    ) -> Result<Allocation<B>, B::Error> {
         layer.clear_suffix_state_valid_range();
+        let mut out = encoder.allocate_scratch(size_for_shape(&[active_row_count, self.model_dim], self.data_type))?;
 
         if active_row_count == 1 {
-            self.run_decode_conv(layer, in_proj, out, encoder, 1)?;
-            return Ok(());
+            self.run_decode_conv(layer, in_proj, &mut out, encoder, 1)?;
+            return Ok(out);
         }
 
         if sampling_length == 0 {
-            return self.run_prefill_conv(layer, in_proj, out, encoder, active_row_count);
+            self.run_prefill_conv(layer, in_proj, &mut out, encoder, active_row_count)?;
+            return Ok(out);
         }
 
         let trie_len = sampling_length;
 
         if trie_len <= 1 {
-            return self.run_prefill_conv(layer, in_proj, out, encoder, active_row_count);
+            self.run_prefill_conv(layer, in_proj, &mut out, encoder, active_row_count)?;
+            return Ok(out);
         }
 
         if sampling_start > 0 {
             if sampling_start == 1 {
-                self.run_decode_conv(layer, in_proj, out, encoder, 1)?;
+                self.run_decode_conv(layer, in_proj, &mut out, encoder, 1)?;
             } else {
-                self.run_prefill_conv(layer, in_proj, out, encoder, sampling_start)?;
+                self.run_prefill_conv(layer, in_proj, &mut out, encoder, sampling_start)?;
             }
         }
 
-        self.run_trie_conv(layer, token_parents, in_proj, out, encoder, sampling_start, trie_len)?;
+        self.run_trie_conv(layer, token_parents, in_proj, &mut out, encoder, sampling_start, trie_len)?;
         layer.set_suffix_state_valid_range(sampling_start, trie_len);
-        Ok(())
+        Ok(out)
     }
 
     fn run_prefill_conv(
@@ -283,19 +302,8 @@ impl<B: Backend> ShortConvMixer<B> {
         assert!(active_row_count > 0, "ShortConv mixer requires at least one active row");
 
         let in_proj = self.in_projection.encode(input, active_row_count, encoder)?;
-        let mut conv_output =
-            encoder.allocate_scratch(size_for_shape(&[active_row_count, self.model_dim], self.data_type))?;
-
-        self.run_conv(
-            layer,
-            token_parents,
-            sampling_start,
-            sampling_length,
-            &in_proj,
-            &mut conv_output,
-            encoder,
-            active_row_count,
-        )?;
+        let conv_output =
+            self.run_conv(layer, token_parents, sampling_start, sampling_length, &in_proj, encoder, active_row_count)?;
 
         self.out_projection.encode(conv_output, active_row_count, encoder)
     }

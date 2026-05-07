@@ -190,7 +190,8 @@ impl<B: Backend> LayerExecutables<B> {
                     layer_index,
                     model_dim,
                     decoder_layer_loader,
-                );
+                )
+                .expect("Failed to create Mamba mixer");
                 (
                     MixerExecutables::StateSpace {
                         mixer,
@@ -206,7 +207,8 @@ impl<B: Backend> LayerExecutables<B> {
                     layer_index,
                     model_dim,
                     decoder_layer_loader,
-                );
+                )
+                .expect("Failed to create ShortConv mixer");
                 (
                     MixerExecutables::ShortConv {
                         mixer,

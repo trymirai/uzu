@@ -13,7 +13,7 @@ use crate::{
     config::DeltaNetAttentionConfig,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::delta_net_layer::DeltaNetLayer,
-    parameters::{ParameterLoaderError, ParameterTree, resolve_subtree},
+    parameters::{ParameterLoaderError, ParameterTree, try_resolve_subtree},
 };
 
 #[derive(Debug, Error)]
@@ -85,15 +85,15 @@ impl<B: Backend> DeltaNetMixer<B> {
         let has_bias = config.conv_config.has_biases;
 
         // Load weights
-        let mixer_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
-        let conv_tree = resolve_subtree(&mixer_tree, &["conv", "conv1d"]);
+        let mixer_tree = try_resolve_subtree(decoder_layer_loader, &["mixer"])?;
+        let conv_tree = try_resolve_subtree(&mixer_tree, &["conv", "conv1d"])?;
 
         let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &config.in_proj_config,
             model_dim,
             [config.total_proj_dim()],
             context,
-            &resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"]),
+            &try_resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"])?,
         )
         .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
@@ -102,7 +102,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             config.value_dim(),
             [model_dim],
             context,
-            &resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"]),
+            &try_resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"])?,
         )
         .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
@@ -115,7 +115,7 @@ impl<B: Backend> DeltaNetMixer<B> {
 
         let a_log = mixer_tree.leaf("a_log")?.read_allocation()?;
         let dt_bias = mixer_tree.leaf("dt_bias")?.read_allocation()?;
-        let norm_tree = resolve_subtree(&mixer_tree, &["norm", "inner_norm"]);
+        let norm_tree = try_resolve_subtree(&mixer_tree, &["norm", "inner_norm"])?;
         let norm_weight = norm_tree.leaf("scales")?.read_allocation()?;
 
         // Create kernels
@@ -183,19 +183,20 @@ impl<B: Backend> DeltaNetMixer<B> {
         &self,
         layer: &mut DeltaNetLayer<B>,
         in_proj: &mut Allocation<B>,
-        padded: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
+    ) -> Result<(), B::Error> {
         let kernel_size = self.config.kernel_size;
         let state_stride = kernel_size - 1;
         let conv_dim = self.config.conv_dim();
         let total_proj_dim = self.config.total_proj_dim();
+        let mut padded = encoder
+            .allocate_scratch(size_for_shape(&[suffix_length + state_stride, total_proj_dim], self.data_type))?;
 
         self.conv_pack.encode(
             &layer.conv_state,
             &*in_proj,
-            &mut *padded,
+            &mut padded,
             state_stride as u32,
             total_proj_dim as u32,
             suffix_length as u32,
@@ -204,7 +205,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         );
 
         self.conv_scan.encode(
-            &*padded,
+            &padded,
             &self.conv_weight,
             self.conv_bias.as_ref(),
             in_proj,
@@ -217,6 +218,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             total_proj_dim as u32,
             encoder,
         );
+        Ok(())
     }
 
     fn run_delta_rule(
@@ -333,12 +335,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             self.run_conv_update(layer, &mut in_proj, encoder);
             self.run_delta_rule(layer, &in_proj, active_row_count, encoder)?
         } else {
-            let state_stride = self.config.kernel_size.saturating_sub(1);
-            let mut padded = encoder.allocate_scratch(size_for_shape(
-                &[active_row_count + state_stride, self.config.total_proj_dim()],
-                self.data_type,
-            ))?;
-            self.run_conv_scan(layer, &mut in_proj, &mut padded, encoder, active_row_count);
+            self.run_conv_scan(layer, &mut in_proj, encoder, active_row_count)?;
             self.run_delta_rule_prefill(layer, &in_proj, active_row_count, encoder)?
         };
 
