@@ -2,15 +2,15 @@ use std::ops::Range;
 
 use crate::backends::common::{Backend, Buffer};
 pub trait SparseBuffer: Buffer<Backend: Backend<SparseBuffer = Self>> {
-    fn map(
+    fn mapping(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
-        pages: Range<usize>,
+        pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 
-    fn unmap(
+    fn unmapping(
         &mut self,
         context: &<Self::Backend as Backend>::Context,
-        pages: Range<usize>,
+        pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }

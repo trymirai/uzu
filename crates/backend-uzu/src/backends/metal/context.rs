@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+use std::{
+    cell::{RefCell, RefMut},
+    collections::HashMap,
+    path::Path,
+    rc::Rc,
+};
 
 use metal::prelude::*;
 
@@ -29,7 +34,7 @@ pub struct MetalContext {
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
-    sparse_heaps: MetalSparseHeapsHolder,
+    sparse_heaps: RefCell<MetalSparseHeapsHolder>,
 }
 
 impl MetalContext {
@@ -54,8 +59,8 @@ impl MetalContext {
         Ok(pipeline)
     }
 
-    pub fn sparse_heaps(&self) -> &MetalSparseHeapsHolder {
-        &self.sparse_heaps
+    pub fn sparse_heaps_mut(&self) -> RefMut<'_, MetalSparseHeapsHolder> {
+        self.sparse_heaps.borrow_mut()
     }
 }
 
@@ -77,6 +82,8 @@ impl Context for MetalContext {
 
         let device_capabilities = MetalDeviceCapabilities::from_device(&device);
 
+        let sparse_heaps = RefCell::new(MetalSparseHeapsHolder::new()?);
+
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
@@ -86,7 +93,7 @@ impl Context for MetalContext {
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
-            sparse_heaps: MetalSparseHeapsHolder::new(),
+            sparse_heaps,
         }))
     }
 
@@ -168,7 +175,7 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        Ok(MetalSparseBuffer::new(self, capacity, self.sparse_heaps.page_size())?)
+        Ok(MetalSparseBuffer::new(self, capacity, self.sparse_heaps.borrow().page_size())?)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
