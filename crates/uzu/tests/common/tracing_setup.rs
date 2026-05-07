@@ -6,15 +6,10 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 
 static INIT: Once = Once::new();
 
-/// Initialize tracing for tests with file output
-/// Logs are written to `test_logs/model_storage_<timestamp>.log`
 pub fn init_test_tracing() {
     INIT.call_once(|| {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-
-        // Use workspace root for test_logs
-        let log_dir =
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("tests").join("logs");
+        let log_dir = std::env::temp_dir().join("uzu-storage-test-logs");
         std::fs::create_dir_all(&log_dir).ok();
 
         let file_appender = tracing_appender::rolling::never(&log_dir, format!("storage_{}.log", timestamp));

@@ -16,8 +16,7 @@ static INIT_TRACING: Once = Once::new();
 pub fn init_test_tracing() {
     INIT_TRACING.call_once(|| {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let log_directory =
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("tests").join("logs");
+        let log_directory = std::env::temp_dir().join("uzu-download-manager-test-logs");
         std::fs::create_dir_all(&log_directory).ok();
         let file_appender =
             tracing_appender::rolling::never(&log_directory, format!("download_manager_{timestamp}.log"));

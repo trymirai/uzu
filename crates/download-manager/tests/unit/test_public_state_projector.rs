@@ -20,6 +20,7 @@ async fn config(expected_bytes: Option<u64>) -> Result<DownloadConfig, Box<dyn s
         file_check: FileCheck::None,
         expected_bytes,
         manager_id: "test-manager".to_string(),
+        manager_instance_id: Uuid::nil(),
     })
 }
 

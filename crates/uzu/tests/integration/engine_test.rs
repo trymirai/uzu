@@ -1,134 +1,91 @@
 #![cfg(not(target_family = "wasm"))]
 
+use std::{io, path::PathBuf};
+
+use download_manager::FileDownloadManagerType;
+use mock_registry::MockRegistry;
+use rstest::rstest;
+use tokio::time::{Duration, timeout};
 use uzu::{
     engine::{Engine, EngineConfig},
-    session::chat::ChatSessionStreamChunk,
-    types::session::{
-        chat::{ChatConfig, ChatMessage, ChatReplyConfig},
-        classification::ClassificationMessage,
-    },
+    registry::FixedRegistry,
+    storage::types::DownloadPhase,
 };
 
-#[ignore]
-#[tokio::test]
-async fn test_engine_chat() {
-    dotenvy::dotenv().ok();
-
-    let config = EngineConfig::default();
-    let engine = Engine::new(config).await.unwrap();
-
-    println!("-------------------------");
-    let models = engine.models().await.unwrap();
-    for model in models {
-        let identifier = model.identifier.clone();
-        let name = model.name();
-        let repo_ids = model.repo_ids();
-        let registry_identifier = model.registry.identifier.clone();
-        let backend_identifiers = model.backends.iter().map(|backend| backend.identifier.clone()).collect::<Vec<_>>();
-        let family_vendor_identifier = model.family.as_ref().map(|family| family.vendor.identifier.clone());
-        let family_identifier = model.family.as_ref().map(|family| family.identifier.clone());
-        let properties_identifier = model.properties.as_ref().map(|properties| properties.identifier.clone());
-        let quantization_vendor_identifier =
-            model.quantization.as_ref().map(|quantization| quantization.vendor.identifier.clone());
-        let quantization_identifier = model.quantization.as_ref().map(|quantization| quantization.identifier.clone());
-        let download_phase = engine.downloader(&model).state().await.map_or(None, |state| Some(state.phase));
-        println!("identifier: {}", identifier);
-        println!("name: {}", name);
-        println!("repo_ids: {:?}", repo_ids);
-        println!("registry_identifier: {}", registry_identifier);
-        println!("backend_identifiers: {:?}", backend_identifiers);
-        println!("family_vendor_identifier: {:?}", family_vendor_identifier);
-        println!("family_identifier: {:?}", family_identifier);
-        println!("properties_identifier: {:?}", properties_identifier);
-        println!("quantization_vendor_identifier: {:?}", quantization_vendor_identifier);
-        println!("quantization_identifier: {:?}", quantization_identifier);
-        println!("download_phase: {:?}", download_phase);
-        println!("specializations: {:?}", model.specializations);
-        println!("-------------------------");
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_engine_downloads_mock_registry_model(
+    #[case] download_manager_type: FileDownloadManagerType
+) -> Result<(), Box<dyn std::error::Error>> {
+    let registry = MockRegistry::start().await?;
+    let model = registry.models.first().cloned().ok_or_else(|| io::Error::other("mock registry has no models"))?;
+    for served_file in registry.files.iter() {
+        assert!(
+            served_file.file.url.starts_with("http://127.0.0.1:"),
+            "mock registry must serve files from localhost, got {}",
+            served_file.file.url,
+        );
     }
 
-    let model = engine.model("alibaba:qwen3:0.6b".to_string()).await.unwrap().unwrap();
-    while let Some(update) = engine.download(&model).await.unwrap().next().await {
-        println!("Downloading: {}", update.progress());
-    }
+    let temporary_directory = tempfile::tempdir()?;
+    let engine_config = EngineConfig::default().with_allow_ollama_usage(false).with_allow_lmstudio_usage(false);
+    let engine = Engine::new_without_default_registries(
+        engine_config,
+        download_manager_type,
+        Some(temporary_directory.path().to_path_buf()),
+    )
+    .await?;
+    engine
+        .add_registry(Box::new(FixedRegistry::new(
+            "mock_registry".to_string(),
+            registry.models.iter().cloned().collect(),
+        )))
+        .await?;
 
-    let session = engine.chat(model, ChatConfig::default()).await.unwrap();
-    session.reset().await.unwrap();
+    let resolved_model = engine
+        .model(model.identifier.clone())
+        .await?
+        .ok_or_else(|| io::Error::other(format!("model not found: {}", model.identifier)))?;
 
-    let messages = vec![
-        ChatMessage::system().with_text("You are a helpful assistant.".to_string()),
-        ChatMessage::user().with_text("My name is John Doe".to_string()),
-    ];
-    let stream = session.reply_with_stream(messages, ChatReplyConfig::default()).await;
-    while let Some(progress) = stream.next().await {
-        match progress {
-            ChatSessionStreamChunk::Replies {
-                replies,
-            } => {
-                let state = session.state().await;
-                let messages = session.messages().await;
-                let roles = messages.iter().map(|message| message.role.clone()).collect::<Vec<_>>();
-                println!("State: {state:?}");
-                println!("Roles: {roles:?}");
-                for reply in replies {
-                    let duration = reply.stats.duration;
-                    let finish_reason = reply.finish_reason;
-                    let text_length = reply.message.text().unwrap_or_default().len();
-                    println!(
-                        "\tDuration: {duration}\n\tFinish reason: {finish_reason:?}\n\tText length: {text_length}"
-                    );
-                }
-            },
-            ChatSessionStreamChunk::Error {
-                error,
-            } => eprintln!("Stream error: {error}"),
+    let stream = engine.download(&resolved_model).await?;
+    let mut final_update = None;
+    timeout(Duration::from_secs(120), async {
+        while let Some(update) = stream.next().await {
+            final_update = Some(update);
         }
-    }
+    })
+    .await?;
 
-    let messages = vec![ChatMessage::user().with_text("What is my name?".to_string())];
-    let _ = session.reply(messages, ChatReplyConfig::default()).await.unwrap();
-
-    let messages = session.messages().await;
-    for message in messages {
-        println!("Message: {message:?}");
-    }
-}
-
-#[ignore]
-#[tokio::test]
-async fn test_engine_classification() {
-    dotenvy::dotenv().ok();
-
-    let config = EngineConfig::default();
-    let engine = Engine::new(config).await.unwrap();
-    let model = engine.model("ModernBERT-Chat-Moderation".to_string()).await.unwrap().unwrap();
-    while let Some(update) = engine.download(&model).await.unwrap().next().await {
-        println!("Downloading: {}", update.progress());
-    }
-
-    let session = engine.classification(model).await.unwrap();
-    let messages = vec![ClassificationMessage::user("Hi!".to_string())];
-    let result = session.classify(messages).await.unwrap();
-    println!("Output: {result:?}");
-}
-
-#[ignore]
-#[tokio::test]
-async fn test_engine_text_to_speech() {
-    dotenvy::dotenv().ok();
-
-    let config = EngineConfig::default();
-    let engine = Engine::new(config).await.unwrap();
-    let model = engine.model("s1-mini".to_string()).await.unwrap().unwrap();
-    while let Some(update) = engine.download(&model).await.unwrap().next().await {
-        println!("Downloading: {}", update.progress());
-    }
-
-    let session = engine.text_to_speech(model).await.unwrap();
-    let result = session
-        .synthesize("London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.".to_string())
+    let final_state = engine
+        .download_state(&resolved_model)
         .await
-        .unwrap();
-    let path = dirs::home_dir().unwrap().join("Desktop").join("output.wav").to_string_lossy().to_string();
-    result.pcm_batch.save_as_wav(path).unwrap();
+        .ok_or_else(|| io::Error::other(format!("download state missing: {}", resolved_model.identifier)))?;
+    assert!(
+        matches!(final_state.phase, DownloadPhase::Downloaded {}),
+        "mock model download must finish, got {:?}",
+        final_state.phase,
+    );
+
+    let expected_total_bytes = registry.files.iter().map(|served_file| served_file.file.size).sum::<i64>();
+    assert_eq!(final_state.total_bytes, expected_total_bytes);
+    assert_eq!(final_state.downloaded_bytes, expected_total_bytes);
+    if let Some(update) = final_update {
+        assert_eq!(update.bytes_total, expected_total_bytes);
+        assert_eq!(update.bytes_downloaded, expected_total_bytes);
+    }
+
+    let model_path = PathBuf::from(
+        engine
+            .model_path(&resolved_model)
+            .await
+            .ok_or_else(|| io::Error::other(format!("model path missing: {}", resolved_model.identifier)))?,
+    );
+    for served_file in registry.files.iter() {
+        let destination = model_path.join(&served_file.file.name);
+        assert_eq!(tokio::fs::read(&destination).await?, served_file.bytes.to_vec());
+    }
+
+    Ok(())
 }

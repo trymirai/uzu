@@ -83,6 +83,9 @@ impl FileDownloadTask for FailingFileTask {
     fn file_check(&self) -> &FileCheck {
         &self.file_check
     }
+    fn expected_bytes(&self) -> Option<u64> {
+        None
+    }
     async fn download(&self) -> Result<(), DownloadError> {
         match &self.download_response {
             Some(response) => response.clone(),
@@ -160,11 +163,17 @@ impl FileDownloadManager for StubManager {
     }
     async fn file_download_task(
         &self,
-        _: &String,
+        _: &str,
         _: &std::path::Path,
         _: FileCheck,
         _: Option<u64>,
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError> {
         unreachable!("test did not expect manager.file_download_task() to be invoked");
+    }
+    async fn destination_foreign_lock(
+        &self,
+        _: &std::path::Path,
+    ) -> Option<String> {
+        None
     }
 }

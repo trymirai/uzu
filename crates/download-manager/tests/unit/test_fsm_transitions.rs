@@ -13,6 +13,7 @@ use tokio::sync::{
     mpsc::channel as tokio_mpsc_channel,
     watch::channel as tokio_watch_channel,
 };
+use tokio::runtime::Handle as TokioHandle;
 use uuid::Uuid;
 
 use crate::common::MockRegistry;
@@ -35,6 +36,7 @@ async fn fsm(
         file_check: FileCheck::None,
         expected_bytes: Some(served_file.file.size as u64),
         manager_id: "test-manager".to_string(),
+        manager_instance_id: Uuid::nil(),
     });
     let (backend_event_sender, _backend_event_receiver) = tokio_mpsc_channel(64);
     let pending_progress = Arc::new(TokioMutex::new(PendingProgressSlot::default()));
@@ -42,7 +44,11 @@ async fn fsm(
     let backend_event_sender =
         BackendEventSender::new(backend_event_sender, pending_progress, progress_waker_sender);
     let download_fsm =
-        DownloadFsm::<UniversalBackend>::new(Arc::clone(&config), Arc::new(UniversalBackendContext::default()), backend_event_sender);
+        DownloadFsm::<UniversalBackend>::new(
+            Arc::clone(&config),
+            Arc::new(UniversalBackendContext::new(TokioHandle::current())),
+            backend_event_sender,
+        );
     Ok((download_fsm.into_state_machine(initial_state), config))
 }
 
@@ -103,9 +109,7 @@ async fn test_fsm_downloading_ignores_stale_completed_generation() -> Result<(),
     Ok(())
 }
 
-fn reply_effect(
-    effects: Vec<DownloadActorEffect<UniversalBackend>>
-) -> Option<Result<(), DownloadError>> {
+fn reply_effect(effects: Vec<DownloadActorEffect>) -> Option<Result<(), DownloadError>> {
     effects.into_iter().find_map(|effect| match effect {
         DownloadActorEffect::Reply(result) => Some(result),
         _ => None,

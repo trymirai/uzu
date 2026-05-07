@@ -7,6 +7,7 @@ use download_manager::{
     reducer::InitialLifecycleState,
     traits::DownloadConfig,
 };
+use tokio::runtime::Handle as TokioHandle;
 use uuid::Uuid;
 
 use crate::common::MockRegistry;
@@ -24,15 +25,16 @@ async fn actor_task(
             file_check: FileCheck::None,
             expected_bytes: Some(120),
             manager_id: "test-manager".to_string(),
+            manager_instance_id: Uuid::nil(),
         }),
-        Arc::new(UniversalBackendContext::default()),
+        Arc::new(UniversalBackendContext::new(TokioHandle::current())),
         initial_lifecycle_state,
         PublicProjection::None,
         ProgressCounters {
             downloaded_bytes: 40,
             total_bytes: 120,
         },
-    ))
+    )?)
 }
 
 #[tokio::test]

@@ -125,6 +125,7 @@ tracing-appender.workspace = true
 chrono.workspace = true
 tempfile.workspace = true
 indicatif.workspace = true
+dotenvy.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
 mock-registry.workspace = true

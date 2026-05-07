@@ -7,6 +7,7 @@ use download_manager::{
     reducer::InitialLifecycleState,
     traits::DownloadConfig,
 };
+use tokio::runtime::Handle as TokioHandle;
 use uuid::Uuid;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -19,8 +20,9 @@ async fn test_universal_pause_with_lower_byte_count_flips_to_paused() {
             file_check: FileCheck::None,
             expected_bytes: Some(10_000_000),
             manager_id: "test-manager".to_string(),
+            manager_instance_id: Uuid::nil(),
         }),
-        Arc::new(UniversalBackendContext::default()),
+        Arc::new(UniversalBackendContext::new(TokioHandle::current())),
         InitialLifecycleState::Paused {
             part_path: PathBuf::from("/tmp/uzu-pause-regression-universal-fsm.part"),
         },
@@ -29,7 +31,8 @@ async fn test_universal_pause_with_lower_byte_count_flips_to_paused() {
             downloaded_bytes: 0,
             total_bytes: 10_000_000,
         },
-    );
+    )
+    .unwrap();
 
     let state = task.state().await;
     assert!(matches!(state.phase, FileDownloadPhase::Paused), "expected Paused, got {:?}", state.phase);
@@ -48,8 +51,9 @@ async fn test_apple_pause_with_lower_byte_count_flips_to_paused() {
             file_check: FileCheck::None,
             expected_bytes: Some(10_000_000),
             manager_id: "test-manager".to_string(),
+            manager_instance_id: Uuid::nil(),
         }),
-        Arc::new(AppleBackendContext::default()),
+        Arc::new(AppleBackendContext::new(TokioHandle::current())),
         InitialLifecycleState::Paused {
             part_path: PathBuf::from("/tmp/uzu-pause-regression-apple-fsm.part"),
         },
@@ -58,7 +62,8 @@ async fn test_apple_pause_with_lower_byte_count_flips_to_paused() {
             downloaded_bytes: 0,
             total_bytes: 10_000_000,
         },
-    );
+    )
+    .unwrap();
 
     let state = task.state().await;
     assert!(matches!(state.phase, FileDownloadPhase::Paused), "expected Paused, got {:?}", state.phase);

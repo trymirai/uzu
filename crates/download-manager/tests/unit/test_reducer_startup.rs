@@ -5,6 +5,7 @@ use download_manager::{
     file_download_task_actor::{ProgressCounters, PublicProjection},
     reducer::{Action, ActionPlan, DiskObservation, InitialLifecycleState, LockObservation, decide, validate},
 };
+use uuid::Uuid;
 
 fn observation(
     destination_state: FileState,
@@ -16,7 +17,7 @@ fn observation(
         destination_state,
         crc_state,
         resume_state,
-        destination_size: Some(100),
+        destination_size: Some(120),
         resume_size: Some(40),
         expected_crc: expected_crc.map(str::to_string),
         expected_bytes: Some(120),
@@ -32,10 +33,10 @@ fn lock_observation(lock_file_state: LockFileState) -> LockObservation {
     }
 }
 
-#[test]
-fn test_reducer_valid_file_deletes_resume_artifact_and_projects_downloaded_inputs() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reducer_valid_file_deletes_resume_artifact_and_projects_downloaded_inputs() {
     let observation = observation(FileState::Exists, FileState::Exists, FileState::Exists, None);
-    let validation = validate(&observation);
+    let validation = validate(&observation).await;
     let decision = decide(&observation, &lock_observation(LockFileState::Missing), &validation);
 
     assert_eq!(validation.checked, CheckedFileState::Valid);
@@ -62,10 +63,10 @@ fn test_reducer_valid_file_deletes_resume_artifact_and_projects_downloaded_input
     );
 }
 
-#[test]
-fn test_reducer_missing_file_with_resume_returns_paused_inputs() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reducer_missing_file_with_resume_returns_paused_inputs() {
     let observation = observation(FileState::Missing, FileState::Missing, FileState::Exists, None);
-    let validation = validate(&observation);
+    let validation = validate(&observation).await;
     let decision = decide(&observation, &lock_observation(LockFileState::Missing), &validation);
 
     assert_eq!(validation.checked, CheckedFileState::Missing);
@@ -84,10 +85,10 @@ fn test_reducer_missing_file_with_resume_returns_paused_inputs() {
     );
 }
 
-#[test]
-fn test_reducer_invalid_file_deletes_bad_file_and_crc_but_keeps_resume() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reducer_invalid_file_deletes_bad_file_and_crc_but_keeps_resume() {
     let observation = observation(FileState::Exists, FileState::Missing, FileState::Exists, Some("expected"));
-    let validation = validate(&observation);
+    let validation = validate(&observation).await;
     let decision = decide(&observation, &lock_observation(LockFileState::Missing), &validation);
 
     assert_eq!(validation.checked, CheckedFileState::Invalid);
@@ -105,11 +106,11 @@ fn test_reducer_invalid_file_deletes_bad_file_and_crc_but_keeps_resume() {
     );
 }
 
-#[test]
-fn test_reducer_live_external_lock_sets_public_projection_only() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reducer_live_external_lock_sets_public_projection_only() {
     let observation = observation(FileState::Missing, FileState::Missing, FileState::Missing, None);
-    let validation = validate(&observation);
-    let owner = LockFileInfo::new("other-manager".to_string(), 123);
+    let validation = validate(&observation).await;
+    let owner = LockFileInfo::new("other-manager".to_string(), Uuid::new_v4(), 123);
     let decision = decide(&observation, &lock_observation(LockFileState::OwnedByOtherApp(owner)), &validation);
 
     assert_eq!(decision.initial_lifecycle_state, InitialLifecycleState::NotDownloaded);

@@ -7606,6 +7606,7 @@ dependencies = [
  "chrono",
  "confy",
  "dirs",
+ "dotenvy",
  "download-manager",
  "fancy-regex 0.17.0",
  "futures",

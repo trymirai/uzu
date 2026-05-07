@@ -3,7 +3,7 @@ pub mod config;
 mod downloader;
 mod error;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
@@ -60,36 +60,8 @@ impl Engine {
         config: EngineConfig,
         download_manager_type: FileDownloadManagerType,
     ) -> Result<Self, EngineError> {
-        let tokio_handle = Handle::try_current().map_err(|error| EngineError::TokioError {
-            message: error.to_string(),
-        })?;
-
-        let settings = if let Some(application_identifier) = &config.application_identifier {
-            Some(Settings::new(application_identifier.clone())?)
-        } else {
-            None
-        };
-        let mut config = config;
-        if let Some(settings) = &settings {
-            config.synchronize_with_settings(settings)?;
-        }
-
-        let device = Device::new()?;
-        let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
-            .with_download_manager_type(download_manager_type);
-        logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
-
-        let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);
-
-        let engine = Self {
-            settings: SharedAccess::new(settings),
-            storage,
-            registry,
-            backends: SharedAccess::new(HashMap::new()),
-            callback: SharedAccess::new(None),
-        };
-        engine.spawn_storage_listener().await;
+        let (engine, config, device) =
+            Self::new_without_default_registries_inner(config, download_manager_type, None).await?;
 
         {
             let uzu_backend = UzuBackend::new();
@@ -159,6 +131,55 @@ impl Engine {
         }
 
         Ok(engine)
+    }
+
+    #[doc(hidden)]
+    pub async fn new_without_default_registries(
+        config: EngineConfig,
+        download_manager_type: FileDownloadManagerType,
+        cache_path: Option<PathBuf>,
+    ) -> Result<Self, EngineError> {
+        let (engine, _config, _device) =
+            Self::new_without_default_registries_inner(config, download_manager_type, cache_path).await?;
+        Ok(engine)
+    }
+
+    async fn new_without_default_registries_inner(
+        config: EngineConfig,
+        download_manager_type: FileDownloadManagerType,
+        cache_path: Option<PathBuf>,
+    ) -> Result<(Self, EngineConfig, Device), EngineError> {
+        let tokio_handle = Handle::try_current().map_err(|error| EngineError::TokioError {
+            message: error.to_string(),
+        })?;
+
+        let settings = if let Some(application_identifier) = &config.application_identifier {
+            Some(Settings::new(application_identifier.clone())?)
+        } else {
+            None
+        };
+        let mut config = config;
+        if let Some(settings) = &settings {
+            config.synchronize_with_settings(settings)?;
+        }
+
+        let device = Device::new()?;
+        let registry = SharedAccess::new(MergedRegistry::new(vec![]));
+        let storage_config = StorageConfig::new(device.clone(), cache_path, "mirai".to_string())
+            .with_download_manager_type(download_manager_type);
+        logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
+
+        let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);
+
+        let engine = Self {
+            settings: SharedAccess::new(settings),
+            storage,
+            registry,
+            backends: SharedAccess::new(HashMap::new()),
+            callback: SharedAccess::new(None),
+        };
+        engine.spawn_storage_listener().await;
+        Ok((engine, config, device))
     }
 }
 
