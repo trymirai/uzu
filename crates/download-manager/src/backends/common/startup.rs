@@ -90,7 +90,7 @@ impl Startup {
 }
 
 fn file_state(path: &Path) -> FileState {
-    if path.exists() {
+    if path.exists() && path.is_file() {
         FileState::Exists
     } else {
         FileState::Missing

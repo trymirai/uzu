@@ -26,6 +26,31 @@ async fn test_manager_startup_valid_existing_file_is_downloaded() -> Result<(), 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_manager_startup_uses_matching_crc_cache_fast_path() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = MockRegistry::start().await?;
+    let served_file = registry.file("config.json")?;
+    let expected_crc = served_file.crc32c()?;
+    let temporary_directory = tempdir()?;
+    let destination = temporary_directory.path().join(&served_file.file.name);
+    let crc_path = std::path::PathBuf::from(format!("{}.crc", destination.display()));
+    let mut stale_destination_bytes = served_file.bytes.to_vec();
+    stale_destination_bytes[0] = stale_destination_bytes[0].wrapping_add(1);
+    tokio::fs::write(&destination, stale_destination_bytes).await?;
+    tokio::fs::write(&crc_path, &expected_crc).await?;
+
+    let task = manager_task(
+        &served_file.file.url,
+        &destination,
+        FileCheck::CRC(expected_crc),
+        Some(served_file.file.size as u64),
+    )
+    .await?;
+
+    assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_manager_startup_revalidates_crc_cache() -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let served_file = registry.file("config.json")?;
@@ -40,6 +65,20 @@ async fn test_manager_startup_revalidates_crc_cache() -> Result<(), Box<dyn std:
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::NotDownloaded);
     assert!(!destination.exists());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_manager_startup_directory_destination_is_not_downloaded() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = MockRegistry::start().await?;
+    let served_file = registry.file("config.json")?;
+    let temporary_directory = tempdir()?;
+    let destination = temporary_directory.path().join(&served_file.file.name);
+    tokio::fs::create_dir(&destination).await?;
+
+    let task = manager_task(&served_file.file.url, &destination, FileCheck::None, None).await?;
+
+    assert_eq!(task.state().await.phase, FileDownloadPhase::NotDownloaded);
     Ok(())
 }
 
