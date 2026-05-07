@@ -3,7 +3,8 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::{
-    DestinationLockLease, DownloadError,
+    DownloadError,
+    lock_manager::DestinationLockLease,
     traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
 };
 

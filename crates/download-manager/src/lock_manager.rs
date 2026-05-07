@@ -10,15 +10,14 @@ use crate::{LockFileInfo, LockFileState};
 const LOCK_TIMEOUT_MINUTES: i64 = 30;
 
 #[derive(Debug)]
-pub struct DestinationLockLease {
+pub(crate) struct DestinationLockLease {
     lock_path: PathBuf,
     manager_id: String,
     instance_id: Uuid,
 }
 
 impl DestinationLockLease {
-    #[doc(hidden)]
-    pub async fn acquire_for_destination(
+    pub(crate) async fn acquire_for_destination(
         destination_path: &Path,
         manager_id: &str,
         instance_id: Uuid,
@@ -39,8 +38,7 @@ impl DestinationLockLease {
         })
     }
 
-    #[doc(hidden)]
-    pub async fn release(self) -> Result<bool, std::io::Error> {
+    pub(crate) async fn release(self) -> Result<bool, std::io::Error> {
         release_lock_if_owned(&self.lock_path, &self.manager_id, self.instance_id).await
     }
 }

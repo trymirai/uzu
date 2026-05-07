@@ -21,17 +21,16 @@ use tokio::{
 use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as TokioBroadcastStream};
 
 use crate::{
-    DownloadError, DownloadEventSender, DownloadId, DownloadLogEvent, FileCheck, FileDownloadEvent, FileDownloadPhase,
-    FileDownloadState,
+    DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadEvent, FileDownloadPhase, FileDownloadState,
     backends::common::{Backend, InitialTaskAttachment},
+    download_log_event::{DownloadLogEvent, record_download_log_event},
     file_download_task::{FileDownloadTask, ManagedFileDownloadTask},
     file_download_task_actor::{
         DownloadFsm, DownloadLifecycleState, DownloadTaskActor, PendingProgressSlot, ProgressCounters,
-        PublicProjection, TaskCommand, TerminalOutcome, local_actor_scheduler::spawn_actor, project_public_state,
+        PublicProjection, TaskCommand, TerminalOutcome, local_actor_scheduler::spawn_actor,
         project_runtime_public_state,
     },
     lock_manager::DestinationLockLease,
-    record_download_log_event,
     reducer::InitialLifecycleState,
     traits::{BackendEventSender, DownloadBackend, DownloadConfig},
 };
@@ -48,54 +47,6 @@ pub struct GenericFileDownloadTask<B: DownloadBackend> {
 }
 
 impl<B: DownloadBackend> GenericFileDownloadTask<B> {
-    pub fn spawn(
-        config: Arc<DownloadConfig>,
-        context: Arc<B::Context>,
-        initial_lifecycle_state: InitialLifecycleState,
-        initial_projection: PublicProjection,
-        initial_progress: ProgressCounters,
-    ) -> Result<Self, DownloadError> {
-        let initial_public_state =
-            project_public_state(&initial_lifecycle_state, &initial_projection, initial_progress, &config);
-        let (command_sender, command_receiver) = tokio_mpsc_channel(64);
-        let (backend_event_sender, backend_event_receiver) = tokio_mpsc_channel(64);
-        let pending_progress = Arc::new(TokioMutex::new(PendingProgressSlot::default()));
-        let (progress_waker_sender, progress_waker_receiver) = tokio_watch_channel(());
-        let backend_event_sender =
-            BackendEventSender::new(backend_event_sender, Arc::clone(&pending_progress), progress_waker_sender);
-        let (public_state_sender, public_state_receiver) = tokio_watch_channel(initial_public_state.clone());
-        let (progress_sender, _) = tokio_broadcast_channel(64);
-        let (terminal_sender, terminal_receiver) = tokio_watch_channel(TerminalOutcome::Pending);
-
-        let fsm = DownloadFsm::<B>::new(Arc::clone(&config), context, backend_event_sender);
-        let lifecycle = fsm.into_state_machine(initial_lifecycle_state.into());
-        let actor = DownloadTaskActor::<B>::new(
-            Arc::clone(&config),
-            lifecycle,
-            initial_projection,
-            initial_progress,
-            command_receiver,
-            backend_event_receiver,
-            pending_progress,
-            progress_waker_receiver,
-            public_state_sender,
-            progress_sender.clone(),
-            terminal_sender,
-        );
-        spawn_actor(actor).map_err(|error| error.into_download_error())?;
-
-        Ok(Self {
-            config,
-            command_sender,
-            public_state_receiver,
-            progress_sender,
-            terminal_receiver,
-            listener_task: Arc::new(TokioMutex::new(None)),
-            is_stopped: AtomicBool::new(false),
-            backend: PhantomData,
-        })
-    }
-
     pub(crate) async fn spawn_with_initial_attachment(
         config: Arc<DownloadConfig>,
         context: Arc<B::Context>,

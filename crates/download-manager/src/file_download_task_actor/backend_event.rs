@@ -27,16 +27,4 @@ impl BackendEvent {
             message,
         }
     }
-
-    pub fn generation(&self) -> ActiveDownloadGeneration {
-        match self {
-            Self::Completed {
-                generation,
-            }
-            | Self::Error {
-                generation,
-                ..
-            } => *generation,
-        }
-    }
 }

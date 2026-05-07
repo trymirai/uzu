@@ -60,8 +60,7 @@ impl Engine {
         config: EngineConfig,
         download_manager_type: FileDownloadManagerType,
     ) -> Result<Self, EngineError> {
-        let (engine, config, device) =
-            Self::new_without_default_registries_inner(config, download_manager_type, None).await?;
+        let (engine, config, device) = Self::new_base(config, download_manager_type, None).await?;
 
         {
             let uzu_backend = UzuBackend::new();
@@ -133,18 +132,7 @@ impl Engine {
         Ok(engine)
     }
 
-    #[doc(hidden)]
-    pub async fn new_without_default_registries(
-        config: EngineConfig,
-        download_manager_type: FileDownloadManagerType,
-        cache_path: Option<PathBuf>,
-    ) -> Result<Self, EngineError> {
-        let (engine, _config, _device) =
-            Self::new_without_default_registries_inner(config, download_manager_type, cache_path).await?;
-        Ok(engine)
-    }
-
-    async fn new_without_default_registries_inner(
+    async fn new_base(
         config: EngineConfig,
         download_manager_type: FileDownloadManagerType,
         cache_path: Option<PathBuf>,

@@ -16,9 +16,9 @@ use tokio::{
 };
 
 use crate::{
-    DestinationLockLease,
     backends::universal::{UniversalActiveTask, UniversalBackend, UniversalBackendError},
     file_download_task_actor::BackendEvent,
+    lock_manager::DestinationLockLease,
     traits::{ActiveDownloadGeneration, BackendContext, BackendEventSender, DownloadConfig},
 };
 

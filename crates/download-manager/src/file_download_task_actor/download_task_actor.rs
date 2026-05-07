@@ -9,7 +9,8 @@ use tokio::sync::{
 };
 
 use crate::{
-    DownloadError, DownloadLogEvent, FileDownloadState,
+    DownloadError, FileDownloadState,
+    download_log_event::{DownloadLogEvent, record_download_log_event},
     file_download_task_actor::{
         BackendEvent, DownloadLifecycleState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
         TerminalOutcome,
@@ -17,7 +18,7 @@ use crate::{
         project_runtime_public_state,
     },
     lock_manager::lock_path_for_destination,
-    record_download_log_event, release_lock_if_owned,
+    release_lock_if_owned,
     traits::{ActiveTask, DownloadBackend, DownloadConfig},
 };
 

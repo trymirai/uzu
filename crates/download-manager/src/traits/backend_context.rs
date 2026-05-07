@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use crate::{
-    DestinationLockLease,
+    lock_manager::DestinationLockLease,
     traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
 };
 

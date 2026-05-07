@@ -4,13 +4,13 @@ use tokio::runtime::Handle as TokioHandle;
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
-    DownloadError, DownloadEvent, DownloadLogEvent, FileCheck, FileDownloadManager, FileDownloadTask, LockFileState,
+    DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask, LockFileState,
     backends::common::{Backend, DownloadManagerState, Startup},
     check_lock_file, compute_download_id,
+    download_log_event::{DownloadLogEvent, record_download_log_event},
     file_download_task::CachedFileDownloadTask,
     file_download_task_actor::GenericFileDownloadTask,
     lock_manager::{DestinationLockLease, lock_path_for_destination},
-    record_download_log_event,
     reducer::InitialLifecycleState,
 };
 
@@ -413,7 +413,7 @@ mod tests {
             self,
             _destination: &Path,
         ) -> Result<PathBuf, UniversalBackendError> {
-            Err(UniversalBackendError::NotWired)
+            Err(UniversalBackendError::Io("synthetic pause failure".to_string()))
         }
 
         async fn cancel(

@@ -3,11 +3,12 @@ use std::sync::Arc;
 use objc2_foundation::NSURLSessionTaskState;
 
 use crate::{
-    DestinationLockLease, DownloadError,
+    DownloadError,
     backends::{
         apple::{AppleActiveTask, AppleBackendContext, AppleBackendError, task_ext::AppleDownloadTaskExt},
         common::{self, InitialTaskAttachment},
     },
+    lock_manager::DestinationLockLease,
     traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
 };
 

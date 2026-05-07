@@ -3,9 +3,8 @@ use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, mpsc::Sender as TokioMpscSender, watch::Sender as TokioWatchSender};
 
 use crate::{
-    DownloadLogEvent,
+    download_log_event::{DownloadLogEvent, record_download_log_event},
     file_download_task_actor::{BackendEvent, BackendProgress, PendingProgressSlot},
-    record_download_log_event,
     traits::ActiveDownloadGeneration,
 };
 

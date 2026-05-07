@@ -1,8 +1,5 @@
 mod cancel_preserves_unrelated_files_test;
-mod cancel_propagates_file_task_error_test;
-mod detach_propagates_file_task_error_test;
-mod download_propagates_file_task_error_test;
+mod file_task_error_propagation_test;
 mod lifecycle_mock_registry_model_test;
-mod pause_propagates_file_task_error_test;
 mod reduce_state_error_priority_test;
 mod refresh_preserves_stale_model_files_test;

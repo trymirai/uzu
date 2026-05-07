@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{DownloadId, FileDownloadEvent, file_download_task_actor::BackendEvent, traits::ActiveDownloadGeneration};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum DownloadLogEvent {
+pub(crate) enum DownloadLogEvent {
     ManagerCreated {
         manager_id: String,
     },
@@ -31,6 +31,6 @@ pub enum DownloadLogEvent {
     },
 }
 
-pub fn record_download_log_event(event: DownloadLogEvent) {
+pub(crate) fn record_download_log_event(event: DownloadLogEvent) {
     tracing::debug!(download_log_event = ?event, "download manager event");
 }
