@@ -25,11 +25,25 @@ struct Cli {
     download_manager: DownloadManagerCliType,
 }
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum DownloadManagerCliType {
-    #[default]
     Apple,
     Universal,
+}
+
+impl Default for DownloadManagerCliType {
+    fn default() -> Self {
+        FileDownloadManagerType::default().into()
+    }
+}
+
+impl From<FileDownloadManagerType> for DownloadManagerCliType {
+    fn from(download_manager_type: FileDownloadManagerType) -> Self {
+        match download_manager_type {
+            FileDownloadManagerType::Apple => Self::Apple,
+            FileDownloadManagerType::Universal => Self::Universal,
+        }
+    }
 }
 
 impl From<DownloadManagerCliType> for FileDownloadManagerType {
