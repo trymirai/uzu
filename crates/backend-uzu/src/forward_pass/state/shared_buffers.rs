@@ -11,6 +11,7 @@ use crate::{
 };
 
 pub struct SharedBuffers<B: Backend> {
+    pub layer_ropes: Box<[Option<RopeBuffers<B>>]>,
     pub global_rope: Option<RopeBuffers<B>>,
     pub local_rope: Option<RopeBuffers<B>>,
     pub attention_sinks: Option<Vec<Array<B>>>,
@@ -22,6 +23,18 @@ impl<B: Backend> SharedBuffers<B> {
         decoder_config: &DecoderConfig,
         model_shape: &ModelShape,
     ) -> Self {
+        let layer_ropes = (0..decoder_config.num_layers)
+            .map(|layer_index| {
+                let layer_config = decoder_config
+                    .layer_configs
+                    .as_ref()
+                    .map(|configs| &configs[layer_index])
+                    .unwrap_or(&decoder_config.layer_config);
+                layer_config.rope_config.as_ref().map(|config| RopeBuffers::new(context, config, model_shape))
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
         let global_rope =
             decoder_config.global_rope_config.as_ref().map(|config| RopeBuffers::new(context, config, model_shape));
 
@@ -38,6 +51,7 @@ impl<B: Backend> SharedBuffers<B> {
         });
 
         Self {
+            layer_ropes,
             global_rope,
             local_rope,
             attention_sinks,

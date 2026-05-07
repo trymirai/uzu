@@ -5,7 +5,6 @@ use super::{
         attention::AttentionConfig,
         common::ConfigDataType,
         embedding::{EmbeddingConfig, EmbeddingConfigCommon},
-        error::ConfigError,
         language_model::InnerModelConfig,
         linear::{LinearConfig, QuantizationConfig},
         mlp::{DenseMLPConfig, MLPConfig},
@@ -413,30 +412,38 @@ fn test_decoder_config_with_layer_configs() {
     assert_eq!(sliding_windows.len(), 2);
     assert_eq!(sliding_windows[0], Some(512));
     assert_eq!(sliding_windows[1], None);
-    let local_rope = config.local_rope_config.as_ref().unwrap();
-    assert_eq!(local_rope.common().base, 10000.0);
-    assert_eq!(local_rope.common().head_dim, Some(256));
-    let global_rope = config.global_rope_config.as_ref().unwrap();
-    assert_eq!(global_rope.common().base, 500000.0);
-    assert_eq!(global_rope.common().partial_rotary_dim, Some(128));
+    assert!(config.local_rope_config.is_none());
+    assert!(config.global_rope_config.is_none());
     let layer_types = config.layer_types.unwrap();
     assert!(matches!(layer_types[0], DecoderLayerType::Transformer));
-    assert_eq!(config.layer_configs.unwrap().len(), 2);
+    let layer_configs = config.layer_configs.unwrap();
+    assert_eq!(layer_configs.len(), 2);
+    let local_rope = layer_configs[0].rope_config.as_ref().unwrap();
+    assert_eq!(local_rope.common().base, 10000.0);
+    assert_eq!(local_rope.common().head_dim, Some(256));
+    let global_rope = layer_configs[1].rope_config.as_ref().unwrap();
+    assert_eq!(global_rope.common().base, 500000.0);
+    assert_eq!(global_rope.common().partial_rotary_dim, Some(128));
 }
 
 #[test]
-fn test_language_model_config_rejects_conflicting_per_layer_rope_configs() {
+fn test_language_model_config_allows_multiple_per_layer_rope_configs_in_same_attention_bucket() {
     let config = serde_json::from_value::<InnerModelConfig>(language_model_config_with_layer_rope_configs(&[
         (None, 10000.0, None),
         (None, 20000.0, None),
     ]))
     .unwrap();
 
-    assert!(matches!(config.to_decoder_config(), Err(ConfigError::Invalid(_))));
+    let decoder_config = config.to_decoder_config().unwrap();
+    let layer_configs = decoder_config.layer_configs.as_ref().unwrap();
+    assert_eq!(layer_configs[0].rope_config.as_ref().unwrap().common().base, 10000.0);
+    assert_eq!(layer_configs[1].rope_config.as_ref().unwrap().common().base, 20000.0);
+    assert!(decoder_config.global_rope_config.is_none());
+    assert!(decoder_config.local_rope_config.is_none());
 }
 
 #[test]
-fn test_language_model_config_derives_global_and_local_rope_configs_from_layers() {
+fn test_language_model_config_preserves_per_layer_rope_configs() {
     let config = serde_json::from_value::<InnerModelConfig>(language_model_config_with_layer_rope_configs(&[
         (Some(512), 10000.0, None),
         (None, 500000.0, Some(128)),
@@ -444,12 +451,15 @@ fn test_language_model_config_derives_global_and_local_rope_configs_from_layers(
     .unwrap();
 
     let decoder_config = config.to_decoder_config().unwrap();
-    let local_rope = decoder_config.local_rope_config.as_ref().unwrap();
-    assert_eq!(local_rope.common().base, 10000.0);
-    assert_eq!(local_rope.common().partial_rotary_dim, None);
-    let global_rope = decoder_config.global_rope_config.as_ref().unwrap();
-    assert_eq!(global_rope.common().base, 500000.0);
-    assert_eq!(global_rope.common().partial_rotary_dim, Some(128));
+    let layer_configs = decoder_config.layer_configs.as_ref().unwrap();
+    let first_rope = layer_configs[0].rope_config.as_ref().unwrap();
+    assert_eq!(first_rope.common().base, 10000.0);
+    assert_eq!(first_rope.common().partial_rotary_dim, None);
+    let second_rope = layer_configs[1].rope_config.as_ref().unwrap();
+    assert_eq!(second_rope.common().base, 500000.0);
+    assert_eq!(second_rope.common().partial_rotary_dim, Some(128));
+    assert!(decoder_config.global_rope_config.is_none());
+    assert!(decoder_config.local_rope_config.is_none());
 }
 
 fn language_model_config_with_layer_rope_configs(

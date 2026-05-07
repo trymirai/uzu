@@ -578,10 +578,16 @@ impl<B: Backend> ForwardPassState<B> {
         let shared = self.shared_buffers.borrow();
         match id {
             ArrayId::RopeCosines(rope_type) => Some(match rope_type {
+                RopeType::Layer(layer_index) => {
+                    shared.layer_ropes[layer_index].as_ref().expect("Layer rope not initialized").cosines.clone()
+                },
                 RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").cosines.clone(),
                 RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").cosines.clone(),
             }),
             ArrayId::RopeSines(rope_type) => Some(match rope_type {
+                RopeType::Layer(layer_index) => {
+                    shared.layer_ropes[layer_index].as_ref().expect("Layer rope not initialized").sines.clone()
+                },
                 RopeType::Global => shared.global_rope.as_ref().expect("Global rope not initialized").sines.clone(),
                 RopeType::Local => shared.local_rope.as_ref().expect("Local rope not initialized").sines.clone(),
             }),

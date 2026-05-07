@@ -62,6 +62,11 @@ impl RoPEConfig {
             } => common,
         }
     }
+
+    pub fn rotary_dim(&self) -> Option<usize> {
+        let common = self.common();
+        common.partial_rotary_dim.or(common.head_dim)
+    }
 }
 
 #[cfg(test)]

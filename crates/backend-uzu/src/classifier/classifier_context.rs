@@ -89,7 +89,12 @@ impl<B: Backend> ClassifierContext<B> {
         )
         .expect("Failed to create embedding");
 
-        let global_rope = Self::create_rope_block(&context, data_type, RopeType::Global).map_err(Error::Classifier)?;
+        let global_rope = decoder_config
+            .global_rope_config
+            .as_ref()
+            .map(|_| Self::create_rope_block(&context, data_type, RopeType::Global))
+            .transpose()
+            .map_err(Error::Classifier)?;
         let local_rope = classifier_model_config
             .model_config
             .transformer_config
@@ -106,14 +111,18 @@ impl<B: Backend> ClassifierContext<B> {
             .iter()
             .enumerate()
             .map(|(layer_index, layer_config)| {
-                let mut rope = global_rope.clone();
                 let attn = layer_config.attention_config().ok_or(ClassifierError::NonAttentionMixer)?;
-
-                if attn.sliding_window_size.is_some() {
-                    if let Some(local_rope_block) = local_rope.clone() {
-                        rope = local_rope_block;
-                    }
-                }
+                let rope = if layer_config.rope_config.is_some() {
+                    Self::create_rope_block(&context, data_type, RopeType::Layer(layer_index))?
+                } else if attn.sliding_window_size.is_some() {
+                    local_rope.clone().or_else(|| global_rope.clone()).ok_or_else(|| {
+                        ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
+                    })?
+                } else {
+                    global_rope.clone().ok_or_else(|| {
+                        ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
+                    })?
+                };
 
                 let num_heads = attn.num_heads.ok_or_else(|| {
                     ClassifierError::MissingConfigField(format!("num_heads in layer {}", layer_index))

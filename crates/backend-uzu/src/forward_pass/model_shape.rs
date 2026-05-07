@@ -118,7 +118,7 @@ impl ModelShape {
                     let rope_dim = layer_config
                         .rope_config
                         .as_ref()
-                        .and_then(|rope| rope.common().partial_rotary_dim.or(rope.common().head_dim))
+                        .and_then(|rope| rope.rotary_dim())
                         .or(attn.partial_rope_dim)
                         .unwrap_or(hd);
                     max_rope_dim = max_rope_dim.max(rope_dim);

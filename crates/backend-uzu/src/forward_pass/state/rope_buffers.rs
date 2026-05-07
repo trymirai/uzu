@@ -22,7 +22,7 @@ impl<B: Backend> RopeBuffers<B> {
         rope_config: &RoPEConfig,
         model_shape: &ModelShape,
     ) -> Self {
-        let rope_dim = model_shape.rope_dim();
+        let rope_dim = rope_config.rotary_dim().unwrap_or_else(|| model_shape.rope_dim());
         let rope_max_sequence_length = model_shape.context_length();
 
         let mut buffers = Self {

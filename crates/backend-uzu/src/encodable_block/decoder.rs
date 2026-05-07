@@ -142,7 +142,11 @@ impl<B: Backend> Decoder<B> {
                 let layer_type = model_shape.layer_type(layer_index);
                 let rope_for_layer = match layer_type {
                     DecoderLayerType::Transformer => {
-                        if let Some(_) = sliding_window_sizes[layer_index]
+                        if layer_config.rope_config.is_some() {
+                            attention_data_type.as_ref().map(|data_type| {
+                                Self::create_rope_block(&context, *data_type, RopeType::Layer(layer_index))
+                            })
+                        } else if let Some(_) = sliding_window_sizes[layer_index]
                             && let Some(local_rope_block) = local_rope.clone()
                         {
                             Some(local_rope_block)
