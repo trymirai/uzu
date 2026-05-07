@@ -13,7 +13,7 @@ use tokio::sync::{
 
 use crate::{
     DownloadError, FileCheck, FileDownloadState, LockFileState, check_lock_file,
-    crc_utils::{calculate_and_verify_crc, crc_path_for_file, save_crc_file},
+    crc_utils::{calculate_and_verify_crc, save_crc_file},
     file_download_task_actor::{
         BackendEvent, DownloadActorState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
         TerminalOutcome, project_runtime_public_state,
@@ -220,9 +220,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             DownloadActorState::Downloading {
                 ..
             }
-            | DownloadActorState::Downloaded {
-                ..
-            } => Ok(()),
+            | DownloadActorState::Downloaded => Ok(()),
         }
     }
 
@@ -303,6 +301,10 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             },
             state => {
                 self.state = state;
+                if matches!(self.projection, PublicProjection::StickyError(_)) {
+                    self.projection = PublicProjection::None;
+                    self.progress_counters = ProgressCounters::default();
+                }
                 Ok(())
             },
         }
@@ -353,13 +355,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                     };
                     self.projection = PublicProjection::None;
                     release_destination_lease(destination_lease).await;
-                    self.finish_transition(
-                        from_state,
-                        DownloadActorState::Downloaded {
-                            file_path: self.config.destination.clone(),
-                            crc_path: crc_path_for_destination(&self.config.destination),
-                        },
-                    );
+                    self.finish_transition(from_state, DownloadActorState::Downloaded);
                     self.pending_terminal_outcome = Some(TerminalOutcome::Downloaded);
                 },
                 Err(message) => {
@@ -604,11 +600,6 @@ fn remove_file(path: &Path) {
 fn remove_resume_artifact(destination: &Path) {
     remove_file(&destination.with_extension("part"));
     remove_file(&destination.with_extension("resume_data"));
-}
-
-fn crc_path_for_destination(destination: &Path) -> Option<PathBuf> {
-    let crc_path = crc_path_for_file(destination);
-    crc_path.exists().then_some(crc_path)
 }
 
 async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String> {

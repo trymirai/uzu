@@ -121,11 +121,10 @@ impl DownloaderStream {
                             bytes_downloaded: state.downloaded_bytes,
                         };
                         match state.phase {
+                            DownloadPhase::Downloading {} | DownloadPhase::Locked {} => {},
                             DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::Downloading {}
-                            | DownloadPhase::Locked {}
-                            | DownloadPhase::Paused {} => {},
-                            DownloadPhase::Downloaded {}
+                            | DownloadPhase::Paused {}
+                            | DownloadPhase::Downloaded {}
                             | DownloadPhase::Error {
                                 ..
                             } => {

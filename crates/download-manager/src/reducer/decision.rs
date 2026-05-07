@@ -25,10 +25,7 @@ pub fn decide(
     };
 
     let initial_lifecycle_state = match validation.checked {
-        CheckedFileState::Valid => InitialLifecycleState::Downloaded {
-            file_path: observation.destination_path.clone(),
-            crc_path: observation.crc_path.clone(),
-        },
+        CheckedFileState::Valid => InitialLifecycleState::Downloaded,
         CheckedFileState::Invalid | CheckedFileState::Missing if observation.resume_state == FileState::Exists => {
             InitialLifecycleState::Paused {
                 part_path: observation
@@ -47,7 +44,7 @@ pub fn decide(
     // `FileDownloadManager::destination_foreign_lock` instead.
     let initial_projection = match (&lock_observation.state, &initial_lifecycle_state) {
         (LockFileState::OwnedByOtherApp(lock_file_info), state)
-            if !matches!(state, InitialLifecycleState::Downloaded { .. }) =>
+            if !matches!(state, InitialLifecycleState::Downloaded) =>
         {
             PublicProjection::LockedByOther(lock_file_info.manager_id.clone())
         },
@@ -61,9 +58,7 @@ pub fn decide(
             downloaded_bytes: observation.resume_size.unwrap_or(0),
             total_bytes: observation.expected_bytes.or(observation.resume_size).unwrap_or(0),
         },
-        InitialLifecycleState::Downloaded {
-            ..
-        } => {
+        InitialLifecycleState::Downloaded => {
             let total_bytes = observation.expected_bytes.or(observation.destination_size).unwrap_or(0);
             ProgressCounters {
                 downloaded_bytes: total_bytes,

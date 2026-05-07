@@ -12,6 +12,7 @@ pub struct Config {
     pub device: Device,
     pub base_path: Option<PathBuf>,
     pub name: String,
+    #[serde(default)]
     pub download_manager_type: FileDownloadManagerType,
 }
 

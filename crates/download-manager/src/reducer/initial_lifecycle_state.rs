@@ -8,8 +8,5 @@ pub enum InitialLifecycleState {
     Paused {
         part_path: PathBuf,
     },
-    Downloaded {
-        file_path: PathBuf,
-        crc_path: Option<PathBuf>,
-    },
+    Downloaded,
 }

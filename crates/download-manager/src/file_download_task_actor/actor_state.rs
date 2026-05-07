@@ -16,10 +16,7 @@ pub(crate) enum DownloadActorState<B: DownloadBackend> {
         generation: ActiveDownloadGeneration,
         destination_lease: DestinationLockLease,
     },
-    Downloaded {
-        file_path: PathBuf,
-        crc_path: Option<PathBuf>,
-    },
+    Downloaded,
 }
 
 impl<B: DownloadBackend> DownloadActorState<B> {
@@ -32,9 +29,7 @@ impl<B: DownloadBackend> DownloadActorState<B> {
             Self::Downloading {
                 ..
             } => "Downloading",
-            Self::Downloaded {
-                ..
-            } => "Downloaded",
+            Self::Downloaded => "Downloaded",
         }
     }
 }
@@ -53,12 +48,7 @@ impl<B: DownloadBackend> fmt::Debug for DownloadActorState<B> {
                 generation,
                 ..
             } => formatter.debug_struct("Downloading").field("generation", generation).finish_non_exhaustive(),
-            Self::Downloaded {
-                file_path,
-                crc_path,
-            } => {
-                formatter.debug_struct("Downloaded").field("file_path", file_path).field("crc_path", crc_path).finish()
-            },
+            Self::Downloaded => formatter.debug_struct("Downloaded").finish(),
         }
     }
 }
@@ -72,13 +62,7 @@ impl<B: DownloadBackend> From<InitialLifecycleState> for DownloadActorState<B> {
             } => Self::Paused {
                 part_path,
             },
-            InitialLifecycleState::Downloaded {
-                file_path,
-                crc_path,
-            } => Self::Downloaded {
-                file_path,
-                crc_path,
-            },
+            InitialLifecycleState::Downloaded => Self::Downloaded,
         }
     }
 }

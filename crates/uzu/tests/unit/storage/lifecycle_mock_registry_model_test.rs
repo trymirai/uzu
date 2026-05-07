@@ -7,7 +7,11 @@ use rstest::rstest;
 use tokio::runtime::Handle as TokioHandle;
 use tokio::time::{Duration, timeout};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use uzu::storage::types::{DownloadPhase, DownloadState, Item};
+use uzu::{
+    engine::Downloader,
+    helpers::SharedAccess,
+    storage::types::{DownloadPhase, DownloadState, Item},
+};
 
 use crate::common::{test_storage::TestStorage, tracing_setup::init_test_tracing};
 
@@ -133,6 +137,43 @@ async fn test_storage_cancel_does_not_delete_locked_files(
 
     assert!(result.is_err());
     assert!(destination.exists());
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_downloader_progress_stream_closes_after_pause(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
+    let model = registry.models.first().ok_or_else(|| std::io::Error::other("mock registry must include a model"))?;
+    let test_storage =
+        TestStorage::with_models_and_manager(TokioHandle::current(), vec![model.clone()], download_manager_type)
+            .await?;
+    let downloader = Downloader::new(model.identifier.clone(), SharedAccess::new(test_storage.storage));
+    let progress = downloader.progress().await?;
+
+    downloader.resume().await?;
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let state = downloader.state().await.expect("model state must exist");
+            if matches!(state.phase, DownloadPhase::Downloading {}) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+
+    downloader.pause().await?;
+    timeout(Duration::from_secs(10), async {
+        while progress.next().await.is_some() {}
+    })
+    .await?;
+
     Ok(())
 }
 

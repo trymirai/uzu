@@ -367,7 +367,7 @@ impl Item {
             });
         }
 
-        let cancel_result = self.cancel_and_remove_active_file_tasks().await;
+        self.cancel_and_remove_active_file_tasks().await?;
 
         self.stop_listening().await;
         *self.file_download_tasks.lock().await = Vec::new();
@@ -394,7 +394,7 @@ impl Item {
         let total_bytes: u64 = self.files.iter().map(|f| f.size as u64).sum();
         let not_downloaded_state = DownloadState::not_downloaded(total_bytes as i64);
         self.update_state_and_broadcast(not_downloaded_state).await;
-        cancel_result
+        Ok(())
     }
 
     pub async fn progress(&self) -> Result<BroadcastStream<DownloadState>, StorageError> {
@@ -402,15 +402,15 @@ impl Item {
     }
 
     pub async fn detach_active_downloads(&self) -> Result<(), StorageError> {
-        let cancel_result = self.cancel_and_remove_active_file_tasks().await;
+        self.cancel_and_remove_active_file_tasks().await?;
         *self.file_download_tasks.lock().await = Vec::new();
         *self.file_download_states.lock().await = Vec::new();
-        cancel_result
+        Ok(())
     }
 
     async fn cancel_and_remove_active_file_tasks(&self) -> Result<(), StorageError> {
-        let file_tasks_guard = self.file_download_tasks.lock().await;
-        let cancel_futures = file_tasks_guard.iter().map(|file_task| {
+        let file_tasks = self.file_download_tasks.lock().await.clone();
+        let cancel_futures = file_tasks.iter().map(|file_task| {
             let file_task = file_task.clone();
             let manager = self.file_download_manager.clone();
             async move {
@@ -421,7 +421,6 @@ impl Item {
             }
         });
         let first_error = join_all(cancel_futures).await.into_iter().find_map(Result::err);
-        drop(file_tasks_guard);
 
         match first_error {
             Some(error) => Err(StorageError::DownloadManager {

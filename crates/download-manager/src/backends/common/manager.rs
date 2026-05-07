@@ -268,7 +268,7 @@ async fn startup_requires_destination_lease<B: Backend>(
 fn startup_can_attach_initial_task<B: Backend>(startup: &Startup) -> bool {
     B::SUPPORTS_INITIAL_TASK_ATTACHMENT
         && !startup.lock_state.is_conflict()
-        && !matches!(startup.initial_lifecycle_state, InitialLifecycleState::Downloaded { .. })
+        && !matches!(startup.initial_lifecycle_state, InitialLifecycleState::Downloaded)
 }
 
 fn ensure_cached_task_matches(

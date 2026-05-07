@@ -21,9 +21,7 @@ pub fn project_runtime_public_state<B: DownloadBackend>(
                 progress_counters.downloaded_bytes,
                 fallback_total_bytes(progress_counters, config.expected_bytes),
             ),
-            DownloadActorState::Downloaded {
-                ..
-            } => {
+            DownloadActorState::Downloaded => {
                 let total_bytes = config.expected_bytes.unwrap_or(progress_counters.total_bytes);
                 FileDownloadState::downloaded(total_bytes)
             },

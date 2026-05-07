@@ -94,9 +94,7 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
                 InitialTaskAttachment::Downloading {
                     ..
                 },
-                InitialLifecycleState::Downloaded {
-                    ..
-                },
+                InitialLifecycleState::Downloaded,
             ) => (initial_lifecycle_state.into(), initial_progress),
             (
                 InitialTaskAttachment::Downloading {
