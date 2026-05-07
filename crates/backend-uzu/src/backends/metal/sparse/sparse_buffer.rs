@@ -2,7 +2,6 @@ use std::{fmt::Debug, ops::Range};
 
 use bytesize::ByteSize;
 use metal::prelude::*;
-use rangemap::RangeMap;
 
 use crate::{
     backends::{
@@ -15,7 +14,6 @@ use crate::{
 #[derive(Debug)]
 pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
-    mapped_pages: RangeMap<usize, ()>,
 }
 
 impl MetalSparseBuffer {
@@ -37,7 +35,6 @@ impl MetalSparseBuffer {
 
         Ok(Self {
             buffer,
-            mapped_pages: RangeMap::new(),
         })
     }
 }
@@ -67,7 +64,7 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        context.sparse_heaps_mut().mapping(context, &self.buffer, pages)
+        context.sparse_heaps_mapper_mut().mapping(context, &self.buffer, pages)
     }
 
     fn unmapping(
@@ -75,8 +72,7 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        // todo: check mapped_pages
-        context.sparse_heaps_mut().unmapping(context, &self.buffer, pages)
+        context.sparse_heaps_mapper_mut().unmapping(context, &self.buffer, pages)
     }
 }
 

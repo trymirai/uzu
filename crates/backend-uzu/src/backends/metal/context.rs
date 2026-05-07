@@ -59,7 +59,7 @@ impl MetalContext {
         Ok(pipeline)
     }
 
-    pub fn sparse_heaps_mut(&self) -> RefMut<'_, MetalSparseHeapsHolder> {
+    pub fn sparse_heaps_mapper_mut(&self) -> RefMut<'_, MetalSparseHeapsHolder> {
         self.sparse_heaps.borrow_mut()
     }
 }
@@ -93,7 +93,7 @@ impl Context for MetalContext {
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
-            sparse_heaps,
+            sparse_heaps: sparse_heaps,
         }))
     }
 
