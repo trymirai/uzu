@@ -42,14 +42,23 @@ pub trait FileDownloadManager: Send + Sync + 'static {
         download_id: DownloadId,
     ) -> Result<(), DownloadError>;
 
-    #[allow(clippy::ptr_arg)]
     async fn file_download_task(
         &self,
-        source_url: &String,
+        source_url: &str,
         destination_path: &Path,
         file_check: FileCheck,
         expected_bytes: Option<u64>,
     ) -> Result<Arc<dyn FileDownloadTask>, DownloadError>;
+
+    /// Returns `Some(owner_manager_id)` if the destination is currently locked by a different
+    /// manager (a live, non-stale lock not owned by us); `None` otherwise. Useful for callers
+    /// that need to check foreign-ownership independently of the file's download phase.
+    async fn destination_foreign_lock(
+        &self,
+        _destination_path: &Path,
+    ) -> Option<String> {
+        None
+    }
 }
 
 impl dyn FileDownloadManager {

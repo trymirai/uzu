@@ -1,4 +1,12 @@
-use std::{fmt, marker::PhantomData, path::Path, sync::Arc};
+use std::{
+    fmt,
+    marker::PhantomData,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use tokio::{
     sync::{
@@ -16,10 +24,13 @@ use crate::{
     DownloadError, DownloadEventSender, DownloadId, DownloadLogEvent, FileCheck, FileDownloadEvent, FileDownloadPhase,
     FileDownloadState,
     backends::common::{Backend, InitialTaskAttachment},
+    file_download_task::{FileDownloadTask, ManagedFileDownloadTask},
     file_download_task_actor::{
         DownloadFsm, DownloadLifecycleState, DownloadTaskActor, PendingProgressSlot, ProgressCounters,
-        PublicProjection, TaskCommand, TerminalOutcome, project_public_state, project_runtime_public_state,
+        PublicProjection, TaskCommand, TerminalOutcome, local_actor_scheduler::spawn_actor, project_public_state,
+        project_runtime_public_state,
     },
+    lock_manager::DestinationLockLease,
     record_download_log_event,
     reducer::InitialLifecycleState,
     traits::{BackendEventSender, DownloadBackend, DownloadConfig},
@@ -28,11 +39,11 @@ use crate::{
 pub struct GenericFileDownloadTask<B: DownloadBackend> {
     config: Arc<DownloadConfig>,
     command_sender: TokioMpscSender<TaskCommand>,
-    actor_task: TokioJoinHandle<()>,
     public_state_receiver: TokioWatchReceiver<FileDownloadState>,
     progress_sender: TokioBroadcastSender<FileDownloadState>,
     terminal_receiver: TokioWatchReceiver<TerminalOutcome>,
     listener_task: Arc<TokioMutex<Option<TokioJoinHandle<()>>>>,
+    is_stopped: AtomicBool,
     backend: PhantomData<B>,
 }
 
@@ -43,7 +54,7 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         initial_lifecycle_state: InitialLifecycleState,
         initial_projection: PublicProjection,
         initial_progress: ProgressCounters,
-    ) -> Self {
+    ) -> Result<Self, DownloadError> {
         let initial_public_state =
             project_public_state(&initial_lifecycle_state, &initial_projection, initial_progress, &config);
         let (command_sender, command_receiver) = tokio_mpsc_channel(64);
@@ -71,27 +82,27 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
             progress_sender.clone(),
             terminal_sender,
         );
-        let runtime_handle = tokio::runtime::Handle::current();
-        let actor_task = tokio::task::spawn_blocking(move || runtime_handle.block_on(actor.run()));
+        spawn_actor(actor).map_err(|error| error.into_download_error())?;
 
-        Self {
+        Ok(Self {
             config,
             command_sender,
-            actor_task,
             public_state_receiver,
             progress_sender,
             terminal_receiver,
             listener_task: Arc::new(TokioMutex::new(None)),
+            is_stopped: AtomicBool::new(false),
             backend: PhantomData,
-        }
+        })
     }
 
-    pub async fn spawn_with_initial_attachment(
+    pub(crate) async fn spawn_with_initial_attachment(
         config: Arc<DownloadConfig>,
         context: Arc<B::Context>,
         initial_lifecycle_state: InitialLifecycleState,
         initial_projection: PublicProjection,
         initial_progress: ProgressCounters,
+        mut startup_lease: Option<DestinationLockLease>,
     ) -> Result<Self, DownloadError>
     where
         B: Backend,
@@ -107,20 +118,45 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
 
         let mut fsm = DownloadFsm::<B>::new(Arc::clone(&config), Arc::clone(&context), backend_event_sender.clone());
         let attachment_generation = fsm.allocate_next_generation();
-        let (lifecycle_state, progress_counters) = match B::initial_task_attachment(
-            context.as_ref(),
-            Arc::clone(&config),
-            attachment_generation,
-            backend_event_sender.clone(),
-        )
-        .await?
-        {
-            InitialTaskAttachment::None => (initial_lifecycle_state.into(), initial_progress),
-            InitialTaskAttachment::Downloading {
-                active_task,
-                initial_downloaded_bytes,
-                total_bytes,
-            } => (
+        let attachment = if let Some(destination_lease) = startup_lease.as_ref() {
+            match B::initial_task_attachment(
+                context.as_ref(),
+                Arc::clone(&config),
+                attachment_generation,
+                backend_event_sender.clone(),
+                destination_lease,
+            )
+            .await
+            {
+                Ok(attachment) => attachment,
+                Err(error) => {
+                    if let Some(lease) = startup_lease.take() {
+                        let _ = lease.release().await;
+                    }
+                    return Err(error);
+                },
+            }
+        } else {
+            InitialTaskAttachment::None
+        };
+        let (lifecycle_state, progress_counters) = match (attachment, &initial_lifecycle_state) {
+            (InitialTaskAttachment::None, _) => (initial_lifecycle_state.into(), initial_progress),
+            (
+                InitialTaskAttachment::Downloading {
+                    ..
+                },
+                InitialLifecycleState::Downloaded {
+                    ..
+                },
+            ) => (initial_lifecycle_state.into(), initial_progress),
+            (
+                InitialTaskAttachment::Downloading {
+                    active_task,
+                    initial_downloaded_bytes,
+                    total_bytes,
+                },
+                _,
+            ) => (
                 DownloadLifecycleState::Downloading {
                     active_task: Some(active_task),
                     generation: attachment_generation,
@@ -132,9 +168,26 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
             ),
         };
 
+        match &lifecycle_state {
+            DownloadLifecycleState::Downloading {
+                ..
+            } => {
+                if let Some(lease) = startup_lease.take() {
+                    fsm.set_destination_lease(lease);
+                }
+            },
+            _ => {
+                if let Some(lease) = startup_lease.take() {
+                    lease.release().await?;
+                }
+            },
+        }
+
         let initial_public_state =
             project_runtime_public_state(&lifecycle_state, &initial_projection, progress_counters, &config);
         let (public_state_sender, public_state_receiver) = tokio_watch_channel(initial_public_state);
+        let actor_needs_shutdown_on_spawn_failure =
+            matches!(&lifecycle_state, DownloadLifecycleState::Downloading { .. });
         let lifecycle = fsm.into_state_machine(lifecycle_state);
 
         let actor = DownloadTaskActor::<B>::new(
@@ -150,17 +203,23 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
             progress_sender.clone(),
             terminal_sender,
         );
-        let runtime_handle = tokio::runtime::Handle::current();
-        let actor_task = tokio::task::spawn_blocking(move || runtime_handle.block_on(actor.run()));
+        if let Err(error) = spawn_actor(actor) {
+            let download_error = if actor_needs_shutdown_on_spawn_failure {
+                error.abort_actor_before_start().await
+            } else {
+                error.into_download_error()
+            };
+            return Err(download_error);
+        }
 
         Ok(Self {
             config,
             command_sender,
-            actor_task,
             public_state_receiver,
             progress_sender,
             terminal_receiver,
             listener_task: Arc::new(TokioMutex::new(None)),
+            is_stopped: AtomicBool::new(false),
             backend: PhantomData,
         })
     }
@@ -169,9 +228,25 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         &self,
         command_builder: impl FnOnce(tokio::sync::oneshot::Sender<Result<(), DownloadError>>) -> TaskCommand,
     ) -> Result<(), DownloadError> {
+        if self.is_stopped.load(Ordering::SeqCst) {
+            return Err(DownloadError::TaskStopped);
+        }
         let (reply_sender, reply_receiver) = tokio_oneshot_channel();
         self.command_sender.send(command_builder(reply_sender)).await.map_err(|_| DownloadError::ChannelClosed)?;
         reply_receiver.await.unwrap_or(Err(DownloadError::TaskStopped))
+    }
+
+    async fn wait_for_actor_stopped(&self) {
+        let mut terminal_receiver = self.terminal_receiver.clone();
+        loop {
+            if matches!(terminal_receiver.borrow().clone(), TerminalOutcome::ActorStopped) {
+                break;
+            }
+
+            if terminal_receiver.changed().await.is_err() {
+                break;
+            }
+        }
     }
 }
 
@@ -205,6 +280,10 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
 
     fn file_check(&self) -> &FileCheck {
         &self.config.file_check
+    }
+
+    fn expected_bytes(&self) -> Option<u64> {
+        self.config.expected_bytes
     }
 
     async fn download(&self) -> Result<(), DownloadError> {
@@ -328,9 +407,47 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
     }
 }
 
+#[async_trait::async_trait]
+impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> {
+    async fn shutdown_for_removal(&self) -> Result<(), DownloadError> {
+        if self.is_stopped.swap(true, Ordering::SeqCst) {
+            self.wait_for_actor_stopped().await;
+            self.stop_listening().await;
+            return Ok(());
+        }
+
+        let (reply_sender, reply_receiver) = tokio_oneshot_channel();
+        if self
+            .command_sender
+            .send(TaskCommand::Remove {
+                reply_sender,
+            })
+            .await
+            .is_err()
+        {
+            self.wait_for_actor_stopped().await;
+            self.stop_listening().await;
+            return Ok(());
+        }
+
+        let result = reply_receiver.await.unwrap_or(Err(DownloadError::TaskStopped));
+        self.wait_for_actor_stopped().await;
+        self.stop_listening().await;
+        result
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.is_stopped.load(Ordering::SeqCst)
+    }
+}
+
 impl<B: DownloadBackend> Drop for GenericFileDownloadTask<B> {
     fn drop(&mut self) {
-        self.actor_task.abort();
+        // Releasing the lock here would race with the backend task that may still be writing
+        // the destination. Dropping `command_sender` closes the actor's command channel,
+        // which triggers nondestructive actor teardown: active backends are paused when
+        // possible, resume artifacts are preserved, and the lock is released after the backend
+        // has stopped.
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, path::Path, sync::Arc};
 
 use tokio::sync::broadcast::Sender as TokioBroadcastSender;
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
@@ -11,6 +11,7 @@ pub trait FileDownloadTask: Send + Sync + Debug {
     fn source_url(&self) -> &str;
     fn destination(&self) -> &Path;
     fn file_check(&self) -> &FileCheck;
+    fn expected_bytes(&self) -> Option<u64>;
 
     async fn download(&self) -> Result<(), DownloadError>;
     async fn pause(&self) -> Result<(), DownloadError>;
@@ -26,4 +27,40 @@ pub trait FileDownloadTask: Send + Sync + Debug {
     async fn wait(&self);
 
     fn broadcast_sender(&self) -> TokioBroadcastSender<FileDownloadState>;
+}
+
+#[async_trait::async_trait]
+pub(crate) trait ManagedFileDownloadTask: FileDownloadTask {
+    async fn shutdown_for_removal(&self) -> Result<(), DownloadError>;
+    fn is_stopped(&self) -> bool;
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedFileDownloadTask {
+    public: Arc<dyn FileDownloadTask>,
+    managed: Arc<dyn ManagedFileDownloadTask>,
+}
+
+impl CachedFileDownloadTask {
+    pub(crate) fn new(
+        public: Arc<dyn FileDownloadTask>,
+        managed: Arc<dyn ManagedFileDownloadTask>,
+    ) -> Self {
+        Self {
+            public,
+            managed,
+        }
+    }
+
+    pub(crate) fn public(&self) -> Arc<dyn FileDownloadTask> {
+        Arc::clone(&self.public)
+    }
+
+    pub(crate) fn managed(&self) -> Arc<dyn ManagedFileDownloadTask> {
+        Arc::clone(&self.managed)
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.managed.is_stopped()
+    }
 }

@@ -18,7 +18,9 @@ impl AppleGetTasksHandler {
             Box<[Retained<NSURLSessionDataTask>]>,
             Box<[Retained<NSURLSessionUploadTask>]>,
             Box<[Retained<NSURLSessionDownloadTask>]>,
-        ) + 'static
+        ) + Send
+        + Sync
+        + 'static
     ) -> Self {
         Self(RcBlock::new(
             move |data_tasks_pointer: NonNull<NSArray<NSURLSessionDataTask>>,
@@ -37,6 +39,13 @@ impl AppleGetTasksHandler {
         ))
     }
 }
+
+// SAFETY: `NSURLSession::getTasksWithCompletionHandler` requires a sendable
+// completion block. The constructor enforces `Send + Sync + 'static` captures,
+// and the block copies Objective-C arrays into owned retained values before
+// invoking the Rust closure.
+unsafe impl Send for AppleGetTasksHandler {}
+unsafe impl Sync for AppleGetTasksHandler {}
 
 impl Deref for AppleGetTasksHandler {
     type Target = Block<AppleGetTasksBlock>;

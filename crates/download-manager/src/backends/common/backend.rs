@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::{
-    DownloadError,
+    DestinationLockLease, DownloadError,
     traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
 };
 
@@ -19,6 +19,7 @@ pub enum InitialTaskAttachment<B: Backend> {
 #[async_trait::async_trait]
 pub trait Backend: DownloadBackend + Debug + Clone + Send + Sync + Sized + 'static {
     const RESUME_ARTIFACT_EXTENSION: &'static str;
+    const SUPPORTS_INITIAL_TASK_ATTACHMENT: bool = false;
 
     fn manager_suffix() -> &'static str;
 
@@ -29,7 +30,15 @@ pub trait Backend: DownloadBackend + Debug + Clone + Send + Sync + Sized + 'stat
         _config: Arc<DownloadConfig>,
         _generation: ActiveDownloadGeneration,
         _backend_event_sender: BackendEventSender,
+        _destination_lease: &DestinationLockLease,
     ) -> Result<InitialTaskAttachment<Self>, DownloadError> {
         Ok(InitialTaskAttachment::None)
+    }
+
+    async fn has_initial_task_to_claim(
+        _context: &Self::Context,
+        _config: &DownloadConfig,
+    ) -> Result<bool, DownloadError> {
+        Ok(false)
     }
 }

@@ -7,18 +7,24 @@ use std::{
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
     NSBundle, NSData, NSString, NSURL, NSURLSession, NSURLSessionConfiguration, NSURLSessionDelegate,
-    NSURLSessionDownloadTask,
+    NSURLSessionDownloadTask, NSURLSessionTaskState,
 };
-use tokio::runtime::Handle as TokioHandle;
+use tokio::{runtime::Handle as TokioHandle, sync::oneshot::channel as tokio_oneshot_channel};
 
 use crate::{
-    DownloadInfo, FileCheck,
+    DestinationLockLease, DownloadId, DownloadInfo, FileCheck,
     backends::apple::{
         AppleActiveTask, AppleBackend, AppleBackendError, AppleEventRegistry, AppleEventSink, AppleGetTasksHandler,
         AppleSessionDelegate, task_ext::AppleDownloadTaskExt,
     },
     traits::{ActiveDownloadGeneration, BackendContext, BackendEventSender, DownloadConfig},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DuplicateMatchPolicy {
+    Keep,
+    Cancel,
+}
 
 pub struct AppleBackendContext {
     session: Retained<NSURLSession>,
@@ -34,12 +40,6 @@ impl std::fmt::Debug for AppleBackendContext {
         formatter: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         formatter.debug_struct("AppleBackendContext").finish_non_exhaustive()
-    }
-}
-
-impl Default for AppleBackendContext {
-    fn default() -> Self {
-        Self::new(TokioHandle::current())
     }
 }
 
@@ -65,25 +65,92 @@ impl AppleBackendContext {
         }
     }
 
-    pub fn matching_download_task(
+    pub async fn matching_download_task(
         &self,
         config: &DownloadConfig,
-    ) -> Option<objc2::rc::Retained<NSURLSessionDownloadTask>> {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let sender = Arc::new(Mutex::new(Some(sender)));
+    ) -> Result<Option<Retained<NSURLSessionDownloadTask>>, AppleBackendError> {
+        self.find_download_task(config, DuplicateMatchPolicy::Keep).await
+    }
+
+    #[doc(hidden)]
+    pub async fn claim_matching_download_task(
+        &self,
+        config: &DownloadConfig,
+    ) -> Result<Option<Retained<NSURLSessionDownloadTask>>, AppleBackendError> {
+        self.find_download_task(config, DuplicateMatchPolicy::Cancel).await
+    }
+
+    #[doc(hidden)]
+    pub async fn has_download_task_to_claim(
+        &self,
+        config: &DownloadConfig,
+    ) -> Result<bool, AppleBackendError> {
+        let download_tasks = self.download_tasks().await?;
+        Ok(download_tasks
+            .iter()
+            .any(|task| task.download_id() == Some(config.download_id) && is_live_task_state(task.state())))
+    }
+
+    #[doc(hidden)]
+    pub fn event_sink_count_for_download(
+        &self,
+        download_id: DownloadId,
+    ) -> usize {
+        self.event_registry
+            .lock()
+            .map(|registry| registry.keys().filter(|(id, _)| *id == download_id).count())
+            .unwrap_or(0)
+    }
+
+    #[doc(hidden)]
+    pub fn event_sink_task_identifiers_for_download(
+        &self,
+        download_id: DownloadId,
+    ) -> Vec<u64> {
+        self.event_registry
+            .lock()
+            .map(|registry| {
+                registry
+                    .keys()
+                    .filter_map(|(id, task_identifier)| (*id == download_id).then_some(*task_identifier))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn find_download_task(
+        &self,
+        config: &DownloadConfig,
+        duplicate_match_policy: DuplicateMatchPolicy,
+    ) -> Result<Option<Retained<NSURLSessionDownloadTask>>, AppleBackendError> {
+        let download_tasks = self.download_tasks().await?;
+        Ok(select_matching_download_task(download_tasks, config, duplicate_match_policy))
+    }
+
+    async fn download_tasks(&self) -> Result<Box<[Retained<NSURLSessionDownloadTask>]>, AppleBackendError> {
+        let (download_tasks_sender, download_tasks_receiver) = tokio_oneshot_channel();
+        let pending_download_tasks_sender = Arc::new(Mutex::new(Some(download_tasks_sender)));
         let handler = AppleGetTasksHandler::new({
-            let sender = Arc::clone(&sender);
+            let pending_download_tasks_sender = Arc::clone(&pending_download_tasks_sender);
             move |_data_tasks, _upload_tasks, download_tasks| {
-                if let Some(sender) = sender.lock().ok().and_then(|mut sender| sender.take()) {
-                    let _ = sender.send(download_tasks);
+                let download_tasks_sender = match pending_download_tasks_sender.lock() {
+                    Ok(mut download_tasks_sender) => download_tasks_sender.take(),
+                    Err(poisoned_sender) => {
+                        let mut download_tasks_sender = poisoned_sender.into_inner();
+                        download_tasks_sender.take()
+                    },
+                };
+                if let Some(download_tasks_sender) = download_tasks_sender {
+                    let _ = download_tasks_sender.send(download_tasks);
                 }
             }
         });
         unsafe {
             self.session.getTasksWithCompletionHandler(&handler);
         }
-        let download_tasks = receiver.recv().unwrap_or_default();
-        download_tasks.into_iter().find(|task| task.download_id() == Some(config.download_id))
+        download_tasks_receiver.await.map_err(|error| {
+            AppleBackendError::TaskEnumeration(format!("URLSession task enumeration callback dropped: {error}"))
+        })
     }
 
     pub fn attach_existing_task(
@@ -96,9 +163,45 @@ impl AppleBackendContext {
         self.prepare_task(task, config, generation, backend_event_sender);
     }
 
-    pub fn event_registry(&self) -> AppleEventRegistry {
+    pub(crate) fn event_registry(&self) -> AppleEventRegistry {
         Arc::clone(&self.event_registry)
     }
+}
+
+fn select_matching_download_task(
+    download_tasks: Box<[Retained<NSURLSessionDownloadTask>]>,
+    config: &DownloadConfig,
+    duplicate_match_policy: DuplicateMatchPolicy,
+) -> Option<Retained<NSURLSessionDownloadTask>> {
+    let mut live_match = None;
+    for task in download_tasks {
+        if task.download_id() != Some(config.download_id) {
+            continue;
+        }
+        let task_state = task.state();
+        if !is_live_task_state(task_state) {
+            continue;
+        }
+        let info = task.download_info();
+        let source_url_matches = info.as_ref().map(|info| info.source_url == config.source_url).unwrap_or(false);
+        let crc_matches = info.as_ref().map(|info| info.crc32c == config.file_check.expected_crc()).unwrap_or(false);
+        if !(source_url_matches && crc_matches) {
+            if matches!(duplicate_match_policy, DuplicateMatchPolicy::Cancel) {
+                task.cancel();
+            }
+            continue;
+        }
+        if live_match.is_none() {
+            live_match = Some(task);
+        } else if matches!(duplicate_match_policy, DuplicateMatchPolicy::Cancel) {
+            task.cancel();
+        }
+    }
+    live_match
+}
+
+fn is_live_task_state(state: NSURLSessionTaskState) -> bool {
+    matches!(state, NSURLSessionTaskState::Running | NSURLSessionTaskState::Suspended)
 }
 
 fn automatic_session_configuration() -> Retained<NSURLSessionConfiguration> {
@@ -127,6 +230,7 @@ impl BackendContext for AppleBackendContext {
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
+        _destination_lease: &DestinationLockLease,
     ) -> Result<AppleActiveTask, AppleBackendError> {
         let ns_url = NSURL::URLWithString(&NSString::from_str(&config.source_url)).ok_or(AppleBackendError::BadUrl)?;
         let task = self.session.downloadTaskWithURL(&ns_url);
@@ -141,6 +245,7 @@ impl BackendContext for AppleBackendContext {
         generation: ActiveDownloadGeneration,
         resume_artifact_path: &Path,
         backend_event_sender: BackendEventSender,
+        _destination_lease: &DestinationLockLease,
     ) -> Result<AppleActiveTask, AppleBackendError> {
         let resume_data =
             tokio::fs::read(resume_artifact_path).await.map_err(|error| AppleBackendError::Io(error.to_string()))?;
@@ -173,7 +278,7 @@ impl AppleBackendContext {
         task.set_download_info(&download_info);
         if let Ok(mut registry) = self.event_registry.lock() {
             registry.insert(
-                config.download_id,
+                (config.download_id, task.task_identifier()),
                 AppleEventSink {
                     generation,
                     destination: config.destination.clone(),

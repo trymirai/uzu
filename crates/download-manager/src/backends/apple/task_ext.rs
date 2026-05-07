@@ -15,6 +15,7 @@ pub trait AppleDownloadTaskExt {
     fn state(&self) -> NSURLSessionTaskState;
     fn count_of_bytes_expected_to_receive(&self) -> u64;
     fn count_of_bytes_received(&self) -> u64;
+    fn task_identifier(&self) -> u64;
 }
 
 impl AppleDownloadTaskExt for NSURLSessionDownloadTask {
@@ -35,8 +36,7 @@ impl AppleDownloadTaskExt for NSURLSessionDownloadTask {
     }
 
     fn download_id(&self) -> Option<DownloadId> {
-        self.download_info()
-            .map(|info| compute_download_id(&info.source_url, PathBuf::from(info.destination_path).as_path()))
+        self.download_info().map(|info| compute_download_id(PathBuf::from(info.destination_path).as_path()))
     }
 
     fn state(&self) -> NSURLSessionTaskState {
@@ -51,5 +51,9 @@ impl AppleDownloadTaskExt for NSURLSessionDownloadTask {
     fn count_of_bytes_received(&self) -> u64 {
         let bytes_received: i64 = unsafe { msg_send![self, countOfBytesReceived] };
         bytes_received.max(0) as u64
+    }
+
+    fn task_identifier(&self) -> u64 {
+        unsafe { msg_send![self, taskIdentifier] }
     }
 }

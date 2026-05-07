@@ -1,6 +1,9 @@
 use std::{path::Path, sync::Arc};
 
-use crate::traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig};
+use crate::{
+    DestinationLockLease,
+    traits::{ActiveDownloadGeneration, BackendEventSender, DownloadBackend, DownloadConfig},
+};
 
 #[async_trait::async_trait]
 pub trait BackendContext: Send + Sync + Sized {
@@ -11,6 +14,7 @@ pub trait BackendContext: Send + Sync + Sized {
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
+        destination_lease: &DestinationLockLease,
     ) -> Result<<Self::Backend as DownloadBackend>::ActiveTask, <Self::Backend as DownloadBackend>::Error>;
 
     async fn resume(
@@ -19,5 +23,6 @@ pub trait BackendContext: Send + Sync + Sized {
         generation: ActiveDownloadGeneration,
         resume_artifact_path: &Path,
         backend_event_sender: BackendEventSender,
+        destination_lease: &DestinationLockLease,
     ) -> Result<<Self::Backend as DownloadBackend>::ActiveTask, <Self::Backend as DownloadBackend>::Error>;
 }

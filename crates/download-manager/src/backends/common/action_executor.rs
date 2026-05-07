@@ -1,10 +1,14 @@
 use crate::{
     DownloadError,
     crc_utils::save_crc_file,
+    lock_manager::DestinationLockLease,
     reducer::{Action, ActionPlan},
 };
 
-pub async fn apply_actions(action_plan: &ActionPlan) -> Result<(), DownloadError> {
+pub async fn apply_actions(
+    action_plan: &ActionPlan,
+    _destination_lease: &DestinationLockLease,
+) -> Result<(), DownloadError> {
     for action in action_plan.as_slice() {
         match action {
             Action::DeleteFile {

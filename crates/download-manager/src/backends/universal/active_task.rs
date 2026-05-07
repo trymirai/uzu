@@ -36,26 +36,34 @@ impl UniversalActiveTask {
     }
 }
 
+impl Drop for UniversalActiveTask {
+    fn drop(&mut self) {
+        for handle in self.task_handles.iter() {
+            handle.abort();
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl ActiveTask for UniversalActiveTask {
     type Backend = UniversalBackend;
 
     async fn pause(
-        self,
+        mut self,
         _destination: &Path,
     ) -> Result<PathBuf, <Self::Backend as DownloadBackend>::Error> {
-        for task_handle in self.task_handles {
+        for task_handle in std::mem::take(&mut self.task_handles) {
             task_handle.abort();
             let _ = task_handle.await;
         }
-        Ok(self.resume_artifact_path)
+        Ok(std::mem::take(&mut self.resume_artifact_path))
     }
 
     async fn cancel(
-        self,
+        mut self,
         _destination: &Path,
     ) -> CancelOutcome {
-        for task_handle in self.task_handles {
+        for task_handle in std::mem::take(&mut self.task_handles) {
             task_handle.abort();
             let _ = task_handle.await;
         }

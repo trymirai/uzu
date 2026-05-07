@@ -10,13 +10,13 @@ use statig::{
 };
 
 use crate::{
-    DownloadError, FileCheck, LockFileState, acquire_lock, check_lock_file,
+    DownloadError, FileCheck, LockFileState, check_lock_file,
     crc_utils::{calculate_and_verify_crc, crc_path_for_file, save_crc_file},
     file_download_task_actor::{
         ProgressCounters, PublicProjection, TerminalOutcome,
         fsm::{DispatchContext, DownloadActorEffect, FsmEvent},
     },
-    release_lock,
+    lock_manager::{DestinationLockLease, lock_path_for_destination},
     traits::{
         ActiveDownloadGeneration, ActiveDownloadGenerationCounter, ActiveTask, BackendContext, BackendEventSender,
         DownloadBackend, DownloadConfig,
@@ -29,6 +29,7 @@ pub struct DownloadFsm<B: DownloadBackend> {
     context: Arc<B::Context>,
     backend_event_sender: BackendEventSender,
     generation_counter: ActiveDownloadGenerationCounter,
+    destination_lease: Option<DestinationLockLease>,
 }
 
 impl<B: DownloadBackend> DownloadFsm<B> {
@@ -42,7 +43,15 @@ impl<B: DownloadBackend> DownloadFsm<B> {
             context,
             backend_event_sender,
             generation_counter: ActiveDownloadGenerationCounter::default(),
+            destination_lease: None,
         }
+    }
+
+    pub(crate) fn set_destination_lease(
+        &mut self,
+        destination_lease: DestinationLockLease,
+    ) {
+        self.destination_lease = Some(destination_lease);
     }
 
     pub fn allocate_next_generation(&mut self) -> ActiveDownloadGeneration {
@@ -58,12 +67,14 @@ impl<B: DownloadBackend> DownloadFsm<B> {
         state_machine.into()
     }
 
-    async fn acquire_destination_lock(
+    async fn acquire_destination_lease(
         &mut self,
-        context: &mut DispatchContext<B>,
-    ) -> Result<(), DownloadError> {
+        context: &mut DispatchContext,
+    ) -> Result<DestinationLockLease, DownloadError> {
         let lock_path = lock_path_for_destination(&self.config.destination);
-        match check_lock_file(&lock_path, &self.config.manager_id, std::process::id()) {
+        match check_lock_file(&lock_path, &self.config.manager_id, self.config.manager_instance_id, std::process::id())
+            .await
+        {
             LockFileState::OwnedByOtherApp(lock_file_info) => {
                 context.push(DownloadActorEffect::SetProjection(PublicProjection::LockedByOther(
                     lock_file_info.manager_id.clone(),
@@ -73,40 +84,73 @@ impl<B: DownloadBackend> DownloadFsm<B> {
             LockFileState::Missing
             | LockFileState::OwnedByUs(_)
             | LockFileState::OwnedBySameAppOldProcess(_)
-            | LockFileState::Stale(_) => {
-                acquire_lock(&lock_path, &self.config.manager_id).await?;
-                Ok(())
+            | LockFileState::Stale(_)
+            | LockFileState::StaleUnparseable(_) => {
+                match DestinationLockLease::acquire(
+                    &lock_path,
+                    &self.config.manager_id,
+                    self.config.manager_instance_id,
+                )
+                .await
+                {
+                    Ok(lease) => Ok(lease),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        match check_lock_file(
+                            &lock_path,
+                            &self.config.manager_id,
+                            self.config.manager_instance_id,
+                            std::process::id(),
+                        )
+                        .await
+                        {
+                            LockFileState::OwnedByOtherApp(lock_file_info) => {
+                                context.push(DownloadActorEffect::SetProjection(PublicProjection::LockedByOther(
+                                    lock_file_info.manager_id.clone(),
+                                )));
+                                Err(DownloadError::LockedByOther(lock_file_info.manager_id))
+                            },
+                            _ => Err(DownloadError::from(error)),
+                        }
+                    },
+                    Err(error) => Err(DownloadError::from(error)),
+                }
             },
         }
     }
 
-    async fn release_destination_lock(&self) {
-        let _ = release_lock(&lock_path_for_destination(&self.config.destination)).await;
+    async fn release_destination_lease(&mut self) {
+        if let Some(lease) = self.destination_lease.take() {
+            let _ = lease.release().await;
+        }
     }
 
     async fn start_fresh_download(
         &mut self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
     ) -> Outcome<DownloadLifecycleState<B>> {
-        if let Err(error) = self.acquire_destination_lock(context).await {
-            context.reply(Err(error));
-            return Handled;
-        }
+        let lease = match self.acquire_destination_lease(context).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                context.reply(Err(error));
+                return Handled;
+            },
+        };
 
         let generation = self.allocate_next_generation();
         let active_task = match self
             .context
-            .download(Arc::clone(&self.config), generation, self.backend_event_sender.clone())
+            .download(Arc::clone(&self.config), generation, self.backend_event_sender.clone(), &lease)
             .await
         {
             Ok(active_task) => active_task,
             Err(error) => {
-                self.release_destination_lock().await;
+                let _ = lease.release().await;
                 context.reply(Err(DownloadError::Backend(error.to_string())));
                 return Handled;
             },
         };
 
+        self.destination_lease = Some(lease);
         context.push(DownloadActorEffect::SetProjection(PublicProjection::None));
         context.push(DownloadActorEffect::SetProgress(ProgressCounters {
             downloaded_bytes: 0,
@@ -119,7 +163,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
     async fn resume_download(
         &mut self,
         part_path: PathBuf,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
     ) -> Outcome<DownloadLifecycleState<B>> {
         if !part_path.exists() {
             remove_file(&part_path);
@@ -131,21 +175,24 @@ impl<B: DownloadBackend> DownloadFsm<B> {
             return Transition(DownloadLifecycleState::not_downloaded());
         }
 
-        if let Err(error) = self.acquire_destination_lock(context).await {
-            context.reply(Err(error));
-            return Handled;
-        }
+        let lease = match self.acquire_destination_lease(context).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                context.reply(Err(error));
+                return Handled;
+            },
+        };
 
         let generation = self.allocate_next_generation();
         let resume_bytes = file_size(&part_path).unwrap_or(0);
         let active_task = match self
             .context
-            .resume(Arc::clone(&self.config), generation, &part_path, self.backend_event_sender.clone())
+            .resume(Arc::clone(&self.config), generation, &part_path, self.backend_event_sender.clone(), &lease)
             .await
         {
             Ok(active_task) => active_task,
             Err(error) => {
-                self.release_destination_lock().await;
+                let _ = lease.release().await;
                 remove_file(&part_path);
                 let message = error.to_string();
                 context.push(DownloadActorEffect::SetProjection(PublicProjection::StickyError(message.clone())));
@@ -156,6 +203,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
             },
         };
 
+        self.destination_lease = Some(lease);
         context.push(DownloadActorEffect::SetProjection(PublicProjection::None));
         context.push(DownloadActorEffect::SetProgress(ProgressCounters {
             downloaded_bytes: resume_bytes,
@@ -167,7 +215,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
 
     fn active_task_missing(
         &self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
     ) -> Outcome<DownloadLifecycleState<B>> {
         let message = "active task missing while downloading".to_string();
         tracing::error!(message, "download FSM invariant failed");
@@ -179,7 +227,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
 
     async fn handle_completion(
         &mut self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
     ) -> Outcome<DownloadLifecycleState<B>> {
         match validate_completed_file(&self.config).await {
             Ok(total_bytes) => {
@@ -216,7 +264,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
     #[superstate]
     async fn idle(
         &mut self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
         event: &FsmEvent,
     ) -> Outcome<DownloadLifecycleState<B>> {
         match event {
@@ -224,10 +272,11 @@ impl<B: DownloadBackend> DownloadFsm<B> {
                 context.reply(Err(DownloadError::InvalidStateTransition));
                 Handled
             },
-            FsmEvent::Cancel => {
+            FsmEvent::Cancel | FsmEvent::Remove => {
                 context.reply(Ok(()));
                 Handled
             },
+            FsmEvent::StopPreservingArtifacts => Handled,
             _ => Super,
         }
     }
@@ -235,7 +284,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
     #[state(superstate = "idle")]
     async fn not_downloaded(
         &mut self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
         event: &FsmEvent,
     ) -> Outcome<DownloadLifecycleState<B>> {
         match event {
@@ -247,7 +296,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
     #[state(superstate = "idle")]
     async fn downloaded(
         &mut self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
         file_path: &mut PathBuf,
         crc_path: &mut Option<PathBuf>,
         event: &FsmEvent,
@@ -265,7 +314,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
     #[state(exit_action = "download_exited")]
     async fn downloading(
         &mut self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
         active_task: &mut Option<B::ActiveTask>,
         generation: &mut ActiveDownloadGeneration,
         event: &FsmEvent,
@@ -298,7 +347,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
                     },
                 }
             },
-            FsmEvent::Cancel => {
+            FsmEvent::Cancel | FsmEvent::Remove => {
                 if let Some(active_task) = active_task.take() {
                     let _ = active_task.cancel(&self.config.destination).await;
                 }
@@ -307,6 +356,27 @@ impl<B: DownloadBackend> DownloadFsm<B> {
                 context.push(DownloadActorEffect::SetProjection(PublicProjection::None));
                 context.reply(Ok(()));
                 Transition(DownloadLifecycleState::not_downloaded())
+            },
+            FsmEvent::StopPreservingArtifacts => {
+                let Some(active_task) = active_task.take() else {
+                    return self.active_task_missing(context);
+                };
+
+                match active_task.pause(&self.config.destination).await {
+                    Ok(part_path) => {
+                        let downloaded_bytes = file_size(&part_path).unwrap_or(0);
+                        context.push(DownloadActorEffect::SetProgress(ProgressCounters {
+                            downloaded_bytes,
+                            total_bytes: self.config.expected_bytes.unwrap_or(downloaded_bytes),
+                        }));
+                        Transition(DownloadLifecycleState::paused(part_path))
+                    },
+                    Err(error) => {
+                        tracing::debug!("failed to preserve resume data while stopping download actor: {error}");
+                        context.push(DownloadActorEffect::SetProgress(ProgressCounters::default()));
+                        Transition(DownloadLifecycleState::not_downloaded())
+                    },
+                }
             },
             FsmEvent::BackendCompleted {
                 generation: event_generation,
@@ -354,13 +424,14 @@ impl<B: DownloadBackend> DownloadFsm<B> {
 
     #[action]
     async fn download_exited(&mut self) {
-        self.release_destination_lock().await;
+        self.release_destination_lease().await;
     }
 
     #[state]
+    #[allow(clippy::ptr_arg)]
     async fn paused(
         &mut self,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
         part_path: &mut PathBuf,
         event: &FsmEvent,
     ) -> Outcome<DownloadLifecycleState<B>> {
@@ -370,13 +441,14 @@ impl<B: DownloadBackend> DownloadFsm<B> {
                 context.reply(Ok(()));
                 Handled
             },
-            FsmEvent::Cancel => {
+            FsmEvent::Cancel | FsmEvent::Remove => {
                 remove_file(part_path);
                 context.push(DownloadActorEffect::SetProgress(ProgressCounters::default()));
                 context.push(DownloadActorEffect::SetProjection(PublicProjection::None));
                 context.reply(Ok(()));
                 Transition(DownloadLifecycleState::not_downloaded())
             },
+            FsmEvent::StopPreservingArtifacts => Handled,
             _ => Handled,
         }
     }
@@ -385,7 +457,7 @@ impl<B: DownloadBackend> DownloadFsm<B> {
         &mut self,
         source: &DownloadLifecycleState<B>,
         target: &DownloadLifecycleState<B>,
-        context: &mut DispatchContext<B>,
+        context: &mut DispatchContext,
     ) {
         context.push(DownloadActorEffect::LogFsmTransition {
             from: source.name(),
@@ -424,10 +496,6 @@ fn remove_resume_artifact(destination: &Path) {
     remove_file(&destination.with_extension("resume_data"));
 }
 
-fn lock_path_for_destination(destination: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.lock", destination.display()))
-}
-
 fn crc_path_for_destination(destination: &Path) -> Option<PathBuf> {
     let crc_path = crc_path_for_file(destination);
     crc_path.exists().then_some(crc_path)
@@ -443,17 +511,34 @@ async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String>
         metadata = config.destination.metadata().ok();
     }
     let metadata = metadata.ok_or_else(|| "download completed but destination is missing".to_string())?;
-    let total_bytes = config.expected_bytes.unwrap_or(metadata.len());
+    let actual_bytes = metadata.len();
+
+    if let Some(expected_bytes) = config.expected_bytes
+        && expected_bytes != actual_bytes
+    {
+        return Err(format!("downloaded file is {actual_bytes} bytes but registry declared {expected_bytes}"));
+    }
+
+    let total_bytes = config.expected_bytes.unwrap_or(actual_bytes);
 
     match &config.file_check {
         FileCheck::None => Ok(total_bytes),
-        FileCheck::CRC(expected_crc) => match calculate_and_verify_crc(&config.destination, expected_crc) {
-            Ok(true) => {
-                let _ = save_crc_file(&config.destination, expected_crc);
-                Ok(total_bytes)
-            },
-            Ok(false) => Err("CRC verification failed".to_string()),
-            Err(error) => Err(format!("CRC verification error: {error}")),
+        FileCheck::CRC(expected_crc) => {
+            let destination = config.destination.clone();
+            let expected = expected_crc.clone();
+            let crc_result = tokio::task::spawn_blocking(move || calculate_and_verify_crc(&destination, &expected))
+                .await
+                .map_err(|error| format!("CRC verification error: {error}"))?;
+            match crc_result {
+                Ok(true) => {
+                    let destination = config.destination.clone();
+                    let expected = expected_crc.clone();
+                    let _ = tokio::task::spawn_blocking(move || save_crc_file(&destination, &expected)).await;
+                    Ok(total_bytes)
+                },
+                Ok(false) => Err("CRC verification failed".to_string()),
+                Err(error) => Err(format!("CRC verification error: {error}")),
+            }
         },
     }
 }

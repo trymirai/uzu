@@ -3,7 +3,7 @@ use std::sync::Arc;
 use objc2_foundation::NSURLSessionTaskState;
 
 use crate::{
-    DownloadError,
+    DestinationLockLease, DownloadError,
     backends::{
         apple::{AppleActiveTask, AppleBackendContext, AppleBackendError, task_ext::AppleDownloadTaskExt},
         common::{self, InitialTaskAttachment},
@@ -23,6 +23,7 @@ impl DownloadBackend for AppleBackend {
 #[async_trait::async_trait]
 impl common::Backend for AppleBackend {
     const RESUME_ARTIFACT_EXTENSION: &'static str = "resume_data";
+    const SUPPORTS_INITIAL_TASK_ATTACHMENT: bool = true;
 
     fn manager_suffix() -> &'static str {
         "apple"
@@ -37,8 +38,13 @@ impl common::Backend for AppleBackend {
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
+        _destination_lease: &DestinationLockLease,
     ) -> Result<InitialTaskAttachment<Self>, DownloadError> {
-        let Some(task) = context.matching_download_task(&config) else {
+        let Some(task) = context
+            .claim_matching_download_task(&config)
+            .await
+            .map_err(|error| DownloadError::Backend(error.to_string()))?
+        else {
             return Ok(InitialTaskAttachment::None);
         };
 
@@ -59,11 +65,15 @@ impl common::Backend for AppleBackend {
                     total_bytes,
                 })
             },
-            NSURLSessionTaskState::Completed | NSURLSessionTaskState::Canceling => {
-                task.cancel();
-                Ok(InitialTaskAttachment::None)
-            },
+            NSURLSessionTaskState::Completed | NSURLSessionTaskState::Canceling => Ok(InitialTaskAttachment::None),
             _ => Ok(InitialTaskAttachment::None),
         }
+    }
+
+    async fn has_initial_task_to_claim(
+        context: &Self::Context,
+        config: &DownloadConfig,
+    ) -> Result<bool, DownloadError> {
+        context.has_download_task_to_claim(config).await.map_err(|error| DownloadError::Backend(error.to_string()))
     }
 }

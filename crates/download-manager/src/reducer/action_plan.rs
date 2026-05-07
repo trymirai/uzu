@@ -33,4 +33,8 @@ impl ActionPlan {
     pub fn as_slice(&self) -> &[Action] {
         &self.actions
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
 }

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{DownloadId, FileCheck};
 
@@ -12,4 +13,5 @@ pub struct DownloadConfig {
     pub file_check: FileCheck,
     pub expected_bytes: Option<u64>,
     pub manager_id: String,
+    pub manager_instance_id: Uuid,
 }

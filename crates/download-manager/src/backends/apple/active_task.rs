@@ -9,7 +9,10 @@ use tokio::sync::oneshot::channel as tokio_oneshot_channel;
 
 use crate::{
     DownloadId,
-    backends::apple::{AppleBackend, AppleBackendError, AppleEventRegistry, resume_data_handler::ResumeDataHandler},
+    backends::apple::{
+        AppleBackend, AppleBackendError, AppleEventRegistry, AppleSinkKey, resume_data_handler::ResumeDataHandler,
+        task_ext::AppleDownloadTaskExt,
+    },
     traits::{ActiveTask, CancelOutcome, DownloadBackend},
 };
 
@@ -17,7 +20,7 @@ use crate::{
 pub struct AppleActiveTask {
     task: Retained<NSURLSessionDownloadTask>,
     event_registry: AppleEventRegistry,
-    download_id: DownloadId,
+    sink_key: AppleSinkKey,
 }
 
 impl AppleActiveTask {
@@ -26,17 +29,25 @@ impl AppleActiveTask {
         event_registry: AppleEventRegistry,
         download_id: DownloadId,
     ) -> Self {
+        let sink_key = (download_id, task.task_identifier());
         Self {
             task,
             event_registry,
-            download_id,
+            sink_key,
         }
     }
 
     fn unregister_event_sink(&self) {
         if let Ok(mut event_registry) = self.event_registry.lock() {
-            event_registry.remove(&self.download_id);
+            event_registry.remove(&self.sink_key);
         }
+    }
+}
+
+impl Drop for AppleActiveTask {
+    fn drop(&mut self) {
+        self.unregister_event_sink();
+        self.task.cancel();
     }
 }
 
@@ -50,13 +61,20 @@ impl ActiveTask for AppleActiveTask {
     ) -> Result<PathBuf, <Self::Backend as DownloadBackend>::Error> {
         let resume_artifact_path = destination.with_extension("resume_data");
         let (resume_data_sender, resume_data_receiver) = tokio_oneshot_channel::<Box<[u8]>>();
-        let resume_data_sender = Arc::new(Mutex::new(Some(resume_data_sender)));
+        let pending_resume_data_sender = Arc::new(Mutex::new(Some(resume_data_sender)));
         self.unregister_event_sink();
         {
-            let resume_data_sender = Arc::clone(&resume_data_sender);
+            let pending_resume_data_sender = Arc::clone(&pending_resume_data_sender);
             let handler = ResumeDataHandler::new_bytes(move |resume_data_bytes| {
-                if let Some(sender) = resume_data_sender.lock().ok().and_then(|mut sender| sender.take()) {
-                    let _ = sender.send(resume_data_bytes);
+                let resume_data_sender = match pending_resume_data_sender.lock() {
+                    Ok(mut resume_data_sender) => resume_data_sender.take(),
+                    Err(poisoned_sender) => {
+                        let mut resume_data_sender = poisoned_sender.into_inner();
+                        resume_data_sender.take()
+                    },
+                };
+                if let Some(resume_data_sender) = resume_data_sender {
+                    let _ = resume_data_sender.send(resume_data_bytes);
                 }
             });
             unsafe {

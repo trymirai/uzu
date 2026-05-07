@@ -348,6 +348,17 @@ impl Item {
             self.start_listening().await;
         }
 
+        for file_info in self.files.iter() {
+            let destination = self.cache_path.join(&file_info.name);
+            if let Some(owner) = self.file_download_manager.destination_foreign_lock(&destination).await {
+                tracing::info!(?destination, %owner, "refusing to cancel: destination is locked by another manager");
+                return Err(StorageError::InvalidStateTransition {
+                    from: DownloadPhase::Locked {},
+                    to: DownloadPhase::NotDownloaded {},
+                });
+            }
+        }
+
         let current_state = self.reduce_state().await;
         if matches!(current_state.phase, DownloadPhase::Locked {}) {
             return Err(StorageError::InvalidStateTransition {

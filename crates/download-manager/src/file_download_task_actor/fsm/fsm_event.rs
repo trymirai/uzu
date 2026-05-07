@@ -5,6 +5,8 @@ pub enum FsmEvent {
     Download,
     Pause,
     Cancel,
+    Remove,
+    StopPreservingArtifacts,
     BackendCompleted {
         generation: ActiveDownloadGeneration,
     },

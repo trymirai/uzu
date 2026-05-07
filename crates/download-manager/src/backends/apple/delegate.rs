@@ -30,7 +30,8 @@ pub struct AppleEventSink {
     pub tokio_handle: TokioHandle,
 }
 
-pub type AppleEventRegistry = Arc<Mutex<HashMap<DownloadId, AppleEventSink>>>;
+pub type AppleSinkKey = (DownloadId, u64);
+pub type AppleEventRegistry = Arc<Mutex<HashMap<AppleSinkKey, AppleEventSink>>>;
 
 #[derive(Debug, Clone)]
 pub struct AppleSessionDelegateIvars {
@@ -72,8 +73,9 @@ define_class!(
             let Some(download_id) = download_task.download_id() else {
                 return;
             };
+            let key: AppleSinkKey = (download_id, download_task.task_identifier());
             let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|mut registry| registry.remove(&download_id))
+                Self::ivars(self).event_registry.lock().ok().and_then(|mut registry| registry.remove(&key))
             else {
                 return;
             };
@@ -95,8 +97,9 @@ define_class!(
             let Some(download_id) = download_task.download_id() else {
                 return;
             };
+            let key: AppleSinkKey = (download_id, download_task.task_identifier());
             let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|mut registry| registry.remove(&download_id))
+                Self::ivars(self).event_registry.lock().ok().and_then(|mut registry| registry.remove(&key))
             else {
                 return;
             };
@@ -137,8 +140,9 @@ define_class!(
             let Some(download_id) = download_task.download_id() else {
                 return;
             };
+            let key: AppleSinkKey = (download_id, download_task.task_identifier());
             let Some(sink) =
-                Self::ivars(self).event_registry.lock().ok().and_then(|registry| registry.get(&download_id).cloned())
+                Self::ivars(self).event_registry.lock().ok().and_then(|registry| registry.get(&key).cloned())
             else {
                 return;
             };

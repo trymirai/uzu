@@ -11,13 +11,20 @@ use tokio::sync::{
 use crate::{
     DownloadError, DownloadLogEvent, FileDownloadState,
     file_download_task_actor::{
-        BackendEvent, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand, TerminalOutcome,
+        BackendEvent, DownloadLifecycleState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
+        TerminalOutcome,
         fsm::{DispatchContext, DownloadActorEffect, DownloadFsm, FsmEvent},
         project_runtime_public_state,
     },
-    record_download_log_event,
-    traits::{DownloadBackend, DownloadConfig},
+    lock_manager::lock_path_for_destination,
+    record_download_log_event, release_lock_if_owned,
+    traits::{ActiveTask, DownloadBackend, DownloadConfig},
 };
+
+enum ActorLoopExit {
+    AlreadyStopped,
+    PreserveArtifacts,
+}
 
 pub struct DownloadTaskActor<B: DownloadBackend> {
     config: Arc<DownloadConfig>,
@@ -66,13 +73,17 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
     pub async fn run(mut self) {
         self.publish_current_state();
 
+        let mut loop_exit = ActorLoopExit::PreserveArtifacts;
         loop {
             tokio::select! {
                 command = self.command_receiver.recv() => {
                     let Some(command) = command else {
                         break;
                     };
-                    self.handle_command(command).await;
+                    if !self.handle_command(command).await {
+                        loop_exit = ActorLoopExit::AlreadyStopped;
+                        break;
+                    }
                 }
                 backend_event = self.backend_event_receiver.recv() => {
                     let Some(backend_event) = backend_event else {
@@ -89,28 +100,65 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
             }
         }
 
+        if matches!(loop_exit, ActorLoopExit::PreserveArtifacts) {
+            self.stop_preserving_artifacts().await;
+        }
         let _ = self.terminal_sender.send(TerminalOutcome::ActorStopped);
+    }
+
+    pub(crate) async fn abort_before_start(mut self) {
+        // SAFETY: The actor was never scheduled, so no state handler can be active.
+        // We only take the backend task before discarding the whole state machine.
+        let lifecycle_state = unsafe { self.lifecycle.state_mut() };
+        let active_task = match lifecycle_state {
+            DownloadLifecycleState::Downloading {
+                active_task,
+                ..
+            } => active_task.take(),
+            _ => None,
+        };
+        if let Some(active_task) = active_task {
+            let _ = active_task.cancel(&self.config.destination).await;
+        }
+        let lock_path = lock_path_for_destination(&self.config.destination);
+        let _ = release_lock_if_owned(&lock_path, &self.config.manager_id, self.config.manager_instance_id).await;
+        let _ = self.terminal_sender.send(TerminalOutcome::ActorStopped);
+    }
+
+    async fn stop_preserving_artifacts(&mut self) {
+        self.dispatch(FsmEvent::StopPreservingArtifacts, None).await;
+        let lock_path = lock_path_for_destination(&self.config.destination);
+        let _ = release_lock_if_owned(&lock_path, &self.config.manager_id, self.config.manager_instance_id).await;
     }
 
     async fn handle_command(
         &mut self,
         command: TaskCommand,
-    ) {
+    ) -> bool {
         match command {
             TaskCommand::Download {
                 reply_sender,
             } => {
                 self.dispatch(FsmEvent::Download, Some(reply_sender)).await;
+                true
             },
             TaskCommand::Pause {
                 reply_sender,
             } => {
                 self.dispatch(FsmEvent::Pause, Some(reply_sender)).await;
+                true
             },
             TaskCommand::Cancel {
                 reply_sender,
             } => {
                 self.dispatch(FsmEvent::Cancel, Some(reply_sender)).await;
+                true
+            },
+            TaskCommand::Remove {
+                reply_sender,
+            } => {
+                self.dispatch(FsmEvent::Remove, Some(reply_sender)).await;
+                false
             },
         }
     }
@@ -180,7 +228,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         event: FsmEvent,
         reply_sender: Option<tokio::sync::oneshot::Sender<Result<(), DownloadError>>>,
     ) {
-        let mut dispatch_context = DispatchContext::<B>::new(reply_sender);
+        let mut dispatch_context = DispatchContext::new(reply_sender);
         self.lifecycle.handle_with_context(&event, &mut dispatch_context).await;
         let pending_reply = self.apply_non_reply_effects(&mut dispatch_context).await;
         self.publish_current_state();
@@ -191,7 +239,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
 
     async fn apply_non_reply_effects(
         &mut self,
-        dispatch_context: &mut DispatchContext<B>,
+        dispatch_context: &mut DispatchContext,
     ) -> Option<(tokio::sync::oneshot::Sender<Result<(), DownloadError>>, Result<(), DownloadError>)> {
         let mut pending_reply = None;
         for effect in dispatch_context.effects.drain(..) {
@@ -215,24 +263,6 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                         to,
                     });
                 },
-                DownloadActorEffect::DeleteFile {
-                    path,
-                } => {
-                    let _ = std::fs::remove_file(path);
-                },
-                DownloadActorEffect::DeleteResumeArtifacts {
-                    destination,
-                } => {
-                    let _ = std::fs::remove_file(destination.with_extension("part"));
-                    let _ = std::fs::remove_file(destination.with_extension("resume_data"));
-                },
-                DownloadActorEffect::EmitGlobalEvent(event) => {
-                    record_download_log_event(DownloadLogEvent::PublicEventEmitted {
-                        download_id: self.config.download_id,
-                        event,
-                    });
-                },
-                DownloadActorEffect::AttachActiveTask(_) => {},
             }
         }
         pending_reply

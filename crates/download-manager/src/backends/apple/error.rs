@@ -8,4 +8,6 @@ pub enum AppleBackendError {
     ResumeData(String),
     #[error("io error: {0}")]
     Io(String),
+    #[error("task enumeration error: {0}")]
+    TaskEnumeration(String),
 }

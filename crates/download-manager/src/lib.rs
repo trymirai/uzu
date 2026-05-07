@@ -42,12 +42,9 @@ pub use file_download_task::FileDownloadTask;
 pub use file_state::FileState;
 pub use lock_file_info::LockFileInfo;
 pub use lock_file_state::LockFileState;
-pub use lock_manager::{acquire_lock, check_lock_file, release_lock, try_acquire_lock};
+pub use lock_manager::{DestinationLockLease, acquire_lock, check_lock_file, release_lock_if_owned, try_acquire_lock};
 
 pub type DownloadId = uuid::Uuid;
-pub fn compute_download_id(
-    source_url: &str,
-    destination_path: &std::path::Path,
-) -> DownloadId {
-    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, format!("{}:{}", source_url, destination_path.display()).as_bytes())
+pub fn compute_download_id(destination_path: &std::path::Path) -> DownloadId {
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, destination_path.display().to_string().as_bytes())
 }

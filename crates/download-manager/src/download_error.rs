@@ -34,10 +34,16 @@ pub enum DownloadError {
     InvalidStateTransition,
     #[error("file locked by another manager: {0}")]
     LockedByOther(String),
+    #[error("conflicting download config for destination: {0}")]
+    ConflictingConfig(String),
     #[error("task stopped")]
     TaskStopped,
     #[error("channel closed")]
     ChannelClosed,
+    #[error("download actor scheduler failed to start: {0}")]
+    ActorSchedulerStartFailed(String),
+    #[error("download actor scheduler stopped")]
+    ActorSchedulerStopped,
     #[error("backend error: {0}")]
     Backend(String),
 }

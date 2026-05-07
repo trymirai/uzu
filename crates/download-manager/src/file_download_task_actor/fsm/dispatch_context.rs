@@ -1,13 +1,13 @@
 use tokio::sync::oneshot::Sender as TokioOneshotSender;
 
-use crate::{DownloadError, file_download_task_actor::fsm::DownloadActorEffect, traits::DownloadBackend};
+use crate::{DownloadError, file_download_task_actor::fsm::DownloadActorEffect};
 
-pub struct DispatchContext<B: DownloadBackend> {
-    pub effects: Vec<DownloadActorEffect<B>>,
+pub struct DispatchContext {
+    pub effects: Vec<DownloadActorEffect>,
     pub pending_reply: Option<TokioOneshotSender<Result<(), DownloadError>>>,
 }
 
-impl<B: DownloadBackend> DispatchContext<B> {
+impl DispatchContext {
     pub fn new(pending_reply: Option<TokioOneshotSender<Result<(), DownloadError>>>) -> Self {
         Self {
             effects: Vec::new(),
@@ -17,7 +17,7 @@ impl<B: DownloadBackend> DispatchContext<B> {
 
     pub fn push(
         &mut self,
-        effect: DownloadActorEffect<B>,
+        effect: DownloadActorEffect,
     ) {
         self.effects.push(effect);
     }

@@ -23,7 +23,7 @@ impl common::Backend for UniversalBackend {
         "universal"
     }
 
-    fn create_context(_tokio_handle: tokio::runtime::Handle) -> Result<Self::Context, DownloadError> {
-        Ok(UniversalBackendContext::default())
+    fn create_context(tokio_handle: tokio::runtime::Handle) -> Result<Self::Context, DownloadError> {
+        Ok(UniversalBackendContext::new(tokio_handle))
     }
 }

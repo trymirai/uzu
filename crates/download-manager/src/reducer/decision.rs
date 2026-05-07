@@ -17,13 +17,6 @@ pub fn decide(
     lock_observation: &LockObservation,
     validation: &ValidationOutcome,
 ) -> Decision {
-    let initial_projection = match &lock_observation.state {
-        LockFileState::OwnedByOtherApp(lock_file_info) => {
-            PublicProjection::LockedByOther(lock_file_info.manager_id.clone())
-        },
-        _ => PublicProjection::None,
-    };
-
     let action_plan = if lock_observation.state.is_conflict() {
         ActionPlan::empty()
     } else {
@@ -45,6 +38,20 @@ pub fn decide(
             }
         },
         CheckedFileState::Invalid | CheckedFileState::Missing => InitialLifecycleState::NotDownloaded,
+    };
+
+    // Project `LockedByOther` only when the destination still needs work; if the
+    // file is already valid on disk (`Downloaded`), the foreign lock is
+    // irrelevant from a state-reporting perspective and shouldn't mask the
+    // runtime's `Downloaded` phase. Callers that care about ownership use
+    // `FileDownloadManager::destination_foreign_lock` instead.
+    let initial_projection = match (&lock_observation.state, &initial_lifecycle_state) {
+        (LockFileState::OwnedByOtherApp(lock_file_info), state)
+            if !matches!(state, InitialLifecycleState::Downloaded { .. }) =>
+        {
+            PublicProjection::LockedByOther(lock_file_info.manager_id.clone())
+        },
+        _ => PublicProjection::None,
     };
 
     let initial_progress = match &initial_lifecycle_state {

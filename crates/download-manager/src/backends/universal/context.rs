@@ -12,9 +12,11 @@ use reqwest::{
 use tokio::{
     fs::{File as TokioFile, OpenOptions as TokioOpenOptions},
     io::AsyncWriteExt,
+    runtime::Handle as TokioHandle,
 };
 
 use crate::{
+    DestinationLockLease,
     backends::universal::{UniversalActiveTask, UniversalBackend, UniversalBackendError},
     file_download_task_actor::BackendEvent,
     traits::{ActiveDownloadGeneration, BackendContext, BackendEventSender, DownloadConfig},
@@ -22,15 +24,15 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct UniversalBackendContext {
-    pub connections_per_file: u16,
+    tokio_handle: TokioHandle,
     pub retries: u16,
     pub progress_interval_ms: u64,
 }
 
-impl Default for UniversalBackendContext {
-    fn default() -> Self {
+impl UniversalBackendContext {
+    pub fn new(tokio_handle: TokioHandle) -> Self {
         Self {
-            connections_per_file: 1,
+            tokio_handle,
             retries: 3,
             progress_interval_ms: 500,
         }
@@ -46,6 +48,7 @@ impl BackendContext for UniversalBackendContext {
         config: Arc<DownloadConfig>,
         generation: ActiveDownloadGeneration,
         backend_event_sender: BackendEventSender,
+        _destination_lease: &DestinationLockLease,
     ) -> Result<UniversalActiveTask, UniversalBackendError> {
         let resume_artifact_path = config.destination.with_extension("part");
         self.start(config, generation, resume_artifact_path, backend_event_sender).await
@@ -57,6 +60,7 @@ impl BackendContext for UniversalBackendContext {
         generation: ActiveDownloadGeneration,
         resume_artifact_path: &Path,
         backend_event_sender: BackendEventSender,
+        _destination_lease: &DestinationLockLease,
     ) -> Result<UniversalActiveTask, UniversalBackendError> {
         self.start(config, generation, resume_artifact_path.to_path_buf(), backend_event_sender).await
     }
@@ -76,7 +80,7 @@ impl UniversalBackendContext {
 
         let retry_count = self.retries;
         let progress_interval = Duration::from_millis(self.progress_interval_ms);
-        let task_handle = tokio::spawn(download_streaming(
+        let task_handle = self.tokio_handle.spawn(download_streaming(
             config,
             generation,
             resume_artifact_path.clone(),
@@ -164,7 +168,21 @@ async fn download_once(
     let content_range = response.headers().get(CONTENT_RANGE).cloned();
     let resume_from_bytes = if resume_from_bytes > 0 {
         match status {
-            StatusCode::PARTIAL_CONTENT if content_range.is_some() => resume_from_bytes,
+            StatusCode::PARTIAL_CONTENT => {
+                let header = content_range
+                    .as_ref()
+                    .ok_or_else(|| "server returned 206 without Content-Range header".to_string())?;
+                let header_value =
+                    header.to_str().map_err(|error| format!("non-utf8 Content-Range header: {error}"))?;
+                let advertised_start = parse_content_range_start(header_value)
+                    .ok_or_else(|| format!("server returned malformed Content-Range header: {header_value}"))?;
+                if advertised_start != resume_from_bytes {
+                    return Err(format!(
+                        "server returned bytes starting at {advertised_start} but client requested {resume_from_bytes}"
+                    ));
+                }
+                resume_from_bytes
+            },
             StatusCode::OK => 0,
             _ => return Err(format!("server did not honor range request: status {status}")),
         }
@@ -212,4 +230,11 @@ async fn open_part_file(
     } else {
         TokioOpenOptions::new().create(true).write(true).truncate(true).open(resume_artifact_path).await
     }
+}
+
+fn parse_content_range_start(header_value: &str) -> Option<u64> {
+    let value = header_value.strip_prefix("bytes ")?.trim_start();
+    let (range, _) = value.split_once('/')?;
+    let (start, _) = range.split_once('-')?;
+    start.parse::<u64>().ok()
 }

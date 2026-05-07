@@ -13,4 +13,7 @@ pub enum TaskCommand {
     Cancel {
         reply_sender: TokioOneshotSender<Result<(), DownloadError>>,
     },
+    Remove {
+        reply_sender: TokioOneshotSender<Result<(), DownloadError>>,
+    },
 }

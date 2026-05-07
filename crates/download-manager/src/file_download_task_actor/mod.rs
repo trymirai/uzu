@@ -3,6 +3,7 @@ mod backend_progress;
 mod download_task_actor;
 mod fsm;
 mod generic_file_download_task;
+mod local_actor_scheduler;
 mod pending_progress_slot;
 mod progress_counters;
 mod public_projection;
