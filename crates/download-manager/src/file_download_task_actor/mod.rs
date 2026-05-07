@@ -14,6 +14,9 @@ mod terminal_outcome;
 pub use backend_event::BackendEvent;
 pub use backend_progress::BackendProgress;
 pub use download_task_actor::DownloadTaskActor;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use fsm::{DispatchContext, FsmEvent};
 pub use fsm::{DownloadFsm, DownloadLifecycleState};
 pub use generic_file_download_task::GenericFileDownloadTask;
 pub use pending_progress_slot::PendingProgressSlot;

@@ -1,6 +1,6 @@
 mod action_executor;
 mod backend;
-mod manager;
+pub(crate) mod manager;
 mod manager_state;
 mod startup;
 
