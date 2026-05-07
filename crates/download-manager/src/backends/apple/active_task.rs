@@ -83,11 +83,6 @@ impl ActiveTask for AppleActiveTask {
         }
         let resume_data_bytes =
             resume_data_receiver.await.map_err(|error| AppleBackendError::ResumeData(error.to_string()))?;
-        if resume_data_bytes.is_empty() {
-            return Err(AppleBackendError::ResumeData(
-                "URLSession returned no resumable bytes; pause cannot be persisted".to_string(),
-            ));
-        }
         tokio::fs::write(&resume_artifact_path, resume_data_bytes)
             .await
             .map_err(|error| AppleBackendError::Io(error.to_string()))?;

@@ -233,8 +233,14 @@ impl BackendContext for AppleBackendContext {
     ) -> Result<AppleActiveTask, AppleBackendError> {
         let resume_data =
             tokio::fs::read(resume_artifact_path).await.map_err(|error| AppleBackendError::Io(error.to_string()))?;
-        let ns_data = NSData::with_bytes(&resume_data);
-        let task = self.session.downloadTaskWithResumeData(&ns_data);
+        let task = if resume_data.is_empty() {
+            let ns_url =
+                NSURL::URLWithString(&NSString::from_str(&config.source_url)).ok_or(AppleBackendError::BadUrl)?;
+            self.session.downloadTaskWithURL(&ns_url)
+        } else {
+            let ns_data = NSData::with_bytes(&resume_data);
+            self.session.downloadTaskWithResumeData(&ns_data)
+        };
         self.prepare_task(&task, Arc::clone(&config), generation, backend_event_sender);
         task.resume();
         Ok(AppleActiveTask::new(task, Arc::clone(&self.event_registry), config.download_id))

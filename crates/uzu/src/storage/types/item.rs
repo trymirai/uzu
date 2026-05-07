@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use download_manager::{FileDownloadManager, FileDownloadState, FileDownloadTask};
+use download_manager::{DownloadError, FileDownloadManager, FileDownloadPhase, FileDownloadState, FileDownloadTask};
 use futures_util::future::join_all;
 use shoji::types::basic::File;
 use tokio::{
@@ -474,14 +474,21 @@ impl Item {
     }
 
     async fn ensure_paused(&self) -> Result<(), StorageError> {
-        use download_manager::FileDownloadPhase;
         tracing::debug!("[MODEL] ensure_paused: model={}", self.identifier);
         let file_tasks_guard = self.file_download_tasks.lock().await;
         let pause_futures = file_tasks_guard.iter().map(|file_task| {
             let file_task = file_task.clone();
             async move {
                 if matches!(file_task.state().await.phase, FileDownloadPhase::Downloading) {
-                    file_task.pause().await
+                    match file_task.pause().await {
+                        Ok(()) => Ok(()),
+                        Err(DownloadError::InvalidStateTransition)
+                            if !matches!(file_task.state().await.phase, FileDownloadPhase::Downloading) =>
+                        {
+                            Ok(())
+                        },
+                        Err(error) => Err(error),
+                    }
                 } else {
                     Ok(())
                 }

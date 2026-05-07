@@ -458,12 +458,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
     ) -> Result<(), DownloadError> {
         if !part_path.exists() {
             remove_file(&part_path);
-            let message = "resume artifact is missing".to_string();
-            self.projection = PublicProjection::StickyError(message.clone());
-            self.progress_counters = ProgressCounters::default();
-            self.transition_to(DownloadActorState::NotDownloaded);
-            self.pending_terminal_outcome = Some(TerminalOutcome::Error(message.clone()));
-            return Err(DownloadError::Backend(message));
+            return self.start_fresh_download().await;
         }
 
         let lease = self.acquire_destination_lease().await?;

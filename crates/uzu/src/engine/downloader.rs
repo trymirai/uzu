@@ -27,6 +27,43 @@ impl Downloader {
             storage,
         }
     }
+
+    async fn wait_for_resume_to_be_observable(
+        &self,
+        mut stream: BroadcastStream<(String, DownloadState)>,
+    ) -> Result<(), EngineError> {
+        if self.state().await.is_some_and(|state| Self::is_resume_observable_phase(&state.phase)) {
+            return Ok(());
+        }
+
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok((identifier, state)) if identifier == self.identifier => {
+                    if Self::is_resume_observable_phase(&state.phase) {
+                        return Ok(());
+                    }
+                },
+                Ok(_) => {},
+                Err(error) => {
+                    tracing::warn!(
+                        identifier = self.identifier,
+                        ?error,
+                        "downloader resume stream lagged; some updates were dropped"
+                    );
+                },
+            }
+        }
+
+        Err(EngineError::UnableToGetDownloaderProgressStream {})
+    }
+
+    fn is_progress_streaming_phase(phase: &DownloadPhase) -> bool {
+        matches!(phase, DownloadPhase::Downloading {})
+    }
+
+    fn is_resume_observable_phase(phase: &DownloadPhase) -> bool {
+        matches!(phase, DownloadPhase::Downloading {} | DownloadPhase::Downloaded {} | DownloadPhase::Error { .. })
+    }
 }
 
 #[bindings::export(Implementation)]
@@ -44,14 +81,19 @@ impl Downloader {
         let result = match state.phase {
             DownloadPhase::Downloading {} | DownloadPhase::Downloaded {} => Ok(()),
             DownloadPhase::NotDownloaded {} | DownloadPhase::Paused {} | DownloadPhase::Locked {} => {
-                Ok(self.storage.lock().await.download(&self.identifier).await?)
+                let stream = self.storage.lock().await.subscribe();
+                self.storage.lock().await.download(&self.identifier).await?;
+                self.wait_for_resume_to_be_observable(stream).await
             },
             DownloadPhase::Error {
                 ..
             } => {
+                let stream = self.storage.lock().await.subscribe();
                 let storage = self.storage.lock().await;
                 storage.delete(&self.identifier).await?;
-                Ok(storage.download(&self.identifier).await?)
+                storage.download(&self.identifier).await?;
+                drop(storage);
+                self.wait_for_resume_to_be_observable(stream).await
             },
         };
         result
@@ -72,7 +114,7 @@ impl Downloader {
         let Some(state) = self.state().await else {
             return Err(EngineError::UnableToGetDownloaderProgressStream {});
         };
-        if matches!(state.phase, DownloadPhase::Downloaded {}) {
+        if !Self::is_progress_streaming_phase(&state.phase) {
             return Ok(DownloaderStream::empty(self.identifier.clone()));
         }
         let stream = self.storage.lock().await.subscribe();
@@ -120,16 +162,8 @@ impl DownloaderStream {
                             bytes_total: state.total_bytes,
                             bytes_downloaded: state.downloaded_bytes,
                         };
-                        match state.phase {
-                            DownloadPhase::Downloading {} | DownloadPhase::Locked {} => {},
-                            DownloadPhase::NotDownloaded {}
-                            | DownloadPhase::Paused {}
-                            | DownloadPhase::Downloaded {}
-                            | DownloadPhase::Error {
-                                ..
-                            } => {
-                                *stream_guard = None;
-                            },
+                        if !Downloader::is_progress_streaming_phase(&state.phase) {
+                            *stream_guard = None;
                         }
                         return Some(update);
                     }

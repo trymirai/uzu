@@ -28,6 +28,54 @@ fn backend_event_sender() -> (BackendEventSender, TokioMpscReceiver<BackendEvent
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_apple_resume_empty_resume_data_starts_fresh_download() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = MockRegistry::start().await?;
+    let served_file = registry.file("config.json")?;
+    let temporary_directory = tempfile::tempdir()?;
+    let destination = temporary_directory.path().join(&served_file.file.name);
+    let resume_artifact_path = destination.with_extension("resume_data");
+    tokio::fs::write(&resume_artifact_path, b"").await?;
+
+    let context = AppleBackendContext::new(TokioHandle::current());
+    let config = Arc::new(DownloadConfig {
+        download_id: compute_download_id(&destination),
+        source_url: served_file.file.url.clone(),
+        destination: destination.clone(),
+        file_check: FileCheck::None,
+        expected_bytes: Some(served_file.file.size as u64),
+        manager_id: "test-manager".to_string(),
+        manager_instance_id: Uuid::new_v4(),
+    });
+    let destination_lease = DestinationLockLease::acquire_for_destination(
+        &config.destination,
+        &config.manager_id,
+        config.manager_instance_id,
+    )
+    .await?;
+    let generation = ActiveDownloadGeneration::new(0);
+    let (backend_event_sender, mut backend_event_receiver) = backend_event_sender();
+
+    let active_task = context
+        .resume(Arc::clone(&config), generation, &resume_artifact_path, backend_event_sender, &destination_lease)
+        .await?;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), backend_event_receiver.recv())
+        .await?
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "backend event channel closed before empty resume-data fallback completed",
+            )
+        })?;
+
+    assert_eq!(event, BackendEvent::completed(generation));
+    assert_eq!(tokio::fs::read(&destination).await?, served_file.bytes.to_vec());
+
+    drop(active_task);
+    destination_lease.release().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn dropping_apple_active_task_unregisters_event_sink() -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
     let served_file = registry.file("config.json")?;

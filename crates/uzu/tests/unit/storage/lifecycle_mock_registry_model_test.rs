@@ -154,9 +154,9 @@ async fn test_downloader_progress_stream_closes_after_pause(
         TestStorage::with_models_and_manager(TokioHandle::current(), vec![model.clone()], download_manager_type)
             .await?;
     let downloader = Downloader::new(model.identifier.clone(), SharedAccess::new(test_storage.storage));
-    let progress = downloader.progress().await?;
 
     downloader.resume().await?;
+    let progress = downloader.progress().await?;
     timeout(Duration::from_secs(30), async {
         loop {
             let state = downloader.state().await.expect("model state must exist");
@@ -174,6 +174,105 @@ async fn test_downloader_progress_stream_closes_after_pause(
     })
     .await?;
 
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_downloader_pause_updates_public_state(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
+    let model = registry.models.first().ok_or_else(|| std::io::Error::other("mock registry must include a model"))?;
+    let test_storage =
+        TestStorage::with_models_and_manager(TokioHandle::current(), vec![model.clone()], download_manager_type)
+            .await?;
+    let downloader = Downloader::new(model.identifier.clone(), SharedAccess::new(test_storage.storage));
+
+    downloader.resume().await?;
+    wait_for_downloader_state(&downloader, "downloader reaches Downloading", |state| {
+        matches!(state.phase, DownloadPhase::Downloading {})
+    })
+    .await;
+
+    downloader.pause().await?;
+    let paused_state = wait_for_downloader_state(&downloader, "downloader reaches Paused", |state| {
+        matches!(state.phase, DownloadPhase::Paused {})
+    })
+    .await;
+
+    assert!(!paused_state.is_in_progress());
+    assert!(!paused_state.can_pause());
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_downloader_progress_after_resuming_paused_model_reaches_downloaded(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    let registry = MockRegistry::start_with(Behavior::THROTTLED).await?;
+    let model = registry.models.first().ok_or_else(|| std::io::Error::other("mock registry must include a model"))?;
+    let test_storage =
+        TestStorage::with_models_and_manager(TokioHandle::current(), vec![model.clone()], download_manager_type)
+            .await?;
+    let downloader = Downloader::new(model.identifier.clone(), SharedAccess::new(test_storage.storage));
+
+    downloader.resume().await?;
+    wait_for_downloader_state(&downloader, "downloader reaches Downloading before pause", |state| {
+        matches!(state.phase, DownloadPhase::Downloading {})
+    })
+    .await;
+    downloader.pause().await?;
+    wait_for_downloader_state(&downloader, "downloader reaches Paused before resume", |state| {
+        matches!(state.phase, DownloadPhase::Paused {})
+    })
+    .await;
+
+    downloader.resume().await?;
+    let progress = downloader.progress().await?;
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let state = downloader.state().await.expect("model state must exist");
+            if matches!(state.phase, DownloadPhase::Downloaded {}) {
+                return;
+            }
+            assert!(progress.next().await.is_some(), "progress stream ended before the resumed model downloaded");
+        }
+    })
+    .await?;
+    Ok(())
+}
+
+#[rstest]
+#[case::universal(FileDownloadManagerType::Universal)]
+#[cfg_attr(target_vendor = "apple", case::apple(FileDownloadManagerType::Apple))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_downloader_progress_for_downloaded_model_is_empty(
+    #[case] download_manager_type: FileDownloadManagerType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    init_test_tracing();
+    let registry = MockRegistry::start().await?;
+    let model = registry.models.first().ok_or_else(|| std::io::Error::other("mock registry must include a model"))?;
+    let test_storage =
+        TestStorage::with_models_and_manager(TokioHandle::current(), vec![model.clone()], download_manager_type)
+            .await?;
+    let downloader = Downloader::new(model.identifier.clone(), SharedAccess::new(test_storage.storage));
+
+    downloader.resume().await?;
+    wait_for_downloader_state(&downloader, "downloader reaches Downloaded", |state| {
+        matches!(state.phase, DownloadPhase::Downloaded {})
+    })
+    .await;
+
+    let downloaded_progress = downloader.progress().await?;
+    assert!(downloaded_progress.next().await.is_none());
     Ok(())
 }
 
@@ -203,6 +302,24 @@ async fn wait_for_item_state(
     })
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for storage download state: {label}"))
+}
+
+async fn wait_for_downloader_state(
+    downloader: &Downloader,
+    label: &'static str,
+    mut is_expected_state: impl FnMut(&DownloadState) -> bool,
+) -> DownloadState {
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let state = downloader.state().await.expect("model state must exist");
+            if is_expected_state(&state) {
+                return state;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for downloader state: {label}"))
 }
 
 fn has_reached_fraction(
