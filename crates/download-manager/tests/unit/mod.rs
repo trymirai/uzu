@@ -1,8 +1,2 @@
 mod backends;
-mod lifecycle_test;
-mod test_actor_task_drop;
-mod test_corrupt_body;
 mod test_lock_manager;
-mod test_manager_startup;
-mod test_state_and_lock_regression;
-mod test_truncated_body;

@@ -1,2 +1,2 @@
-mod resume_content_range_validation_test;
-mod resume_test;
+mod test_resume;
+mod test_resume_content_range_validation;
