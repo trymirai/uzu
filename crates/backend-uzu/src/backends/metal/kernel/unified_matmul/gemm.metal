@@ -8,10 +8,23 @@
 using namespace metal;
 using namespace uzu::unified_gemm;
 
-template <typename T, uint SIMDGROUPS_M, uint SIMDGROUPS_N>
+#define UNIFIED_GEMM_MAX_THREADGROUP_A 2560
+#define UNIFIED_GEMM_MAX_THREADGROUP_B 1536
+
+template <
+    typename T,
+    uint THREADGROUP_M,
+    uint THREADGROUP_N,
+    uint THREADGROUP_K,
+    uint SIMDGROUPS_M,
+    uint SIMDGROUPS_N>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(SIMDGROUPS_M, 1, 2, 4)
+VARIANTS(THREADGROUP_M, 32, 64)
+VARIANTS(THREADGROUP_N, 32, 64)
+VARIANTS(THREADGROUP_K, 16, 32)
+VARIANTS(SIMDGROUPS_M, 1, 2)
 VARIANTS(SIMDGROUPS_N, 1, 2, 4)
+CONSTRAINT(max(THREADGROUP_M, THREADGROUP_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
 KERNEL(UnifiedGemm)(
     const device T* activations,
     const device uint8_t* weights,
@@ -22,9 +35,10 @@ KERNEL(UnifiedGemm)(
         OPTIONAL(weight_prologue == GemmWeightPrologueKind::MlxDequant),
     const device uint8_t* zero_points
         OPTIONAL(weight_prologue == GemmWeightPrologueKind::AwqDequant),
+    const constant uzu::matmul::GemmParams* params,
+    const constant float& ab_scale,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
-    const constant GemmTilingConfig& tile,
     const GemmInputPrologueKind input_prologue SPECIALIZE,
     const GemmWeightPrologueKind weight_prologue SPECIALIZE,
     const GemmComputeKind compute SPECIALIZE,
@@ -32,6 +46,8 @@ KERNEL(UnifiedGemm)(
     const GemmAlignment alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
     const uint group_size SPECIALIZE,
+    threadgroup T a_shared[UNIFIED_GEMM_MAX_THREADGROUP_A],
+    threadgroup T b_shared[UNIFIED_GEMM_MAX_THREADGROUP_B],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
@@ -39,25 +55,27 @@ KERNEL(UnifiedGemm)(
     const uint thread_z THREADS(SIMDGROUPS_M),
     const ThreadContext thread_context
 ) {
-  (void)activations;
-  (void)weights;
-  (void)result;
   (void)scales;
   (void)biases;
   (void)zero_points;
-  (void)tile;
-  (void)input_prologue;
-  (void)weight_prologue;
-  (void)compute;
-  (void)output_transform;
-  (void)alignment;
   (void)bits_per_weight;
   (void)group_size;
-  (void)group_x;
-  (void)group_y;
-  (void)thread_x;
-  (void)thread_y;
-  (void)thread_z;
-  (void)thread_context;
-  uzu::unified_gemm::GemmPipeline<T>::run();
+  GemmPipeline<T, THREADGROUP_M, THREADGROUP_N, THREADGROUP_K, SIMDGROUPS_M, SIMDGROUPS_N>::run(
+      activations,
+      weights,
+      result,
+      params,
+      ab_scale,
+      input_prologue,
+      weight_prologue,
+      compute,
+      output_transform,
+      alignment,
+      a_shared,
+      b_shared,
+      thread_context.simdgroup_index,
+      thread_context.threadgroup_index,
+      uint2(group_x, group_y),
+      uint3(thread_x, thread_y, thread_z),
+      thread_context);
 }

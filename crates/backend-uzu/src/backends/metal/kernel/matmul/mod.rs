@@ -309,18 +309,24 @@ impl MatmulMetalKernel {
         let tile = select_unified_gemm_simdgroup_tile(self.data_type, &arguments);
         let group_count_x = arguments.output_dim.div_ceil(tile.threadgroup_n);
         let group_count_y = arguments.batch_dim.div_ceil(tile.threadgroup_m);
+        let alignment = unified_gemm_alignment(&arguments, &tile);
+        let output_transform = unified_gemm_output_transform(&arguments);
+        let params = build_unified_gemm_params(&arguments, &tile);
+        let ab_scale = arguments.ab_scale;
         let dispatch = UnifiedGemmDispatch {
             tiling_config: tile,
             input_prologue: GemmInputPrologueKind::FullPrecision,
             compute: GemmComputeKind::SimdgroupMma,
-            output_transform: unified_gemm_output_transform(&arguments),
-            alignment: unified_gemm_alignment(&arguments, &tile),
+            output_transform,
+            alignment,
             weights: GemmWeights::FullPrecision {
                 weights: arguments.b,
             },
             activations: arguments.a,
             activations_offset: arguments.a_offset as usize,
             result: &mut *arguments.d,
+            params,
+            ab_scale,
             group_count_x,
             group_count_y,
         };
@@ -363,18 +369,24 @@ impl MatmulMetalKernel {
         let tile = select_unified_gemm_mxu_tile(&arguments);
         let group_count_x = arguments.output_dim.div_ceil(tile.threadgroup_n);
         let group_count_y = arguments.batch_dim.div_ceil(tile.threadgroup_m);
+        let alignment = unified_gemm_alignment(&arguments, &tile);
+        let output_transform = unified_gemm_output_transform(&arguments);
+        let params = build_unified_gemm_params(&arguments, &tile);
+        let ab_scale = arguments.ab_scale;
         let dispatch = UnifiedGemmDispatch {
             tiling_config: tile,
             input_prologue: GemmInputPrologueKind::FullPrecision,
             compute: GemmComputeKind::MxuMma,
-            output_transform: unified_gemm_output_transform(&arguments),
-            alignment: unified_gemm_alignment(&arguments, &tile),
+            output_transform,
+            alignment,
             weights: GemmWeights::FullPrecision {
                 weights: arguments.b,
             },
             activations: arguments.a,
             activations_offset: arguments.a_offset as usize,
             result: &mut *arguments.d,
+            params,
+            ab_scale,
             group_count_x,
             group_count_y,
         };
@@ -462,6 +474,25 @@ fn unified_gemm_alignment(
         m_aligned: arguments.batch_dim % tile.threadgroup_m == 0,
         n_aligned: arguments.output_dim % tile.threadgroup_n == 0,
         k_aligned: arguments.input_dim % tile.threadgroup_k == 0,
+    }
+}
+
+fn build_unified_gemm_params(
+    arguments: &MatmulArguments<Metal>,
+    tile: &GemmTilingConfig,
+) -> GemmParams {
+    GemmParams {
+        M: arguments.batch_dim,
+        N: arguments.output_dim,
+        K: arguments.input_dim,
+        leading_dimension_a: arguments.input_dim,
+        leading_dimension_b: arguments.input_dim,
+        leading_dimension_d: arguments.output_dim,
+        threadgroups_per_row: arguments.output_dim.div_ceil(tile.threadgroup_n),
+        threadgroups_per_column: arguments.batch_dim.div_ceil(tile.threadgroup_m),
+        swizzle_log: 0,
+        aligned_inner_iterations: arguments.input_dim / tile.threadgroup_k,
+        use_morton: false,
     }
 }
 

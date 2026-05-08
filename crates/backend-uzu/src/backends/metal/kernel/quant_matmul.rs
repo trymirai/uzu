@@ -2,7 +2,7 @@ use crate::backends::{
     common::{
         Encoder,
         gpu_types::{
-            QuantizationMethod,
+            GemmParams, QuantizationMethod,
             unified_gemm::{GemmAlignment, GemmOutputTransformKind},
         },
         kernel::quant_matmul::{
@@ -42,15 +42,20 @@ pub fn encode_quantized_matmul_with_path(
         QuantizedMatmulDispatchPath::UnifiedGemm => {
             let tile = select_unified_quantized_tile(configuration, arguments.batch_dim as u32);
             let group_size = configuration.group_size as u32;
+            let batch_dim = arguments.batch_dim as u32;
+            let input_dim = configuration.input_dim as u32;
+            let output_dim = configuration.output_dim as u32;
+            let group_count_x = output_dim.div_ceil(tile.threadgroup_n);
+            let group_count_y = batch_dim.div_ceil(tile.threadgroup_m);
             let dispatch = UnifiedGemmDispatch {
                 tiling_config: tile,
                 input_prologue: GemmInputPrologueKind::FullPrecision,
                 compute: GemmComputeKind::SimdgroupMma,
                 output_transform: GemmOutputTransformKind::Store,
                 alignment: GemmAlignment {
-                    m_aligned: (arguments.batch_dim as u32) % tile.threadgroup_m == 0,
-                    n_aligned: (configuration.output_dim as u32) % tile.threadgroup_n == 0,
-                    k_aligned: (configuration.input_dim as u32) % tile.threadgroup_k == 0,
+                    m_aligned: batch_dim % tile.threadgroup_m == 0,
+                    n_aligned: output_dim % tile.threadgroup_n == 0,
+                    k_aligned: input_dim % tile.threadgroup_k == 0,
                 },
                 weights: match configuration.quantization_method {
                     QuantizationMethod::MLX => GemmWeights::Mlx {
@@ -71,8 +76,22 @@ pub fn encode_quantized_matmul_with_path(
                 activations: arguments.a_buffer,
                 activations_offset: arguments.a_offset,
                 result: arguments.output_buffer,
-                group_count_x: (configuration.output_dim as u32).div_ceil(tile.threadgroup_n),
-                group_count_y: (arguments.batch_dim as u32).div_ceil(tile.threadgroup_m),
+                params: GemmParams {
+                    M: batch_dim,
+                    N: output_dim,
+                    K: input_dim,
+                    leading_dimension_a: input_dim,
+                    leading_dimension_b: input_dim,
+                    leading_dimension_d: output_dim,
+                    threadgroups_per_row: group_count_x,
+                    threadgroups_per_column: group_count_y,
+                    swizzle_log: 0,
+                    aligned_inner_iterations: input_dim / tile.threadgroup_k,
+                    use_morton: false,
+                },
+                ab_scale: 1.0,
+                group_count_x,
+                group_count_y,
             };
             matmul.encode_unified_gemm(context, dispatch, encoder).map_err(QuantizedMatmulError::BackendError)
         },

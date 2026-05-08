@@ -44,6 +44,9 @@ impl UnifiedGemmKernel {
                 let kernel = UnifiedGemmMetalKernel::new(
                     context,
                     self.data_type,
+                    specialization.tiling_config.threadgroup_m,
+                    specialization.tiling_config.threadgroup_n,
+                    specialization.tiling_config.threadgroup_k,
                     specialization.tiling_config.simdgroups_m,
                     specialization.tiling_config.simdgroups_n,
                     specialization.input_prologue,
@@ -94,9 +97,10 @@ impl UnifiedGemmKernel {
             scales,
             biases,
             zero_points,
+            std::slice::from_ref(&dispatch.params),
+            dispatch.ab_scale,
             dispatch.group_count_x,
             dispatch.group_count_y,
-            dispatch.tiling_config,
             encoder,
         );
         Ok(())
