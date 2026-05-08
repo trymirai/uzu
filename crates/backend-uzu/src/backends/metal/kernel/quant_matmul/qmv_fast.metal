@@ -3,6 +3,27 @@
 #include "../hadamard_transform/hadamard_transform.h"
 #include "quant_matmul.h"
 
+template <uint BITS, int values_per_thread>
+inline float qdot_qmv_fast_experiment(
+    const device uint8_t* w,
+    const thread float* x_thread,
+    float scale,
+    float bias,
+    float sum
+) {
+  if (BITS == 4) {
+    return qdot_q4_byte_lut_half<values_per_thread>(
+        w,
+        x_thread,
+        scale,
+        bias,
+        sum
+    );
+  } else {
+    return qdot<float, values_per_thread, BITS>(w, x_thread, scale, bias, sum);
+  }
+}
+
 template <typename T, uint GROUP_SIZE, uint BITS>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
@@ -90,14 +111,34 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         U b1 = static_cast<U>(biases[in_vec_size_g]);
         U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
         U b3 = static_cast<U>(biases[3 * in_vec_size_g]);
-        result[0] +=
-            qdot<U, values_per_thread, BITS>(wl0, x_thread, s0, b0, sum);
-        result[1] +=
-            qdot<U, values_per_thread, BITS>(wl1, x_thread, s1, b1, sum);
-        result[2] +=
-            qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, b2, sum);
-        result[3] +=
-            qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum);
+        result[0] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
+            wl0,
+            x_thread,
+            s0,
+            b0,
+            sum
+        );
+        result[1] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
+            wl1,
+            x_thread,
+            s1,
+            b1,
+            sum
+        );
+        result[2] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
+            wl2,
+            x_thread,
+            s2,
+            b2,
+            sum
+        );
+        result[3] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
+            wl3,
+            x_thread,
+            s3,
+            b3,
+            sum
+        );
       } else {
         uchar4 zp_bytes = uchar4(
             zps[0],
@@ -112,28 +153,28 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         } else {
           zp_nibbles = zp_bytes;
         }
-        result[0] += qdot<U, values_per_thread, BITS>(
+        result[0] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl0,
             x_thread,
             s0,
             -s0 * static_cast<U>(zp_nibbles.x),
             sum
         );
-        result[1] += qdot<U, values_per_thread, BITS>(
+        result[1] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl1,
             x_thread,
             s1,
             -s1 * static_cast<U>(zp_nibbles.y),
             sum
         );
-        result[2] += qdot<U, values_per_thread, BITS>(
+        result[2] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl2,
             x_thread,
             s2,
             -s2 * static_cast<U>(zp_nibbles.z),
             sum
         );
-        result[3] += qdot<U, values_per_thread, BITS>(
+        result[3] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl3,
             x_thread,
             s3,
