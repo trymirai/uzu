@@ -7,6 +7,7 @@ template <uint BITS, int values_per_thread>
 inline float qdot_qmv_fast_experiment(
     const device uint8_t* w,
     const thread float* x_thread,
+    const threadgroup half2* lut,
     float scale,
     float bias,
     float sum
@@ -15,6 +16,7 @@ inline float qdot_qmv_fast_experiment(
     return qdot_q4_byte_lut_half<values_per_thread>(
         w,
         x_thread,
+        lut,
         scale,
         bias,
         sum
@@ -43,6 +45,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const bool use_mlx_quant SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
+    threadgroup half2 q4_lut[256],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
     const uint simd_lane THREADS(32),
@@ -92,6 +95,15 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   input += batch_idx * in_vec_size + simd_lane * values_per_thread;
   output += batch_idx * out_vec_size + out_row;
 
+  {
+    const uint tid = simd_group * METAL_SIMD_SIZE + simd_lane;
+    q4_lut[tid] = half2(
+        static_cast<half>(tid & 0x0f),
+        static_cast<half>((tid >> 4) & 0x0f)
+    );
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+
   for (uint k = 0; k < in_vec_size; k += block_size) {
     U sum = load_vector<T, U, values_per_thread, BITS>(input, x_thread);
 
@@ -114,6 +126,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[0] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl0,
             x_thread,
+            q4_lut,
             s0,
             b0,
             sum
@@ -121,6 +134,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[1] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl1,
             x_thread,
+            q4_lut,
             s1,
             b1,
             sum
@@ -128,6 +142,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[2] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl2,
             x_thread,
+            q4_lut,
             s2,
             b2,
             sum
@@ -135,6 +150,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[3] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl3,
             x_thread,
+            q4_lut,
             s3,
             b3,
             sum
@@ -156,6 +172,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[0] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl0,
             x_thread,
+            q4_lut,
             s0,
             -s0 * static_cast<U>(zp_nibbles.x),
             sum
@@ -163,6 +180,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[1] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl1,
             x_thread,
+            q4_lut,
             s1,
             -s1 * static_cast<U>(zp_nibbles.y),
             sum
@@ -170,6 +188,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[2] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl2,
             x_thread,
+            q4_lut,
             s2,
             -s2 * static_cast<U>(zp_nibbles.z),
             sum
@@ -177,6 +196,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
         result[3] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl3,
             x_thread,
+            q4_lut,
             s3,
             -s3 * static_cast<U>(zp_nibbles.w),
             sum
