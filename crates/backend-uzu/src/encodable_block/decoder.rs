@@ -130,6 +130,7 @@ impl<B: Backend> Decoder<B> {
                     DecoderLayerType::Transformer => {
                         let attention_config =
                             layer_config.attention_config().expect("Transformer layer must use attention");
+                        let layer_head_dim = attention_config.head_dim.unwrap_or(decoder_config.head_dim);
                         let rope_config = decoder_config
                             .rope_config_for_layer(layer_config.rope_config.as_ref(), sliding_window_sizes[layer_index])
                             .expect("RoPE config missing for transformer layer");
@@ -139,6 +140,7 @@ impl<B: Backend> Decoder<B> {
                                 *data_type,
                                 rope_config,
                                 attention_config.partial_rope_dim,
+                                layer_head_dim,
                             )
                         })
                     },
@@ -194,9 +196,11 @@ impl<B: Backend> Decoder<B> {
         data_type: DataType,
         rope_config: &RoPEConfig,
         attention_partial_rope_dim: Option<usize>,
+        fallback_rotary_frequency_dim: usize,
     ) -> Rc<Rope<B>> {
         Rc::new(
-            Rope::<B>::new(context, data_type, rope_config, attention_partial_rope_dim).expect("Failed to create Rope"),
+            Rope::<B>::new(context, data_type, rope_config, attention_partial_rope_dim, fallback_rotary_frequency_dim)
+                .expect("Failed to create Rope"),
         )
     }
 

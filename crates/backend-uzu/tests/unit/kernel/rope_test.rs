@@ -18,20 +18,11 @@ use crate::{common::assert::assert_eq_float, uzu_test};
 struct Input<T: ArrayElement + Float> {
     qkv: Box<[T]>,
     token_positions: Box<[i32]>,
+    inverse_frequencies: Box<[f32]>,
     head_dim: u32,
     rope_dim: u32,
     rotary_pair_stride: u32,
-    rotary_frequency_dim: u32,
     rope_max_sequence_length: u32,
-    rope_scaling_type: u32,
-    rope_base: f32,
-    rope_scaling_factor: f32,
-    rope_original_context_length: u32,
-    rope_low_frequency_factor: f32,
-    rope_high_frequency_factor: f32,
-    rope_beta_fast: f32,
-    rope_beta_slow: f32,
-    rope_truncate: u32,
     rope_attention_scaling_factor: f32,
     num_heads: u32,
     num_groups: u32,
@@ -54,24 +45,16 @@ fn get_test_data<T: ArrayElement + Float>(
         .collect::<Box<_>>();
 
     let token_positions = (0..suffix_length).map(|index| index as i32).collect::<Box<_>>();
+    let inverse_frequencies = unscaled_inverse_frequencies(rope_dim, 10000.0);
 
     Input {
         qkv,
         token_positions,
+        inverse_frequencies,
         head_dim,
         rope_dim,
         rotary_pair_stride: rope_dim / 2,
-        rotary_frequency_dim: rope_dim,
         rope_max_sequence_length: max_sequence_length,
-        rope_scaling_type: 0,
-        rope_base: 10000.0,
-        rope_scaling_factor: 1.0,
-        rope_original_context_length: max_sequence_length,
-        rope_low_frequency_factor: 1.0,
-        rope_high_frequency_factor: 1.0,
-        rope_beta_fast: 1.0,
-        rope_beta_slow: 1.0,
-        rope_truncate: 0,
         rope_attention_scaling_factor: 1.0,
         num_heads,
         num_groups,
@@ -92,6 +75,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
 
     let qkv_array = context.create_array_from(&[qkv_len], &input.qkv, "");
     let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions, "");
+    let inverse_frequencies_array =
+        context.create_array_from(&[input.inverse_frequencies.len()], &input.inverse_frequencies, "");
     let rotated_queries_array = context.create_array_uninitialized(&[queries_len], T::data_type(), "");
     let rotated_keys_array = context.create_array_uninitialized(&[keys_len], T::data_type(), "");
 
@@ -99,22 +84,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     kernel.encode(
         qkv_array.buffer().borrow().deref(),
         token_positions_array.buffer().borrow().deref(),
+        inverse_frequencies_array.buffer().borrow().deref(),
         rotated_queries_array.buffer().borrow_mut().deref_mut(),
         rotated_keys_array.buffer().borrow_mut().deref_mut(),
         input.head_dim,
         input.rope_dim,
         input.rotary_pair_stride,
-        input.rotary_frequency_dim,
+        input.inverse_frequencies.len() as u32,
         input.rope_max_sequence_length,
-        input.rope_scaling_type,
-        input.rope_base,
-        input.rope_scaling_factor,
-        input.rope_original_context_length,
-        input.rope_low_frequency_factor,
-        input.rope_high_frequency_factor,
-        input.rope_beta_fast,
-        input.rope_beta_slow,
-        input.rope_truncate,
         input.rope_attention_scaling_factor,
         input.num_heads,
         input.num_groups,
@@ -179,20 +156,11 @@ fn test_partial_rope_proportional_layout() {
     let input = Input {
         qkv: (0..32).map(|value| value as f32).collect::<Box<_>>(),
         token_positions: [1].into(),
+        inverse_frequencies: unscaled_inverse_frequencies(8, 10000.0),
         head_dim: 8,
         rope_dim: 4,
         rotary_pair_stride: 4,
-        rotary_frequency_dim: 8,
         rope_max_sequence_length: 8,
-        rope_scaling_type: 0,
-        rope_base: 10000.0,
-        rope_scaling_factor: 1.0,
-        rope_original_context_length: 8,
-        rope_low_frequency_factor: 1.0,
-        rope_high_frequency_factor: 1.0,
-        rope_beta_fast: 1.0,
-        rope_beta_slow: 1.0,
-        rope_truncate: 0,
         rope_attention_scaling_factor: 1.0,
         num_heads: 2,
         num_groups: 1,
@@ -234,33 +202,17 @@ fn test_partial_rope_proportional_layout() {
 }
 
 fn fixed_fixture_input(
-    rope_scaling_type: u32,
-    rope_scaling_factor: f32,
-    rope_original_context_length: u32,
-    rope_low_frequency_factor: f32,
-    rope_high_frequency_factor: f32,
-    rope_beta_fast: f32,
-    rope_beta_slow: f32,
-    rope_truncate: u32,
+    inverse_frequencies: Box<[f32]>,
     rope_attention_scaling_factor: f32,
 ) -> Input<f32> {
     Input {
         qkv: (0..12).map(|value| value as f32).collect::<Box<_>>(),
         token_positions: [1].into(),
+        inverse_frequencies,
         head_dim: 4,
         rope_dim: 4,
         rotary_pair_stride: 2,
-        rotary_frequency_dim: 4,
         rope_max_sequence_length: 8,
-        rope_scaling_type,
-        rope_base: 10000.0,
-        rope_scaling_factor,
-        rope_original_context_length,
-        rope_low_frequency_factor,
-        rope_high_frequency_factor,
-        rope_beta_fast,
-        rope_beta_slow,
-        rope_truncate,
         rope_attention_scaling_factor,
         num_heads: 1,
         num_groups: 1,
@@ -290,7 +242,7 @@ fn assert_fixed_fixture(
 
 fn test_unscaled_fixed_fixture() {
     assert_fixed_fixture(
-        fixed_fixture_input(0, 1.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.0),
+        fixed_fixture_input([1.0, 0.01].into(), 1.0),
         &[-1.682941970, 0.969950500, 1.080604612, 3.009849835],
         &[-2.887616685, 4.929751169, 6.607697774, 7.049649170],
         "unscaled RoPE fixed fixture",
@@ -299,7 +251,7 @@ fn test_unscaled_fixed_fixture() {
 
 fn test_linear_fixed_fixture() {
     assert_fixed_fixture(
-        fixed_fixture_input(1, 2.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.0),
+        fixed_fixture_input([0.5, 0.005].into(), 1.0),
         &[-0.958851077, 0.984987563, 1.755165124, 3.004962479],
         &[0.633777016, 4.964937646, 7.183197526, 7.024912396],
         "linear RoPE fixed fixture",
@@ -308,7 +260,7 @@ fn test_linear_fixed_fixture() {
 
 fn test_llama_fixed_fixture() {
     assert_fixed_fixture(
-        fixed_fixture_input(2, 8.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.0),
+        fixed_fixture_input([0.204694867, 0.00125].into(), 1.0),
         &[-0.406536814, 0.996249220, 1.958246108, 3.001247656],
         &[2.696881775, 4.991246096, 6.687811951, 7.006244530],
         "llama RoPE fixed fixture",
@@ -317,11 +269,24 @@ fn test_llama_fixed_fixture() {
 
 fn test_yarn_fixed_fixture() {
     assert_fixed_fixture(
-        fixed_fixture_input(3, 4.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.138629436),
+        fixed_fixture_input([1.0, 0.0025].into(), 1.138629436),
         &[-1.916247266, 1.130086166, 1.230408220, 3.418724204],
         &[-3.287925358, 5.673203395, 7.523719191, 7.984613998],
         "yarn RoPE fixed fixture",
     );
+}
+
+fn unscaled_inverse_frequencies(
+    rotary_frequency_dim: u32,
+    base: f32,
+) -> Box<[f32]> {
+    (0..rotary_frequency_dim / 2)
+        .map(|frequency_index| {
+            let exponent = (2 * frequency_index) as f32 / rotary_frequency_dim as f32;
+            1.0 / base.powf(exponent)
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
 }
 
 fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {

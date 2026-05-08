@@ -2,120 +2,6 @@
 #include "../common/dsl.h"
 #include "../common/tensor_view.h"
 
-inline float linear_ramp_factor(float min_value, float max_value, float dim) {
-  if (min_value == max_value) {
-    max_value += 0.001;
-  }
-  return metal::clamp((dim - min_value) / (max_value - min_value), 0.0, 1.0);
-}
-
-inline float2 yarn_correction_range(
-    float beta_fast,
-    float beta_slow,
-    uint dim,
-    float base,
-    uint original_context_length,
-    uint truncate
-) {
-  const float two_pi = 6.28318530717958647692;
-  const float scale = static_cast<float>(dim) / (2.0 * metal::log(base));
-
-  float low = scale * metal::log(
-                          static_cast<float>(original_context_length) /
-                          (beta_fast * two_pi)
-                      );
-
-  float high = scale * metal::log(
-                           static_cast<float>(original_context_length) /
-                           (beta_slow * two_pi)
-                       );
-
-  if (truncate != 0) {
-    low = metal::floor(low);
-    high = metal::ceil(high);
-  }
-
-  return float2(
-      metal::max(low, 0.0),
-      metal::min(high, static_cast<float>(dim - 1))
-  );
-}
-
-inline float inverse_frequency(
-    uint frequency_index,
-    uint rotary_frequency_dim,
-    uint rope_scaling_type,
-    float rope_base,
-    float rope_scaling_factor,
-    uint rope_original_context_length,
-    float rope_low_frequency_factor,
-    float rope_high_frequency_factor,
-    float rope_beta_fast,
-    float rope_beta_slow,
-    uint rope_truncate
-) {
-  const float two_pi = 6.28318530717958647692;
-  const float exponent = static_cast<float>(2 * frequency_index) /
-                         static_cast<float>(rotary_frequency_dim);
-
-  float value = metal::exp2(-exponent * metal::log2(rope_base));
-
-  if (rope_scaling_type == 1) {
-    return value / rope_scaling_factor;
-  }
-
-  if (rope_scaling_type == 2) {
-    const float low_frequency_wavelength =
-        static_cast<float>(rope_original_context_length) /
-        rope_low_frequency_factor;
-
-    const float high_frequency_wavelength =
-        static_cast<float>(rope_original_context_length) /
-        rope_high_frequency_factor;
-
-    const float wavelength = two_pi / value;
-    const float scaled = value / rope_scaling_factor;
-
-    if (wavelength > low_frequency_wavelength) {
-      return scaled;
-    }
-
-    if (wavelength >= high_frequency_wavelength) {
-      float smoothing =
-          static_cast<float>(rope_original_context_length) / wavelength -
-          rope_low_frequency_factor;
-
-      smoothing /= rope_high_frequency_factor - rope_low_frequency_factor;
-      return smoothing * value + (1.0 - smoothing) * scaled;
-    }
-
-    return value;
-  }
-
-  if (rope_scaling_type == 3) {
-    const float scaled = value / rope_scaling_factor;
-    const float2 correction_range = yarn_correction_range(
-        rope_beta_fast,
-        rope_beta_slow,
-        rotary_frequency_dim,
-        rope_base,
-        rope_original_context_length,
-        rope_truncate
-    );
-
-    const float ramp = linear_ramp_factor(
-        correction_range.x,
-        correction_range.y,
-        static_cast<float>(frequency_index)
-    );
-
-    const float smoothing = 1.0 - ramp;
-    return scaled * (1.0 - smoothing) + value * smoothing;
-  }
-
-  return value;
-}
-
 template <typename T>
 inline T apply_rope_transform(
     TensorView3D<const T> qkv_tensor_view,
@@ -170,22 +56,14 @@ VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(Rope)(
     device const T* qkv,                // [suffix_len, (num_heads + 2*num_groups) * head_dim]
     device const int* token_positions,  // [suffix_len] - actual token positions
+    device const float* inverse_frequencies,
     device T* rotated_queries,          // [num_heads,   suffix_len,  head_dim]
     device T* rotated_keys,             // [num_groups,  suffix_len,  head_dim]
     constant uint& head_dim,
     constant uint& rope_dim,
     constant uint& rotary_pair_stride,
-    constant uint& rotary_frequency_dim,
+    constant uint& inverse_frequency_count,
     constant uint& rope_max_sequence_length,
-    constant uint& rope_scaling_type,
-    constant float& rope_base,
-    constant float& rope_scaling_factor,
-    constant uint& rope_original_context_length,
-    constant float& rope_low_frequency_factor,
-    constant float& rope_high_frequency_factor,
-    constant float& rope_beta_fast,
-    constant float& rope_beta_slow,
-    constant uint& rope_truncate,
     constant float& rope_attention_scaling_factor,
     constant uint& num_heads,
     constant uint& num_groups,
@@ -203,7 +81,7 @@ PUBLIC KERNEL(Rope)(
     return;
   if (rope_dim > head_dim)
     return;
-  if (rope_dim != 0 && rotary_frequency_dim == 0)
+  if (rope_dim != 0 && inverse_frequency_count < rope_dim / 2)
     return;
   if (rotary_pair_stride < rope_dim / 2)
     return;
@@ -242,20 +120,7 @@ PUBLIC KERNEL(Rope)(
           rotary_dimension_index
       )) {
     const uint frequency_index = rotary_dimension_index % half_rope_dim;
-    const float frequency = inverse_frequency(
-        frequency_index,
-        rotary_frequency_dim,
-        rope_scaling_type,
-        rope_base,
-        rope_scaling_factor,
-        rope_original_context_length,
-        rope_low_frequency_factor,
-        rope_high_frequency_factor,
-        rope_beta_fast,
-        rope_beta_slow,
-        rope_truncate
-    );
-
+    const float frequency = inverse_frequencies[frequency_index];
     const float angle = static_cast<float>(absolute_position) * frequency;
 
     const T cos_val =
