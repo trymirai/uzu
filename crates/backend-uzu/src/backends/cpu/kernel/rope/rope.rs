@@ -1,5 +1,3 @@
-use std::f32::consts::PI;
-
 use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
@@ -44,109 +42,19 @@ fn rotated_dimension_index(
     }
 }
 
-fn linear_ramp_factor(
-    min_value: f32,
-    mut max_value: f32,
-    dim: f32,
-) -> f32 {
-    if min_value == max_value {
-        max_value += 0.001;
-    }
-    ((dim - min_value) / (max_value - min_value)).clamp(0.0, 1.0)
-}
-
-fn yarn_correction_range(
-    beta_fast: f32,
-    beta_slow: f32,
-    dim: u32,
-    base: f32,
-    original_context_length: u32,
-    truncate: u32,
-) -> (f32, f32) {
-    let correction_dim = |num_rotations: f32| {
-        (dim as f32 * (original_context_length as f32 / (num_rotations * 2.0 * PI)).ln()) / (2.0 * base.ln())
-    };
-    let mut low = correction_dim(beta_fast);
-    let mut high = correction_dim(beta_slow);
-    if truncate != 0 {
-        low = low.floor();
-        high = high.ceil();
-    }
-    (low.max(0.0), high.min((dim - 1) as f32))
-}
-
-fn inverse_frequency(
-    frequency_index: usize,
-    rotary_frequency_dim: u32,
-    rope_scaling_type: u32,
-    base: f32,
-    scaling_factor: f32,
-    original_context_length: u32,
-    low_frequency_factor: f32,
-    high_frequency_factor: f32,
-    beta_fast: f32,
-    beta_slow: f32,
-    truncate: u32,
-) -> f32 {
-    let exponent = (2 * frequency_index) as f32 / rotary_frequency_dim as f32;
-    let value = 1.0 / base.powf(exponent);
-
-    match rope_scaling_type {
-        1 => value / scaling_factor,
-        2 => {
-            let low_frequency_wavelength = original_context_length as f32 / low_frequency_factor;
-            let high_frequency_wavelength = original_context_length as f32 / high_frequency_factor;
-            let wavelength = 2.0 * PI / value;
-            let scaled = value / scaling_factor;
-            if wavelength > low_frequency_wavelength {
-                scaled
-            } else if wavelength >= high_frequency_wavelength {
-                let smoothing = original_context_length as f32 / wavelength - low_frequency_factor;
-                let smoothing = smoothing / (high_frequency_factor - low_frequency_factor);
-                smoothing * value + (1.0 - smoothing) * scaled
-            } else {
-                value
-            }
-        },
-        3 => {
-            let scaled = value / scaling_factor;
-            let (low, high) = yarn_correction_range(
-                beta_fast,
-                beta_slow,
-                rotary_frequency_dim,
-                base,
-                original_context_length,
-                truncate,
-            );
-            let ramp = linear_ramp_factor(low, high, frequency_index as f32);
-            let smoothing = 1.0 - ramp;
-            scaled * (1.0 - smoothing) + value * smoothing
-        },
-        _ => value,
-    }
-}
-
 #[kernel(Rope)]
 #[variants(T, f32, f16, bf16)]
 pub fn rope<T: ArrayElement + Float>(
     qkv: *const T,
     token_positions: *const i32,
+    inverse_frequencies: *const f32,
     rotated_queries: *mut T,
     rotated_keys: *mut T,
     head_dim: u32,
     rope_dim: u32,
     rotary_pair_stride: u32,
-    rotary_frequency_dim: u32,
+    inverse_frequency_count: u32,
     rope_max_sequence_length: u32,
-    rope_scaling_type: u32,
-    rope_base: f32,
-    rope_scaling_factor: f32,
-    rope_original_context_length: u32,
-    rope_low_frequency_factor: f32,
-    rope_high_frequency_factor: f32,
-    rope_beta_fast: f32,
-    rope_beta_slow: f32,
-    rope_truncate: u32,
     rope_attention_scaling_factor: f32,
     num_heads: u32,
     num_groups: u32,
@@ -156,7 +64,7 @@ pub fn rope<T: ArrayElement + Float>(
         || head_dim & 1 != 0
         || rope_dim & 1 != 0
         || rope_dim > head_dim
-        || (rope_dim != 0 && rotary_frequency_dim == 0)
+        || (rope_dim != 0 && inverse_frequency_count < rope_dim / 2)
         || rotary_pair_stride < rope_dim / 2
         || rotary_pair_stride + rope_dim / 2 > head_dim
         || num_heads % num_groups != 0
@@ -190,19 +98,7 @@ pub fn rope<T: ArrayElement + Float>(
             for dim_index in 0..head_dim {
                 if let Some(rotary_dim_index) = rotated_dimension_index(dim_index, half_rope_dim, rotary_pair_stride) {
                     let frequency_index = rotary_dim_index % half_rope_dim;
-                    let frequency = inverse_frequency(
-                        frequency_index,
-                        rotary_frequency_dim,
-                        rope_scaling_type,
-                        rope_base,
-                        rope_scaling_factor,
-                        rope_original_context_length,
-                        rope_low_frequency_factor,
-                        rope_high_frequency_factor,
-                        rope_beta_fast,
-                        rope_beta_slow,
-                        rope_truncate,
-                    );
+                    let frequency = unsafe { *inverse_frequencies.add(frequency_index) };
                     let angle = absolute_position as f32 * frequency;
                     let cos_val = T::from(angle.cos() * rope_attention_scaling_factor).unwrap();
                     let sin_val = T::from(angle.sin() * rope_attention_scaling_factor).unwrap();

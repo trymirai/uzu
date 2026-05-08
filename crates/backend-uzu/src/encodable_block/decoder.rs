@@ -160,12 +160,15 @@ impl<B: Backend> Decoder<B> {
                 let layer_type = model_shape.layer_type(layer_index);
                 let rope_for_layer = match layer_type {
                     DecoderLayerType::Transformer => {
+                        let attention_config =
+                            layer_config.attention_config().expect("Transformer layer must use attention");
+                        let layer_head_dim = attention_config.head_dim.unwrap_or(decoder_config.head_dim);
                         let rope_config = decoder_config
                             .rope_config_for_layer(layer_config)
                             .expect("RoPE config missing for transformer layer");
                         attention_data_type
                             .as_ref()
-                            .map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
+                            .map(|data_type| Self::create_rope_block(&context, *data_type, rope_config, layer_head_dim))
                     },
                     DecoderLayerType::StateSpace {
                         ..
@@ -219,8 +222,12 @@ impl<B: Backend> Decoder<B> {
         context: &B::Context,
         data_type: DataType,
         rope_config: &RoPEConfig,
+        fallback_rotary_frequency_dim: usize,
     ) -> Rc<Rope<B>> {
-        Rc::new(Rope::<B>::new(context, data_type, rope_config).expect("Failed to create Rope"))
+        Rc::new(
+            Rope::<B>::new(context, data_type, rope_config, fallback_rotary_frequency_dim)
+                .expect("Failed to create Rope"),
+        )
     }
 
     fn attention_data_type(decoder_config: &DecoderConfig) -> Option<DataType> {

@@ -91,7 +91,6 @@ impl<B: Backend> ClassifierContext<B> {
                 let rope_config = decoder_config.rope_config_for_transformer_layer(layer_config).ok_or_else(|| {
                     ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
                 })?;
-                let rope = Self::create_rope_block(&context, data_type, rope_config)?;
 
                 let num_heads = attn.num_heads.ok_or_else(|| {
                     ClassifierError::MissingConfigField(format!("num_heads in layer {}", layer_index))
@@ -99,6 +98,7 @@ impl<B: Backend> ClassifierContext<B> {
                 let head_dim = attn
                     .head_dim
                     .ok_or_else(|| ClassifierError::MissingConfigField(format!("head_dim in layer {}", layer_index)))?;
+                let rope = Self::create_rope_block(&context, data_type, rope_config, head_dim)?;
                 let num_groups = attn.num_groups.ok_or_else(|| {
                     ClassifierError::MissingConfigField(format!("num_groups in layer {}", layer_index))
                 })?;
@@ -260,8 +260,9 @@ impl<B: Backend> ClassifierContext<B> {
         context: &B::Context,
         data_type: DataType,
         rope_config: &RoPEConfig,
+        fallback_rotary_frequency_dim: usize,
     ) -> Result<Rc<Rope<B>>, ClassifierError> {
-        let rotation = Rope::<B>::new(context, data_type, rope_config)
+        let rotation = Rope::<B>::new(context, data_type, rope_config, fallback_rotary_frequency_dim)
             .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?;
         Ok(Rc::new(rotation))
     }

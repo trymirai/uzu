@@ -196,108 +196,11 @@ impl<B: Backend> Attention<B> {
         let head_dim = self.head_dim;
         let has_kv_cache = state.cache_layers().is_some();
         let projection_step = parameters.projection_step.unwrap_or(0);
-        if has_kv_cache && let Some(source_layer_index) = self.kv_source_layer {
-            let cache_layers = state.cache_layers().unwrap();
-            let (source_keys, source_values, target_keys, target_values, source_cache_state) = {
-                let mut cache = cache_layers.borrow_mut();
-                let source_layer =
-                    cache.data[source_layer_index].as_transformer().expect("KV source layer must be transformer");
-                let source_keys = source_layer.keys.clone();
-                let source_values = source_layer.values.clone();
-                let source_cache_state = source_layer.state.clone();
-                let source_prefix_length = match source_cache_state {
-                    KVCacheLayerState::Full {
-                        prefix_len,
-                    } => prefix_len,
-                    KVCacheLayerState::Windowed {
-                        ring_length,
-                        ..
-                    } => ring_length,
-                };
-
-                let target_layer = cache.data[self.layer_index]
-                    .as_transformer_mut()
-                    .expect("Shared KV target layer must be transformer");
-                target_layer.state = KVCacheLayerState::Full {
-                    prefix_len: source_prefix_length + projection_step + suffix_length,
-                };
-                let target_keys = target_layer.keys.clone();
-                let target_values = target_layer.values.clone();
-                (source_keys, source_values, target_keys, target_values, source_cache_state)
-            };
-
-            let row_size = num_groups * head_dim * target_keys.data_type().size_in_bytes();
-            match source_cache_state {
-                KVCacheLayerState::Full {
-                    prefix_len,
-                } => {
-                    let rows_to_copy = prefix_len + projection_step + suffix_length;
-                    let bytes_to_copy = rows_to_copy * row_size;
-                    debug_assert!(target_keys.size() >= bytes_to_copy);
-                    debug_assert!(target_values.size() >= bytes_to_copy);
-                    encoder.encode_copy(
-                        source_keys.buffer().borrow().deref(),
-                        source_keys.offset()..source_keys.offset() + bytes_to_copy,
-                        target_keys.buffer().borrow_mut().deref_mut(),
-                        target_keys.offset()..target_keys.offset() + bytes_to_copy,
-                    );
-                    encoder.encode_copy(
-                        source_values.buffer().borrow().deref(),
-                        source_values.offset()..source_values.offset() + bytes_to_copy,
-                        target_values.buffer().borrow_mut().deref_mut(),
-                        target_values.offset()..target_values.offset() + bytes_to_copy,
-                    );
-                },
-                KVCacheLayerState::Windowed {
-                    ring_offset,
-                    ring_length,
-                    window_length,
-                } => {
-                    let mut copy_key_value_row = |source_row: usize, target_row: usize| {
-                        let source_key_start = source_keys.offset() + source_row * row_size;
-                        let target_key_start = target_keys.offset() + target_row * row_size;
-                        let source_value_start = source_values.offset() + source_row * row_size;
-                        let target_value_start = target_values.offset() + target_row * row_size;
-                        encoder.encode_copy(
-                            source_keys.buffer().borrow().deref(),
-                            source_key_start..source_key_start + row_size,
-                            target_keys.buffer().borrow_mut().deref_mut(),
-                            target_key_start..target_key_start + row_size,
-                        );
-                        encoder.encode_copy(
-                            source_values.buffer().borrow().deref(),
-                            source_value_start..source_value_start + row_size,
-                            target_values.buffer().borrow_mut().deref_mut(),
-                            target_value_start..target_value_start + row_size,
-                        );
-                    };
-
-                    for logical_index in 0..ring_length {
-                        let source_row = (ring_offset + logical_index) % window_length;
-                        copy_key_value_row(source_row, logical_index);
-                    }
-
-                    let extra_rows_to_copy = projection_step + suffix_length;
-                    let target_suffix_start = ring_length;
-                    let source_suffix_start = source_cache_state
-                        .shared_kv_suffix_source_start(
-                            extra_rows_to_copy,
-                            0,
-                            state.is_prefilling(),
-                            state.sampling_start(),
-                        )
-                        .expect("Windowed shared KV source layer must have suffix source");
-                    for token_index in 0..extra_rows_to_copy {
-                        let source_row = source_suffix_start + token_index;
-                        let target_row = target_suffix_start + token_index;
-                        copy_key_value_row(source_row, target_row);
-                    }
-                },
-            }
-        }
+        let kv_cache_layer_index = self.kv_source_layer.unwrap_or(self.layer_index);
+        let writes_kv_cache = has_kv_cache && self.kv_source_layer.is_none();
 
         let max_sequence_length = if has_kv_cache {
-            state.array(ArrayId::Keys(self.layer_index)).shape()[0]
+            state.array(ArrayId::Keys(kv_cache_layer_index)).shape()[0]
         } else {
             // For classifiers without KV cache, max_sequence_length is just suffix_length
             suffix_length
@@ -307,7 +210,7 @@ impl<B: Backend> Attention<B> {
 
         let (segment_prefix_length, ring_params) = if let Some(cache_layers) = state.cache_layers() {
             let cache = cache_layers.borrow();
-            let layer = cache.data[self.layer_index]
+            let layer = cache.data[kv_cache_layer_index]
                 .as_transformer()
                 .expect("Attention kernel expects transformer layer state");
             let compact_window_prefix_length = layer
@@ -371,11 +274,11 @@ impl<B: Backend> Attention<B> {
         let qkv_buf_rc = qkv_array.buffer();
         let qkv_buf_borrow = qkv_buf_rc.borrow();
 
-        let key_cache_array = has_kv_cache.then(|| state.array(ArrayId::Keys(self.layer_index)));
+        let key_cache_array = has_kv_cache.then(|| state.array(ArrayId::Keys(kv_cache_layer_index)));
         let key_cache_buf_rc = key_cache_array.as_ref().map(|a| a.buffer());
         let mut key_cache_buf_borrow = key_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
-        let value_cache_array = has_kv_cache.then(|| state.array(ArrayId::Values(self.layer_index)));
+        let value_cache_array = has_kv_cache.then(|| state.array(ArrayId::Values(kv_cache_layer_index)));
         let value_cache_buf_rc = value_cache_array.as_ref().map(|a| a.buffer());
         let mut value_cache_buf_borrow = value_cache_buf_rc.as_ref().map(|rc| rc.borrow_mut());
 
@@ -424,8 +327,8 @@ impl<B: Backend> Attention<B> {
         let sinks_buf_borrow = sinks_buf_rc.as_ref().map(|rc| rc.borrow());
         let sinks_buffer: Option<&B::DenseBuffer> = sinks_buf_borrow.as_ref().map(|b| b.deref());
 
-        // Only update KV cache for LLM mode (not for classifiers)
-        if has_kv_cache {
+        // Only update owned KV cache for LLM mode (not for classifiers or shared-KV target layers).
+        if writes_kv_cache {
             self.update_kv_cache_kernel.encode(
                 Some(rotated_keys_buf_borrow.deref()),
                 qkv_buf_borrow.deref(),

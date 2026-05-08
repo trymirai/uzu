@@ -788,7 +788,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let pending = executable.submit();
 
-        if allow_pre_encode {
+        if allow_pre_encode && !task.is_prefilling {
             let mut next_encoding_key = encoding_key;
 
             next_encoding_key.context_len += 1;
