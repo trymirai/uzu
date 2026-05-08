@@ -94,6 +94,11 @@ async fn handle_file_request(
     } else {
         served_file.bytes.clone()
     };
+    let bytes = if behavior.contains(Behavior::TRUNCATE_BODY) {
+        truncate_bytes(&bytes)
+    } else {
+        bytes
+    };
     let file_size = bytes.len() as u64;
     let range_header = request.headers().get(RANGE).and_then(|header| header.to_str().ok());
     let (status, body_start, body_end_exclusive) =
@@ -132,6 +137,13 @@ fn corrupt_bytes(bytes: &Arc<[u8]>) -> Arc<[u8]> {
         *first_byte = first_byte.wrapping_add(1);
     }
     corrupted_bytes.into()
+}
+
+fn truncate_bytes(bytes: &Arc<[u8]>) -> Arc<[u8]> {
+    if bytes.is_empty() {
+        return bytes.clone();
+    }
+    bytes[..bytes.len() - 1].to_vec().into()
 }
 
 fn file_server_base_url(listener: &TcpListener) -> Result<String> {

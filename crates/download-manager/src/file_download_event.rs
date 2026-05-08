@@ -1,6 +1,8 @@
-use crate::PathBuf;
+use std::path::PathBuf;
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FileDownloadEvent {
     DownloadCompleted {
         tmp_path: PathBuf,
