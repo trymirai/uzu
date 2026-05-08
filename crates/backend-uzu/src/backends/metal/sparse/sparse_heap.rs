@@ -8,19 +8,17 @@ use objc2::__framework_prelude::{ProtocolObject, Retained};
 use rangemap::RangeMap;
 
 use crate::{
-    backends::metal::{error::MetalError, metal_extensions::SparsePageSizeExt},
+    backends::metal::{
+        error::MetalError,
+        metal_extensions::SparsePageSizeExt,
+        sparse::sparse_utils::{MetalSparseHeapBufferMapping, MetalSparseHeapMappingParameters},
+    },
     prelude::MetalContext,
 };
 
-pub(super) struct MetalSparseHeapOperationParameters {
-    pub(super) buffer_pages: Range<usize>,
-    pub(super) heap_page_offset: usize,
-}
-
 pub(super) struct MetalSparseHeap {
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
-    /// map of heap page ranges to buffer gpu address (u64) and buffer pages (Range<usize>)
-    mapped_pages: RangeMap<usize, (u64, Range<usize>)>,
+    mapped_pages: RangeMap<usize, MetalSparseHeapBufferMapping>,
 }
 
 impl MetalSparseHeap {
@@ -50,7 +48,7 @@ impl MetalSparseHeap {
         })
     }
 
-    pub fn mapped_pages(&self) -> &RangeMap<usize, (u64, Range<usize>)> {
+    pub fn mapped_pages(&self) -> &RangeMap<usize, MetalSparseHeapBufferMapping> {
         &self.mapped_pages
     }
 
@@ -58,37 +56,34 @@ impl MetalSparseHeap {
         &mut self,
         buffer: &ProtocolObject<dyn MTLBuffer>,
         cmd_queue: &ProtocolObject<dyn MTL4CommandQueue>,
-        ops_parameters: &[MetalSparseHeapOperationParameters],
-        mapping: bool,
+        operations: &[MetalSparseHeapMappingParameters],
+        map: bool,
     ) {
-        if ops_parameters.is_empty() {
-            return;
-        }
-
-        let operations = ops_parameters
+        let mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = operations
             .iter()
             .map(|op| {
-                let mode = if mapping {
+                let mode = if map {
                     MTLSparseTextureMappingMode::Map
                 } else {
                     MTLSparseTextureMappingMode::Unmap
                 };
                 MTL4UpdateSparseBufferMappingOperation::new(mode, op.buffer_pages.clone(), op.heap_page_offset)
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        cmd_queue.update_buffer_mappings(buffer, Some(&self.heap), &operations);
+        cmd_queue.update_buffer_mappings(buffer, Some(&self.heap), &mtl_operations);
 
-        for op in &operations {
+        mtl_operations.iter().for_each(|mtl_op| {
             let heap_range = Range {
-                start: op.heap_offset,
-                end: op.heap_offset + op.buffer_range().len(),
+                start: mtl_op.heap_offset,
+                end: mtl_op.heap_offset + mtl_op.buffer_range().len(),
             };
-            if mapping {
-                self.mapped_pages.insert(heap_range, (buffer.gpu_address(), op.buffer_range()));
+            if map {
+                let buffer_mapping = MetalSparseHeapBufferMapping::new(buffer.gpu_address(), mtl_op.buffer_range());
+                self.mapped_pages.insert(heap_range, buffer_mapping);
             } else {
                 self.mapped_pages.remove(heap_range);
             }
-        }
+        });
     }
 }

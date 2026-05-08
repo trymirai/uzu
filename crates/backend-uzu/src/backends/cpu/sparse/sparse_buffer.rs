@@ -30,7 +30,7 @@ impl Buffer for CpuSparseBuffer {
 }
 
 impl SparseBuffer for CpuSparseBuffer {
-    fn mapping(
+    fn map(
         &mut self,
         _context: &<Self::Backend as Backend>::Context,
         _pages: &Range<usize>,
@@ -38,7 +38,7 @@ impl SparseBuffer for CpuSparseBuffer {
         todo!()
     }
 
-    fn unmapping(
+    fn unmap(
         &mut self,
         _context: &<Self::Backend as Backend>::Context,
         _pages: &Range<usize>,

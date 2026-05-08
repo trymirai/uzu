@@ -14,7 +14,7 @@ fn buffer_capacity(
     ctx: &<Metal as Backend>::Context,
     heap_count: usize,
 ) -> usize {
-    heap_count * ctx.sparse_heaps_mapper_mut().heap_capacity_bytes()
+    heap_count * ctx.sparse_heap_pool_mut().heap_capacity_bytes()
 }
 
 /// Buffer-page range covering `heap_count` worth of heaps starting at `heap_offset`.
@@ -23,7 +23,7 @@ fn pages_for_heaps(
     heap_offset: usize,
     heap_count: usize,
 ) -> Range<usize> {
-    let pages_per_heap = ctx.sparse_heaps_mapper_mut().heap_capacity_pages();
+    let pages_per_heap = ctx.sparse_heap_pool_mut().heap_capacity_pages();
     (heap_offset * pages_per_heap)..((heap_offset + heap_count) * pages_per_heap)
 }
 
@@ -34,7 +34,7 @@ fn test_mapping_succeeds() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
 }
 
 #[test]
@@ -44,8 +44,8 @@ fn test_unmapping_succeeds() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
-    sparse_buffer.unmapping(ctx.as_ref(), &pages).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), &pages).expect("Failed to unmap sparse buffer");
 }
 
 #[test]
@@ -56,8 +56,8 @@ fn test_partial_unmapping_succeeds() {
     let unmapped = pages_for_heaps(ctx.as_ref(), 1, 2);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &mapped).expect("Failed to map sparse buffer");
-    sparse_buffer.unmapping(ctx.as_ref(), &unmapped).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), &mapped).expect("Failed to map sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), &unmapped).expect("Failed to unmap sparse buffer");
 }
 
 #[test]
@@ -68,9 +68,9 @@ fn test_mapping_uses_minimum_heaps() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, heap_count);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
 
-    let heaps = ctx.sparse_heaps_mapper_mut();
+    let heaps = ctx.sparse_heap_pool_mut();
     let expected = pages.len().div_ceil(heaps.heap_capacity_pages());
     assert_eq!(heaps.heaps_count(), expected, "mapping should allocate the minimum number of heaps");
 }
@@ -84,14 +84,14 @@ fn test_remapping_reuses_freed_pages() {
     let extra_pages = pages_for_heaps(ctx.as_ref(), 4, 1);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &initial_pages).expect("Failed to map sparse buffer");
-    let initial_heaps = ctx.sparse_heaps_mapper_mut().heaps_count();
+    sparse_buffer.map(ctx.as_ref(), &initial_pages).expect("Failed to map sparse buffer");
+    let initial_heaps = ctx.sparse_heap_pool_mut().heaps_count();
 
-    sparse_buffer.unmapping(ctx.as_ref(), &unmapped_pages).expect("Failed to unmap sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &extra_pages).expect("Failed to remap sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), &unmapped_pages).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), &extra_pages).expect("Failed to remap sparse buffer");
 
     assert_eq!(
-        ctx.sparse_heaps_mapper_mut().heaps_count(),
+        ctx.sparse_heap_pool_mut().heaps_count(),
         initial_heaps,
         "remapping after unmap should reuse freed heap pages instead of allocating new heaps",
     );
@@ -104,14 +104,14 @@ fn test_full_unmap_then_remap_reuses_heaps() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
-    let initial_heaps = ctx.sparse_heaps_mapper_mut().heaps_count();
+    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    let initial_heaps = ctx.sparse_heap_pool_mut().heaps_count();
 
-    sparse_buffer.unmapping(ctx.as_ref(), &pages).expect("Failed to unmap sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &pages).expect("Failed to remap sparse buffer");
+    sparse_buffer.unmap(ctx.as_ref(), &pages).expect("Failed to unmap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to remap sparse buffer");
 
     assert_eq!(
-        ctx.sparse_heaps_mapper_mut().heaps_count(),
+        ctx.sparse_heap_pool_mut().heaps_count(),
         initial_heaps,
         "remapping the same range after a full unmap should not grow the heap pool",
     );
@@ -124,13 +124,13 @@ fn test_remapping_same_pages_is_noop() {
     let pages = pages_for_heaps(ctx.as_ref(), 0, 4);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
-    let initial_heaps = ctx.sparse_heaps_mapper_mut().heaps_count();
+    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+    let initial_heaps = ctx.sparse_heap_pool_mut().heaps_count();
 
-    sparse_buffer.mapping(ctx.as_ref(), &pages).expect("Failed to remap sparse buffer");
+    sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to remap sparse buffer");
 
     assert_eq!(
-        ctx.sparse_heaps_mapper_mut().heaps_count(),
+        ctx.sparse_heap_pool_mut().heaps_count(),
         initial_heaps,
         "remapping the same pages should not allocate new heaps",
     );
@@ -144,10 +144,10 @@ fn test_sequential_mappings_are_compact() {
     let second = pages_for_heaps(ctx.as_ref(), 2, 2);
 
     let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
-    sparse_buffer.mapping(ctx.as_ref(), &first).expect("Failed to map first range");
-    sparse_buffer.mapping(ctx.as_ref(), &second).expect("Failed to map second range");
+    sparse_buffer.map(ctx.as_ref(), &first).expect("Failed to map first range");
+    sparse_buffer.map(ctx.as_ref(), &second).expect("Failed to map second range");
 
-    let heaps = ctx.sparse_heaps_mapper_mut();
+    let heaps = ctx.sparse_heap_pool_mut();
     let total_pages = first.len() + second.len();
     let expected = total_pages.div_ceil(heaps.heap_capacity_pages());
     assert_eq!(
