@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap,
     MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
@@ -74,10 +72,7 @@ impl MetalSparseHeap {
         cmd_queue.update_buffer_mappings(buffer, Some(&self.heap), &mtl_operations);
 
         mtl_operations.iter().for_each(|mtl_op| {
-            let heap_range = Range {
-                start: mtl_op.heap_offset,
-                end: mtl_op.heap_offset + mtl_op.buffer_range().len(),
-            };
+            let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
             if map {
                 let buffer_mapping = MetalSparseHeapBufferMapping::new(buffer.gpu_address(), mtl_op.buffer_range());
                 self.mapped_pages.insert(heap_range, buffer_mapping);
