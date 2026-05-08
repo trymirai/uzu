@@ -1,5 +1,5 @@
 use std::{
-    fs::{create_dir_all, remove_dir, remove_file},
+    fs::{create_dir_all, remove_dir_all, remove_file},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -396,7 +396,7 @@ impl Item {
         }
 
         if self.cache_path.exists() {
-            let _ = remove_dir(&self.cache_path);
+            let _ = remove_dir_all(&self.cache_path);
         }
 
         let total_bytes: u64 = self.files.iter().map(|f| f.size as u64).sum();
