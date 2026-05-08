@@ -307,9 +307,16 @@ impl Item {
         }
 
         tracing::debug!("[MODEL] Calling ensure_downloading");
-        let result = self.ensure_downloading().await;
+        self.ensure_downloading().await?;
+
+        self.stop_listening().await;
+        self.start_listening().await;
+
+        let downloading_state = self.reduce_state().await;
+        self.update_state_and_broadcast(downloading_state).await;
+
         tracing::debug!("[MODEL] download() completed for model: {}", self.identifier);
-        result
+        Ok(())
     }
 
     pub async fn pause(&self) -> Result<(), StorageError> {
