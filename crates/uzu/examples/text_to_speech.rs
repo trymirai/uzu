@@ -27,10 +27,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pcm_batches: Vec<PcmBatch> = Vec::new();
     while let Some(event) = stream.next().await {
         match event {
-            TextToSpeechSessionStreamChunk::PcmBatch {
-                batch,
+            TextToSpeechSessionStreamChunk::Output {
+                output,
             } => {
-                pcm_batches.push(batch);
+                pcm_batches.push(output.pcm_batch);
             },
             TextToSpeechSessionStreamChunk::Error {
                 error,
