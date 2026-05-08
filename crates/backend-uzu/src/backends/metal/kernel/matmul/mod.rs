@@ -369,7 +369,11 @@ impl MatmulMetalKernel {
         let tile = select_unified_gemm_mxu_tile(&arguments);
         let group_count_x = arguments.output_dim.div_ceil(tile.threadgroup_n);
         let group_count_y = arguments.batch_dim.div_ceil(tile.threadgroup_m);
-        let alignment = unified_gemm_alignment(&arguments, &tile);
+        let alignment = GemmAlignment {
+            m_aligned: arguments.batch_dim % tile.threadgroup_m == 0,
+            n_aligned: arguments.output_dim % tile.threadgroup_n == 0,
+            k_aligned: arguments.input_dim % 256 == 0,
+        };
         let output_transform = unified_gemm_output_transform(&arguments);
         let params = build_unified_gemm_params(&arguments, &tile);
         let ab_scale = arguments.ab_scale;
@@ -441,14 +445,12 @@ fn select_unified_gemm_simdgroup_tile(
 
 fn select_unified_gemm_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
     let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) =
-        if arguments.batch_dim >= 128 && arguments.output_dim >= 128 {
-            (128u32, 128u32, 4u32, 4u32)
-        } else if arguments.output_dim < 64 {
-            (64, 32, 4, 1)
+        if arguments.output_dim < 64 {
+            (64u32, 32u32, 4u32, 1u32)
         } else if arguments.batch_dim < 64 {
-            (32, 64, 2, 2)
+            (32u32, 64u32, 2u32, 2u32)
         } else {
-            (64, 64, 2, 2)
+            (64u32, 64u32, 2u32, 2u32)
         };
     let threadgroup_k = 32u32;
     GemmTilingConfig {
