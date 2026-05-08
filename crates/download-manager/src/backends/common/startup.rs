@@ -37,12 +37,17 @@ impl Startup {
             FileCheck::None => None,
         };
         let crc_path = crc_path_for_file(destination_path);
+        let resume_state = file_state(&resume_artifact_path);
+        let resume_size = match resume_state {
+            FileState::Exists => B::read_resume_progress(&resume_artifact_path),
+            FileState::Missing => None,
+        };
         let observation = DiskObservation {
             destination_state: file_state(destination_path),
             crc_state: file_state(&crc_path),
-            resume_state: file_state(&resume_artifact_path),
+            resume_state,
             destination_size: file_size(destination_path),
-            resume_size: file_size(&resume_artifact_path),
+            resume_size,
             expected_crc,
             expected_bytes,
             destination_path: destination_path.to_path_buf(),

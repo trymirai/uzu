@@ -40,10 +40,8 @@ impl AppleGetTasksHandler {
     }
 }
 
-// SAFETY: `NSURLSession::getTasksWithCompletionHandler` requires a sendable
-// completion block. The constructor enforces `Send + Sync + 'static` captures,
-// and the block copies Objective-C arrays into owned retained values before
-// invoking the Rust closure.
+// SAFETY: ctor requires `Send + Sync + 'static` captures, and the block copies
+// Objective-C arrays into owned retained values before invoking the Rust closure.
 unsafe impl Send for AppleGetTasksHandler {}
 unsafe impl Sync for AppleGetTasksHandler {}
 

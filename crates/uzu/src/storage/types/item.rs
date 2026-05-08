@@ -293,6 +293,7 @@ impl Item {
 
         let tasks_were_created = self.ensure_file_tasks().await?;
         if tasks_were_created {
+            tracing::debug!("[MODEL] Restarting listener for model: {} (file tasks created)", self.identifier);
             self.stop_listening().await;
             self.start_listening().await;
         }
@@ -305,7 +306,10 @@ impl Item {
             });
         }
 
-        self.ensure_downloading().await
+        tracing::debug!("[MODEL] Calling ensure_downloading");
+        let result = self.ensure_downloading().await;
+        tracing::debug!("[MODEL] download() completed for model: {}", self.identifier);
+        result
     }
 
     pub async fn pause(&self) -> Result<(), StorageError> {
@@ -313,6 +317,7 @@ impl Item {
 
         let tasks_were_created = self.ensure_file_tasks().await?;
         if tasks_were_created {
+            tracing::debug!("[MODEL] Restarting listener for model: {} (file tasks created)", self.identifier);
             self.stop_listening().await;
             self.start_listening().await;
         }
@@ -325,6 +330,7 @@ impl Item {
             });
         }
 
+        tracing::debug!("[MODEL] Calling ensure_paused");
         self.ensure_paused().await?;
 
         let file_tasks_guard = self.file_download_tasks.lock().await;
@@ -338,12 +344,14 @@ impl Item {
         let paused_state = self.reduce_state().await;
         self.update_state_and_broadcast(paused_state).await;
 
+        tracing::debug!("[MODEL] pause() completed for model: {}", self.identifier);
         Ok(())
     }
 
     pub async fn cancel(&self) -> Result<(), StorageError> {
         let tasks_were_created = self.ensure_file_tasks().await?;
         if tasks_were_created {
+            tracing::debug!("[MODEL] Restarting listener for model: {} (file tasks created)", self.identifier);
             self.stop_listening().await;
             self.start_listening().await;
         }

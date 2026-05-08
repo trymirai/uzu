@@ -1,11 +1,13 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use objc2_foundation::NSURLSessionTaskState;
 
 use crate::{
     DownloadError,
     backends::{
-        apple::{AppleActiveTask, AppleBackendContext, AppleBackendError, task_ext::AppleDownloadTaskExt},
+        apple::{
+            AppleActiveTask, AppleBackendContext, AppleBackendError, resume_data_parser, task_ext::AppleDownloadTaskExt,
+        },
         common::{self, InitialTaskAttachment},
     },
     lock_manager::DestinationLockLease,
@@ -19,6 +21,10 @@ impl DownloadBackend for AppleBackend {
     type Context = AppleBackendContext;
     type ActiveTask = AppleActiveTask;
     type Error = AppleBackendError;
+
+    fn read_resume_progress(part_path: &Path) -> Option<u64> {
+        resume_data_parser::read_resume_progress(part_path)
+    }
 }
 
 #[async_trait::async_trait]

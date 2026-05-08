@@ -10,3 +10,15 @@ pub enum InitialLifecycleState {
     },
     Downloaded,
 }
+
+impl InitialLifecycleState {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NotDownloaded => "NotDownloaded",
+            Self::Paused {
+                ..
+            } => "Paused",
+            Self::Downloaded => "Downloaded",
+        }
+    }
+}

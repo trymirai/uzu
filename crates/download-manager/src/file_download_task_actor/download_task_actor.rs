@@ -13,7 +13,8 @@ use tokio::sync::{
 
 use crate::{
     DownloadError, FileCheck, FileDownloadState, LockFileState, check_lock_file,
-    crc_utils::{calculate_and_verify_crc, save_crc_file},
+    crc_utils::{calculate_and_verify_crc, crc_path_for_file, save_crc_file},
+    download_log_event::{DownloadLogEvent, log},
     file_download_task_actor::{
         BackendEvent, DownloadActorState, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
         TerminalOutcome, project_runtime_public_state,
@@ -138,7 +139,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 ..
             } => match active_task.pause(&self.config.destination).await {
                 Ok(part_path) => {
-                    let downloaded_bytes = file_size(&part_path).unwrap_or(0);
+                    let downloaded_bytes = B::read_resume_progress(&part_path).unwrap_or(0);
                     self.progress_counters = ProgressCounters {
                         downloaded_bytes,
                         total_bytes: self.config.expected_bytes.unwrap_or(downloaded_bytes),
@@ -237,7 +238,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 release_destination_lease(destination_lease).await;
                 match pause_result {
                     Ok(part_path) => {
-                        let downloaded_bytes = file_size(&part_path).unwrap_or(0);
+                        let downloaded_bytes = B::read_resume_progress(&part_path).unwrap_or(0);
                         self.progress_counters = ProgressCounters {
                             downloaded_bytes,
                             total_bytes: self.config.expected_bytes.unwrap_or(downloaded_bytes),
@@ -349,6 +350,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         {
             match validate_completed_file(&self.config).await {
                 Ok(total_bytes) => {
+                    remove_resume_artifact(&self.config.destination);
                     self.progress_counters = ProgressCounters {
                         downloaded_bytes: total_bytes,
                         total_bytes,
@@ -361,6 +363,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
                 Err(message) => {
                     remove_file(&self.config.destination);
                     remove_resume_artifact(&self.config.destination);
+                    remove_file(&crc_path_for_file(&self.config.destination));
                     self.progress_counters = ProgressCounters::default();
                     self.projection = PublicProjection::StickyError(message.clone());
                     release_destination_lease(destination_lease).await;
@@ -463,7 +466,7 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
 
         let lease = self.acquire_destination_lease().await?;
         let generation = self.generation_counter.allocate_next();
-        let resume_bytes = file_size(&part_path).unwrap_or(0);
+        let resume_bytes = B::read_resume_progress(&part_path).unwrap_or(0);
         let active_task = match self
             .context
             .resume(Arc::clone(&self.config), generation, &part_path, self.backend_event_sender.clone(), &lease)
@@ -568,7 +571,11 @@ impl<B: DownloadBackend> DownloadTaskActor<B> {
         let to_state = next_state.name();
         self.state = next_state;
         if from_state != to_state {
-            tracing::debug!(from = from_state, to = to_state, "download actor state transition");
+            log(DownloadLogEvent::StateTransition {
+                download_id: self.config.download_id,
+                from: from_state,
+                to: to_state,
+            });
         }
     }
 }
@@ -582,10 +589,6 @@ fn send_reply(
 
 async fn release_destination_lease(destination_lease: DestinationLockLease) {
     let _ = destination_lease.release().await;
-}
-
-fn file_size(path: &Path) -> Option<u64> {
-    path.metadata().ok().map(|metadata| metadata.len())
 }
 
 fn remove_file(path: &Path) {

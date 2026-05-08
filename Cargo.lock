@@ -1924,6 +1924,7 @@ dependencies = [
  "chrono",
  "crc32c",
  "futures-util",
+ "libc",
  "mock-registry",
  "objc-sys",
  "objc2",

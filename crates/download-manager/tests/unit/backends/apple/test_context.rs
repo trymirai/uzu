@@ -24,7 +24,10 @@ fn backend_event_sender() -> (BackendEventSender, TokioMpscReceiver<BackendEvent
     let (backend_event_sender, backend_event_receiver) = tokio_mpsc_channel(64);
     let pending_progress = Arc::new(TokioMutex::new(PendingProgressSlot::default()));
     let (progress_waker_sender, _progress_waker_receiver) = tokio_watch_channel(());
-    (BackendEventSender::new(backend_event_sender, pending_progress, progress_waker_sender), backend_event_receiver)
+    (
+        BackendEventSender::new(Uuid::new_v4(), backend_event_sender, pending_progress, progress_waker_sender),
+        backend_event_receiver,
+    )
 }
 
 #[tokio::test(flavor = "multi_thread")]

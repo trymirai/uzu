@@ -107,23 +107,21 @@ define_class!(
                 return;
             };
 
+            // Move synchronously: NSURLSession deletes the temp file as soon as this method returns.
+            if let Some(parent) = sink.destination.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let move_result = std::fs::rename(&temporary_path, &sink.destination).or_else(|_| {
+                std::fs::copy(&temporary_path, &sink.destination)?;
+                let _ = std::fs::remove_file(&temporary_path);
+                Ok::<(), std::io::Error>(())
+            });
+
+            let terminal_event = match move_result {
+                Ok(()) => BackendEvent::completed(sink.generation),
+                Err(error) => BackendEvent::error(sink.generation, format!("move into destination failed: {error}")),
+            };
             sink.tokio_handle.clone().spawn(async move {
-                if let Some(parent) = sink.destination.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
-                }
-
-                let move_result = tokio::fs::rename(&temporary_path, &sink.destination).await.or_else(|_| {
-                    std::fs::copy(&temporary_path, &sink.destination)?;
-                    std::fs::remove_file(&temporary_path)?;
-                    Ok::<(), std::io::Error>(())
-                });
-
-                let terminal_event = match move_result {
-                    Ok(()) => BackendEvent::completed(sink.generation),
-                    Err(error) => {
-                        BackendEvent::error(sink.generation, format!("move into destination failed: {error}"))
-                    },
-                };
                 let _ = sink.backend_event_sender.send_terminal(terminal_event).await;
             });
         }

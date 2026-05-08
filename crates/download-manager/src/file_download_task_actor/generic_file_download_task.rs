@@ -23,6 +23,7 @@ use tokio_stream::{StreamExt as TokioStreamExt, wrappers::BroadcastStream as Tok
 use crate::{
     DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadEvent, FileDownloadPhase, FileDownloadState,
     backends::common::{Backend, InitialTaskAttachment},
+    download_log_event::{DownloadLogEvent, log},
     file_download_task::{FileDownloadTask, ManagedFileDownloadTask},
     file_download_task_actor::{
         DownloadActorState, DownloadTaskActor, PendingProgressSlot, ProgressCounters, PublicProjection, TaskCommand,
@@ -60,8 +61,12 @@ impl<B: DownloadBackend> GenericFileDownloadTask<B> {
         let (backend_event_sender, backend_event_receiver) = tokio_mpsc_channel(64);
         let pending_progress = Arc::new(TokioMutex::new(PendingProgressSlot::default()));
         let (progress_waker_sender, progress_waker_receiver) = tokio_watch_channel(());
-        let backend_event_sender =
-            BackendEventSender::new(backend_event_sender, Arc::clone(&pending_progress), progress_waker_sender);
+        let backend_event_sender = BackendEventSender::new(
+            config.download_id,
+            backend_event_sender,
+            Arc::clone(&pending_progress),
+            progress_waker_sender,
+        );
         let (progress_sender, _) = tokio_broadcast_channel(64);
         let (terminal_sender, terminal_receiver) = tokio_watch_channel(TerminalOutcome::Pending);
 
@@ -281,6 +286,10 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
                             total_bytes_written: state.downloaded_bytes,
                             total_bytes_expected: state.total_bytes,
                         };
+                        log(DownloadLogEvent::PublicEventEmitted {
+                            download_id,
+                            event: event.clone(),
+                        });
                         let _ = global_broadcast.send((download_id, event));
                     },
                     FileDownloadPhase::Downloaded => {
@@ -288,6 +297,10 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
                             tmp_path: destination.clone(),
                             final_destination: destination.clone(),
                         };
+                        log(DownloadLogEvent::PublicEventEmitted {
+                            download_id,
+                            event: event.clone(),
+                        });
                         let _ = global_broadcast.send((download_id, event));
                         break;
                     },
@@ -295,6 +308,10 @@ impl<B: DownloadBackend> crate::FileDownloadTask for GenericFileDownloadTask<B> 
                         let event = FileDownloadEvent::Error {
                             message,
                         };
+                        log(DownloadLogEvent::PublicEventEmitted {
+                            download_id,
+                            event: event.clone(),
+                        });
                         let _ = global_broadcast.send((download_id, event));
                         break;
                     },

@@ -18,10 +18,8 @@ impl ResumeDataHandler {
     }
 }
 
-// SAFETY: `NSURLSessionDownloadTask::cancelByProducingResumeData` requires a
-// sendable completion block. The constructor enforces `Send + Sync + 'static`
-// captures, and the block copies `NSData` into owned bytes before invoking the
-// Rust closure.
+// SAFETY: ctor requires `Send + Sync + 'static` captures, and the block copies
+// `NSData` into owned bytes before invoking the Rust closure.
 unsafe impl Send for ResumeDataHandler {}
 unsafe impl Sync for ResumeDataHandler {}
 

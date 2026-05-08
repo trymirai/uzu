@@ -7,6 +7,7 @@ use crate::{
     DownloadError, DownloadEvent, FileCheck, FileDownloadManager, FileDownloadTask, LockFileState,
     backends::common::{Backend, DownloadManagerState, Startup},
     check_lock_file, compute_download_id,
+    download_log_event::{DownloadLogEvent, log},
     file_download_task::CachedFileDownloadTask,
     file_download_task_actor::GenericFileDownloadTask,
     lock_manager::{DestinationLockLease, lock_path_for_destination},
@@ -23,6 +24,9 @@ impl<B: Backend> DownloadManager<B> {
     pub fn from_tokio_handle(tokio_handle: TokioHandle) -> Result<Self, DownloadError> {
         let context = B::create_context(tokio_handle.clone())?;
         let state = DownloadManagerState::new(B::manager_suffix());
+        log(DownloadLogEvent::ManagerCreated {
+            manager_id: state.manager_id.clone(),
+        });
         Ok(Self {
             state,
             context: Arc::new(context),
@@ -122,6 +126,12 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
                 )
                 .await?;
 
+                log(DownloadLogEvent::StartupReconciled {
+                    download_id,
+                    initial_lifecycle_state: startup.initial_lifecycle_state.name(),
+                    action_count: startup.action_plan.as_slice().len(),
+                });
+
                 let task = Arc::new(
                     GenericFileDownloadTask::<B>::spawn_with_initial_attachment(
                         startup.config,
@@ -133,6 +143,9 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
                     )
                     .await?,
                 );
+                log(DownloadLogEvent::TaskSpawned {
+                    download_id,
+                });
                 let public_task: Arc<dyn FileDownloadTask> = task.clone();
                 let managed_task = task;
                 self.state

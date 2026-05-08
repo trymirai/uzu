@@ -6,6 +6,7 @@ mod error;
 mod get_tasks_handler;
 mod manager;
 mod resume_data_handler;
+mod resume_data_parser;
 mod task_ext;
 
 pub use active_task::AppleActiveTask;

@@ -9,8 +9,8 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 
 static INIT: Once = Once::new();
 
-const MAX_LOG_SIZE_BYTES: u64 = 10 * 1024 * 1024;
-const KEEP_LINES: usize = 5000;
+const MAX_LOG_SIZE_BYTES: u64 = 50 * 1024 * 1024;
+const KEEP_LINES: usize = 50000;
 
 /// Initialize tracing for production use
 /// Logs are written to a single file that gets trimmed when it exceeds MAX_LOG_SIZE_BYTES
@@ -47,9 +47,10 @@ fn init(
     // Keep guard alive for the process lifetime
     std::mem::forget(guard);
 
+    let default_filter = "info,download_manager=debug,uzu=debug";
     let env_filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new("info"))
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+        .or_else(|_| EnvFilter::try_new(default_filter))
+        .unwrap_or_else(|_| EnvFilter::new(default_filter));
 
     let registry = tracing_subscriber::registry().with(env_filter).with(
         fmt::layer()

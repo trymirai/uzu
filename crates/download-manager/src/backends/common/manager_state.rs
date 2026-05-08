@@ -89,8 +89,7 @@ impl DownloadManagerState {
         let Some(cached_lock) = construction_locks.get(&download_id) else {
             return;
         };
-        // Keep a shared lock entry when another caller already cloned it; removing it
-        // would allow later callers to construct the same task on a different mutex.
+        // Only remove if no other caller is racing with us — otherwise they'd serialize on a different mutex.
         if Arc::ptr_eq(cached_lock, construction_lock) && Arc::strong_count(construction_lock) == 2 {
             construction_locks.remove(&download_id);
         }

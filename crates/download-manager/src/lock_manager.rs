@@ -1,6 +1,4 @@
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::process::Stdio;
 
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
@@ -263,13 +261,8 @@ pub(crate) async fn try_restore_quarantine(
     quarantine_path: &Path,
     lock_path: &Path,
 ) -> Result<RestoreOutcome, std::io::Error> {
-    // `rename` would replace the destination atomically on Unix, so if another
-    // process already created a fresh lock at `lock_path` while we held the
-    // quarantine, restoring via rename would clobber that new owner. Try
-    // `hard_link` first (atomic create-or-fail), then fall back to a
-    // copy-with-create_new for filesystems that don't support hardlinks. Both
-    // paths fail if `lock_path` already exists, so the new owner's lock is
-    // preserved either way.
+    // Use atomic create-or-fail (hard_link, then create_new fallback) so a fresh lock
+    // installed by another owner during our quarantine isn't clobbered by `rename`.
     match tokio::fs::hard_link(quarantine_path, lock_path).await {
         Ok(()) => {
             let _ = tokio::fs::remove_file(quarantine_path).await;
@@ -367,16 +360,14 @@ fn is_lock_stale(lock_info: &LockFileInfo) -> bool {
 
 #[cfg(unix)]
 async fn is_process_alive(process_id: u32) -> bool {
-    tokio::task::spawn_blocking(move || {
-        std::process::Command::new("kill")
-            .args(["-0", &process_id.to_string()])
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    })
-    .await
-    .unwrap_or(false)
+    // SAFETY: `kill(pid, 0)` is a probe with no signal delivery. Direct syscall is required
+    // because sandboxed macOS apps can't exec `/bin/kill`.
+    let result = unsafe { libc::kill(process_id as libc::pid_t, 0) };
+    if result == 0 {
+        return true;
+    }
+    // EPERM = exists but we can't signal it; ESRCH = gone.
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(windows)]
