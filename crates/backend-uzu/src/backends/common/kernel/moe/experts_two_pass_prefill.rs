@@ -3,6 +3,7 @@ use super::{
 };
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{MoeExpertsPrefillPassAKernel, MoeExpertsPrefillPassBKernel},
@@ -48,12 +49,10 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         &self,
         encoder: &mut Encoder<B>,
         args: MoeExpertsTwoPassArguments<B>,
-    ) {
-        if args.total_rows == 0 {
-            return;
-        }
-
-        encoder.encode_fill(args.hidden, 0);
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
+        encoder.encode_fill(&mut hidden, 0);
 
         self.tile_map.encode_counts(
             encoder,
@@ -114,7 +113,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             args.expert_offsets,
             args.w13_all,
             args.up_biases,
-            &mut *args.hidden,
+            &mut hidden,
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
@@ -137,11 +136,11 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
 
         let kernel_pass_b = &self.pass_b_indirect[dtype_idx];
         kernel_pass_b.encode(
-            &*args.hidden,
+            &hidden,
             args.expert_offsets,
             args.w2_all,
             args.down_biases,
-            &mut *args.output,
+            &mut output,
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
@@ -149,6 +148,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             &*args.dispatch_args,
             encoder,
         );
+        Ok(output)
     }
 }
 
@@ -156,8 +156,6 @@ pub struct MoeExpertsTwoPassArguments<'a, B: Backend> {
     pub x_perm: &'a Allocation<B>,
     pub expert_offsets: &'a Allocation<B>,
     pub row_expert_map: &'a mut Allocation<B>,
-    pub hidden: &'a mut Allocation<B>,
-    pub output: &'a mut Allocation<B>,
     pub w13_all: &'a Allocation<B>,
     pub w2_all: &'a Allocation<B>,
     pub up_biases: &'a Allocation<B>,

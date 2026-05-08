@@ -308,7 +308,6 @@ fn run_moe_parity_test_internal<B: Backend>(
     let mut bucketed_probs_buf = alloc_allocation::<B, bf16>(&ctx, max_sumk);
     let mut tok2row_buf = alloc_allocation::<B, i32>(&ctx, t * k);
     let mut x_perm_buf = alloc_allocation::<B, bf16>(&ctx, max_sumk * d_model);
-    let mut y_partial_buf = alloc_allocation::<B, bf16>(&ctx, max_sumk * d_model);
     let mut y_out_buf = alloc_allocation::<B, bf16>(&ctx, t * d_model);
     const BLOCK_M_DECODE: usize = 4; // matches two-pass decode kernel configuration
     let h_blocks_decode = (d_ff + BLOCK_M_DECODE - 1) / BLOCK_M_DECODE;
@@ -398,9 +397,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         },
     );
 
-    // Additional buffers for 2-pass
     let total_rows = t * k;
-    let mut hidden_buf = alloc_allocation::<B, f32>(&ctx, total_rows * d_ff);
     let mut row_expert_map_buf = alloc_allocation::<B, u32>(&ctx, total_rows);
 
     let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx).expect("experts");
@@ -409,8 +406,6 @@ fn run_moe_parity_test_internal<B: Backend>(
         x_perm: &x_perm_buf,
         expert_offsets: &offsets_buf,
         row_expert_map: &mut row_expert_map_buf,
-        hidden: &mut hidden_buf,
-        output: &mut y_partial_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
         up_biases: &up_biases_buf,
@@ -433,7 +428,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         silu_alpha,
         data_type: DataType::BF16,
     };
-    experts.encode(&mut encoder, args);
+    let y_partial_buf = experts.encode(&mut encoder, args).expect("failed to encode MoE experts");
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
     finalize.encode(

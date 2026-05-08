@@ -1,5 +1,6 @@
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{MoeExpertsDecodeSinglePassAKernel, MoeExpertsDecodeSinglePassBKernel},
@@ -24,10 +25,6 @@ pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     pub up_biases: &'a Allocation<B>,
     /// Down biases [E, d_model]
     pub down_biases: &'a Allocation<B>,
-    /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: &'a mut Allocation<B>,
-    /// Final output [d_model]
-    pub y: &'a mut Allocation<B>,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension
@@ -83,13 +80,13 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
         &self,
         encoder: &mut Encoder<B>,
         args: MoeExpertsSingleDecodeArguments<B>,
-    ) {
-        if args.k == 0 {
-            return;
-        }
+    ) -> Result<Allocation<B>, B::Error> {
+        assert!(args.k > 0, "MoE single decode requires at least one active expert");
 
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.k, args.d_ff], DataType::F32))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.d_model], args.data_type))?;
 
         // Pass A: x @ W13[expert] -> hidden
         let kernel = &self.pass_a[gate_idx][dtype_idx];
@@ -98,7 +95,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
             args.topk_ids,
             args.w13_all,
             args.up_biases,
-            &mut *args.hidden,
+            &mut hidden,
             args.d_model as u32,
             args.d_ff as u32,
             args.k as u32,
@@ -113,16 +110,17 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
         // Pass B: 8 simdgroups (256 threads), outputs final y directly
         let kernel = &self.pass_b[dtype_idx];
         kernel.encode(
-            &*args.hidden,
+            &hidden,
             args.topk_ids,
             args.topk_probs,
             args.w2_all,
             args.down_biases,
-            args.y,
+            &mut output,
             args.d_model as u32,
             args.d_ff as u32,
             args.k as u32,
             encoder,
         );
+        Ok(output)
     }
 }

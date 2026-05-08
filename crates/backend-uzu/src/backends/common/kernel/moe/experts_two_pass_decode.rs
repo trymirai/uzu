@@ -4,8 +4,9 @@ use super::{
 };
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{Kernels, MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel},
     },
 };
@@ -47,10 +48,9 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         &self,
         encoder: &mut Encoder<B>,
         args: MoeExpertsTwoPassArguments<B>,
-    ) {
-        if args.total_rows == 0 {
-            return;
-        }
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
 
         // pass a tile
         const BLOCK_M: u32 = 4;
@@ -111,7 +111,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             args.x_perm,
             args.expert_offsets,
             args.w13_all,
-            &mut *args.hidden,
+            &mut hidden,
             args.up_biases,
             args.d_model as u32,
             args.d_ff as u32,
@@ -129,16 +129,17 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         // pass b
         let pass_b_kernel = &self.fused_down[dtype_idx];
         pass_b_kernel.encode(
-            &*args.hidden,
+            &hidden,
             &*args.row_expert_map,
             args.w2_all,
             args.down_biases,
-            &mut *args.output,
+            &mut output,
             args.total_rows as u32,
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
             encoder,
         );
+        Ok(output)
     }
 }

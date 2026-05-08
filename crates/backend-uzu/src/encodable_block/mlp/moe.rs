@@ -330,13 +330,6 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let up_clip_min = self.moe_config.expert_config.up_clipping[0];
         let up_clip_max = self.moe_config.expert_config.up_clipping[1];
         let silu_alpha = self.moe_config.expert_config.activation.alpha();
-        let mut hidden = encoder.allocate_scratch(size_for_shape(&[total_rows, self.hidden_dim], DataType::F32))?;
-        let mut y_partial = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
-
-        if suffix_length > 0 && k > 0 {
-            encoder.encode_fill(&mut hidden, 0);
-            encoder.encode_fill(&mut y_partial, 0);
-        }
 
         let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;
         let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[e], DataType::U32))?;
@@ -347,7 +340,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
         let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
 
-        if suffix_length == 1 {
+        let y_partial = if suffix_length == 1 {
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
 
             self.experts_two_pass_decode_kernel.encode(
@@ -356,8 +349,6 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                     x_perm: &x_perm,
                     expert_offsets: &offsets,
                     row_expert_map: &mut row_expert_map,
-                    hidden: &mut hidden,
-                    output: &mut y_partial,
                     w13_all: &self.shared_weights.w13,
                     w2_all: &self.shared_weights.w2,
                     up_biases: &self.shared_weights.up_biases,
@@ -380,15 +371,13 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                     silu_alpha,
                     data_type: self.data_type,
                 },
-            );
+            )?
         } else {
             let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
             let args = MoeExpertsTwoPassArguments {
                 x_perm: &x_perm,
                 expert_offsets: &offsets,
                 row_expert_map: &mut row_expert_map,
-                hidden: &mut hidden,
-                output: &mut y_partial,
                 w13_all: &self.shared_weights.w13,
                 w2_all: &self.shared_weights.w2,
                 up_biases: &self.shared_weights.up_biases,
@@ -411,8 +400,8 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                 silu_alpha,
                 data_type: self.data_type,
             };
-            self.experts_two_pass_prefill_kernel.encode(encoder, args);
-        }
+            self.experts_two_pass_prefill_kernel.encode(encoder, args)?
+        };
 
         let mut output = encoder.allocate_scratch(size_for_shape(&[suffix_length, self.model_dim], self.data_type))?;
         self.finalize_kernel.encode(
