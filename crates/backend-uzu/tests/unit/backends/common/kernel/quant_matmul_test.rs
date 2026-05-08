@@ -7,7 +7,8 @@ use std::time::Instant;
 use half::{bf16, f16};
 
 use crate::{
-    DataType, allocation_as_bytes,
+    DataType,
+    array::allocation_as_bytes,
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder,
         gpu_types::QuantizationMode,
