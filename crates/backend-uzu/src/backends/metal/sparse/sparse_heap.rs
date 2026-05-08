@@ -74,7 +74,9 @@ impl MetalSparseHeap {
         mtl_operations.iter().for_each(|mtl_op| {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
             if map {
-                let buffer_mapping = MetalSparseHeapBufferMapping::new(buffer.gpu_address(), mtl_op.buffer_range());
+                let buffer_range = mtl_op.buffer_range();
+                let buffer_mapping =
+                    MetalSparseHeapBufferMapping::new(buffer.gpu_address(), mtl_op.heap_offset, buffer_range.start);
                 self.mapped_pages.insert(heap_range, buffer_mapping);
             } else {
                 self.mapped_pages.remove(heap_range);

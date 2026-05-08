@@ -111,7 +111,7 @@ impl MetalSparseHeapPool {
                         return None;
                     };
 
-                    let mapped_buffer_pages = mapping.pages();
+                    let mapped_buffer_pages = mapping.buffer_pages_for(&heap_range);
                     let unmap_start = max(buffer_pages.start, mapped_buffer_pages.start);
                     let unmap_end = min(buffer_pages.end, mapped_buffer_pages.end);
                     if unmap_start >= unmap_end {

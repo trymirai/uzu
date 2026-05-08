@@ -216,6 +216,24 @@ fn test_remap_into_freed_gap_reuses_heap() {
 }
 
 #[test]
+fn test_sequential_partial_unmaps_release_full_heap() {
+    // Regression: after a partial unmap splits a rangemap entry, the surviving
+    // entry must still report the correct buffer↔heap correspondence so that a
+    // subsequent unmap of the remaining suffix targets the right heap pages.
+    let ctx = create_context();
+    let pages_per_heap = ctx.sparse_heap_pool_mut().heap_capacity_pages();
+    let half = pages_per_heap / 2;
+    let cap = ctx.sparse_heap_pool_mut().heap_capacity_bytes();
+    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+
+    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..pages_per_heap)).expect("map");
+    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &(0..half)).expect("unmap prefix");
+    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &(half..pages_per_heap)).expect("unmap suffix");
+
+    assert_eq!(ctx.sparse_heap_pool_mut().heaps_count(), 0);
+}
+
+#[test]
 fn test_heap_capacity_pages_matches_byte_capacity() {
     let ctx = create_context();
     let pool = ctx.sparse_heap_pool_mut();
