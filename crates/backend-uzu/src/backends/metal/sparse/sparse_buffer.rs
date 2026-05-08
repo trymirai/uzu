@@ -2,6 +2,7 @@ use std::{
     cmp::{max, min},
     fmt::Debug,
     ops::Range,
+    rc::Weak,
 };
 
 use bytesize::ByteSize;
@@ -20,18 +21,23 @@ use crate::{
 pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     mapped_pages: RangeMap<usize, ()>,
+    context: Weak<MetalContext>,
 }
 
 impl MetalSparseBuffer {
     pub(crate) fn new(
-        context: &MetalContext,
+        context: Weak<MetalContext>,
         capacity: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
+        let Some(ctx) = context.upgrade() else {
+            return Err(MetalError::CannotCreateBuffer);
+        };
+
         let page_size_bytes = page_size.byte_size().as_u64() as usize;
         let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
 
-        let Some(buffer) = context.device.new_buffer_with_length_options_placement_sparse_page_size(
+        let Some(buffer) = ctx.device.new_buffer_with_length_options_placement_sparse_page_size(
             aligned_capacity,
             MTLResourceOptions::STORAGE_MODE_PRIVATE,
             page_size,
@@ -42,7 +48,21 @@ impl MetalSparseBuffer {
         Ok(Self {
             buffer,
             mapped_pages: RangeMap::new(),
+            context,
         })
+    }
+}
+
+impl Drop for MetalSparseBuffer {
+    fn drop(&mut self) {
+        let Some(context) = self.context.upgrade() else {
+            return;
+        };
+
+        let ranges: Vec<Range<usize>> = self.mapped_pages.iter().map(|(range, _)| range.clone()).collect();
+        ranges.iter().for_each(|range| {
+            let _ = context.sparse_heap_pool_mut().unmap(&context, &self.buffer, range);
+        });
     }
 }
 

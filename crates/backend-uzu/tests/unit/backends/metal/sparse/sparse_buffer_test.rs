@@ -137,6 +137,51 @@ fn test_remapping_same_pages_is_noop() {
 }
 
 #[test]
+fn test_drop_releases_pool_heaps() {
+    // Regression: a mapped buffer dropped without an explicit unmap must
+    // still release its heap pages back to the shared pool.
+    let ctx = create_context();
+    let capacity = buffer_capacity(ctx.as_ref(), 2);
+    let pages = pages_for_heaps(ctx.as_ref(), 0, 2);
+
+    {
+        let mut sparse_buffer = ctx.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
+        sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
+        assert!(ctx.sparse_heap_pool_mut().heaps_count() > 0);
+    }
+
+    assert_eq!(
+        ctx.sparse_heap_pool_mut().heaps_count(),
+        0,
+        "dropping a mapped sparse buffer should release its heap pages",
+    );
+}
+
+#[test]
+fn test_drop_does_not_disturb_other_buffer_mappings() {
+    // Dropping one buffer must not unmap heap pages held by another buffer
+    // sharing the same pool.
+    let ctx = create_context();
+    let capacity = buffer_capacity(ctx.as_ref(), 1);
+    let pages = pages_for_heaps(ctx.as_ref(), 0, 1);
+
+    let mut keeper = ctx.create_sparse_buffer(capacity).expect("Failed to create keeper buffer");
+    keeper.map(ctx.as_ref(), &pages).expect("Failed to map keeper buffer");
+    let baseline = ctx.sparse_heap_pool_mut().heaps_count();
+
+    {
+        let mut transient = ctx.create_sparse_buffer(capacity).expect("Failed to create transient buffer");
+        transient.map(ctx.as_ref(), &pages).expect("Failed to map transient buffer");
+    }
+
+    assert_eq!(
+        ctx.sparse_heap_pool_mut().heaps_count(),
+        baseline,
+        "dropping a transient buffer must leave keeper buffer's mappings intact",
+    );
+}
+
+#[test]
 fn test_sequential_mappings_are_compact() {
     let ctx = create_context();
     let capacity = buffer_capacity(ctx.as_ref(), 4);

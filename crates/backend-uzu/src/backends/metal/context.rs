@@ -2,7 +2,7 @@ use std::{
     cell::{RefCell, RefMut},
     collections::HashMap,
     path::Path,
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 
 use metal::prelude::*;
@@ -36,6 +36,7 @@ pub struct MetalContext {
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    weak_self: Weak<MetalContext>,
 }
 
 impl MetalContext {
@@ -97,6 +98,7 @@ impl Context for MetalContext {
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
             sparse_heap_pool: RefCell::new(sparse_pool),
+            weak_self: weak_self.clone(),
         }))
     }
 
@@ -179,7 +181,7 @@ impl Context for MetalContext {
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
-        Ok(MetalSparseBuffer::new(self, capacity, sparse_page_size)?)
+        Ok(MetalSparseBuffer::new(self.weak_self.clone(), capacity, sparse_page_size)?)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
