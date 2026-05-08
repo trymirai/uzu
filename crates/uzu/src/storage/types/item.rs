@@ -1,6 +1,6 @@
 use std::{
-    fs::{create_dir_all, remove_dir_all, remove_file},
-    path::{Path, PathBuf},
+    fs::{create_dir_all, remove_dir_all},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -21,7 +21,7 @@ use crate::{
     helpers::SharedAccess,
     storage::{
         StorageError,
-        types::{CrcSnapshot, DownloadPhase, DownloadState, StorageDownloadEventSender, reduce_file_download_states},
+        types::{DownloadPhase, DownloadState, StorageDownloadEventSender, reduce_file_download_states},
     },
 };
 
@@ -380,20 +380,6 @@ impl Item {
         self.stop_listening().await;
         *self.file_download_tasks.lock().await = Vec::new();
         *self.file_download_states.lock().await = Vec::new();
-
-        for file_info in self.files.iter() {
-            let file_path = self.cache_path.join(&file_info.name);
-            if file_path.exists() {
-                let _ = remove_file(&file_path);
-            }
-            let resume_data_path = format!("{}.resume_data", file_path.display());
-            if Path::new(&resume_data_path).exists() {
-                let _ = remove_file(&resume_data_path);
-            }
-            if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
-                let _ = CrcSnapshot::remove_crc(&self.cache_path, filename);
-            }
-        }
 
         if self.cache_path.exists() {
             let _ = remove_dir_all(&self.cache_path);
