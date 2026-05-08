@@ -341,7 +341,7 @@ impl Engine {
         if let Some(model) = self.model_by_repo_id(identifier.clone()).await? {
             return Ok(Some(model));
         }
-        self.model_by_path(identifier.clone()).await
+        self.model_by_path(identifier).await
     }
 
     #[bindings::export(Method)]
@@ -367,10 +367,8 @@ impl Engine {
     ) -> Result<Option<Model>, EngineError> {
         let models = self.models().await?;
         for model in models {
-            if let Some(model_path) = self.model_path(&model).await {
-                if model_path == path {
-                    return Ok(Some(model));
-                }
+            if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
+                return Ok(Some(model));
             }
         }
         Ok(None)
@@ -384,29 +382,26 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Option<String> {
-        let path = if model.is_local() {
-            if let Some(local_external_path) = model.local_external_path() {
-                Some(local_external_path.clone())
-            } else {
-                let storage = self.storage.lock().await;
-                let state = storage.state(&model.identifier.clone()).await?;
-                match state.phase {
-                    DownloadPhase::Downloaded {} => {
-                        storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
-                    },
-                    DownloadPhase::NotDownloaded {}
-                    | DownloadPhase::Downloading {}
-                    | DownloadPhase::Paused {}
-                    | DownloadPhase::Locked {}
-                    | DownloadPhase::Error {
-                        ..
-                    } => None,
-                }
-            }
-        } else {
-            None
-        };
-        path
+        if !model.is_local() {
+            return None;
+        }
+        if let Some(local_external_path) = model.local_external_path() {
+            return Some(local_external_path);
+        }
+        let storage = self.storage.lock().await;
+        let state = storage.state(&model.identifier).await?;
+        match state.phase {
+            DownloadPhase::Downloaded {} => {
+                storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
+            },
+            DownloadPhase::NotDownloaded {}
+            | DownloadPhase::Downloading {}
+            | DownloadPhase::Paused {}
+            | DownloadPhase::Locked {}
+            | DownloadPhase::Error {
+                ..
+            } => None,
+        }
     }
 
     #[bindings::export(Method)]
@@ -434,7 +429,7 @@ impl Engine {
             return Ok(DownloaderStream::empty(model.identifier.clone()));
         }
         downloader.resume().await?;
-        Ok(downloader.progress().await?)
+        downloader.progress().await
     }
 
     #[bindings::export(Method)]
@@ -507,7 +502,7 @@ impl Engine {
 impl Engine {
     #[bindings::export(Method)]
     pub async fn settings(&self) -> Result<Settings, EngineError> {
-        Ok(self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)?)
+        self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)
     }
 }
 
