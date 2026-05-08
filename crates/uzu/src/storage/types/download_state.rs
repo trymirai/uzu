@@ -132,7 +132,14 @@ pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> Downloa
         return DownloadState::downloaded(total_bytes as i64);
     }
 
-    // Locked takes precedence over other in-progress states
+    if any_error {
+        if let Some(error_state) = file_states.iter().find(|f| matches!(f.phase, FileDownloadPhase::Error(_))) {
+            if let FileDownloadPhase::Error(err) = &error_state.phase {
+                return DownloadState::error(err.clone());
+            }
+        }
+    }
+
     if any_locked {
         return DownloadState::locked(downloaded_bytes as i64, total_bytes as i64);
     }
@@ -143,14 +150,6 @@ pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> Downloa
 
     if any_paused {
         return DownloadState::paused(downloaded_bytes as i64, total_bytes as i64);
-    }
-
-    if any_error {
-        if let Some(error_state) = file_states.iter().find(|f| matches!(f.phase, FileDownloadPhase::Error(_))) {
-            if let FileDownloadPhase::Error(err) = &error_state.phase {
-                return DownloadState::error(err.clone());
-            }
-        }
     }
 
     // If some files are downloaded but not all, and nothing is actively
