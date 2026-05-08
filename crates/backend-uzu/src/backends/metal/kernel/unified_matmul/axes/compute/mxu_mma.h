@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../matmul/common/gemm_mpp_core.h"
+#include "../../common/mxu_mma_core.h"
 
 namespace uzu {
 namespace unified_gemm {
@@ -21,7 +21,6 @@ struct GemmComputeMxuMma {
       const device T* weights,
       device T* result,
       const constant uzu::matmul::GemmParams* params,
-      const constant float& ab_scale,
       bool align_m,
       bool align_n,
       bool align_k,
@@ -29,14 +28,12 @@ struct GemmComputeMxuMma {
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
-    uzu::matmul::GemmMppCore<
+    MxuMmaCore<
         T,
         THREADGROUP_M,
         THREADGROUP_N,
         SIMDGROUPS_N,
-        SIMDGROUPS_M,
-        false,
-        false>::run(
+        SIMDGROUPS_M>::run(
         activations,
         weights,
         result,
@@ -44,7 +41,6 @@ struct GemmComputeMxuMma {
         align_m,
         align_n,
         align_k,
-        ab_scale,
         simd_group_id,
         threadgroup_position,
         thread_context);
@@ -58,7 +54,6 @@ struct GemmComputeMxuMma<T, THREADGROUP_M, THREADGROUP_N, SIMDGROUPS_M, SIMDGROU
       const device T* weights,
       device T* result,
       const constant uzu::matmul::GemmParams* params,
-      const constant float& ab_scale,
       bool align_m,
       bool align_n,
       bool align_k,
@@ -70,7 +65,6 @@ struct GemmComputeMxuMma<T, THREADGROUP_M, THREADGROUP_N, SIMDGROUPS_M, SIMDGROU
     (void)weights;
     (void)result;
     (void)params;
-    (void)ab_scale;
     (void)align_m;
     (void)align_n;
     (void)align_k;

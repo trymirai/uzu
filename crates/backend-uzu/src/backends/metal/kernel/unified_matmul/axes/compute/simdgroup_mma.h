@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../matmul/common/gemm.h"
+#include "../../common/simdgroup_mma_core.h"
 
 namespace uzu {
 namespace unified_gemm {
@@ -20,7 +20,6 @@ struct GemmComputeSimdgroupMma {
       const device T* weights,
       device T* result,
       const constant uzu::matmul::GemmParams* params,
-      const constant float& ab_scale,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       uint simd_lane_id,
@@ -28,25 +27,19 @@ struct GemmComputeSimdgroupMma {
       uint2 threadgroup_position,
       uint3 thread_position
   ) {
-    uzu::matmul::ThreadgroupGemm<
-        T,
+    SimdgroupMmaCore<
         T,
         THREADGROUP_M,
         THREADGROUP_N,
         THREADGROUP_K,
         SIMDGROUPS_N,
         SIMDGROUPS_M,
-        false,
-        true,
         MN_ALIGNED,
-        K_ALIGNED,
-        float>::run(
+        K_ALIGNED>::run(
         activations,
         weights,
         result,
         params,
-        ab_scale,
-        false,
         a_shared,
         b_shared,
         simd_lane_id,

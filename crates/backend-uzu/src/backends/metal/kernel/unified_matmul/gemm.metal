@@ -36,7 +36,6 @@ KERNEL(UnifiedGemm)(
     const device uint8_t* zero_points
         OPTIONAL(weight_prologue == GemmWeightPrologueKind::AwqDequant),
     const constant uzu::matmul::GemmParams* params,
-    const constant float& ab_scale,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const GemmInputPrologueKind input_prologue SPECIALIZE,
@@ -65,7 +64,6 @@ KERNEL(UnifiedGemm)(
       weights,
       result,
       params,
-      ab_scale,
       input_prologue,
       weight_prologue,
       compute,

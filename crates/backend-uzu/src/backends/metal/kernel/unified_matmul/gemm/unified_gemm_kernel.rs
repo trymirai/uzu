@@ -98,7 +98,6 @@ impl UnifiedGemmKernel {
             biases,
             zero_points,
             std::slice::from_ref(&dispatch.params),
-            dispatch.ab_scale,
             dispatch.group_count_x,
             dispatch.group_count_y,
             encoder,

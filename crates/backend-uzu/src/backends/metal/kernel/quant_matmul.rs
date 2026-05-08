@@ -87,9 +87,8 @@ pub fn encode_quantized_matmul_with_path(
                     threadgroups_per_column: group_count_y,
                     swizzle_log: 0,
                     aligned_inner_iterations: input_dim / tile.threadgroup_k,
-                    use_morton: false,
+                    ..Default::default()
                 },
-                ab_scale: 1.0,
                 group_count_x,
                 group_count_y,
             };

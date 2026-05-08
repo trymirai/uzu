@@ -312,7 +312,6 @@ impl MatmulMetalKernel {
         let alignment = unified_gemm_alignment(&arguments, &tile);
         let output_transform = unified_gemm_output_transform(&arguments);
         let params = build_unified_gemm_params(&arguments, &tile);
-        let ab_scale = arguments.ab_scale;
         let dispatch = UnifiedGemmDispatch {
             tiling_config: tile,
             input_prologue: GemmInputPrologueKind::FullPrecision,
@@ -326,7 +325,6 @@ impl MatmulMetalKernel {
             activations_offset: arguments.a_offset as usize,
             result: &mut *arguments.d,
             params,
-            ab_scale,
             group_count_x,
             group_count_y,
         };
@@ -376,7 +374,6 @@ impl MatmulMetalKernel {
         };
         let output_transform = unified_gemm_output_transform(&arguments);
         let params = build_unified_gemm_params(&arguments, &tile);
-        let ab_scale = arguments.ab_scale;
         let dispatch = UnifiedGemmDispatch {
             tiling_config: tile,
             input_prologue: GemmInputPrologueKind::FullPrecision,
@@ -390,7 +387,6 @@ impl MatmulMetalKernel {
             activations_offset: arguments.a_offset as usize,
             result: &mut *arguments.d,
             params,
-            ab_scale,
             group_count_x,
             group_count_y,
         };
@@ -494,7 +490,7 @@ fn build_unified_gemm_params(
         threadgroups_per_column: arguments.batch_dim.div_ceil(tile.threadgroup_m),
         swizzle_log: 0,
         aligned_inner_iterations: arguments.input_dim / tile.threadgroup_k,
-        use_morton: false,
+        ..Default::default()
     }
 }
 

@@ -28,7 +28,6 @@ pub(crate) struct UnifiedGemmDispatch<'a> {
     pub(crate) activations_offset: usize,
     pub(crate) result: &'a mut DenseBuffer,
     pub(crate) params: GemmParams,
-    pub(crate) ab_scale: f32,
     pub(crate) group_count_x: u32,
     pub(crate) group_count_y: u32,
 }
