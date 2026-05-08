@@ -1,5 +1,6 @@
 use std::env;
 
+use download_manager::FileDownloadManagerType;
 use serde::{Deserialize, Serialize};
 
 use crate::settings::{SettingKind, Settings, SettingsError};
@@ -30,6 +31,8 @@ pub struct EngineConfig {
     pub openrouter_api_key: Option<String>,
     pub allow_ollama_usage: bool,
     pub allow_lmstudio_usage: bool,
+    #[serde(default)]
+    pub download_manager_type: FileDownloadManagerType,
 }
 
 impl Default for EngineConfig {
@@ -47,6 +50,7 @@ impl Default for EngineConfig {
             openrouter_api_key: env::var(KEY_OPENROUTER_API_KEY).ok(),
             allow_ollama_usage: true,
             allow_lmstudio_usage: true,
+            download_manager_type: FileDownloadManagerType::default(),
         }
     }
 }
@@ -216,6 +220,18 @@ impl EngineConfig {
     ) -> Self {
         Self {
             allow_lmstudio_usage,
+            ..self.clone()
+        }
+    }
+}
+
+impl EngineConfig {
+    pub fn with_download_manager_type(
+        &self,
+        download_manager_type: FileDownloadManagerType,
+    ) -> Self {
+        Self {
+            download_manager_type,
             ..self.clone()
         }
     }

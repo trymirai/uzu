@@ -60,8 +60,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     dotenvy::dotenv().ok();
     let runtime = tokio::runtime::Handle::current();
-    let engine =
-        Arc::new(Engine::new_with_download_manager_type(EngineConfig::default(), cli.download_manager.into()).await?);
+    let config = EngineConfig::default().with_download_manager_type(cli.download_manager.into());
+    let engine = Arc::new(Engine::new(config).await?);
 
     // Setup terminal
     enable_raw_mode()?;
