@@ -180,7 +180,7 @@ impl Engine {
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), EngineError> {
         self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
-        self.handle_registry_resfresh().await?;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -200,7 +200,7 @@ impl Engine {
         registry_identifier: String,
     ) -> Result<(), EngineError> {
         self.registry.lock().await.remove(&registry_identifier)?;
-        self.handle_registry_resfresh().await?;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -516,7 +516,7 @@ impl Engine {
         self.storage.lock().await.subscribe()
     }
 
-    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
+    async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
         self.storage.lock().await.refresh(models).await?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
