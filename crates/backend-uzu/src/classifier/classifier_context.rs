@@ -4,14 +4,14 @@ use crate::{
     DataType,
     backends::common::{Backend, Context},
     classifier::ClassifierError,
-    config::{ClassifierModelConfig, ModelMetadata},
+    config::{ClassifierModelConfig, ModelMetadata, RoPEConfig},
     encodable_block::{
         Activation, ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope,
     },
     forward_pass::{
         model_shape::ModelShape,
         scratch_buffers::ScratchBuffers,
-        state::{ArrayId, RopeType, SharedBuffers},
+        state::{ArrayId, SharedBuffers},
     },
     parameters::ParameterLoader,
     session::types::Error,
@@ -56,20 +56,11 @@ impl<B: Backend> ClassifierContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
+        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config)));
         let transformer_tree = root_loader_view
             .subtree("transformer")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("transformer".to_string())))?;
-
-        {
-            let mut shared_bufs = shared_buffers.borrow_mut();
-            if let Some(global_rope) = &mut shared_bufs.global_rope {
-                global_rope.update_data(&transformer_tree, "global_rope");
-            }
-            if let Some(local_rope) = &mut shared_bufs.local_rope {
-                local_rope.update_data(&transformer_tree, "local_rope");
-            }
-        }
+        shared_buffers.borrow_mut().update_data(&root_loader_view);
 
         let data_type = decoder_config
             .layer_config
@@ -89,21 +80,6 @@ impl<B: Backend> ClassifierContext<B> {
         )
         .expect("Failed to create embedding");
 
-        let global_rope = decoder_config
-            .global_rope_config
-            .as_ref()
-            .map(|_| Self::create_rope_block(&context, data_type, RopeType::Global))
-            .transpose()
-            .map_err(Error::Classifier)?;
-        let local_rope = classifier_model_config
-            .model_config
-            .transformer_config
-            .local_rope_config
-            .as_ref()
-            .map(|_| Self::create_rope_block(&context, data_type, RopeType::Local))
-            .transpose()
-            .map_err(Error::Classifier)?;
-
         let layers = classifier_model_config
             .model_config
             .transformer_config
@@ -112,17 +88,12 @@ impl<B: Backend> ClassifierContext<B> {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let attn = layer_config.attention_config().ok_or(ClassifierError::NonAttentionMixer)?;
-                let rope = if layer_config.rope_config.is_some() {
-                    Self::create_rope_block(&context, data_type, RopeType::Layer(layer_index))?
-                } else if attn.sliding_window_size.is_some() {
-                    local_rope.clone().or_else(|| global_rope.clone()).ok_or_else(|| {
+                let rope_config = decoder_config
+                    .rope_config_for_layer(layer_config.rope_config.as_ref(), attn.sliding_window_size)
+                    .ok_or_else(|| {
                         ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
-                    })?
-                } else {
-                    global_rope.clone().ok_or_else(|| {
-                        ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
-                    })?
-                };
+                    })?;
+                let rope = Self::create_rope_block(&context, data_type, rope_config, attn.partial_rope_dim)?;
 
                 let num_heads = attn.num_heads.ok_or_else(|| {
                     ClassifierError::MissingConfigField(format!("num_heads in layer {}", layer_index))
@@ -290,9 +261,10 @@ impl<B: Backend> ClassifierContext<B> {
     fn create_rope_block(
         context: &B::Context,
         data_type: DataType,
-        rope_type: RopeType,
+        rope_config: &RoPEConfig,
+        attention_partial_rope_dim: Option<usize>,
     ) -> Result<Rc<Rope<B>>, ClassifierError> {
-        let rotation = Rope::<B>::new(context, data_type, rope_type)
+        let rotation = Rope::<B>::new(context, data_type, rope_config, attention_partial_rope_dim)
             .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?;
         Ok(Rc::new(rotation))
     }

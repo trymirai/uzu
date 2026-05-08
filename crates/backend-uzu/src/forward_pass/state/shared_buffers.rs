@@ -1,19 +1,14 @@
 use half::{bf16, f16};
 
-use super::RopeBuffers;
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
     backends::common::Backend,
     config::DecoderConfig,
-    forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
 
 pub struct SharedBuffers<B: Backend> {
-    pub layer_ropes: Box<[Option<RopeBuffers<B>>]>,
-    pub global_rope: Option<RopeBuffers<B>>,
-    pub local_rope: Option<RopeBuffers<B>>,
     pub attention_sinks: Option<Vec<Array<B>>>,
 }
 
@@ -21,26 +16,7 @@ impl<B: Backend> SharedBuffers<B> {
     pub fn new(
         context: &B::Context,
         decoder_config: &DecoderConfig,
-        model_shape: &ModelShape,
     ) -> Self {
-        let layer_ropes = (0..decoder_config.num_layers)
-            .map(|layer_index| {
-                let layer_config = decoder_config
-                    .layer_configs
-                    .as_ref()
-                    .map(|configs| &configs[layer_index])
-                    .unwrap_or(&decoder_config.layer_config);
-                layer_config.rope_config.as_ref().map(|config| RopeBuffers::new(context, config, model_shape))
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-
-        let global_rope =
-            decoder_config.global_rope_config.as_ref().map(|config| RopeBuffers::new(context, config, model_shape));
-
-        let local_rope =
-            decoder_config.local_rope_config.as_ref().map(|config| RopeBuffers::new(context, config, model_shape));
-
         let attention_sinks = decoder_config.layer_config.attention_config().is_some_and(|c| c.has_sinks).then(|| {
             let num_heads = decoder_config.num_heads;
             (0..decoder_config.num_layers)
@@ -51,9 +27,6 @@ impl<B: Backend> SharedBuffers<B> {
         });
 
         Self {
-            layer_ropes,
-            global_rope,
-            local_rope,
             attention_sinks,
         }
     }
@@ -63,14 +36,13 @@ impl<B: Backend> SharedBuffers<B> {
         parameter_tree: &ParameterTree<B::Context>,
     ) {
         let transformer_tree = parameter_tree.subtree("transformer").expect("transformer subtree not found");
+        self.update_data_from_transformer_tree(&transformer_tree);
+    }
 
-        if let Some(global_rope) = &mut self.global_rope {
-            global_rope.update_data(&transformer_tree, "global_rope");
-        }
-        if let Some(local_rope) = &mut self.local_rope {
-            local_rope.update_data(&transformer_tree, "local_rope");
-        }
-
+    pub fn update_data_from_transformer_tree(
+        &mut self,
+        transformer_tree: &ParameterTree<B::Context>,
+    ) {
         if let Some(sinks_vec) = &mut self.attention_sinks {
             for (layer_idx, sink_cell) in sinks_vec.iter_mut().enumerate() {
                 let layer_tree = transformer_tree.subtree(&format!("layers.{}", layer_idx)).unwrap();

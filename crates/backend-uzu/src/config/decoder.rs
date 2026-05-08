@@ -225,6 +225,20 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
     }
 }
 impl DecoderConfig {
+    pub fn rope_config_for_layer<'a>(
+        &'a self,
+        layer_rope_config: Option<&'a RoPEConfig>,
+        sliding_window_size: Option<usize>,
+    ) -> Option<&'a RoPEConfig> {
+        if let Some(rope_config) = layer_rope_config {
+            Some(rope_config)
+        } else if sliding_window_size.is_some() {
+            self.local_rope_config.as_ref().or(self.global_rope_config.as_ref())
+        } else {
+            self.global_rope_config.as_ref()
+        }
+    }
+
     pub fn group_size(&self) -> usize {
         self.num_heads * self.num_groups
     }

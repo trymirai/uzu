@@ -29,7 +29,6 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         let shared_buffers = TokenDecoderContext::<B>::build_shared_buffers(
             context,
             decoder_config,
-            model_shape,
             &root_loader_view,
             transformer_subtree,
         )?;
@@ -150,20 +149,12 @@ impl<B: Backend> TokenDecoderContext<B> {
     fn build_shared_buffers(
         context: &Rc<B::Context>,
         decoder_config: &Rc<crate::config::DecoderConfig>,
-        model_shape: &ModelShape,
         root_loader_view: &crate::parameters::ParameterTree<B::Context>,
         transformer_subtree: &str,
     ) -> Result<Rc<RefCell<SharedBuffers<B>>>, Error> {
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), decoder_config, model_shape)));
+        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), decoder_config)));
         let transformer_tree = root_loader_view.subtree(transformer_subtree).map_err(|_| Error::UnableToLoadWeights)?;
-        let mut shared_buffers_borrow = shared_buffers.borrow_mut();
-        if let Some(global_rope) = &mut shared_buffers_borrow.global_rope {
-            global_rope.update_data(&transformer_tree, "global_rope");
-        }
-        if let Some(local_rope) = &mut shared_buffers_borrow.local_rope {
-            local_rope.update_data(&transformer_tree, "local_rope");
-        }
-        drop(shared_buffers_borrow);
+        shared_buffers.borrow_mut().update_data_from_transformer_tree(&transformer_tree);
         Ok(shared_buffers)
     }
 
