@@ -365,7 +365,3 @@ impl<B: DownloadBackend> ManagedFileDownloadTask for GenericFileDownloadTask<B> 
         self.is_stopped.load(Ordering::SeqCst)
     }
 }
-
-impl<B: DownloadBackend> Drop for GenericFileDownloadTask<B> {
-    fn drop(&mut self) {}
-}

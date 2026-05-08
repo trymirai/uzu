@@ -1,6 +1,6 @@
 use crate::{
     CheckedFileState, FileState,
-    crc_utils::calculate_and_verify_crc,
+    crc_utils::{calculate_and_verify_crc, crc_cache_matches},
     reducer::{Action, ActionPlan, DiskObservation},
 };
 
@@ -44,11 +44,7 @@ async fn validate_crc_with_cache(
     observation: &DiskObservation,
     expected_crc: &str,
 ) -> (CheckedFileState, Vec<Action>) {
-    if observation.crc_state == FileState::Exists
-        && let Some(crc_path) = &observation.crc_path
-        && let Ok(saved_crc) = std::fs::read_to_string(crc_path)
-        && saved_crc.trim() == expected_crc
-    {
+    if observation.crc_state == FileState::Exists && crc_cache_matches(&observation.destination_path, expected_crc) {
         return (CheckedFileState::Valid, Vec::new());
     }
 

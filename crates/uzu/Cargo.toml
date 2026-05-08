@@ -129,7 +129,6 @@ dotenvy.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
 mock-registry.workspace = true
-async-trait.workspace = true
 rstest.workspace = true
 
 [[test]]

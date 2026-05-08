@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{
     DownloadError,
     crc_utils::save_crc_file,
@@ -20,7 +22,7 @@ pub async fn apply_actions(
             | Action::DeleteResumeArtifact {
                 path,
             } => {
-                let _ = tokio::fs::remove_file(path).await;
+                remove_file_if_present(path).await?;
             },
             Action::SaveCrcCache {
                 destination,
@@ -32,4 +34,12 @@ pub async fn apply_actions(
     }
 
     Ok(())
+}
+
+async fn remove_file_if_present(path: &Path) -> Result<(), DownloadError> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(DownloadError::from(error)),
+    }
 }

@@ -31,8 +31,6 @@ objc-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-libc.workspace = true
-indicatif.workspace = true
 rstest.workspace = true
 mock-registry.workspace = true
 wiremock.workspace = true

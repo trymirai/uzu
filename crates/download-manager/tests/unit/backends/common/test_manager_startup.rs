@@ -21,12 +21,17 @@ async fn test_manager_startup_valid_existing_file_is_downloaded() -> Result<(), 
 
     assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
     assert!(!resume_artifact.exists());
-    assert_eq!(tokio::fs::read_to_string(crc_path).await?, expected_crc);
+    let crc_receipt: serde_json::Value = serde_json::from_str(&tokio::fs::read_to_string(crc_path).await?)?;
+    assert_eq!(crc_receipt["version"].as_u64(), Some(1));
+    assert_eq!(crc_receipt["crc"].as_str(), Some(expected_crc.as_str()));
+    assert_eq!(crc_receipt["file_size"].as_u64(), Some(served_file.file.size as u64));
+    assert!(crc_receipt["modified_unix_seconds"].as_u64().is_some());
+    assert!(crc_receipt["modified_nanos"].as_u64().is_some());
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_manager_startup_uses_matching_crc_cache_fast_path() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_manager_startup_rejects_legacy_crc_cache_after_file_changes() -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let served_file = registry.file("config.json")?;
     let expected_crc = served_file.crc32c()?;
@@ -46,20 +51,33 @@ async fn test_manager_startup_uses_matching_crc_cache_fast_path() -> Result<(), 
     )
     .await?;
 
-    assert_eq!(task.state().await.phase, FileDownloadPhase::Downloaded);
+    assert_eq!(task.state().await.phase, FileDownloadPhase::NotDownloaded);
+    assert!(!destination.exists());
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_manager_startup_revalidates_crc_cache() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_manager_startup_revalidates_stale_metadata_crc_cache() -> Result<(), Box<dyn std::error::Error>> {
     let registry = MockRegistry::start().await?;
     let served_file = registry.file("config.json")?;
     let expected_crc = served_file.crc32c()?;
     let temporary_directory = tempdir()?;
     let destination = temporary_directory.path().join(&served_file.file.name);
     let crc_path = std::path::PathBuf::from(format!("{}.crc", destination.display()));
-    tokio::fs::write(&destination, b"corrupt").await?;
-    tokio::fs::write(&crc_path, &expected_crc).await?;
+    let mut stale_destination_bytes = served_file.bytes.to_vec();
+    stale_destination_bytes[0] = stale_destination_bytes[0].wrapping_add(1);
+    tokio::fs::write(&destination, stale_destination_bytes).await?;
+    tokio::fs::write(
+        &crc_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "crc": expected_crc.clone(),
+            "file_size": served_file.file.size,
+            "modified_unix_seconds": 0,
+            "modified_nanos": 0,
+        }))?,
+    )
+    .await?;
 
     let task = manager_task(&served_file.file.url, &destination, FileCheck::CRC(expected_crc), Some(served_file.file.size as u64)).await?;
 
