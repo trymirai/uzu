@@ -136,7 +136,6 @@ futures-util = "0.3.31"
 http = "1.4.0"
 httparse = "1.10.1"
 stream_throttle = "0.5.1"
-async-fetcher = "0.12"
 reqwest = { version = "0.13.2", features = [
     "json",
     "stream",
