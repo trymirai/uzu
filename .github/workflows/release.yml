@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: [self-hosted, macos, mac, arm64, m4pro]
+    runs-on: macos-26
     env:
       VERSION: ${{ inputs.version }}
 
@@ -28,22 +28,12 @@ jobs:
           metal: true
           bindings: true
 
-      - name: "Release: Generate GitHub App token"
-        id: release-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: trymirai
-          repositories: uzu
-
       - name: "Release: Checkout main"
         uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ steps.release-token.outputs.token }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: "Release: Validate version"
         run: |
@@ -68,12 +58,59 @@ jobs:
             echo "No previous tags; ${VERSION} is the first release"
           fi
 
-      - name: "Release: Reset existing rustup toolchains on self-hosted runner"
+      - name: "Binaries: Import developer identity certificate"
+        shell: bash
+        env:
+          TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
         run: |
-          if command -v rustup >/dev/null; then
-            rustup toolchain uninstall stable 2>/dev/null || true
-            rustup toolchain uninstall nightly 2>/dev/null || true
+          set -euo pipefail
+          CERT_P12="$RUNNER_TEMP/dev_id_app.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          KEYCHAIN_PASSWORD=""
+
+          echo "${{ secrets.APPLE_DEVELOPER_ID_P12 }}" | base64 -D > "$CERT_P12"
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f "$KEYCHAIN_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          existing_keychains=()
+          while IFS= read -r existing_keychain; do
+            existing_keychain=$(printf '%s\n' "$existing_keychain" | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+            if [ -n "$existing_keychain" ] && [ "$existing_keychain" != "$KEYCHAIN_PATH" ]; then
+              existing_keychains+=("$existing_keychain")
+            fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "${existing_keychains[@]}"
+
+          security import "$CERT_P12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}" \
+            -T /usr/bin/codesign
+
+          if ! security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+            echo "Unable to set key partition list for imported signing identity" >&2
+            exit 1
           fi
+
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | grep 'Developer ID Application:' \
+            | grep "(${TEAM_ID})" \
+            | sed -nE 's/.*"(.*)".*/\1/p' \
+            | head -n1 || true)
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "Imported keychain does not contain a valid Developer ID Application identity for team $TEAM_ID" >&2
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+            exit 1
+          fi
+
+          echo "SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
       - name: "Release: Install tools"
         run: |
@@ -88,6 +125,88 @@ jobs:
 
       - name: "Release: Build artifacts"
         run: cargo tools release "${VERSION}"
+
+      - name: "Binaries: Codesign"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          security unlock-keychain -p "" "$SIGNING_KEYCHAIN_PATH"
+
+          signed=0
+          while IFS= read -r -d '' binary_path; do
+            chmod +x "$binary_path"
+            codesign --force --options runtime --timestamp \
+              --sign "$SIGNING_IDENTITY" \
+              "$binary_path"
+            codesign --verify --strict --verbose=2 "$binary_path"
+            signed=$((signed + 1))
+          done < <(find workspace/release/binaries \
+            -type f \
+            ! -name '.DS_Store' \
+            ! -name '*.zip' \
+            ! -name '*.tar.gz' \
+            -print0)
+
+          if [ "$signed" -eq 0 ]; then
+            echo "No binaries found under workspace/release/binaries" >&2
+            exit 1
+          fi
+
+      - name: "Binaries: Package"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          zip_root="workspace/release/notarization"
+          mkdir -p "$zip_root"
+
+          packaged=0
+          while IFS= read -r -d '' binary_path; do
+            binary_dir=$(dirname "$binary_path")
+            artifact_name=$(basename "$binary_path")
+            zip_path="$zip_root/${artifact_name}.zip"
+            tarball_path="$binary_dir/${artifact_name}.tar.gz"
+
+            rm -f "$zip_path" "$tarball_path"
+            ditto -c -k --sequesterRsrc --keepParent "$binary_path" "$zip_path"
+            tar -czf "$tarball_path" -C "$binary_dir" "$artifact_name"
+            packaged=$((packaged + 1))
+          done < <(find workspace/release/binaries \
+            -type f \
+            ! -name '.DS_Store' \
+            ! -name '*.zip' \
+            ! -name '*.tar.gz' \
+            -print0)
+
+          if [ "$packaged" -eq 0 ]; then
+            echo "No binaries found under workspace/release/binaries" >&2
+            exit 1
+          fi
+
+      - name: "Binaries: Notarize"
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          notarized=0
+          while IFS= read -r -d '' zip_path; do
+            xcrun notarytool submit "$zip_path" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait
+            notarized=$((notarized + 1))
+          done < <(find workspace/release/notarization -type f -name '*.zip' -print0)
+
+          if [ "$notarized" -eq 0 ]; then
+            echo "No notarization zips found under workspace/release/notarization" >&2
+            exit 1
+          fi
 
       # ---------------------------------------------------------------
       # Commit + tag locally now, while the workspace only contains
@@ -230,7 +349,29 @@ jobs:
       # publish step ran, so the workspace pollution from publishes
       # never makes it into the commit.
       # ---------------------------------------------------------------
+      - name: "Release: Generate GitHub App token"
+        id: release-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: trymirai
+          repositories: uzu
+
       - name: "Release: Push"
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
         run: |
+          set -euo pipefail
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/trymirai/uzu.git"
           git push origin HEAD:main
           git push origin "${VERSION}"
+
+      - name: "Release: Attach binaries"
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ steps.release-token.outputs.token }}
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
+          files: workspace/release/binaries/**/*.tar.gz
+          fail_on_unmatched_files: true

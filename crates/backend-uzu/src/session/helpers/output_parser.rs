@@ -93,7 +93,8 @@ impl OutputParser {
 
         let thought_close = thought_content_start + thought_close_relative;
         let response_start = thought_close + THOUGHT_CLOSE.len();
-        let response = Self::strip_gemma_4_stop_tokens(&text[response_start..]).to_string();
+        let response = Self::strip_gemma_4_final_channel_marker(&text[response_start..]);
+        let response = Self::strip_gemma_4_stop_tokens(response).to_string();
 
         Some(ParsedText {
             chain_of_thought: Some(text[thought_content_start..thought_close].to_string()),
@@ -106,6 +107,23 @@ impl OutputParser {
 
         let stop_index = STOP_TOKENS.iter().filter_map(|stop_token| text.find(stop_token)).min().unwrap_or(text.len());
         &text[..stop_index]
+    }
+
+    fn strip_gemma_4_final_channel_marker(text: &str) -> &str {
+        const FINAL_CHANNEL_OPEN: &str = "<|channel>final";
+        const FINAL_CHANNEL_NAME: &str = "final";
+
+        if let Some(response) = text.strip_prefix(FINAL_CHANNEL_OPEN) {
+            return response.trim_start_matches(['\n', '\r']);
+        }
+
+        if let Some(response) = text.strip_prefix(FINAL_CHANNEL_NAME)
+            && (response.is_empty() || response.starts_with(['<', '\n', '\r']))
+        {
+            return response.trim_start_matches(['\n', '\r']);
+        }
+
+        text
     }
 }
 
@@ -123,6 +141,32 @@ mod tests {
 
         assert_eq!(text.original, "Final answer.");
         assert_eq!(text.parsed.response.as_deref(), Some("Final answer."));
+        assert_eq!(text.parsed.chain_of_thought.as_deref(), Some("\nThinking Process"));
+    }
+
+    #[test]
+    fn test_output_parser_gemma_4_final_channel_marker() {
+        let parser = OutputParser::new(None).unwrap();
+        let text = parser.parse_raw(
+            "<|channel>thought\nThinking Process<channel|>final\nFinal answer.<turn|>".to_string(),
+            "thought\nThinking ProcessFinal answer.".to_string(),
+        );
+
+        assert_eq!(text.original, "Final answer.");
+        assert_eq!(text.parsed.response.as_deref(), Some("Final answer."));
+        assert_eq!(text.parsed.chain_of_thought.as_deref(), Some("\nThinking Process"));
+    }
+
+    #[test]
+    fn test_output_parser_gemma_4_empty_final_channel_marker() {
+        let parser = OutputParser::new(None).unwrap();
+        let text = parser.parse_raw(
+            "<|channel>thought\nThinking Process<channel|>final<turn|>".to_string(),
+            "thought\nThinking Process".to_string(),
+        );
+
+        assert_eq!(text.original, "");
+        assert_eq!(text.parsed.response.as_deref(), Some(""));
         assert_eq!(text.parsed.chain_of_thought.as_deref(), Some("\nThinking Process"));
     }
 

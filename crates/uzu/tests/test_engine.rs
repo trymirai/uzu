@@ -127,5 +127,5 @@ async fn test_engine_text_to_speech() {
     let session = engine.text_to_speech(model).await.unwrap();
     let result = session.synthesize("London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.".to_string()).await.unwrap();
     let path = dirs::home_dir().unwrap().join("Desktop").join("output.wav").to_string_lossy().to_string();
-    result.save_as_wav(path).unwrap();
+    result.pcm_batch.save_as_wav(path).unwrap();
 }

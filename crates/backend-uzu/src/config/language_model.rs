@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ConfigError, DecoderConfig, DecoderLayerConfig, DecoderLayerType, EmbeddingConfig, GenerationConfig,
-    MessageProcessorConfig, MixerConfig, PLEModelConfig, TransformerConfig,
+    MessageProcessorConfig, MixerConfig, NormalizationConfig, PerLayerEmbeddingModelConfig, TransformerConfig,
+    TransformerLayerConfig,
 };
 
 struct AttentionDims {
@@ -20,7 +21,7 @@ pub struct InnerModelConfig {
     pub transformer_config: TransformerConfig,
     pub vocab_size: usize,
     #[serde(default)]
-    pub ple_model_config: Option<PLEModelConfig>,
+    pub ple_model_config: Option<PerLayerEmbeddingModelConfig>,
 }
 
 impl InnerModelConfig {
@@ -39,7 +40,7 @@ impl InnerModelConfig {
 
     pub fn with_ple_model_config(
         mut self,
-        ple_model_config: Option<PLEModelConfig>,
+        ple_model_config: Option<PerLayerEmbeddingModelConfig>,
     ) -> Self {
         self.ple_model_config = ple_model_config;
         self
@@ -51,22 +52,7 @@ impl InnerModelConfig {
 
         let first_layer = tf.layer_configs.first().ok_or(ConfigError::NoLayers)?;
 
-        let layer_config = DecoderLayerConfig {
-            pre_attention_norm_config: first_layer
-                .pre_attention_norm_config
-                .clone()
-                .unwrap_or_else(|| tf.output_norm_config.clone()),
-            mixer_config: first_layer.mixer_config.clone(),
-            post_attention_norm_config: first_layer.post_attention_norm_config.clone(),
-            pre_mlp_norm_config: first_layer.pre_mlp_norm_config.clone(),
-            mlp_config: first_layer.mlp_config.clone(),
-            post_mlp_norm_config: first_layer.post_mlp_norm_config.clone(),
-            hidden_dim: first_layer.hidden_dim,
-            ple_config: first_layer.ple_config.clone(),
-            has_post_layer_scalar: first_layer.has_post_layer_scalar,
-            kv_source_layer: first_layer.kv_source_layer,
-            rope_config: first_layer.rope_config.clone(),
-        };
+        let layer_config = Self::decoder_layer_config(first_layer, &tf.output_norm_config);
 
         let attention_dims = Self::derive_attention_dims(tf)?;
         let num_layers = tf.num_layers.unwrap_or(tf.layer_configs.len());
@@ -88,22 +74,7 @@ impl InnerModelConfig {
         let layer_configs: Box<[DecoderLayerConfig]> = tf
             .layer_configs
             .iter()
-            .map(|layer| DecoderLayerConfig {
-                pre_attention_norm_config: layer
-                    .pre_attention_norm_config
-                    .clone()
-                    .unwrap_or_else(|| tf.output_norm_config.clone()),
-                mixer_config: layer.mixer_config.clone(),
-                post_attention_norm_config: layer.post_attention_norm_config.clone(),
-                pre_mlp_norm_config: layer.pre_mlp_norm_config.clone(),
-                mlp_config: layer.mlp_config.clone(),
-                post_mlp_norm_config: layer.post_mlp_norm_config.clone(),
-                hidden_dim: layer.hidden_dim,
-                ple_config: layer.ple_config.clone(),
-                has_post_layer_scalar: layer.has_post_layer_scalar,
-                kv_source_layer: layer.kv_source_layer,
-                rope_config: layer.rope_config.clone(),
-            })
+            .map(|layer| Self::decoder_layer_config(layer, &tf.output_norm_config))
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
@@ -127,6 +98,28 @@ impl InnerModelConfig {
             layer_types: Some(layer_types),
             context_length: tf.context_length,
         })
+    }
+
+    fn decoder_layer_config(
+        layer: &TransformerLayerConfig,
+        output_norm_config: &NormalizationConfig,
+    ) -> DecoderLayerConfig {
+        DecoderLayerConfig {
+            pre_attention_norm_config: layer
+                .pre_attention_norm_config
+                .clone()
+                .unwrap_or_else(|| output_norm_config.clone()),
+            mixer_config: layer.mixer_config.clone(),
+            post_attention_norm_config: layer.post_attention_norm_config.clone(),
+            pre_mlp_norm_config: layer.pre_mlp_norm_config.clone(),
+            mlp_config: layer.mlp_config.clone(),
+            post_mlp_norm_config: layer.post_mlp_norm_config.clone(),
+            hidden_dim: layer.hidden_dim,
+            ple_config: layer.ple_config.clone(),
+            has_post_layer_scalar: layer.has_post_layer_scalar,
+            kv_source_layer: layer.kv_source_layer,
+            rope_config: layer.rope_config.clone(),
+        }
     }
 
     fn derive_attention_dims(tf: &TransformerConfig) -> Result<AttentionDims, ConfigError> {

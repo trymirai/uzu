@@ -12,12 +12,21 @@ use crate::{
     forward_pass::state::{ArrayId, ForwardPassState},
 };
 
+#[repr(u32)]
+#[derive(Clone, Copy, Debug)]
+enum RopeScalingType {
+    Unscaled = 0,
+    Linear = 1,
+    Llama = 2,
+    Yarn = 3,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct RopeKernelConfig {
     base: f32,
     max_sequence_length: usize,
     rotary_frequency_dim: Option<usize>,
-    scaling_type: u32,
+    scaling_type: RopeScalingType,
     scaling_factor: f32,
     original_context_length: usize,
     low_frequency_factor: f32,
@@ -36,7 +45,7 @@ impl RopeKernelConfig {
                 base: common.base,
                 max_sequence_length: common.max_sequence_length,
                 rotary_frequency_dim: common.head_dim,
-                scaling_type: 0,
+                scaling_type: RopeScalingType::Unscaled,
                 scaling_factor: 1.0,
                 original_context_length: common.max_sequence_length,
                 low_frequency_factor: 1.0,
@@ -53,7 +62,7 @@ impl RopeKernelConfig {
                 base: common.base,
                 max_sequence_length: common.max_sequence_length,
                 rotary_frequency_dim: common.head_dim,
-                scaling_type: 1,
+                scaling_type: RopeScalingType::Linear,
                 scaling_factor: *scaling_factor,
                 original_context_length: common.max_sequence_length,
                 low_frequency_factor: 1.0,
@@ -73,7 +82,7 @@ impl RopeKernelConfig {
                 base: common.base,
                 max_sequence_length: common.max_sequence_length,
                 rotary_frequency_dim: common.head_dim,
-                scaling_type: 2,
+                scaling_type: RopeScalingType::Llama,
                 scaling_factor: *scaling_factor,
                 original_context_length: *original_context_length,
                 low_frequency_factor: *low_frequency_factor,
@@ -94,7 +103,7 @@ impl RopeKernelConfig {
                 base: common.base,
                 max_sequence_length: common.max_sequence_length,
                 rotary_frequency_dim: common.head_dim,
-                scaling_type: 3,
+                scaling_type: RopeScalingType::Yarn,
                 scaling_factor: *scaling_factor,
                 original_context_length: *original_context_length,
                 low_frequency_factor: 1.0,
@@ -159,7 +168,7 @@ impl<B: Backend> Rope<B> {
             rotary_pair_stride as u32,
             self.config.rotary_frequency_dim.unwrap_or(head_dim) as u32,
             self.config.max_sequence_length as u32,
-            self.config.scaling_type,
+            self.config.scaling_type as u32,
             self.config.base,
             self.config.scaling_factor,
             self.config.original_context_length as u32,

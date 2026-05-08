@@ -159,7 +159,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
+        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config)));
         shared_buffers.borrow_mut().update_data(&root_loader_view);
 
         let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, max_suffix_length);

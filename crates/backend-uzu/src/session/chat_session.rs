@@ -564,20 +564,17 @@ impl ChatSession {
         eos_tokens: &[u64],
         skip_special_tokens: bool,
     ) -> Result<String, Error> {
-        let generated_tokens: Vec<u32> = prefill_tokens
+        let generated_tokens =
+            generate_results.iter().flat_map(|result| result.tokens.iter()).copied().collect::<Vec<_>>();
+        let generated_token_count =
+            generated_tokens.iter().position(|token| eos_tokens.contains(token)).unwrap_or(generated_tokens.len());
+        let tokens = prefill_tokens
             .iter()
-            .chain(generate_results.iter().flat_map(|r| r.tokens.iter()))
-            .map(|&v| v as u32)
-            .collect();
+            .chain(generated_tokens.iter().take(generated_token_count))
+            .map(|&token| token as u32)
+            .collect::<Vec<_>>();
 
-        let visible_token_count = generated_tokens
-            .iter()
-            .position(|token| eos_tokens.contains(&(*token as u64)))
-            .unwrap_or(generated_tokens.len());
-
-        tokenizer
-            .decode(&generated_tokens[..visible_token_count], skip_special_tokens)
-            .map_err(|_| Error::UnableToDecodeText)
+        tokenizer.decode(&tokens, skip_special_tokens).map_err(|_| Error::UnableToDecodeText)
     }
 
     fn build_output(

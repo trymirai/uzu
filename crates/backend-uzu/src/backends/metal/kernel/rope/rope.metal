@@ -2,14 +2,14 @@
 #include "../common/dsl.h"
 #include "../common/tensor_view.h"
 
-inline float linearRampFactor(float min_value, float max_value, float dim) {
+inline float linear_ramp_factor(float min_value, float max_value, float dim) {
   if (min_value == max_value) {
     max_value += 0.001;
   }
   return metal::clamp((dim - min_value) / (max_value - min_value), 0.0, 1.0);
 }
 
-inline float2 yarnCorrectionRange(
+inline float2 yarn_correction_range(
     float beta_fast,
     float beta_slow,
     uint dim,
@@ -19,10 +19,12 @@ inline float2 yarnCorrectionRange(
 ) {
   const float two_pi = 6.28318530717958647692;
   const float scale = static_cast<float>(dim) / (2.0 * metal::log(base));
+
   float low = scale * metal::log(
                           static_cast<float>(original_context_length) /
                           (beta_fast * two_pi)
                       );
+
   float high = scale * metal::log(
                            static_cast<float>(original_context_length) /
                            (beta_slow * two_pi)
@@ -33,10 +35,13 @@ inline float2 yarnCorrectionRange(
     high = metal::ceil(high);
   }
 
-  return float2(metal::max(low, 0.0), metal::min(high, static_cast<float>(dim - 1)));
+  return float2(
+      metal::max(low, 0.0),
+      metal::min(high, static_cast<float>(dim - 1))
+  );
 }
 
-inline float inverseFrequency(
+inline float inverse_frequency(
     uint frequency_index,
     uint rotary_frequency_dim,
     uint rope_scaling_type,
@@ -50,9 +55,9 @@ inline float inverseFrequency(
     uint rope_truncate
 ) {
   const float two_pi = 6.28318530717958647692;
-  const float exponent =
-      static_cast<float>(2 * frequency_index) /
-      static_cast<float>(rotary_frequency_dim);
+  const float exponent = static_cast<float>(2 * frequency_index) /
+                         static_cast<float>(rotary_frequency_dim);
+
   float value = metal::exp2(-exponent * metal::log2(rope_base));
 
   if (rope_scaling_type == 1) {
@@ -63,29 +68,33 @@ inline float inverseFrequency(
     const float low_frequency_wavelength =
         static_cast<float>(rope_original_context_length) /
         rope_low_frequency_factor;
+
     const float high_frequency_wavelength =
         static_cast<float>(rope_original_context_length) /
         rope_high_frequency_factor;
+
     const float wavelength = two_pi / value;
     const float scaled = value / rope_scaling_factor;
 
     if (wavelength > low_frequency_wavelength) {
       return scaled;
     }
+
     if (wavelength >= high_frequency_wavelength) {
       float smoothing =
           static_cast<float>(rope_original_context_length) / wavelength -
           rope_low_frequency_factor;
-      smoothing /=
-          rope_high_frequency_factor - rope_low_frequency_factor;
+
+      smoothing /= rope_high_frequency_factor - rope_low_frequency_factor;
       return smoothing * value + (1.0 - smoothing) * scaled;
     }
+
     return value;
   }
 
   if (rope_scaling_type == 3) {
     const float scaled = value / rope_scaling_factor;
-    const float2 correction_range = yarnCorrectionRange(
+    const float2 correction_range = yarn_correction_range(
         rope_beta_fast,
         rope_beta_slow,
         rotary_frequency_dim,
@@ -93,8 +102,13 @@ inline float inverseFrequency(
         rope_original_context_length,
         rope_truncate
     );
-    const float ramp =
-        linearRampFactor(correction_range.x, correction_range.y, static_cast<float>(frequency_index));
+
+    const float ramp = linear_ramp_factor(
+        correction_range.x,
+        correction_range.y,
+        static_cast<float>(frequency_index)
+    );
+
     const float smoothing = 1.0 - ramp;
     return scaled * (1.0 - smoothing) + value * smoothing;
   }
@@ -103,24 +117,32 @@ inline float inverseFrequency(
 }
 
 template <typename T>
-inline T applyRopeTransform(
+inline T apply_rope_transform(
     TensorView3D<const T> qkv_tensor_view,
-    uint token_idx,
-    uint head_idx,
-    uint dim_idx,
+    uint token_index,
+    uint head_index,
+    uint dimension_index,
     uint rotary_pair_stride,
     T cos_val,
     T sin_val
 ) {
-  T inputVal = qkv_tensor_view(token_idx, head_idx, dim_idx);
-  T pairedVal =
-      (dim_idx < rotary_pair_stride)
-          ? -qkv_tensor_view(token_idx, head_idx, dim_idx + rotary_pair_stride)
-          : qkv_tensor_view(token_idx, head_idx, dim_idx - rotary_pair_stride);
-  return inputVal * cos_val + pairedVal * sin_val;
+  T input_value = qkv_tensor_view(token_index, head_index, dimension_index);
+  T paired_value = (dimension_index < rotary_pair_stride)
+                       ? -qkv_tensor_view(
+                             token_index,
+                             head_index,
+                             dimension_index + rotary_pair_stride
+                         )
+                       : qkv_tensor_view(
+                             token_index,
+                             head_index,
+                             dimension_index - rotary_pair_stride
+                         );
+
+  return input_value * cos_val + paired_value * sin_val;
 }
 
-inline bool getRotaryDimensionIndex(
+inline bool get_rotary_dimension_index(
     uint dimension_index,
     uint half_rope_dim,
     uint rotary_pair_stride,
@@ -133,8 +155,10 @@ inline bool getRotaryDimensionIndex(
 
   if (dimension_index >= rotary_pair_stride &&
       dimension_index < rotary_pair_stride + half_rope_dim) {
+
     rotary_dimension_index =
         dimension_index - rotary_pair_stride + half_rope_dim;
+
     return true;
   }
 
@@ -179,7 +203,7 @@ PUBLIC KERNEL(Rope)(
     return;
   if (rope_dim > head_dim)
     return;
-  if (rotary_frequency_dim == 0)
+  if (rope_dim != 0 && rotary_frequency_dim == 0)
     return;
   if (rotary_pair_stride < rope_dim / 2)
     return;
@@ -190,36 +214,35 @@ PUBLIC KERNEL(Rope)(
   if (num_heads % num_groups != 0)
     return;
 
-  const uint group_index =
-      head_index /
-      (num_heads / num_groups); // which KV group this head belongs to
+  const uint group_index = head_index / (num_heads / num_groups);
   const uint total_heads = num_heads + 2 * num_groups;
-  // Use actual token position from buffer
   const uint raw_position = token_positions[token_index];
-  const uint absolutePosition =
-      raw_position >= rope_max_sequence_length ? 0 : raw_position;
   const uint half_rope_dim = rope_dim / 2;
+
+  const uint absolute_position =
+      raw_position >= rope_max_sequence_length ? 0 : raw_position;
 
   TensorView3D<const T> qkv_tensor_view =
       TensorView3D<const T>(qkv).shaped(suffix_length, total_heads, head_dim);
+
   TensorView3D<T> rotated_queries_tensor_view =
       TensorView3D<T>(rotated_queries)
           .shaped(num_heads, suffix_length, head_dim);
+
   TensorView3D<T> rotated_keys_tensor_view =
       TensorView3D<T>(rotated_keys).shaped(num_groups, suffix_length, head_dim);
 
   uint first_head_in_group = group_index * (num_heads / num_groups);
-
-  /* ---------- QUERIES ---------- */
   uint rotary_dimension_index = 0;
-  if (getRotaryDimensionIndex(
+
+  if (get_rotary_dimension_index(
           dimension_index,
           half_rope_dim,
           rotary_pair_stride,
           rotary_dimension_index
       )) {
     const uint frequency_index = rotary_dimension_index % half_rope_dim;
-    const float frequency = inverseFrequency(
+    const float frequency = inverse_frequency(
         frequency_index,
         rotary_frequency_dim,
         rope_scaling_type,
@@ -232,13 +255,16 @@ PUBLIC KERNEL(Rope)(
         rope_beta_slow,
         rope_truncate
     );
-    const float angle = static_cast<float>(absolutePosition) * frequency;
+
+    const float angle = static_cast<float>(absolute_position) * frequency;
+
     const T cos_val =
         static_cast<T>(metal::fast::cos(angle) * rope_attention_scaling_factor);
+
     const T sin_val =
         static_cast<T>(metal::fast::sin(angle) * rope_attention_scaling_factor);
 
-    T queryResult = applyRopeTransform(
+    T query_result = apply_rope_transform(
         qkv_tensor_view,
         token_index,
         head_index,
@@ -247,14 +273,13 @@ PUBLIC KERNEL(Rope)(
         cos_val,
         sin_val
     );
-    rotated_queries_tensor_view(head_index, token_index, dimension_index) =
-        queryResult;
 
-    /* ---------- KEYS (only first head of each group processes) ---------- */
+    rotated_queries_tensor_view(head_index, token_index, dimension_index) =
+        query_result;
+
     if (head_index == first_head_in_group) {
-      uint key_head_index =
-          num_heads + group_index; // Keys start after all query heads
-      T keyResult = applyRopeTransform(
+      uint key_head_index = num_heads + group_index;
+      T key_result = apply_rope_transform(
           qkv_tensor_view,
           token_index,
           key_head_index,
@@ -263,16 +288,16 @@ PUBLIC KERNEL(Rope)(
           cos_val,
           sin_val
       );
+
       rotated_keys_tensor_view(group_index, token_index, dimension_index) =
-          keyResult;
+          key_result;
     }
   } else {
     rotated_queries_tensor_view(head_index, token_index, dimension_index) =
         qkv_tensor_view(token_index, head_index, dimension_index);
 
     if (head_index == first_head_in_group) {
-      uint key_head_index =
-          num_heads + group_index; // Keys start after all query heads
+      uint key_head_index = num_heads + group_index;
       rotated_keys_tensor_view(group_index, token_index, dimension_index) =
           qkv_tensor_view(token_index, key_head_index, dimension_index);
     }

@@ -64,6 +64,12 @@ struct TaskEncodingKey {
     is_prefilling: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheUpdateCompletion {
+    Wait,
+    Defer,
+}
+
 pub struct LanguageModelGenerator<B: Backend> {
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
@@ -299,7 +305,12 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             }
 
             if tokens_processed_this_step > 0 {
-                self.update_cache_layers(&(0..tokens_processed_this_step).collect::<Vec<usize>>(), None, None, true)?;
+                self.update_cache_layers(
+                    &(0..tokens_processed_this_step).collect::<Vec<usize>>(),
+                    None,
+                    None,
+                    CacheUpdateCompletion::Wait,
+                )?;
 
                 self.context.cache_layers.borrow_mut().register_accepted_tokens(tokens_processed_this_step);
 
@@ -330,7 +341,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
             Some(last_suffix_start),
             None,
-            false,
+            CacheUpdateCompletion::Defer,
         )?;
 
         self.tokens.extend(accepted_tokens.clone());
@@ -424,7 +435,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &accepted_token_indices,
             None,
             Some(self.decoding_config.generate_suffix_length()),
-            false,
+            CacheUpdateCompletion::Defer,
         )?;
 
         self.tokens.extend(accepted_tokens.clone());
@@ -638,10 +649,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         &self,
         model_path: &Path,
     ) -> usize {
-        if self.requires_ordered_forward_passes() {
-            return 1;
-        }
-
         self.decoding_config.async_batch_size.resolve::<B>(model_path, self.context.context.as_ref())
     }
 
@@ -850,7 +857,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         accepted_token_indices: &[usize],
         suffix_start: Option<usize>,
         generated_suffix_length: Option<usize>,
-        wait_until_completed: bool,
+        completion: CacheUpdateCompletion,
     ) -> Result<(), Error> {
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
@@ -868,7 +875,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let pending = encoder.end_encoding().submit();
 
-        if wait_until_completed || self.requires_ordered_forward_passes() {
+        if matches!(completion, CacheUpdateCompletion::Wait) {
             pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
         }
         Ok(())
@@ -877,14 +884,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
     fn allow_pre_encode(&self) -> bool {
         let debug_active = self.context.context.debug_active();
 
-        let result = self.decoding_config.allow_pre_encode && !debug_active && !self.requires_ordered_forward_passes();
+        let result = self.decoding_config.allow_pre_encode && !debug_active;
 
         result
-    }
-
-    fn requires_ordered_forward_passes(&self) -> bool {
-        self.context.decoder_config.ple_model_config.is_some()
-            || self.context.model_shape.kv_source_layers.iter().any(Option::is_some)
     }
 
     fn sync_prefix(&mut self) {

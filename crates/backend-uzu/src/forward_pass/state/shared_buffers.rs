@@ -5,7 +5,6 @@ use crate::{
     array::{Array, ArrayContextExt},
     backends::common::Backend,
     config::DecoderConfig,
-    forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
 };
 
@@ -17,7 +16,6 @@ impl<B: Backend> SharedBuffers<B> {
     pub fn new(
         context: &B::Context,
         decoder_config: &DecoderConfig,
-        _model_shape: &ModelShape,
     ) -> Self {
         let attention_sinks = decoder_config.layer_config.attention_config().is_some_and(|c| c.has_sinks).then(|| {
             let num_heads = decoder_config.num_heads;

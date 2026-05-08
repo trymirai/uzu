@@ -12,8 +12,8 @@ use crate::{
     backends::common::{Backend, Encoder},
     config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
-        Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, PLELayer, QKNorm, RMSNorm, Rope,
-        ShortConvMixer, TensorFinalize, ValueNorm,
+        Attention, DeltaNetMixer, EncodingParameters, Linear, MambaMixer, Mlp, PerLayerEmbeddingLayer, QKNorm, RMSNorm,
+        Rope, ShortConvMixer, TensorFinalize, ValueNorm,
     },
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -31,7 +31,7 @@ pub struct LayerExecutables<B: Backend> {
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
-    pub ple: Option<PLELayer<B>>,
+    pub per_layer_embedding: Option<PerLayerEmbeddingLayer<B>>,
     pub finalize: Option<TensorFinalize<B>>,
 }
 
@@ -322,25 +322,26 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
-        let ple = layer_config.ple_config.as_ref().map(|ple_config| {
-            PLELayer::new(
+        let per_layer_embedding = layer_config.ple_config.as_ref().map(|per_layer_embedding_config| {
+            PerLayerEmbeddingLayer::new(
                 context,
                 intermediate_data_type,
-                ple_config,
+                per_layer_embedding_config,
                 layer_index,
                 model_dim,
                 num_layers,
-                &decoder_layer_loader.subtree("ple").expect("PLE layer weights missing"),
+                &decoder_layer_loader.subtree("ple").expect("per-layer embedding layer weights missing"),
             )
-            .expect("Failed to create PLE layer")
+            .expect("Failed to create per-layer embedding layer")
         });
 
-        let scalar = layer_config.has_post_layer_scalar.then(|| {
-            PLELayer::<B>::validate_post_layer_scalar(intermediate_data_type, decoder_layer_loader)
+        let post_layer_scalar = layer_config.has_post_layer_scalar.then(|| {
+            PerLayerEmbeddingLayer::<B>::validate_post_layer_scalar(intermediate_data_type, decoder_layer_loader)
                 .expect("Failed to load post layer scalar")
         });
         let finalize = (layer_config.ple_config.is_some() || layer_config.has_post_layer_scalar).then(|| {
-            TensorFinalize::new(context, intermediate_data_type, scalar).expect("Failed to create tensor finalizer")
+            TensorFinalize::new(context, intermediate_data_type, post_layer_scalar)
+                .expect("Failed to create tensor finalizer")
         });
 
         Self {
@@ -354,7 +355,7 @@ impl<B: Backend> LayerExecutables<B> {
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
-            ple,
+            per_layer_embedding,
             finalize,
         }
     }
@@ -478,8 +479,8 @@ impl<B: Backend> LayerExecutables<B> {
             }
         }
 
-        if let Some(ple) = &self.ple {
-            ple.encode(state, encoder)?;
+        if let Some(per_layer_embedding) = &self.per_layer_embedding {
+            per_layer_embedding.encode(state, encoder)?;
         }
         if let Some(finalize) = &self.finalize {
             finalize.encode(state, encoder);

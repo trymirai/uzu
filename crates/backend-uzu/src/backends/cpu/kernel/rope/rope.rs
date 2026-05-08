@@ -16,10 +16,10 @@ fn get_paired_val<T: ArrayElement + Float>(
     head_index: usize,
 ) -> T {
     if dim_index < rotary_pair_stride {
-        let v = unsafe {
+        let value = unsafe {
             *values.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index + rotary_pair_stride)
         };
-        T::zero() - v
+        T::zero() - value
     } else {
         unsafe {
             *values.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index - rotary_pair_stride)
@@ -32,6 +32,9 @@ fn rotated_dimension_index(
     half_rope_dim: usize,
     rotary_pair_stride: usize,
 ) -> Option<usize> {
+    // Gemma 4 proportional RoPE keeps NeoX-style pairs in the full head layout.
+    // Example: head_dim=512, rope_dim=128, rotary_pair_stride=256 rotates dims
+    // 0..63 and 256..319, while 64..255 and 320..511 pass through unchanged.
     if dim_index < half_rope_dim {
         Some(dim_index)
     } else if dim_index >= rotary_pair_stride && dim_index < rotary_pair_stride + half_rope_dim {
@@ -86,7 +89,7 @@ fn inverse_frequency(
     truncate: u32,
 ) -> f32 {
     let exponent = (2 * frequency_index) as f32 / rotary_frequency_dim as f32;
-    let mut value = 1.0 / base.powf(exponent);
+    let value = 1.0 / base.powf(exponent);
 
     match rope_scaling_type {
         1 => value / scaling_factor,
@@ -153,7 +156,7 @@ pub fn rope<T: ArrayElement + Float>(
         || head_dim & 1 != 0
         || rope_dim & 1 != 0
         || rope_dim > head_dim
-        || rotary_frequency_dim == 0
+        || (rope_dim != 0 && rotary_frequency_dim == 0)
         || rotary_pair_stride < rope_dim / 2
         || rotary_pair_stride + rope_dim / 2 > head_dim
         || num_heads % num_groups != 0

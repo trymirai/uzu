@@ -49,19 +49,15 @@ fn get_test_data<T: ArrayElement + Float>(
     let total_heads = (num_heads + 2 * num_groups) as usize;
     let qkv_size = suffix_length as usize * total_heads * head_dim as usize;
 
-    let mut qkv = vec![T::zero(); qkv_size];
-    for i in 0..qkv_size {
-        qkv[i] = T::from(((i as f32) * 0.1).sin() * 2.0).unwrap();
-    }
+    let qkv = (0..qkv_size)
+        .map(|index| T::from(((index as f32) * 0.1).sin() * 2.0).unwrap())
+        .collect::<Box<_>>();
 
-    let mut token_positions = vec![0i32; suffix_length as usize];
-    for i in 0..suffix_length as usize {
-        token_positions[i] = i as i32;
-    }
+    let token_positions = (0..suffix_length).map(|index| index as i32).collect::<Box<_>>();
 
     Input {
-        qkv: qkv.into_boxed_slice(),
-        token_positions: token_positions.into_boxed_slice(),
+        qkv,
+        token_positions,
         head_dim,
         rope_dim,
         rotary_pair_stride: rope_dim / 2,
@@ -150,25 +146,21 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
-    // Typical GQA config: 32 query heads, 8 KV groups, head_dim=128, 4 tokens
     let input = get_test_data::<T>(32, 8, 128, 128, 4, 512);
     test_internal(&input);
 }
 
 fn test_mha<T: ArrayElement + Float + Debug + Display>() {
-    // MHA: num_heads == num_groups
     let input = get_test_data::<T>(8, 8, 64, 64, 2, 256);
     test_internal(&input);
 }
 
 fn test_single_token<T: ArrayElement + Float + Debug + Display>() {
-    // Single token (decode)
     let input = get_test_data::<T>(16, 4, 64, 64, 1, 1024);
     test_internal(&input);
 }
 
 fn test_small<T: ArrayElement + Float + Debug + Display>() {
-    // Minimal config
     let input = get_test_data::<T>(2, 1, 4, 4, 1, 8);
     test_internal(&input);
 }
@@ -241,6 +233,97 @@ fn test_partial_rope_proportional_layout() {
     });
 }
 
+fn fixed_fixture_input(
+    rope_scaling_type: u32,
+    rope_scaling_factor: f32,
+    rope_original_context_length: u32,
+    rope_low_frequency_factor: f32,
+    rope_high_frequency_factor: f32,
+    rope_beta_fast: f32,
+    rope_beta_slow: f32,
+    rope_truncate: u32,
+    rope_attention_scaling_factor: f32,
+) -> Input<f32> {
+    Input {
+        qkv: (0..12).map(|value| value as f32).collect::<Box<_>>(),
+        token_positions: [1].into(),
+        head_dim: 4,
+        rope_dim: 4,
+        rotary_pair_stride: 2,
+        rotary_frequency_dim: 4,
+        rope_max_sequence_length: 8,
+        rope_scaling_type,
+        rope_base: 10000.0,
+        rope_scaling_factor,
+        rope_original_context_length,
+        rope_low_frequency_factor,
+        rope_high_frequency_factor,
+        rope_beta_fast,
+        rope_beta_slow,
+        rope_truncate,
+        rope_attention_scaling_factor,
+        num_heads: 1,
+        num_groups: 1,
+        suffix_length: 1,
+    }
+}
+
+fn assert_fixed_fixture(
+    input: Input<f32>,
+    expected_queries: &[f32],
+    expected_keys: &[f32],
+    fixture_name: &str,
+) {
+    let (cpu_queries, cpu_keys) = get_output::<f32, Cpu>(&input);
+    assert_eq_float::<f32>(expected_queries, &cpu_queries, 1e-5, &format!("{fixture_name} CPU queries"));
+    assert_eq_float::<f32>(expected_keys, &cpu_keys, 1e-5, &format!("{fixture_name} CPU keys"));
+
+    for_each_non_cpu_backend!(|B| {
+        let (queries, keys) = get_output::<f32, B>(&input);
+        let msg = format!("{fixture_name} queries test failed with backend={}", std::any::type_name::<B>());
+        assert_eq_float::<f32>(expected_queries, &queries, 1e-4, &msg);
+
+        let msg = format!("{fixture_name} keys test failed with backend={}", std::any::type_name::<B>());
+        assert_eq_float::<f32>(expected_keys, &keys, 1e-4, &msg);
+    });
+}
+
+fn test_unscaled_fixed_fixture() {
+    assert_fixed_fixture(
+        fixed_fixture_input(0, 1.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.0),
+        &[-1.682941970, 0.969950500, 1.080604612, 3.009849835],
+        &[-2.887616685, 4.929751169, 6.607697774, 7.049649170],
+        "unscaled RoPE fixed fixture",
+    );
+}
+
+fn test_linear_fixed_fixture() {
+    assert_fixed_fixture(
+        fixed_fixture_input(1, 2.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.0),
+        &[-0.958851077, 0.984987563, 1.755165124, 3.004962479],
+        &[0.633777016, 4.964937646, 7.183197526, 7.024912396],
+        "linear RoPE fixed fixture",
+    );
+}
+
+fn test_llama_fixed_fixture() {
+    assert_fixed_fixture(
+        fixed_fixture_input(2, 8.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.0),
+        &[-0.406536814, 0.996249220, 1.958246108, 3.001247656],
+        &[2.696881775, 4.991246096, 6.687811951, 7.006244530],
+        "llama RoPE fixed fixture",
+    );
+}
+
+fn test_yarn_fixed_fixture() {
+    assert_fixed_fixture(
+        fixed_fixture_input(3, 4.0, 8, 1.0, 4.0, 32.0, 1.0, 0, 1.138629436),
+        &[-1.916247266, 1.130086166, 1.230408220, 3.418724204],
+        &[-3.287925358, 5.673203395, 7.523719191, 7.984613998],
+        "yarn RoPE fixed fixture",
+    );
+}
+
 fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
     let mut input = get_test_data::<T>(4, 2, 8, 8, 3, 64);
     input.token_positions = vec![10, 11, 12].into_boxed_slice();
@@ -253,7 +336,6 @@ fn test_out_of_range_positions<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input);
 }
 
-// f32 tests
 #[uzu_test]
 fn test_basic_f32() {
     test_basic::<f32>();
@@ -284,7 +366,6 @@ fn test_out_of_range_positions_f32() {
     test_out_of_range_positions::<f32>();
 }
 
-// f16 tests
 #[uzu_test]
 fn test_basic_f16() {
     test_basic::<f16>();
@@ -305,7 +386,6 @@ fn test_small_f16() {
     test_small::<f16>();
 }
 
-// bf16 tests
 #[uzu_test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
@@ -339,4 +419,24 @@ fn test_partial_rope_small_f32() {
 #[uzu_test]
 fn test_partial_rope_proportional_layout_f32() {
     test_partial_rope_proportional_layout();
+}
+
+#[uzu_test]
+fn test_unscaled_fixed_fixture_f32() {
+    test_unscaled_fixed_fixture();
+}
+
+#[uzu_test]
+fn test_linear_fixed_fixture_f32() {
+    test_linear_fixed_fixture();
+}
+
+#[uzu_test]
+fn test_llama_fixed_fixture_f32() {
+    test_llama_fixed_fixture();
+}
+
+#[uzu_test]
+fn test_yarn_fixed_fixture_f32() {
+    test_yarn_fixed_fixture();
 }

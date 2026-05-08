@@ -13,7 +13,7 @@ use crate::{
             matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
         },
     },
-    config::PLEModelConfig,
+    config::PerLayerEmbeddingModelConfig,
     encodable_block::model_extension::{ModelExtensionError, validate_tensor},
     forward_pass::state::{ArrayId, ForwardPassState},
     parameters::ParameterTree,
@@ -26,7 +26,7 @@ pub struct PerLayerEmbedding<B: Backend> {
     projection_norm_scales: Rc<RefCell<B::DenseBuffer>>,
     lookup_kernel: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
     combine_kernel: <B::Kernels as Kernels>::PerLayerEmbeddingCombineKernel,
-    config: PLEModelConfig,
+    config: PerLayerEmbeddingModelConfig,
     model_dim: usize,
 }
 
@@ -34,18 +34,18 @@ impl<B: Backend> PerLayerEmbedding<B> {
     pub fn new(
         context: &B::Context,
         model_dim: usize,
-        config: PLEModelConfig,
+        config: PerLayerEmbeddingModelConfig,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, ModelExtensionError<B>> {
-        let activation_type: DataType = config.linear_config.activation_precision().into();
-        let total_ple_dim = config.num_layers * config.ple_dim;
+        let activation_data_type: DataType = config.linear_config.activation_precision().into();
+        let total_per_layer_embedding_dim = config.num_layers * config.ple_dim;
 
         let token_embedding = parameter_tree.leaf_array("token_embedding")?;
         validate_tensor::<B>(
             token_embedding.shape(),
             token_embedding.data_type(),
-            &[config.ple_vocab_size, total_ple_dim],
-            activation_type,
+            &[config.ple_vocab_size, total_per_layer_embedding_dim],
+            activation_data_type,
         )?;
 
         let projection_tree = parameter_tree.subtree("model_projection")?;
@@ -53,8 +53,8 @@ impl<B: Backend> PerLayerEmbedding<B> {
         validate_tensor::<B>(
             projection_weights.shape(),
             projection_weights.data_type(),
-            &[total_ple_dim, model_dim],
-            activation_type,
+            &[total_per_layer_embedding_dim, model_dim],
+            activation_data_type,
         )?;
 
         let projection_norm_tree = parameter_tree.subtree("projection_norm")?;
@@ -66,12 +66,13 @@ impl<B: Backend> PerLayerEmbedding<B> {
             projection_norm_scales.data_type(),
         )?;
 
-        let lookup_kernel = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, activation_type)
-            .map_err(ModelExtensionError::BackendError)?;
-        let model_projection = <B::Kernels as ManualKernels>::MatmulKernel::new(context, activation_type)?;
+        let lookup_kernel =
+            <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, activation_data_type)
+                .map_err(ModelExtensionError::BackendError)?;
+        let model_projection = <B::Kernels as ManualKernels>::MatmulKernel::new(context, activation_data_type)?;
         let combine_kernel = <B::Kernels as Kernels>::PerLayerEmbeddingCombineKernel::new(
             context,
-            activation_type,
+            activation_data_type,
             projection_norm_scales.data_type(),
         )
         .map_err(ModelExtensionError::BackendError)?;
@@ -102,7 +103,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
         let token_ids_buffer = token_ids.buffer();
         let ple_token = state.array(ArrayId::PleToken);
         let ple_token_buffer = ple_token.buffer();
-        let total_ple_dim = self.config.num_layers * self.config.ple_dim;
+        let total_per_layer_embedding_dim = self.config.num_layers * self.config.ple_dim;
 
         self.lookup_kernel.encode(
             token_ids_buffer.borrow().deref(),
@@ -110,7 +111,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
             ple_token_buffer.borrow_mut().deref_mut(),
             batch_dim as u32,
             self.config.ple_vocab_size as u32,
-            total_ple_dim as u32,
+            total_per_layer_embedding_dim as u32,
             self.config.ple_embed_scale,
             encoder,
         );
@@ -128,7 +129,7 @@ impl<B: Backend> PerLayerEmbedding<B> {
                 d: ple_model.buffer().borrow_mut().deref_mut(),
                 batch_dim: batch_dim as u32,
                 input_dim: self.model_dim as u32,
-                output_dim: total_ple_dim as u32,
+                output_dim: total_per_layer_embedding_dim as u32,
             },
             encoder,
         );

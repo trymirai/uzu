@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     RoPEConfig, attention::AttentionConfig, delta_net::DeltaNetAttentionConfig, mamba::Mamba2Config, mlp::MLPConfig,
-    normalization::NormalizationConfig, short_conv::ShortConvConfig, transformer_layer::PLELayerConfig,
+    normalization::NormalizationConfig, short_conv::ShortConvConfig, transformer_layer::PerLayerEmbeddingLayerConfig,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -105,7 +105,7 @@ pub struct DecoderLayerConfig {
     #[serde(default)]
     pub hidden_dim: Option<usize>,
     #[serde(default)]
-    pub ple_config: Option<PLELayerConfig>,
+    pub ple_config: Option<PerLayerEmbeddingLayerConfig>,
     #[serde(default)]
     pub has_post_layer_scalar: bool,
     #[serde(default)]

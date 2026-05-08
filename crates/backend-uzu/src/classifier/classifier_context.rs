@@ -56,7 +56,7 @@ impl<B: Backend> ClassifierContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
+        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config)));
         let transformer_tree = root_loader_view
             .subtree("transformer")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("transformer".to_string())))?;
@@ -80,21 +80,6 @@ impl<B: Backend> ClassifierContext<B> {
         )
         .expect("Failed to create embedding");
 
-        let global_rope = decoder_config
-            .global_rope_config
-            .as_ref()
-            .map(|rope_config| Self::create_rope_block(&context, data_type, rope_config))
-            .transpose()
-            .map_err(Error::Classifier)?;
-        let local_rope = classifier_model_config
-            .model_config
-            .transformer_config
-            .local_rope_config
-            .as_ref()
-            .map(|rope_config| Self::create_rope_block(&context, data_type, rope_config))
-            .transpose()
-            .map_err(Error::Classifier)?;
-
         let layers = classifier_model_config
             .model_config
             .transformer_config
@@ -103,17 +88,10 @@ impl<B: Backend> ClassifierContext<B> {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let attn = layer_config.attention_config().ok_or(ClassifierError::NonAttentionMixer)?;
-                let rope = if let Some(rope_config) = layer_config.rope_config.as_ref() {
-                    Self::create_rope_block(&context, data_type, rope_config)?
-                } else if attn.sliding_window_size.is_some() {
-                    local_rope.clone().or_else(|| global_rope.clone()).ok_or_else(|| {
-                        ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
-                    })?
-                } else {
-                    global_rope.clone().ok_or_else(|| {
-                        ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
-                    })?
-                };
+                let rope_config = decoder_config.rope_config_for_transformer_layer(layer_config).ok_or_else(|| {
+                    ClassifierError::MissingConfigField(format!("rope_config in layer {}", layer_index))
+                })?;
+                let rope = Self::create_rope_block(&context, data_type, rope_config)?;
 
                 let num_heads = attn.num_heads.ok_or_else(|| {
                     ClassifierError::MissingConfigField(format!("num_heads in layer {}", layer_index))

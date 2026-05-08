@@ -32,7 +32,7 @@ pub use layer_norm::{LayerNorm, LayerNormError};
 pub use linear::Linear;
 pub(crate) use mamba_mixer::MambaMixer;
 pub use mlp::Mlp;
-pub use model_extension::{PLELayer, PerLayerEmbedding, TensorFinalize, ValueNorm};
+pub use model_extension::{PerLayerEmbedding, PerLayerEmbeddingLayer, TensorFinalize, ValueNorm};
 pub use normalization::Normalization;
 pub use pooling::Pooling;
 pub use prediction_head::ClassifierPredictionHead;

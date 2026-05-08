@@ -132,16 +132,10 @@ impl ModelShape {
                 _ => (decoder_config.num_groups, decoder_config.head_dim),
             })
             .collect::<Vec<_>>();
-        let num_groups_per_layer = attention_layer_dimensions
-            .iter()
-            .map(|(num_groups, _)| *num_groups)
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        let head_dim_per_layer = attention_layer_dimensions
-            .iter()
-            .map(|(_, head_dim)| *head_dim)
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
+        let num_groups_per_layer =
+            attention_layer_dimensions.iter().map(|(num_groups, _)| *num_groups).collect::<Vec<_>>().into_boxed_slice();
+        let head_dim_per_layer =
+            attention_layer_dimensions.iter().map(|(_, head_dim)| *head_dim).collect::<Vec<_>>().into_boxed_slice();
         for layer_config in &all_layer_configs {
             let mut linear_configs = Vec::new();
 

@@ -8,7 +8,7 @@ use super::{
     embedding::EmbeddingConfig,
     normalization::NormalizationConfig,
     rope::RoPEConfig,
-    transformer_layer::PLEModelConfig,
+    transformer_layer::{PerLayerEmbeddingModelConfig, TransformerLayerConfig},
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -44,7 +44,7 @@ pub struct DecoderConfig {
     pub embedding_config: EmbeddingConfig,
     pub global_rope_config: Option<RoPEConfig>,
     pub local_rope_config: Option<RoPEConfig>,
-    pub ple_model_config: Option<PLEModelConfig>,
+    pub ple_model_config: Option<PerLayerEmbeddingModelConfig>,
     pub layer_config: DecoderLayerConfig,
     pub layer_configs: Option<Box<[DecoderLayerConfig]>>,
     pub output_norm_config: NormalizationConfig,
@@ -183,7 +183,7 @@ struct RawDecoderConfig {
     #[serde(default)]
     local_rope_config: Option<RoPEConfig>,
     #[serde(default)]
-    ple_model_config: Option<PLEModelConfig>,
+    ple_model_config: Option<PerLayerEmbeddingModelConfig>,
     #[serde(default)]
     layer_config: Option<DecoderLayerConfig>,
     #[serde(default)]
@@ -254,6 +254,40 @@ fn layer_type_from_config(layer: &DecoderLayerConfig) -> DecoderLayerType {
     }
 }
 impl DecoderConfig {
+    pub fn rope_config_for_layer<'a>(
+        &'a self,
+        layer_config: &'a DecoderLayerConfig,
+    ) -> Option<&'a RoPEConfig> {
+        self.rope_config_from_layer_parts(
+            layer_config.rope_config.as_ref(),
+            layer_config.mixer_config.sliding_window_size(),
+        )
+    }
+
+    pub fn rope_config_for_transformer_layer<'a>(
+        &'a self,
+        layer_config: &'a TransformerLayerConfig,
+    ) -> Option<&'a RoPEConfig> {
+        self.rope_config_from_layer_parts(
+            layer_config.rope_config.as_ref(),
+            layer_config.mixer_config.sliding_window_size(),
+        )
+    }
+
+    fn rope_config_from_layer_parts<'a>(
+        &'a self,
+        layer_rope_config: Option<&'a RoPEConfig>,
+        sliding_window_size: Option<usize>,
+    ) -> Option<&'a RoPEConfig> {
+        layer_rope_config.or_else(|| {
+            if sliding_window_size.is_some() {
+                self.local_rope_config.as_ref().or(self.global_rope_config.as_ref())
+            } else {
+                self.global_rope_config.as_ref()
+            }
+        })
+    }
+
     pub fn unsupported_runtime_features(&self) -> Vec<&'static str> {
         let mut features = Vec::new();
         let layer_configs = self

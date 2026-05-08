@@ -1,17 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 use super::{AttentionConfig, LinearConfig, MLPConfig, MixerConfig, NormalizationConfig, RoPEConfig};
+use crate::backends::common::ActivationConfig;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct PLELayerConfig {
+pub struct PerLayerEmbeddingLayerConfig {
     pub linear_config: LinearConfig,
     pub norm_config: NormalizationConfig,
     pub ple_dim: usize,
-    pub activation: crate::backends::common::ActivationConfig,
+    pub activation: ActivationConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct PLEModelConfig {
+pub struct PerLayerEmbeddingModelConfig {
     pub ple_dim: usize,
     pub num_layers: usize,
     pub ple_vocab_size: usize,
@@ -35,7 +36,7 @@ pub struct TransformerLayerConfig {
     #[serde(default)]
     pub hidden_dim: Option<usize>,
     #[serde(default)]
-    pub ple_config: Option<PLELayerConfig>,
+    pub ple_config: Option<PerLayerEmbeddingLayerConfig>,
     #[serde(default)]
     pub has_post_layer_scalar: bool,
     #[serde(default)]

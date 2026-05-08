@@ -1,10 +1,10 @@
 mod per_layer_embedding;
-mod ple_layer;
+mod per_layer_embedding_layer;
 mod tensor_finalize;
 mod value_norm;
 
 pub use per_layer_embedding::PerLayerEmbedding;
-pub use ple_layer::PLELayer;
+pub use per_layer_embedding_layer::PerLayerEmbeddingLayer;
 pub use tensor_finalize::TensorFinalize;
 use thiserror::Error;
 pub use value_norm::ValueNorm;

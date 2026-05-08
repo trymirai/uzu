@@ -148,16 +148,7 @@ impl<B: Backend> Decoder<B> {
             MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
         };
 
-        let global_rope = decoder_config.global_rope_config.as_ref().and_then(|rope_config| {
-            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
-        });
-
-        let local_rope = decoder_config.local_rope_config.as_ref().and_then(|rope_config| {
-            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
-        });
-
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
-        let sliding_window_sizes = model_shape.sliding_window_length_per_layer.clone();
 
         let layers = (0..decoder_config.num_layers)
             .map(|layer_index| {
@@ -169,19 +160,12 @@ impl<B: Backend> Decoder<B> {
                 let layer_type = model_shape.layer_type(layer_index);
                 let rope_for_layer = match layer_type {
                     DecoderLayerType::Transformer => {
-                        if layer_config.rope_config.is_some() {
-                            layer_config.rope_config.as_ref().and_then(|rope_config| {
-                                attention_data_type
-                                    .as_ref()
-                                    .map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
-                            })
-                        } else if let Some(_) = sliding_window_sizes[layer_index]
-                            && let Some(local_rope_block) = local_rope.clone()
-                        {
-                            Some(local_rope_block)
-                        } else {
-                            Some(global_rope.clone().expect("Global rope missing for transformer layer"))
-                        }
+                        let rope_config = decoder_config
+                            .rope_config_for_layer(layer_config)
+                            .expect("RoPE config missing for transformer layer");
+                        attention_data_type
+                            .as_ref()
+                            .map(|data_type| Self::create_rope_block(&context, *data_type, rope_config))
                     },
                     DecoderLayerType::StateSpace {
                         ..

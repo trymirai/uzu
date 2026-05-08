@@ -198,14 +198,14 @@ impl<B: Backend> Attention<B> {
         let projection_step = parameters.projection_step.unwrap_or(0);
         if has_kv_cache && let Some(source_layer_index) = self.kv_source_layer {
             let cache_layers = state.cache_layers().unwrap();
-            let (source_keys, source_values, target_keys, target_values, source_state) = {
+            let (source_keys, source_values, target_keys, target_values, source_cache_state) = {
                 let mut cache = cache_layers.borrow_mut();
                 let source_layer =
                     cache.data[source_layer_index].as_transformer().expect("KV source layer must be transformer");
                 let source_keys = source_layer.keys.clone();
                 let source_values = source_layer.values.clone();
-                let source_state = source_layer.state.clone();
-                let source_prefix_length = match source_state {
+                let source_cache_state = source_layer.state.clone();
+                let source_prefix_length = match source_cache_state {
                     KVCacheLayerState::Full {
                         prefix_len,
                     } => prefix_len,
@@ -223,11 +223,11 @@ impl<B: Backend> Attention<B> {
                 };
                 let target_keys = target_layer.keys.clone();
                 let target_values = target_layer.values.clone();
-                (source_keys, source_values, target_keys, target_values, source_state)
+                (source_keys, source_values, target_keys, target_values, source_cache_state)
             };
 
             let row_size = num_groups * head_dim * target_keys.data_type().size_in_bytes();
-            match source_state {
+            match source_cache_state {
                 KVCacheLayerState::Full {
                     prefix_len,
                 } => {
@@ -253,27 +253,33 @@ impl<B: Backend> Attention<B> {
                     ring_length,
                     window_length,
                 } => {
-                    for logical_index in 0..ring_length {
-                        let source_row = (ring_offset + logical_index) % window_length;
-                        let source_start = source_keys.offset() + source_row * row_size;
-                        let target_start = target_keys.offset() + logical_index * row_size;
+                    let mut copy_key_value_row = |source_row: usize, target_row: usize| {
+                        let source_key_start = source_keys.offset() + source_row * row_size;
+                        let target_key_start = target_keys.offset() + target_row * row_size;
+                        let source_value_start = source_values.offset() + source_row * row_size;
+                        let target_value_start = target_values.offset() + target_row * row_size;
                         encoder.encode_copy(
                             source_keys.buffer().borrow().deref(),
-                            source_start..source_start + row_size,
+                            source_key_start..source_key_start + row_size,
                             target_keys.buffer().borrow_mut().deref_mut(),
-                            target_start..target_start + row_size,
+                            target_key_start..target_key_start + row_size,
                         );
                         encoder.encode_copy(
                             source_values.buffer().borrow().deref(),
-                            source_start..source_start + row_size,
+                            source_value_start..source_value_start + row_size,
                             target_values.buffer().borrow_mut().deref_mut(),
-                            target_start..target_start + row_size,
+                            target_value_start..target_value_start + row_size,
                         );
+                    };
+
+                    for logical_index in 0..ring_length {
+                        let source_row = (ring_offset + logical_index) % window_length;
+                        copy_key_value_row(source_row, logical_index);
                     }
 
                     let extra_rows_to_copy = projection_step + suffix_length;
                     let target_suffix_start = ring_length;
-                    let source_suffix_start = source_state
+                    let source_suffix_start = source_cache_state
                         .shared_kv_suffix_source_start(
                             extra_rows_to_copy,
                             0,
@@ -284,20 +290,7 @@ impl<B: Backend> Attention<B> {
                     for token_index in 0..extra_rows_to_copy {
                         let source_row = source_suffix_start + token_index;
                         let target_row = target_suffix_start + token_index;
-                        let source_start = source_keys.offset() + source_row * row_size;
-                        let target_start = target_keys.offset() + target_row * row_size;
-                        encoder.encode_copy(
-                            source_keys.buffer().borrow().deref(),
-                            source_start..source_start + row_size,
-                            target_keys.buffer().borrow_mut().deref_mut(),
-                            target_start..target_start + row_size,
-                        );
-                        encoder.encode_copy(
-                            source_values.buffer().borrow().deref(),
-                            source_start..source_start + row_size,
-                            target_values.buffer().borrow_mut().deref_mut(),
-                            target_start..target_start + row_size,
-                        );
+                        copy_key_value_row(source_row, target_row);
                     }
                 },
             }
