@@ -61,7 +61,8 @@ impl Drop for MetalSparseBuffer {
 
         let ranges: Vec<Range<usize>> = self.mapped_pages.iter().map(|(range, _)| range.clone()).collect();
         ranges.iter().for_each(|range| {
-            let _ = context.sparse_heap_pool_mut().unmap(&context, &self.buffer, range);
+            let error = context.sparse_heap_pool_mut().unmap(&context, &self.buffer, range);
+            eprintln!("MetalSparseBuffer::drop error: {:?}", error);
         });
     }
 }
