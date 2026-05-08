@@ -27,6 +27,8 @@ let package = Package(
                 .linkedFramework("SystemConfiguration"),
                 .linkedFramework("Metal"),
                 .linkedFramework("MetalPerformanceShadersGraph"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("AudioToolbox"),
             ]
         ),
         .executableTarget(
