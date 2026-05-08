@@ -37,21 +37,6 @@ impl<B: Backend> AsBufferRangeMut for Allocation<B> {
     }
 }
 
-impl<B: Backend> Allocation<B> {
-    pub fn as_buffer_range(&self) -> (&B::DenseBuffer, Range<usize>) {
-        // SAFETY: we keep a strong ref to the allocator that owns the buffers and won't deallocate them while this allocation is alive.
-        (unsafe { &*self.buffer }, self.range.clone())
-    }
-
-    pub fn as_buffer_subrange<'a>(
-        &'a self,
-        range: &Range<usize>,
-    ) -> (&'a B::DenseBuffer, Range<usize>) {
-        assert!(range.end <= self.range.len(), "allocation subrange exceeds allocation");
-        (unsafe { &*self.buffer }, self.range.start + range.start..self.range.start + range.end)
-    }
-}
-
 impl<B: Backend> Drop for Allocation<B> {
     fn drop(&mut self) {
         self.allocator.free(self)

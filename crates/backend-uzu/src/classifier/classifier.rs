@@ -5,7 +5,7 @@ use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext, ClassifierError};
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::ModelMetadata,
     encodable_block::{EncodingParameters, LayerArguments},
     forward_pass::token_inputs::TokenInputs,
@@ -133,8 +133,9 @@ impl<B: Backend> Classifier<B> {
             encoder.encode_copy(&main, .., embedding_norm, ..);
         }
 
-        let mut shortcut =
-            encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        let mut shortcut = encoder
+            .allocate_scratch(main.as_buffer_range_ref().range().len())
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         for (layer_index, layer) in self.context.layers.iter().enumerate() {
             let rope_type = layer.rope_type();
             main = layer

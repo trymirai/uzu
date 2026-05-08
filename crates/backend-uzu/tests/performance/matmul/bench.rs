@@ -4,7 +4,7 @@ use backend_uzu::{
     DataType,
     backends::{
         common::{
-            AllocationType, Backend, Context, DenseBuffer, Encoder,
+            Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -22,10 +22,17 @@ const WARMUP_ITERATIONS: usize = 3;
 const BENCHMARK_ITERATIONS: usize = 10;
 
 fn fill_buffer_random(
-    buffer: &<Metal as Backend>::DenseBuffer,
+    allocation: &mut Allocation<Metal>,
     byte_count: usize,
 ) {
-    let slice = unsafe { std::slice::from_raw_parts_mut(buffer.cpu_ptr().as_ptr() as *mut u8, byte_count) };
+    let buffer_range = allocation.as_buffer_range_mut();
+    let range = buffer_range.range();
+    let slice = unsafe {
+        std::slice::from_raw_parts_mut(
+            (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+            byte_count,
+        )
+    };
     for (i, byte) in slice.iter_mut().enumerate() {
         *byte = (i % 251) as u8;
     }
@@ -74,17 +81,15 @@ fn run_benchmark(
     let b_byte_count = shape.output_dim * shape.input_dim * elem_size;
     let d_byte_count = shape.batch * shape.output_dim * elem_size;
 
-    let a_allocation =
+    let mut a_allocation =
         context.create_allocation(a_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
-    let b_allocation =
+    let mut b_allocation =
         context.create_allocation(b_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
     let mut d_allocation =
         context.create_allocation(d_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
 
-    let (a_raw, _) = a_allocation.as_buffer_range();
-    let (b_raw, _) = b_allocation.as_buffer_range();
-    fill_buffer_random(a_raw, a_byte_count);
-    fill_buffer_random(b_raw, b_byte_count);
+    fill_buffer_random(&mut a_allocation, a_byte_count);
+    fill_buffer_random(&mut b_allocation, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
         encode_and_run(context, &mut kernel, shape, &a_allocation, &b_allocation, &mut d_allocation).map_err(

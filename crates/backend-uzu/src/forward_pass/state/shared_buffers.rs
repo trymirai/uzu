@@ -4,7 +4,7 @@ use super::{RopeBuffers, RopeType};
 use crate::{
     DataType,
     array::ArrayContextExt,
-    backends::common::{Allocation, Backend, DenseBuffer},
+    backends::common::{Allocation, AsBufferRangeMut, Backend, DenseBuffer},
     config::DecoderConfig,
     forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
@@ -61,9 +61,10 @@ impl<B: Backend> SharedBuffers<B> {
                 let attn_tree = layer_tree.subtree("mixer").unwrap();
                 let sinks_arr = attn_tree.leaf_array("sinks").unwrap();
                 let dst_slice = unsafe {
-                    let (buffer, range) = sink_cell.as_buffer_range();
+                    let buffer_range = sink_cell.as_buffer_range_mut();
+                    let range = buffer_range.range();
                     std::slice::from_raw_parts_mut(
-                        (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start) as *mut f32,
+                        (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start) as *mut f32,
                         range.len() / std::mem::size_of::<f32>(),
                     )
                 };

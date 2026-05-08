@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::Allocation,
+    backends::common::{Allocation, AsBufferRangeRef},
     encodable_block::LayerArguments,
     forward_pass::token_inputs::TokenInputs,
 };
@@ -314,7 +314,7 @@ impl StructuredAudioCodecGraph {
         let encoding_parameters = EncodingParameters::new();
         let mut main = main;
         let mut shortcut = encoder
-            .allocate_scratch(main.as_buffer_range().1.len())
+            .allocate_scratch(main.as_buffer_range_ref().range().len())
             .map_err(|err| AudioError::Runtime(format!("post_module shortcut allocation failed: {err}")))?;
         for layer in runtime.layers.iter() {
             let rope_type = layer.rope_type();

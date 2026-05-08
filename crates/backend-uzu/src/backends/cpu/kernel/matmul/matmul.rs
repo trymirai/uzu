@@ -4,7 +4,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            AsBufferRangeMut, AsBufferRangeRef, Encoder,
             kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
         },
         cpu::{Cpu, context::CpuContext},
@@ -55,22 +55,29 @@ impl MatmulKernel for MatmulCpuKernel {
         let ldb = k;
         let ldd = n;
         let data_type = self.data_type;
-        let (a, a_range) = a.as_buffer_range();
-        let (b, b_range) = b.as_buffer_range();
-        let (d, d_range) = d.as_buffer_range();
-        let a_offset = a_range.start + a_offset;
-        let b_offset = b_range.start;
-        let d_offset = d_range.start;
+        let a_buffer_range = a.as_buffer_range_ref();
+        let b_buffer_range = b.as_buffer_range_ref();
+        let d_buffer_range = d.as_buffer_range_mut();
+        let a_offset = a_buffer_range.range().start + a_offset;
+        let b_offset = b_buffer_range.range().start;
+        let d_offset = d_buffer_range.range().start;
 
-        let a_ptr = SendPtr(unsafe { &*a.get() }.as_ptr().wrapping_byte_add(a_offset));
-        let b_ptr = SendPtr(unsafe { &*b.get() }.as_ptr().wrapping_byte_add(b_offset));
-        let d_ptr = SendPtrMut(unsafe { (&*d.get()).as_ptr().wrapping_byte_add(d_offset) as *mut u8 });
+        let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_offset));
+        let b_ptr = SendPtr(unsafe { &*b_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(b_offset));
+        let d_ptr =
+            SendPtrMut(unsafe { (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_offset) as *mut u8 });
 
         let (is_accumulate, bias_ptr) = match c {
             MatmulArgumentC::Accumulate => (true, None),
             MatmulArgumentC::Bias(bias) => {
-                let (bias, bias_range) = bias.as_buffer_range();
-                (false, Some(SendPtr(unsafe { &*bias.get() }.as_ptr().wrapping_byte_add(bias_range.start))))
+                let bias_buffer_range = bias.as_buffer_range_ref();
+                let bias_range = bias_buffer_range.range();
+                (
+                    false,
+                    Some(SendPtr(
+                        unsafe { &*bias_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(bias_range.start),
+                    )),
+                )
             },
             MatmulArgumentC::None => (false, None),
         };

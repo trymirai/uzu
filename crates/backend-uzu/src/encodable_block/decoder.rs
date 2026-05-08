@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::{DecoderConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
         Embedding, EncodingParameters, LayerArguments, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError,
@@ -266,7 +266,7 @@ impl<B: Backend> Decoder<B> {
         let mut trace = trace;
 
         let mut shortcut =
-            encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(DecoderError::BackendError)?;
+            encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(DecoderError::BackendError)?;
 
         for layer in self.layers.iter() {
             let rope_type = layer.rope_type();
@@ -361,7 +361,7 @@ impl<B: Backend> Decoder<B> {
             .encode(&main, sampling_start, sampling_length, Some(&mut shortcut), encoder)
             .map_err(DecoderError::BackendError)?;
         if let Some(hidden_capture) = hidden_capture {
-            let row_size_bytes = shortcut.as_buffer_range().1.len() / batch_dim;
+            let row_size_bytes = shortcut.as_buffer_range_ref().range().len() / batch_dim;
             let input_offset = (batch_dim - 1) * row_size_bytes;
             encoder.encode_copy(&shortcut, input_offset..input_offset + row_size_bytes, hidden_capture, ..);
         }

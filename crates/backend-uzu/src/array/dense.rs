@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     Array, ArrayElement,
-    backends::common::{Allocation, Backend, DenseBuffer},
+    backends::common::{Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, DenseBuffer},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -27,8 +27,9 @@ impl<B: Backend> Array<B> {
         if self.size() == 0 {
             return NonNull::new(self.data_type().size_in_bytes() as *mut c_void).expect("dtype-aligned empty pointer");
         }
-        let (buffer, range) = self.as_buffer_range();
-        unsafe { buffer.cpu_ptr().add(range.start) }
+        let buffer_range = self.allocation().as_buffer_range_ref();
+        let range = buffer_range.range();
+        unsafe { buffer_range.buffer().cpu_ptr().add(range.start + self.offset()) }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -44,9 +45,14 @@ impl<B: Backend> Array<B> {
             let pointer = NonNull::new(data_type.size_in_bytes() as *mut c_void).expect("dtype-aligned empty pointer");
             return unsafe { std::slice::from_raw_parts_mut(pointer.as_ptr() as *mut u8, size) };
         };
-        let (buffer, allocation_range) = allocation.as_buffer_range();
-        let start = allocation_range.start + offset;
-        unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(start), size) }
+        let buffer_range = allocation.as_buffer_range_mut();
+        let range = buffer_range.range();
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start + offset),
+                size,
+            )
+        }
     }
 
     pub fn as_slice<T: ArrayElement>(&self) -> &[T] {
@@ -166,13 +172,25 @@ pub fn allocation_copy_from_slice<B: Backend, T: ArrayElement>(
 }
 
 pub fn allocation_as_bytes<B: Backend>(allocation: &Allocation<B>) -> &[u8] {
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe { std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len()) }
+    let buffer_range = allocation.as_buffer_range_ref();
+    let range = buffer_range.range();
+    unsafe {
+        std::slice::from_raw_parts(
+            (buffer_range.buffer().cpu_ptr().as_ptr() as *const u8).add(range.start),
+            range.len(),
+        )
+    }
 }
 
 pub fn allocation_as_bytes_mut<B: Backend>(allocation: &mut Allocation<B>) -> &mut [u8] {
-    let (buffer, range) = allocation.as_buffer_range();
-    unsafe { std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len()) }
+    let buffer_range = allocation.as_buffer_range_mut();
+    let range = buffer_range.range();
+    unsafe {
+        std::slice::from_raw_parts_mut(
+            (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+            range.len(),
+        )
+    }
 }
 
 pub fn try_allocation_to_vec<B: Backend, T: ArrayElement>(

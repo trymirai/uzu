@@ -5,7 +5,7 @@ use regex::Regex;
 use super::*;
 use crate::{
     array::ArrayContextExt,
-    backends::common::{Allocation, DenseBuffer},
+    backends::common::{Allocation, AsBufferRangeRef, DenseBuffer},
     config::TtsMessageProcessorConfig,
     encodable_block::SamplingInputs,
     forward_pass::token_inputs::TokenInputs,
@@ -537,7 +537,10 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             return Err(Error::UnableToLoadConfig);
         }
 
-        debug_assert_eq!(slow_hidden_capture.as_buffer_range().1.len(), output_embedding.as_buffer_range().1.len());
+        debug_assert_eq!(
+            slow_hidden_capture.as_buffer_range_ref().range().len(),
+            output_embedding.as_buffer_range_ref().range().len()
+        );
         encoder.encode_copy(slow_hidden_capture, .., output_embedding, ..);
         Ok(())
     }
@@ -568,9 +571,10 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             if semantic_bridge.num_codebooks != num_codebooks {
                 return Err(Error::GenerateFailed);
             }
-            let (buffer, range) = semantic_bridge.codebook_token_indices.as_buffer_range();
+            let buffer_range = semantic_bridge.codebook_token_indices.as_buffer_range_ref();
+            let range = buffer_range.range();
             unsafe {
-                let ptr = (buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start) as *mut u32;
+                let ptr = (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start) as *mut u32;
                 *ptr = first_code;
             }
         }

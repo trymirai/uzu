@@ -11,7 +11,8 @@ use super::{
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{
-        Allocation, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending, kernel::TokenCopySampledKernel,
+        Allocation, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
+        kernel::TokenCopySampledKernel,
     },
     config::ModelMetadata,
     encodable_block::{DecoderDecodeInput, EncodingParameters, SamplingArguments, SamplingInputs},
@@ -523,9 +524,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             .context
             .create_array_uninitialized(&token_ids_shape, token_ids_data_type, "async_token_id")
             .into_allocation();
-        let (async_token_ids_buffer, async_token_ids_range) = async_token_ids_allocation.as_buffer_range();
+        let async_token_ids_buffer_range = async_token_ids_allocation.as_buffer_range_ref();
+        let async_token_ids_range = async_token_ids_buffer_range.range();
         let async_token_ptr = SendPtr(unsafe {
-            (async_token_ids_buffer.cpu_ptr().as_ptr() as *const u64)
+            (async_token_ids_buffer_range.buffer().cpu_ptr().as_ptr() as *const u64)
                 .add(async_token_ids_range.start / std::mem::size_of::<u64>())
         });
         self.context.token_copy_sampled.encode(
@@ -866,10 +868,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_output: &Allocation<B>,
         batch_size: usize,
     ) -> Result<Vec<u64>, Error> {
-        let (buffer, range) = sampling_output.as_buffer_range();
+        let buffer_range = sampling_output.as_buffer_range_ref();
+        let range = buffer_range.range();
         let values = unsafe {
             std::slice::from_raw_parts(
-                (buffer.cpu_ptr().as_ptr() as *const u32).add(range.start / std::mem::size_of::<u32>()),
+                (buffer_range.buffer().cpu_ptr().as_ptr() as *const u32).add(range.start / std::mem::size_of::<u32>()),
                 batch_size,
             )
         };

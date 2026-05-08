@@ -1,9 +1,9 @@
-use std::{fmt, ops::Range};
+use std::fmt;
 
 use crate::{
     DataType,
     array::size_for_shape,
-    backends::common::{Allocation, Backend},
+    backends::common::{Allocation, AsBufferRangeRef, Backend},
 };
 
 pub struct Array<B: Backend> {
@@ -29,7 +29,7 @@ impl<B: Backend> Array<B> {
         data_type: DataType,
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
-        let allocation_len = allocation.as_buffer_range().1.len();
+        let allocation_len = allocation.as_buffer_range_ref().range().len();
         Self::assert_offset_alignment(offset, data_type);
         assert!(
             offset + required_bytes <= allocation_len,
@@ -73,16 +73,10 @@ impl<B: Backend> Array<B> {
         let allocation = self.allocation.expect("Empty Array has no backing allocation");
         assert_eq!(
             size_for_shape(&self.shape, self.data_type),
-            allocation.as_buffer_range().1.len(),
+            allocation.as_buffer_range_ref().range().len(),
             "Partial Array view cannot be converted into Allocation",
         );
         allocation
-    }
-
-    pub fn as_buffer_range(&self) -> (&B::DenseBuffer, Range<usize>) {
-        let (buffer, allocation_range) = self.allocation().as_buffer_range();
-        let start = allocation_range.start + self.offset;
-        (buffer, start..start + self.size())
     }
 
     pub fn size(&self) -> usize {

@@ -1,4 +1,4 @@
-use std::{cell::Cell, ops::Range, time::Duration};
+use std::{cell::Cell, time::Duration};
 
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
@@ -9,8 +9,8 @@ use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use super::Metal;
 use crate::backends::{
     common::{
-        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferInitial, CommandBufferPending,
+        AccessFlags, Backend, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+        CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
     metal::error::MetalError,
 };
@@ -120,30 +120,27 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &crate::backends::common::Allocation<Metal>,
-        src_range: Range<usize>,
-        dst: &mut crate::backends::common::Allocation<Metal>,
-        dst_range: Range<usize>,
+        src: BufferRangeRef<'_, <Metal as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
     ) {
-        let (src, src_buffer_range) = src.as_buffer_subrange(&src_range);
-        let (dst, dst_buffer_range) = dst.as_buffer_subrange(&dst_range);
-        let size = src_buffer_range.end - src_buffer_range.start;
-        assert_eq!(size, dst_buffer_range.end - dst_buffer_range.start);
+        let src_range = src.range();
+        let dst_range = dst.range();
+        let size = src_range.end - src_range.start;
+        assert_eq!(size, dst_range.end - dst_range.start);
 
-        self.ensure_blit().copy_buffer_to_buffer(src, src_buffer_range.start, dst, dst_buffer_range.start, size);
+        self.ensure_blit().copy_buffer_to_buffer(src.buffer(), src_range.start, dst.buffer(), dst_range.start, size);
     }
 
     fn encode_fill(
         &mut self,
-        dst: &mut crate::backends::common::Allocation<Metal>,
-        range: Range<usize>,
+        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
         value: u8,
     ) {
-        let (dst, range) = dst.as_buffer_subrange(&range);
+        let range = dst.range();
         assert!(range.end > range.start);
         assert!(range.start % 4 == 0 && range.end % 4 == 0);
 
-        self.ensure_blit().fill_buffer_range_value(dst, range, value);
+        self.ensure_blit().fill_buffer_range_value(dst.buffer(), range, value);
     }
 
     fn encode_barrier(

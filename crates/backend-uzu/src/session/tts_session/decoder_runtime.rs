@@ -1,7 +1,7 @@
 use super::{decoder_support::*, *};
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Allocation, DenseBuffer},
+    backends::common::{Allocation, AsBufferRangeRef, DenseBuffer},
     encodable_block::{DecoderArguments, DecoderDecodeInput, SamplingInputs},
     forward_pass::token_inputs::TokenInputs,
     session::types::TtsModelConfigError,
@@ -1043,7 +1043,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
             u32::try_from(total_len).map_err(|_| TtsModelConfigError::AddScaleTotalLengthExceedsU32 {
                 total_len,
             })?;
-        let mut output = encoder.allocate_scratch(main.as_buffer_range().1.len()).map_err(unable_to_create_context)?;
+        let mut output =
+            encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(unable_to_create_context)?;
         self.tensor_add_scale.encode(
             &*main,
             &self.single_override_embedding,
@@ -1156,10 +1157,11 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
             .into());
         }
-        let (buffer, range) = self.ctx.async_chain_results.as_buffer_range();
+        let buffer_range = self.ctx.async_chain_results.as_buffer_range_ref();
+        let range = buffer_range.range();
         Ok(unsafe {
-            *((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start + slot * std::mem::size_of::<u32>())
-                as *const u32)
+            *((buffer_range.buffer().cpu_ptr().as_ptr() as *const u8)
+                .add(range.start + slot * std::mem::size_of::<u32>()) as *const u32)
         })
     }
 
@@ -1173,7 +1175,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
 }
 
 fn read_sampled_token_from_sampling_output<B: Backend>(sampling_output: &Allocation<B>) -> Result<u64, Error> {
-    let (buffer, range) = sampling_output.as_buffer_range();
-    let token = unsafe { *((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start) as *const u32) };
+    let buffer_range = sampling_output.as_buffer_range_ref();
+    let range = buffer_range.range();
+    let token = unsafe { *((buffer_range.buffer().cpu_ptr().as_ptr() as *const u8).add(range.start) as *const u32) };
     Ok(u64::from(token))
 }

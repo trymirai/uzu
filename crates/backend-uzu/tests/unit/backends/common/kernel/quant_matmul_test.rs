@@ -7,9 +7,9 @@ use std::time::Instant;
 use half::{bf16, f16};
 
 use crate::{
-    DataType,
+    DataType, allocation_as_bytes,
     backends::common::{
-        Allocation, AllocationType, Backend, Context, DenseBuffer, Encoder,
+        Allocation, AllocationType, Backend, Context, Encoder,
         gpu_types::QuantizationMode,
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
@@ -404,31 +404,14 @@ fn execute_quantized_matmul<B: Backend>(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let (buffer, range) = y_buf.as_buffer_range();
-                let y_out = unsafe {
-                    let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
-                    let bytes = std::slice::from_raw_parts(src, range.len());
-                    bytemuck::cast_slice::<u8, f16>(bytes)
-                };
+                let y_out = bytemuck::cast_slice::<u8, f16>(allocation_as_bytes(&y_buf));
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let (buffer, range) = y_buf.as_buffer_range();
-                let y_out = unsafe {
-                    let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
-                    let bytes = std::slice::from_raw_parts(src, range.len());
-                    bytemuck::cast_slice::<u8, bf16>(bytes)
-                };
+                let y_out = bytemuck::cast_slice::<u8, bf16>(allocation_as_bytes(&y_buf));
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
-            DataType::F32 => {
-                let (buffer, range) = y_buf.as_buffer_range();
-                unsafe {
-                    let src = (buffer.cpu_ptr().as_ptr() as *const u8).add(range.start);
-                    let bytes = std::slice::from_raw_parts(src, range.len());
-                    bytemuck::cast_slice::<u8, f32>(bytes).to_vec()
-                }
-            },
+            DataType::F32 => bytemuck::cast_slice::<u8, f32>(allocation_as_bytes(&y_buf)).to_vec(),
             other => panic!("Unsupported dtype for validation: {:?}", other),
         };
 

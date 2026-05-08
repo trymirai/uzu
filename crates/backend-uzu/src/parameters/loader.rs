@@ -9,7 +9,7 @@ use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
-    backends::common::{Allocation, AllocationType, Backend, Context, DenseBuffer},
+    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
     utils::fs::file_read_exact_at,
 };
 
@@ -173,11 +173,15 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
             .context
             .create_allocation(self.metadata.size, AllocationType::Global)
             .map_err(ParameterLoaderError::BackendError)?;
-        let (buffer, range) = allocation.as_buffer_range();
+        let buffer_range = allocation.as_buffer_range_ref();
+        let range = buffer_range.range();
         file_read_exact_at(
             self.loader.file,
             unsafe {
-                std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
+                std::slice::from_raw_parts_mut(
+                    (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+                    range.len(),
+                )
             },
             self.metadata.offset as u64,
         )?;

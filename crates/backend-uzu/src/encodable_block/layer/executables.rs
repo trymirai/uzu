@@ -9,7 +9,7 @@ use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
 use crate::forward_pass::traces::LayerActivationTrace;
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
     encodable_block::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, EncodingParameters, Linear, MambaArguments,
@@ -357,7 +357,7 @@ impl<B: Backend> LayerExecutables<B> {
                 head_dim,
             } => {
                 let gate_input = if gate_projection.is_some() {
-                    let hidden_len = hidden.as_buffer_range().1.len();
+                    let hidden_len = hidden.as_buffer_range_ref().range().len();
                     let mut gate_input = encoder.allocate_scratch(hidden_len)?;
                     encoder.encode_copy(&hidden, .., &mut gate_input, ..);
                     Some(gate_input)

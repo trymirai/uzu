@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::backends::common::{
-    AccessFlags, Allocation, AllocationPool, AllocationType, Backend, BufferGpuAddressRangeExt, CommandBuffer,
-    CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-    Context,
+    AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend,
+    BufferGpuAddressRangeExt, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+    CommandBufferInitial, CommandBufferPending, Context,
     hazard_tracker::{Access, HazardTracker},
 };
 
@@ -86,24 +86,26 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         dst: &mut Allocation<B>,
         dst_range: impl RangeBounds<usize>,
     ) {
-        let src_range = resolve_copy_range(src_range, src.as_buffer_range().1.len(), "source");
-        let dst_range = resolve_copy_range(dst_range, dst.as_buffer_range().1.len(), "destination");
+        let src_buffer_range = src.as_buffer_range_ref();
+        let dst_buffer_range = dst.as_buffer_range_mut();
+        let src_range = resolve_copy_range(src_range, src_buffer_range.range().len(), "source");
+        let dst_range = resolve_copy_range(dst_range, dst_buffer_range.range().len(), "destination");
         let byte_len = src_range.len();
         assert_eq!(byte_len, dst_range.len(), "copy range lengths must match");
         assert!(byte_len > 0, "zero-sized copies are not allowed");
-        let (src_buffer, src_access_range) = src.as_buffer_subrange(&src_range);
-        let (dst_buffer, dst_access_range) = dst.as_buffer_subrange(&dst_range);
+        let src_buffer_range = src_buffer_range.subrange(src_range);
+        let dst_buffer_range = dst_buffer_range.subrange(dst_range);
         self.access(&[
             Access {
-                range: src_buffer.gpu_address_subrange(src_access_range),
+                range: src_buffer_range.buffer().gpu_address_subrange(src_buffer_range.range()),
                 flags: AccessFlags::copy_read(),
             },
             Access {
-                range: dst_buffer.gpu_address_subrange(dst_access_range),
+                range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
                 flags: AccessFlags::copy_write(),
             },
         ]);
-        self.command_buffer.encode_copy(src, src_range, dst, dst_range);
+        self.command_buffer.encode_copy(src_buffer_range, dst_buffer_range);
     }
 
     pub fn encode_fill(
@@ -111,14 +113,16 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         dst: &mut Allocation<B>,
         value: u8,
     ) {
-        let range = 0..dst.as_buffer_range().1.len();
+        let dst_buffer_range = dst.as_buffer_range_mut();
+        let dst_len = dst_buffer_range.range().len();
+        let range = 0..dst_len;
         assert!(!range.is_empty(), "zero-sized fills are not allowed");
-        let (dst_buffer, dst_access_range) = dst.as_buffer_subrange(&range);
+        let dst_buffer_range = dst_buffer_range.subrange(range);
         self.access(&[Access {
-            range: dst_buffer.gpu_address_subrange(dst_access_range),
+            range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
             flags: AccessFlags::copy_write(),
         }]);
-        self.command_buffer.encode_fill(dst, range, value);
+        self.command_buffer.encode_fill(dst_buffer_range, value);
     }
 
     pub fn access(

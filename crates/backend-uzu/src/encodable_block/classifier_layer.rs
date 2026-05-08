@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
     config::TransformerLayerConfig,
     encodable_block::{
         Attention, AttentionArguments, EncodingParameters, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope,
@@ -218,7 +218,7 @@ impl<B: Backend> ClassifierLayer<B> {
             encoder.encode_copy(&main, .., layer_traces.inputs.allocation_mut(), ..);
         }
 
-        debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
+        debug_assert_eq!(main.as_buffer_range_ref().range().len(), shortcut.as_buffer_range_ref().range().len());
         encoder.encode_copy(&main, .., shortcut, ..);
 
         let mut main = if let Some(ref pre_attn_norm) = self.pre_attention_norm {
@@ -288,7 +288,7 @@ impl<B: Backend> ClassifierLayer<B> {
             encoder.encode_copy(&main, .., layer_traces.mlp_inputs.allocation_mut(), ..);
         }
 
-        debug_assert_eq!(main.as_buffer_range().1.len(), shortcut.as_buffer_range().1.len());
+        debug_assert_eq!(main.as_buffer_range_ref().range().len(), shortcut.as_buffer_range_ref().range().len());
         encoder.encode_copy(&main, .., shortcut, ..);
 
         main = self.pre_mlp_norm.encode(&main, 0, batch_dim, encoder)?;

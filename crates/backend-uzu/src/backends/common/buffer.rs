@@ -57,6 +57,17 @@ impl<'a, B: Buffer> BufferRangeRef<'a, B> {
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
     }
+
+    pub(super) fn subrange(
+        self,
+        range: Range<usize>,
+    ) -> Self {
+        assert!(range.end <= self.range.len(), "buffer subrange exceeds range");
+        Self {
+            buffer: self.buffer,
+            range: self.range.start + range.start..self.range.start + range.end,
+        }
+    }
 }
 
 pub trait AsBufferRangeRef {
@@ -97,6 +108,17 @@ impl<'a, B: Buffer> BufferRangeMut<'a, B> {
 
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
+    }
+
+    pub(super) fn subrange(
+        self,
+        range: Range<usize>,
+    ) -> Self {
+        assert!(range.end <= self.range.len(), "buffer subrange exceeds range");
+        Self {
+            buffer: self.buffer,
+            range: self.range.start + range.start..self.range.start + range.end,
+        }
     }
 }
 
