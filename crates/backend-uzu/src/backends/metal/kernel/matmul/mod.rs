@@ -362,7 +362,7 @@ impl MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        if !self.is_mpp_eligible(context) {
+        if !context.device.supports_mxu() {
             return Err(MatmulError::UnsupportedDataType(self.data_type));
         }
 

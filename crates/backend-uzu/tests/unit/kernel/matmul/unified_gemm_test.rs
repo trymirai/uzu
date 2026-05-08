@@ -216,6 +216,11 @@ fn test_bf16_unaligned() {
 // MxuMma path (requires MXU-eligible hardware; runs on Apple Silicon GPUs that support metal_perf_primitives).
 
 #[uzu_test]
+fn test_mxu_f32_aligned_64() {
+    test_mxu_mma::<f32>(64, 64, 64, 0.01);
+}
+
+#[uzu_test]
 fn test_mxu_f16_aligned_64() {
     test_mxu_mma::<f16>(64, 64, 64, 0.05);
 }
@@ -223,6 +228,11 @@ fn test_mxu_f16_aligned_64() {
 #[uzu_test]
 fn test_mxu_bf16_aligned_64() {
     test_mxu_mma::<bf16>(64, 64, 64, 0.5);
+}
+
+#[uzu_test]
+fn test_mxu_f32_large_aligned() {
+    test_mxu_mma::<f32>(128, 256, 128, 0.01);
 }
 
 #[uzu_test]
