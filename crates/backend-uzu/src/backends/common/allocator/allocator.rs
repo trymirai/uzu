@@ -6,7 +6,10 @@ use std::{
 };
 
 use super::{RangeAllocationType, RangeAllocator};
-use crate::backends::common::{Backend, Buffer, Context};
+use crate::backends::common::{
+    Backend, Buffer, Context,
+    buffer::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef},
+};
 
 pub struct Allocation<B: Backend> {
     allocator: Rc<Allocator<B>>,
@@ -14,9 +17,23 @@ pub struct Allocation<B: Backend> {
     range: Range<usize>,
 }
 
-impl<B: Backend> Allocation<B> {
-    pub fn as_buffer_range<'a>(&'a self) -> (&'a B::DenseBuffer, Range<usize>) {
-        (unsafe { &*self.buffer }, self.range.clone())
+impl<B: Backend> AsBufferRangeRef for Allocation<B> {
+    type Buffer = B::DenseBuffer;
+
+    fn as_buffer_range_ref<'a>(&'a self) -> BufferRangeRef<'a, B::DenseBuffer> {
+        // SAFETY: we keep a strong ref to the allocator that owns the bufs and won't deallocate them while we're alive
+        let buffer = unsafe { &*self.buffer };
+
+        BufferRangeRef::new(buffer, self.range.clone())
+    }
+}
+
+impl<B: Backend> AsBufferRangeMut for Allocation<B> {
+    fn as_buffer_range_mut<'a>(&'a mut self) -> BufferRangeMut<'a, B::DenseBuffer> {
+        // SAFETY: we keep a strong ref to the allocator that owns the bufs and won't deallocate them while we're alive
+        let buffer = unsafe { &*self.buffer };
+        // SAFETY: allocator algorithm (hopefully if there is no bugs) guarantees no two overlapping live allocations can exist (which is the contract of BufferRangeMut)
+        unsafe { BufferRangeMut::new_shared(buffer, self.range.clone()) }
     }
 }
 

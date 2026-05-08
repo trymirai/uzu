@@ -3,18 +3,18 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     DataType,
     array::size_for_shape,
-    backends::common::{Backend, Buffer},
+    backends::common::{AsBufferRangeMut, Backend, Buffer},
 };
 
 #[derive(Debug)]
-pub struct Array<B: Backend, Buf: Buffer<Backend = B> = <B as Backend>::DenseBuffer> {
+pub struct Array<B: Backend, Buf: AsBufferRangeMut<Buffer: Buffer<Backend = B>> = <B as Backend>::DenseBuffer> {
     pub(super) buffer: Rc<RefCell<Buf>>,
     pub(super) offset: usize,
     pub(super) shape: Box<[usize]>,
     pub(super) data_type: DataType,
 }
 
-impl<B: Backend, Buf: Buffer<Backend = B>> Array<B, Buf> {
+impl<B: Backend, Buf: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Array<B, Buf> {
     // Constructors
     pub unsafe fn from_parts(
         buffer: Rc<RefCell<Buf>>,
@@ -23,14 +23,17 @@ impl<B: Backend, Buf: Buffer<Backend = B>> Array<B, Buf> {
         data_type: DataType,
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
+        let buffer_range = buffer.borrow().as_buffer_range_ref().range();
+        let buffer_range_size = buffer_range.end - buffer_range.start;
+
         assert!(
-            offset + required_bytes <= buffer.borrow().size(),
+            offset + required_bytes <= buffer_range_size,
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
             shape,
             data_type,
             offset,
             offset + required_bytes,
-            buffer.borrow().size()
+            buffer_range_size
         );
         Self {
             buffer: buffer.clone(),
@@ -73,7 +76,7 @@ impl<B: Backend, Buf: Buffer<Backend = B>> Array<B, Buf> {
     }
 }
 
-impl<B: Backend, Buf: Buffer<Backend = B>> Clone for Array<B, Buf> {
+impl<B: Backend, Buf: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Clone for Array<B, Buf> {
     fn clone(&self) -> Self {
         Self {
             buffer: self.buffer.clone(),
