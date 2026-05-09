@@ -50,6 +50,8 @@ impl MetalSparseHeap {
         &self.mapped_pages
     }
 
+    /// Command queue calls doesn't have any synchronization.
+    /// It is the responsibility of the caller.
     pub fn execute(
         &mut self,
         buffer: &ProtocolObject<dyn MTLBuffer>,
@@ -57,6 +59,10 @@ impl MetalSparseHeap {
         operations: &[MetalSparseHeapMappingParameters],
         map: bool,
     ) {
+        if operations.is_empty() {
+            return;
+        }
+
         let mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = operations
             .iter()
             .map(|op| {
