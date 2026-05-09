@@ -435,7 +435,7 @@ fn test_two_pass_decode_correctness() {
             )
             .expect("failed to encode MoE experts");
 
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Read GPU partial output and do CPU finalize (weighted sum)
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
@@ -479,6 +479,8 @@ fn test_two_pass_decode_correctness() {
         assert_eq_float(&y_expected, &y_gpu, tolerance, "2-pass decode output");
 
         eprintln!("[2-pass decode] ✓ PASSED (tolerance={:.4})", tolerance);
+        drop(y_partial_buf);
+        drop(completed);
     });
 }
 
@@ -571,13 +573,15 @@ fn test_two_pass_decode_multi_token() {
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
         let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
 
         assert_eq_float(&y_expected, &y_gpu, 0.02, "2-pass decode multi-token");
         eprintln!("[2-pass decode multi-token] ✓ PASSED");
+        drop(y_partial_buf);
+        drop(completed);
     });
 }
 
@@ -666,13 +670,15 @@ fn test_two_pass_prefill_correctness() {
             data_type: DataType::BF16,
         };
         let y_partial_buf = experts_kernel.encode(&mut encoder, args).expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
         let y_gpu = gather_and_finalize(&y_partial_gpu, &data.topk_probs, &scatter.perm_idx, t, k, d_model);
 
         assert_eq_float(&y_expected, &y_gpu, 0.02, "2-pass prefill");
         eprintln!("[2-pass prefill] ✓ PASSED");
+        drop(y_partial_buf);
+        drop(completed);
     });
 }
 
@@ -790,7 +796,7 @@ fn test_fused_single_token_decode() {
             )
             .expect("failed to encode MoE experts");
 
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         // Read GPU output
         let y_gpu = allocation_prefix_to_vec::<B, bf16>(&y_buf, d_model);
@@ -823,6 +829,8 @@ fn test_fused_single_token_decode() {
         assert_eq_float(&y_expected, &y_gpu, tolerance, "fused single-token output");
 
         eprintln!("[fused single-token] PASSED (tolerance={:.4})", tolerance);
+        drop(y_buf);
+        drop(completed);
     });
 }
 
@@ -911,7 +919,7 @@ fn test_fused_single_token_k4() {
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let y_gpu = allocation_prefix_to_vec::<B, bf16>(&y_buf, d_model);
 
@@ -943,5 +951,7 @@ fn test_fused_single_token_k4() {
         assert_eq_float(&y_gpu, &y_expected, tolerance, "fused single-token K=4 output");
 
         eprintln!("[fused single-token K=4] PASSED (tolerance={:.4})", tolerance);
+        drop(y_buf);
+        drop(completed);
     });
 }

@@ -443,7 +443,7 @@ fn run_moe_parity_test_internal<B: Backend>(
     );
 
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     eprintln!("[E2E] GPU execution completed");
 
     // Read GPU output
@@ -669,6 +669,8 @@ fn run_moe_parity_test_internal<B: Backend>(
     }
 
     eprintln!("[{}] ✓ PASSED (GPU matches CPU reference)", test_name);
+    drop(y_partial_buf);
+    drop(completed);
 }
 
 // Test 1: Minimal (K=1, small dims, no clipping, alpha=1.0)
