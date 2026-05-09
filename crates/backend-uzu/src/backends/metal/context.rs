@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+use std::{
+    cell::{RefCell, RefMut},
+    collections::HashMap,
+    path::Path,
+    rc::{Rc, Weak},
+};
 
 use metal::prelude::*;
 
@@ -12,7 +17,11 @@ use super::{
 use crate::{
     backends::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-        metal::{command_buffer::MetalCommandBufferInitial, sparse::MetalSparseBuffer},
+        metal::{
+            command_buffer::MetalCommandBufferInitial,
+            metal_extensions::SparsePageSizeExt,
+            sparse::{MetalSparseBuffer, MetalSparseHeapPool},
+        },
     },
     utils::model_size::ModelSize,
 };
@@ -26,6 +35,8 @@ pub struct MetalContext {
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    weak_self: Weak<MetalContext>,
 }
 
 impl MetalContext {
@@ -49,6 +60,10 @@ impl MetalContext {
 
         Ok(pipeline)
     }
+
+    pub fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
+        self.sparse_heap_pool.borrow_mut()
+    }
 }
 
 impl Context for MetalContext {
@@ -69,6 +84,10 @@ impl Context for MetalContext {
 
         let device_capabilities = MetalDeviceCapabilities::from_device(&device);
 
+        let page_size = MTLSparsePageSize::KB256;
+        let heap_capacity = 64 * 4 * page_size.byte_size().as_u64() as usize;
+        let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
+
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
@@ -78,6 +97,8 @@ impl Context for MetalContext {
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
+            sparse_heap_pool: RefCell::new(sparse_pool),
+            weak_self: weak_self.clone(),
         }))
     }
 
@@ -159,7 +180,8 @@ impl Context for MetalContext {
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
-        Ok(MetalSparseBuffer::new(self, capacity)?)
+        let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
+        Ok(MetalSparseBuffer::new(self.weak_self.clone(), capacity, sparse_page_size)?)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {

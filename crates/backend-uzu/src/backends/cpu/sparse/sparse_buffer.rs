@@ -1,8 +1,9 @@
+use std::ops::Range;
+
 use bytesize::ByteSize;
-use rangemap::RangeMap;
 
 use crate::backends::{
-    common::{Backend, Buffer, SparseBuffer, SparseBufferOperation},
+    common::{Backend, Buffer, SparseBuffer},
     cpu::Cpu,
 };
 
@@ -29,18 +30,18 @@ impl Buffer for CpuSparseBuffer {
 }
 
 impl SparseBuffer for CpuSparseBuffer {
-    fn get_mapped_pages(&self) -> &RangeMap<usize, ()> {
-        todo!()
-    }
-
-    fn get_page_size(&self) -> ByteSize {
-        todo!()
-    }
-
-    fn execute(
+    fn map(
         &mut self,
         _context: &<Self::Backend as Backend>::Context,
-        _operations: &[SparseBufferOperation],
+        _pages: &Range<usize>,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
+        todo!()
+    }
+
+    fn unmap(
+        &mut self,
+        _context: &<Self::Backend as Backend>::Context,
+        _pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         todo!()
     }
