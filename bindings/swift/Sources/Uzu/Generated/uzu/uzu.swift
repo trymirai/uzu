@@ -2258,10 +2258,11 @@ public struct EngineConfig: Equatable, Hashable, Codable {
     public var openrouterApiKey: String?
     public var allowOllamaUsage: Bool
     public var allowLmstudioUsage: Bool
+    public var downloadManagerType: FileDownloadManagerType
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool) {
+    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: FileDownloadManagerType) {
         self.applicationIdentifier = applicationIdentifier
         self.miraiApiKey = miraiApiKey
         self.lalamoPath = lalamoPath
@@ -2274,6 +2275,7 @@ public struct EngineConfig: Equatable, Hashable, Codable {
         self.openrouterApiKey = openrouterApiKey
         self.allowOllamaUsage = allowOllamaUsage
         self.allowLmstudioUsage = allowLmstudioUsage
+        self.downloadManagerType = downloadManagerType
     }
 
     
@@ -2411,7 +2413,8 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
                 basetenApiKey: FfiConverterOptionString.read(from: &buf), 
                 openrouterApiKey: FfiConverterOptionString.read(from: &buf), 
                 allowOllamaUsage: FfiConverterBool.read(from: &buf), 
-                allowLmstudioUsage: FfiConverterBool.read(from: &buf)
+                allowLmstudioUsage: FfiConverterBool.read(from: &buf), 
+                downloadManagerType: FfiConverterTypeFileDownloadManagerType.read(from: &buf)
         )
     }
 
@@ -2428,6 +2431,7 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.openrouterApiKey, into: &buf)
         FfiConverterBool.write(value.allowOllamaUsage, into: &buf)
         FfiConverterBool.write(value.allowLmstudioUsage, into: &buf)
+        FfiConverterTypeFileDownloadManagerType.write(value.downloadManagerType, into: &buf)
     }
 }
 
@@ -3963,6 +3967,7 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitEngineCallbackHandler()
+    uniffiEnsureDownloadManagerInitialized()
     uniffiEnsureNagareInitialized()
     uniffiEnsureShojiInitialized()
     return InitializationResult.ok
