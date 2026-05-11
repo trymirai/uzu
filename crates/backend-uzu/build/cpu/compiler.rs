@@ -651,17 +651,16 @@ impl CpuCompiler {
 impl Compiler for CpuCompiler {
     async fn build(
         &self,
-        gpu_types: &GpuTypes,
+        _gpu_types: &GpuTypes,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
-        let enum_paths = EnumPaths::from_gpu_types(gpu_types);
-
         let objects = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|entry| entry.ok())
             .filter(|entry| {
                 entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs")
             })
-            .map(|entry| self.compile(entry.into_path(), &enum_paths))
+            .map(|entry| self.compile(entry.into_path(), enum_paths))
             .collect::<anyhow::Result<Vec<(Box<[Box<str>]>, Box<[Kernel]>)>>>()
             .context("cannot compile cpu sources")?;
 

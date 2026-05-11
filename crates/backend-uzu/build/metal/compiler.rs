@@ -16,7 +16,10 @@ use super::{
     wrapper::{SpecializeBaseIndices, wrappers},
 };
 use crate::{
-    common::{caching, codegen::write_tokens, compiler::Compiler, envs, gpu_types::GpuTypes, kernel::Kernel},
+    common::{
+        caching, codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes,
+        kernel::Kernel,
+    },
     debug_log,
     metal::gpu_types::gpu_type_gen,
 };
@@ -325,10 +328,11 @@ impl Compiler for MetalCompiler {
     async fn build(
         &self,
         gpu_types: &GpuTypes,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
         gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
 
-        let rewriter = EnumPathRewriter::from_gpu_types(gpu_types);
+        let rewriter = EnumPathRewriter::new(enum_paths);
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()

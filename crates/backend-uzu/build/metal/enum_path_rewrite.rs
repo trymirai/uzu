@@ -3,16 +3,16 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{BinOp, Expr, ExprBinary, ExprLit, ExprParen, ExprPath, ExprUnary, Lit, Path, UnOp, parse_quote};
 
-use crate::common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with, gpu_types::GpuTypes};
+use crate::common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with};
 
 pub struct EnumPathRewriter {
     enum_paths: EnumPaths,
 }
 
 impl EnumPathRewriter {
-    pub fn from_gpu_types(gpu_types: &GpuTypes) -> Self {
+    pub fn new(enum_paths: &EnumPaths) -> Self {
         Self {
-            enum_paths: EnumPaths::from_gpu_types(gpu_types),
+            enum_paths: enum_paths.clone(),
         }
     }
 
