@@ -17,16 +17,16 @@ pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 #[serde(rename_all = "snake_case")]
 pub enum FileDownloadManagerType {
     Universal,
+    #[cfg(target_vendor = "apple")]
     Apple,
 }
 
 impl Default for FileDownloadManagerType {
+    #[allow(unreachable_code)]
     fn default() -> Self {
-        if cfg!(target_vendor = "apple") {
-            Self::Apple
-        } else {
-            Self::Universal
-        }
+        #[cfg(target_vendor = "apple")]
+        return Self::Apple;
+        Self::Universal
     }
 }
 
@@ -70,17 +70,11 @@ impl dyn FileDownloadManager {
                     Box::new(UniversalDownloadManager::from_tokio_handle(tokio_handle)?);
                 Ok(manager)
             },
+            #[cfg(target_vendor = "apple")]
             FileDownloadManagerType::Apple => {
-                #[cfg(target_vendor = "apple")]
-                {
-                    let manager: Box<dyn FileDownloadManager> =
-                        Box::new(AppleDownloadManager::from_tokio_handle(tokio_handle)?);
-                    Ok(manager)
-                }
-                #[cfg(not(target_vendor = "apple"))]
-                {
-                    Err(DownloadError::UnsupportedType)
-                }
+                let manager: Box<dyn FileDownloadManager> =
+                    Box::new(AppleDownloadManager::from_tokio_handle(tokio_handle)?);
+                Ok(manager)
             },
         }
     }
