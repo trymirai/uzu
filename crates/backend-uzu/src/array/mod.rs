@@ -1,7 +1,6 @@
 mod array;
 mod context_ext;
 mod dense;
-mod sparse;
 mod util;
 
 pub use array::Array;

@@ -21,7 +21,7 @@ fn create_sparse_buffer(
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let page_size = ctx.sparse_heap_pool_mut().page_size();
     let page_size_bytes = page_size.in_bytes();
-    let aligned = capacity_bytes.div_ceil(page_size_bytes) * page_size_bytes;
+    let aligned = capacity_bytes.next_multiple_of(page_size_bytes);
     ctx.device
         .new_buffer_with_length_options_placement_sparse_page_size(
             aligned,

@@ -35,15 +35,16 @@ impl MetalSparseBuffer {
         };
 
         let page_size_bytes = page_size.in_bytes();
-        let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
+        let aligned_capacity = capacity.next_multiple_of(page_size_bytes);
 
-        let Some(buffer) = ctx.device.new_buffer_with_length_options_placement_sparse_page_size(
-            aligned_capacity,
-            MTLResourceOptions::STORAGE_MODE_PRIVATE,
-            page_size,
-        ) else {
-            return Err(MetalError::SparseBufferAlloc(aligned_capacity));
-        };
+        let buffer = ctx
+            .device
+            .new_buffer_with_length_options_placement_sparse_page_size(
+                aligned_capacity,
+                MTLResourceOptions::STORAGE_MODE_PRIVATE,
+                page_size,
+            )
+            .ok_or(MetalError::SparseBufferAlloc(aligned_capacity))?;
 
         Ok(Self {
             buffer,
@@ -60,8 +61,7 @@ impl Drop for MetalSparseBuffer {
         };
 
         self.mapped_pages.iter().map(|(range, _)| range.clone()).for_each(|range| {
-            let error = context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range);
-            eprintln!("MetalSparseBuffer::drop error: {:?}", error);
+            context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range).expect("Failed to unmap");
         });
     }
 }
@@ -91,8 +91,7 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        let mut gaps_iter = self.mapped_pages.gaps(pages).collect::<Vec<_>>().into_iter();
-        gaps_iter.try_for_each(|gap| {
+        self.mapped_pages.gaps(pages).collect::<Vec<_>>().into_iter().try_for_each(|gap| {
             context.sparse_heap_pool_mut().map(context, &self.buffer, &gap)?;
             self.mapped_pages.insert(gap, ());
             Ok(())
