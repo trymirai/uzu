@@ -2,7 +2,10 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-use crate::settings::{SettingKind, Settings, SettingsError};
+use crate::{
+    engine::DownloadManagerType,
+    settings::{SettingKind, Settings, SettingsError},
+};
 
 pub const KEY_MIRAI_API_KEY: &str = "MIRAI_API_KEY";
 pub const KEY_LALAMO_PATH: &str = "LALAMO_PATH";
@@ -30,6 +33,8 @@ pub struct EngineConfig {
     pub openrouter_api_key: Option<String>,
     pub allow_ollama_usage: bool,
     pub allow_lmstudio_usage: bool,
+    #[serde(default)]
+    pub download_manager_type: DownloadManagerType,
 }
 
 impl Default for EngineConfig {
@@ -47,6 +52,7 @@ impl Default for EngineConfig {
             openrouter_api_key: env::var(KEY_OPENROUTER_API_KEY).ok(),
             allow_ollama_usage: true,
             allow_lmstudio_usage: true,
+            download_manager_type: DownloadManagerType::default(),
         }
     }
 }
@@ -216,6 +222,17 @@ impl EngineConfig {
     ) -> Self {
         Self {
             allow_lmstudio_usage,
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_download_manager_type(
+        &self,
+        download_manager_type: DownloadManagerType,
+    ) -> Self {
+        Self {
+            download_manager_type,
             ..self.clone()
         }
     }
