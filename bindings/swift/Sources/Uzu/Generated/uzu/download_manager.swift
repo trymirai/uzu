@@ -460,7 +460,7 @@ fileprivate struct FfiConverterString: FfiConverter {
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum FileDownloadManagerType: Equatable, Hashable {
+public enum FileDownloadManagerType: Equatable, Hashable, Codable {
     
     case universal
     case apple
