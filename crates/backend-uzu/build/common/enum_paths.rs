@@ -16,8 +16,8 @@ impl EnumPaths {
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 if let GpuType::Enum(enum_type) = ty {
-                    let name = GpuTypeName::new(enum_type.name.as_ref());
-                    let path = GpuTypePath::new(format!(
+                    let name = GpuTypeName::from(enum_type.name.as_ref());
+                    let path = GpuTypePath::from(format!(
                         "crate::backends::common::gpu_types::{}::{}",
                         file.name, enum_type.name
                     ));
@@ -41,7 +41,7 @@ impl EnumPaths {
         &self,
         short_name: &str,
     ) -> Option<&str> {
-        self.short_name_to_full_path.get(short_name).map(|path| path.as_str())
+        self.short_name_to_full_path.get(short_name).map(|path| &**path)
     }
 
     #[cfg(all(feature = "metal", target_os = "macos"))]

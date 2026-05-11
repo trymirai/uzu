@@ -109,7 +109,7 @@ fn emit_metal_path(
     if segments.len() == 1
         && let Some(prefixed) = specialize_names.get(segments[0].ident.to_string().as_str())
     {
-        return prefixed.as_str().to_owned();
+        return prefixed.to_string();
     }
 
     let path_text = path_to_metal_string(&expr_path.path);

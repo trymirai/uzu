@@ -95,7 +95,7 @@ fn kernel_wrappers(
             if matches!(a.argument_type(), MetalArgumentType::Specialize(_)) {
                 Some((
                     a.name.clone(),
-                    SpecializeConstantName::new(format!("__dsl_specialize_{}_{}", kernel.name, a.name)),
+                    SpecializeConstantName::from(format!("__dsl_specialize_{}_{}", kernel.name, a.name)),
                 ))
             } else {
                 None

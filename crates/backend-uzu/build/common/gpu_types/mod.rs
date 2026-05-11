@@ -1,11 +1,12 @@
 #![allow(unused)]
 use std::{
     borrow::Borrow,
-    env, fmt, fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context;
+use derive_more::{AsRef, Deref, Display, From};
 use syn::{Attribute, Ident, Item};
 use walkdir::WalkDir;
 
@@ -15,18 +16,11 @@ mod item_struct;
 pub use item_enum::GpuTypeEnum;
 pub use item_struct::{GpuTypeStruct, GpuTypeStructFieldType};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
+#[as_ref(str)]
+#[deref(forward)]
+#[from(forward)]
 pub struct GpuTypeName(String);
-
-impl GpuTypeName {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(name.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 impl Borrow<str> for GpuTypeName {
     fn borrow(&self) -> &str {
@@ -34,36 +28,11 @@ impl Borrow<str> for GpuTypeName {
     }
 }
 
-impl fmt::Display for GpuTypeName {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
+#[as_ref(str)]
+#[deref(forward)]
+#[from(forward)]
 pub struct GpuTypePath(String);
-
-impl GpuTypePath {
-    pub fn new(path: impl Into<String>) -> Self {
-        Self(path.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for GpuTypePath {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
 
 fn ensure_repr_c(attrs: &[Attribute]) -> anyhow::Result<()> {
     anyhow::ensure!(

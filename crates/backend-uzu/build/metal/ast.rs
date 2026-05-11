@@ -186,7 +186,7 @@ impl MetalArgument {
         let (argument_type, condition) = parse_argument_annotation(&c_type, &source, annotation.as_deref())?;
 
         Ok(Self {
-            name: ArgumentName::new(name),
+            name: ArgumentName::from(name),
             c_type,
             argument_type,
             condition,
@@ -205,7 +205,7 @@ impl MetalArgument {
     fn to_parameter(&self) -> Option<KernelParameter> {
         match self.argument_type() {
             MetalArgumentType::Specialize(ty) => Some(KernelParameter {
-                name: Box::from(self.name.as_str()),
+                name: Box::from(&*self.name),
                 ty: KernelParameterType::Value(ty.clone()),
             }),
             _ => None,
@@ -598,7 +598,7 @@ impl MetalKernelInfo {
 
         Ok(Some(MetalKernelInfo {
             public,
-            name: KernelName::new(name),
+            name: KernelName::from(name),
             arguments,
             variants,
             constraints,

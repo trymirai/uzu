@@ -41,7 +41,7 @@ impl FunctionArgument {
         enum_paths: &EnumPaths,
     ) -> Option<KernelArgument> {
         Some(KernelArgument {
-            name: ArgumentName::new(self.name.to_string()),
+            name: ArgumentName::from(self.name.to_string()),
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
                 FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
@@ -594,7 +594,7 @@ impl CpuCompiler {
         write_tokens(tokens, &out_path).context("cannot write bindings")?;
 
         Ok(Kernel {
-            name: KernelName::new(kernel_ident.to_string()),
+            name: KernelName::from(kernel_ident.to_string()),
             parameters: kernel_parameters,
             arguments: kernel_arguments,
         })
