@@ -139,7 +139,7 @@ impl MetalSparseHeapPool {
     }
 
     pub fn heap_capacity_pages(&self) -> usize {
-        self.heap_capacity / self.page_size.byte_size().as_u64() as usize
+        self.heap_capacity / self.page_size.in_bytes()
     }
 
     pub fn heaps_count(&self) -> usize {

@@ -1,6 +1,5 @@
 use std::{os::raw::c_void, ptr::NonNull};
 
-use bytesize::ByteSize;
 use metal::prelude::*;
 
 use super::Metal;
@@ -13,8 +12,8 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
         self.gpu_address() as usize
     }
 
-    fn size(&self) -> ByteSize {
-        ByteSize((**self).length() as u64)
+    fn size(&self) -> usize {
+        (**self).length()
     }
 
     fn set_label(

@@ -25,7 +25,7 @@ impl MetalSparseHeap {
         capacity_bytes: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
-        let page_size_bytes = page_size.byte_size().as_u64() as usize;
+        let page_size_bytes = page_size.in_bytes();
         let aligned_capacity = capacity_bytes.div_ceil(page_size_bytes) * page_size_bytes;
 
         let heap_desc = MTLHeapDescriptor::new();
@@ -39,7 +39,7 @@ impl MetalSparseHeap {
         let heap = context
             .device
             .new_heap_with_descriptor(&heap_desc)
-            .ok_or_else(|| MetalError::SparseHeapAlloc(aligned_capacity, page_size.byte_size()))?;
+            .ok_or_else(|| MetalError::SparseHeapAlloc(aligned_capacity, page_size.in_bytes()))?;
         Ok(Self {
             heap,
             mapped_pages: RangeMap::new(),

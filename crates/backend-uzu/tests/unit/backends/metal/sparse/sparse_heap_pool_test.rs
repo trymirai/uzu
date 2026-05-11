@@ -19,7 +19,7 @@ fn create_sparse_buffer(
     capacity_bytes: usize,
 ) -> Retained<ProtocolObject<dyn MTLBuffer>> {
     let page_size = ctx.sparse_heap_pool_mut().page_size();
-    let page_size_bytes = page_size.byte_size().as_u64() as usize;
+    let page_size_bytes = page_size.in_bytes();
     let aligned = capacity_bytes.div_ceil(page_size_bytes) * page_size_bytes;
     ctx.device
         .new_buffer_with_length_options_placement_sparse_page_size(
@@ -237,7 +237,7 @@ fn test_sequential_partial_unmaps_release_full_heap() {
 fn test_heap_capacity_pages_matches_byte_capacity() {
     let ctx = create_context();
     let pool = ctx.sparse_heap_pool_mut();
-    let page_size_bytes = pool.page_size().byte_size().as_u64() as usize;
+    let page_size_bytes = pool.page_size().in_bytes();
 
     assert_eq!(pool.heap_capacity_pages(), pool.heap_capacity_bytes() / page_size_bytes);
 }

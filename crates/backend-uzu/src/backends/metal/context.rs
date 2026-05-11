@@ -85,7 +85,7 @@ impl Context for MetalContext {
         let device_capabilities = MetalDeviceCapabilities::from_device(&device);
 
         let page_size = MTLSparsePageSize::KB256;
-        let heap_capacity = 64 * 4 * page_size.byte_size().as_u64() as usize;
+        let heap_capacity = 64 * 4 * page_size.in_bytes();
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
 
         Ok(Rc::new_cyclic(|weak_self| Self {

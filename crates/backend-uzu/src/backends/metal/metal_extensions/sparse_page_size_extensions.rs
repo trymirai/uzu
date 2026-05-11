@@ -1,16 +1,15 @@
-use bytesize::ByteSize;
 use metal::MTLSparsePageSize;
 
 pub trait SparsePageSizeExt {
-    fn byte_size(&self) -> ByteSize;
+    fn in_bytes(&self) -> usize;
 }
 
 impl SparsePageSizeExt for MTLSparsePageSize {
-    fn byte_size(&self) -> ByteSize {
+    fn in_bytes(&self) -> usize {
         match self {
-            MTLSparsePageSize::KB16 => ByteSize::kib(16),
-            MTLSparsePageSize::KB64 => ByteSize::kib(64),
-            MTLSparsePageSize::KB256 => ByteSize::kib(256),
+            MTLSparsePageSize::KB16 => 16 * 1024,
+            MTLSparsePageSize::KB64 => 64 * 1024,
+            MTLSparsePageSize::KB256 => 256 * 1024,
         }
     }
 }

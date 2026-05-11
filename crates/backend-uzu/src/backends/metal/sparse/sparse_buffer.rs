@@ -5,7 +5,6 @@ use std::{
     rc::Weak,
 };
 
-use bytesize::ByteSize;
 use metal::prelude::*;
 use rangemap::RangeMap;
 
@@ -34,7 +33,7 @@ impl MetalSparseBuffer {
             return Err(MetalError::CannotCreateBuffer);
         };
 
-        let page_size_bytes = page_size.byte_size().as_u64() as usize;
+        let page_size_bytes = page_size.in_bytes();
         let aligned_capacity = capacity.div_ceil(page_size_bytes) * page_size_bytes;
 
         let Some(buffer) = ctx.device.new_buffer_with_length_options_placement_sparse_page_size(
@@ -59,9 +58,8 @@ impl Drop for MetalSparseBuffer {
             return;
         };
 
-        let ranges: Vec<Range<usize>> = self.mapped_pages.iter().map(|(range, _)| range.clone()).collect();
-        ranges.iter().for_each(|range| {
-            let error = context.sparse_heap_pool_mut().unmap(&context, &self.buffer, range);
+        self.mapped_pages.iter().map(|(range, _)| range.clone()).for_each(|range| {
+            let error = context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range);
             eprintln!("MetalSparseBuffer::drop error: {:?}", error);
         });
     }
@@ -74,7 +72,7 @@ impl Buffer for MetalSparseBuffer {
         self.buffer.gpu_ptr()
     }
 
-    fn size(&self) -> ByteSize {
+    fn size(&self) -> usize {
         self.buffer.size()
     }
 

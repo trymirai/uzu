@@ -24,7 +24,7 @@ impl<B: Backend, Buf: Buffer<Backend = B>> Array<B, Buf> {
     ) -> Self {
         let required_bytes = size_for_shape(shape, data_type);
         assert!(
-            offset + required_bytes <= buffer.borrow().size().as_u64() as usize,
+            offset + required_bytes <= buffer.borrow().size(),
             "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
             shape,
             data_type,

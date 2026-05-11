@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use bytesize::ByteSize;
-
 use crate::backends::{
     common::{Backend, Buffer, SparseBuffer},
     cpu::Cpu,
@@ -17,7 +15,7 @@ impl Buffer for CpuSparseBuffer {
         todo!()
     }
 
-    fn size(&self) -> ByteSize {
+    fn size(&self) -> usize {
         todo!()
     }
 
