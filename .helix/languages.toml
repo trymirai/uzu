@@ -1,0 +1,11 @@
+[[language]]
+name = "c"
+file-types = []
+
+[[language]]
+name = "cpp"
+file-types = []
+
+[[language]]
+name = "metal"
+file-types = ["metal", "h"]
