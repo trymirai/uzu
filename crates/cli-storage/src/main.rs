@@ -13,9 +13,8 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use download_manager::FileDownloadManagerType;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use uzu::engine::{Engine, EngineConfig};
+use uzu::engine::{DownloadManagerType, Engine, EngineConfig};
 
 use crate::{app::App, events::EventHandler};
 
@@ -27,29 +26,29 @@ struct Cli {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum DownloadManagerCliType {
-    Apple,
+    Native,
     Universal,
 }
 
 impl Default for DownloadManagerCliType {
     fn default() -> Self {
-        FileDownloadManagerType::default().into()
+        DownloadManagerType::default().into()
     }
 }
 
-impl From<FileDownloadManagerType> for DownloadManagerCliType {
-    fn from(download_manager_type: FileDownloadManagerType) -> Self {
+impl From<DownloadManagerType> for DownloadManagerCliType {
+    fn from(download_manager_type: DownloadManagerType) -> Self {
         match download_manager_type {
-            FileDownloadManagerType::Apple => Self::Apple,
-            FileDownloadManagerType::Universal => Self::Universal,
+            DownloadManagerType::Native => Self::Native,
+            DownloadManagerType::Universal => Self::Universal,
         }
     }
 }
 
-impl From<DownloadManagerCliType> for FileDownloadManagerType {
+impl From<DownloadManagerCliType> for DownloadManagerType {
     fn from(download_manager_type: DownloadManagerCliType) -> Self {
         match download_manager_type {
-            DownloadManagerCliType::Apple => Self::Apple,
+            DownloadManagerCliType::Native => Self::Native,
             DownloadManagerCliType::Universal => Self::Universal,
         }
     }

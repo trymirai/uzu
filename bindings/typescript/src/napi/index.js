@@ -508,7 +508,6 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
-module.exports.FileDownloadManagerType = nativeBinding.FileDownloadManagerType
 module.exports.ChatSession = nativeBinding.ChatSession
 module.exports.ChatSessionStream = nativeBinding.ChatSessionStream
 module.exports.ChatSessionStreamChunkError = nativeBinding.ChatSessionStreamChunkError
@@ -628,4 +627,5 @@ module.exports.EngineCallback = nativeBinding.EngineCallback
 module.exports.EngineConfig = nativeBinding.EngineConfig
 module.exports.Player = nativeBinding.Player
 module.exports.Settings = nativeBinding.Settings
+module.exports.DownloadManagerType = nativeBinding.DownloadManagerType
 module.exports.SettingKind = nativeBinding.SettingKind

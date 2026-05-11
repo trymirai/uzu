@@ -1,5 +1,6 @@
 mod callback;
 pub mod config;
+mod download_manager;
 mod downloader;
 mod error;
 
@@ -9,6 +10,7 @@ use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
+pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use indexmap::IndexSet;
@@ -69,7 +71,7 @@ impl Engine {
         let device = Device::new()?;
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
-            .with_download_manager_type(config.download_manager_type);
+            .with_download_manager_type(config.download_manager_type.into());
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
         let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);

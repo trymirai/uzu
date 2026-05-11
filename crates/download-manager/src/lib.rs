@@ -1,6 +1,3 @@
-#[cfg(feature = "bindings-uniffi")]
-uniffi::setup_scaffolding!();
-
 mod checked_file_state;
 mod crc_utils;
 mod download_error;

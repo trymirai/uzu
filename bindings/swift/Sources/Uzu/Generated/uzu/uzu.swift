@@ -2258,11 +2258,11 @@ public struct EngineConfig: Equatable, Hashable, Codable {
     public var openrouterApiKey: String?
     public var allowOllamaUsage: Bool
     public var allowLmstudioUsage: Bool
-    public var downloadManagerType: FileDownloadManagerType
+    public var downloadManagerType: DownloadManagerType
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: FileDownloadManagerType) {
+    public init(applicationIdentifier: String?, miraiApiKey: String?, lalamoPath: String?, huggingfaceApiKey: String?, openaiApiKey: String?, anthropicApiKey: String?, geminiApiKey: String?, xaiApiKey: String?, basetenApiKey: String?, openrouterApiKey: String?, allowOllamaUsage: Bool, allowLmstudioUsage: Bool, downloadManagerType: DownloadManagerType) {
         self.applicationIdentifier = applicationIdentifier
         self.miraiApiKey = miraiApiKey
         self.lalamoPath = lalamoPath
@@ -2320,6 +2320,15 @@ public func withBasetenApiKey(basetenApiKey: String) -> EngineConfig  {
     uniffi_uzu_fn_method_engineconfig_with_baseten_api_key(
             FfiConverterTypeEngineConfig_lower(self),
         FfiConverterString.lower(basetenApiKey),$0
+    )
+})
+}
+    
+public func withDownloadManagerType(downloadManagerType: DownloadManagerType) -> EngineConfig  {
+    return try!  FfiConverterTypeEngineConfig_lift(try! rustCall() {
+    uniffi_uzu_fn_method_engineconfig_with_download_manager_type(
+            FfiConverterTypeEngineConfig_lower(self),
+        FfiConverterTypeDownloadManagerType_lower(downloadManagerType),$0
     )
 })
 }
@@ -2414,7 +2423,7 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
                 openrouterApiKey: FfiConverterOptionString.read(from: &buf), 
                 allowOllamaUsage: FfiConverterBool.read(from: &buf), 
                 allowLmstudioUsage: FfiConverterBool.read(from: &buf), 
-                downloadManagerType: FfiConverterTypeFileDownloadManagerType.read(from: &buf)
+                downloadManagerType: FfiConverterTypeDownloadManagerType.read(from: &buf)
         )
     }
 
@@ -2431,7 +2440,7 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.openrouterApiKey, into: &buf)
         FfiConverterBool.write(value.allowOllamaUsage, into: &buf)
         FfiConverterBool.write(value.allowLmstudioUsage, into: &buf)
-        FfiConverterTypeFileDownloadManagerType.write(value.downloadManagerType, into: &buf)
+        FfiConverterTypeDownloadManagerType.write(value.downloadManagerType, into: &buf)
     }
 }
 
@@ -2613,6 +2622,73 @@ public func FfiConverterTypeDeviceError_lift(_ buf: RustBuffer) throws -> Device
 public func FfiConverterTypeDeviceError_lower(_ value: DeviceError) -> RustBuffer {
     return FfiConverterTypeDeviceError.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum DownloadManagerType: Equatable, Hashable, Codable {
+    
+    case native
+    case universal
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DownloadManagerType: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDownloadManagerType: FfiConverterRustBuffer {
+    typealias SwiftType = DownloadManagerType
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DownloadManagerType {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .native
+        
+        case 2: return .universal
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DownloadManagerType, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .native:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .universal:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDownloadManagerType_lift(_ buf: RustBuffer) throws -> DownloadManagerType {
+    return try FfiConverterTypeDownloadManagerType.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDownloadManagerType_lower(_ value: DownloadManagerType) -> RustBuffer {
+    return FfiConverterTypeDownloadManagerType.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -3967,7 +4043,6 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitEngineCallbackHandler()
-    uniffiEnsureDownloadManagerInitialized()
     uniffiEnsureNagareInitialized()
     uniffiEnsureShojiInitialized()
     return InitializationResult.ok

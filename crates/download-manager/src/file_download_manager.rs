@@ -12,7 +12,6 @@ pub type DownloadEvent = (DownloadId, FileDownloadEvent);
 pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
 pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 
-#[bindings::export(Enumeration)]
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum FileDownloadManagerType {

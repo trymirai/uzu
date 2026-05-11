@@ -28,14 +28,12 @@ bindings-uniffi = [
     "bindings-types/bindings-uniffi",
     "shoji/bindings-uniffi",
     "nagare/bindings-uniffi",
-    "download-manager/bindings-uniffi",
     "dep:uniffi",
 ]
 bindings-napi = [
     "bindings-types/bindings-napi",
     "shoji/bindings-napi",
     "nagare/bindings-napi",
-    "download-manager/bindings-napi",
     "dep:napi",
     "dep:napi-derive",
     "dep:napi-build",
@@ -44,7 +42,6 @@ bindings-pyo3 = [
     "bindings-types/bindings-pyo3",
     "shoji/bindings-pyo3",
     "nagare/bindings-pyo3",
-    "download-manager/bindings-pyo3",
     "dep:pyo3",
     "dep:pyo3-build-config",
     "dep:pyo3-async-runtimes",
