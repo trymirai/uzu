@@ -54,7 +54,7 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                     // GPU hardware; computing in f32 avoids biasing toward any
                     // particular rounding pattern.
                     let w_dequant_f32 = match quant_method {
-                        QuantizationMethod::AWQ => {
+                        QuantizationMethod::ScaleZeroPoint => {
                             let zp = zero_points.unwrap();
                             let zp_val = if bits == 4 {
                                 let byte_index = j * zp_stride + (group_idx >> 1);
@@ -69,7 +69,7 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                             };
                             scale_t.to_f32().unwrap() * (val_q - zp_val)
                         },
-                        QuantizationMethod::MLX => {
+                        QuantizationMethod::ScaleBias => {
                             let bias_t = *biases.unwrap().add(j * num_groups_k + group_idx);
                             scale_t.to_f32().unwrap() * val_q + bias_t.to_f32().unwrap()
                         },
@@ -113,8 +113,8 @@ pub fn quantized_matmul_qmm_transposed<
 >(
     weights: *const u32,
     scales: *const T,
-    #[optional(quant_method == QuantizationMethod::AWQ)] zero_points: Option<*const u8>,
-    #[optional(quant_method == QuantizationMethod::MLX)] biases: Option<*const T>,
+    #[optional(quant_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
+    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
     input: *const T,
     output: *mut T,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,

@@ -297,7 +297,7 @@ impl<B: Backend> Embedding<B> {
                         input_dim: model_dim as usize,
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
-                        quantization_method: QuantizationMethod::MLX,
+                        quantization_method: QuantizationMethod::ScaleBias,
                         use_hadamard: false,
                     },
                 )?;
@@ -377,7 +377,7 @@ impl<B: Backend> Embedding<B> {
                         input_dim: model_dim as usize,
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
-                        quantization_method: QuantizationMethod::MLX,
+                        quantization_method: QuantizationMethod::ScaleBias,
                         use_hadamard: false,
                     },
                 )?;
@@ -447,7 +447,7 @@ impl<B: Backend> Embedding<B> {
                         input_dim: model_dim as usize,
                         output_dim: vocab_size as usize,
                         mode: *embedding_quantization_mode,
-                        quantization_method: QuantizationMethod::MLX,
+                        quantization_method: QuantizationMethod::ScaleBias,
                         use_hadamard: false,
                     },
                 )?;

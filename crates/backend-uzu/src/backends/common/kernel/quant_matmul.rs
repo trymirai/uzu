@@ -206,8 +206,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         arguments: QuantizedMatmulArguments<B>,
     ) -> Result<(), QuantizedMatmulError<B>> {
         let (zero_points, biases) = match self.quantization_method {
-            QuantizationMethod::AWQ => (Some(arguments.zero_points_or_biases_buffer), None),
-            QuantizationMethod::MLX => (None, Some(arguments.zero_points_or_biases_buffer)),
+            QuantizationMethod::ScaleZeroPoint => (Some(arguments.zero_points_or_biases_buffer), None),
+            QuantizationMethod::ScaleBias => (None, Some(arguments.zero_points_or_biases_buffer)),
         };
 
         macro_rules! encode_kernel {

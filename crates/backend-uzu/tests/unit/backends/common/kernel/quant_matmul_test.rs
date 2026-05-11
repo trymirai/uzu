@@ -151,11 +151,11 @@ fn cpu_reference(
             for g in 0..num_groups {
                 let scale = scales[j * num_groups + g];
                 let bias = match quantization_method {
-                    QuantizationMethod::AWQ => {
+                    QuantizationMethod::ScaleZeroPoint => {
                         let zp = get_zp_value(zero_points, zero_points_stride, j, g, bits);
                         -scale * zp
                     },
-                    QuantizationMethod::MLX => biases[j * num_groups + g],
+                    QuantizationMethod::ScaleBias => biases[j * num_groups + g],
                 };
                 let l_start = g * group_size;
                 let l_end = (l_start + group_size).min(input_dim);
@@ -213,7 +213,7 @@ fn generate_test_quant_params(
     };
     let mut zero_points = vec![0u8; output_dim * zero_points_stride];
 
-    if quantization_method == QuantizationMethod::AWQ && randomize_zp {
+    if quantization_method == QuantizationMethod::ScaleZeroPoint && randomize_zp {
         for j in 0..output_dim {
             for g in 0..num_groups {
                 let base_val = j + 3 * g;
@@ -242,7 +242,7 @@ fn generate_test_quant_params(
         }
     }
 
-    if quantization_method == QuantizationMethod::MLX {
+    if quantization_method == QuantizationMethod::ScaleBias {
         for j in 0..output_dim {
             for g in 0..num_groups {
                 let base_val = j * 7 + g * 3;
@@ -330,8 +330,8 @@ fn execute_quantized_matmul<B: Backend>(
     let s_buf = buffer_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_method {
-        QuantizationMethod::AWQ => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
-        QuantizationMethod::MLX => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
+        QuantizationMethod::ScaleZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizationMethod::ScaleBias => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
     let x_buf = buffer_from_f32_slice::<B>(ctx, data_type, &x_f32);
     let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
@@ -490,7 +490,7 @@ fn run_kernel_test<B: Backend>(
     validate: bool,
     iterations: usize,
 ) -> ExecutionResult {
-    let randomize_zp = config.quant_method == QuantizationMethod::AWQ;
+    let randomize_zp = config.quant_method == QuantizationMethod::ScaleZeroPoint;
 
     execute_quantized_matmul::<B>(
         ctx,
@@ -518,25 +518,25 @@ fn test_quant_gmv_internal<B: Backend>() {
 
     let configs = vec![
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
@@ -561,25 +561,25 @@ fn test_quant_gmm_transposed_internal<B: Backend>() {
 
     let configs = vec![
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
@@ -615,28 +615,28 @@ fn test_quant_matmul_perf_internal<B: Backend>() {
     let configs = vec![
         // 4-bit Mlx BF16
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 4,
             data_type: DataType::BF16,
             group_size: 128,
         },
         // 8-bit Mlx BF16
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 8,
             data_type: DataType::BF16,
             group_size: 128,
         },
         // 4-bit ZP F16
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 4,
             data_type: DataType::F16,
             group_size: 64,
         },
         // 8-bit ZP F16
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 8,
             data_type: DataType::F16,
             group_size: 64,

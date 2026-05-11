@@ -158,7 +158,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizationMethod::MLX, deq_biases.buffer())
+                (QuantizationMethod::ScaleBias, deq_biases.buffer())
             },
             Err(_) => {
                 let zero_points =
@@ -185,7 +185,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizationMethod::AWQ, zero_points.buffer())
+                (QuantizationMethod::ScaleZeroPoint, zero_points.buffer())
             },
         };
 

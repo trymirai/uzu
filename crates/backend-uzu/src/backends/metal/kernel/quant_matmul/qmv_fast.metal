@@ -13,8 +13,8 @@ VARIANTS(BITS, 4, 8)
 PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const device uint32_t* weights,
     const device T* scales,
-    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::AWQ),
-    const device T* biases OPTIONAL(quant_method == QuantizationMethod::MLX),
+    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::ScaleZeroPoint),
+    const device T* biases OPTIONAL(quant_method == QuantizationMethod::ScaleBias),
     const device T* input,
     device T* output,
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
@@ -54,7 +54,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   const device uint8_t* zps = nullptr;
   bool high_nibble = false;
 
-  if (quant_method == QuantizationMethod::MLX) {
+  if (quant_method == QuantizationMethod::ScaleBias) {
     biases += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
   } else {
     if (BITS == 4) {
@@ -87,7 +87,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
       U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
       U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
 
-      if (quant_method == QuantizationMethod::MLX) {
+      if (quant_method == QuantizationMethod::ScaleBias) {
         U b0 = static_cast<U>(biases[0]);
         U b1 = static_cast<U>(biases[in_vec_size_g]);
         U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
@@ -147,7 +147,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
 
     ws += block_size * bytes_per_pack / pack_factor;
     scales += block_size / GROUP_SIZE;
-    if (quant_method == QuantizationMethod::MLX) {
+    if (quant_method == QuantizationMethod::ScaleBias) {
       biases += block_size / GROUP_SIZE;
     } else {
       if (BITS == 4) {

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, bail};
 use proc_macro2::TokenStream;
 use quote::ToTokens;
@@ -5,55 +7,50 @@ use syn::{BinOp, Expr, ExprBinary, ExprLit, ExprParen, ExprPath, ExprUnary, Lit,
 
 use crate::common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with};
 
-pub struct EnumPathRewriter {
-    enum_paths: EnumPaths,
+pub fn is_enum_c_type(
+    enum_paths: &EnumPaths,
+    c_type: &str,
+) -> bool {
+    let trimmed = c_type.trim_start_matches("const ").trim();
+    let Some(uzu_path) = trimmed.strip_prefix("uzu::") else {
+        return false;
+    };
+    let Some(short_name) = uzu_path.rsplit("::").next() else {
+        return false;
+    };
+    let expected_rust_path = format!("crate::backends::common::gpu_types::{uzu_path}");
+    enum_paths.full_path_for(short_name) == Some(expected_rust_path.as_str())
 }
 
-impl EnumPathRewriter {
-    pub fn new(enum_paths: &EnumPaths) -> Self {
-        Self {
-            enum_paths: enum_paths.clone(),
-        }
-    }
+pub fn rewrite_for_metal(
+    enum_paths: &EnumPaths,
+    specialize_names: &HashMap<String, String>,
+    condition: &str,
+) -> anyhow::Result<String> {
+    let parsed: Expr =
+        syn::parse_str(condition).with_context(|| format!("cannot parse Metal condition `{condition}`"))?;
+    let body = emit_metal_expr(&parsed, enum_paths, specialize_names)
+        .with_context(|| format!("cannot emit Metal for condition `{condition}`"))?;
+    Ok(format!("static_cast<bool>({body})"))
+}
 
-    pub fn is_enum_c_type(
-        &self,
-        c_type: &str,
-    ) -> bool {
-        let trimmed = c_type.trim_start_matches("const ").trim();
-        let type_name = trimmed.rsplit("::").next().unwrap_or(trimmed);
-        self.enum_paths.contains(type_name)
-    }
-
-    pub fn rewrite_for_metal(
-        &self,
-        condition: &str,
-    ) -> anyhow::Result<String> {
-        let parsed: Expr =
-            syn::parse_str(condition).with_context(|| format!("cannot parse Metal condition `{condition}`"))?;
-        let body =
-            emit_metal_expr(&parsed, self).with_context(|| format!("cannot emit Metal for condition `{condition}`"))?;
-        Ok(format!("static_cast<bool>({body})"))
-    }
-
-    pub fn rewrite_for_rust(
-        &self,
-        condition: &str,
-    ) -> anyhow::Result<TokenStream> {
-        let mut parsed: Expr = syn::parse_str(condition)
-            .map_err(|error| anyhow::anyhow!("cannot parse rust expression `{}`: {}", condition, error))?;
-        let enum_paths = &self.enum_paths;
-        rewrite_paths_with(&mut parsed, |path| qualify_enum_path(path, enum_paths));
-        Ok(parsed.into_token_stream())
-    }
+pub fn rewrite_for_rust(
+    enum_paths: &EnumPaths,
+    condition: &str,
+) -> anyhow::Result<TokenStream> {
+    let mut parsed: Expr = syn::parse_str(condition)
+        .map_err(|error| anyhow::anyhow!("cannot parse rust expression `{}`: {}", condition, error))?;
+    rewrite_paths_with(&mut parsed, |path| qualify_enum_path(path, enum_paths));
+    Ok(parsed.into_token_stream())
 }
 
 fn emit_metal_expr(
     expr: &Expr,
-    rewriter: &EnumPathRewriter,
+    enum_paths: &EnumPaths,
+    specialize_names: &HashMap<String, String>,
 ) -> anyhow::Result<String> {
     match expr {
-        Expr::Path(expr_path) => Ok(emit_metal_path(expr_path, rewriter)),
+        Expr::Path(expr_path) => Ok(emit_metal_path(expr_path, enum_paths, specialize_names)),
         Expr::Binary(ExprBinary {
             op,
             left,
@@ -67,8 +64,8 @@ fn emit_metal_expr(
                 BinOp::Or(_) => "||",
                 other => bail!("unsupported Metal binary operator: {:?}", other),
             };
-            let left_emitted = emit_metal_expr(left, rewriter)?;
-            let right_emitted = emit_metal_expr(right, rewriter)?;
+            let left_emitted = emit_metal_expr(left, enum_paths, specialize_names)?;
+            let right_emitted = emit_metal_expr(right, enum_paths, specialize_names)?;
             Ok(format!("{left_emitted} {operator} {right_emitted}"))
         },
         Expr::Unary(ExprUnary {
@@ -80,13 +77,13 @@ fn emit_metal_expr(
                 UnOp::Not(_) => "!",
                 other => bail!("unsupported Metal unary operator: {:?}", other),
             };
-            let inner_emitted = emit_metal_expr(inner, rewriter)?;
+            let inner_emitted = emit_metal_expr(inner, enum_paths, specialize_names)?;
             Ok(format!("{operator}{inner_emitted}"))
         },
         Expr::Paren(ExprParen {
             expr: inner,
             ..
-        }) => Ok(format!("({})", emit_metal_expr(inner, rewriter)?)),
+        }) => Ok(format!("({})", emit_metal_expr(inner, enum_paths, specialize_names)?)),
         Expr::Lit(ExprLit {
             lit,
             ..
@@ -101,12 +98,19 @@ fn emit_metal_expr(
 
 fn emit_metal_path(
     expr_path: &ExprPath,
-    rewriter: &EnumPathRewriter,
+    enum_paths: &EnumPaths,
+    specialize_names: &HashMap<String, String>,
 ) -> String {
+    let segments = &expr_path.path.segments;
+    if segments.len() == 1
+        && let Some(prefixed) = specialize_names.get(&segments[0].ident.to_string())
+    {
+        return prefixed.clone();
+    }
+
     let path_text = path_to_metal_string(&expr_path.path);
-    let head_is_enum =
-        expr_path.path.segments.first().is_some_and(|segment| rewriter.enum_paths.contains(&segment.ident.to_string()));
-    if head_is_enum && expr_path.path.segments.len() >= 2 {
+    let head_is_enum = segments.first().is_some_and(|segment| enum_paths.contains(&segment.ident.to_string()));
+    if head_is_enum && segments.len() >= 2 {
         format!("static_cast<uint>({path_text})")
     } else {
         path_text

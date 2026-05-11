@@ -14,8 +14,8 @@ use crate::{
 pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32, const BITS: u32>(
     weights: *const u32,
     scales: *const T,
-    #[optional(quant_method == QuantizationMethod::AWQ)] zero_points: Option<*const u8>,
-    #[optional(quant_method == QuantizationMethod::MLX)] biases: Option<*const T>,
+    #[optional(quant_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
+    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
     input: *const T,
     output: *mut T,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,

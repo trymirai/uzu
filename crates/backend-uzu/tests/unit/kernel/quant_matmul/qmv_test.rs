@@ -103,7 +103,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     };
 
     let (zero_points, biases) = match quant_method {
-        QuantizationMethod::AWQ => {
+        QuantizationMethod::ScaleZeroPoint => {
             let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
             for j in 0..n {
                 for g in 0..num_groups_k {
@@ -122,7 +122,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(
             }
             (Some(zp_packed), None)
         },
-        QuantizationMethod::MLX => {
+        QuantizationMethod::ScaleBias => {
             let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
             for j in 0..n {
                 for g in 0..num_groups_k {
@@ -186,12 +186,12 @@ fn get_test_data_edge<T: ArrayElement + Float>(
     };
 
     let (zero_points, biases) = match quant_method {
-        QuantizationMethod::AWQ => {
+        QuantizationMethod::ScaleZeroPoint => {
             // Zero points all 0 → bias = 0
             let zp_packed = vec![0u8; n * zp_stride];
             (Some(zp_packed), None)
         },
-        QuantizationMethod::MLX => {
+        QuantizationMethod::ScaleBias => {
             let biases: Vec<T> = vec![T::zero(); n * num_groups_k];
             (None, Some(biases))
         },
@@ -304,21 +304,21 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>(
 #[uzu_test]
 fn test_gs32_4bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 4, QuantizationMethod::AWQ);
+        test_basic::<F>(32, 4, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
 #[uzu_test]
 fn test_gs64_4bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 4, QuantizationMethod::AWQ);
+        test_basic::<F>(64, 4, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
 #[uzu_test]
 fn test_gs128_4bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 4, QuantizationMethod::AWQ);
+        test_basic::<F>(128, 4, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
@@ -327,21 +327,21 @@ fn test_gs128_4bit_zp() {
 #[uzu_test]
 fn test_gs32_8bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 8, QuantizationMethod::AWQ);
+        test_basic::<F>(32, 8, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
 #[uzu_test]
 fn test_gs64_8bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 8, QuantizationMethod::AWQ);
+        test_basic::<F>(64, 8, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
 #[uzu_test]
 fn test_gs128_8bit_zp() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 8, QuantizationMethod::AWQ);
+        test_basic::<F>(128, 8, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
@@ -350,21 +350,21 @@ fn test_gs128_8bit_zp() {
 #[uzu_test]
 fn test_gs32_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 4, QuantizationMethod::MLX);
+        test_basic::<F>(32, 4, QuantizationMethod::ScaleBias);
     })
 }
 
 #[uzu_test]
 fn test_gs64_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 4, QuantizationMethod::MLX);
+        test_basic::<F>(64, 4, QuantizationMethod::ScaleBias);
     })
 }
 
 #[uzu_test]
 fn test_gs128_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 4, QuantizationMethod::MLX);
+        test_basic::<F>(128, 4, QuantizationMethod::ScaleBias);
     })
 }
 
@@ -373,21 +373,21 @@ fn test_gs128_4bit_mlx() {
 #[uzu_test]
 fn test_gs32_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(32, 8, QuantizationMethod::MLX);
+        test_basic::<F>(32, 8, QuantizationMethod::ScaleBias);
     })
 }
 
 #[uzu_test]
 fn test_gs64_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(64, 8, QuantizationMethod::MLX);
+        test_basic::<F>(64, 8, QuantizationMethod::ScaleBias);
     })
 }
 
 #[uzu_test]
 fn test_gs128_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_basic::<F>(128, 8, QuantizationMethod::MLX);
+        test_basic::<F>(128, 8, QuantizationMethod::ScaleBias);
     })
 }
 
@@ -396,27 +396,27 @@ fn test_gs128_8bit_mlx() {
 #[uzu_test]
 fn test_edge_4bit_zp() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 4, QuantizationMethod::AWQ);
+        test_edge::<F>(32, 4, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
 #[uzu_test]
 fn test_edge_8bit_zp() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 8, QuantizationMethod::AWQ);
+        test_edge::<F>(32, 8, QuantizationMethod::ScaleZeroPoint);
     })
 }
 
 #[uzu_test]
 fn test_edge_4bit_mlx() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 4, QuantizationMethod::MLX);
+        test_edge::<F>(32, 4, QuantizationMethod::ScaleBias);
     })
 }
 
 #[uzu_test]
 fn test_edge_8bit_mlx() {
     for_each_float_type!(|F| {
-        test_edge::<F>(32, 8, QuantizationMethod::MLX);
+        test_edge::<F>(32, 8, QuantizationMethod::ScaleBias);
     })
 }

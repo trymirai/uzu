@@ -5,8 +5,9 @@ use syn::{Expr, Ident, Lifetime, Type};
 
 use super::super::{
     ast::{MetalArgument, MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, MetalKernelInfo},
-    enum_path_rewrite::EnumPathRewriter,
+    enum_path_rewrite::rewrite_for_rust,
 };
+use crate::common::enum_paths::EnumPaths;
 
 pub enum ArgumentEmission {
     Buffer(BufferArgument),
@@ -47,27 +48,26 @@ pub struct IndirectDispatchArgument;
 
 pub fn parse(
     kernel: &MetalKernelInfo,
-    enum_path_rewriter: &EnumPathRewriter,
+    enum_paths: &EnumPaths,
 ) -> Result<Vec<ArgumentEmission>> {
     let mut emissions = Vec::new();
     let mut next_buffer_index = 0usize;
     let mut indirect_dispatch_emitted = false;
 
     for argument in kernel.arguments.iter() {
-        let argument_type = argument.argument_type().unwrap();
-        match argument_type {
+        match argument.argument_type() {
             MetalArgumentType::Buffer(access) => {
-                let buffer = parse_buffer_argument(argument, access, next_buffer_index, enum_path_rewriter)?;
+                let buffer = parse_buffer_argument(argument, *access, next_buffer_index, enum_paths)?;
                 emissions.push(ArgumentEmission::Buffer(buffer));
                 next_buffer_index += 1;
             },
             MetalArgumentType::Constant((rust_type_text, constant_type)) => {
                 let constant = parse_constant_argument(
                     argument,
-                    &rust_type_text,
-                    &constant_type,
+                    rust_type_text,
+                    constant_type,
                     next_buffer_index,
-                    enum_path_rewriter,
+                    enum_paths,
                 )?;
                 emissions.push(ArgumentEmission::Constant(constant));
                 next_buffer_index += 1;
@@ -87,11 +87,11 @@ fn parse_buffer_argument(
     argument: &MetalArgument,
     access: MetalBufferAccess,
     buffer_index: usize,
-    enum_path_rewriter: &EnumPathRewriter,
+    enum_paths: &EnumPaths,
 ) -> Result<BufferArgument> {
     let name = format_ident!("{}", argument.name.as_ref());
     let lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
-    let condition = parse_argument_condition(argument, enum_path_rewriter)?;
+    let condition = parse_argument_condition(argument, enum_paths)?;
     Ok(BufferArgument {
         name,
         buffer_index,
@@ -106,7 +106,7 @@ fn parse_constant_argument(
     rust_type_text: &str,
     constant_type: &MetalConstantType,
     buffer_index: usize,
-    enum_path_rewriter: &EnumPathRewriter,
+    enum_paths: &EnumPaths,
 ) -> Result<ConstantArgument> {
     let name = format_ident!("{}", argument.name.as_ref());
     let element_type: Type = syn::parse_str(rust_type_text)
@@ -123,7 +123,7 @@ fn parse_constant_argument(
             }
         },
     };
-    let condition = parse_argument_condition(argument, enum_path_rewriter)?;
+    let condition = parse_argument_condition(argument, enum_paths)?;
     Ok(ConstantArgument {
         name,
         buffer_index,
@@ -134,12 +134,12 @@ fn parse_constant_argument(
 
 fn parse_argument_condition(
     argument: &MetalArgument,
-    enum_path_rewriter: &EnumPathRewriter,
+    enum_paths: &EnumPaths,
 ) -> Result<Option<ArgumentCondition>> {
-    match argument.argument_condition().unwrap() {
+    match argument.argument_condition() {
         Some(condition_text) => {
             let field_name = format_ident!("has_{}", argument.name.as_ref());
-            let rust_expression = enum_path_rewriter.rewrite_for_rust(condition_text).with_context(|| {
+            let rust_expression = rewrite_for_rust(enum_paths, condition_text).with_context(|| {
                 format!("OPTIONAL condition `{}` cannot be parsed as a rust expression", condition_text)
             })?;
             Ok(Some(ArgumentCondition {

@@ -28,8 +28,8 @@ CONSTRAINT(T != "float" || BK < 64)
 PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const device uint32_t* weights,
     const device T* scales,
-    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::AWQ),
-    const device T* biases OPTIONAL(quant_method == QuantizationMethod::MLX),
+    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::ScaleZeroPoint),
+    const device T* biases OPTIONAL(quant_method == QuantizationMethod::ScaleBias),
     const device T* input,
     device T* output,
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
@@ -46,7 +46,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const uint simd_lane THREADS(32),
     const uint simd_group THREADS(WM * WN)
 ) {
-  if (quant_method == QuantizationMethod::MLX) {
+  if (quant_method == QuantizationMethod::ScaleBias) {
     if (aligned_n) {
       qmm_transposed_impl<
           T,
@@ -56,7 +56,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           BM,
           BK,
           BN,
-          QuantizationMethod::MLX,
+          QuantizationMethod::ScaleBias,
           WM,
           WN>(
           weights,
@@ -84,7 +84,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           BM,
           BK,
           BN,
-          QuantizationMethod::MLX,
+          QuantizationMethod::ScaleBias,
           WM,
           WN>(
           weights,
@@ -114,7 +114,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           BM,
           BK,
           BN,
-          QuantizationMethod::AWQ,
+          QuantizationMethod::ScaleZeroPoint,
           WM,
           WN>(
           weights,
@@ -142,7 +142,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           BM,
           BK,
           BN,
-          QuantizationMethod::AWQ,
+          QuantizationMethod::ScaleZeroPoint,
           WM,
           WN>(
           weights,
