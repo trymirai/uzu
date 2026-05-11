@@ -16,7 +16,7 @@ use backend_uzu::{
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{error::BenchError, output::PerfResult, shapes::TestShape};
+use super::{dispatch::BenchDispatchPath, error::BenchError, output::PerfResult, shapes::TestShape};
 
 type Ctx = <Metal as Backend>::Context;
 type Buf = Retained<ProtocolObject<dyn MTLBuffer>>;
@@ -42,24 +42,26 @@ fn encode_and_run(
     a_buffer: &Buf,
     b_buffer: &Buf,
     d_buffer: &mut Buf,
+    path: BenchDispatchPath,
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
-    kernel.encode(
-        context,
-        MatmulArguments {
-            a: a_buffer,
-            a_offset: 0,
-            b: b_buffer,
-            ab_scale: 1.0,
-            c: MatmulArgumentC::None,
-            d: d_buffer,
-            batch_dim: shape.batch as u32,
-            input_dim: shape.input_dim as u32,
-            output_dim: shape.output_dim as u32,
-        },
-        &mut encoder,
-    );
+    let arguments = MatmulArguments {
+        a: a_buffer,
+        a_offset: 0,
+        b: b_buffer,
+        ab_scale: 1.0,
+        c: MatmulArgumentC::None,
+        d: d_buffer,
+        batch_dim: shape.batch as u32,
+        input_dim: shape.input_dim as u32,
+        output_dim: shape.output_dim as u32,
+    };
+
+    match path.metal_dispatch() {
+        None => kernel.encode(context, arguments, &mut encoder),
+        Some(metal_path) => kernel.encode_with_path(context, arguments, &mut encoder, metal_path),
+    }
 
     let completed = encoder.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 
@@ -70,6 +72,7 @@ fn run_benchmark(
     context: &Ctx,
     data_type: DataType,
     shape: &TestShape,
+    path: BenchDispatchPath,
 ) -> Result<f64, BenchError> {
     let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
         .map_err(|e| BenchError::Kernel(e.to_string()))?;
@@ -92,7 +95,7 @@ fn run_benchmark(
     fill_buffer_random(&b_buffer, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
-        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
+        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, path).map_err(|source| {
             BenchError::Warmup {
                 iteration,
                 source: Box::new(source),
@@ -102,13 +105,12 @@ fn run_benchmark(
 
     let mut gpu_time_total_ms = 0.0;
     for iteration in 0..BENCHMARK_ITERATIONS {
-        let gpu_ms =
-            encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer).map_err(|source| {
-                BenchError::Benchmark {
-                    iteration,
-                    source: Box::new(source),
-                }
-            })?;
+        let gpu_ms = encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, path).map_err(
+            |source| BenchError::Benchmark {
+                iteration,
+                source: Box::new(source),
+            },
+        )?;
         gpu_time_total_ms += gpu_ms;
     }
 
@@ -119,15 +121,16 @@ pub fn benchmark_single(
     context: &Ctx,
     data_type: DataType,
     shape: &TestShape,
+    path: BenchDispatchPath,
 ) -> PerfResult {
-    match run_benchmark(context, data_type, shape) {
+    match run_benchmark(context, data_type, shape, path) {
         Ok(duration_ms) => {
             let flops = 2.0 * shape.batch as f64 * shape.input_dim as f64 * shape.output_dim as f64;
             let gflops = flops / (duration_ms / 1000.0) / 1e9;
             PerfResult {
                 combo: format!("{data_type:?}"),
                 shape: format!("{shape}"),
-                dispatch_path: "auto".to_owned(),
+                dispatch_path: path.label().to_owned(),
                 duration_ms,
                 gflops,
                 status: "ok".into(),
@@ -137,7 +140,7 @@ pub fn benchmark_single(
         Err(error) => PerfResult {
             combo: format!("{data_type:?}"),
             shape: format!("{shape}"),
-            dispatch_path: "auto".to_owned(),
+            dispatch_path: path.label().to_owned(),
             duration_ms: 0.0,
             gflops: 0.0,
             status: "error".into(),

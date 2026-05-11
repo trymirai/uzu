@@ -19,13 +19,9 @@ use backend_uzu::{
         metal::{DeviceExt, MatmulDispatchPath, Metal, MetalContext},
     },
 };
-use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
 
-use crate::{
-    common::{assert::assert_eq_float, type_short_name},
-    uzu_bench, uzu_test,
-};
+use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input {
     left: Box<[bf16]>,
@@ -271,69 +267,3 @@ fn test_bf16_128x128_scale_and_accumulate() {
     test_mpp_correctness(256, 2048, 2048, 0.5, true, 1.0);
 }
 
-// Benchmarks
-
-const BENCHMARK_SHAPES: &[(usize, usize, usize)] =
-    &[(128, 2048, 8192), (128, 4096, 14336), (256, 4096, 4096), (512, 8192, 2048)];
-
-#[uzu_bench]
-fn bench_gemm_mpp(criterion: &mut Criterion) {
-    let metal_context = MetalContext::new().unwrap();
-    if !metal_context.device.supports_mxu() {
-        return;
-    }
-
-    let mut matmul_kernel =
-        <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&metal_context, bf16::data_type())
-            .expect("MatmulKernel");
-
-    let mut benchmark_group =
-        criterion.benchmark_group(format!("{}/Kernel/Matmul/GEMM_MPP", type_short_name::<Metal>()));
-
-    for &(batch_dim, input_dim, output_dim) in BENCHMARK_SHAPES {
-        let left_array = metal_context.create_array_uninitialized(&[batch_dim, input_dim], bf16::data_type(), "");
-        let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type(), "");
-        let destination_array =
-            metal_context.create_array_uninitialized(&[batch_dim, output_dim], bf16::data_type(), "");
-
-        let floating_point_operations = 2 * batch_dim * input_dim * output_dim;
-        benchmark_group.throughput(Throughput::Elements(floating_point_operations as u64));
-
-        benchmark_group.bench_function(
-            BenchmarkId::new("BF16", format!("M[{batch_dim}]K[{input_dim}]N[{output_dim}]")),
-            |bencher| {
-                let left_buffer = left_array.buffer();
-                let left_ref = left_buffer.borrow();
-                let right_buffer = right_array.buffer();
-                let right_ref = right_buffer.borrow();
-                let destination_buffer = destination_array.buffer();
-
-                bencher.iter_custom(|iteration_count| {
-                    let mut encoder = Encoder::<Metal>::new(&metal_context).unwrap();
-
-                    for _ in 0..iteration_count {
-                        let mut destination_ref = destination_buffer.borrow_mut();
-                        matmul_kernel.encode_with_path(
-                            &metal_context,
-                            MatmulArguments {
-                                a: left_ref.deref(),
-                                a_offset: 0,
-                                b: right_ref.deref(),
-                                ab_scale: 1.0,
-                                c: MatmulArgumentC::None,
-                                d: destination_ref.deref_mut(),
-                                batch_dim: batch_dim as u32,
-                                input_dim: input_dim as u32,
-                                output_dim: output_dim as u32,
-                            },
-                            &mut encoder,
-                            MatmulDispatchPath::GemmMpp,
-                        );
-                    }
-
-                    encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
-                })
-            },
-        );
-    }
-}

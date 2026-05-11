@@ -4,13 +4,13 @@ use backend_uzu::{
     DataType,
     backends::{
         common::{Backend, Context},
-        metal::Metal,
+        metal::{DeviceExt, Metal},
     },
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use metal::MTLDeviceExt;
 
-use crate::matmul::{bench, output::print_results_table, shapes::test_shapes};
+use crate::matmul::{bench, dispatch::BenchDispatchPath, output::print_results_table, shapes::test_shapes};
 
 type Ctx = <Metal as Backend>::Context;
 
@@ -34,11 +34,22 @@ fn write_json_results<T: serde::Serialize>(
 #[ignore]
 fn matmul_perf() {
     let context = Ctx::new().expect("Metal context required");
+    let supports_mxu = context.device.supports_mxu();
 
     let data_types = [DataType::BF16, DataType::F16];
     let test_shapes = test_shapes();
+    let dispatch_paths: Vec<BenchDispatchPath> = BenchDispatchPath::ALL
+        .iter()
+        .copied()
+        .filter(|p| !p.requires_mxu() || supports_mxu)
+        .collect();
 
-    eprintln!("Matmul perf: {} dtypes x {} shapes", data_types.len(), test_shapes.len(),);
+    eprintln!(
+        "Matmul perf: {} dtypes x {} paths x {} shapes",
+        data_types.len(),
+        dispatch_paths.len(),
+        test_shapes.len(),
+    );
 
     let progress_bar = ProgressBar::new_spinner();
     progress_bar.set_style(
@@ -48,11 +59,13 @@ fn matmul_perf() {
     let mut results = Vec::new();
 
     for &data_type in &data_types {
-        for shape in &test_shapes {
-            progress_bar.set_message(format!("{data_type:?} {shape}"));
-            let result = bench::benchmark_single(&context, data_type, shape);
-            results.push(result);
-            progress_bar.inc(1);
+        for &path in &dispatch_paths {
+            for shape in &test_shapes {
+                progress_bar.set_message(format!("{data_type:?} {} {shape}", path.label()));
+                let result = bench::benchmark_single(&context, data_type, shape, path);
+                results.push(result);
+                progress_bar.inc(1);
+            }
         }
     }
 
