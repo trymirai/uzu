@@ -8470,9 +8470,9 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xgrammar-rs"
-version = "0.1.32"
+version = "0.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b801ffa86a1ff8637c04b7512350a3e71dc879dbdc0c142ed3ee27c0d0b540"
+checksum = "2f62aaf862c4c02642e381bc17172be4096889bb3834aa47a1bead94df70f0c6"
 dependencies = [
  "autocxx",
  "autocxx-build",
