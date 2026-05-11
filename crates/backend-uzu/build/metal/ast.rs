@@ -378,9 +378,7 @@ impl MetalKernelInfo {
     }
 
     pub fn has_groups_indirect(&self) -> bool {
-        self.arguments
-            .iter()
-            .any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(MetalGroupsType::Indirect)))
+        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(MetalGroupsType::Indirect)))
     }
 
     pub fn has_threads(&self) -> bool {
@@ -438,13 +436,11 @@ impl MetalKernelInfo {
                         conditional: a.argument_condition().is_some(),
                         ty: KernelArgumentType::Constant(format!("&[{ty}]").into_boxed_str()),
                     }),
-                    MetalArgumentType::Constant((ty, MetalConstantType::Array(Some(size)))) => {
-                        Some(KernelArgument {
-                            name: a.name.clone(),
-                            conditional: a.argument_condition().is_some(),
-                            ty: KernelArgumentType::Constant(format!("&[{ty}; {size}]").into_boxed_str()),
-                        })
-                    },
+                    MetalArgumentType::Constant((ty, MetalConstantType::Array(Some(size)))) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        conditional: a.argument_condition().is_some(),
+                        ty: KernelArgumentType::Constant(format!("&[{ty}; {size}]").into_boxed_str()),
+                    }),
                     _ => None,
                 })
                 .collect(),

@@ -24,11 +24,8 @@ pub fn wrappers(
     let mut next_index = 0usize;
 
     for kernel in kernels {
-        let specialize_count = kernel
-            .arguments
-            .iter()
-            .filter(|a| matches!(a.argument_type(), MetalArgumentType::Specialize(_)))
-            .count();
+        let specialize_count =
+            kernel.arguments.iter().filter(|a| matches!(a.argument_type(), MetalArgumentType::Specialize(_))).count();
 
         if specialize_count > 0 {
             base_indices.insert(kernel.name.clone(), next_index);
@@ -158,9 +155,7 @@ fn kernel_wrappers(
         let (mut wrapper_arguments, condition_definitions) = kernel
             .arguments
             .iter()
-            .filter(|a| {
-                matches!(a.argument_type(), MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_))
-            })
+            .filter(|a| matches!(a.argument_type(), MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)))
             .enumerate()
             .map(|(i, a)| -> anyhow::Result<_> {
                 let condition = a.argument_condition();

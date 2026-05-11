@@ -62,13 +62,8 @@ pub fn parse(
                 next_buffer_index += 1;
             },
             MetalArgumentType::Constant((rust_type_text, constant_type)) => {
-                let constant = parse_constant_argument(
-                    argument,
-                    rust_type_text,
-                    constant_type,
-                    next_buffer_index,
-                    enum_paths,
-                )?;
+                let constant =
+                    parse_constant_argument(argument, rust_type_text, constant_type, next_buffer_index, enum_paths)?;
                 emissions.push(ArgumentEmission::Constant(constant));
                 next_buffer_index += 1;
             },

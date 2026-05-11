@@ -331,7 +331,6 @@ impl Compiler for MetalCompiler {
     ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
 
-
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|e| e.ok())
