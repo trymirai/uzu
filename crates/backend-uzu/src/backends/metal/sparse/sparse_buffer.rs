@@ -30,10 +30,7 @@ impl MetalSparseBuffer {
         capacity: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
-        let Some(ctx) = context.upgrade() else {
-            return Err(MetalError::CannotCreateBuffer);
-        };
-
+        let ctx = context.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
         let page_size_bytes = page_size.in_bytes();
         let aligned_capacity = capacity.next_multiple_of(page_size_bytes);
 
@@ -56,13 +53,10 @@ impl MetalSparseBuffer {
 
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
-        let Some(context) = self.context.upgrade() else {
-            return;
-        };
-
-        self.mapped_pages.iter().map(|(range, _)| range.clone()).for_each(|range| {
+        let context = self.context.upgrade().expect("Failed to upgrade context");
+        for (range, _) in self.mapped_pages.iter() {
             context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range).expect("Failed to unmap");
-        });
+        }
     }
 }
 

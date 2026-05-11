@@ -66,7 +66,7 @@ impl MetalContext {
         Ok(pipeline)
     }
 
-    pub fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
+    pub(super) fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
         self.sparse_heap_pool.borrow_mut()
     }
 }
@@ -136,24 +136,37 @@ impl Context for MetalContext {
         &self,
         size: usize,
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        let buffer =
-            self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer);
+        // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
+        let size = size.max(1);
+        let buffer = self
+            .device
+            .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MetalError::CannotCreateBuffer)?;
+
         let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
         *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
-        buffer
+
+        Ok(buffer)
     }
 
     fn create_buffer_with_data(
         &self,
         data: &[u8],
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
+        let data = if data.len() == 0 {
+            &[0]
+        } else {
+            data
+        };
+
         let buffer = self
             .device
             .new_buffer_with_data(data, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .ok_or(MetalError::CannotCreateBuffer);
+            .ok_or(MetalError::CannotCreateBuffer)?;
+
         let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
         *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
-        buffer
+        Ok(buffer)
     }
 
     fn create_allocation(
