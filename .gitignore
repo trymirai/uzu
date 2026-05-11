@@ -4,6 +4,9 @@
 *.proptest-regressions
 .idea/
 
+# Nix
+result
+
 # Metal traces
 *.gputrace
 *.trace
