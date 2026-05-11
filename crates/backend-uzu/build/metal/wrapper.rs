@@ -7,7 +7,11 @@ use super::{
     ast::{MetalArgumentType, MetalKernelInfo},
     enum_path_rewrite::{is_enum_c_type, rewrite_for_metal},
 };
-use crate::common::{enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle};
+use crate::common::{
+    enum_paths::EnumPaths,
+    identifiers::{ArgumentName, KernelName, SpecializeConstantName},
+    mangling::static_mangle,
+};
 
 pub type SpecializeBaseIndices = HashMap<KernelName, usize>;
 
@@ -87,12 +91,15 @@ fn kernel_wrappers(
         );
     }
 
-    let specialize_names: HashMap<String, String> = kernel
+    let specialize_names: HashMap<ArgumentName, SpecializeConstantName> = kernel
         .arguments
         .iter()
         .filter_map(|a| {
             if matches!(a.argument_type(), MetalArgumentType::Specialize(_)) {
-                Some((a.name.to_string(), format!("__dsl_specialize_{}_{}", kernel.name, a.name)))
+                Some((
+                    a.name.clone(),
+                    SpecializeConstantName::new(format!("__dsl_specialize_{}_{}", kernel.name, a.name)),
+                ))
             } else {
                 None
             }

@@ -5,7 +5,11 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{BinOp, Expr, ExprBinary, ExprLit, ExprParen, ExprPath, ExprUnary, Lit, Path, UnOp, parse_quote};
 
-use crate::common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with};
+use crate::common::{
+    enum_paths::EnumPaths,
+    expr_rewrite::rewrite_paths_with,
+    identifiers::{ArgumentName, SpecializeConstantName},
+};
 
 pub fn is_enum_c_type(
     enum_paths: &EnumPaths,
@@ -24,7 +28,7 @@ pub fn is_enum_c_type(
 
 pub fn rewrite_for_metal(
     enum_paths: &EnumPaths,
-    specialize_names: &HashMap<String, String>,
+    specialize_names: &HashMap<ArgumentName, SpecializeConstantName>,
     condition: &str,
 ) -> anyhow::Result<String> {
     let parsed: Expr =
@@ -47,7 +51,7 @@ pub fn rewrite_for_rust(
 fn emit_metal_expr(
     expr: &Expr,
     enum_paths: &EnumPaths,
-    specialize_names: &HashMap<String, String>,
+    specialize_names: &HashMap<ArgumentName, SpecializeConstantName>,
 ) -> anyhow::Result<String> {
     match expr {
         Expr::Path(expr_path) => Ok(emit_metal_path(expr_path, enum_paths, specialize_names)),
@@ -99,13 +103,13 @@ fn emit_metal_expr(
 fn emit_metal_path(
     expr_path: &ExprPath,
     enum_paths: &EnumPaths,
-    specialize_names: &HashMap<String, String>,
+    specialize_names: &HashMap<ArgumentName, SpecializeConstantName>,
 ) -> String {
     let segments = &expr_path.path.segments;
     if segments.len() == 1
-        && let Some(prefixed) = specialize_names.get(&segments[0].ident.to_string())
+        && let Some(prefixed) = specialize_names.get(segments[0].ident.to_string().as_str())
     {
-        return prefixed.clone();
+        return prefixed.as_str().to_owned();
     }
 
     let path_text = path_to_metal_string(&expr_path.path);
