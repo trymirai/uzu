@@ -16,7 +16,7 @@ use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
 use crate::{
-    ArrayElement, DataType,
+    ArrayElement, DataType, allocation_to_vec,
     array::Array,
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
@@ -33,7 +33,6 @@ use crate::{
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
         types::Error,
     },
-    try_allocation_to_vec,
 };
 
 // ============================================================================
@@ -682,8 +681,7 @@ impl<B: Backend> TraceValidator<B> {
         produced_shape: &[usize],
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
-        let produced =
-            try_allocation_to_vec::<B, Precision>(produced_allocation).expect("Failed to read produced allocation");
+        let produced = allocation_to_vec::<B, Precision>(produced_allocation);
         Self::validate_allocation_data_of_type(expected_array, &produced, produced_shape, transform)
     }
 

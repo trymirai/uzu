@@ -1,7 +1,7 @@
 use std::sync::mpsc::Receiver;
 
 use super::*;
-use crate::{array::Array, backends::common::Allocation, try_allocation_to_vec};
+use crate::{allocation_to_vec, array::Array, backends::common::Allocation};
 
 pub enum SubmittedDecodedPaddedAudio<B: Backend> {
     Ready(DecodedPaddedAudio),
@@ -50,16 +50,14 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
                     AudioError::Runtime(format!("failed to wait for FishAudio decoder command buffer: {err}"))
                 })?;
                 drop(retained_inputs);
-                let allocation_read_error =
-                    |err| AudioError::Runtime(format!("failed to read FishAudio decoder output allocation: {err}"));
                 let samples_result: AudioResult<Vec<f32>> = match data_type {
-                    DataType::F32 => try_allocation_to_vec::<B, f32>(&output).map_err(allocation_read_error),
-                    DataType::F16 => try_allocation_to_vec::<B, half::f16>(&output)
-                        .map_err(allocation_read_error)
-                        .map(|values| values.iter().map(|&value| f32::from(value)).collect()),
-                    DataType::BF16 => try_allocation_to_vec::<B, half::bf16>(&output)
-                        .map_err(allocation_read_error)
-                        .map(|values| values.iter().map(|&value| f32::from(value)).collect()),
+                    DataType::F32 => Ok(allocation_to_vec::<B, f32>(&output)),
+                    DataType::F16 => {
+                        Ok(allocation_to_vec::<B, half::f16>(&output).iter().map(|&value| f32::from(value)).collect())
+                    },
+                    DataType::BF16 => {
+                        Ok(allocation_to_vec::<B, half::bf16>(&output).iter().map(|&value| f32::from(value)).collect())
+                    },
                     dt => Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
                 };
                 drop(output);

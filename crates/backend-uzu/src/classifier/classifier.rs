@@ -2,15 +2,14 @@ use std::{collections::HashMap, path::Path, time::Instant};
 
 #[cfg(feature = "tracing")]
 use super::ActivationTrace;
-use super::{ClassificationOutput, ClassificationStats, ClassifierContext, ClassifierError};
+use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
-    DataType,
+    DataType, allocation_to_vec,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::ModelMetadata,
     encodable_block::{EncodingParameters, LayerArguments},
     forward_pass::token_inputs::TokenInputs,
     session::types::Error,
-    try_allocation_to_vec,
 };
 
 pub struct Classifier<B: Backend> {
@@ -219,22 +218,15 @@ impl<B: Backend> Classifier<B> {
     ) -> Result<Box<[f32]>, Error> {
         let logits_data_type: DataType =
             self.context.model_config.model_config.prediction_head_config.readout_config.activation_precision().into();
-        let allocation_read_error = |err| {
-            Error::Classifier(ClassifierError::Custom(format!("failed to read classifier logits allocation: {err}")))
-        };
 
         match logits_data_type {
-            DataType::F32 => Ok(try_allocation_to_vec::<B, f32>(logits).map_err(allocation_read_error)?.into()),
-            DataType::F16 => Ok(try_allocation_to_vec::<B, half::f16>(logits)
-                .map_err(allocation_read_error)?
-                .into_iter()
-                .map(|x| x.to_f32())
-                .collect::<Box<[_]>>()),
-            DataType::BF16 => Ok(try_allocation_to_vec::<B, half::bf16>(logits)
-                .map_err(allocation_read_error)?
-                .into_iter()
-                .map(|x| x.to_f32())
-                .collect::<Box<[_]>>()),
+            DataType::F32 => Ok(allocation_to_vec::<B, f32>(logits).into()),
+            DataType::F16 => {
+                Ok(allocation_to_vec::<B, half::f16>(logits).into_iter().map(|x| x.to_f32()).collect::<Box<[_]>>())
+            },
+            DataType::BF16 => {
+                Ok(allocation_to_vec::<B, half::bf16>(logits).into_iter().map(|x| x.to_f32()).collect::<Box<[_]>>())
+            },
             _ => Err(Error::UnableToDecodeText),
         }
     }

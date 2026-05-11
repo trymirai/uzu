@@ -9,7 +9,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    DataType,
+    DataType, allocation_to_vec,
     array::{ArrayContextExt, size_for_shape},
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     backends::common::{
@@ -28,7 +28,6 @@ use crate::{
     encodable_block::{Decoder, EncodingParameters, LayerExecutables, RMSNorm},
     forward_pass::{model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,
-    try_allocation_to_vec,
 };
 
 mod loaders;
@@ -357,8 +356,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
 
         Ok(DecodedPaddedAudio {
-            samples: try_allocation_to_vec::<B, f32>(&output)
-                .map_err(|err| AudioError::Runtime(format!("failed to read FSQ decode output allocation: {err}")))?,
+            samples: allocation_to_vec::<B, f32>(&output),
             channels: self.config.channels(),
             frames,
             lengths: lengths_usize,
@@ -432,8 +430,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
 
-        let encoded_tokens = try_allocation_to_vec::<B, i32>(&tokens)
-            .map_err(|err| AudioError::Runtime(format!("failed to read FSQ encode token allocation: {err}")))?;
+        let encoded_tokens = allocation_to_vec::<B, i32>(&tokens);
         let mut tokens_u32 = vec![0_u32; encoded_tokens.len()];
         for (index, &token) in encoded_tokens.iter().enumerate() {
             if token < 0 {

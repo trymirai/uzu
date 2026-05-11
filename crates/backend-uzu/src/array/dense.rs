@@ -10,11 +10,6 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AllocationAccessError {
-    #[error("allocation length {byte_len} is not divisible by element size {element_size}")]
-    LengthNotMultiple {
-        byte_len: usize,
-        element_size: usize,
-    },
     #[error("allocation write length {write_len} exceeds allocation length {range_len}")]
     WriteExceedsRange {
         write_len: usize,
@@ -180,23 +175,12 @@ pub fn allocation_as_bytes_mut<B: Backend>(allocation: &mut Allocation<B>) -> &m
     }
 }
 
-pub fn try_allocation_to_vec<B: Backend, T: ArrayElement>(
-    allocation: &Allocation<B>
-) -> Result<Vec<T>, AllocationAccessError> {
+pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
     let element_size = size_of::<T>();
     let allocation_bytes = allocation_as_bytes(allocation);
-    if allocation_bytes.len() % element_size != 0 {
-        return Err(AllocationAccessError::LengthNotMultiple {
-            byte_len: allocation_bytes.len(),
-            element_size,
-        });
-    }
+    assert_eq!(allocation_bytes.len() % element_size, 0, "allocation length must be a multiple of element size");
 
     let base = allocation_bytes.as_ptr() as *const T;
     let element_count = allocation_bytes.len() / element_size;
-    Ok((0..element_count).map(|index| unsafe { base.add(index).read_unaligned() }).collect())
-}
-
-pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
-    try_allocation_to_vec(allocation).expect("Failed to read allocation")
+    (0..element_count).map(|index| unsafe { base.add(index).read_unaligned() }).collect()
 }
