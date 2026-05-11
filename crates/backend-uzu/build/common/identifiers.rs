@@ -13,9 +13,7 @@ macro_rules! borrow_str {
     };
 }
 
-#[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display,
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display)]
 #[serde(transparent)]
 #[as_ref(str)]
 #[deref(forward)]
@@ -23,9 +21,7 @@ macro_rules! borrow_str {
 pub struct KernelName(String);
 borrow_str!(KernelName);
 
-#[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display,
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display)]
 #[serde(transparent)]
 #[as_ref(str)]
 #[deref(forward)]
@@ -33,9 +29,7 @@ borrow_str!(KernelName);
 pub struct ArgumentName(String);
 borrow_str!(ArgumentName);
 
-#[derive(
-    Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display,
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display)]
 #[serde(transparent)]
 #[as_ref(str)]
 #[deref(forward)]
