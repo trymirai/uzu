@@ -3,75 +3,82 @@ use std::{path::Path, sync::Arc};
 use tokio::{runtime::Handle as TokioHandle, sync::broadcast::Sender as TokioBroadcastSender};
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
-use crate::{DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask};
+use crate::{
+    DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask,
+    backends::{apple::AppleDownloadManager, universal::UniversalDownloadManager},
+};
 
 pub type DownloadEvent = (DownloadId, FileDownloadEvent);
 pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
 pub type SharedDownloadEventSender = Arc<DownloadEventSender>;
 
-#[async_trait::async_trait]
-pub trait FileDownloadManager: Send + Sync + 'static {
-    fn manager_id(&self) -> &str;
-
-    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent>;
-
-    fn global_broadcast_sender(&self) -> SharedDownloadEventSender;
-
-    async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError>;
-
-    async fn file_download_task(
-        &self,
-        source_url: &String,
-        destination_path: &Path,
-        file_check: FileCheck,
-        expected_bytes: Option<u64>,
-    ) -> Result<Arc<dyn FileDownloadTask>, DownloadError>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum FileDownloadManagerType {
     Universal,
+    #[cfg(target_vendor = "apple")]
     Apple,
 }
 
 impl Default for FileDownloadManagerType {
+    #[allow(unreachable_code)]
     fn default() -> Self {
-        if cfg!(target_vendor = "apple") {
-            FileDownloadManagerType::Apple
-        } else {
-            FileDownloadManagerType::Universal
-        }
+        #[cfg(target_vendor = "apple")]
+        return Self::Apple;
+        Self::Universal
     }
 }
 
-#[allow(unreachable_code)]
-pub async fn create_download_manager(
-    r#type: FileDownloadManagerType,
-    tokio_handle: TokioHandle,
-) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
-    match r#type {
-        FileDownloadManagerType::Universal => {
-            use crate::managers::universal::{AsyncFetcherConfig, AsyncFetcherDownloadManager};
-            let config = AsyncFetcherConfig::default()
-                .with_connections_per_file(4)
-                .with_retries(3)
-                .with_progress_interval_ms(500);
-            let manager = AsyncFetcherDownloadManager::new(config, tokio_handle).await?;
-            return Ok(Box::new(manager) as Box<dyn FileDownloadManager>);
-        },
-        FileDownloadManagerType::Apple => {
+#[async_trait::async_trait]
+pub trait FileDownloadManager: Send + Sync + 'static {
+    fn manager_id(&self) -> &str;
+    fn subscribe_to_all_downloads(&self) -> TokioBroadcastStream<DownloadEvent>;
+    fn global_broadcast_sender(&self) -> SharedDownloadEventSender;
+
+    async fn get_all_file_tasks(&self) -> Result<Vec<Arc<dyn FileDownloadTask>>, DownloadError>;
+
+    async fn remove_file_task(
+        &self,
+        download_id: DownloadId,
+    ) -> Result<(), DownloadError>;
+
+    async fn file_download_task(
+        &self,
+        source_url: &str,
+        destination_path: &Path,
+        file_check: FileCheck,
+        expected_bytes: Option<u64>,
+    ) -> Result<Arc<dyn FileDownloadTask>, DownloadError>;
+
+    async fn destination_foreign_lock(
+        &self,
+        _destination_path: &Path,
+    ) -> Option<String> {
+        None
+    }
+}
+
+impl dyn FileDownloadManager {
+    pub async fn new(
+        file_download_manager_type: FileDownloadManagerType,
+        tokio_handle: TokioHandle,
+    ) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
+        match file_download_manager_type {
+            FileDownloadManagerType::Universal => {
+                let manager: Box<dyn FileDownloadManager> =
+                    Box::new(UniversalDownloadManager::from_tokio_handle(tokio_handle)?);
+                Ok(manager)
+            },
             #[cfg(target_vendor = "apple")]
-            {
-                use crate::managers::apple::{SessionConfig, URLSessionDownloadManager, URLSessionDropPolicy};
-                let manager = URLSessionDownloadManager::new(
-                    SessionConfig::default(),
-                    URLSessionDropPolicy::FinishTasksAndInvalidate,
-                    tokio_handle,
-                )
-                .await?;
-                return Ok(Box::new(manager) as Box<dyn FileDownloadManager>);
-            }
-            return Err(DownloadError::UnsupportedType);
-        },
-    };
+            FileDownloadManagerType::Apple => {
+                let manager: Box<dyn FileDownloadManager> =
+                    Box::new(AppleDownloadManager::from_tokio_handle(tokio_handle)?);
+                Ok(manager)
+            },
+        }
+    }
+
+    pub async fn system_default(tokio_handle: TokioHandle) -> Result<Box<dyn FileDownloadManager>, DownloadError> {
+        Self::new(FileDownloadManagerType::default(), tokio_handle).await
+    }
 }

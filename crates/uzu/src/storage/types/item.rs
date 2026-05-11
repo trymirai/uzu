@@ -1,10 +1,10 @@
 use std::{
-    fs::{create_dir_all, read_dir, remove_dir_all, remove_file},
-    path::{Path, PathBuf},
+    fs::{create_dir_all, remove_dir_all},
+    path::PathBuf,
     sync::Arc,
 };
 
-use download_manager::{FileDownloadManager, FileDownloadState, FileDownloadTask};
+use download_manager::{DownloadError, FileDownloadManager, FileDownloadPhase, FileDownloadState, FileDownloadTask};
 use futures_util::future::join_all;
 use shoji::types::basic::File;
 use tokio::{
@@ -21,7 +21,7 @@ use crate::{
     helpers::SharedAccess,
     storage::{
         StorageError,
-        types::{CrcSnapshot, DownloadPhase, DownloadState, StorageDownloadEventSender, reduce_file_download_states},
+        types::{DownloadPhase, DownloadState, StorageDownloadEventSender, reduce_file_download_states},
     },
 };
 
@@ -291,26 +291,14 @@ impl Item {
     pub async fn download(&self) -> Result<(), StorageError> {
         tracing::debug!("[MODEL] download() called for model: {}", self.identifier);
 
-        // Ensure file tasks are initialized
         let tasks_were_created = self.ensure_file_tasks().await?;
-
-        // Only restart listener if file tasks were just created
         if tasks_were_created {
             tracing::debug!("[MODEL] Restarting listener for model: {} (file tasks created)", self.identifier);
             self.stop_listening().await;
             self.start_listening().await;
         }
 
-        // Reduce state after ensuring file tasks
         let current_state = self.reduce_state().await;
-        self.update_state_and_broadcast(current_state.clone()).await;
-
-        tracing::debug!(
-            "[MODEL] Current state: phase={:?}, can_transition={}",
-            current_state.phase,
-            Self::can_transition_to_downloading(&current_state.phase)
-        );
-
         if !Self::can_transition_to_downloading(&current_state.phase) {
             return Err(StorageError::InvalidStateTransition {
                 from: current_state.phase.clone(),
@@ -319,31 +307,29 @@ impl Item {
         }
 
         tracing::debug!("[MODEL] Calling ensure_downloading");
+        self.ensure_downloading().await?;
 
-        let result = self.ensure_downloading().await;
+        self.stop_listening().await;
+        self.start_listening().await;
+
+        let downloading_state = self.reduce_state().await;
+        self.update_state_and_broadcast(downloading_state).await;
 
         tracing::debug!("[MODEL] download() completed for model: {}", self.identifier);
-
-        result
+        Ok(())
     }
 
     pub async fn pause(&self) -> Result<(), StorageError> {
         tracing::debug!("[MODEL] pause() called for model: {}", self.identifier);
 
-        // Ensure file tasks are initialized
         let tasks_were_created = self.ensure_file_tasks().await?;
-
-        // Only restart listener if file tasks were just created
         if tasks_were_created {
             tracing::debug!("[MODEL] Restarting listener for model: {} (file tasks created)", self.identifier);
             self.stop_listening().await;
             self.start_listening().await;
         }
 
-        // Reduce state after ensuring file tasks
         let current_state = self.reduce_state().await;
-        self.update_state_and_broadcast(current_state.clone()).await;
-
         if !current_state.can_pause() {
             return Err(StorageError::InvalidStateTransition {
                 from: current_state.phase.clone(),
@@ -352,63 +338,55 @@ impl Item {
         }
 
         tracing::debug!("[MODEL] Calling ensure_paused");
+        self.ensure_paused().await?;
 
-        let result = self.ensure_paused().await;
-        if result.is_ok() {
-            let file_tasks_guard = self.file_download_tasks.lock().await;
-            let mut file_download_states = Vec::with_capacity(file_tasks_guard.len());
-            for file_task in file_tasks_guard.iter() {
-                file_download_states.push(file_task.state().await);
-            }
-            drop(file_tasks_guard);
-
-            let mut cache_guard = self.file_download_states.lock().await;
-            *cache_guard = file_download_states;
-            drop(cache_guard);
-
-            let paused_state = self.reduce_state().await;
-            self.update_state_and_broadcast(paused_state).await;
+        let file_tasks_guard = self.file_download_tasks.lock().await;
+        let mut file_download_states = Vec::with_capacity(file_tasks_guard.len());
+        for file_task in file_tasks_guard.iter() {
+            file_download_states.push(file_task.state().await);
         }
+        drop(file_tasks_guard);
+
+        *self.file_download_states.lock().await = file_download_states;
+        let paused_state = self.reduce_state().await;
+        self.update_state_and_broadcast(paused_state).await;
 
         tracing::debug!("[MODEL] pause() completed for model: {}", self.identifier);
-
-        result
+        Ok(())
     }
 
     pub async fn cancel(&self) -> Result<(), StorageError> {
-        // Ensure file tasks are initialized
         let tasks_were_created = self.ensure_file_tasks().await?;
-
-        // Only restart listener if file tasks were just created
         if tasks_were_created {
             tracing::debug!("[MODEL] Restarting listener for model: {} (file tasks created)", self.identifier);
             self.stop_listening().await;
             self.start_listening().await;
         }
 
-        // Reduce state after ensuring file tasks
-        let current_state = self.reduce_state().await;
-        self.update_state_and_broadcast(current_state.clone()).await;
-
-        let file_tasks_guard = self.file_download_tasks.lock().await;
-        for file_task in file_tasks_guard.iter() {
-            let _ = file_task.cancel().await;
-        }
-        drop(file_tasks_guard);
-
         for file_info in self.files.iter() {
-            let file_path = self.cache_path.join(&file_info.name);
-            if file_path.exists() {
-                let _ = remove_file(&file_path);
-            }
-            let resume_data_path = format!("{}.resume_data", file_path.display());
-            if Path::new(&resume_data_path).exists() {
-                let _ = remove_file(&resume_data_path);
-            }
-            if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
-                let _ = CrcSnapshot::remove_crc(&self.cache_path, filename);
+            let destination = self.cache_path.join(&file_info.name);
+            if let Some(owner) = self.file_download_manager.destination_foreign_lock(&destination).await {
+                tracing::info!(?destination, %owner, "refusing to cancel: destination is locked by another manager");
+                return Err(StorageError::InvalidStateTransition {
+                    from: DownloadPhase::Locked {},
+                    to: DownloadPhase::NotDownloaded {},
+                });
             }
         }
+
+        let current_state = self.reduce_state().await;
+        if matches!(current_state.phase, DownloadPhase::Locked {}) {
+            return Err(StorageError::InvalidStateTransition {
+                from: current_state.phase,
+                to: DownloadPhase::NotDownloaded {},
+            });
+        }
+
+        self.cancel_and_remove_active_file_tasks().await?;
+
+        self.stop_listening().await;
+        *self.file_download_tasks.lock().await = Vec::new();
+        *self.file_download_states.lock().await = Vec::new();
 
         if self.cache_path.exists() {
             let _ = remove_dir_all(&self.cache_path);
@@ -422,6 +400,35 @@ impl Item {
 
     pub async fn progress(&self) -> Result<BroadcastStream<DownloadState>, StorageError> {
         Ok(BroadcastStream::new(self.broadcast_sender.subscribe()))
+    }
+
+    pub async fn detach_active_downloads(&self) -> Result<(), StorageError> {
+        self.cancel_and_remove_active_file_tasks().await?;
+        *self.file_download_tasks.lock().await = Vec::new();
+        *self.file_download_states.lock().await = Vec::new();
+        Ok(())
+    }
+
+    async fn cancel_and_remove_active_file_tasks(&self) -> Result<(), StorageError> {
+        let file_tasks = self.file_download_tasks.lock().await.clone();
+        let cancel_futures = file_tasks.iter().map(|file_task| {
+            let file_task = file_task.clone();
+            let manager = self.file_download_manager.clone();
+            async move {
+                let download_id = file_task.download_id();
+                file_task.cancel().await?;
+                manager.remove_file_task(download_id).await?;
+                Ok::<(), download_manager::DownloadError>(())
+            }
+        });
+        let first_error = join_all(cancel_futures).await.into_iter().find_map(Result::err);
+
+        match first_error {
+            Some(error) => Err(StorageError::DownloadManager {
+                message: error.to_string(),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Handle file task state update
@@ -452,11 +459,16 @@ impl Item {
         let file_tasks_guard = self.file_download_tasks.lock().await;
         let download_futures = file_tasks_guard.iter().map(|file_task| {
             let file_task = file_task.clone();
-            async move {
-                let _ = file_task.download().await;
-            }
+            async move { file_task.download().await }
         });
-        join_all(download_futures).await;
+        let first_error = join_all(download_futures).await.into_iter().find_map(Result::err);
+        drop(file_tasks_guard);
+
+        if let Some(error) = first_error {
+            return Err(StorageError::DownloadManager {
+                message: error.to_string(),
+            });
+        }
 
         tracing::debug!("[MODEL] ensure_downloading: All file downloads initiated");
         Ok(())
@@ -468,37 +480,31 @@ impl Item {
         let pause_futures = file_tasks_guard.iter().map(|file_task| {
             let file_task = file_task.clone();
             async move {
-                let _ = file_task.pause().await;
-            }
-        });
-        join_all(pause_futures).await;
-
-        tracing::debug!("[MODEL] ensure_paused: All file tasks paused");
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    async fn cleanup_empty_directory(&self) -> Result<(), StorageError> {
-        if !self.cache_path.exists() {
-            return Ok(());
-        }
-        let entries = read_dir(&self.cache_path).map_err(|error| StorageError::IO {
-            message: error.to_string(),
-        })?;
-        let mut has_real_files = false;
-        for entry in entries {
-            if let Ok(entry) = entry {
-                if let Some(name) = entry.file_name().to_str() {
-                    if !name.ends_with(".resume_data") && !name.ends_with(".crc") && !name.starts_with('.') {
-                        has_real_files = true;
-                        break;
+                if matches!(file_task.state().await.phase, FileDownloadPhase::Downloading) {
+                    match file_task.pause().await {
+                        Ok(()) => Ok(()),
+                        Err(DownloadError::InvalidStateTransition)
+                            if !matches!(file_task.state().await.phase, FileDownloadPhase::Downloading) =>
+                        {
+                            Ok(())
+                        },
+                        Err(error) => Err(error),
                     }
+                } else {
+                    Ok(())
                 }
             }
+        });
+        let first_error = join_all(pause_futures).await.into_iter().find_map(Result::err);
+        drop(file_tasks_guard);
+
+        if let Some(error) = first_error {
+            return Err(StorageError::DownloadManager {
+                message: error.to_string(),
+            });
         }
-        if !has_real_files {
-            let _ = remove_dir_all(&self.cache_path);
-        }
+
+        tracing::debug!("[MODEL] ensure_paused: All file tasks paused");
         Ok(())
     }
 
@@ -576,10 +582,11 @@ impl Item {
             // Fan-in: per-stream forwarders into a single bounded channel
             let num_streams = streams.len();
             let (tx, mut rx) = tokio_mpsc_channel::<(usize, FileDownloadState)>(1024);
+            let mut forwarder_handles = Vec::with_capacity(num_streams);
 
             for (idx, mut stream) in streams {
                 let tx = tx.clone();
-                model.handle.spawn(async move {
+                let forwarder_handle = model.handle.spawn(async move {
                     while let Some(item) = stream.next().await {
                         match item {
                             Ok(state) => {
@@ -592,7 +599,11 @@ impl Item {
                         }
                     }
                 });
+                forwarder_handles.push(forwarder_handle);
             }
+            let _forwarder_handles = ListenerForwarderHandles {
+                handles: forwarder_handles,
+            };
             drop(tx); // close when all forwarders end
 
             // Aggregator: coalesce bursts, keep only latest state per task
@@ -661,5 +672,17 @@ impl Item {
                 | DownloadPhase::Paused {}
                 | DownloadPhase::Error { .. }
         )
+    }
+}
+
+struct ListenerForwarderHandles {
+    handles: Vec<TokioJoinHandle<()>>,
+}
+
+impl Drop for ListenerForwarderHandles {
+    fn drop(&mut self) {
+        for handle in &self.handles {
+            handle.abort();
+        }
     }
 }

@@ -1,5 +1,6 @@
 mod callback;
 pub mod config;
+mod download_manager;
 mod downloader;
 mod error;
 
@@ -9,6 +10,7 @@ use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
+pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
 use indexmap::IndexSet;
@@ -68,10 +70,11 @@ impl Engine {
 
         let device = Device::new()?;
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string());
+        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
+            .with_download_manager_type(config.download_manager_type.into());
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
-        let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);
+        let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);
 
         let engine = Self {
             settings: SharedAccess::new(settings),
@@ -179,7 +182,7 @@ impl Engine {
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), EngineError> {
         self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
-        self.handle_registry_resfresh().await?;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -199,7 +202,7 @@ impl Engine {
         registry_identifier: String,
     ) -> Result<(), EngineError> {
         self.registry.lock().await.remove(&registry_identifier)?;
-        self.handle_registry_resfresh().await?;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -340,7 +343,7 @@ impl Engine {
         if let Some(model) = self.model_by_repo_id(identifier.clone()).await? {
             return Ok(Some(model));
         }
-        self.model_by_path(identifier.clone()).await
+        self.model_by_path(identifier).await
     }
 
     #[bindings::export(Method)]
@@ -366,10 +369,8 @@ impl Engine {
     ) -> Result<Option<Model>, EngineError> {
         let models = self.models().await?;
         for model in models {
-            if let Some(model_path) = self.model_path(&model).await {
-                if model_path == path {
-                    return Ok(Some(model));
-                }
+            if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
+                return Ok(Some(model));
             }
         }
         Ok(None)
@@ -383,29 +384,26 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Option<String> {
-        let path = if model.is_local() {
-            if let Some(local_external_path) = model.local_external_path() {
-                Some(local_external_path.clone())
-            } else {
-                let storage = self.storage.lock().await;
-                let state = storage.state(&model.identifier.clone()).await?;
-                match state.phase {
-                    DownloadPhase::Downloaded {} => {
-                        storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
-                    },
-                    DownloadPhase::NotDownloaded {}
-                    | DownloadPhase::Downloading {}
-                    | DownloadPhase::Paused {}
-                    | DownloadPhase::Locked {}
-                    | DownloadPhase::Error {
-                        ..
-                    } => None,
-                }
-            }
-        } else {
-            None
-        };
-        path
+        if !model.is_local() {
+            return None;
+        }
+        if let Some(local_external_path) = model.local_external_path() {
+            return Some(local_external_path);
+        }
+        let storage = self.storage.lock().await;
+        let state = storage.state(&model.identifier).await?;
+        match state.phase {
+            DownloadPhase::Downloaded {} => {
+                storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
+            },
+            DownloadPhase::NotDownloaded {}
+            | DownloadPhase::Downloading {}
+            | DownloadPhase::Paused {}
+            | DownloadPhase::Locked {}
+            | DownloadPhase::Error {
+                ..
+            } => None,
+        }
     }
 
     #[bindings::export(Method)]
@@ -433,7 +431,7 @@ impl Engine {
             return Ok(DownloaderStream::empty(model.identifier.clone()));
         }
         downloader.resume().await?;
-        Ok(downloader.progress().await?)
+        downloader.progress().await
     }
 
     #[bindings::export(Method)]
@@ -506,7 +504,7 @@ impl Engine {
 impl Engine {
     #[bindings::export(Method)]
     pub async fn settings(&self) -> Result<Settings, EngineError> {
-        Ok(self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)?)
+        self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)
     }
 }
 
@@ -515,7 +513,7 @@ impl Engine {
         self.storage.lock().await.subscribe()
     }
 
-    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
+    async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
         self.storage.lock().await.refresh(models).await?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {

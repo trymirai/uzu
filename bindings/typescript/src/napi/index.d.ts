@@ -924,7 +924,8 @@ export declare class EngineConfig {
   openrouterApiKey?: string
   allowOllamaUsage: boolean
   allowLmstudioUsage: boolean
-  constructor(applicationIdentifier?: string, miraiApiKey?: string, lalamoPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean)
+  downloadManagerType: DownloadManagerType
+  constructor(applicationIdentifier?: string, miraiApiKey?: string, lalamoPath?: string, huggingfaceApiKey?: string, openaiApiKey?: string, anthropicApiKey?: string, geminiApiKey?: string, xaiApiKey?: string, basetenApiKey?: string, openrouterApiKey?: string, allowOllamaUsage: boolean, allowLmstudioUsage: boolean, downloadManagerType: DownloadManagerType)
 
   static create(): EngineConfig
   withApplicationIdentifier(applicationIdentifier: string): EngineConfig
@@ -939,6 +940,7 @@ export declare class EngineConfig {
   withOpenrouterApiKey(openrouterApiKey: string): EngineConfig
   withAllowOllamaUsage(allowOllamaUsage: boolean): EngineConfig
   withAllowLmstudioUsage(allowLmstudioUsage: boolean): EngineConfig
+  withDownloadManagerType(downloadManagerType: DownloadManagerType): EngineConfig
 }
 
 export declare class Player {
@@ -960,6 +962,11 @@ export type CliError =
 
 export type DeviceError =
   | { type: 'UnsupportedDevice' }
+
+export declare const enum DownloadManagerType {
+  Native = 'Native',
+  Universal = 'Universal'
+}
 
 export type DownloadPhase =
   DownloadPhaseNotDownloaded | DownloadPhaseDownloading | DownloadPhasePaused | DownloadPhaseDownloaded | DownloadPhaseLocked | DownloadPhaseError
