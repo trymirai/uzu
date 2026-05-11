@@ -114,10 +114,7 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         value: u8,
     ) {
         let dst_buffer_range = dst.as_buffer_range_mut();
-        let dst_len = dst_buffer_range.range().len();
-        let range = 0..dst_len;
-        assert!(!range.is_empty(), "zero-sized fills are not allowed");
-        let dst_buffer_range = dst_buffer_range.subrange(range);
+        assert!(!dst_buffer_range.range().is_empty(), "zero-sized fills are not allowed");
         self.access(&[Access {
             range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
             flags: AccessFlags::copy_write(),

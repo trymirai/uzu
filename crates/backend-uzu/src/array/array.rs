@@ -67,7 +67,9 @@ impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Arr
     }
 
     pub fn as_buffer_range_mut<'a>(&'a mut self) -> BufferRangeMut<'a, BufferRange::Buffer> {
-        self.buffer_range.as_buffer_range_mut().subrange(self.offset..self.offset + self.size())
+        let offset = self.offset;
+        let size = self.size();
+        self.buffer_range.as_buffer_range_mut().subrange(offset..offset + size)
     }
 }
 

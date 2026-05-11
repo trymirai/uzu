@@ -51,9 +51,12 @@ impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = B>>
         ArrayView::from_shape(IxDyn(self.shape()), self.as_slice::<T>()).expect("Failed to create array view")
     }
 
-    pub fn copy_from_array<C: Backend, OtherBufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = C>>>(
+    pub fn copy_from_array<
+        OtherBackend: Backend,
+        OtherBufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = OtherBackend>>,
+    >(
         &mut self,
-        other: &Array<C, OtherBufferRange>,
+        other: &Array<OtherBackend, OtherBufferRange>,
     ) {
         assert_eq!(self.shape(), other.shape());
         assert_eq!(self.data_type(), other.data_type());
@@ -61,9 +64,12 @@ impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = B>>
         self.as_bytes_mut().copy_from_slice(other.as_bytes());
     }
 
-    pub fn copy_slice<C: Backend, OtherBufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = C>>>(
+    pub fn copy_slice<
+        OtherBackend: Backend,
+        OtherBufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = OtherBackend>>,
+    >(
         &mut self,
-        source: &Array<C, OtherBufferRange>,
+        source: &Array<OtherBackend, OtherBufferRange>,
         axis: usize,
         src_range: Range<usize>,
         dst_offset: usize,
