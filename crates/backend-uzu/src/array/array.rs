@@ -61,6 +61,14 @@ impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Arr
     pub fn num_elements(&self) -> usize {
         self.shape.iter().product()
     }
+
+    pub fn as_buffer_range_ref<'a>(&'a self) -> BufferRangeRef<'a, BufferRange::Buffer> {
+        self.buffer_range.as_buffer_range_ref().subrange(self.offset..self.offset + self.size())
+    }
+
+    pub fn as_buffer_range_mut<'a>(&'a mut self) -> BufferRangeMut<'a, BufferRange::Buffer> {
+        self.buffer_range.as_buffer_range_mut().subrange(self.offset..self.offset + self.size())
+    }
 }
 
 impl<B: Backend> Array<B, Allocation<B>> {
@@ -103,25 +111,5 @@ impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> fmt
             .field("shape", &self.shape)
             .field("data_type", &self.data_type)
             .finish()
-    }
-}
-
-impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> AsBufferRangeRef
-    for Array<B, BufferRange>
-{
-    type Buffer = BufferRange::Buffer;
-
-    fn as_buffer_range_ref<'a>(&'a self) -> BufferRangeRef<'a, Self::Buffer> {
-        self.buffer_range.as_buffer_range_ref().subrange(self.offset..self.offset + self.size())
-    }
-}
-
-impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> AsBufferRangeMut
-    for Array<B, BufferRange>
-{
-    fn as_buffer_range_mut<'a>(&'a mut self) -> BufferRangeMut<'a, Self::Buffer> {
-        let offset = self.offset;
-        let size = self.size();
-        self.buffer_range.as_buffer_range_mut().subrange(offset..offset + size)
     }
 }
