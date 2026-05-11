@@ -5,6 +5,7 @@ import cjs from './index.js';
 
 export default cjs;
 
+export const FileDownloadManagerType = cjs.FileDownloadManagerType;
 export const ChatSession = cjs.ChatSession;
 export const ChatSessionStream = cjs.ChatSessionStream;
 export const ChatSessionStreamChunkError = cjs.ChatSessionStreamChunkError;
