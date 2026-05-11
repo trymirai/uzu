@@ -49,7 +49,8 @@ impl MetalSparseHeapPool {
         // Try to find pages in existing heaps.
         // While `pages_to_map` is not empty in each heap find unmapped pages, collect them into `mappings` and map
         let heap_range = 0..heap_capacity_pages;
-        for heap in &mut self.heaps {
+        let mut existing_heaps_mappings: Vec<(usize, Vec<MetalSparseHeapMappingParameters>)> = Vec::new();
+        for (i, heap) in self.heaps.iter_mut().enumerate() {
             let mut mappings: Vec<MetalSparseHeapMappingParameters> = Vec::new();
 
             let free_pages_ranges: Vec<Range<usize>> = heap.mapped_pages().gaps(&heap_range).collect();
@@ -68,6 +69,8 @@ impl MetalSparseHeapPool {
             }
 
             heap.execute(buffer, &context.command_queue4, &mappings, true);
+            existing_heaps_mappings.push((i, mappings));
+
             if pages_to_map.len() == 0 {
                 break;
             }
@@ -83,11 +86,20 @@ impl MetalSparseHeapPool {
                 heap_page_offset: 0,
             };
 
-            let mut heap = MetalSparseHeap::new(context, self.heap_capacity, self.page_size)?;
-            heap.execute(buffer, &context.command_queue4, &[op_params], true);
-            self.heaps.push(heap);
-
-            pages_to_map.start += map_pages_count;
+            match MetalSparseHeap::new(context, self.heap_capacity, self.page_size) {
+                Ok(mut heap) => {
+                    heap.execute(buffer, &context.command_queue4, &[op_params], true);
+                    self.heaps.push(heap);
+                    pages_to_map.start += map_pages_count;
+                },
+                Err(err) => {
+                    // it's necessary to unmap previously mapped pages in existing heaps
+                    for (heap_pos, mappings) in existing_heaps_mappings {
+                        self.heaps[heap_pos].execute(buffer, &context.command_queue4, &mappings, false);
+                    }
+                    return Err(err);
+                },
+            };
         }
 
         Ok(())
