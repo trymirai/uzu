@@ -41,12 +41,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     )
     .expect("Failed to create ShortConvDecodeKernel");
 
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
-    let w_array = context.create_array_from(&[input.w.len()], &input.w, "");
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
+    let w_array = context.create_array_from(&[input.w.len()], &input.w);
+    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let mut out = context.create_array_uninitialized(&[out_size], T::data_type(), "").into_allocation();
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
 
     let state_size = input.model_dim as usize * input.state_stride as usize;
     let state_allocation_size = state_size.max(1);
@@ -54,13 +54,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         input.state.iter().copied().chain(std::iter::repeat(T::zero())).take(state_allocation_size).collect();
 
     let mut next_state = if state_in_place {
-        context.create_array_from(&[state_allocation_size], &state_data, "").into_allocation()
+        context.create_array_from(&[state_allocation_size], &state_data).into_allocation()
     } else {
-        context.create_array_uninitialized(&[state_allocation_size], T::data_type(), "").into_allocation()
+        context.create_array_uninitialized(&[state_allocation_size], T::data_type()).into_allocation()
     };
 
     let state_array =
-        (!state_in_place).then(|| context.create_array_from(&[state_allocation_size], &state_data, ""));
+        (!state_in_place).then(|| context.create_array_from(&[state_allocation_size], &state_data));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

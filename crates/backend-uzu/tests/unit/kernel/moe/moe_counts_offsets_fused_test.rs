@@ -38,15 +38,15 @@ fn get_output<B: Backend>(
 
     let topk_ids_len = (t * k).max(1);
     let topk_ids_array = if topk_ids.is_empty() {
-        context.create_array_uninitialized(&[topk_ids_len], i32::data_type(), "topk_ids")
+        context.create_array_uninitialized(&[topk_ids_len], i32::data_type())
     } else {
-        context.create_array_from(&[topk_ids_len], topk_ids, "topk_ids")
+        context.create_array_from(&[topk_ids_len], topk_ids)
     };
-    let mut offsets = context.create_array_uninitialized(&[e + 1], u32::data_type(), "offsets").into_allocation();
-    let mut sum_k = context.create_array_uninitialized(&[1], u32::data_type(), "sum_k").into_allocation();
+    let mut offsets = context.create_array_uninitialized(&[e + 1], u32::data_type()).into_allocation();
+    let mut sum_k = context.create_array_uninitialized(&[1], u32::data_type()).into_allocation();
     let num_tiles = e.div_ceil(512).max(1);
     let mut partials =
-        context.create_array_uninitialized(&[num_tiles * 512], u32::data_type(), "partials").into_allocation();
+        context.create_array_uninitialized(&[num_tiles * 512], u32::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

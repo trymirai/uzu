@@ -110,10 +110,7 @@ where
     ) -> Result<Array<C::Backend>, ParameterLoaderError<C::Backend>> {
         let metadata_entry = self.index.get(key).ok_or(ParameterLoaderError::KeyNotFound(key.to_string()))?;
         let (offset, size) = (metadata_entry.offset, metadata_entry.size);
-        let array_key = key.replace(".", "_");
-        let array_label = format!("parameter_loader_{array_key}");
-        let mut array =
-            self.context.create_array_uninitialized(&metadata_entry.shape, metadata_entry.data_type, &array_label);
+        let mut array = self.context.create_array_uninitialized(&metadata_entry.shape, metadata_entry.data_type);
         if array.size() != size {
             return Err(ParameterLoaderError::SizeMismatch {
                 data_type: metadata_entry.data_type,

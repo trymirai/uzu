@@ -33,19 +33,19 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPrefillKernel::new(&context, T::data_type(), has_bias)
         .expect("Failed to create ShortConvPrefillKernel");
 
-    let padded_array = context.create_array_from(&[input.padded.len()], &input.padded, "");
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
-    let w_array = context.create_array_from(&[input.w.len()], &input.w, "");
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
+    let padded_array = context.create_array_from(&[input.padded.len()], &input.padded);
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
+    let w_array = context.create_array_from(&[input.w.len()], &input.w);
+    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
     let mut out = context
-        .create_array_uninitialized(&[out_size], T::data_type(), "")
+        .create_array_uninitialized(&[out_size], T::data_type())
         .into_allocation();
 
     let state_out_size = input.model_dim as usize * input.state_stride as usize;
     let mut state_out = context
-        .create_array_uninitialized(&[state_out_size], T::data_type(), "")
+        .create_array_uninitialized(&[state_out_size], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

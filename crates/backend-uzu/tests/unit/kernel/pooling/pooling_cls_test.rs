@@ -49,9 +49,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let input_len = (input.batch_size * input.seq_len * input.hidden_dim) as usize;
     let output_len = (input.batch_size * input.hidden_dim) as usize;
 
-    let input_array = context.create_array_from(&[input_len], &input.input, "");
+    let input_array = context.create_array_from(&[input_len], &input.input);
     let mut output = context
-        .create_array_uninitialized(&[output_len], T::data_type(), "")
+        .create_array_uninitialized(&[output_len], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

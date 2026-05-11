@@ -29,13 +29,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPackKernel::new(&context, T::data_type())
         .expect("Failed to create ShortConvPackKernel");
 
-    let state_in_array = context.create_array_from(&[input.state_in.len()], &input.state_in, "");
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
+    let state_in_array = context.create_array_from(&[input.state_in.len()], &input.state_in);
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
 
     let padded_rows = (input.state_stride + input.suffix_len) as usize;
     let padded_size = padded_rows * input.model_dim as usize;
     let mut padded = context
-        .create_array_uninitialized(&[padded_size], T::data_type(), "")
+        .create_array_uninitialized(&[padded_size], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

@@ -82,15 +82,15 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let queries_len = input.num_heads as usize * input.suffix_length as usize * input.head_dim as usize;
     let keys_len = input.num_groups as usize * input.suffix_length as usize * input.head_dim as usize;
 
-    let qkv_array = context.create_array_from(&[qkv_len], &input.qkv, "");
-    let cosines_array = context.create_array_from(&[cos_sin_len], &input.cosines, "");
-    let sines_array = context.create_array_from(&[cos_sin_len], &input.sines, "");
-    let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions, "");
+    let qkv_array = context.create_array_from(&[qkv_len], &input.qkv);
+    let cosines_array = context.create_array_from(&[cos_sin_len], &input.cosines);
+    let sines_array = context.create_array_from(&[cos_sin_len], &input.sines);
+    let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions);
     let mut rotated_queries = context
-        .create_array_uninitialized(&[queries_len], T::data_type(), "")
+        .create_array_uninitialized(&[queries_len], T::data_type())
         .into_allocation();
     let mut rotated_keys = context
-        .create_array_uninitialized(&[keys_len], T::data_type(), "")
+        .create_array_uninitialized(&[keys_len], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

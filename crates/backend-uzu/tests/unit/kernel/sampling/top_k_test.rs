@@ -56,10 +56,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .expect("Failed to create TopKKernel");
 
     let len = (input.batch_size * input.vocab_size) as usize;
-    let logits_buffer = (!input.in_place).then(|| context.create_array_from(&[len], &input.logits, "").into_allocation());
+    let logits_buffer = (!input.in_place).then(|| context.create_array_from(&[len], &input.logits).into_allocation());
     let mut output = match input.in_place {
-        true => context.create_array_from(&[len], &input.logits, "").into_allocation(),
-        false => context.create_array_uninitialized(&[len], T::data_type(), "").into_allocation(),
+        true => context.create_array_from(&[len], &input.logits).into_allocation(),
+        false => context.create_array_uninitialized(&[len], T::data_type()).into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

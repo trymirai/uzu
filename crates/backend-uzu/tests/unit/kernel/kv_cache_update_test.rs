@@ -44,8 +44,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         .expect("Failed to create KVCacheUpdateKernel");
 
     let total = input.num_heads as usize * input.max_sequence_length as usize * input.head_dim as usize;
-    let mut keys = context.create_array_from(&[total], &input.keys, "").into_allocation();
-    let mut values = context.create_array_from(&[total], &input.values, "").into_allocation();
+    let mut keys = context.create_array_from(&[total], &input.keys).into_allocation();
+    let mut values = context.create_array_from(&[total], &input.values).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
     kernel.encode(

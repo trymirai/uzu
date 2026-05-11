@@ -49,8 +49,8 @@ impl<B: Backend> AsyncBuffers<B> {
         max_tokens: usize,
         batch_size: usize,
     ) -> Self {
-        let positions = context.create_array_uninitialized(&[max_tokens], DataType::I32, "async_positions");
-        let seeds = context.create_array_uninitialized(&[max_tokens], DataType::U64, "async_seeds");
+        let positions = context.create_array_uninitialized(&[max_tokens], DataType::I32);
+        let seeds = context.create_array_uninitialized(&[max_tokens], DataType::U64);
         let event = context.create_event().expect("Failed to create event");
 
         Self {

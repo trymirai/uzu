@@ -67,7 +67,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>, ab_scale: f
     let k = input.k as u32;
     let n = input.n as u32;
 
-    let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
+    let b_array = context.create_array_from(&[input.n, input.k], &input.b);
     let a_allocation = alloc_allocation_with_data::<B, T>(&context, &input.a);
     let mut d_allocation = context
         .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
@@ -202,7 +202,7 @@ fn bench_gemm(criterion: &mut Criterion) {
         let left_allocation = metal_context
             .create_allocation(batch_dim * input_dim * std::mem::size_of::<bf16>(), AllocationType::Global)
             .expect("Failed to create allocation");
-        let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type(), "");
+        let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type());
         let mut destination_allocation = metal_context
             .create_allocation(batch_dim * output_dim * std::mem::size_of::<bf16>(), AllocationType::Global)
             .expect("Failed to create allocation");

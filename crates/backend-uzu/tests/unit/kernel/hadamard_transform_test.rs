@@ -105,9 +105,9 @@ fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<
 
     let total_elements = input.batch_count * input.channel_count;
     let mut data = context
-        .create_array_from(&[total_elements], &input.data, "data")
+        .create_array_from(&[total_elements], &input.data)
         .into_allocation();
-    let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors, "factors");
+    let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

@@ -38,7 +38,7 @@ impl<B: Backend> SamplingInputs<B> {
         token_bitmask: &[u32],
         bitmask_row_len: usize,
     ) -> Array<B> {
-        let mut array = context.create_array_zeros(&[row_count, bitmask_row_len], DataType::U32, "sampling_bitmask");
+        let mut array = context.create_array_zeros(&[row_count, bitmask_row_len], DataType::U32);
         let source =
             ArrayView2::from_shape((row_count, bitmask_row_len), token_bitmask).expect("Invalid token bitmask shape");
         array.copy_from_view(source);
@@ -51,7 +51,7 @@ impl<B: Backend> SamplingInputs<B> {
         token_bitmask: Option<&[u32]>,
         bitmask_row_len: Option<usize>,
     ) -> Self {
-        let seeds = context.create_array_from(&[token_seeds.len()], token_seeds, "sampling_seeds");
+        let seeds = context.create_array_from(&[token_seeds.len()], token_seeds);
 
         let bitmask = match (token_bitmask, bitmask_row_len) {
             (Some(token_bitmask), Some(bitmask_row_len)) => {

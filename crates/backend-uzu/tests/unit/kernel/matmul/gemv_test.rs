@@ -58,7 +58,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let k = input.k as u32;
     let n = input.n as u32;
 
-    let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
+    let b_array = context.create_array_from(&[input.n, input.k], &input.b);
     let a_allocation = alloc_allocation_with_data::<B, T>(&context, &input.a);
     let mut d_allocation = context
         .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)

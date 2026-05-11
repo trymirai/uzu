@@ -43,15 +43,15 @@ fn do_argmax_backend<B: Backend, T: ArrayElement + Float>(
     batch_size: usize,
     vocab_size: usize,
 ) -> Result<ArgmaxTestResults, TestCaseError> {
-    let logits_buffer = context.create_array_from(&[logits.len()], logits, "").into_allocation();
+    let logits_buffer = context.create_array_from(&[logits.len()], logits).into_allocation();
     let mut twopass_partial_results_buffer = context
         .create_allocation(
             batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(),
             AllocationType::Global,
         )
         .unwrap();
-    let mut single_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32, "").into_allocation();
-    let mut twopass_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32, "").into_allocation();
+    let mut single_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32).into_allocation();
+    let mut twopass_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32).into_allocation();
 
     let single_kernel = <B::Kernels as Kernels>::ArgmaxSingleKernel::new(context, T::data_type()).unwrap();
     let twopass_kernel_main = <B::Kernels as Kernels>::ArgmaxMainKernel::new(context, T::data_type()).unwrap();
@@ -130,7 +130,7 @@ fn bench_argmax(c: &mut Criterion) {
             <<B as Backend>::Kernels as Kernels>::ArgmaxMainKernel::new(&context, T::data_type()).unwrap();
         let twopass_kernel_final = <<B as Backend>::Kernels as Kernels>::ArgmaxFinalKernel::new(&context).unwrap();
 
-        let mut output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32, "").into_allocation();
+        let mut output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32).into_allocation();
 
         let mut group = c.benchmark_group(format!("{}/Kernel/Sampling/Argmax", type_short_name::<B>()));
 
@@ -141,7 +141,7 @@ fn bench_argmax(c: &mut Criterion) {
             262144, // Gemma-3-1b
         ] {
             let logits_data = get_argmax_data::<T>(1337, batch_size, vocab_size);
-            let logits_buffer = context.create_array_from(&[logits_data.len()], logits_data.as_ref(), "").into_allocation();
+            let logits_buffer = context.create_array_from(&[logits_data.len()], logits_data.as_ref()).into_allocation();
             let mut twopass_partial_results_buffer = context
                 .create_allocation(
                     batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(),

@@ -104,7 +104,7 @@ impl<B: Backend> TokenInputs<B> {
         context: &B::Context,
         token_ids: &[u64],
     ) -> Array<B> {
-        context.create_array_from(&[token_ids.len()], token_ids, "forward_pass_token_ids")
+        context.create_array_from(&[token_ids.len()], token_ids)
     }
 
     fn init_token_positions(
@@ -112,7 +112,7 @@ impl<B: Backend> TokenInputs<B> {
         token_positions: &[usize],
     ) -> Array<B> {
         let positions_i32: Box<[i32]> = token_positions.iter().map(|position| *position as i32).collect();
-        context.create_array_from(&[token_positions.len()], positions_i32.as_ref(), "forward_pass_token_positions")
+        context.create_array_from(&[token_positions.len()], positions_i32.as_ref())
     }
 
     fn init_token_parents(
@@ -152,7 +152,7 @@ impl<B: Backend> TokenInputs<B> {
             }
         }
 
-        context.create_array_from(&[suffix_length], &parents, "forward_pass_token_parents")
+        context.create_array_from(&[suffix_length], &parents)
     }
 
     fn init_token_subtrie_ranges(
@@ -162,7 +162,7 @@ impl<B: Backend> TokenInputs<B> {
         token_subtrie_ranges: &[[u32; 3]],
     ) -> Array<B> {
         let shape = model_shape.subtrie_ranges_shape(suffix_length);
-        let mut array = context.create_array_zeros(&shape, DataType::U32, "forward_pass_token_subtrie_ranges");
+        let mut array = context.create_array_zeros(&shape, DataType::U32);
         let source = ArrayView2::from_shape(
             (token_subtrie_ranges.len(), 3),
             bytemuck::cast_slice::<_, u32>(token_subtrie_ranges),

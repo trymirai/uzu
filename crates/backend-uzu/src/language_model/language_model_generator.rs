@@ -519,11 +519,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         // Copy sampled token: sampling_output → token_ids (for next pass)
         let token_ids_shape = [1];
         let token_ids_data_type = crate::DataType::U64;
-        let mut async_token_ids_allocation = self
-            .context
-            .context
-            .create_array_uninitialized(&token_ids_shape, token_ids_data_type, "async_token_id")
-            .into_allocation();
+        let mut async_token_ids_allocation =
+            self.context.context.create_array_uninitialized(&token_ids_shape, token_ids_data_type).into_allocation();
         let async_token_ids_buffer_range = async_token_ids_allocation.as_buffer_range_ref();
         let async_token_ids_range = async_token_ids_buffer_range.range();
         let async_token_ptr = SendPtr(unsafe {
@@ -756,10 +753,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_inputs: Option<SamplingInputs<B>>,
     ) -> Result<ForwardPassResources<B>, Error> {
         let mut sampling_output = sampling_method.map(|_| {
-            context
-                .context
-                .create_array_uninitialized(&[sampling_length], crate::DataType::U32, "sampling_output")
-                .into_allocation()
+            context.context.create_array_uninitialized(&[sampling_length], crate::DataType::U32).into_allocation()
         });
         let mut logits = None;
         if is_prefilling {

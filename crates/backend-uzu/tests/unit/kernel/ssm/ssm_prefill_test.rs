@@ -101,14 +101,14 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
 
     let total_x = input.suffix_len * input.num_heads * input.head_dim;
 
-    let x_array = context.create_array_from(&[input.x.len()], &input.x, "x");
-    let dt_array = context.create_array_from(&[input.dt.len()], &input.dt, "dt");
-    let b_array = context.create_array_from(&[input.b.len()], &input.b, "b");
-    let c_array = context.create_array_from(&[input.c.len()], &input.c, "c");
-    let d_array = context.create_array_from(&[input.d.len()], &input.d, "d");
-    let z_array = context.create_array_from(&[input.z.len()], &input.z, "z");
-    let mut state = context.create_array_from(&[input.state.len()], &input.state, "state").into_allocation();
-    let mut y = context.create_array_uninitialized(&[total_x], T::data_type(), "y").into_allocation();
+    let x_array = context.create_array_from(&[input.x.len()], &input.x);
+    let dt_array = context.create_array_from(&[input.dt.len()], &input.dt);
+    let b_array = context.create_array_from(&[input.b.len()], &input.b);
+    let c_array = context.create_array_from(&[input.c.len()], &input.c);
+    let d_array = context.create_array_from(&[input.d.len()], &input.d);
+    let z_array = context.create_array_from(&[input.z.len()], &input.z);
+    let mut state = context.create_array_from(&[input.state.len()], &input.state).into_allocation();
+    let mut y = context.create_array_uninitialized(&[total_x], T::data_type()).into_allocation();
 
     let x_strides: [u32; 3] = input.x_strides.map(|s| s as u32);
     let dt_strides: [u32; 2] = input.dt_strides.map(|s| s as u32);

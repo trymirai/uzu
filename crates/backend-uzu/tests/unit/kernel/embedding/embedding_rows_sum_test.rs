@@ -104,11 +104,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::EmbeddingRowsSumKernel::new(&context, T::data_type())
         .expect("Failed to create EmbeddingRowsSumKernel");
 
-    let token_indices_array = context.create_array_from(&[input.num_rows as usize], &input.token_indices, "");
+    let token_indices_array = context.create_array_from(&[input.num_rows as usize], &input.token_indices);
     let weights_array =
-        context.create_array_from(&[input.total_rows as usize, input.model_dim as usize], &input.weights, "");
+        context.create_array_from(&[input.total_rows as usize, input.model_dim as usize], &input.weights);
     let mut output = context
-        .create_array_uninitialized(&[input.model_dim as usize], T::data_type(), "")
+        .create_array_uninitialized(&[input.model_dim as usize], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

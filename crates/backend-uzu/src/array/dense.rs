@@ -22,14 +22,11 @@ pub enum AllocationAccessError {
     },
 }
 
-impl<B: Backend> Array<B> {
+impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = B>>> Array<B, BufferRange> {
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
-        if self.size() == 0 {
-            return NonNull::new(self.data_type().size_in_bytes() as *mut c_void).expect("dtype-aligned empty pointer");
-        }
-        let buffer_range = self.allocation().as_buffer_range_ref();
+        let buffer_range = self.as_buffer_range_ref();
         let range = buffer_range.range();
-        unsafe { buffer_range.buffer().cpu_ptr().add(range.start + self.offset()) }
+        unsafe { buffer_range.buffer().cpu_ptr().add(range.start) }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -38,20 +35,10 @@ impl<B: Backend> Array<B> {
 
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         let size = self.size();
-        let offset = self.offset();
-        let data_type = self.data_type();
-        let Some(allocation) = self.allocation.as_mut() else {
-            assert_eq!(size, 0, "Empty Array has no backing allocation");
-            let pointer = NonNull::new(data_type.size_in_bytes() as *mut c_void).expect("dtype-aligned empty pointer");
-            return unsafe { std::slice::from_raw_parts_mut(pointer.as_ptr() as *mut u8, size) };
-        };
-        let buffer_range = allocation.as_buffer_range_mut();
+        let buffer_range = self.as_buffer_range_mut();
         let range = buffer_range.range();
         unsafe {
-            std::slice::from_raw_parts_mut(
-                (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start + offset),
-                size,
-            )
+            std::slice::from_raw_parts_mut((buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start), size)
         }
     }
 
@@ -69,9 +56,9 @@ impl<B: Backend> Array<B> {
         ArrayView::from_shape(IxDyn(self.shape()), self.as_slice::<T>()).expect("Failed to create array view")
     }
 
-    pub fn copy_from_array<C: Backend>(
+    pub fn copy_from_array<C: Backend, OtherBufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = C>>>(
         &mut self,
-        other: &Array<C>,
+        other: &Array<C, OtherBufferRange>,
     ) {
         assert_eq!(self.shape(), other.shape());
         assert_eq!(self.data_type(), other.data_type());
@@ -79,9 +66,9 @@ impl<B: Backend> Array<B> {
         self.as_bytes_mut().copy_from_slice(other.as_bytes());
     }
 
-    pub fn copy_slice<C: Backend>(
+    pub fn copy_slice<C: Backend, OtherBufferRange: AsBufferRangeMut<Buffer: DenseBuffer<Backend = C>>>(
         &mut self,
-        source: &Array<C>,
+        source: &Array<C, OtherBufferRange>,
         axis: usize,
         src_range: Range<usize>,
         dst_offset: usize,

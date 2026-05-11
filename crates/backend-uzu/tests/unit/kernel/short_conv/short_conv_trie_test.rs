@@ -35,12 +35,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
             .expect("Failed to create ShortConvTrieKernel");
 
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
-    let w_array = context.create_array_from(&[input.w.len()], &input.w, "");
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
+    let w_array = context.create_array_from(&[input.w.len()], &input.w);
+    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let mut out = context.create_array_uninitialized(&[out_size], T::data_type(), "").into_allocation();
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
 
     let state_stride = input.state_stride as usize;
     let model_dim = input.model_dim as usize;
@@ -55,13 +55,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         .chain(std::iter::repeat(T::zero()))
         .take(base_state_allocation_size)
         .collect();
-    let base_state_array = context.create_array_from(&[base_state_allocation_size], &base_state_data, "");
+    let base_state_array = context.create_array_from(&[base_state_allocation_size], &base_state_data);
 
-    let parents_array = context.create_array_from(&[input.parents.len()], &input.parents, "");
+    let parents_array = context.create_array_from(&[input.parents.len()], &input.parents);
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
     let mut suffix_state = context
-        .create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type(), "")
+        .create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

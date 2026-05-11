@@ -160,12 +160,10 @@ impl<B: Backend> TokenDecoderContext<B> {
         context: &Rc<B::Context>,
         async_chain_capacity: usize,
     ) -> Result<(Array<B>, Array<B>, Allocation<B>), Error> {
-        let positions =
-            context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::I32, "async_positions");
-        let seeds = context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::U64, "async_seeds");
-        let results = context
-            .create_array_uninitialized(&[async_chain_capacity], crate::DataType::U32, "async_results")
-            .into_allocation();
+        let positions = context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::I32);
+        let seeds = context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::U64);
+        let results =
+            context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::U32).into_allocation();
         Ok((positions, seeds, results))
     }
 }
@@ -213,12 +211,9 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let tensor_add_scale =
             <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
                 .map_err(unable_to_create_context)?;
-        let single_hidden_capture = context
-            .create_array_zeros(&[1, model_dim], activation_data_type, "tts_single_hidden_capture")
-            .into_allocation();
-        let single_override_embedding = context
-            .create_array_zeros(&[1, model_dim], activation_data_type, "tts_single_override_embedding")
-            .into_allocation();
+        let single_hidden_capture = context.create_array_zeros(&[1, model_dim], activation_data_type).into_allocation();
+        let single_override_embedding =
+            context.create_array_zeros(&[1, model_dim], activation_data_type).into_allocation();
 
         Ok(Self {
             ctx,
@@ -514,11 +509,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let first_followup_token_ids = if followup_count > 0 {
             let token_ids_shape = [1];
             let token_ids_data_type = crate::DataType::U64;
-            let mut next_token_ids = self
-                .ctx
-                .context
-                .create_array_uninitialized(&token_ids_shape, token_ids_data_type, "async_token_id")
-                .into_allocation();
+            let mut next_token_ids =
+                self.ctx.context.create_array_uninitialized(&token_ids_shape, token_ids_data_type).into_allocation();
             self.ctx.token_copy_sampled.encode(&sampling_output, &mut next_token_ids, encoder);
             Some(unsafe { Array::from_allocation(next_token_ids, 0, &token_ids_shape, token_ids_data_type) })
         } else {
@@ -616,7 +608,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                     let mut updated_token_ids = self
                         .ctx
                         .context
-                        .create_array_uninitialized(&token_ids_shape, token_ids_data_type, "async_token_id")
+                        .create_array_uninitialized(&token_ids_shape, token_ids_data_type)
                         .into_allocation();
                     self.ctx.token_copy_sampled.encode(&sampling_output, &mut updated_token_ids, encoder);
                     next_token_ids = Some(unsafe {
@@ -698,10 +690,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         &self,
         sampling_length: usize,
     ) -> Allocation<B> {
-        self.ctx
-            .context
-            .create_array_uninitialized(&[sampling_length], crate::DataType::U32, "tts_sampling_output")
-            .into_allocation()
+        self.ctx.context.create_array_uninitialized(&[sampling_length], crate::DataType::U32).into_allocation()
     }
 
     fn encode_single_forward_pass_on(

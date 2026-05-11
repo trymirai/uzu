@@ -28,10 +28,10 @@ fn run_conv_update<B: Backend>(
 ) -> (Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("Failed to create context");
 
-    let w_array = context.create_array_from(&[w.len()], w, "w");
-    let b_array = context.create_array_from(&[b.len()], b, "b");
-    let mut in_out = context.create_array_from(&[in_proj.len()], in_proj, "in_out").into_allocation();
-    let mut state_allocation = context.create_array_from(&[state.len()], state, "state").into_allocation();
+    let w_array = context.create_array_from(&[w.len()], w);
+    let b_array = context.create_array_from(&[b.len()], b);
+    let mut in_out = context.create_array_from(&[in_proj.len()], in_proj).into_allocation();
+    let mut state_allocation = context.create_array_from(&[state.len()], state).into_allocation();
 
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(&context, DataType::F32, true)
         .expect("Failed to create kernel");
@@ -69,12 +69,12 @@ fn run_delta_net_update<B: Backend>(
 ) -> (Vec<f32>, Vec<f32>) {
     let context = B::Context::new().expect("Failed to create context");
 
-    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj, "in_proj");
-    let a_log_array = context.create_array_from(&[a_log.len()], a_log, "a_log");
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias, "dt_bias");
-    let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight, "norm_weight");
-    let mut state_allocation = context.create_array_from(&[state.len()], state, "state").into_allocation();
-    let mut out = context.create_array_zeros(&[value_dim as usize], DataType::F32, "out").into_allocation();
+    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
+    let a_log_array = context.create_array_from(&[a_log.len()], a_log);
+    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
+    let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight);
+    let mut state_allocation = context.create_array_from(&[state.len()], state).into_allocation();
+    let mut out = context.create_array_zeros(&[value_dim as usize], DataType::F32).into_allocation();
 
     let kernel = <<B as Backend>::Kernels as Kernels>::DeltaNetUpdateKernel::new(&context, DataType::F32, head_k_dim)
         .expect("Failed to create kernel");
@@ -174,15 +174,15 @@ fn test_delta_net_conv_scan() {
 
     // Test: Conv1dPack + DeltaNetConvScan on Metal
     let context = <Metal as Backend>::Context::new().expect("context");
-    let state_array = context.create_array_from(&[init_state.len()], &init_state, "state");
-    let mut in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj, "in_proj").into_allocation();
-    let w_array = context.create_array_from(&[w.len()], &w, "w");
-    let b_array = context.create_array_from(&[b.len()], &b, "b");
+    let state_array = context.create_array_from(&[init_state.len()], &init_state);
+    let mut in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj).into_allocation();
+    let w_array = context.create_array_from(&[w.len()], &w);
+    let b_array = context.create_array_from(&[b.len()], &b);
 
     let padded_len = (tap_count + suffix_len) * total_proj_dim;
-    let mut padded_array = context.create_array_zeros(&[padded_len], DataType::F32, "padded").into_allocation();
+    let mut padded_array = context.create_array_zeros(&[padded_len], DataType::F32).into_allocation();
     let mut state_out_array =
-        context.create_array_zeros(&[conv_dim * tap_count], DataType::F32, "state_out").into_allocation();
+        context.create_array_zeros(&[conv_dim * tap_count], DataType::F32).into_allocation();
 
     let pack_kernel =
         <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32).expect("pack");
@@ -307,21 +307,21 @@ fn run_prefill_with_norm_gate(
     let num_dv_groups = (head_v_dim as u32 + 7) / 8;
 
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj, "in_proj");
-    let a_log_array = context.create_array_from(&[a_log.len()], a_log, "a_log");
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias, "dt_bias");
-    let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight, "norm_weight");
-    let mut state_array = context.create_array_from(&[state.len()], state, "state").into_allocation();
-    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32, "out").into_allocation();
+    let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
+    let a_log_array = context.create_array_from(&[a_log.len()], a_log);
+    let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
+    let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight);
+    let mut state_array = context.create_array_from(&[state.len()], state).into_allocation();
+    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32).into_allocation();
     let mut q_norm_array =
-        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "q_norm").into_allocation();
+        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
     let mut k_norm_array =
-        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "k_norm").into_allocation();
+        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
 
     let mut beta_array =
-        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta").into_allocation();
+        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut decay_array =
-        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay").into_allocation();
+        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
@@ -475,15 +475,15 @@ fn test_delta_net_prefill_prep() {
 
     // CPU reference via Kernels trait
     let cpu_ctx = <Cpu as Backend>::Context::new().expect("cpu context");
-    let cpu_in_proj = cpu_ctx.create_array_from(&[in_proj.len()], &in_proj, "in_proj");
-    let cpu_a_log = cpu_ctx.create_array_from(&[a_log.len()], &a_log, "a_log");
-    let cpu_dt_bias = cpu_ctx.create_array_from(&[dt_bias.len()], &dt_bias, "dt_bias");
-    let mut cpu_q = cpu_ctx.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "q").into_allocation();
-    let mut cpu_k = cpu_ctx.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "k").into_allocation();
+    let cpu_in_proj = cpu_ctx.create_array_from(&[in_proj.len()], &in_proj);
+    let cpu_a_log = cpu_ctx.create_array_from(&[a_log.len()], &a_log);
+    let cpu_dt_bias = cpu_ctx.create_array_from(&[dt_bias.len()], &dt_bias);
+    let mut cpu_q = cpu_ctx.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
+    let mut cpu_k = cpu_ctx.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
     let mut cpu_beta =
-        cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta").into_allocation();
+        cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut cpu_decay =
-        cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay").into_allocation();
+        cpu_ctx.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
 
     let cpu_prep = <<Cpu as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &cpu_ctx,
@@ -516,18 +516,18 @@ fn test_delta_net_prefill_prep() {
 
     // Metal
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj, "in_proj");
-    let a_log_array = context.create_array_from(&[a_log.len()], &a_log, "a_log");
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias, "dt_bias");
+    let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
+    let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
+    let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
     let mut q_norm_array =
-        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "q_norm").into_allocation();
+        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
     let mut k_norm_array =
-        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "k_norm").into_allocation();
+        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
 
     let mut beta_array =
-        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta").into_allocation();
+        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut decay_array =
-        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay").into_allocation();
+        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
@@ -588,20 +588,20 @@ fn bench_delta_net_prefill() {
     let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
 
     let context = <Metal as Backend>::Context::new().expect("context");
-    let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj, "in_proj");
-    let a_log_array = context.create_array_from(&[a_log.len()], &a_log, "a_log");
-    let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias, "dt_bias");
-    let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight, "norm_weight");
-    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32, "out").into_allocation();
+    let in_proj_array = context.create_array_from(&[in_proj.len()], &in_proj);
+    let a_log_array = context.create_array_from(&[a_log.len()], &a_log);
+    let dt_bias_array = context.create_array_from(&[dt_bias.len()], &dt_bias);
+    let norm_weight_array = context.create_array_from(&[norm_weight.len()], &norm_weight);
+    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32).into_allocation();
     let mut q_norm_array =
-        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "q_norm").into_allocation();
+        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
     let mut k_norm_array =
-        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32, "k_norm").into_allocation();
+        context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
 
     let mut beta_array =
-        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "beta").into_allocation();
+        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut decay_array =
-        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32, "decay").into_allocation();
+        context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
 
     let num_dv_groups = (head_v_dim as u32 + 7) / 8;
 
@@ -648,7 +648,7 @@ fn bench_delta_net_prefill() {
     prep_result.print();
 
     // Benchmark prep + prefill + norm_gate (production path)
-    let mut state_array = context.create_array_zeros(&[state_size], DataType::F32, "state").into_allocation();
+    let mut state_array = context.create_array_zeros(&[state_size], DataType::F32).into_allocation();
 
     let prefill_result = run_perf_with_warmup("prep+prefill+norm_gate", 5, 50, || {
         let mut encoder = Encoder::new(context.as_ref()).expect("encoder");

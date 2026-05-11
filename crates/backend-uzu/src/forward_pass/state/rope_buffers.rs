@@ -22,18 +22,10 @@ impl<B: Backend> RopeBuffers<B> {
 
         Self {
             cosines: context
-                .create_array_uninitialized(
-                    &[rope_max_sequence_length, rope_dim],
-                    model_shape.activation_data_type(),
-                    "rope_cosines",
-                )
+                .create_array_uninitialized(&[rope_max_sequence_length, rope_dim], model_shape.activation_data_type())
                 .into_allocation(),
             sines: context
-                .create_array_uninitialized(
-                    &[rope_max_sequence_length, rope_dim],
-                    model_shape.activation_data_type(),
-                    "rope_sines",
-                )
+                .create_array_uninitialized(&[rope_max_sequence_length, rope_dim], model_shape.activation_data_type())
                 .into_allocation(),
         }
     }

@@ -56,10 +56,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         <<B as Backend>::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(&context, T::data_type())
             .expect("Failed to create FullPrecisionEmbeddingLookupKernel");
 
-    let token_ids_array = context.create_array_from(&[input.batch_size], &input.token_ids, "");
-    let weights_array = context.create_array_from(&[input.vocab_size, input.model_dim], &input.weights, "");
+    let token_ids_array = context.create_array_from(&[input.batch_size], &input.token_ids);
+    let weights_array = context.create_array_from(&[input.vocab_size, input.model_dim], &input.weights);
     let mut output = context
-        .create_array_uninitialized(&[input.batch_size, input.model_dim], T::data_type(), "")
+        .create_array_uninitialized(&[input.batch_size, input.model_dim], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");

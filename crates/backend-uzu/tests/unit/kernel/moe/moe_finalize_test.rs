@@ -25,10 +25,10 @@ struct Input<T: ArrayElement + Float> {
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = create_context::<B>();
-    let tok2row_array = context.create_array_from(&[input.tok2row.len()], &input.tok2row, "");
-    let probs_array = context.create_array_from(&[input.probs.len()], &input.probs, "");
-    let y_partial_array = context.create_array_from(&[input.y_partial.len()], &input.y_partial, "");
-    let mut y_out = context.create_array_uninitialized(&[input.t * input.d_model], T::data_type(), "").into_allocation();
+    let tok2row_array = context.create_array_from(&[input.tok2row.len()], &input.tok2row);
+    let probs_array = context.create_array_from(&[input.probs.len()], &input.probs);
+    let y_partial_array = context.create_array_from(&[input.y_partial.len()], &input.y_partial);
+    let mut y_out = context.create_array_uninitialized(&[input.t * input.d_model], T::data_type()).into_allocation();
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&context, DataType::BF16).expect("finalize kernel");
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

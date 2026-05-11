@@ -43,14 +43,14 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let rotated_keys = input
         .rotated_keys
         .as_ref()
-        .map(|rk| context.create_array_from(&[rk.len()], rk, "").into_allocation());
+        .map(|rk| context.create_array_from(&[rk.len()], rk).into_allocation());
 
-    let qkv_array = context.create_array_from(&[input.qkv.len()], &input.qkv, "");
+    let qkv_array = context.create_array_from(&[input.qkv.len()], &input.qkv);
     let mut key_cache = context
-        .create_array_from(&[cache_size], &input.key_cache, "")
+        .create_array_from(&[cache_size], &input.key_cache)
         .into_allocation();
     let mut value_cache = context
-        .create_array_from(&[cache_size], &input.value_cache, "")
+        .create_array_from(&[cache_size], &input.value_cache)
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

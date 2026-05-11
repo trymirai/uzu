@@ -119,12 +119,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let weights_stride = input.model_dim as usize / packing_divisor;
     let num_groups = (input.model_dim as usize + input.group_size as usize - 1) / input.group_size as usize;
 
-    let token_ids_array = context.create_array_from(&[input.batch_size as usize], &input.token_ids, "");
-    let weights_array = context.create_array_from(&[input.vocab_size as usize, weights_stride], &input.weights, "");
-    let scales_array = context.create_array_from(&[input.vocab_size as usize, num_groups], &input.scales, "");
-    let biases_array = context.create_array_from(&[input.vocab_size as usize, num_groups], &input.biases, "");
+    let token_ids_array = context.create_array_from(&[input.batch_size as usize], &input.token_ids);
+    let weights_array = context.create_array_from(&[input.vocab_size as usize, weights_stride], &input.weights);
+    let scales_array = context.create_array_from(&[input.vocab_size as usize, num_groups], &input.scales);
+    let biases_array = context.create_array_from(&[input.vocab_size as usize, num_groups], &input.biases);
     let mut output = context
-        .create_array_uninitialized(&[input.batch_size as usize, input.model_dim as usize], T::data_type(), "")
+        .create_array_uninitialized(&[input.batch_size as usize, input.model_dim as usize], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

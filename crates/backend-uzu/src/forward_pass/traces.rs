@@ -11,7 +11,7 @@ fn create_trace_array<B: Backend>(
     data_type: DataType,
     label: &str,
 ) -> Array<B> {
-    context.create_array_uninitialized(shape, data_type, label)
+    context.create_array_uninitialized(shape, data_type)
 }
 
 fn create_layer_results<B: Backend>(

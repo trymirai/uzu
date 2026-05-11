@@ -95,17 +95,17 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let y_size = bsz * h * dh;
     let ns_size = bsz * h * dh * n;
 
-    let x_array = context.create_array_from(&[input.x.len()], &input.x, "x");
-    let dt_array = context.create_array_from(&[input.dt.len()], &input.dt, "dt");
-    let b_array = context.create_array_from(&[input.b.len()], &input.b, "b");
-    let c_array = context.create_array_from(&[input.c.len()], &input.c, "c");
-    let d_array = context.create_array_from(&[input.d.len()], &input.d, "d");
-    let z_array = context.create_array_from(&[input.z.len()], &input.z, "z");
+    let x_array = context.create_array_from(&[input.x.len()], &input.x);
+    let dt_array = context.create_array_from(&[input.dt.len()], &input.dt);
+    let b_array = context.create_array_from(&[input.b.len()], &input.b);
+    let c_array = context.create_array_from(&[input.c.len()], &input.c);
+    let d_array = context.create_array_from(&[input.d.len()], &input.d);
+    let z_array = context.create_array_from(&[input.z.len()], &input.z);
 
-    let mut y = context.create_array_uninitialized(&[y_size], T::data_type(), "y").into_allocation();
+    let mut y = context.create_array_uninitialized(&[y_size], T::data_type()).into_allocation();
 
     if input.state_in_place {
-        let mut next_state = context.create_array_from(&[ns_size], &input.state, "next_state").into_allocation();
+        let mut next_state = context.create_array_from(&[ns_size], &input.state).into_allocation();
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(
@@ -136,9 +136,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
             next_state: crate::common::helpers::allocation_to_vec(&next_state),
         }
     } else {
-        let state_array = context.create_array_from(&[ns_size], &input.state, "state");
+        let state_array = context.create_array_from(&[ns_size], &input.state);
         let mut next_state =
-            context.create_array_uninitialized(&[ns_size], T::data_type(), "next_state").into_allocation();
+            context.create_array_uninitialized(&[ns_size], T::data_type()).into_allocation();
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(

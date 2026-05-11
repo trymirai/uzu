@@ -321,23 +321,13 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         let kernel = <B::Kernels as Kernels>::AudioFsqDecodeKernel::new(&context, DataType::F32)
             .map_err(|err| AudioError::Runtime(format!("failed to initialize fsq decode kernel: {err}")))?;
 
-        let tokens_allocation = context
-            .create_array_from(
-                &[batch_size, self.config.num_groups(), frames],
-                &tokens_i32,
-                "nanocodec_fsq_decode_tokens",
-            )
-            .into_allocation();
+        let tokens_allocation =
+            context.create_array_from(&[batch_size, self.config.num_groups(), frames], &tokens_i32).into_allocation();
 
-        let lengths_allocation =
-            context.create_array_from(&[batch_size], &lengths_i32, "nanocodec_fsq_decode_lengths").into_allocation();
+        let lengths_allocation = context.create_array_from(&[batch_size], &lengths_i32).into_allocation();
 
         let mut output = context
-            .create_array_uninitialized(
-                &[batch_size, self.config.channels(), frames],
-                DataType::F32,
-                "nanocodec_fsq_decode_output",
-            )
+            .create_array_uninitialized(&[batch_size, self.config.channels(), frames], DataType::F32)
             .into_allocation();
 
         let mut encoder = Encoder::new(context.as_ref())
@@ -406,23 +396,13 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         let kernel = <B::Kernels as Kernels>::AudioFsqEncodeKernel::new(&context, DataType::F32)
             .map_err(|err| AudioError::Runtime(format!("failed to initialize fsq encode kernel: {err}")))?;
 
-        let input = context
-            .create_array_from(
-                &[batch_size, self.config.channels(), frames],
-                &padded_input,
-                "nanocodec_fsq_encode_input",
-            )
-            .into_allocation();
+        let input =
+            context.create_array_from(&[batch_size, self.config.channels(), frames], &padded_input).into_allocation();
 
-        let lengths =
-            context.create_array_from(&[batch_size], &lengths_i32, "nanocodec_fsq_encode_lengths").into_allocation();
+        let lengths = context.create_array_from(&[batch_size], &lengths_i32).into_allocation();
 
         let mut tokens = context
-            .create_array_uninitialized(
-                &[batch_size, self.config.num_groups(), frames],
-                DataType::I32,
-                "nanocodec_fsq_encode_tokens",
-            )
+            .create_array_uninitialized(&[batch_size, self.config.num_groups(), frames], DataType::I32)
             .into_allocation();
 
         let mut encoder = Encoder::new(context.as_ref())

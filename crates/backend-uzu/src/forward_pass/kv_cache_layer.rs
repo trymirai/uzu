@@ -251,10 +251,8 @@ impl<B: Backend> KVCacheLayer<B> {
                 let row_size = size_for_shape(&[1, num_groups, head_dim], dtype);
 
                 let slice_shape = [len, num_groups, head_dim];
-                let mut slice_keys =
-                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_keys");
-                let mut slice_values =
-                    context.create_array_uninitialized(&slice_shape, dtype, "kv_cache_layer_slice_values");
+                let mut slice_keys = context.create_array_uninitialized(&slice_shape, dtype);
+                let mut slice_values = context.create_array_uninitialized(&slice_shape, dtype);
                 let source_keys_bytes = allocation_as_bytes(&self.keys);
                 let source_values_bytes = allocation_as_bytes(&self.values);
 

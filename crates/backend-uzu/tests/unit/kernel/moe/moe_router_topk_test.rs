@@ -27,11 +27,11 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
 ) -> (Vec<i32>, Vec<T>) {
     let ctx = create_context::<B>();
 
-    let input_array = ctx.create_array_from(&[input.len()], input, "");
-    let weights_array = ctx.create_array_from(&[weights.len()], weights, "");
-    let bias_array = ctx.create_array_from(&[bias.len()], bias, "");
-    let mut ids = ctx.create_array_uninitialized(&[t * k], DataType::I32, "").into_allocation();
-    let mut probs = ctx.create_array_uninitialized(&[t * k], T::data_type(), "").into_allocation();
+    let input_array = ctx.create_array_from(&[input.len()], input);
+    let weights_array = ctx.create_array_from(&[weights.len()], weights);
+    let bias_array = ctx.create_array_from(&[bias.len()], bias);
+    let mut ids = ctx.create_array_uninitialized(&[t * k], DataType::I32).into_allocation();
+    let mut probs = ctx.create_array_uninitialized(&[t * k], T::data_type()).into_allocation();
 
     let kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, T::data_type()).expect("kernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");

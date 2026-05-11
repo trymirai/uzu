@@ -29,9 +29,7 @@ impl<B: Backend> SharedBuffers<B> {
         let attention_sinks = decoder_config.layer_config.attention_config().is_some_and(|c| c.has_sinks).then(|| {
             let num_heads = decoder_config.num_heads;
             (0..decoder_config.num_layers)
-                .map(|_| {
-                    context.create_array_uninitialized(&[num_heads], DataType::F32, "attention_sinks").into_allocation()
-                })
+                .map(|_| context.create_array_uninitialized(&[num_heads], DataType::F32).into_allocation())
                 .collect()
         });
 

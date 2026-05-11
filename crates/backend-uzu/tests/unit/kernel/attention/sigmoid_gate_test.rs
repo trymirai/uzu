@@ -28,9 +28,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::SigmoidGateKernel::new(&context, T::data_type())
         .expect("Failed to create SigmoidGateKernel");
 
-    let gate_array = context.create_array_from(&[size], &gate_data.to_vec().into_boxed_slice(), "gate");
+    let gate_array = context.create_array_from(&[size], &gate_data.to_vec().into_boxed_slice());
     let mut output = context
-        .create_array_from(&[size], &output_data.to_vec().into_boxed_slice(), "output")
+        .create_array_from(&[size], &output_data.to_vec().into_boxed_slice())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

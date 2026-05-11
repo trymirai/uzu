@@ -125,8 +125,8 @@ fn get_output<
     .expect("Failed to create QKNormKernel");
 
     let qkv_len = input.qkv.len();
-    let mut qkv = context.create_array_from(&[qkv_len], &input.qkv, "").into_allocation();
-    let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
+    let mut qkv = context.create_array_from(&[qkv_len], &input.qkv).into_allocation();
+    let scales_array = context.create_array_from(&[input.scales.len()], &input.scales);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

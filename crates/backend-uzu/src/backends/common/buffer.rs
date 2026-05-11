@@ -58,7 +58,7 @@ impl<'a, B: Buffer> BufferRangeRef<'a, B> {
         self.range.clone()
     }
 
-    pub(super) fn subrange(
+    pub(crate) fn subrange(
         self,
         range: Range<usize>,
     ) -> Self {
@@ -110,7 +110,7 @@ impl<'a, B: Buffer> BufferRangeMut<'a, B> {
         self.range.clone()
     }
 
-    pub(super) fn subrange(
+    pub(crate) fn subrange(
         self,
         range: Range<usize>,
     ) -> Self {

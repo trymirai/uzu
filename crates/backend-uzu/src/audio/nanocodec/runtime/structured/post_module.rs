@@ -205,21 +205,11 @@ impl StructuredAudioCodecGraph {
         let residual_quantizers = self.config.n_codebooks;
         let residual_count_for_shape = residual_quantizers.max(1);
         let residual_codebook_rows_for_shape = self.codebook_size.max(1);
-        let mut residual_codebooks = context.create_array_zeros(
-            &[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim],
-            data_type,
-            "structured_audio_quantizer_residual_codebooks",
-        );
-        let mut residual_out_proj = context.create_array_zeros(
-            &[residual_count_for_shape, self.input_dim, codebook_dim],
-            data_type,
-            "structured_audio_quantizer_residual_out_proj",
-        );
-        let mut residual_out_bias = context.create_array_zeros(
-            &[residual_count_for_shape, self.input_dim],
-            data_type,
-            "structured_audio_quantizer_residual_out_bias",
-        );
+        let mut residual_codebooks = context
+            .create_array_zeros(&[residual_count_for_shape, residual_codebook_rows_for_shape, codebook_dim], data_type);
+        let mut residual_out_proj =
+            context.create_array_zeros(&[residual_count_for_shape, self.input_dim, codebook_dim], data_type);
+        let mut residual_out_bias = context.create_array_zeros(&[residual_count_for_shape, self.input_dim], data_type);
 
         let residual_root = quantizer_tree.subtree("quantizer")?.subtree("quantizers")?;
         for index in 0..residual_quantizers {

@@ -62,13 +62,13 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let z_out_size = input.suffix_length as usize * input.inner_dim as usize;
     let dt_out_size = input.suffix_length as usize * input.num_heads as usize;
 
-    let input_array = context.create_array_from(&[input.input.len()], &input.input, "input");
-    let z_bias_array = context.create_array_from(&[input.z_bias.len()], &input.z_bias, "z_bias");
+    let input_array = context.create_array_from(&[input.input.len()], &input.input);
+    let z_bias_array = context.create_array_from(&[input.z_bias.len()], &input.z_bias);
 
     let mut conv_out =
-        context.create_array_uninitialized(&[conv_out_size], T::data_type(), "conv_out").into_allocation();
-    let mut z_out = context.create_array_uninitialized(&[z_out_size], T::data_type(), "z_out").into_allocation();
-    let mut dt_out = context.create_array_uninitialized(&[dt_out_size], T::data_type(), "dt_out").into_allocation();
+        context.create_array_uninitialized(&[conv_out_size], T::data_type()).into_allocation();
+    let mut z_out = context.create_array_uninitialized(&[z_out_size], T::data_type()).into_allocation();
+    let mut dt_out = context.create_array_uninitialized(&[dt_out_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

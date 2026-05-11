@@ -99,9 +99,9 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     )
     .expect("Failed to create AttentionTwoPass1Kernel");
 
-    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries, "");
-    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys, "");
-    let values_array = context.create_array_from(&[input.values.len()], &input.values, "");
+    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries);
+    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys);
+    let values_array = context.create_array_from(&[input.values.len()], &input.values);
 
     let total_offsets = (input.suffix_length * input.num_heads) as usize;
     let partials_size = total_offsets * TOTAL_BLOCKS_COUNT as usize * input.head_dim as usize;
@@ -109,13 +109,13 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     let maxs_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
 
     let mut partials = context
-        .create_array_uninitialized(&[partials_size], DataType::F32, "")
+        .create_array_uninitialized(&[partials_size], DataType::F32)
         .into_allocation();
     let mut sums = context
-        .create_array_uninitialized(&[sums_size], DataType::F32, "")
+        .create_array_uninitialized(&[sums_size], DataType::F32)
         .into_allocation();
     let mut maxs = context
-        .create_array_uninitialized(&[maxs_size], DataType::F32, "")
+        .create_array_uninitialized(&[maxs_size], DataType::F32)
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -204,13 +204,13 @@ fn get_second_pass_output<T: ArrayElement + Float, B: Backend>(input: &SecondPas
         <<B as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(&context, T::data_type(), input.head_dim)
             .expect("Failed to create AttentionTwoPass2Kernel");
 
-    let partials_array = context.create_array_from(&[input.partials.len()], &input.partials, "");
-    let sums_array = context.create_array_from(&[input.sums.len()], &input.sums, "");
-    let maxs_array = context.create_array_from(&[input.maxs.len()], &input.maxs, "");
+    let partials_array = context.create_array_from(&[input.partials.len()], &input.partials);
+    let sums_array = context.create_array_from(&[input.sums.len()], &input.sums);
+    let maxs_array = context.create_array_from(&[input.maxs.len()], &input.maxs);
 
     let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
     let mut output = context
-        .create_array_uninitialized(&[output_size], T::data_type(), "")
+        .create_array_uninitialized(&[output_size], T::data_type())
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

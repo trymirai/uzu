@@ -137,13 +137,13 @@ fn get_output<
     .expect("Failed to create RMSNormKernel");
 
     let input_size = input.input.len();
-    let input_buffer = (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input, "").into_allocation());
+    let input_buffer = (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input).into_allocation());
 
-    let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
+    let scales_array = context.create_array_from(&[input.scales.len()], &input.scales);
     let mut output = match input.in_place {
-        true => context.create_array_from(&[input_size], &input.output, "").into_allocation(),
+        true => context.create_array_from(&[input_size], &input.output).into_allocation(),
         false => context
-            .create_array_uninitialized(&[input_size], OutputT::data_type(), "")
+            .create_array_uninitialized(&[input_size], OutputT::data_type())
             .into_allocation(),
     };
 
@@ -431,9 +431,9 @@ fn bench_rms_norm(c: &mut Criterion) {
             let (input_data, scale_data) = get_rms_norm_data(1337, batch_size, model_dim);
             let input_size = batch_size * model_dim;
 
-            let input_buffer = context.create_array_from(&[input_size], input_data.as_ref(), "").into_allocation();
-            let scales_buffer = context.create_array_from(&[model_dim], scale_data.as_ref(), "").into_allocation();
-            let mut output_buffer = context.create_array_uninitialized(&[input_size], T::data_type(), "").into_allocation();
+            let input_buffer = context.create_array_from(&[input_size], input_data.as_ref()).into_allocation();
+            let scales_buffer = context.create_array_from(&[model_dim], scale_data.as_ref()).into_allocation();
+            let mut output_buffer = context.create_array_uninitialized(&[input_size], T::data_type()).into_allocation();
 
             group.throughput(Throughput::Elements((batch_size * model_dim) as u64));
 

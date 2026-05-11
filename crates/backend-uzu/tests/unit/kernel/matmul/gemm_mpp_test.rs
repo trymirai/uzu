@@ -69,7 +69,7 @@ fn get_test_data(
 fn get_cpu_output(input: &Input) -> Vec<bf16> {
     let cpu_context = <Cpu as Backend>::Context::new().expect("CPU context");
 
-    let right_array = cpu_context.create_array_from(&[input.output_dim, input.input_dim], &input.right, "");
+    let right_array = cpu_context.create_array_from(&[input.output_dim, input.input_dim], &input.right);
     let left_allocation = alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &input.left);
     let mut destination_allocation = if let Some(ref prefill) = input.destination_prefill {
         alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, prefill)
@@ -116,7 +116,7 @@ fn get_mpp_output(
     matmul_kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     input: &Input,
 ) -> Vec<bf16> {
-    let right_array = metal_context.create_array_from(&[input.output_dim, input.input_dim], &input.right, "");
+    let right_array = metal_context.create_array_from(&[input.output_dim, input.input_dim], &input.right);
     let left_allocation = alloc_allocation_with_data::<Metal, bf16>(metal_context, &input.left);
     let mut destination_allocation = if let Some(ref prefill) = input.destination_prefill {
         alloc_allocation_with_data::<Metal, bf16>(metal_context, prefill)
@@ -284,7 +284,7 @@ fn bench_gemm_mpp(criterion: &mut Criterion) {
         criterion.benchmark_group(format!("{}/Kernel/Matmul/GEMM_MPP", type_short_name::<Metal>()));
 
     for &(batch_dim, input_dim, output_dim) in BENCHMARK_SHAPES {
-        let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type(), "");
+        let right_array = metal_context.create_array_uninitialized(&[output_dim, input_dim], bf16::data_type());
         let left_allocation = metal_context
             .create_allocation(batch_dim * input_dim * std::mem::size_of::<bf16>(), AllocationType::Global)
             .expect("Failed to create allocation");

@@ -66,11 +66,11 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
     e: usize,
     k: usize,
 ) -> (Allocation<B>, Allocation<B>) {
-    let input_array = ctx.create_array_from(&[input.len()], input, "");
-    let weights_array = ctx.create_array_from(&[weights.len()], weights, "");
-    let bias_array = ctx.create_array_from(&[bias.len()], bias, "");
-    let mut topk_ids = ctx.create_array_uninitialized(&[t * k], DataType::I32, "").into_allocation();
-    let mut topk_probs = ctx.create_array_uninitialized(&[t * k], T::data_type(), "").into_allocation();
+    let input_array = ctx.create_array_from(&[input.len()], input);
+    let weights_array = ctx.create_array_from(&[weights.len()], weights);
+    let bias_array = ctx.create_array_from(&[bias.len()], bias);
+    let mut topk_ids = ctx.create_array_uninitialized(&[t * k], DataType::I32).into_allocation();
+    let mut topk_probs = ctx.create_array_uninitialized(&[t * k], T::data_type()).into_allocation();
 
     let topk_kernel =
         <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, T::data_type()).expect("router_topk");
@@ -109,10 +109,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         get_output_topk::<B, T>(ctx.as_ref(), input, weights, bias, t, d_model, e, k);
 
     // fused
-    let mut offsets = ctx.create_array_uninitialized(&[e + 1], DataType::U32, "").into_allocation();
-    let mut sumk = ctx.create_array_uninitialized(&[1], DataType::U32, "").into_allocation();
+    let mut offsets = ctx.create_array_uninitialized(&[e + 1], DataType::U32).into_allocation();
+    let mut sumk = ctx.create_array_uninitialized(&[1], DataType::U32).into_allocation();
     let num_tiles = e.div_ceil(512).max(1);
-    let mut partials = ctx.create_array_uninitialized(&[num_tiles * 512], DataType::U32, "").into_allocation();
+    let mut partials = ctx.create_array_uninitialized(&[num_tiles * 512], DataType::U32).into_allocation();
     let fused_kernel =
         <<B as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
@@ -132,8 +132,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     // Partials already created by fused kernel above
     let num_blocks = 1; // Fused kernel uses single block
     let entries = num_blocks * num_tiles * 512usize;
-    let mut block_bases = ctx.create_array_uninitialized(&[entries], DataType::U32, "").into_allocation();
-    let mut block_alloc = ctx.create_array_uninitialized(&[entries], DataType::U32, "").into_allocation();
+    let mut block_bases = ctx.create_array_uninitialized(&[entries], DataType::U32).into_allocation();
+    let mut block_alloc = ctx.create_array_uninitialized(&[entries], DataType::U32).into_allocation();
     let scatter_bases_kernel = <<B as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(ctx.as_ref())
         .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
@@ -153,8 +153,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     // scatter
     let scatter_kernel = <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel::new(&ctx, T::data_type())
         .expect("Failed to create <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsKernel");
-    let mut out_ids = ctx.create_array_uninitialized(&[sumk], DataType::I32, "").into_allocation();
-    let mut out_probs = ctx.create_array_uninitialized(&[sumk], T::data_type(), "").into_allocation();
+    let mut out_ids = ctx.create_array_uninitialized(&[sumk], DataType::I32).into_allocation();
+    let mut out_probs = ctx.create_array_uninitialized(&[sumk], T::data_type()).into_allocation();
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     scatter_kernel.encode(
         &topk_ids,

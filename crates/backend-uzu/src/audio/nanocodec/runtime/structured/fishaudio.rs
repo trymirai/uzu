@@ -121,14 +121,14 @@ impl<B: Backend> StructuredAudioRuntimeResources<B> {
         &self,
         min_elements: usize,
     ) -> Array<B> {
-        self.context.create_array_uninitialized(&[min_elements], DataType::U32, "structured_audio_tokens")
+        self.context.create_array_uninitialized(&[min_elements], DataType::U32)
     }
 
     pub(super) fn length_staging(
         &self,
         min_elements: usize,
     ) -> Array<B> {
-        self.context.create_array_uninitialized(&[min_elements], DataType::I32, "structured_audio_lengths")
+        self.context.create_array_uninitialized(&[min_elements], DataType::I32)
     }
 }
 

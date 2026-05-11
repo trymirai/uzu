@@ -55,9 +55,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let total_rows = input.state_stride as usize + input.suffix_len as usize;
     let padded_size = total_rows * input.row_stride as usize;
 
-    let state_array = context.create_array_from(&[state_size], &input.state_in, "state_in");
-    let x_array = context.create_array_from(&[x_size], &input.x, "x");
-    let mut padded = context.create_array_uninitialized(&[padded_size], T::data_type(), "padded").into_allocation();
+    let state_array = context.create_array_from(&[state_size], &input.state_in);
+    let x_array = context.create_array_from(&[x_size], &input.x);
+    let mut padded = context.create_array_uninitialized(&[padded_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

@@ -68,8 +68,8 @@ fn get_output_single<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> V
         .expect("Failed to create ArgmaxSingleKernel");
 
     let len = (input.batch_size * input.vocab_size) as usize;
-    let logits_array = context.create_array_from(&[len], &input.logits, "");
-    let mut output = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32, "").into_allocation();
+    let logits_array = context.create_array_from(&[len], &input.logits);
+    let mut output = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -94,8 +94,8 @@ fn get_output_two_pass<T: ArrayElement + Float, B: Backend>(input: &Input<T>) ->
         .expect("Failed to create ArgmaxFinalKernel");
 
     let len = (input.batch_size * input.vocab_size) as usize;
-    let logits_array = context.create_array_from(&[len], &input.logits, "");
-    let mut output = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32, "").into_allocation();
+    let logits_array = context.create_array_from(&[len], &input.logits);
+    let mut output = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32).into_allocation();
 
     let block_size = 1024;
     let grain_size = 4;
@@ -103,7 +103,7 @@ fn get_output_two_pass<T: ArrayElement + Float, B: Backend>(input: &Input<T>) ->
     let vocab_groups_per_batch = (input.vocab_size as usize + elements_per_group - 1) / elements_per_group;
     let partial_results_count = input.batch_size as usize * vocab_groups_per_batch;
     let mut partial_results = context
-        .create_array_uninitialized(&[partial_results_count * size_of::<ArgmaxPair>()], DataType::U8, "")
+        .create_array_uninitialized(&[partial_results_count * size_of::<ArgmaxPair>()], DataType::U8)
         .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
