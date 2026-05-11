@@ -5,12 +5,16 @@ use ndarray::{ArrayView, Dimension, IxDyn};
 use crate::{
     ArrayElement,
     array::Array,
-    backends::common::{Backend, DenseBuffer},
+    backends::common::{AsBufferRangeMut, Backend, DenseBuffer},
 };
 
-impl<B: Backend, Buf: DenseBuffer<Backend = B>> Array<B, Buf> {
+impl<B: Backend, Buf: AsBufferRangeMut<Buffer: DenseBuffer<Backend = B>>> Array<B, Buf> {
     pub fn cpu_ptr(&self) -> NonNull<c_void> {
-        unsafe { self.buffer.borrow().cpu_ptr().add(self.offset) }
+        let buffer = self.buffer.borrow();
+        let buffer_range = buffer.as_buffer_range_ref();
+        let range = buffer_range.range();
+
+        unsafe { buffer_range.buffer().cpu_ptr().add(range.start + self.offset) }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -35,9 +39,12 @@ impl<B: Backend, Buf: DenseBuffer<Backend = B>> Array<B, Buf> {
         ArrayView::from_shape(IxDyn(self.shape()), self.as_slice::<T>()).expect("Failed to create array view")
     }
 
-    pub fn copy_from_array<C: Backend>(
+    pub fn copy_from_array<
+        OtherBackend: Backend,
+        OtherBuf: AsBufferRangeMut<Buffer: DenseBuffer<Backend = OtherBackend>>,
+    >(
         &mut self,
-        other: &Array<C>,
+        other: &Array<OtherBackend, OtherBuf>,
     ) {
         assert_eq!(self.shape, other.shape);
         assert_eq!(self.data_type, other.data_type);
@@ -45,9 +52,12 @@ impl<B: Backend, Buf: DenseBuffer<Backend = B>> Array<B, Buf> {
         self.as_bytes_mut().copy_from_slice(other.as_bytes());
     }
 
-    pub fn copy_slice<C: Backend>(
+    pub fn copy_slice<
+        OtherBackend: Backend,
+        OtherBuf: AsBufferRangeMut<Buffer: DenseBuffer<Backend = OtherBackend>>,
+    >(
         &mut self,
-        source: &Array<C>,
+        source: &Array<OtherBackend, OtherBuf>,
         axis: usize,
         src_range: Range<usize>,
         dst_offset: usize,
