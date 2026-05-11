@@ -6,7 +6,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::{AttnParams, ring::RingParams},
         kernel::AttentionGemmKernel,
     },
@@ -15,12 +15,12 @@ use crate::{
 const BQ: usize = 32;
 
 pub struct AttentionGemmArguments<'a, B: Backend> {
-    pub queries_buffer: &'a B::DenseBuffer,
-    pub keys_buffer: &'a B::DenseBuffer,
-    pub values_buffer: &'a B::DenseBuffer,
-    pub output_buffer: &'a mut B::DenseBuffer,
-    pub trie_buffer: Option<&'a B::DenseBuffer>,
-    pub sinks_buffer: Option<&'a B::DenseBuffer>,
+    pub queries: &'a Allocation<B>,
+    pub keys: &'a Allocation<B>,
+    pub values: &'a Allocation<B>,
+    pub output: &'a mut Allocation<B>,
+    pub trie: Option<&'a Allocation<B>>,
+    pub sinks: Option<&'a Allocation<B>>,
     pub num_heads: usize,
     pub num_groups: usize,
     pub suffix_length: usize,         // qL
@@ -58,7 +58,6 @@ impl<B: Backend> AttentionGemmBlock<B> {
 
     pub fn encode(
         &self,
-        context: &B::Context,
         encoder: &mut Encoder<B>,
         args: AttentionGemmArguments<B>,
     ) -> Result<(), B::Error> {
@@ -72,9 +71,9 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let align_k = (args.sequence_length % bk) == 0;
         let is_kv_cache_ring = args.ring_params.is_some();
         let is_causal = args.is_causal;
-        let is_trie = args.trie_buffer.is_some();
+        let is_trie = args.trie.is_some();
         let is_sliding_window = args.sliding_window_size.is_some();
-        let has_sinks = args.sinks_buffer.is_some();
+        let has_sinks = args.sinks.is_some();
         let key = KernelKey {
             bk,
             head_dim,
@@ -92,7 +91,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let kernel = <B::Kernels as Kernels>::AttentionGemmKernel::new(
-                    context,
+                    encoder.context(),
                     self.data_type,
                     bk as u32,
                     head_dim as u32,
@@ -137,15 +136,15 @@ impl<B: Backend> AttentionGemmBlock<B> {
         };
 
         kernel.encode(
-            args.queries_buffer,
-            args.keys_buffer,
-            args.values_buffer,
-            args.output_buffer,
+            args.queries,
+            args.keys,
+            args.values,
+            args.output,
             params,
             args.ring_params,
-            args.trie_buffer,
+            args.trie,
             args.sliding_window_size.map(|s| s as u32),
-            args.sinks_buffer,
+            args.sinks,
             args.num_heads as u32,
             args.suffix_length as u32,
             encoder,

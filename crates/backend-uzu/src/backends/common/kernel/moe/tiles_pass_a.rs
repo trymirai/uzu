@@ -1,49 +1,44 @@
 use crate::backends::common::{
-    Backend, Encoder,
+    Allocation, Backend, Encoder,
     kernel::{
         Kernels, MoePassABuildRowMapKernel, MoePassABuildTileMapKernel, MoePassATileCountsKernel,
         MoePassATileScanKernel, MoePassAWriteDispatchArgsKernel,
     },
 };
 
-#[derive(Debug)]
 pub struct MoePassATileCountsArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::DenseBuffer,  // [E+1]
-    pub tile_counts: &'a mut B::DenseBuffer, // [E]
+    pub expert_offsets: &'a Allocation<B>,  // [E+1]
+    pub tile_counts: &'a mut Allocation<B>, // [E]
     pub e: usize,
     pub h_blocks: u32,
 }
 
-#[derive(Debug)]
 pub struct MoePassATileScanArguments<'a, B: Backend> {
-    pub tile_counts: &'a B::DenseBuffer,      // [E]
-    pub tile_offsets: &'a mut B::DenseBuffer, // [E+1]
-    pub total_tiles: &'a mut B::DenseBuffer,  // [>=1]
+    pub tile_counts: &'a Allocation<B>,      // [E]
+    pub tile_offsets: &'a mut Allocation<B>, // [E+1]
+    pub total_tiles: &'a mut Allocation<B>,  // [>=1]
     pub e: usize,
 }
 
-#[derive(Debug)]
 pub struct MoePassARowMapArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::DenseBuffer,     // [E+1]
-    pub row_expert_map: &'a mut B::DenseBuffer, // [total_rows]
+    pub expert_offsets: &'a Allocation<B>,     // [E+1]
+    pub row_expert_map: &'a mut Allocation<B>, // [total_rows]
     pub total_rows: usize,
     pub e: usize,
 }
 
-#[derive(Debug)]
 pub struct MoePassATileBuildArguments<'a, B: Backend> {
-    pub expert_offsets: &'a B::DenseBuffer, // [E+1]
-    pub tile_offsets: &'a B::DenseBuffer,   // [E+1]
-    pub row_expert_map: &'a B::DenseBuffer, // [total_rows]
-    pub tile_map: &'a mut B::DenseBuffer,   // [total_tiles * 3]
+    pub expert_offsets: &'a Allocation<B>, // [E+1]
+    pub tile_offsets: &'a Allocation<B>,   // [E+1]
+    pub row_expert_map: &'a Allocation<B>, // [total_rows]
+    pub tile_map: &'a mut Allocation<B>,   // [total_tiles * 3]
     pub total_rows: usize,
     pub h_blocks: u32,
 }
 
-#[derive(Debug)]
 pub struct MoePassATileDispatchArguments<'a, B: Backend> {
-    pub total_tiles: &'a B::DenseBuffer,       // [>=1]
-    pub dispatch_args: &'a mut B::DenseBuffer, // [3]
+    pub total_tiles: &'a Allocation<B>,       // [>=1]
+    pub dispatch_args: &'a mut Allocation<B>, // [3]
     pub num_tiles_y: u32,
 }
 

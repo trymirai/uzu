@@ -1,6 +1,6 @@
-use std::{ops::Range, time::Duration};
+use std::time::Duration;
 
-use super::Backend;
+use super::{Backend, BufferRangeMut, BufferRangeRef};
 
 pub trait CommandBuffer {
     type Backend: Backend<CommandBuffer = Self>;
@@ -72,16 +72,13 @@ pub trait CommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer,
-        src_range: Range<usize>,
-        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer,
-        dst_range: Range<usize>,
+        src: BufferRangeRef<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
     );
 
     fn encode_fill(
         &mut self,
-        dst: &mut <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer,
-        range: Range<usize>,
+        dst: BufferRangeMut<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
         value: u8,
     );
 

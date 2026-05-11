@@ -1,13 +1,12 @@
-use std::ops::{Deref, DerefMut};
-
 use super::{
     MoeExpertsTwoPassArguments, MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments,
     MoePassATileDispatchArguments, MoePassATileKernels, MoePassATileScanArguments,
 };
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{Kernels, MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel},
     },
 };
@@ -48,11 +47,10 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        mut args: MoeExpertsTwoPassArguments<B>,
-    ) {
-        if args.total_rows == 0 {
-            return;
-        }
+        args: MoeExpertsTwoPassArguments<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
 
         // pass a tile
         const BLOCK_M: u32 = 4;
@@ -61,7 +59,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             encoder,
             MoePassATileCountsArguments {
                 expert_offsets: args.expert_offsets,
-                tile_counts: args.tile_counts.deref_mut(),
+                tile_counts: &mut *args.tile_counts,
                 e: args.e,
                 h_blocks,
             },
@@ -69,9 +67,9 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         self.pass_a_tile.encode_scan(
             encoder,
             MoePassATileScanArguments {
-                tile_counts: args.tile_counts,
-                tile_offsets: args.tile_offsets.deref_mut(),
-                total_tiles: args.total_tiles.deref_mut(),
+                tile_counts: &*args.tile_counts,
+                tile_offsets: &mut *args.tile_offsets,
+                total_tiles: &mut *args.total_tiles,
                 e: args.e,
             },
         );
@@ -79,7 +77,7 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             encoder,
             MoePassARowMapArguments {
                 expert_offsets: args.expert_offsets,
-                row_expert_map: args.row_expert_map.deref_mut(),
+                row_expert_map: &mut *args.row_expert_map,
                 total_rows: args.total_rows,
                 e: args.e,
             },
@@ -88,9 +86,9 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             encoder,
             MoePassATileBuildArguments {
                 expert_offsets: args.expert_offsets,
-                tile_offsets: args.tile_offsets,
-                row_expert_map: args.row_expert_map,
-                tile_map: args.tile_map.deref_mut(),
+                tile_offsets: &*args.tile_offsets,
+                row_expert_map: &*args.row_expert_map,
+                tile_map: &mut *args.tile_map,
                 total_rows: args.total_rows,
                 h_blocks,
             },
@@ -98,8 +96,8 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         self.pass_a_tile.encode_dispatch_args(
             encoder,
             MoePassATileDispatchArguments {
-                total_tiles: args.total_tiles,
-                dispatch_args: args.dispatch_args.deref_mut(),
+                total_tiles: &*args.total_tiles,
+                dispatch_args: &mut *args.dispatch_args,
                 num_tiles_y: 1,
             },
         );
@@ -110,10 +108,10 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         // pass a
         let pass_a_kernel = &self.pass_a_indirect[gate_idx][dtype_idx];
         pass_a_kernel.encode(
-            args.x_perm_buffer,
+            args.x_perm,
             args.expert_offsets,
             args.w13_all,
-            args.hidden_buffer.deref_mut(),
+            &mut hidden,
             args.up_biases,
             args.d_model as u32,
             args.d_ff as u32,
@@ -123,24 +121,25 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             args.up_clip_min,
             args.up_clip_max,
             args.silu_alpha,
-            args.tile_map.deref(),
-            args.dispatch_args.deref(),
+            &*args.tile_map,
+            &*args.dispatch_args,
             encoder,
         );
 
         // pass b
         let pass_b_kernel = &self.fused_down[dtype_idx];
         pass_b_kernel.encode(
-            args.hidden_buffer.deref(),
-            args.row_expert_map.deref(),
+            &hidden,
+            &*args.row_expert_map,
             args.w2_all,
             args.down_biases,
-            args.output_buffer.deref_mut(),
+            &mut output,
             args.total_rows as u32,
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
             encoder,
         );
+        Ok(output)
     }
 }

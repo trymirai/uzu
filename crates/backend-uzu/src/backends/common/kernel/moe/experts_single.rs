@@ -1,9 +1,8 @@
-use std::ops::{Deref, DerefMut};
-
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{MoeExpertsDecodeSinglePassAKernel, MoeExpertsDecodeSinglePassBKernel},
     },
 };
@@ -11,26 +10,21 @@ use crate::{
 static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 
 /// Arguments for single-token MoE decode (T=1 optimized path)
-#[derive(Debug)]
 pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     /// Input activation [d_model]
-    pub x: &'a B::DenseBuffer,
+    pub x: &'a Allocation<B>,
     /// Top-K expert indices from router [K]
-    pub topk_ids: &'a B::DenseBuffer,
+    pub topk_ids: &'a Allocation<B>,
     /// Top-K probabilities from router [K]
-    pub topk_probs: &'a B::DenseBuffer,
+    pub topk_probs: &'a Allocation<B>,
     /// Up/gate projection weights [E, 2*d_ff, d_model]
-    pub w13_all: &'a B::DenseBuffer,
+    pub w13_all: &'a Allocation<B>,
     /// Down projection weights [E, d_model, d_ff]
-    pub w2_all: &'a B::DenseBuffer,
+    pub w2_all: &'a Allocation<B>,
     /// Up/gate biases [E, 2*d_ff]
-    pub up_biases: &'a B::DenseBuffer,
+    pub up_biases: &'a Allocation<B>,
     /// Down biases [E, d_model]
-    pub down_biases: &'a B::DenseBuffer,
-    /// Hidden buffer [K, d_ff] - intermediate storage (f32)
-    pub hidden: &'a mut B::DenseBuffer,
-    /// Final output [d_model]
-    pub y: &'a mut B::DenseBuffer,
+    pub down_biases: &'a Allocation<B>,
     /// Model dimension
     pub d_model: usize,
     /// FFN hidden dimension
@@ -85,14 +79,14 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        mut args: MoeExpertsSingleDecodeArguments<B>,
-    ) {
-        if args.k == 0 {
-            return;
-        }
+        args: MoeExpertsSingleDecodeArguments<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        assert!(args.k > 0, "MoE single decode requires at least one active expert");
 
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.k, args.d_ff], DataType::F32))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.d_model], args.data_type))?;
 
         // Pass A: x @ W13[expert] -> hidden
         let kernel = &self.pass_a[gate_idx][dtype_idx];
@@ -101,7 +95,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
             args.topk_ids,
             args.w13_all,
             args.up_biases,
-            args.hidden.deref_mut(),
+            &mut hidden,
             args.d_model as u32,
             args.d_ff as u32,
             args.k as u32,
@@ -116,16 +110,17 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
         // Pass B: 8 simdgroups (256 threads), outputs final y directly
         let kernel = &self.pass_b[dtype_idx];
         kernel.encode(
-            args.hidden.deref(),
+            &hidden,
             args.topk_ids,
             args.topk_probs,
             args.w2_all,
             args.down_biases,
-            args.y,
+            &mut output,
             args.d_model as u32,
             args.d_ff as u32,
             args.k as u32,
             encoder,
         );
+        Ok(output)
     }
 }

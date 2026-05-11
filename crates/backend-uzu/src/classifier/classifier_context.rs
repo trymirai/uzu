@@ -1,17 +1,14 @@
-use std::{cell::RefCell, fs::File, path::Path, rc::Rc};
+use std::{fs::File, path::Path, rc::Rc};
 
 use crate::{
     DataType,
     backends::common::{Backend, Context},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::{
-        Activation, ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope,
-    },
+    encodable_block::{ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope},
     forward_pass::{
         model_shape::ModelShape,
-        scratch_buffers::ScratchBuffers,
-        state::{ArrayId, RopeType, SharedBuffers},
+        state::{RopeType, SharedBuffers},
     },
     parameters::ParameterLoader,
     session::types::Error,
@@ -20,8 +17,7 @@ use crate::{
 pub struct ClassifierContext<B: Backend> {
     pub context: Rc<B::Context>,
 
-    pub shared_buffers: Rc<RefCell<SharedBuffers<B>>>,
-    pub scratch_buffers: ScratchBuffers<B>,
+    pub shared_buffers: Rc<SharedBuffers<B>>,
 
     pub model_config: ClassifierModelConfig,
     pub model_shape: ModelShape,
@@ -56,20 +52,18 @@ impl<B: Backend> ClassifierContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let shared_buffers = Rc::new(RefCell::new(SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape)));
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
         let transformer_tree = root_loader_view
             .subtree("transformer")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("transformer".to_string())))?;
 
-        {
-            let mut shared_bufs = shared_buffers.borrow_mut();
-            if let Some(global_rope) = &mut shared_bufs.global_rope {
-                global_rope.update_data(&transformer_tree, "global_rope");
-            }
-            if let Some(local_rope) = &mut shared_bufs.local_rope {
-                local_rope.update_data(&transformer_tree, "local_rope");
-            }
+        if let Some(global_rope) = &mut shared_buffers.global_rope {
+            global_rope.update_data(&transformer_tree, "global_rope");
         }
+        if let Some(local_rope) = &mut shared_buffers.local_rope {
+            local_rope.update_data(&transformer_tree, "local_rope");
+        }
+        let shared_buffers = Rc::new(shared_buffers);
 
         let data_type = decoder_config
             .layer_config
@@ -154,14 +148,9 @@ impl<B: Backend> ClassifierContext<B> {
             context.as_ref(),
             data_type,
             classifier_model_config.model_config.transformer_config.output_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
             &output_norm_tree,
         )
         .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("output norm: {:?}", e))))?;
-
-        let context_length = classifier_model_config.model_config.context_length;
-        let scratch_buffers = ScratchBuffers::new(context.as_ref(), &decoder_config, &model_shape, context_length);
 
         let embedding_norm_tree = root_loader_view
             .subtree("embedding_norm")
@@ -170,8 +159,6 @@ impl<B: Backend> ClassifierContext<B> {
             context.as_ref(),
             data_type,
             classifier_model_config.model_config.embedding_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
             &embedding_norm_tree,
         )
         .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("embedding norm: {:?}", e))))?;
@@ -190,24 +177,13 @@ impl<B: Backend> ClassifierContext<B> {
         })?;
         let prediction_head_dense = <dyn Linear<B>>::new::<1>(
             &prediction_head_config.dense_config,
-            prediction_head_config.use_dense_bias,
             model_dim,
             [model_dim],
             context.as_ref(),
             &prediction_head_dense_tree,
-            ArrayId::ClassifierPooling,
-            ArrayId::ClassifierPredictionHeadDense,
-        );
-
-        let prediction_head_activation = Activation::<B>::new(
-            &context,
-            prediction_head_data_type,
-            prediction_head_config.activation.clone(),
-            ArrayId::ClassifierPredictionHeadDense,
-            ArrayId::ClassifierPredictionHeadDense,
         )
         .map_err(|e| {
-            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head activation: {:?}", e)))
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
         })?;
 
         let prediction_head_norm_tree = prediction_head_tree.subtree("norm").map_err(|_| {
@@ -217,8 +193,6 @@ impl<B: Backend> ClassifierContext<B> {
             context.as_ref(),
             prediction_head_data_type,
             prediction_head_config.normalization_config.clone(),
-            ArrayId::ClassifierPredictionHeadDense,
-            ArrayId::ClassifierPredictionHeadNorm,
             &prediction_head_norm_tree,
         )
         .map_err(|e| {
@@ -230,13 +204,10 @@ impl<B: Backend> ClassifierContext<B> {
         })?;
         let prediction_head_final_linear = <dyn Linear<B>>::new::<1>(
             &prediction_head_config.readout_config,
-            true,
             model_dim,
             [num_labels],
             context.as_ref(),
             &prediction_head_readout_tree,
-            ArrayId::ClassifierPredictionHeadNorm,
-            ArrayId::ClassifierPredictionHeadLogits,
         )
         .map_err(|e| {
             Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head readout: {:?}", e)))
@@ -254,19 +225,21 @@ impl<B: Backend> ClassifierContext<B> {
         })?;
 
         let prediction_head = ClassifierPredictionHead::new(
-            prediction_head_dense.map_err(|e| {
-                Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head dense: {:?}", e)))
-            })?,
-            prediction_head_activation,
+            context.as_ref(),
+            prediction_head_dense,
+            prediction_head_config.activation.clone(),
+            prediction_head_data_type,
             prediction_head_norm,
             prediction_head_final_linear,
-            num_labels,
-        );
+            model_dim,
+        )
+        .map_err(|e| {
+            Error::Classifier(ClassifierError::KernelCreationFailed(format!("prediction head activation: {:?}", e)))
+        })?;
 
         Ok(Self {
             context,
             shared_buffers,
-            scratch_buffers,
             model_config: classifier_model_config.clone(),
             model_shape,
             embed,

@@ -460,8 +460,9 @@ impl ChatSession {
             next_to_submit = batch_end;
 
             for _ in 0..batch_submitted {
-                let (_, token, duration_nanos) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
+                let (idx, token, duration_nanos) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
                 in_flight -= 1;
+                llm.finish_async(idx);
 
                 let duration = nanos_to_secs(duration_nanos);
                 llm.tokens_push(token);
@@ -494,7 +495,8 @@ impl ChatSession {
 
                 if should_stop {
                     while in_flight > 0 {
-                        let _ = receiver.recv();
+                        let (idx, _, _) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
+                        llm.finish_async(idx);
                         in_flight -= 1;
                     }
                     if let Some(slice) = cache_slice {
