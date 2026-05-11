@@ -1,9 +1,11 @@
+use std::{collections::HashMap, ops::Range};
+
 use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap,
     MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use rangemap::RangeMap;
+use rangemap::{RangeMap, RangeSet};
 
 use crate::{
     backends::metal::{
@@ -16,7 +18,10 @@ use crate::{
 
 pub(super) struct MetalSparseHeap {
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
-    mapped_pages: RangeMap<usize, MetalSparseHeapBufferMapping>,
+    // Mappings are tracked per buffer (keyed by gpu_address) so multiple
+    // buffers can alias overlapping heap page ranges without losing track of
+    // either side.
+    buffer_mappings: HashMap<u64, RangeMap<usize, MetalSparseHeapBufferMapping>>,
 }
 
 impl MetalSparseHeap {
@@ -42,12 +47,39 @@ impl MetalSparseHeap {
             .ok_or(MetalError::SparseHeapAlloc(aligned_capacity, page_size.in_bytes()))?;
         Ok(Self {
             heap,
-            mapped_pages: RangeMap::new(),
+            buffer_mappings: HashMap::new(),
         })
     }
 
-    pub fn mapped_pages(&self) -> &RangeMap<usize, MetalSparseHeapBufferMapping> {
-        &self.mapped_pages
+    /// Heap page ranges within `heap_range` that have no buffer mapped to them.
+    pub fn free_pages_in(
+        &self,
+        heap_range: &Range<usize>,
+    ) -> Vec<Range<usize>> {
+        self.buffer_mappings
+            .values()
+            .flat_map(|m| m.iter().map(|(r, _)| r.clone()))
+            .fold(RangeSet::new(), |mut acc, r| {
+                acc.insert(r);
+                acc
+            })
+            .gaps(heap_range)
+            .collect()
+    }
+
+    /// Iterates `(heap_range, mapping)` pairs that belong to a single buffer.
+    pub fn mappings_for(
+        &self,
+        buffer_address: u64,
+    ) -> impl Iterator<Item = (Range<usize>, &MetalSparseHeapBufferMapping)> + '_ {
+        self.buffer_mappings
+            .get(&buffer_address)
+            .into_iter()
+            .flat_map(|m| m.iter().map(|(r, mapping)| (r.clone(), mapping)))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buffer_mappings.is_empty()
     }
 
     /// Command queue calls doesn't have any synchronization.
@@ -77,16 +109,21 @@ impl MetalSparseHeap {
 
         cmd_queue.update_buffer_mappings(buffer, Some(&self.heap), &mtl_operations);
 
+        let buffer_address = buffer.gpu_address();
+        let entry = self.buffer_mappings.entry(buffer_address).or_default();
         mtl_operations.iter().for_each(|mtl_op| {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
             if map {
                 let buffer_range = mtl_op.buffer_range();
-                let buffer_mapping =
-                    MetalSparseHeapBufferMapping::new(buffer.gpu_address(), mtl_op.heap_offset, buffer_range.start);
-                self.mapped_pages.insert(heap_range, buffer_mapping);
+                let buffer_mapping = MetalSparseHeapBufferMapping::new(mtl_op.heap_offset, buffer_range.start);
+                entry.insert(heap_range, buffer_mapping);
             } else {
-                self.mapped_pages.remove(heap_range);
+                entry.remove(heap_range);
             }
         });
+        let entry_empty = entry.is_empty();
+        if entry_empty {
+            self.buffer_mappings.remove(&buffer_address);
+        }
     }
 }

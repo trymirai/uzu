@@ -53,7 +53,7 @@ impl MetalSparseHeapPool {
         for (i, heap) in self.heaps.iter_mut().enumerate() {
             let mut mappings: Vec<MetalSparseHeapMappingParameters> = Vec::new();
 
-            let free_pages_ranges: Vec<Range<usize>> = heap.mapped_pages().gaps(&heap_range).collect();
+            let free_pages_ranges: Vec<Range<usize>> = heap.free_pages_in(&heap_range);
             for free_pages in free_pages_ranges {
                 let map_pages_count = min(free_pages.len(), pages_to_map.len());
                 let mapping = MetalSparseHeapMappingParameters {
@@ -113,16 +113,11 @@ impl MetalSparseHeapPool {
     ) -> Result<(), MetalError> {
         let buffer_address = buffer.gpu_address();
 
-        // Iterate over heaps, find mappings with `buffer_address`, unmap them
-        for heap in &mut self.heaps {
+        // Iterate over heaps, find mappings for `buffer_address`, unmap them
+        self.heaps.iter_mut().for_each(|heap| {
             let unmappings: Vec<MetalSparseHeapMappingParameters> = heap
-                .mapped_pages()
-                .iter()
+                .mappings_for(buffer_address)
                 .filter_map(|(heap_range, mapping)| {
-                    if mapping.gpu_address() != buffer_address {
-                        return None;
-                    };
-
                     let mapped_buffer_pages = mapping.buffer_pages_for(&heap_range);
                     let unmap_start = max(buffer_pages.start, mapped_buffer_pages.start);
                     let unmap_end = min(buffer_pages.end, mapped_buffer_pages.end);
@@ -138,14 +133,15 @@ impl MetalSparseHeapPool {
                 })
                 .collect();
             heap.execute(buffer, &context.command_queue4, &unmappings, false);
-        }
+        });
 
         // Remove empty heaps
-        self.heaps.retain(|heap| heap.mapped_pages().len() > 0);
+        self.heaps.retain(|heap| !heap.is_empty());
 
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn heap_capacity_bytes(&self) -> usize {
         self.heap_capacity
     }
@@ -154,6 +150,7 @@ impl MetalSparseHeapPool {
         self.heap_capacity / self.page_size.in_bytes()
     }
 
+    #[cfg(test)]
     pub fn heaps_count(&self) -> usize {
         self.heaps.len()
     }
