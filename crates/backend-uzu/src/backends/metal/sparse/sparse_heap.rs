@@ -2,7 +2,7 @@ use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap,
     MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
 };
-use objc2::__framework_prelude::{ProtocolObject, Retained};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeMap;
 
 use crate::{

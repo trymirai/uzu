@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
-use metal::prelude::*;
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     backends::{

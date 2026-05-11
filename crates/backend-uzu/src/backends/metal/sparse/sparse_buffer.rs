@@ -5,7 +5,8 @@ use std::{
     rc::Weak,
 };
 
-use metal::prelude::*;
+use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeMap;
 
 use crate::{

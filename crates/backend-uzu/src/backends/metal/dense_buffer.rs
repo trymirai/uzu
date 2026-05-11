@@ -1,6 +1,7 @@
 use std::{os::raw::c_void, ptr::NonNull};
 
-use metal::prelude::*;
+use metal::{MTLBuffer, MTLResourceExt};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
 use crate::backends::common::{Buffer, DenseBuffer};

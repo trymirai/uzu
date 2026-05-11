@@ -5,7 +5,12 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use metal::prelude::*;
+use metal::{
+    MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
+    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
+    MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
     Metal,
