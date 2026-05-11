@@ -1,8 +1,8 @@
 use crate::{
     DataType,
-    array::{Array, ArrayContextExt, allocation_as_bytes, allocation_as_bytes_mut, size_for_shape},
+    array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, Backend, Encoder, allocation_as_bytes, allocation_as_bytes_mut,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };

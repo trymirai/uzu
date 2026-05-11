@@ -16,32 +16,6 @@ pub struct Array<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backen
 }
 
 impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Array<B, BufferRange> {
-    pub unsafe fn from_parts(
-        buffer_range: BufferRange,
-        offset: usize,
-        shape: &[usize],
-        data_type: DataType,
-    ) -> Self {
-        let required_bytes = size_for_shape(shape, data_type);
-        let buffer_range_size = buffer_range.as_buffer_range_ref().range().len();
-
-        assert!(
-            offset + required_bytes <= buffer_range_size,
-            "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
-            shape,
-            data_type,
-            offset,
-            offset + required_bytes,
-            buffer_range_size
-        );
-        Self {
-            buffer_range,
-            offset,
-            shape: shape.into(),
-            data_type,
-        }
-    }
-
     pub fn offset(&self) -> usize {
         self.offset
     }
@@ -80,7 +54,15 @@ impl<B: Backend> Array<B, Allocation<B>> {
         shape: &[usize],
         data_type: DataType,
     ) -> Self {
-        unsafe { Self::from_parts(allocation, offset, shape, data_type) }
+        let required_bytes = size_for_shape(shape, data_type);
+        let allocation_size = allocation.as_buffer_range_ref().range().len();
+        assert!(offset + required_bytes <= allocation_size, "Array shape exceeds allocation length",);
+        Self {
+            buffer_range: allocation,
+            offset,
+            shape: shape.into(),
+            data_type,
+        }
     }
 
     pub fn allocation(&self) -> &Allocation<B> {
