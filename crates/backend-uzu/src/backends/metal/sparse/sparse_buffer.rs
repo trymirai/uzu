@@ -2,6 +2,7 @@ use std::{
     cmp::{max, min},
     fmt::Debug,
     ops::Range,
+    rc::Weak,
 };
 
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
@@ -16,20 +17,24 @@ use crate::{
     prelude::MetalContext,
 };
 
-pub struct MetalSparseBuffer<'a> {
+#[derive(Debug)]
+pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     mapped_pages: RangeSet<usize>,
-    context: &'a MetalContext,
+    context: Weak<MetalContext>,
 }
 
-impl<'a> MetalSparseBuffer<'a> {
+impl MetalSparseBuffer {
     pub(crate) fn new(
         context: &'a MetalContext,
         capacity: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
-        let aligned_capacity = capacity.next_multiple_of(page_size.in_bytes());
-        let buffer = context
+        let ctx = context.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
+        let page_size_bytes = page_size.in_bytes();
+        let aligned_capacity = capacity.next_multiple_of(page_size_bytes);
+
+        let buffer = ctx
             .device
             .new_buffer_with_length_options_placement_sparse_page_size(
                 aligned_capacity,
@@ -46,27 +51,16 @@ impl<'a> MetalSparseBuffer<'a> {
     }
 }
 
-impl Drop for MetalSparseBuffer<'_> {
+impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
+        let context = self.context.upgrade().expect("Failed to upgrade context");
         for range in self.mapped_pages.iter() {
-            self.context.sparse_heap_pool_mut().unmap(self.context, &self.buffer, &range).expect("Failed to unmap");
+            context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range).expect("Failed to unmap");
         }
     }
 }
 
-impl Debug for MetalSparseBuffer<'_> {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        f.debug_struct("MetalSparseBuffer")
-            .field("mapped_pages", &self.mapped_pages)
-            .field("buffer", &self.buffer)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Buffer for MetalSparseBuffer<'_> {
+impl Buffer for MetalSparseBuffer {
     type Backend = Metal;
 
     fn gpu_ptr(&self) -> usize {
@@ -85,7 +79,7 @@ impl Buffer for MetalSparseBuffer<'_> {
     }
 }
 
-impl<'a> SparseBuffer for MetalSparseBuffer<'a> {
+impl SparseBuffer for MetalSparseBuffer {
     fn map(
         &mut self,
         context: &<Self::Backend as Backend>::Context,

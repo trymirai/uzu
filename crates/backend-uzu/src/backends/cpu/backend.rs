@@ -12,7 +12,7 @@ impl Backend for Cpu {
     type Context = CpuContext;
     type CommandBuffer = CpuCommandBuffer;
     type DenseBuffer = UnsafeCell<Pin<Box<[u8]>>>;
-    type SparseBuffer<'a> = CpuSparseBuffer;
+    type SparseBuffer = CpuSparseBuffer;
     type Event = Pin<Box<AtomicU64>>;
     type Kernels = CpuKernels;
     type Error = CpuError;

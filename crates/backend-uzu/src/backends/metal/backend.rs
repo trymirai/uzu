@@ -11,7 +11,7 @@ impl Backend for Metal {
     type Context = MetalContext;
     type CommandBuffer = MetalCommandBuffer;
     type DenseBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
-    type SparseBuffer<'a> = MetalSparseBuffer<'a>;
+    type SparseBuffer = MetalSparseBuffer;
     type Event = Retained<ProtocolObject<dyn MTLEvent>>;
     type Kernels = MetalKernels;
     type Error = MetalError;
