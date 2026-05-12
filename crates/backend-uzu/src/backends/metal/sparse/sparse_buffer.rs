@@ -2,7 +2,7 @@ use std::{
     cmp::{max, min},
     fmt::Debug,
     ops::Range,
-    rc::Weak,
+    rc::Rc,
 };
 
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
@@ -17,24 +17,20 @@ use crate::{
     prelude::MetalContext,
 };
 
-#[derive(Debug)]
 pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     mapped_pages: RangeSet<usize>,
-    context: Weak<MetalContext>,
+    context: Rc<MetalContext>,
 }
 
 impl MetalSparseBuffer {
     pub(crate) fn new(
-        context: &'a MetalContext,
+        context: Rc<MetalContext>,
         capacity: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
-        let ctx = context.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
-        let page_size_bytes = page_size.in_bytes();
-        let aligned_capacity = capacity.next_multiple_of(page_size_bytes);
-
-        let buffer = ctx
+        let aligned_capacity = capacity.next_multiple_of(page_size.in_bytes());
+        let buffer = context
             .device
             .new_buffer_with_length_options_placement_sparse_page_size(
                 aligned_capacity,
@@ -51,9 +47,21 @@ impl MetalSparseBuffer {
     }
 }
 
+impl Debug for MetalSparseBuffer {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.debug_struct("MetalSparseBuffer")
+            .field("mapped_pages", &self.mapped_pages)
+            .field("buffer", &self.buffer)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
-        let context = self.context.upgrade().expect("Failed to upgrade context");
+        let context = self.context.clone();
         for range in self.mapped_pages.iter() {
             context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range).expect("Failed to unmap");
         }
