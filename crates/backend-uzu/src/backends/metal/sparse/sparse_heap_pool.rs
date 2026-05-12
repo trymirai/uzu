@@ -49,7 +49,7 @@ impl MetalSparseHeapPool {
         // Try to find pages in existing heaps.
         // While `pages_to_map` is not empty in each heap find unmapped pages, collect them into `mappings` and map
         let heap_range = 0..heap_capacity_pages;
-        let mut existing_heaps_mappings: Vec<(usize, Vec<MetalSparseHeapMappingParameters>)> = Vec::new();
+        let mut existing_heaps_mappings: Vec<(usize, Box<[MetalSparseHeapMappingParameters]>)> = Vec::new();
         for (i, heap) in self.heaps.iter_mut().enumerate() {
             let mut mappings: Vec<MetalSparseHeapMappingParameters> = Vec::new();
 
@@ -69,7 +69,7 @@ impl MetalSparseHeapPool {
             }
 
             heap.execute(buffer, &context.command_queue4, &mappings, true);
-            existing_heaps_mappings.push((i, mappings));
+            existing_heaps_mappings.push((i, mappings.into_boxed_slice()));
 
             if pages_to_map.len() == 0 {
                 break;
@@ -88,9 +88,11 @@ impl MetalSparseHeapPool {
 
             match MetalSparseHeap::new(context, self.heap_capacity, self.page_size) {
                 Ok(mut heap) => {
-                    heap.execute(buffer, &context.command_queue4, &[op_params], true);
+                    let operations = [op_params];
+                    heap.execute(buffer, &context.command_queue4, &operations, true);
                     self.heaps.push(heap);
                     pages_to_map.start += map_pages_count;
+                    existing_heaps_mappings.push((self.heaps.len() - 1, Box::new(operations)));
                 },
                 Err(err) => {
                     // it's necessary to unmap previously mapped pages in existing heaps
