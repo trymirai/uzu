@@ -3,6 +3,7 @@ mod allocation_access;
 mod allocator;
 mod backend;
 mod buffer;
+mod buffer_range;
 mod command_buffer;
 mod context;
 mod dense_buffer;
@@ -19,9 +20,8 @@ pub use allocation_access::{
 };
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
-pub use buffer::{
-    AsBufferRangeMut, AsBufferRangeRef, Buffer, BufferGpuAddressRangeExt, BufferRangeMut, BufferRangeRef,
-};
+pub use buffer::{Buffer, BufferGpuAddressRangeExt};
+pub use buffer_range::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef};
 pub use command_buffer::{
     AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
     CommandBufferInitial, CommandBufferPending,
