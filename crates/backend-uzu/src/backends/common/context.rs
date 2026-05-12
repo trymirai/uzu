@@ -46,7 +46,7 @@ pub trait Context: Sized {
     fn create_sparse_buffer(
         &self,
         capacity: usize,
-    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer<'_>, <Self::Backend as Backend>::Error>;
 
     fn peak_memory_usage(&self) -> Option<usize>;
 
