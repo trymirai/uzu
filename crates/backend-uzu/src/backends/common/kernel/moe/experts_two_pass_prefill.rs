@@ -1,12 +1,11 @@
-use std::ops::{Deref, DerefMut};
-
 use super::{
     MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels, MoeTileScanArguments,
 };
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{MoeExpertsPrefillPassAKernel, MoeExpertsPrefillPassBKernel},
     },
 };
@@ -49,29 +48,26 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
     pub fn encode(
         &self,
         encoder: &mut Encoder<B>,
-        mut args: MoeExpertsTwoPassArguments<B>,
-    ) {
-        if args.total_rows == 0 {
-            return;
-        }
-
-        let hidden_bytes = args.total_rows * args.d_ff * args.data_type.size_in_bytes();
-        encoder.encode_fill(args.hidden_buffer.deref_mut(), 0..hidden_bytes, 0);
+        args: MoeExpertsTwoPassArguments<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
+        encoder.encode_fill(&mut hidden, 0);
 
         self.tile_map.encode_counts(
             encoder,
             MoeTileCountsArguments {
-                offsets_buffer: args.expert_offsets,
-                tile_counts_buffer: args.tile_counts.deref_mut(),
+                offsets: args.expert_offsets,
+                tile_counts: &mut *args.tile_counts,
                 e: args.e,
             },
         );
         self.tile_map.encode_scan(
             encoder,
             MoeTileScanArguments {
-                tile_counts_buffer: args.tile_counts,
-                tile_offsets_buffer: args.tile_offsets.deref_mut(),
-                total_tiles_buffer: args.total_tiles.deref_mut(),
+                tile_counts: &*args.tile_counts,
+                tile_offsets: &mut *args.tile_offsets,
+                total_tiles: &mut *args.total_tiles,
                 e: args.e,
             },
         );
@@ -79,9 +75,9 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             encoder,
             MoeTileMapBuildArguments {
                 expert_offsets: args.expert_offsets,
-                tile_offsets: args.tile_offsets,
-                tile_counts: args.tile_counts,
-                tile_map: args.tile_map.deref_mut(),
+                tile_offsets: &*args.tile_offsets,
+                tile_counts: &*args.tile_counts,
+                tile_map: &mut *args.tile_map,
                 e: args.e,
             },
         );
@@ -102,8 +98,8 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         self.tile_map.encode_dispatch_args(
             encoder,
             MoeTileDispatchArguments {
-                total_tiles: args.total_tiles,
-                dispatch_args: args.dispatch_args.deref_mut(),
+                total_tiles: &*args.total_tiles,
+                dispatch_args: &mut *args.dispatch_args,
                 num_tiles_x: n_tiles_ff,
             },
         );
@@ -113,11 +109,11 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
 
         let kernel_pass_a = &self.pass_a_indirect[gate_idx][dtype_idx];
         kernel_pass_a.encode(
-            args.x_perm_buffer,
+            args.x_perm,
             args.expert_offsets,
             args.w13_all,
             args.up_biases,
-            args.hidden_buffer.deref_mut(),
+            &mut hidden,
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
@@ -126,51 +122,49 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             args.up_clip_min,
             args.up_clip_max,
             args.silu_alpha,
-            args.tile_map.deref(),
-            args.dispatch_args.deref(),
+            &*args.tile_map,
+            &*args.dispatch_args,
             encoder,
         );
 
         let dispatch_args = MoeTileDispatchArguments {
-            total_tiles: args.total_tiles,
-            dispatch_args: args.dispatch_args.deref_mut(),
+            total_tiles: &*args.total_tiles,
+            dispatch_args: &mut *args.dispatch_args,
             num_tiles_x: n_tiles_model,
         };
         self.tile_map.encode_dispatch_args(encoder, dispatch_args);
 
         let kernel_pass_b = &self.pass_b_indirect[dtype_idx];
         kernel_pass_b.encode(
-            args.hidden_buffer.deref(),
+            &hidden,
             args.expert_offsets,
             args.w2_all,
             args.down_biases,
-            args.output_buffer.deref_mut(),
+            &mut output,
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
-            args.tile_map.deref(),
-            args.dispatch_args.deref(),
+            &*args.tile_map,
+            &*args.dispatch_args,
             encoder,
         );
+        Ok(output)
     }
 }
 
-#[derive(Debug)]
 pub struct MoeExpertsTwoPassArguments<'a, B: Backend> {
-    pub x_perm_buffer: &'a B::DenseBuffer,
-    pub expert_offsets: &'a B::DenseBuffer,
-    pub row_expert_map: &'a mut B::DenseBuffer,
-    pub hidden_buffer: &'a mut B::DenseBuffer,
-    pub output_buffer: &'a mut B::DenseBuffer,
-    pub w13_all: &'a B::DenseBuffer,
-    pub w2_all: &'a B::DenseBuffer,
-    pub up_biases: &'a B::DenseBuffer,
-    pub down_biases: &'a B::DenseBuffer,
-    pub tile_counts: &'a mut B::DenseBuffer,
-    pub tile_offsets: &'a mut B::DenseBuffer,
-    pub tile_map: &'a mut B::DenseBuffer,
-    pub total_tiles: &'a mut B::DenseBuffer,
-    pub dispatch_args: &'a mut B::DenseBuffer,
+    pub x_perm: &'a Allocation<B>,
+    pub expert_offsets: &'a Allocation<B>,
+    pub row_expert_map: &'a mut Allocation<B>,
+    pub w13_all: &'a Allocation<B>,
+    pub w2_all: &'a Allocation<B>,
+    pub up_biases: &'a Allocation<B>,
+    pub down_biases: &'a Allocation<B>,
+    pub tile_counts: &'a mut Allocation<B>,
+    pub tile_offsets: &'a mut Allocation<B>,
+    pub tile_map: &'a mut Allocation<B>,
+    pub total_tiles: &'a mut Allocation<B>,
+    pub dispatch_args: &'a mut Allocation<B>,
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,

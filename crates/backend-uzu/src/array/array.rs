@@ -1,60 +1,21 @@
-use std::{cell::RefCell, rc::Rc};
+use std::fmt;
 
 use crate::{
     DataType,
     array::size_for_shape,
-    backends::common::{AsBufferRangeMut, Backend, Buffer},
+    backends::common::{
+        Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef,
+    },
 };
 
-#[derive(Debug)]
-pub struct Array<B: Backend, Buf: AsBufferRangeMut<Buffer: Buffer<Backend = B>> = <B as Backend>::DenseBuffer> {
-    pub(super) buffer: Rc<RefCell<Buf>>,
+pub struct Array<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>> = Allocation<B>> {
+    pub(super) buffer_range: BufferRange,
     pub(super) offset: usize,
     pub(super) shape: Box<[usize]>,
     pub(super) data_type: DataType,
 }
 
-impl<B: Backend, Buf: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Array<B, Buf> {
-    // Constructors
-    pub unsafe fn from_parts(
-        buffer: Rc<RefCell<Buf>>,
-        offset: usize,
-        shape: &[usize],
-        data_type: DataType,
-    ) -> Self {
-        let required_bytes = size_for_shape(shape, data_type);
-        let buffer_range = buffer.borrow().as_buffer_range_ref().range();
-        let buffer_range_size = buffer_range.end - buffer_range.start;
-
-        assert!(
-            offset + required_bytes <= buffer_range_size,
-            "Shape {:?} with data type {:?} at offset {} requires {} bytes total, but buffer length is {} bytes",
-            shape,
-            data_type,
-            offset,
-            offset + required_bytes,
-            buffer_range_size
-        );
-        Self {
-            buffer: buffer.clone(),
-            offset,
-            shape: shape.into(),
-            data_type,
-        }
-    }
-
-    pub fn view(
-        &self,
-        shape: &[usize],
-    ) -> Self {
-        unsafe { Self::from_parts(self.buffer.clone(), self.offset, shape, self.data_type) }
-    }
-
-    // Getters
-    pub fn buffer(&self) -> Rc<RefCell<Buf>> {
-        self.buffer.clone()
-    }
-
+impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Array<B, BufferRange> {
     pub fn offset(&self) -> usize {
         self.offset
     }
@@ -74,15 +35,65 @@ impl<B: Backend, Buf: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Array<B, Bu
     pub fn num_elements(&self) -> usize {
         self.shape.iter().product()
     }
+
+    pub fn as_buffer_range_ref<'a>(&'a self) -> BufferRangeRef<'a, BufferRange::Buffer> {
+        self.buffer_range.as_buffer_range_ref().subrange(self.offset..self.offset + self.size())
+    }
+
+    pub fn as_buffer_range_mut<'a>(&'a mut self) -> BufferRangeMut<'a, BufferRange::Buffer> {
+        let offset = self.offset;
+        let size = self.size();
+        self.buffer_range.as_buffer_range_mut().subrange(offset..offset + size)
+    }
 }
 
-impl<B: Backend, Buf: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> Clone for Array<B, Buf> {
-    fn clone(&self) -> Self {
+impl<B: Backend> Array<B, Allocation<B>> {
+    pub unsafe fn from_allocation(
+        allocation: Allocation<B>,
+        offset: usize,
+        shape: &[usize],
+        data_type: DataType,
+    ) -> Self {
+        let required_bytes = size_for_shape(shape, data_type);
+        let allocation_size = allocation.as_buffer_range_ref().range().len();
+        assert!(offset + required_bytes <= allocation_size, "Array shape exceeds allocation length",);
         Self {
-            buffer: self.buffer.clone(),
-            offset: self.offset,
-            shape: self.shape.clone(),
-            data_type: self.data_type,
+            buffer_range: allocation,
+            offset,
+            shape: shape.into(),
+            data_type,
         }
+    }
+
+    pub fn allocation(&self) -> &Allocation<B> {
+        &self.buffer_range
+    }
+
+    pub fn allocation_mut(&mut self) -> &mut Allocation<B> {
+        &mut self.buffer_range
+    }
+
+    pub fn into_allocation(self) -> Allocation<B> {
+        assert_eq!(self.offset, 0, "Array view cannot be converted into Allocation");
+        assert_eq!(
+            size_for_shape(&self.shape, self.data_type),
+            self.buffer_range.as_buffer_range_ref().range().len(),
+            "Partial Array view cannot be converted into Allocation",
+        );
+        self.buffer_range
+    }
+}
+
+impl<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>>> fmt::Debug for Array<B, BufferRange> {
+    fn fmt(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        formatter
+            .debug_struct("Array")
+            .field("offset", &self.offset)
+            .field("shape", &self.shape)
+            .field("data_type", &self.data_type)
+            .finish()
     }
 }

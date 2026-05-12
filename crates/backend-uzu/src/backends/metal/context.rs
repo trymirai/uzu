@@ -1,5 +1,5 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{RefCell, RefMut},
     collections::HashMap,
     path::Path,
     rc::Rc,
@@ -65,6 +65,7 @@ impl MetalContext {
         Ok(pipeline)
     }
 
+    #[cfg(test)]
     pub(super) fn sparse_heap_pool(&self) -> Ref<'_, MetalSparseHeapPool> {
         self.sparse_heap_pool.borrow()
     }

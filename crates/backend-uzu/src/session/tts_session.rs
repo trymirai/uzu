@@ -25,7 +25,6 @@ use tokenizers::Tokenizer;
 
 use crate::{
     DataType,
-    array::ArrayContextExt,
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState},
@@ -33,20 +32,14 @@ use crate::{
     backends::common::{
         Backend, Context as BackendContext, Encoder, Kernels,
         kernel::{
-            EmbeddingRowsSumKernel, ManualKernels, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
-            TokenCopyToResultsKernel,
+            EmbeddingRowsSumKernel, ManualKernels, TensorAddScaleKernel, TokenCopySampledKernel,
             kv_cache_update::KVCacheUpdate,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
         },
     },
     config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
     encodable_block::{Decoder, EncodingParameters, Sampling as GpuSampling},
-    forward_pass::{
-        cache_layers::CacheLayers,
-        model_shape::ModelShape,
-        scratch_buffers::ScratchBuffers,
-        state::{ArrayId, ForwardPassState, SharedBuffers},
-    },
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,
     session::{
         config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsSessionOptions},

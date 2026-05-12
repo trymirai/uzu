@@ -1,9 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     Array, ArrayElement, DataType,
     array::size_for_shape,
-    backends::common::{Backend, Buffer, Context},
+    backends::common::{AllocationType, Context},
 };
 
 pub trait ArrayContextExt: Context {
@@ -11,23 +9,18 @@ pub trait ArrayContextExt: Context {
         &self,
         shape: &[usize],
         data_type: DataType,
-        label: &str,
-    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
-        let buffer_size_bytes = size_for_shape(shape, data_type);
-
-        let mut buffer = self.create_buffer(buffer_size_bytes).expect("Failed to create buffer");
-        buffer.set_label(Some(label));
-
-        unsafe { Array::from_parts(Rc::new(RefCell::new(buffer)), 0, shape, data_type) }
+    ) -> Array<Self::Backend> {
+        let size = size_for_shape(shape, data_type);
+        let allocation = self.create_allocation(size, AllocationType::Global).expect("Failed to create allocation");
+        unsafe { Array::from_allocation(allocation, 0, shape, data_type) }
     }
 
     fn create_array_zeros(
         &self,
         shape: &[usize],
         data_type: DataType,
-        label: &str,
-    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
-        let mut array = self.create_array_uninitialized(shape, data_type, label);
+    ) -> Array<Self::Backend> {
+        let mut array = self.create_array_uninitialized(shape, data_type);
         array.as_bytes_mut().fill(0);
         array
     }
@@ -36,8 +29,7 @@ pub trait ArrayContextExt: Context {
         &self,
         shape: &[usize],
         data: &[T],
-        label: &str,
-    ) -> Array<Self::Backend, <Self::Backend as Backend>::DenseBuffer> {
+    ) -> Array<Self::Backend> {
         let size_from_shape: usize = shape.iter().product();
         assert_eq!(
             data.len(),
@@ -47,7 +39,7 @@ pub trait ArrayContextExt: Context {
             data.len()
         );
 
-        let mut array = self.create_array_uninitialized(shape, T::data_type(), label);
+        let mut array = self.create_array_uninitialized(shape, T::data_type());
         array.as_slice_mut().copy_from_slice(data);
         array
     }

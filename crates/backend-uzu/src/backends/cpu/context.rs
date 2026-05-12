@@ -37,8 +37,9 @@ impl Context for CpuContext {
 
     fn recommended_async_batch_size(
         &self,
-        _model_path: &Path,
+        model_path: &Path,
     ) -> usize {
+        let _ = model_path;
         1
     }
 

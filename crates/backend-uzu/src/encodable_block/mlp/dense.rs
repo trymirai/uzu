@@ -1,17 +1,18 @@
 //! MLP block encodable.
 
-use std::ops::{Deref, DerefMut};
-
 use super::{super::linear::Linear, Mlp};
 use crate::{
-    backends::common::{Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
-    forward_pass::state::{ArrayId, ForwardPassState},
+    DataType,
+    array::size_for_shape,
+    backends::common::{Allocation, Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
 };
 
 pub struct DenseMlp<B: Backend> {
     up: Box<dyn Linear<B>>,
     gate: MlpGateActMulEncodable<B>,
     down: Box<dyn Linear<B>>,
+    hidden_dim: usize,
+    data_type: DataType,
 }
 
 impl<B: Backend> DenseMlp<B> {
@@ -19,11 +20,15 @@ impl<B: Backend> DenseMlp<B> {
         up: Box<dyn Linear<B>>,
         gate: MlpGateActMulEncodable<B>,
         down: Box<dyn Linear<B>>,
+        hidden_dim: usize,
+        data_type: DataType,
     ) -> Self {
         Self {
             up,
             gate,
             down,
+            hidden_dim,
+            data_type,
         }
     }
 }
@@ -31,22 +36,13 @@ impl<B: Backend> DenseMlp<B> {
 impl<B: Backend> Mlp<B> for DenseMlp<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        // Up
-        self.up.encode(state, encoder)?;
-
-        // Gate act+mul (fused_up -> hidden)
-        {
-            let fused = state.array(ArrayId::MlpFusedUp);
-            let hidden = state.array(ArrayId::MlpHidden);
-            let m = fused.shape()[0] as i32;
-            self.gate.encode(encoder, fused.buffer().borrow().deref(), hidden.buffer().borrow_mut().deref_mut(), m)?;
-        }
-
-        // Down
-        self.down.encode(state, encoder)?;
-        Ok(())
+    ) -> Result<Allocation<B>, B::Error> {
+        let fused_up = self.up.encode(input, batch_dim, encoder)?;
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
+        self.gate.encode(encoder, &fused_up, &mut hidden, batch_dim as i32)?;
+        self.down.encode(hidden, batch_dim, encoder)
     }
 }

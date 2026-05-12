@@ -13,10 +13,6 @@ use crate::{
 };
 
 pub struct ClassificationSession {
-    #[allow(dead_code)]
-    model_path: PathBuf,
-    #[allow(dead_code)]
-    model_metadata: ModelMetadata,
     tokenizer: Tokenizer,
     classifier: Box<dyn ClassifierTrait>,
     input_processor: Box<dyn InputProcessor>,
@@ -50,8 +46,6 @@ impl ClassificationSession {
         let classifier = Box::new(Classifier::<B>::new(&model_path, &model_metadata)?);
 
         Ok(Self {
-            model_path,
-            model_metadata,
             tokenizer,
             classifier,
             input_processor,
