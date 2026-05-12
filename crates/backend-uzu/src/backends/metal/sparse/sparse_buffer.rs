@@ -7,7 +7,7 @@ use std::{
 
 use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions, MTLSparsePageSize};
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use rangemap::RangeMap;
+use rangemap::RangeSet;
 
 use crate::{
     backends::{
@@ -20,7 +20,7 @@ use crate::{
 #[derive(Debug)]
 pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
-    mapped_pages: RangeMap<usize, ()>,
+    mapped_pages: RangeSet<usize>,
     context: Weak<MetalContext>,
 }
 
@@ -45,7 +45,7 @@ impl MetalSparseBuffer {
 
         Ok(Self {
             buffer,
-            mapped_pages: RangeMap::new(),
+            mapped_pages: RangeSet::new(),
             context,
         })
     }
@@ -54,7 +54,7 @@ impl MetalSparseBuffer {
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
         let context = self.context.upgrade().expect("Failed to upgrade context");
-        for (range, _) in self.mapped_pages.iter() {
+        for range in self.mapped_pages.iter() {
             context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range).expect("Failed to unmap");
         }
     }
@@ -87,7 +87,7 @@ impl SparseBuffer for MetalSparseBuffer {
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         self.mapped_pages.gaps(pages).collect::<Vec<_>>().into_iter().try_for_each(|gap| {
             context.sparse_heap_pool_mut().map(context, &self.buffer, &gap)?;
-            self.mapped_pages.insert(gap, ());
+            self.mapped_pages.insert(gap);
             Ok(())
         })
     }
@@ -99,7 +99,7 @@ impl SparseBuffer for MetalSparseBuffer {
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         self.mapped_pages
             .overlapping(pages)
-            .map(|(range, _)| max(range.start, pages.start)..min(range.end, pages.end))
+            .map(|range| max(range.start, pages.start)..min(range.end, pages.end))
             .collect::<Vec<_>>()
             .into_iter()
             .try_for_each(|range| {
