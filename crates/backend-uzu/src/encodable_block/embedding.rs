@@ -1,14 +1,11 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
 use crate::{
     DataType,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         gpu_types::QuantizationMethod,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
@@ -20,7 +17,6 @@ use crate::{
         },
     },
     config::EmbeddingConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
     parameters::{ParameterLeaf, ParameterLoaderError, ParameterTree},
 };
 
@@ -47,14 +43,14 @@ pub enum EmbeddingError<B: Backend> {
 
 enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
-        weights: B::DenseBuffer,
+        weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::DenseBuffer,
-        scales: B::DenseBuffer,
-        biases: B::DenseBuffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        biases: Allocation<B>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
@@ -62,26 +58,26 @@ enum TiedEmbeddingType<B: Backend> {
 
 enum UntiedEmbeddingLookupType<B: Backend> {
     FullPrecision {
-        weights: B::DenseBuffer,
+        weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
     },
     Quantized {
-        weights: B::DenseBuffer,
-        scales: B::DenseBuffer,
-        biases: B::DenseBuffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        biases: Allocation<B>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
     },
 }
 
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
-        weights: B::DenseBuffer,
+        weights: Allocation<B>,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::DenseBuffer,
-        scales: B::DenseBuffer,
-        biases: B::DenseBuffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        biases: Allocation<B>,
         readout: QuantizedMatmulKernelEncodable<B>,
     },
 }
@@ -99,6 +95,7 @@ enum EmbeddingTying<B: Backend> {
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
+    activation_data_type: DataType,
     vocab_size: u32,
     model_dim: u32,
 }
@@ -152,6 +149,31 @@ fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
 }
 
 impl<B: Backend> Embedding<B> {
+    fn activation_data_type(config: &EmbeddingConfig) -> DataType {
+        match config {
+            EmbeddingConfig::Tied {
+                precision,
+                ..
+            }
+            | EmbeddingConfig::Untied {
+                precision,
+                ..
+            } => (*precision).into(),
+            EmbeddingConfig::MLXQuantizedTied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXQuantizedUntied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXSemiQuantizedUntied {
+                activation_precision,
+                ..
+            } => (*activation_precision).into(),
+        }
+    }
+
     pub fn new(
         context: &B::Context,
         vocab_size: u32,
@@ -210,7 +232,7 @@ impl<B: Backend> Embedding<B> {
 
                 let weights_leaf = lookup_tree.leaf("weights")?;
                 validate_tensor(&weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let weights = weights_leaf.read_buffer()?;
+                let weights = weights_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
@@ -235,8 +257,8 @@ impl<B: Backend> Embedding<B> {
                 let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
                 validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let output_weights = output_weights_leaf.read_buffer()?;
+                let input_weights = input_weights_leaf.read_allocation()?;
+                let output_weights = output_weights_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
@@ -278,9 +300,9 @@ impl<B: Backend> Embedding<B> {
                 let biases_leaf = lookup_tree.leaf("biases")?;
                 validate_tensor(&biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let weights = weights_leaf.read_buffer()?;
-                let scales = scales_leaf.read_buffer()?;
-                let biases = biases_leaf.read_buffer()?;
+                let weights = weights_leaf.read_allocation()?;
+                let scales = scales_leaf.read_allocation()?;
+                let biases = biases_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
@@ -354,13 +376,13 @@ impl<B: Backend> Embedding<B> {
                 let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let input_scales = input_scales_leaf.read_buffer()?;
-                let input_biases = input_biases_leaf.read_buffer()?;
+                let input_weights = input_weights_leaf.read_allocation()?;
+                let input_scales = input_scales_leaf.read_allocation()?;
+                let input_biases = input_biases_leaf.read_allocation()?;
 
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
+                let output_weights = output_weights_leaf.read_allocation()?;
+                let output_scales = output_scales_leaf.read_allocation()?;
+                let output_biases = output_biases_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                     context,
@@ -431,11 +453,11 @@ impl<B: Backend> Embedding<B> {
                 let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
                 validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
+                let input_weights = input_weights_leaf.read_allocation()?;
 
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
+                let output_weights = output_weights_leaf.read_allocation()?;
+                let output_scales = output_scales_leaf.read_allocation()?;
+                let output_biases = output_biases_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
@@ -474,6 +496,7 @@ impl<B: Backend> Embedding<B> {
         };
 
         let input_scale = common.input_scale.unwrap_or(1.0);
+        let activation_data_type = Self::activation_data_type(config);
 
         if let Some(logit_soft_cap) = common.logit_soft_cap {
             return Err(EmbeddingError::UnsupportedConfiguration(format!("logit_soft_cap={logit_soft_cap:?}")));
@@ -482,6 +505,7 @@ impl<B: Backend> Embedding<B> {
         Ok(Self {
             tying,
             input_scale,
+            activation_data_type,
             vocab_size,
             model_dim,
         })
@@ -489,20 +513,17 @@ impl<B: Backend> Embedding<B> {
 
     pub fn encode_lookup(
         &self,
-        state: &mut ForwardPassState<B>,
+        token_ids: &Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), EmbeddingError<B>> {
-        let batch_dim = state.active_row_count() as u32;
-
-        let token_ids_array = state.array(ArrayId::TokenIds);
-        let token_ids_buffer_rc = token_ids_array.buffer();
-        let token_ids_buffer_borrow = token_ids_buffer_rc.borrow();
-        let token_ids = token_ids_buffer_borrow.deref();
-
-        let output_array = state.array(ArrayId::Main);
-        let output_buffer_rc = output_array.buffer();
-        let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
-        let output = output_buffer_borrow.deref_mut();
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        let mut output = encoder
+            .allocate_scratch(crate::array::size_for_shape(
+                &[batch_dim, self.model_dim as usize],
+                self.activation_data_type,
+            ))
+            .map_err(EmbeddingError::BackendError)?;
+        let batch_dim = batch_dim as u32;
 
         match &self.tying {
             EmbeddingTying::Tied {
@@ -523,7 +544,7 @@ impl<B: Backend> Embedding<B> {
             } => lookup.encode(
                 token_ids,
                 weights,
-                output,
+                &mut output,
                 batch_dim,
                 self.vocab_size,
                 self.model_dim,
@@ -555,7 +576,7 @@ impl<B: Backend> Embedding<B> {
                     weights,
                     scales,
                     biases,
-                    output,
+                    &mut output,
                     batch_dim,
                     self.vocab_size,
                     self.model_dim,
@@ -565,31 +586,22 @@ impl<B: Backend> Embedding<B> {
             },
         };
 
-        Ok(())
+        Ok(output)
     }
 
     pub fn encode_readout(
         &self,
-        state: &mut ForwardPassState<B>,
+        batch_dim: usize,
+        input_allocation: &Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), EmbeddingError<B>> {
-        let batch_dim = state.sampling_length();
-
-        if batch_dim == 0 {
-            return Ok(());
-        }
-
-        let input_array = state.array(ArrayId::Main);
-        let input_buffer_rc = input_array.buffer();
-        let input_buffer_borrow = input_buffer_rc.borrow();
-        let input = input_buffer_borrow.deref();
-
-        let output_array = state.array(ArrayId::Logits);
-        let output_buffer_rc = output_array.buffer();
-        let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
-        let output = output_buffer_borrow.deref_mut();
-
-        let input_offset = state.sampling_start() * self.model_dim as usize * input_array.data_type().size_in_bytes();
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        let mut output_allocation = encoder
+            .allocate_scratch(crate::array::size_for_shape(
+                &[batch_dim, self.vocab_size as usize],
+                self.activation_data_type,
+            ))
+            .map_err(EmbeddingError::BackendError)?;
 
         match &self.tying {
             EmbeddingTying::Tied {
@@ -611,14 +623,13 @@ impl<B: Backend> Embedding<B> {
                 let input_dim = self.model_dim as usize;
                 let output_dim = self.vocab_size as usize;
                 readout.borrow_mut().encode(
-                    state.context(),
                     MatmulArguments {
-                        a: input,
-                        a_offset: input_offset as u64,
+                        a: input_allocation,
+                        a_offset: 0,
                         b: weights,
                         ab_scale: 1.0,
                         c: MatmulArgumentC::None,
-                        d: output,
+                        d: &mut output_allocation,
                         batch_dim: batch_dim as u32,
                         input_dim: input_dim as u32,
                         output_dim: output_dim as u32,
@@ -649,19 +660,19 @@ impl<B: Backend> Embedding<B> {
                 readout.encode(
                     encoder,
                     QuantizedMatmulArguments {
-                        a_buffer: input,
-                        a_offset: input_offset,
-                        b_buffer: weights,
-                        scales_buffer: scales,
-                        zero_points_or_biases_buffer: biases,
-                        output_buffer: output,
+                        a: input_allocation,
+                        a_offset: 0,
+                        b: weights,
+                        scales,
+                        zero_points_or_biases: biases,
+                        output: &mut output_allocation,
                         hadamard_factors: None,
                         batch_dim,
                     },
-                )?;
+                );
             },
         };
 
-        Ok(())
+        Ok(output_allocation)
     }
 }

@@ -1,16 +1,12 @@
-use bytemuck::fill_zeroes;
+use crate::{
+    DataType,
+    backends::common::{Allocation, Backend},
+};
 
-use crate::{array::Array, backends::common::Backend};
-
-#[derive(Debug)]
 pub struct DeltaNetLayer<B: Backend> {
-    pub conv_state: Array<B>,
-    pub ssm_state: Array<B>,
-}
-
-impl<B: Backend> DeltaNetLayer<B> {
-    pub fn zero(&mut self) {
-        fill_zeroes(self.conv_state.as_bytes_mut());
-        fill_zeroes(self.ssm_state.as_bytes_mut());
-    }
+    pub conv_state: Allocation<B>,
+    pub conv_shape: [usize; 2],
+    pub ssm_state: Allocation<B>,
+    pub ssm_shape: [usize; 3],
+    pub data_type: DataType,
 }

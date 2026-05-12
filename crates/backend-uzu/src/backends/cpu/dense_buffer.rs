@@ -16,8 +16,9 @@ impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
 
     fn set_label(
         &mut self,
-        _label: Option<&str>,
+        label: Option<&str>,
     ) {
+        let _ = label;
     }
 }
 

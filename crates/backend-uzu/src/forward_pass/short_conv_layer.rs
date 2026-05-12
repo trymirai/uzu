@@ -1,16 +1,20 @@
 use std::cell::Cell;
 
-use bytemuck::fill_zeroes;
+use crate::{
+    DataType,
+    array::size_for_shape,
+    backends::common::{Allocation, Backend, Encoder},
+};
 
-use crate::{array::Array, backends::common::Backend};
-
-#[derive(Debug)]
 pub struct ShortConvLayer<B: Backend> {
-    pub conv_state: Array<B>,
+    pub conv_state: Allocation<B>,
+    pub conv_shape: [usize; 2],
     /// Per-token post-state written during speculative runs.
     ///
     /// Shape: [max_suffix_length, model_dim, state_stride]
-    pub suffix_state: Array<B>,
+    pub suffix_state: Allocation<B>,
+    pub suffix_shape: [usize; 3],
+    pub data_type: DataType,
     /// Start index (in the suffix batch) for which `suffix_state` contains
     /// valid post-states for this layer.
     pub suffix_state_valid_start: Cell<usize>,
@@ -20,12 +24,6 @@ pub struct ShortConvLayer<B: Backend> {
 }
 
 impl<B: Backend> ShortConvLayer<B> {
-    pub fn zero(&mut self) {
-        fill_zeroes(self.conv_state.as_bytes_mut());
-        fill_zeroes(self.suffix_state.as_bytes_mut());
-        self.clear_suffix_state_valid_range();
-    }
-
     pub fn clear_suffix_state_valid_range(&self) {
         self.suffix_state_valid_start.set(0);
         self.suffix_state_valid_len.set(0);
@@ -43,6 +41,7 @@ impl<B: Backend> ShortConvLayer<B> {
     pub fn commit_from_suffix_state_if_valid(
         &mut self,
         commit_index: usize,
+        encoder: &mut Encoder<B>,
     ) {
         let start = self.suffix_state_valid_start.get();
         let len = self.suffix_state_valid_len.get();
@@ -53,38 +52,19 @@ impl<B: Backend> ShortConvLayer<B> {
             return;
         }
 
-        assert_eq!(
-            self.conv_state.data_type(),
-            self.suffix_state.data_type(),
-            "ShortConv conv_state / suffix_state dtype mismatch"
+        let [model_dim, state_stride] = self.conv_shape;
+        let [suffix_length, suffix_model_dim, suffix_stride] = self.suffix_shape;
+        assert_eq!(suffix_model_dim, model_dim, "ShortConv suffix_state model_dim mismatch");
+        assert_eq!(suffix_stride, state_stride, "ShortConv suffix_state stride mismatch");
+        assert!(commit_index < suffix_length, "ShortConv commit_index {} out of range {}", commit_index, suffix_length);
+
+        let bytes_per_token = size_for_shape(&[model_dim, state_stride], self.data_type);
+        let src_start = commit_index * bytes_per_token;
+        encoder.encode_copy(
+            &self.suffix_state,
+            src_start..src_start + bytes_per_token,
+            &mut self.conv_state,
+            0..bytes_per_token,
         );
-
-        let [model_dim, state_stride] = {
-            let shape = self.conv_state.shape();
-            assert_eq!(shape.len(), 2, "ShortConv conv_state expected 2-D [model_dim, state_stride], got {:?}", shape);
-            [shape[0], shape[1]]
-        };
-
-        let suffix_shape = self.suffix_state.shape();
-        assert!(
-            suffix_shape.len() == 3 && suffix_shape[1] == model_dim && suffix_shape[2] == state_stride,
-            "ShortConv suffix_state expected 3-D [suffix_len, model_dim, state_stride], got {:?}",
-            suffix_shape
-        );
-        assert!(
-            commit_index < suffix_shape[0],
-            "ShortConv commit_index {} out of suffix_state range {}",
-            commit_index,
-            suffix_shape[0]
-        );
-
-        let elem_bytes = self.conv_state.data_type().size_in_bytes();
-        let bytes_per_token = model_dim.saturating_mul(state_stride).saturating_mul(elem_bytes);
-        let src_start = commit_index.saturating_mul(bytes_per_token);
-        let src_end = src_start.saturating_add(bytes_per_token);
-
-        let src = &self.suffix_state.as_bytes()[src_start..src_end];
-        let dst = self.conv_state.as_bytes_mut();
-        dst.copy_from_slice(src);
     }
 }

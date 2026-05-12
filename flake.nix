@@ -68,6 +68,7 @@
               uv
               wasmtime
               evcxr
+              rustToolchain
               cargo-deny
               cargo-nextest
               cargo-flamegraph

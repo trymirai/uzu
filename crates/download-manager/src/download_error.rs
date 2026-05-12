@@ -10,8 +10,6 @@ pub enum DownloadError {
     Canceled,
     #[error("resume unsupported")]
     ResumeUnsupported,
-    #[error("unsupported file download manager type")]
-    UnsupportedType,
     #[error("bad url")]
     BadUrl,
     #[error("missing download info for task")]
