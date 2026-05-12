@@ -5,7 +5,7 @@ mod dense_buffer;
 mod device_capabilities;
 mod error;
 mod event;
-mod kernel;
+pub mod kernel;
 mod metal_extensions;
 
 pub use backend::Metal;

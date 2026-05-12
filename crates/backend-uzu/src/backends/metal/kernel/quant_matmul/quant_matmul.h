@@ -390,9 +390,9 @@ inline void dequantize(
 }
 
 // NOTE: The bf16 N=8 specialization below is currently dead — qmm_transposed's
-// QuantizedBlockLoader{Mlx,Zp} always call dequantize with N == pack_factor == 2
-// for bits==4. Left untouched (no LUT path) so we don't introduce a half->bfloat
-// numeric drift on a path that nothing exercises.
+// QuantizedBlockLoader{Mlx,Zp} always call dequantize with N == pack_factor ==
+// 2 for bits==4. Left untouched (no LUT path) so we don't introduce a
+// half->bfloat numeric drift on a path that nothing exercises.
 template <>
 inline void dequantize<bfloat, 8, 4>(
     const device uint8_t* w,
