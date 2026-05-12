@@ -6,10 +6,11 @@ use itertools::Itertools;
 use super::{
     ast::{MetalArgumentType, MetalKernelInfo},
     enum_path_rewrite::{is_enum_c_type, rewrite_for_metal},
+    identifiers::SpecializeConstantName,
 };
 use crate::common::{
     enum_paths::EnumPaths,
-    identifiers::{ArgumentName, KernelName, SpecializeConstantName},
+    identifiers::{ArgumentName, KernelName},
     mangling::static_mangle,
 };
 

@@ -5,11 +5,8 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{BinOp, Expr, ExprBinary, ExprLit, ExprParen, ExprPath, ExprUnary, Lit, Path, UnOp, parse_quote};
 
-use crate::common::{
-    enum_paths::EnumPaths,
-    expr_rewrite::rewrite_paths_with,
-    identifiers::{ArgumentName, SpecializeConstantName},
-};
+use super::identifiers::SpecializeConstantName;
+use crate::common::{enum_paths::EnumPaths, expr_rewrite::rewrite_paths_with, identifiers::ArgumentName};
 
 pub fn is_enum_c_type(
     enum_paths: &EnumPaths,

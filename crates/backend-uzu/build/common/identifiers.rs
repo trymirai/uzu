@@ -29,14 +29,6 @@ borrow_str!(KernelName);
 pub struct ArgumentName(String);
 borrow_str!(ArgumentName);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display)]
-#[serde(transparent)]
-#[as_ref(str)]
-#[deref(forward)]
-#[from(forward)]
-pub struct SpecializeConstantName(String);
-borrow_str!(SpecializeConstantName);
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, AsRef, Deref)]
 #[serde(transparent)]
 #[as_ref([String])]
