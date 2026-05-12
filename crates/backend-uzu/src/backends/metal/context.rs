@@ -136,8 +136,10 @@ impl Context for MetalContext {
         &self,
         size: usize,
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        // Metal doesn't allow creating 0-byte buffers, create a minimal buffer instead
-        let size = size.max(1);
+        if size == 0 {
+            return Err(MetalError::ZeroBuffer);
+        }
+
         let buffer = self
             .device
             .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
@@ -153,11 +155,9 @@ impl Context for MetalContext {
         &self,
         data: &[u8],
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        let data = if data.len() == 0 {
-            &[0]
-        } else {
-            data
-        };
+        if data.len() == 0 {
+            return Err(MetalError::ZeroBuffer);
+        }
 
         let buffer = self
             .device
