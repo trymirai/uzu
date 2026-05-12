@@ -53,8 +53,7 @@ impl MetalSparseHeapPool {
         for (i, heap) in self.heaps.iter_mut().enumerate() {
             let mut mappings: Vec<MetalSparseHeapMappingParameters> = Vec::new();
 
-            let free_pages_ranges: Vec<Range<usize>> = heap.free_pages_in(&heap_range);
-            for free_pages in free_pages_ranges {
+            for free_pages in heap.free_pages_in(&heap_range) {
                 let map_pages_count = min(free_pages.len(), pages_to_map.len());
                 let mapping = MetalSparseHeapMappingParameters {
                     buffer_pages: pages_to_map.start..(pages_to_map.start + map_pages_count),
