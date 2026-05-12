@@ -149,7 +149,10 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizationMethod::ScaleBias, deq_biases.read_allocation().map_err(QuantizedLinearError::ParameterError)?)
+                (
+                    QuantizationMethod::ScaleBias,
+                    deq_biases.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
+                )
             },
             Err(_) => {
                 let zero_points_leaf =
@@ -176,8 +179,10 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                (QuantizationMethod::ScaleZeroPoint, zero_points_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?
-)
+                (
+                    QuantizationMethod::ScaleZeroPoint,
+                    zero_points_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
+                )
             },
         };
 
