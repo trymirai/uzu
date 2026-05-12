@@ -3,7 +3,11 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::QuantizedMatmulQmmTransposedKernel},
+        common::{
+            Allocation, Backend, Context, Encoder, Kernels,
+            gpu_types::QuantizationMethod,
+            kernel::QuantizedMatmulQmmTransposedKernel,
+        },
         cpu::Cpu,
     },
 };

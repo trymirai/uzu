@@ -127,7 +127,7 @@ impl<B: Backend> QuantizedLinear<B> {
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
         let weights_shape = weights_leaf.shape().to_vec();
         let scales_shape = scales_leaf.shape().to_vec();
-        let (quantization_method, zero_points_or_biases_buffer) = match parameter_tree.leaf("deq_biases") {
+        let (quantization_method, zero_points_or_biases) = match parameter_tree.leaf("deq_biases") {
             Ok(deq_biases) => {
                 let deq_biases_shape = deq_biases.shape().to_vec();
                 if !(weights_shape == [output_dim, input_dim / packing_divisor]
@@ -142,14 +142,14 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                if deq_biases_leaf.data_type() != kernel_data_type {
+                if deq_biases.data_type() != kernel_data_type {
                     return Err(QuantizedLinearError::InvalidDeqBiasesDataType {
                         expected: kernel_data_type,
-                        got: deq_biases_leaf.data_type(),
+                        got: deq_biases.data_type(),
                     });
                 }
 
-                (QuantizationMethod::ScaleBias, deq_biases_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?)
+                (QuantizationMethod::ScaleBias, deq_biases.read_allocation().map_err(QuantizedLinearError::ParameterError)?)
             },
             Err(_) => {
                 let zero_points_leaf =

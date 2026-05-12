@@ -13,7 +13,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-            tests::common::helpers::alloc_buffer_with_data,
+            tests::common::helpers::alloc_allocation_with_data,
         },
     },
 };
@@ -330,8 +330,8 @@ fn execute_quantized_matmul<B: Backend>(
     let s_buf = allocation_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_method {
-        QuantizationMethod::ScaleZeroPoint => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
-        QuantizationMethod::ScaleBias => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
+        QuantizationMethod::ScaleZeroPoint => alloc_allocation_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizationMethod::ScaleBias => allocation_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
     let x_buf = allocation_from_f32_slice::<B>(ctx, data_type, &x_f32);
     let mut y_buf = ctx

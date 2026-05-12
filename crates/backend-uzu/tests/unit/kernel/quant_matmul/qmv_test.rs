@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, DenseBuffer, Encoder, Kernels, gpu_types::QuantizationMethod,
+            Backend, Context, Encoder, Kernels, gpu_types::QuantizationMethod,
             kernel::QuantizedMatmulQmvKernel,
         },
         cpu::Cpu,

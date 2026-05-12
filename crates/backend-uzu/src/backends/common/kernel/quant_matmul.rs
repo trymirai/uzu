@@ -197,10 +197,21 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
         &self,
         encoder: &mut Encoder<B>,
         arguments: QuantizedMatmulArguments<B>,
-    ) -> Result<(), QuantizedMatmulError<B>> {
+    ) {
+        let QuantizedMatmulArguments {
+            a,
+            a_offset,
+            b,
+            scales,
+            zero_points_or_biases,
+            output,
+            hadamard_factors,
+            batch_dim,
+        } = arguments;
+
         let (zero_points, biases) = match self.quantization_method {
-            QuantizationMethod::ScaleZeroPoint => (Some(arguments.zero_points_or_biases_buffer), None),
-            QuantizationMethod::ScaleBias => (None, Some(arguments.zero_points_or_biases_buffer)),
+            QuantizationMethod::ScaleZeroPoint => (Some(zero_points_or_biases), None),
+            QuantizationMethod::ScaleBias => (None, Some(zero_points_or_biases)),
         };
 
         macro_rules! encode_kernel {
