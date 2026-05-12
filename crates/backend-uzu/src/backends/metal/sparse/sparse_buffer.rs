@@ -28,9 +28,7 @@ impl<'a> MetalSparseBuffer<'a> {
         capacity: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
-        let page_size_bytes = page_size.in_bytes();
-        let aligned_capacity = capacity.next_multiple_of(page_size_bytes);
-
+        let aligned_capacity = capacity.next_multiple_of(page_size.in_bytes());
         let buffer = context
             .device
             .new_buffer_with_length_options_placement_sparse_page_size(

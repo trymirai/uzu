@@ -30,8 +30,7 @@ impl MetalSparseHeap {
         capacity_bytes: usize,
         page_size: MTLSparsePageSize,
     ) -> Result<Self, MetalError> {
-        let page_size_bytes = page_size.in_bytes();
-        let aligned_capacity = capacity_bytes.next_multiple_of(page_size_bytes);
+        let aligned_capacity = capacity_bytes.next_multiple_of(page_size.in_bytes());
 
         let heap_desc = MTLHeapDescriptor::new();
         // Sparse buffers must be backed by a Placement heap with a sparse page size set;
