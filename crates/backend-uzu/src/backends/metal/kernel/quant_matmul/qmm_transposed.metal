@@ -35,6 +35,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const constant uint& batch_size,
     threadgroup T Xs[BM * (BK + 16 / sizeof(T))],
     threadgroup T Ws[BN * (BK + 16 / sizeof(T))],
+    threadgroup half2 q4_lut[256],
     const bool use_zero_points SPECIALIZE,
     const bool use_mlx_quant SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
@@ -44,6 +45,20 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
     const uint simd_lane THREADS(32),
     const uint simd_group THREADS(WM * WN)
 ) {
+  // Cooperative strided LUT init: BM=8 variant has only 32 threads, so a
+  // 1-write-per-thread fill won't cover all 256 entries.
+  {
+    const uint tid = simd_group * 32 + simd_lane;
+    const uint tgp_size = WM * WN * 32;
+    for (uint i = tid; i < 256; i += tgp_size) {
+      q4_lut[i] = half2(
+          static_cast<half>(i & 0x0f),
+          static_cast<half>((i >> 4) & 0x0f)
+      );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+
   if (use_mlx_quant) {
     if (aligned_n) {
       qmm_transposed_impl<T, GROUP_SIZE, BITS, true, BM, BK, BN, true, WM, WN>(
@@ -55,6 +70,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           output,
           Xs,
           Ws,
+          q4_lut,
           in_vec_size,
           out_vec_size,
           batch_size,
@@ -73,6 +89,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           output,
           Xs,
           Ws,
+          q4_lut,
           in_vec_size,
           out_vec_size,
           batch_size,
@@ -93,6 +110,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           output,
           Xs,
           Ws,
+          q4_lut,
           in_vec_size,
           out_vec_size,
           batch_size,
@@ -121,6 +139,7 @@ PUBLIC KERNEL(QuantizedMatmulQmmTransposed)(
           output,
           Xs,
           Ws,
+          q4_lut,
           in_vec_size,
           out_vec_size,
           batch_size,
