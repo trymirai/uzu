@@ -57,10 +57,7 @@ impl MatmulMetalKernel {
         &self,
         context: &MetalContext,
     ) -> bool {
-        // EXPERIMENTAL: probe whether routing bf16/f16 to simdgroup-matrix
-        // (encode_gemm) works on devices where MPP bf16/f16 is broken.
-        let _ = context;
-        false
+        context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
     }
 
     fn get_or_create_gemv(
