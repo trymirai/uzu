@@ -8,7 +8,7 @@ use std::{
 use super::{RangeAllocationType, RangeAllocator};
 use crate::backends::common::{
     Backend, Buffer, Context,
-    buffer::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef},
+    buffer_range::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef},
 };
 
 pub struct Allocation<B: Backend> {
