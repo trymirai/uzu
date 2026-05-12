@@ -27,7 +27,7 @@ impl MetalSparseHeapPool {
         heap_capacity: usize,
     ) -> Self {
         Self {
-            heaps: vec![],
+            heaps: Vec::new(),
             page_size,
             heap_capacity,
         }
@@ -48,12 +48,11 @@ impl MetalSparseHeapPool {
 
         // Try to find pages in existing heaps.
         // While `pages_to_map` is not empty in each heap find unmapped pages, collect them into `mappings` and map
-        let heap_range = 0..heap_capacity_pages;
         let mut existing_heaps_mappings: Vec<(usize, Box<[MetalSparseHeapMappingParameters]>)> = Vec::new();
         for (i, heap) in self.heaps.iter_mut().enumerate() {
             let mut mappings: Vec<MetalSparseHeapMappingParameters> = Vec::new();
 
-            for free_pages in heap.free_pages_in(&heap_range) {
+            for free_pages in heap.free_pages().iter() {
                 let map_pages_count = min(free_pages.len(), pages_to_map.len());
                 let mapping = MetalSparseHeapMappingParameters {
                     buffer_pages: pages_to_map.start..(pages_to_map.start + map_pages_count),

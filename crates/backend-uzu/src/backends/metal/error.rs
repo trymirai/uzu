@@ -28,6 +28,4 @@ pub enum MetalError {
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]
     SparseHeapAlloc(usize, usize),
-    #[error("Metal can not create buffer with length zero")]
-    ZeroBuffer,
 }

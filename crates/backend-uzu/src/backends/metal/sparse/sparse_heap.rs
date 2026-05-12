@@ -55,12 +55,8 @@ impl MetalSparseHeap {
         })
     }
 
-    /// Heap page ranges within `heap_range` that have no buffer mapped to them.
-    pub fn free_pages_in<'a>(
-        &'a self,
-        heap_range: &'a Range<usize>,
-    ) -> impl Iterator<Item = Range<usize>> + 'a {
-        self.free_pages.overlapping(heap_range).map(move |r| r.start.max(heap_range.start)..r.end.min(heap_range.end))
+    pub fn free_pages(&self) -> &RangeSet<usize> {
+        &self.free_pages
     }
 
     /// Iterates `(heap_range, mapping)` pairs that belong to a single buffer.
@@ -107,17 +103,16 @@ impl MetalSparseHeap {
 
         let buffer_address = buffer.gpu_address();
         let entry = self.buffer_mappings.entry(buffer_address).or_default();
-        let free_pages = &mut self.free_pages;
         mtl_operations.iter().for_each(|mtl_op| {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
             if map {
                 let buffer_range = mtl_op.buffer_range();
                 let buffer_mapping = MetalSparseHeapBufferMapping::new(mtl_op.heap_offset, buffer_range.start);
                 entry.insert(heap_range.clone(), buffer_mapping);
-                free_pages.remove(heap_range);
+                self.free_pages.remove(heap_range);
             } else {
                 entry.remove(heap_range.clone());
-                free_pages.insert(heap_range);
+                self.free_pages.insert(heap_range);
             }
         });
 
