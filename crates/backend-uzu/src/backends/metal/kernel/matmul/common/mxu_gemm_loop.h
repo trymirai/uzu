@@ -60,6 +60,8 @@ METAL_FUNC auto gemm_loop(
           thread_context
       );
 
+      volatile int mxu_iteration_fence;
+
       const int left_offset =
           transpose_a ? inner_k * leading_dimension_a : inner_k;
       const int right_offset =
@@ -98,6 +100,8 @@ METAL_FUNC auto gemm_loop(
           left_tile,
           right_tile
       );
+
+      (void)mxu_iteration_fence;
     }
 
     left_ptr += transpose_a ? (BLOCK_K * leading_dimension_a) : BLOCK_K;

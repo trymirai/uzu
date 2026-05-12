@@ -18,6 +18,27 @@ static METAL_FUNC uint2 swizzled_block_id(
       threadgroup_position.y * stride + (threadgroup_position.x % stride));
 }
 
+static METAL_FUNC uint morton_expand_bits(uint x) {
+  x &= 0x55555555u;
+  x = (x | (x >> 1)) & 0x33333333u;
+  x = (x | (x >> 2)) & 0x0F0F0F0Fu;
+  x = (x | (x >> 4)) & 0x00FF00FFu;
+  x = (x | (x >> 8)) & 0x0000FFFFu;
+  return x;
+}
+
+static METAL_FUNC uint2 morton_block_id(
+    uint2 threadgroup_position,
+    bool use_morton
+) {
+  if (use_morton) {
+    return uint2(
+        morton_expand_bits(threadgroup_position.x),
+        morton_expand_bits(threadgroup_position.x >> 1));
+  }
+  return threadgroup_position;
+}
+
 template <uint BLOCK_M, uint BLOCK_N>
 struct BlockGeometry {
   uint2 tile_id;

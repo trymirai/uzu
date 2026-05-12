@@ -57,7 +57,10 @@ impl MatmulMetalKernel {
         &self,
         context: &MetalContext,
     ) -> bool {
-        context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
+        // EXPERIMENTAL: probe whether routing bf16/f16 to simdgroup-matrix
+        // (encode_gemm) works on devices where MPP bf16/f16 is broken.
+        let _ = context;
+        false
     }
 
     fn get_or_create_gemv(
@@ -365,15 +368,27 @@ impl MatmulMetalKernel {
         }
 
         let tile = select_unified_gemm_mxu_tile(&arguments);
-        let group_count_x = arguments.output_dim.div_ceil(tile.threadgroup_n);
-        let group_count_y = arguments.batch_dim.div_ceil(tile.threadgroup_m);
+        let threadgroups_per_row = arguments.output_dim.div_ceil(tile.threadgroup_n);
+        let threadgroups_per_column = arguments.batch_dim.div_ceil(tile.threadgroup_m);
+        let max_threadgroups_per_dim = threadgroups_per_row.max(threadgroups_per_column);
+        let min_threadgroups_per_dim = threadgroups_per_row.min(threadgroups_per_column);
+        let morton_dim = max_threadgroups_per_dim.next_power_of_two();
+        let morton_total = morton_dim.saturating_mul(morton_dim);
+        let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
+        let use_morton = min_threadgroups_per_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
+        let (group_count_x, group_count_y) = if use_morton {
+            (morton_total, 1_u32)
+        } else {
+            (threadgroups_per_row, threadgroups_per_column)
+        };
         let alignment = GemmAlignment {
             m_aligned: arguments.batch_dim % tile.threadgroup_m == 0,
             n_aligned: arguments.output_dim % tile.threadgroup_n == 0,
             k_aligned: arguments.input_dim % 256 == 0,
         };
         let output_transform = unified_gemm_output_transform(&arguments);
-        let params = build_unified_gemm_params(&arguments, &tile);
+        let mut params = build_unified_gemm_params(&arguments, &tile);
+        params.use_morton = use_morton;
         let dispatch = UnifiedGemmDispatch {
             tiling_config: tile,
             input_prologue: GemmInputPrologueKind::FullPrecision,

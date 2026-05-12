@@ -43,7 +43,8 @@ struct MxuMmaCore {
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
-    const auto geometry = BlockGeometry<BLOCK_M, BLOCK_N>::compute(threadgroup_position, params);
+    const uint2 tile_id = morton_block_id(threadgroup_position, params->use_morton);
+    const auto geometry = BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
