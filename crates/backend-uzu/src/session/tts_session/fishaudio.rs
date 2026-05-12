@@ -6,7 +6,7 @@ use super::*;
 use crate::{
     array::ArrayContextExt,
     backends::common::{Allocation, AsBufferRangeRef, DenseBuffer},
-    config::TtsMessageProcessorConfig,
+    config::{DecoderConfig, TtsMessageProcessorConfig},
     encodable_block::SamplingInputs,
     forward_pass::token_inputs::TokenInputs,
     session::types::{TtsModelConfigError, TtsPromptConfigError},
@@ -262,19 +262,18 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
     let slow_transformer_config = config.slow_model_config.clone();
     let fast_transformer_config = config.fast_model_config.clone();
 
-    let slow_inner_config = InnerModelConfig {
+    let slow_decoder_config = Rc::new(DecoderConfig {
         embedding_config: config.slow_embeddings_config.to_text_decoder_embedding_config(),
         transformer_config: slow_transformer_config,
         vocab_size: config.vocab_size,
-    };
-    let fast_inner_config = InnerModelConfig {
+        pard_token: None,
+    });
+    let fast_decoder_config = Rc::new(DecoderConfig {
         embedding_config: config.fast_embeddings_config.to_text_decoder_embedding_config(),
         transformer_config: fast_transformer_config,
         vocab_size: config.codebook_size,
-    };
-
-    let slow_decoder_config = Rc::new(slow_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
-    let fast_decoder_config = Rc::new(fast_inner_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
+        pard_token: None,
+    });
     let text_decoder_context = B::Context::new().map_err(unable_to_create_context)?;
 
     let slow_runner = TokenDecoderRunner::new_with_context(

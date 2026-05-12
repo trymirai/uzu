@@ -16,6 +16,7 @@ use crate::{
             attention::{AttentionGemmArguments, AttentionGemmBlock},
         },
     },
+    config::AttentionConfig,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
 
@@ -50,7 +51,6 @@ pub struct Attention<B: Backend> {
 }
 
 pub struct AttentionArguments<'a, B: Backend> {
-    pub projection_step: usize,
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub attention_sinks: Option<&'a Allocation<B>>,
     pub kv_cache_layer: Option<&'a mut KVCacheLayer<B>>,
@@ -60,10 +60,7 @@ impl<B: Backend> Attention<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        attention_scale: Option<f32>,
-        has_sinks: bool,
-        is_causal: bool,
-        sliding_window_size: Option<usize>,
+        config: &AttentionConfig,
         has_gate: bool,
     ) -> Result<Self, B::Error> {
         let mut single_pass_kernels = HashMap::new();
@@ -81,11 +78,11 @@ impl<B: Backend> Attention<B> {
                 context,
                 data_type,
                 head_dim,
-                has_sinks,
+                config.has_sinks,
                 is_kv_cache_ring,
-                is_causal,
+                config.is_causal,
                 is_trie,
-                sliding_window_size.is_some(),
+                config.sliding_window_size.is_some(),
             )?;
             single_pass_kernels.insert(key, sp_kernel);
 
@@ -93,11 +90,11 @@ impl<B: Backend> Attention<B> {
                 context,
                 data_type,
                 head_dim,
-                has_sinks,
+                config.has_sinks,
                 is_kv_cache_ring,
-                is_causal,
+                config.is_causal,
                 is_trie,
-                sliding_window_size.is_some(),
+                config.sliding_window_size.is_some(),
             )?;
             two_pass_1_kernels.insert(key, tp1_kernel);
 
@@ -125,9 +122,9 @@ impl<B: Backend> Attention<B> {
             gate_kernel,
             gemm_block,
             data_type,
-            attention_scale,
-            is_causal,
-            sliding_window_size,
+            attention_scale: config.scale,
+            is_causal: config.is_causal,
+            sliding_window_size: config.sliding_window_size,
         })
     }
 
@@ -184,15 +181,15 @@ impl<B: Backend> Attention<B> {
                         ring_length,
                         window_length,
                     } => {
-                        let overflow = (ring_length + args.projection_step).saturating_sub(window_length);
+                        let overflow = ring_length.saturating_sub(window_length);
                         Some(RingParams {
                             ring_offset: ((ring_offset + overflow) % window_length) as u32,
-                            ring_length: (ring_length + args.projection_step).min(window_length) as u32,
+                            ring_length: ring_length.min(window_length) as u32,
                         })
                     },
                     _ => None,
                 };
-                (max_sequence_length, layer.projected_segment_prefix_length(args.projection_step), ring_params)
+                (max_sequence_length, layer.prefix_segment_length(), ring_params)
             } else {
                 (suffix_length, 0, None)
             };

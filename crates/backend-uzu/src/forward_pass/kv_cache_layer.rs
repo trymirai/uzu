@@ -105,21 +105,6 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    pub fn projected_segment_prefix_length(
-        &self,
-        projection_step: usize,
-    ) -> usize {
-        match &self.state {
-            KVCacheLayerState::Full {
-                prefix_len,
-            } => *prefix_len + projection_step,
-            KVCacheLayerState::Windowed {
-                window_length,
-                ..
-            } => *window_length,
-        }
-    }
-
     pub fn window_length(&self) -> Option<usize> {
         match &self.state {
             KVCacheLayerState::Full {

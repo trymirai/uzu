@@ -61,6 +61,7 @@ half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_ignored = "0.1"
 thiserror = "2.0"
 tokenizers = { version = "0.22", features = [
     "fancy-regex",
@@ -88,7 +89,6 @@ sysinfo = "0.38"
 itertools = "0.14"
 schemars = { version = "1.2", features = ["derive"] }
 is_close = "0.1"
-serde_json5 = "0.2"
 anyhow = "1.0.102"
 async-trait = "0.1"
 bindgen = "0.72"

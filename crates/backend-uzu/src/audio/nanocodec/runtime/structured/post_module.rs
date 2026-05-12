@@ -87,7 +87,7 @@ impl StructuredAudioCodecGraph {
         context: Rc<B::Context>,
         required_sequence_length: usize,
     ) -> AudioResult<StructuredAudioPostModuleRuntime<B>> {
-        let inner_model_config = InnerModelConfig {
+        let decoder_config = Rc::new(DecoderConfig {
             embedding_config: EmbeddingConfig::Untied {
                 common: EmbeddingConfigCommon {
                     input_scale: None,
@@ -97,10 +97,8 @@ impl StructuredAudioCodecGraph {
             },
             transformer_config: self.config.quantizer_config.post_module_config.clone(),
             vocab_size: 1,
-        };
-        let decoder_config = Rc::new(inner_model_config.to_decoder_config().map_err(|_| {
-            AudioError::Runtime("failed to build structured audio post_module decoder config".to_string())
-        })?);
+            pard_token: None,
+        });
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
@@ -115,7 +113,7 @@ impl StructuredAudioCodecGraph {
             .subtree(transformer_subtree_name)
             .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
 
-        let max_sequence_length = decoder_config.context_length.max(required_sequence_length.max(1));
+        let max_sequence_length = decoder_config.transformer_config.context_length.max(required_sequence_length.max(1));
         let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
         {
             let transformer_tree = root_loader_view
@@ -301,7 +299,6 @@ impl StructuredAudioCodecGraph {
         main: Allocation<B>,
         encoder: &mut Encoder<B>,
     ) -> AudioResult<Allocation<B>> {
-        let encoding_parameters = EncodingParameters::new();
         let mut main = main;
         let mut shortcut = encoder
             .allocate_scratch(main.as_buffer_range_ref().range().len())
@@ -326,7 +323,6 @@ impl StructuredAudioCodecGraph {
                         #[cfg(feature = "tracing")]
                         trace: None,
                     },
-                    &encoding_parameters,
                     main,
                     &mut shortcut,
                     encoder,

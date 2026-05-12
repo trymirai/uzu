@@ -6,8 +6,8 @@ use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
     DataType, allocation_to_vec,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
-    config::ModelMetadata,
-    encodable_block::{EncodingParameters, LayerArguments},
+    config::{ClassifierModelConfig, ModelMetadata},
+    encodable_block::LayerArguments,
     forward_pass::token_inputs::TokenInputs,
     session::types::Error,
 };
@@ -67,7 +67,7 @@ impl<B: Backend> ClassifierTrait for Classifier<B> {
 impl<B: Backend> Classifier<B> {
     pub fn new(
         model_path: &Path,
-        model_metadata: &ModelMetadata,
+        model_metadata: &ModelMetadata<ClassifierModelConfig>,
     ) -> Result<Self, Error> {
         let context = ClassifierContext::new(model_path, model_metadata)?;
         Ok(Self {
@@ -109,7 +109,6 @@ impl<B: Backend> Classifier<B> {
     ) -> Result<Box<[f32]>, Error> {
         let batch_dim = token_ids.len();
         let token_inputs = TokenInputs::new_classifier(self.context.context.as_ref(), token_ids, token_positions);
-        let encoding_params = EncodingParameters::new();
 
         #[cfg(feature = "tracing")]
         let mut trace = trace;
@@ -155,7 +154,6 @@ impl<B: Backend> Classifier<B> {
                         #[cfg(feature = "tracing")]
                         trace: trace.as_deref_mut().map(|traces| &mut traces.layer_results[layer_index]),
                     },
-                    &encoding_params,
                     main,
                     &mut shortcut,
                     &mut encoder,

@@ -595,8 +595,8 @@ dependencies = [
  "rustix",
  "schemars 1.2.1",
  "serde",
+ "serde_ignored",
  "serde_json",
- "serde_json5",
  "shoji",
  "syn 2.0.117",
  "sysinfo",
@@ -6042,6 +6042,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_ignored"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6053,17 +6063,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "serde_json5"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d34d03f54462862f2a42918391c9526337f53171eaa4d8894562be7f252edd3"
-dependencies = [
- "pest",
- "pest_derive",
- "serde",
 ]
 
 [[package]]

@@ -7,10 +7,10 @@ use crate::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
-    config::{DecoderLayerType, ShortConvConfig},
+    config::ShortConvConfig,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::short_conv_layer::ShortConvLayer,
-    parameters::{ParameterLoaderError, ParameterTree, try_resolve_subtree},
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -50,17 +50,10 @@ pub(crate) struct ShortConvArguments<'a, B: Backend> {
 impl<B: Backend> ShortConvMixer<B> {
     pub fn new(
         context: &B::Context,
-        layer_type: DecoderLayerType,
         short_conv_config: ShortConvConfig,
-        layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Result<(Self, Option<Allocation<B>>), ShortConvMixerError<B>> {
-        if !matches!(layer_type, DecoderLayerType::ShortConv { .. }) {
-            return Err(ShortConvMixerError::UnsupportedConfiguration(format!(
-                "layer {layer_index} marked as non-ShortConv but ShortConv config provided"
-            )));
-        }
         if short_conv_config.kernel_size < 2 {
             return Err(ShortConvMixerError::UnsupportedConfiguration(format!(
                 "kernel_size must be >= 2, got {}",
@@ -68,8 +61,8 @@ impl<B: Backend> ShortConvMixer<B> {
             )));
         }
 
-        let mixer_tree = try_resolve_subtree(decoder_layer_loader, &["mixer"])?;
-        let conv_tree = try_resolve_subtree(&mixer_tree, &["conv"])?;
+        let mixer_tree = decoder_layer_loader.subtree("mixer")?;
+        let conv_tree = mixer_tree.subtree("conv")?;
 
         let data_type: DataType = short_conv_config.in_projection_config.activation_precision().into();
 
@@ -78,7 +71,7 @@ impl<B: Backend> ShortConvMixer<B> {
             model_dim,
             [model_dim * 3],
             context,
-            &try_resolve_subtree(&mixer_tree, &["in_projection", "in_proj"])?,
+            &mixer_tree.subtree("in_projection")?,
         )
         .map_err(|err| ShortConvMixerError::LinearError(Box::new(err)))?;
 
@@ -87,7 +80,7 @@ impl<B: Backend> ShortConvMixer<B> {
             model_dim,
             [model_dim],
             context,
-            &try_resolve_subtree(&mixer_tree, &["out_projection", "out_proj"])?,
+            &mixer_tree.subtree("out_projection")?,
         )
         .map_err(|err| ShortConvMixerError::LinearError(Box::new(err)))?;
 
