@@ -35,10 +35,9 @@ impl<'a, B: Buffer> BufferRangeRef<'a, B> {
         self,
         range: Range<usize>,
     ) -> Self {
-        assert!(range.end <= self.range.len(), "buffer subrange exceeds range");
         Self {
             buffer: self.buffer,
-            range: self.range.start + range.start..self.range.start + range.end,
+            range: subrange(self.range, range),
         }
     }
 }
@@ -87,10 +86,9 @@ impl<'a, B: Buffer> BufferRangeMut<'a, B> {
         self,
         range: Range<usize>,
     ) -> Self {
-        assert!(range.end <= self.range.len(), "buffer subrange exceeds range");
         Self {
             buffer: self.buffer,
-            range: self.range.start + range.start..self.range.start + range.end,
+            range: subrange(self.range, range),
         }
     }
 }
@@ -113,4 +111,12 @@ impl<B: Buffer> AsBufferRangeMut for B {
 
         BufferRangeMut::new_exclusive(self, 0..size)
     }
+}
+
+fn subrange(
+    buffer_range: Range<usize>,
+    subrange: Range<usize>,
+) -> Range<usize> {
+    assert!(subrange.end <= buffer_range.len(), "buffer subrange exceeds range");
+    buffer_range.start + subrange.start..buffer_range.start + subrange.end
 }
