@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::Ref;
 use std::{
     cell::{RefCell, RefMut},
     collections::HashMap,
