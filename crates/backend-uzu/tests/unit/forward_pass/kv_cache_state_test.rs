@@ -306,12 +306,17 @@ fn kv_cache_slice_apply_contiguous_window() {
     );
     let (initial_keys, initial_values) = fill_arrays(&mut layer);
 
-    let slice = layer.slice(&context, 0..2).expect("slice should exist");
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    let slice = layer.slice(&context, &mut encoder, 0..2).expect("slice should exist");
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
+
     // Mutate the captured slots.
     overwrite_allocation(&mut layer.keys, &[(0, -1.0), (1, -2.0)]);
     overwrite_allocation(&mut layer.values, &[(0, -3.0), (1, -4.0)]);
 
-    layer.apply_slice(&context, &slice, None);
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    layer.apply_slice(&mut encoder, &slice, None);
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     let keys_after: Vec<f32> = allocation_to_vec(&layer.keys);
     let values_after: Vec<f32> = allocation_to_vec(&layer.values);
@@ -337,12 +342,17 @@ fn kv_cache_slice_apply_wrap_window() {
     );
     let (initial_keys, initial_values) = fill_arrays(&mut layer);
 
-    let slice = layer.slice(&context, 2..4).expect("slice should exist");
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    let slice = layer.slice(&context, &mut encoder, 2..4).expect("slice should exist");
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
+
     // Captured slots are expected to wrap; mutate them.
     overwrite_allocation(&mut layer.keys, &[(2, -11.0), (3, -12.0)]);
     overwrite_allocation(&mut layer.values, &[(2, -13.0), (3, -14.0)]);
 
-    layer.apply_slice(&context, &slice, None);
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    layer.apply_slice(&mut encoder, &slice, None);
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     let keys_after: Vec<f32> = allocation_to_vec(&layer.keys);
     let values_after: Vec<f32> = allocation_to_vec(&layer.values);
@@ -365,7 +375,9 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         0,
     );
 
-    let slice = layer.slice(&context, 0..2).expect("full slice exists");
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    let slice = layer.slice(&context, &mut encoder, 0..2).expect("full slice exists");
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     // Mutate metadata.
     if let KVCacheLayerState::Full {
@@ -375,7 +387,9 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         *prefix_len = 1;
     }
 
-    layer.apply_slice(&context, &slice, None);
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    layer.apply_slice(&mut encoder, &slice, None);
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     if let KVCacheLayerState::Full {
         prefix_len,

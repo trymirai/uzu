@@ -198,6 +198,7 @@ impl<B: Backend> KVCacheLayer<B> {
     pub fn slice(
         &self,
         context: &B::Context,
+        encoder: &mut Encoder<B>,
         range: Range<usize>,
     ) -> Option<KVSlice<B>> {
         match self.state {
@@ -236,7 +237,7 @@ impl<B: Backend> KVCacheLayer<B> {
                 let mut dst_keys = context.create_array_uninitialized(&slice_shape, dtype);
                 let mut dst_values = context.create_array_uninitialized(&slice_shape, dtype);
                 Self::copy_rows(
-                    context,
+                    encoder,
                     &self.keys,
                     dst_keys.allocation_mut(),
                     &self.values,
@@ -259,7 +260,7 @@ impl<B: Backend> KVCacheLayer<B> {
 
     pub fn apply_slice(
         &mut self,
-        context: &B::Context,
+        encoder: &mut Encoder<B>,
         slice: &KVSlice<B>,
         range: Option<Range<usize>>,
     ) {
@@ -340,7 +341,7 @@ impl<B: Backend> KVCacheLayer<B> {
                 };
 
                 Self::copy_rows(
-                    context,
+                    encoder,
                     keys.allocation(),
                     &mut self.keys,
                     values.allocation(),
@@ -354,7 +355,7 @@ impl<B: Backend> KVCacheLayer<B> {
     }
 
     fn copy_rows(
-        context: &B::Context,
+        encoder: &mut Encoder<B>,
         src_keys: &Allocation<B>,
         dst_keys: &mut Allocation<B>,
         src_values: &Allocation<B>,
@@ -362,7 +363,6 @@ impl<B: Backend> KVCacheLayer<B> {
         row_size: usize,
         row_pairs: impl IntoIterator<Item = (usize, usize)>,
     ) {
-        let mut encoder = Encoder::new(context).expect("Failed to create Encoder");
         for (src_row, dst_row) in row_pairs {
             let src_offset = src_row * row_size;
             let dst_offset = dst_row * row_size;
@@ -379,7 +379,6 @@ impl<B: Backend> KVCacheLayer<B> {
                 dst_offset..dst_offset + row_size,
             );
         }
-        encoder.end_encoding().submit().wait_until_completed().expect("Failed to copy rows");
     }
 }
 

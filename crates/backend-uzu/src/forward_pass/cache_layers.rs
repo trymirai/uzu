@@ -330,10 +330,14 @@ impl<B: Backend> CacheLayers<B> {
         range: std::ops::Range<usize>,
     ) -> Option<CacheLayersSlice<B>> {
         let mut layers = Vec::with_capacity(self.data.len());
+        let mut encoder: Option<Encoder<B>> = None;
+
         for layer in self.data.iter() {
             match layer {
                 CacheLayer::Transformer(kv) => {
-                    let Some(slice) = kv.slice(context, range.clone()) else {
+                    let mut encoder =
+                        encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
+                    let Some(slice) = kv.slice(context, &mut encoder, range.clone()) else {
                         return None;
                     };
                     layers.push(CacheLayerSlice::Transformer(slice));
@@ -342,6 +346,10 @@ impl<B: Backend> CacheLayers<B> {
                 CacheLayer::ShortConv(_) => layers.push(CacheLayerSlice::ShortConv),
                 CacheLayer::DeltaNet(_) => layers.push(CacheLayerSlice::DeltaNet),
             }
+        }
+
+        if let Some(encoder) = encoder {
+            encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
         }
 
         Some(CacheLayersSlice {
@@ -355,15 +363,23 @@ impl<B: Backend> CacheLayers<B> {
         slice: &CacheLayersSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
+        let mut encoder: Option<Encoder<B>> = None;
+
         for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
-                    kv.apply_slice(context, &s, range.clone());
+                    let mut encoder =
+                        encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
+                    kv.apply_slice(&mut encoder, &s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
                 _ => {},
             }
+        }
+
+        if let Some(encoder) = encoder {
+            encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
         }
     }
 
@@ -386,13 +402,22 @@ impl<B: Backend> CacheLayers<B> {
     ) {
         assert_eq!(source.data.len(), self.data.len(), "cache layer count mismatch");
 
+        // Key/value arrays stay alive until after encoder.submit().wait_until_completed() returns, then explicitly drops them.
+        // This prevents the slice buffers from being freed while the GPU is still reading from them during windowed cache cloning.
+        let mut pending_slices: Vec<KVSlice<B>> = Vec::new();
+        let mut encoder: Option<Encoder<B>> = None;
+
         for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
             match (source_layer, destination_layer) {
                 (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
                     let copy_rows = source.prefix_segment_length();
                     if copy_rows > 0 && matches!(source.state, KVCacheLayerState::Windowed { .. }) {
-                        let slice = source.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
-                        destination.apply_slice(context, &slice, None);
+                        let encoder =
+                            encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
+                        let slice =
+                            source.slice(context, encoder, 0..copy_rows).expect("Failed to slice KV cache layer");
+                        destination.apply_slice(encoder, &slice, None);
+                        pending_slices.push(slice);
                     }
                     destination.state = source.state.clone();
                 },
@@ -404,6 +429,11 @@ impl<B: Backend> CacheLayers<B> {
                 _ => panic!("cache layer type mismatch while copying cache layers"),
             }
         }
+
+        if let Some(encoder) = encoder {
+            encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
+        }
+        drop(pending_slices);
     }
 
     fn encode_copy_data_from(
