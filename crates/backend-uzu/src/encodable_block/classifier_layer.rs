@@ -5,7 +5,6 @@ use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
     config::{TransformerConfig, TransformerLayerConfig},
     encodable_block::{Attention, AttentionArguments, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope},
-    forward_pass::state::RopeType,
     parameters::ParameterTree,
 };
 
@@ -14,7 +13,6 @@ pub struct ClassifierLayer<B: Backend> {
     qkv_projection: Box<dyn Linear<B>>,
     qk_norm: Option<QKNorm<B>>,
     rope: Rc<Rope<B>>,
-    use_rope: bool,
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
@@ -144,7 +142,6 @@ impl<B: Backend> ClassifierLayer<B> {
             qkv_projection,
             qk_norm,
             rope,
-            use_rope: attention_config.use_rope,
             attention,
             out_projection,
             post_attention_norm,
@@ -172,10 +169,7 @@ impl<B: Backend> ClassifierLayer<B> {
             token_positions,
             token_subtrie_ranges,
             attention_sinks,
-            rope_cosines,
-            rope_sines,
-            rope_max_sequence_length,
-            rope_dim,
+            rope_buffers,
             #[cfg(feature = "tracing")]
             trace,
             ..
@@ -206,20 +200,18 @@ impl<B: Backend> ClassifierLayer<B> {
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(&mut qkv, batch_dim, encoder)?;
         }
-        let cosines = rope_cosines.expect("Classifier attention layer requires RoPE cosine allocation");
-        let sines = rope_sines.expect("Classifier attention layer requires RoPE sine allocation");
+        let rope_buffers = rope_buffers.expect("Classifier attention layer requires RoPE buffers");
         let (queries, rotated_keys) = self.rope.encode(
             &qkv,
             token_positions,
-            cosines,
-            sines,
+            &rope_buffers.cosines,
+            &rope_buffers.sines,
             batch_dim,
             self.num_heads,
             self.num_groups,
             self.head_dim,
-            rope_max_sequence_length,
-            rope_dim,
-            self.use_rope,
+            rope_buffers.max_sequence_length(),
+            rope_buffers.dim(),
             encoder,
         )?;
         let attention_output = self.attention.encode(
@@ -288,9 +280,5 @@ impl<B: Backend> ClassifierLayer<B> {
         }
 
         Ok(main)
-    }
-
-    pub fn rope_type(&self) -> RopeType {
-        self.rope.rope_type()
     }
 }

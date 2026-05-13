@@ -259,7 +259,6 @@ impl<B: Backend> TraceValidator<B> {
         {
             let mut cache_layers = ctx.cache_layers.borrow_mut();
             let decoder_arguments = token_inputs.decoder_arguments(
-                &ctx.model_shape,
                 ctx.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
                 token_ids.len(),

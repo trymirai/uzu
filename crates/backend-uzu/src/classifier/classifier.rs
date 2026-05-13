@@ -135,7 +135,7 @@ impl<B: Backend> Classifier<B> {
             .allocate_scratch(main.as_buffer_range_ref().range().len())
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         for (layer_index, layer) in self.context.layers.iter().enumerate() {
-            let rope_type = layer.rope_type();
+            let rope_buffers = self.context.shared_buffers.rope_buffers_for_layer(layer_index);
             main = layer
                 .encode(
                     LayerArguments {
@@ -144,10 +144,7 @@ impl<B: Backend> Classifier<B> {
                         token_parents: token_inputs.token_parents(),
                         token_subtrie_ranges: None,
                         attention_sinks: self.context.shared_buffers.attention_sinks(layer_index),
-                        rope_cosines: self.context.shared_buffers.rope_cosines(rope_type),
-                        rope_sines: self.context.shared_buffers.rope_sines(rope_type),
-                        rope_max_sequence_length: self.context.model_shape.context_length(),
-                        rope_dim: self.context.model_shape.rope_dim(),
+                        rope_buffers,
                         sampling_start: 0,
                         sampling_length: batch_dim,
                         cache_layer: None,

@@ -141,7 +141,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
 
         let mut shared_buffers =
             SharedBuffers::new(context.as_ref(), &model_metadata.model_config.model_config, &model_shape);
-        shared_buffers.update_data(&root_loader_view);
+        shared_buffers.update_data(&root_loader_view)?;
         let shared_buffers = Rc::new(shared_buffers);
 
         let executables = Decoder::new(context.as_ref(), &model_metadata.model_config.model_config, &root_loader_view);

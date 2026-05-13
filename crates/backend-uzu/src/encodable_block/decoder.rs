@@ -11,10 +11,7 @@ use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::DecoderConfig,
     encodable_block::{Embedding, LayerArguments, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
-    forward_pass::{
-        cache_layers::CacheLayers,
-        state::{RopeType, SharedBuffers},
-    },
+    forward_pass::{cache_layers::CacheLayers, state::SharedBuffers},
     parameters::ParameterTree,
 };
 
@@ -42,8 +39,6 @@ pub struct DecoderArguments<'a, B: Backend> {
     pub batch_dim: usize,
     pub sampling_start: usize,
     pub sampling_length: usize,
-    pub rope_max_sequence_length: usize,
-    pub rope_dim: usize,
     #[cfg(feature = "tracing")]
     pub trace: Option<&'a mut ActivationTrace<B>>,
 }
@@ -126,28 +121,16 @@ impl<B: Backend> Decoder<B> {
 
         let tf = &decoder_config.transformer_config;
         let norm_data_type: DataType = tf.layer_configs[0].mixer_config.activation_precision().into();
-
-        let global_rope =
-            tf.global_rope_config.is_some().then(|| Self::create_rope_block(context, norm_data_type, RopeType::Global));
-        let local_rope =
-            tf.local_rope_config.is_some().then(|| Self::create_rope_block(context, norm_data_type, RopeType::Local));
+        let rope = Rc::new(Rope::<B>::new(context, norm_data_type).expect("Failed to create Rope"));
 
         let layers = tf
             .layer_configs
             .iter()
             .enumerate()
             .map(|(layer_index, layer_config)| {
-                let rope_for_layer = layer_config.mixer_config.as_attention().map(|attn| {
-                    if attn.sliding_window_size.is_some() {
-                        local_rope.clone().expect("Local rope missing for sliding-window attention layer")
-                    } else {
-                        global_rope.clone().expect("Global rope missing for attention layer")
-                    }
-                });
-
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
-                LayerExecutables::new(context, tf, layer_config, layer_index, &layer_loader, rope_for_layer)
+                LayerExecutables::new(context, tf, layer_config, layer_index, &layer_loader, &rope)
             })
             .collect::<Vec<_>>();
 
@@ -165,14 +148,6 @@ impl<B: Backend> Decoder<B> {
         (layers.into_boxed_slice(), norm_block)
     }
 
-    fn create_rope_block(
-        context: &B::Context,
-        data_type: DataType,
-        rope_type: RopeType,
-    ) -> Rc<Rope<B>> {
-        Rc::new(Rope::<B>::new(context, data_type, rope_type).expect("Failed to create Rope"))
-    }
-
     fn run_layers(
         &self,
         args: DecoderArguments<B>,
@@ -188,8 +163,6 @@ impl<B: Backend> Decoder<B> {
             batch_dim,
             sampling_start,
             sampling_length,
-            rope_max_sequence_length,
-            rope_dim,
             #[cfg(feature = "tracing")]
             trace,
         } = args;
@@ -200,9 +173,7 @@ impl<B: Backend> Decoder<B> {
             encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(DecoderError::BackendError)?;
 
         for layer in self.layers.iter() {
-            let rope_type = layer.rope_type();
-            let rope_cosines = rope_type.and_then(|rope_type| shared_buffers.rope_cosines(rope_type));
-            let rope_sines = rope_type.and_then(|rope_type| shared_buffers.rope_sines(rope_type));
+            let rope_buffers = shared_buffers.rope_buffers_for_layer(layer.layer_index);
             let attention_sinks = shared_buffers.attention_sinks(layer.layer_index);
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
@@ -216,10 +187,7 @@ impl<B: Backend> Decoder<B> {
                         token_parents,
                         token_subtrie_ranges,
                         attention_sinks,
-                        rope_cosines,
-                        rope_sines,
-                        rope_max_sequence_length,
-                        rope_dim,
+                        rope_buffers,
                         sampling_start,
                         sampling_length,
                         cache_layer,
@@ -274,8 +242,6 @@ impl<B: Backend> Decoder<B> {
                 batch_dim: args.batch_dim,
                 sampling_start,
                 sampling_length,
-                rope_max_sequence_length: args.rope_max_sequence_length,
-                rope_dim: args.rope_dim,
                 #[cfg(feature = "tracing")]
                 trace: trace.as_deref_mut(),
             },

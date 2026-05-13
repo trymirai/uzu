@@ -14,7 +14,6 @@ pub(crate) enum MixerExecutables<B: Backend> {
         gate_projection: Option<Box<dyn Linear<B>>>,
         qk_norm: Option<QKNorm<B>>,
         rope: Rc<Rope<B>>,
-        use_rope: bool,
         attention: Attention<B>,
         out_projection: Box<dyn Linear<B>>,
         num_heads: usize,
