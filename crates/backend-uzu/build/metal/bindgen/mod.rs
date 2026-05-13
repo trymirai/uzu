@@ -24,7 +24,8 @@ pub fn bindgen(
 
     let variant_binds = variants::parse(kernel)?;
     let argument_emissions = arguments::parse(kernel, enum_paths)?;
-    let specialize_emission = specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name)?;
+    let specialize_emission =
+        specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, enum_paths)?;
     let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
 
     let mut variant_path_rewriter = VariantPathRewriter::new(&variant_binds, kernel_name);

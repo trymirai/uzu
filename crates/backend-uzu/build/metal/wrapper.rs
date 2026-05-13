@@ -52,7 +52,7 @@ impl SpecializeBinding<'_> {
 
     fn slot_type(&self) -> &str {
         match self.enum_type {
-            Some(_) => "uint",
+            Some(_) => "uint32_t",
             None => self.argument.c_type.trim_start_matches("const ").trim(),
         }
     }

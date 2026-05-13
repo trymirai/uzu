@@ -2,8 +2,6 @@ use std::ptr::NonNull;
 
 use metal::{MTLDataType, MTLFunctionConstantValues};
 
-use crate::backends::common::gpu_types::QuantizationMethod;
-
 pub trait FunctionConstantValueType {
     const DATA_TYPE: MTLDataType;
 }
@@ -21,10 +19,6 @@ impl FunctionConstantValueType for i32 {
 }
 
 impl FunctionConstantValueType for u32 {
-    const DATA_TYPE: MTLDataType = MTLDataType::UInt;
-}
-
-impl FunctionConstantValueType for QuantizationMethod {
     const DATA_TYPE: MTLDataType = MTLDataType::UInt;
 }
 

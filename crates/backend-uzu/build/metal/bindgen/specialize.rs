@@ -1,14 +1,21 @@
 use anyhow::{Context, Result};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Ident, Type};
+use syn::{Ident, Type, parse_quote};
 
-use super::super::ast::{MetalArgumentType, MetalKernelInfo};
+use super::super::{ast::{MetalArgumentType, MetalKernelInfo}, enum_path_rewrite::is_enum_c_type};
+use crate::common::enum_paths::EnumPaths;
+
+enum SpecializeLowering {
+    Direct,
+    CastTo(Type),
+}
 
 struct SpecializeArgument {
     name: Ident,
     rust_type: Type,
     function_constant_index: usize,
+    lowering: SpecializeLowering,
 }
 
 pub struct SpecializeEmission {
@@ -19,6 +26,7 @@ pub fn parse(
     kernel: &MetalKernelInfo,
     base_function_constant_index: Option<usize>,
     kernel_name: &str,
+    enum_paths: &EnumPaths,
 ) -> Result<SpecializeEmission> {
     let arguments = kernel
         .arguments
@@ -34,10 +42,16 @@ pub fn parse(
                 format!("specialize type `{}` in kernel `{}` cannot be parsed", rust_type_text, kernel_name)
             })?;
             let function_constant_index = base_function_constant_index.unwrap_or(0) + offset;
+            let lowering = if is_enum_c_type(enum_paths, &argument.c_type) {
+                SpecializeLowering::CastTo(parse_quote!(u32))
+            } else {
+                SpecializeLowering::Direct
+            };
             Ok(SpecializeArgument {
                 name,
                 rust_type,
                 function_constant_index,
+                lowering,
             })
         })
         .collect::<Result<_>>()?;
@@ -68,8 +82,15 @@ impl SpecializeEmission {
             .iter()
             .map(|argument| {
                 let name = &argument.name;
-                let function_constant_index = argument.function_constant_index;
-                quote! { function_constants.set_value(&#name, #function_constant_index); }
+                let index = argument.function_constant_index;
+                match &argument.lowering {
+                    SpecializeLowering::Direct => {
+                        quote! { function_constants.set_value(&#name, #index); }
+                    },
+                    SpecializeLowering::CastTo(wire_type) => {
+                        quote! { function_constants.set_value(&(#name as #wire_type), #index); }
+                    },
+                }
             })
             .collect();
         quote! {
