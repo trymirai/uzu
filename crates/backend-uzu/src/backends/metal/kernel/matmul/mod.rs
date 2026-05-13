@@ -24,11 +24,12 @@ use crate::{
             context::MetalContext,
             kernel::{
                 MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
-                unified_matmul::gemm::{GemmTilingConfig, GemmWeights, UnifiedGemmDispatch, UnifiedGemmKernel},
+                unified_matmul::gemm::{GemmTilingConfig, UnifiedGemmDispatch, UnifiedGemmKernel},
             },
             metal_extensions::DeviceExt,
         },
     },
+    model::LinearWeights,
 };
 
 mod gemm;
@@ -330,7 +331,7 @@ impl MatmulMetalKernel {
             compute: GemmComputeKind::SimdgroupMma,
             output_transform,
             alignment,
-            weights: GemmWeights::FullPrecision {
+            weights: LinearWeights::FullPrecision {
                 weights: arguments.b,
             },
             activations: arguments.a,
@@ -404,7 +405,7 @@ impl MatmulMetalKernel {
             compute: GemmComputeKind::MxuMma,
             output_transform,
             alignment,
-            weights: GemmWeights::FullPrecision {
+            weights: LinearWeights::FullPrecision {
                 weights: arguments.b,
             },
             activations: arguments.a,

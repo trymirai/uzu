@@ -1,19 +1,22 @@
-use crate::backends::{
-    common::{
-        Allocation, Borrowed,
-        gpu_types::{
-            GemmParams,
-            unified_gemm::{
-                GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
+use crate::{
+    backends::{
+        common::{
+            Allocation, Borrowed,
+            gpu_types::{
+                GemmParams,
+                unified_gemm::{
+                    GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
+                },
             },
         },
+        metal::Metal,
     },
-    metal::Metal,
+    model::LinearWeights,
 };
 
-use super::{GemmWeights, UnifiedGemmSpecialization};
+use super::UnifiedGemmSpecialization;
 
-pub(crate) type GemmWeightsBorrowed<'a> = GemmWeights<Borrowed<'a, Allocation<Metal>>>;
+pub(crate) type LinearWeightsBorrowed<'a> = LinearWeights<Borrowed<'a, Allocation<Metal>>>;
 
 pub(crate) struct UnifiedGemmDispatch<'a> {
     pub(crate) tiling_config: GemmTilingConfig,
@@ -21,7 +24,7 @@ pub(crate) struct UnifiedGemmDispatch<'a> {
     pub(crate) compute: GemmComputeKind,
     pub(crate) output_transform: GemmOutputTransformKind,
     pub(crate) alignment: GemmAlignment,
-    pub(crate) weights: GemmWeightsBorrowed<'a>,
+    pub(crate) weights: LinearWeightsBorrowed<'a>,
     pub(crate) activations: &'a Allocation<Metal>,
     pub(crate) activations_offset: usize,
     pub(crate) result: &'a mut Allocation<Metal>,

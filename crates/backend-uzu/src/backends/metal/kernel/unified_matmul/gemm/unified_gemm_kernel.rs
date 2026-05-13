@@ -10,10 +10,11 @@ use crate::{
             error::MetalError,
             kernel::{
                 UnifiedGemmMetalKernel,
-                unified_matmul::gemm::{GemmWeights, UnifiedGemmDispatch, UnifiedGemmSpecialization},
+                unified_matmul::gemm::{UnifiedGemmDispatch, UnifiedGemmSpecialization},
             },
         },
     },
+    model::LinearWeights,
 };
 
 pub(crate) struct UnifiedGemmKernel {
@@ -74,16 +75,16 @@ impl UnifiedGemmKernel {
             .map_err(|error| MetalError::CannotCreatePipelineState(format!("{error:?}")))?;
         let kernel = self.get_or_create(context, specialization)?;
         let (weights, scales, biases, zero_points) = match &dispatch.weights {
-            GemmWeights::FullPrecision {
+            LinearWeights::FullPrecision {
                 weights,
             } => (*weights, None, None, None),
-            GemmWeights::ScaleBias {
+            LinearWeights::ScaleBias {
                 weights,
                 scales,
                 biases,
                 ..
             } => (*weights, Some(*scales), Some(*biases), None),
-            GemmWeights::ScaleZeroPoint {
+            LinearWeights::ScaleZeroPoint {
                 weights,
                 scales,
                 zero_points,

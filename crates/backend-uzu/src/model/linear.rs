@@ -6,7 +6,10 @@ use crate::{
     },
 };
 
-pub(crate) enum GemmWeights<S: Storage> {
+/// Layout of the weights for a linear layer, parameterised over the storage
+/// carrier `S` (e.g. `Borrowed<'a, _>` at encode time, `Owned<_>` for loaded
+/// weights, `Schema` for config-only views).
+pub enum LinearWeights<S: Storage> {
     FullPrecision {
         weights: S::Buffer,
     },
@@ -26,8 +29,8 @@ pub(crate) enum GemmWeights<S: Storage> {
     },
 }
 
-impl<S: Storage> GemmWeights<S> {
-    pub(crate) fn weight_prologue(&self) -> GemmWeightPrologueKind {
+impl<S: Storage> LinearWeights<S> {
+    pub fn weight_prologue(&self) -> GemmWeightPrologueKind {
         match self {
             Self::FullPrecision {
                 ..
@@ -41,7 +44,7 @@ impl<S: Storage> GemmWeights<S> {
         }
     }
 
-    pub(crate) fn bits_per_weight(&self) -> u32 {
+    pub fn bits_per_weight(&self) -> u32 {
         match self {
             Self::FullPrecision {
                 ..
@@ -55,7 +58,7 @@ impl<S: Storage> GemmWeights<S> {
         }
     }
 
-    pub(crate) fn group_size(&self) -> u32 {
+    pub fn group_size(&self) -> u32 {
         match self {
             Self::FullPrecision {
                 ..
