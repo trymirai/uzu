@@ -3,14 +3,17 @@ use std::borrow::Borrow;
 use derive_more::{AsRef, Deref, Display, From};
 use serde::{Deserialize, Serialize};
 
-macro_rules! borrow_str {
-    ($name:ident) => {
-        impl Borrow<str> for $name {
-            fn borrow(&self) -> &str {
-                &self.0
-            }
-        }
-    };
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display)]
+#[serde(transparent)]
+#[as_ref(str)]
+#[deref(forward)]
+#[from(forward)]
+pub struct KernelName(String);
+
+impl Borrow<str> for KernelName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display)]
@@ -18,16 +21,13 @@ macro_rules! borrow_str {
 #[as_ref(str)]
 #[deref(forward)]
 #[from(forward)]
-pub struct KernelName(String);
-borrow_str!(KernelName);
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From, AsRef, Deref, Display)]
-#[serde(transparent)]
-#[as_ref(str)]
-#[deref(forward)]
-#[from(forward)]
 pub struct ArgumentName(String);
-borrow_str!(ArgumentName);
+
+impl Borrow<str> for ArgumentName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, AsRef, Deref)]
 #[serde(transparent)]

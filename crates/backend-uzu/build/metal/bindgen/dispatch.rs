@@ -48,7 +48,7 @@ fn build_axis_dispatch(
     let mut axis_pairs: Vec<(TokenStream, TokenStream)> = kernel
         .arguments
         .iter()
-        .filter_map(|argument| match argument.argument_type() {
+        .filter_map(|argument| match &argument.argument_type {
             MetalArgumentType::Axis(threads_text, threads_per_group_text) => {
                 Some((threads_text, threads_per_group_text))
             },
@@ -104,7 +104,7 @@ fn build_direct_dispatch(
     let mut groups: Vec<TokenStream> = kernel
         .arguments
         .iter()
-        .filter_map(|argument| match argument.argument_type() {
+        .filter_map(|argument| match &argument.argument_type {
             MetalArgumentType::Groups(MetalGroupsType::Direct(groups_text)) => {
                 Some(variant_path_rewriter.rewrite(groups_text))
             },
@@ -132,7 +132,7 @@ fn collect_thread_expressions(
     kernel
         .arguments
         .iter()
-        .filter_map(|argument| match argument.argument_type() {
+        .filter_map(|argument| match &argument.argument_type {
             MetalArgumentType::Threads(threads_text) => Some(variant_path_rewriter.rewrite(threads_text)),
             _ => None,
         })

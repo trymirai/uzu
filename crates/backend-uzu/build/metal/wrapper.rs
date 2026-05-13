@@ -21,7 +21,7 @@ pub fn wrappers(
 
     for kernel in kernels {
         let specialize_count =
-            kernel.arguments.iter().filter(|a| matches!(a.argument_type(), MetalArgumentType::Specialize(_))).count();
+            kernel.arguments.iter().filter(|a| matches!(&a.argument_type, MetalArgumentType::Specialize(_))).count();
 
         if specialize_count > 0 {
             base_indices.insert(kernel.name.clone(), next_index);
@@ -37,14 +37,29 @@ pub fn wrappers(
 
 struct SpecializeBinding<'a> {
     argument: &'a MetalArgument,
-    slot_name: String,
-    alias_target: String,
-    typed_companion: Option<TypedCompanion>,
+    name_suffix: String,
+    enum_type: Option<String>,
 }
 
-struct TypedCompanion {
-    name: String,
-    enum_type: String,
+impl SpecializeBinding<'_> {
+    fn slot_name(&self) -> String {
+        format!("__dsl_specialize_{}", self.name_suffix)
+    }
+
+    fn typed_name(&self) -> String {
+        format!("__dsl_typed_{}", self.name_suffix)
+    }
+
+    fn slot_type(&self) -> &str {
+        match self.enum_type {
+            Some(_) => "uint",
+            None => self.argument.c_type.trim_start_matches("const ").trim(),
+        }
+    }
+
+    fn alias_target(&self) -> String {
+        if self.enum_type.is_some() { self.typed_name() } else { self.slot_name() }
+    }
 }
 
 fn specialize_bindings<'a>(
@@ -54,28 +69,15 @@ fn specialize_bindings<'a>(
     kernel
         .arguments
         .iter()
-        .filter(|a| matches!(a.argument_type(), MetalArgumentType::Specialize(_)))
+        .filter(|a| matches!(&a.argument_type, MetalArgumentType::Specialize(_)))
         .map(|argument| {
-            let slot_name = format!("__dsl_specialize_{}_{}", kernel.name, argument.name);
-            if is_enum_c_type(enum_paths, &argument.c_type) {
-                let enum_type = argument.c_type.trim_start_matches("const ").trim().to_string();
-                let typed_name = format!("__dsl_typed_{}_{}", kernel.name, argument.name);
-                SpecializeBinding {
-                    argument,
-                    alias_target: typed_name.clone(),
-                    typed_companion: Some(TypedCompanion {
-                        name: typed_name,
-                        enum_type,
-                    }),
-                    slot_name,
-                }
-            } else {
-                SpecializeBinding {
-                    argument,
-                    alias_target: slot_name.clone(),
-                    typed_companion: None,
-                    slot_name,
-                }
+            let name_suffix = format!("{}_{}", kernel.name, argument.name);
+            let enum_type = is_enum_c_type(enum_paths, &argument.c_type)
+                .then(|| argument.c_type.trim_start_matches("const ").trim().to_string());
+            SpecializeBinding {
+                argument,
+                name_suffix,
+                enum_type,
             }
         })
         .collect()
@@ -88,27 +90,27 @@ fn kernel_header(
     let mut lines = Vec::new();
 
     for (offset, binding) in bindings.iter().enumerate() {
-        let slot_type = match &binding.typed_companion {
-            Some(_) => "uint",
-            None => binding.argument.c_type.trim_start_matches("const ").trim(),
-        };
-        let index = base_index + offset;
-        lines.push(format!("constant {slot_type} {} [[function_constant({index})]];", binding.slot_name));
+        lines.push(format!(
+            "constant {} {} [[function_constant({})]];",
+            binding.slot_type(),
+            binding.slot_name(),
+            base_index + offset,
+        ));
     }
 
     for binding in bindings.iter() {
-        if let Some(companion) = &binding.typed_companion {
+        if let Some(enum_type) = &binding.enum_type {
             lines.push(format!(
                 "constant {ty} {name} = {ty}({slot});",
-                ty = companion.enum_type,
-                name = companion.name,
-                slot = binding.slot_name,
+                ty = enum_type,
+                name = binding.typed_name(),
+                slot = binding.slot_name(),
             ));
         }
     }
 
     for binding in bindings.iter() {
-        lines.push(format!("#define {} {}", binding.argument.name, binding.alias_target));
+        lines.push(format!("#define {} {}", binding.argument.name, binding.alias_target()));
     }
 
     lines.push(String::new());
@@ -168,7 +170,7 @@ fn kernel_wrappers(
         let max_total_threads_per_threadgroup = kernel
             .arguments
             .iter()
-            .filter_map(|a| match a.argument_type() {
+            .filter_map(|a| match &a.argument_type {
                 MetalArgumentType::Axis(_, l) | MetalArgumentType::Threads(l) => Some(format!("({l})")),
                 _ => None,
             })
@@ -183,11 +185,11 @@ fn kernel_wrappers(
         let (mut wrapper_arguments, condition_definitions): (Vec<_>, Vec<_>) = kernel
             .arguments
             .iter()
-            .filter(|a| matches!(a.argument_type(), MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)))
+            .filter(|a| matches!(&a.argument_type, MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)))
             .enumerate()
             .map(|(i, a)| {
                 let condition_field = format!("__dsl_buffer_condition_{}_{}", wrapper_name, a.name);
-                match a.argument_condition() {
+                match a.condition.as_deref() {
                     Some(condition) => (
                         format!("{} {} [[buffer({}), function_constant({})]]", &a.c_type, a.name, i, condition_field,),
                         Some(format!("constant bool {} = ({});", condition_field, condition)),
@@ -222,7 +224,7 @@ fn kernel_wrappers(
 
         let wrapper_arguments = wrapper_arguments.join(", ");
 
-        let shared_definitions = kernel.arguments.iter().filter_map(|a| match a.argument_type() {
+        let shared_definitions = kernel.arguments.iter().filter_map(|a| match &a.argument_type {
             MetalArgumentType::Shared(Some(len)) => {
                 Some(format!("{} {}[{}]", &a.c_type.replace('*', ""), a.name, len.as_ref(),))
             },
@@ -237,7 +239,7 @@ fn kernel_wrappers(
             kernel
                 .arguments
                 .iter()
-                .map(|a| match a.argument_type() {
+                .map(|a| match &a.argument_type {
                     MetalArgumentType::Buffer(_)
                     | MetalArgumentType::Constant(_)
                     | MetalArgumentType::Shared(_)

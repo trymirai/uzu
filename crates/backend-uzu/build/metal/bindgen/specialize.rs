@@ -23,7 +23,7 @@ pub fn parse(
     let arguments = kernel
         .arguments
         .iter()
-        .filter_map(|argument| match argument.argument_type() {
+        .filter_map(|argument| match &argument.argument_type {
             MetalArgumentType::Specialize(rust_type_text) => Some((argument, rust_type_text)),
             _ => None,
         })

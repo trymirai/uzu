@@ -55,7 +55,7 @@ pub fn parse(
     let mut indirect_dispatch_emitted = false;
 
     for argument in kernel.arguments.iter() {
-        match argument.argument_type() {
+        match &argument.argument_type {
             MetalArgumentType::Buffer(access) => {
                 let buffer = parse_buffer_argument(argument, *access, next_buffer_index, enum_paths)?;
                 emissions.push(ArgumentEmission::Buffer(buffer));
@@ -131,7 +131,7 @@ fn parse_argument_condition(
     argument: &MetalArgument,
     enum_paths: &EnumPaths,
 ) -> Result<Option<ArgumentCondition>> {
-    match argument.argument_condition() {
+    match argument.condition.as_deref() {
         Some(condition_text) => {
             let field_name = format_ident!("has_{}", argument.name.as_ref());
             let rust_expression = rewrite_for_rust(enum_paths, condition_text).with_context(|| {
