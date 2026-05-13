@@ -213,3 +213,7 @@ impl<B: Backend> Allocator<B> {
         allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
     }
 }
+
+#[cfg(all(test, metal_backend))]
+#[path = "../../../../tests/unit/backends/common/allocator/allocator.rs"]
+mod tests;
