@@ -1770,7 +1770,7 @@ checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
 name = "debug-display"
-version = "0.4.6"
+version = "0.4.8"
 dependencies = [
  "proc-macro2",
  "quote",
