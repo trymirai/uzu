@@ -6,7 +6,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Lifetime, Type};
 
-use super::kernel::Kernel;
+use super::{identifiers::KernelPath, kernel::Kernel};
 use crate::common::{
     codegen::write_tokens,
     kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
@@ -81,10 +81,10 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     (kernel_trait, kernel_type)
 }
 
-pub fn traitgen_all(backends_kernels: Vec<HashMap<Box<[Box<str>]>, Box<[Kernel]>>>) -> anyhow::Result<()> {
+pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -> anyhow::Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").context("missing OUT_DIR")?);
 
-    let mut kernels: HashMap<Box<[Box<str>]>, Box<[Kernel]>> = HashMap::new();
+    let mut kernels: HashMap<KernelPath, Box<[Kernel]>> = HashMap::new();
 
     for backend_kernels in backends_kernels {
         for (file_path, file_kernels) in backend_kernels {

@@ -9,6 +9,7 @@ pub mod attention;
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod quantization;
+pub mod quantization_method;
 pub mod ring;
 pub mod trie;
 
@@ -18,3 +19,4 @@ pub use attention::*;
 pub use kv_cache_update::*;
 pub use matmul::*;
 pub use quantization::*;
+pub use quantization_method::*;
