@@ -8,7 +8,7 @@ use crate::backends::{
     metal::{Metal, sparse::MetalSparseBuffer},
 };
 
-pub(super) fn metal_buffer<B: Buffer<Backend = Metal>>(buffer: &B) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
+pub fn metal_buffer<B: Buffer<Backend = Metal>>(buffer: &B) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
     let buffer = buffer as &dyn Any;
     if let Some(buffer) = buffer.downcast_ref::<<Metal as Backend>::DenseBuffer>() {
         buffer

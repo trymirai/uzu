@@ -170,7 +170,8 @@ pub fn bindgen(
     let mut arg_count: usize = 0;
     let mut indirect_flag = false;
 
-    let (conditional_buffer_fields,conditional_buffer_sets, encode_generics, encode_args_defs, encode_deconstructs, encode_accesses, encode_args_sets): (
+    let mut with_any_buffer = false;
+    let (conditional_buffer_fields,conditional_buffer_sets, encode_generics, mut encode_args_defs, encode_deconstructs, encode_accesses, encode_args_sets): (
         Vec<Option<TokenStream>>,
         Vec<Option<TokenStream>>,
         Vec<Option<TokenStream>>,
@@ -188,11 +189,16 @@ pub fn bindgen(
                 arg_type @ (MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)) => {
                     let (mut ty, deconstruct, access_type, mut set, generic) = match arg_type {
                         MetalArgumentType::Buffer(access) => {
+                            with_any_buffer = true;
                             let buffer_lifetime = Lifetime::new(&format!("'{}", ka.name.as_ref()), Span::call_site());
                             (
                                 match access {
-                                    MetalBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
-                                    MetalBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                                    MetalBufferAccess::Read => quote! {
+                                        impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Buf>
+                                    },
+                                    MetalBufferAccess::ReadWrite => quote! {
+                                        impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Buf>
+                                    },
                                 },
                                 Some(if ka.argument_condition().unwrap().is_some() {
                                     quote! {
@@ -205,7 +211,7 @@ pub fn bindgen(
                                 }),
                                 Some(access),
                                 quote! {
-                                    compute_encoder.set_buffer(Some(#arg_name.0), #arg_name.1, #arg_count);
+                                    compute_encoder.set_buffer(Some(crate::backends::metal::metal_buffer(#arg_name.0)), #arg_name.1, #arg_count);
                                 },
                                 Some(quote! { #buffer_lifetime }),
                             )
@@ -295,13 +301,14 @@ pub fn bindgen(
                     ))
                 }
                 MetalArgumentType::Groups(MetalGroupsType::Indirect) if !indirect_flag => {
+                    with_any_buffer = true;
                     indirect_flag = true;
 
                     Some((
                         None,
                         None,
                         Some(quote! { '__dsl_indirect_dispatch_buffer }),
-                        quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Retained<ProtocolObject<dyn MTLBuffer>>> },
+                        quote! { __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Buf> },
                         Some(quote! { let __dsl_indirect_dispatch_buffer = __dsl_indirect_dispatch_buffer.into_parts(); }),
                         Some(quote! {
                             Some(crate::backends::common::Access {
@@ -319,7 +326,12 @@ pub fn bindgen(
 
     let conditional_buffer_fields = conditional_buffer_fields.into_iter().flatten().collect::<Vec<_>>();
     let conditional_buffer_sets = conditional_buffer_sets.into_iter().flatten().collect::<Vec<_>>();
-    let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+    let mut encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+
+    // 'encoder
+    encode_generics.push(quote! { 'encoder });
+    encode_args_defs
+        .push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>});
 
     let encode_deconstructs = encode_deconstructs.into_iter().flatten().collect::<Vec<_>>();
 
@@ -392,7 +404,7 @@ pub fn bindgen(
             (
                 quote! {
                     compute_encoder.dispatch_threadgroups_indirect(
-                        __dsl_indirect_dispatch_buffer.0,
+                        crate::backends::metal::metal_buffer(__dsl_indirect_dispatch_buffer.0),
                         __dsl_indirect_dispatch_buffer.1,
                         MTLSize::new(#((#threads) as usize, )*),
                     );
@@ -480,6 +492,19 @@ pub fn bindgen(
         })
         .unzip();
 
+    let mut where_args: Vec<TokenStream> = Vec::new();
+    if with_any_buffer {
+        encode_generics.push(quote! { Buf });
+        where_args.push(quote! {
+            Buf: Buffer<Backend = Metal>
+        })
+    }
+    let maybe_where_block = if where_args.is_empty() {
+        quote! {}
+    } else {
+        quote! { where #(#where_args),* }
+    };
+
     let kernel = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -497,7 +522,7 @@ pub fn bindgen(
                 Ok(Self { pipeline #(, #conditional_buffer_sets)* #(, #variant_inits)* })
             }
 
-            #method_visibility fn encode<#(#encode_generics, )* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>) {
+            #method_visibility fn encode<#(#encode_generics),*>(&self, #(#encode_args_defs),*)#maybe_where_block {
                 #empty_dispatch_guards
                 #(#encode_deconstructs)*
                 #encode_accesses
