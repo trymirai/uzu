@@ -1,9 +1,16 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+#[cfg(test)]
+use std::cell::Ref;
+use std::{
+    cell::{RefCell, RefMut},
+    collections::HashMap,
+    path::Path,
+    rc::{Rc, Weak},
+};
 
 use metal::{
-    MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt,
-    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLLibrary,
-    MTLResourceOptions,
+    MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
+    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
+    MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -16,8 +23,12 @@ use super::{
 };
 use crate::{
     backends::{
-        common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
-        metal::command_buffer::MetalCommandBufferInitial,
+        common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+        metal::{
+            command_buffer::MetalCommandBufferInitial,
+            metal_extensions::SparsePageSizeExt,
+            sparse::{MetalSparseBuffer, MetalSparseHeapPool},
+        },
     },
     utils::model_size::ModelSize,
 };
@@ -25,11 +36,14 @@ use crate::{
 pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
+    sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    weak_self: Weak<MetalContext>,
 }
 
 impl MetalContext {
@@ -53,6 +67,15 @@ impl MetalContext {
 
         Ok(pipeline)
     }
+
+    #[cfg(test)]
+    pub(super) fn sparse_heap_pool(&self) -> Ref<'_, MetalSparseHeapPool> {
+        self.sparse_heap_pool.borrow()
+    }
+
+    pub(super) fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
+        self.sparse_heap_pool.borrow_mut()
+    }
 }
 
 impl Context for MetalContext {
@@ -60,10 +83,12 @@ impl Context for MetalContext {
 
     fn new() -> Result<Rc<Self>, MetalError> {
         let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn metal::MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
+            <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
 
         let command_queue =
             device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
+
+        let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
 
         let library = device
             .new_library_with_data(kernel::MTLB)
@@ -71,14 +96,21 @@ impl Context for MetalContext {
 
         let device_capabilities = MetalDeviceCapabilities::from_device(&device);
 
+        let page_size = MTLSparsePageSize::KB256;
+        let heap_capacity = 64 * 4 * page_size.in_bytes();
+        let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
+
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
+            command_queue4,
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: RefCell::new(0),
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
+            sparse_heap_pool: RefCell::new(sparse_pool),
+            weak_self: weak_self.clone(),
         }))
     }
 
@@ -111,11 +143,29 @@ impl Context for MetalContext {
         &self,
         size: usize,
     ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        let buffer =
-            self.device.new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED).ok_or(MetalError::CannotCreateBuffer);
+        let buffer = self
+            .device
+            .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MetalError::CannotCreateBuffer)?;
+
         let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
         *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
-        buffer
+
+        Ok(buffer)
+    }
+
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
+        let buffer = self
+            .device
+            .new_buffer_with_data(data, MTLResourceOptions::STORAGE_MODE_SHARED)
+            .ok_or(MetalError::CannotCreateBuffer)?;
+
+        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
+        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+        Ok(buffer)
     }
 
     fn create_allocation(
@@ -143,6 +193,15 @@ impl Context for MetalContext {
         self.device.new_event().ok_or(MetalError::CannotCreateEvent)
     }
 
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
+        let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
+        Ok(MetalSparseBuffer::new(context, capacity, sparse_page_size)?)
+    }
+
     fn peak_memory_usage(&self) -> Option<usize> {
         Some(*self.peak_memory_usage.borrow())
     }
@@ -155,8 +214,8 @@ impl Context for MetalContext {
 
     fn start_capture(
         &self,
-        trace_path: &std::path::Path,
-    ) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+        trace_path: &Path,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
         let capture_manager = MTLCaptureManager::shared_capture_manager();
         let capture_descriptor = MTLCaptureDescriptor::new();
         capture_descriptor.set_destination(MTLCaptureDestination::GPUTraceDocument);
@@ -172,7 +231,7 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    fn stop_capture(&self) -> Result<(), <Self::Backend as crate::backends::common::Backend>::Error> {
+    fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error> {
         MTLCaptureManager::shared_capture_manager().stop_capture();
 
         Ok(())
