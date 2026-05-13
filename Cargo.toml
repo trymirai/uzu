@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/dsl",
-    "crates/debug-display",
     "crates/bindings-types",
     "crates/bindings",
     "crates/shoji",
@@ -92,7 +91,6 @@ schemars = { version = "1.2", features = ["derive"] }
 is_close = "0.1"
 anyhow = "1.0.102"
 async-trait = "0.1"
-debug-display = { path = "crates/debug-display" }
 derive_more = { version = "2", features = ["from", "deref", "as_ref", "display"] }
 bindgen = "0.72"
 walkdir = "2.5"

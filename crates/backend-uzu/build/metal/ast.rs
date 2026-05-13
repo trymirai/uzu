@@ -194,16 +194,8 @@ impl MetalArgument {
         })
     }
 
-    pub fn argument_condition(&self) -> Option<&str> {
-        self.condition.as_deref()
-    }
-
-    pub fn argument_type(&self) -> &MetalArgumentType {
-        &self.argument_type
-    }
-
     fn to_parameter(&self) -> Option<KernelParameter> {
-        match self.argument_type() {
+        match &self.argument_type {
             MetalArgumentType::Specialize(ty) => Some(KernelParameter {
                 name: Box::from(&*self.name),
                 ty: KernelParameterType::Value(ty.clone()),
@@ -364,29 +356,27 @@ pub struct MetalKernelInfo {
 
 impl MetalKernelInfo {
     pub fn has_axis(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Axis(..)))
+        self.arguments.iter().any(|a| matches!(&a.argument_type, MetalArgumentType::Axis(..)))
     }
 
     pub fn has_groups(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(_)))
+        self.arguments.iter().any(|a| matches!(&a.argument_type, MetalArgumentType::Groups(_)))
     }
 
     pub fn has_groups_direct(&self) -> bool {
-        self.arguments
-            .iter()
-            .any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(MetalGroupsType::Direct(_))))
+        self.arguments.iter().any(|a| matches!(&a.argument_type, MetalArgumentType::Groups(MetalGroupsType::Direct(_))))
     }
 
     pub fn has_groups_indirect(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(MetalGroupsType::Indirect)))
+        self.arguments.iter().any(|a| matches!(&a.argument_type, MetalArgumentType::Groups(MetalGroupsType::Indirect)))
     }
 
     pub fn has_threads(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Threads(_)))
+        self.arguments.iter().any(|a| matches!(&a.argument_type, MetalArgumentType::Threads(_)))
     }
 
     pub fn has_thread_context(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::ThreadContext))
+        self.arguments.iter().any(|a| matches!(&a.argument_type, MetalArgumentType::ThreadContext))
     }
 
     pub fn to_kernel(&self) -> Option<Kernel> {
@@ -409,10 +399,10 @@ impl MetalKernelInfo {
             arguments: self
                 .arguments
                 .iter()
-                .filter_map(|a| match a.argument_type() {
+                .filter_map(|a| match &a.argument_type {
                     MetalArgumentType::Buffer(access) => Some(KernelArgument {
                         name: a.name.clone(),
-                        conditional: a.argument_condition().is_some(),
+                        conditional: a.condition.is_some(),
                         ty: KernelArgumentType::Buffer(match access {
                             MetalBufferAccess::Read => KernelBufferAccess::Read,
                             MetalBufferAccess::ReadWrite => KernelBufferAccess::ReadWrite,
@@ -428,17 +418,17 @@ impl MetalKernelInfo {
                     },
                     MetalArgumentType::Constant((ty, MetalConstantType::Scalar)) => Some(KernelArgument {
                         name: a.name.clone(),
-                        conditional: a.argument_condition().is_some(),
+                        conditional: a.condition.is_some(),
                         ty: KernelArgumentType::Constant(ty.clone()),
                     }),
                     MetalArgumentType::Constant((ty, MetalConstantType::Array(None))) => Some(KernelArgument {
                         name: a.name.clone(),
-                        conditional: a.argument_condition().is_some(),
+                        conditional: a.condition.is_some(),
                         ty: KernelArgumentType::Constant(format!("&[{ty}]").into_boxed_str()),
                     }),
                     MetalArgumentType::Constant((ty, MetalConstantType::Array(Some(size)))) => Some(KernelArgument {
                         name: a.name.clone(),
-                        conditional: a.argument_condition().is_some(),
+                        conditional: a.condition.is_some(),
                         ty: KernelArgumentType::Constant(format!("&[{ty}; {size}]").into_boxed_str()),
                     }),
                     _ => None,

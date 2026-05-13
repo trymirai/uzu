@@ -44,14 +44,6 @@ impl EnumPaths {
         self.short_name_to_full_path.get(short_name).map(|path| &**path)
     }
 
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    pub fn contains(
-        &self,
-        short_name: &str,
-    ) -> bool {
-        self.short_name_to_full_path.contains_key(short_name)
-    }
-
     pub fn canonicalize_type(
         &self,
         ty: &mut Type,
