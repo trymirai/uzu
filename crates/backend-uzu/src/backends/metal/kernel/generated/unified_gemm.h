@@ -5,18 +5,6 @@
 using namespace metal;
 
 namespace uzu::unified_gemm {
-struct alignas(4) GemmAlignment {
-  bool m_aligned;
-  bool n_aligned;
-  bool k_aligned;
-  inline GemmAlignment() = default;
-  inline GemmAlignment(uint __dsl_v)
-    : m_aligned(uint8_t(__dsl_v))
-    , n_aligned(uint8_t(__dsl_v >> 8))
-    , k_aligned(uint8_t(__dsl_v >> 16))
-  {}
-};
-
 enum class GemmComputeKind : uint32_t {
   SimdgroupMma = 0,
   MxuMma = 1,
@@ -54,7 +42,7 @@ typedef struct {
 
 enum class GemmWeightPrologueKind : uint32_t {
   FullPrecision = 0,
-  MlxDequant = 1,
-  AwqDequant = 2,
+  ScaleBiasDequant = 1,
+  ScaleZeroPointDequant = 2,
 };
 } // namespace uzu::unified_gemm

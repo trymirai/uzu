@@ -10,14 +10,14 @@ pub(crate) enum GemmWeights<S: Storage> {
     FullPrecision {
         weights: S::Buffer,
     },
-    Mlx {
+    ScaleBias {
         weights: S::Buffer,
         scales: S::Buffer,
         biases: S::Buffer,
         mode: QuantizationMode,
         group_size: u32,
     },
-    Awq {
+    ScaleZeroPoint {
         weights: S::Buffer,
         scales: S::Buffer,
         zero_points: S::Buffer,
@@ -32,12 +32,12 @@ impl<S: Storage> GemmWeights<S> {
             Self::FullPrecision {
                 ..
             } => GemmWeightPrologueKind::FullPrecision,
-            Self::Mlx {
+            Self::ScaleBias {
                 ..
-            } => GemmWeightPrologueKind::MlxDequant,
-            Self::Awq {
+            } => GemmWeightPrologueKind::ScaleBiasDequant,
+            Self::ScaleZeroPoint {
                 ..
-            } => GemmWeightPrologueKind::AwqDequant,
+            } => GemmWeightPrologueKind::ScaleZeroPointDequant,
         }
     }
 
@@ -46,10 +46,10 @@ impl<S: Storage> GemmWeights<S> {
             Self::FullPrecision {
                 ..
             } => 0,
-            Self::Mlx {
+            Self::ScaleBias {
                 mode, ..
             }
-            | Self::Awq {
+            | Self::ScaleZeroPoint {
                 mode, ..
             } => DataType::from(*mode).size_in_bits() as u32,
         }
@@ -60,10 +60,10 @@ impl<S: Storage> GemmWeights<S> {
             Self::FullPrecision {
                 ..
             } => 0,
-            Self::Mlx {
+            Self::ScaleBias {
                 group_size, ..
             }
-            | Self::Awq {
+            | Self::ScaleZeroPoint {
                 group_size, ..
             } => *group_size,
         }

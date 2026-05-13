@@ -1,4 +1,4 @@
-use debug_display::Display;
+use derive_more::Display;
 
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]

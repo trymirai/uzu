@@ -609,14 +609,14 @@ fn test_quant_matmul_perf_internal<B: Backend>() {
     ];
 
     let configs = vec![
-        // 4-bit Mlx BF16
+        // 4-bit scale-bias BF16
         TestConfig {
             quant_method: QuantizationMethod::ScaleBias,
             bits: 4,
             data_type: DataType::BF16,
             group_size: 128,
         },
-        // 8-bit Mlx BF16
+        // 8-bit scale-bias BF16
         TestConfig {
             quant_method: QuantizationMethod::ScaleBias,
             bits: 8,

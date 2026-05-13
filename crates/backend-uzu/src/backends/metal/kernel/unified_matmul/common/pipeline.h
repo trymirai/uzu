@@ -17,6 +17,12 @@ template <
     uint SIMDGROUPS_M,
     uint SIMDGROUPS_N>
 struct GemmPipeline {
+  // Bit positions for the `alignment` uint32_t function-constant — must match
+  // the `bitflags!` definition of `GemmAlignment` on the Rust side.
+  static constant constexpr uint32_t kAlignmentM = 1u << 0;
+  static constant constexpr uint32_t kAlignmentN = 1u << 1;
+  static constant constexpr uint32_t kAlignmentK = 1u << 2;
+
   static METAL_FUNC void run(
       const device T* activations,
       const device uint8_t* weights_packed,
@@ -26,7 +32,7 @@ struct GemmPipeline {
       GemmWeightPrologueKind weight_prologue,
       GemmComputeKind compute,
       GemmOutputTransformKind output_transform,
-      GemmAlignment alignment,
+      uint32_t alignment,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       uint simd_lane_id,
@@ -40,10 +46,12 @@ struct GemmPipeline {
         output_transform != GemmOutputTransformKind::Store) {
       return;
     }
+    const bool m_aligned = (alignment & kAlignmentM) != 0;
+    const bool n_aligned = (alignment & kAlignmentN) != 0;
+    const bool k_aligned = (alignment & kAlignmentK) != 0;
     const device T* weights = reinterpret_cast<const device T*>(weights_packed);
     if (compute == GemmComputeKind::SimdgroupMma) {
-      const bool mn_aligned = alignment.m_aligned && alignment.n_aligned;
-      const bool k_aligned = alignment.k_aligned;
+      const bool mn_aligned = m_aligned && n_aligned;
       if (mn_aligned && k_aligned) {
         GemmComputeSimdgroupMma<T, THREADGROUP_M, THREADGROUP_N, THREADGROUP_K, SIMDGROUPS_M, SIMDGROUPS_N, true, true>::run(
             activations, weights, result, params,
@@ -68,7 +76,7 @@ struct GemmPipeline {
     } else if (compute == GemmComputeKind::MxuMma) {
       GemmComputeMxuMma<T, THREADGROUP_M, THREADGROUP_N, SIMDGROUPS_M, SIMDGROUPS_N>::run(
           activations, weights, result, params,
-          alignment.m_aligned, alignment.n_aligned, alignment.k_aligned,
+          m_aligned, n_aligned, k_aligned,
           simd_group_id, threadgroup_position, thread_context);
     }
   }

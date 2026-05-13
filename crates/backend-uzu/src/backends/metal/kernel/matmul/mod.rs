@@ -8,7 +8,12 @@ use crate::{
     backends::{
         common::{
             Allocation, Encoder,
-            gpu_types::GemmParams,
+            gpu_types::{
+                GemmParams,
+                unified_gemm::{
+                    GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind,
+                },
+            },
             kernel::{
                 TensorAddBiasKernel,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
@@ -385,11 +390,11 @@ impl MatmulMetalKernel {
         } else {
             (threadgroups_per_row, threadgroups_per_column)
         };
-        let alignment = GemmAlignment {
-            m_aligned: arguments.batch_dim % tile.threadgroup_m == 0,
-            n_aligned: arguments.output_dim % tile.threadgroup_n == 0,
-            k_aligned: arguments.input_dim % 256 == 0,
-        };
+        let alignment = GemmAlignment::from_flags(
+            arguments.batch_dim % tile.threadgroup_m == 0,
+            arguments.output_dim % tile.threadgroup_n == 0,
+            arguments.input_dim % 256 == 0,
+        );
         let output_transform = unified_gemm_output_transform(&arguments);
         let mut params = build_unified_gemm_params(&arguments, &tile);
         params.use_morton = use_morton;
@@ -487,11 +492,11 @@ fn unified_gemm_alignment(
     arguments: &MatmulArguments<Metal>,
     tile: &GemmTilingConfig,
 ) -> GemmAlignment {
-    GemmAlignment {
-        m_aligned: arguments.batch_dim % tile.threadgroup_m == 0,
-        n_aligned: arguments.output_dim % tile.threadgroup_n == 0,
-        k_aligned: arguments.input_dim % tile.threadgroup_k == 0,
-    }
+    GemmAlignment::from_flags(
+        arguments.batch_dim % tile.threadgroup_m == 0,
+        arguments.output_dim % tile.threadgroup_n == 0,
+        arguments.input_dim % tile.threadgroup_k == 0,
+    )
 }
 
 fn build_unified_gemm_params(
@@ -542,11 +547,18 @@ impl MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) {
+        let context = encoder.context();
         match path {
             MatmulDispatchPath::Auto => self.encode(arguments, encoder),
             MatmulDispatchPath::Gemv => self.encode_gemv(encoder, arguments).expect("Failed to encode GEMV"),
             MatmulDispatchPath::Gemm => self.encode_gemm(encoder, arguments).expect("Failed to encode GEMM"),
             MatmulDispatchPath::GemmMpp => self.encode_gemm_mpp(encoder, arguments).expect("Failed to encode GEMM MPP"),
+            MatmulDispatchPath::UnifiedGemm => self
+                .encode_unified_gemm_full_simdgroup(context, encoder, arguments)
+                .expect("Failed to encode UnifiedGemm"),
+            MatmulDispatchPath::UnifiedGemmMxuMma => self
+                .encode_unified_gemm_full_mxu(context, encoder, arguments)
+                .expect("Failed to encode UnifiedGemmMxuMma"),
         }
     }
 }

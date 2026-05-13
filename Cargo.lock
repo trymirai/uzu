@@ -559,6 +559,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bindgen",
+ "bitflags 2.11.1",
  "blake3",
  "bytemuck",
  "bytesize",

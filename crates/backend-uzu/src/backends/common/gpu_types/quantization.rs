@@ -1,4 +1,4 @@
-use debug_display::Display;
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
 use crate::DataType;

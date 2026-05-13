@@ -32,9 +32,9 @@ KERNEL(UnifiedGemm)(
     const device T* scales
         OPTIONAL(weight_prologue != GemmWeightPrologueKind::FullPrecision),
     const device T* biases
-        OPTIONAL(weight_prologue == GemmWeightPrologueKind::MlxDequant),
+        OPTIONAL(weight_prologue == GemmWeightPrologueKind::ScaleBiasDequant),
     const device uint8_t* zero_points
-        OPTIONAL(weight_prologue == GemmWeightPrologueKind::AwqDequant),
+        OPTIONAL(weight_prologue == GemmWeightPrologueKind::ScaleZeroPointDequant),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -42,7 +42,7 @@ KERNEL(UnifiedGemm)(
     const GemmWeightPrologueKind weight_prologue SPECIALIZE,
     const GemmComputeKind compute SPECIALIZE,
     const GemmOutputTransformKind output_transform SPECIALIZE,
-    const GemmAlignment alignment SPECIALIZE,
+    const uint alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
     const uint group_size SPECIALIZE,
     threadgroup T a_shared[UNIFIED_GEMM_MAX_THREADGROUP_A],

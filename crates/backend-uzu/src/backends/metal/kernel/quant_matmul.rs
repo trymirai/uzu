@@ -38,7 +38,10 @@ pub fn encode_quantized_matmul_with_path(
     path: QuantizedMatmulDispatchPath,
 ) -> Result<(), QuantizedMatmulError<Metal>> {
     match path {
-        QuantizedMatmulDispatchPath::Auto => encodable.encode(encoder, arguments),
+        QuantizedMatmulDispatchPath::Auto => {
+            encodable.encode(encoder, arguments);
+            Ok(())
+        },
         QuantizedMatmulDispatchPath::UnifiedGemm => {
             let tile = select_unified_quantized_tile(configuration, arguments.batch_dim as u32);
             let group_size = configuration.group_size as u32;
@@ -52,30 +55,30 @@ pub fn encode_quantized_matmul_with_path(
                 input_prologue: GemmInputPrologueKind::FullPrecision,
                 compute: GemmComputeKind::SimdgroupMma,
                 output_transform: GemmOutputTransformKind::Store,
-                alignment: GemmAlignment {
-                    m_aligned: batch_dim % tile.threadgroup_m == 0,
-                    n_aligned: output_dim % tile.threadgroup_n == 0,
-                    k_aligned: input_dim % tile.threadgroup_k == 0,
-                },
+                alignment: GemmAlignment::from_flags(
+                    batch_dim % tile.threadgroup_m == 0,
+                    output_dim % tile.threadgroup_n == 0,
+                    input_dim % tile.threadgroup_k == 0,
+                ),
                 weights: match configuration.quantization_method {
-                    QuantizationMethod::MLX => GemmWeights::Mlx {
-                        weights: arguments.b_buffer,
-                        scales: arguments.scales_buffer,
-                        biases: arguments.zero_points_or_biases_buffer,
+                    QuantizationMethod::ScaleBias => GemmWeights::ScaleBias {
+                        weights: arguments.b,
+                        scales: arguments.scales,
+                        biases: arguments.zero_points_or_biases,
                         mode: configuration.mode,
                         group_size,
                     },
-                    QuantizationMethod::AWQ => GemmWeights::Awq {
-                        weights: arguments.b_buffer,
-                        scales: arguments.scales_buffer,
-                        zero_points: arguments.zero_points_or_biases_buffer,
+                    QuantizationMethod::ScaleZeroPoint => GemmWeights::ScaleZeroPoint {
+                        weights: arguments.b,
+                        scales: arguments.scales,
+                        zero_points: arguments.zero_points_or_biases,
                         mode: configuration.mode,
                         group_size,
                     },
                 },
-                activations: arguments.a_buffer,
+                activations: arguments.a,
                 activations_offset: arguments.a_offset,
-                result: arguments.output_buffer,
+                result: arguments.output,
                 params: GemmParams {
                     M: batch_dim,
                     N: output_dim,

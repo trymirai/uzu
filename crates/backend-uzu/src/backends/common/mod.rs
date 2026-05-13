@@ -13,6 +13,7 @@ pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
 mod sparse_buffer;
+mod storage;
 
 pub use activation_config::ActivationConfig;
 pub use allocation_access::{
@@ -33,3 +34,4 @@ pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
 pub use sparse_buffer::SparseBuffer;
+pub use storage::{Borrowed, Storage};

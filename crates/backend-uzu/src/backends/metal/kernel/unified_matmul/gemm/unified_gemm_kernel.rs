@@ -53,7 +53,7 @@ impl UnifiedGemmKernel {
                     specialization.weight_prologue,
                     specialization.compute,
                     specialization.output_transform,
-                    specialization.alignment,
+                    specialization.alignment.bits(),
                     specialization.bits_per_weight,
                     specialization.group_size,
                 )?;
@@ -77,13 +77,13 @@ impl UnifiedGemmKernel {
             GemmWeights::FullPrecision {
                 weights,
             } => (*weights, None, None, None),
-            GemmWeights::Mlx {
+            GemmWeights::ScaleBias {
                 weights,
                 scales,
                 biases,
                 ..
             } => (*weights, Some(*scales), Some(*biases), None),
-            GemmWeights::Awq {
+            GemmWeights::ScaleZeroPoint {
                 weights,
                 scales,
                 zero_points,

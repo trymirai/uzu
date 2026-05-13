@@ -1,13 +1,10 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -20,7 +17,13 @@ use backend_uzu::{
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -53,30 +56,24 @@ fn get_test_data<T: ArrayElement + Float>(
 fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Failed to create CPU context");
 
-    let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
-    let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
-
-    let a_buf = a_array.buffer();
-    let a_ref = a_buf.borrow();
-    let b_buf = b_array.buffer();
-    let b_ref = b_buf.borrow();
-    let d_buf = d_array.buffer();
-    let mut d_ref = d_buf.borrow_mut();
+    let b_array = context.create_array_from(&[input.n, input.k], &input.b);
+    let a_allocation = alloc_allocation_with_data::<Cpu, T>(&context, &input.a);
+    let mut d_allocation = context
+        .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create d allocation");
 
     let mut kernel = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
-        .expect("Failed to create MatmulKernel");
+        .expect("Failed to create CPU MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        &context,
         MatmulArguments {
-            a: a_ref.deref(),
+            a: &a_allocation,
             a_offset: 0,
-            b: b_ref.deref(),
+            b: b_array.allocation(),
             ab_scale: 1.0,
             c: MatmulArgumentC::None,
-            d: d_ref.deref_mut(),
+            d: &mut d_allocation,
             batch_dim: input.m as u32,
             input_dim: input.k as u32,
             output_dim: input.n as u32,
@@ -84,9 +81,7 @@ fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(d_ref);
-    d_array.as_slice().to_vec()
+    allocation_to_vec::<Cpu, T>(&d_allocation)
 }
 
 fn run_unified_gemm<T: ArrayElement + Float>(
@@ -95,30 +90,24 @@ fn run_unified_gemm<T: ArrayElement + Float>(
 ) -> Vec<T> {
     let context = MetalContext::new().expect("Failed to create Metal context");
 
-    let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
-    let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
-
-    let a_buf = a_array.buffer();
-    let a_ref = a_buf.borrow();
-    let b_buf = b_array.buffer();
-    let b_ref = b_buf.borrow();
-    let d_buf = d_array.buffer();
-    let mut d_ref = d_buf.borrow_mut();
+    let b_array = context.create_array_from(&[input.n, input.k], &input.b);
+    let a_allocation = alloc_allocation_with_data::<Metal, T>(&context, &input.a);
+    let mut d_allocation = context
+        .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create d allocation");
 
     let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::<Metal>::new(&context).unwrap();
     kernel.encode_with_path(
-        &context,
         MatmulArguments {
-            a: a_ref.deref(),
+            a: &a_allocation,
             a_offset: 0,
-            b: b_ref.deref(),
+            b: b_array.allocation(),
             ab_scale: 1.0,
             c: MatmulArgumentC::None,
-            d: d_ref.deref_mut(),
+            d: &mut d_allocation,
             batch_dim: input.m as u32,
             input_dim: input.k as u32,
             output_dim: input.n as u32,
@@ -127,9 +116,7 @@ fn run_unified_gemm<T: ArrayElement + Float>(
         path,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(d_ref);
-    d_array.as_slice().to_vec()
+    allocation_to_vec::<Metal, T>(&d_allocation)
 }
 
 fn test_simdgroup_mma<T: ArrayElement + Float + Debug + Display>(
@@ -213,8 +200,6 @@ fn test_bf16_unaligned() {
     test_aligned::<bf16>(7, 33, 11, 0.1);
 }
 
-// MxuMma path (requires MXU-eligible hardware; runs on Apple Silicon GPUs that support metal_perf_primitives).
-
 #[uzu_test]
 fn test_mxu_f32_aligned_64() {
     test_mxu_mma::<f32>(64, 64, 64, 0.01);
@@ -239,4 +224,3 @@ fn test_mxu_f32_large_aligned() {
 fn test_mxu_f16_large_aligned() {
     test_mxu_mma::<f16>(128, 256, 128, 0.05);
 }
-

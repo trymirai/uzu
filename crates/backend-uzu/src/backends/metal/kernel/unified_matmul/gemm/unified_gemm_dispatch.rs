@@ -1,6 +1,6 @@
 use crate::backends::{
     common::{
-        Backend, Borrowed,
+        Allocation, Borrowed,
         gpu_types::{
             GemmParams,
             unified_gemm::{
@@ -13,9 +13,7 @@ use crate::backends::{
 
 use super::{GemmWeights, UnifiedGemmSpecialization};
 
-type DenseBuffer = <Metal as Backend>::DenseBuffer;
-
-pub(crate) type GemmWeightsBorrowed<'a> = GemmWeights<Borrowed<'a, DenseBuffer>>;
+pub(crate) type GemmWeightsBorrowed<'a> = GemmWeights<Borrowed<'a, Allocation<Metal>>>;
 
 pub(crate) struct UnifiedGemmDispatch<'a> {
     pub(crate) tiling_config: GemmTilingConfig,
@@ -24,9 +22,9 @@ pub(crate) struct UnifiedGemmDispatch<'a> {
     pub(crate) output_transform: GemmOutputTransformKind,
     pub(crate) alignment: GemmAlignment,
     pub(crate) weights: GemmWeightsBorrowed<'a>,
-    pub(crate) activations: &'a DenseBuffer,
+    pub(crate) activations: &'a Allocation<Metal>,
     pub(crate) activations_offset: usize,
-    pub(crate) result: &'a mut DenseBuffer,
+    pub(crate) result: &'a mut Allocation<Metal>,
     pub(crate) params: GemmParams,
     pub(crate) group_count_x: u32,
     pub(crate) group_count_y: u32,

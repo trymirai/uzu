@@ -223,7 +223,7 @@ impl<B: Backend> Embedding<B> {
                     },
                 }
             },
-            EmbeddingConfig::MLXQuantizedTied {
+            EmbeddingConfig::ScaleBiasQuantizedTied {
                 common: _,
                 group_size,
                 embedding_quantization_mode,
@@ -285,7 +285,7 @@ impl<B: Backend> Embedding<B> {
                     },
                 }
             },
-            EmbeddingConfig::MLXQuantizedUntied {
+            EmbeddingConfig::ScaleBiasQuantizedUntied {
                 common: _,
                 group_size,
                 embedding_quantization_mode,
@@ -364,7 +364,7 @@ impl<B: Backend> Embedding<B> {
                     },
                 }
             },
-            EmbeddingConfig::MLXSemiQuantizedUntied {
+            EmbeddingConfig::ScaleBiasSemiQuantizedUntied {
                 common: _,
                 group_size,
                 embedding_quantization_mode,

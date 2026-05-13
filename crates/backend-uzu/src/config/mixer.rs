@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::{AttentionConfig, ConfigDataType, DeltaNetAttentionConfig, Mamba2Config, ShortConvConfig};
+use super::{AttentionConfig, DeltaNetAttentionConfig, Mamba2Config, ShortConvConfig};
+use crate::DataType;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
@@ -44,7 +45,7 @@ impl MixerConfig {
         }
     }
 
-    pub fn activation_precision(&self) -> ConfigDataType {
+    pub fn activation_precision(&self) -> DataType {
         match self {
             MixerConfig::Attention(c) => c.qkv_projection_config.activation_precision(),
             MixerConfig::Mamba(c) => c.in_projection_config.activation_precision(),
