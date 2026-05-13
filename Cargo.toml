@@ -91,6 +91,7 @@ schemars = { version = "1.2", features = ["derive"] }
 is_close = "0.1"
 anyhow = "1.0.102"
 async-trait = "0.1"
+derive_more = { version = "2", features = ["from", "deref", "as_ref", "display"] }
 bindgen = "0.72"
 walkdir = "2.5"
 depfile = "0.1"

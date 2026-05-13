@@ -6,11 +6,12 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
+        gpu_types::QuantizationMethod,
         kernel::{
             Kernels, TensorAddBiasKernel,
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                QuantizedMatmulKernelEncodable, QuantizedMatmulType,
+                QuantizedMatmulKernelEncodable,
             },
         },
     },
@@ -126,9 +127,9 @@ impl<B: Backend> QuantizedLinear<B> {
         let k_g = (input_dim + config.group_size - 1) / config.group_size;
         let weights_shape = weights_leaf.shape().to_vec();
         let scales_shape = scales_leaf.shape().to_vec();
-        let (quantization_type, zero_points_or_biases) = match parameter_tree.leaf("deq_biases") {
-            Ok(deq_biases_leaf) => {
-                let deq_biases_shape = deq_biases_leaf.shape().to_vec();
+        let (quantization_method, zero_points_or_biases) = match parameter_tree.leaf("deq_biases") {
+            Ok(deq_biases) => {
+                let deq_biases_shape = deq_biases.shape().to_vec();
                 if !(weights_shape == [output_dim, input_dim / packing_divisor]
                     && scales_shape == [output_dim, k_g]
                     && deq_biases_shape == [output_dim, k_g])
@@ -141,16 +142,16 @@ impl<B: Backend> QuantizedLinear<B> {
                     });
                 }
 
-                if deq_biases_leaf.data_type() != kernel_data_type {
+                if deq_biases.data_type() != kernel_data_type {
                     return Err(QuantizedLinearError::InvalidDeqBiasesDataType {
                         expected: kernel_data_type,
-                        got: deq_biases_leaf.data_type(),
+                        got: deq_biases.data_type(),
                     });
                 }
 
                 (
-                    QuantizedMatmulType::Mlx,
-                    deq_biases_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
+                    QuantizationMethod::ScaleBias,
+                    deq_biases.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
                 )
             },
             Err(_) => {
@@ -179,7 +180,7 @@ impl<B: Backend> QuantizedLinear<B> {
                 }
 
                 (
-                    QuantizedMatmulType::ZeroPoint,
+                    QuantizationMethod::ScaleZeroPoint,
                     zero_points_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
                 )
             },
@@ -221,7 +222,7 @@ impl<B: Backend> QuantizedLinear<B> {
                 input_dim,
                 output_dim,
                 mode: config.weight_quantization_mode,
-                quantization_type,
+                quantization_method,
                 use_hadamard: output_hadamard_factors.is_some(),
             },
         )
