@@ -93,10 +93,7 @@ fn kernel_header(
             None => binding.argument.c_type.trim_start_matches("const ").trim(),
         };
         let index = base_index + offset;
-        lines.push(format!(
-            "constant {slot_type} {} [[function_constant({index})]];",
-            binding.slot_name
-        ));
+        lines.push(format!("constant {slot_type} {} [[function_constant({index})]];", binding.slot_name));
     }
 
     for binding in bindings.iter() {
@@ -192,10 +189,7 @@ fn kernel_wrappers(
                 let condition_field = format!("__dsl_buffer_condition_{}_{}", wrapper_name, a.name);
                 match a.argument_condition() {
                     Some(condition) => (
-                        format!(
-                            "{} {} [[buffer({}), function_constant({})]]",
-                            &a.c_type, a.name, i, condition_field,
-                        ),
+                        format!("{} {} [[buffer({}), function_constant({})]]", &a.c_type, a.name, i, condition_field,),
                         Some(format!("constant bool {} = ({});", condition_field, condition)),
                     ),
                     None => (format!("{} {} [[buffer({})]]", &a.c_type, a.name, i), None),
