@@ -58,7 +58,11 @@ impl SpecializeBinding<'_> {
     }
 
     fn alias_target(&self) -> String {
-        if self.enum_type.is_some() { self.typed_name() } else { self.slot_name() }
+        if self.enum_type.is_some() {
+            self.typed_name()
+        } else {
+            self.slot_name()
+        }
     }
 }
 

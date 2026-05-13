@@ -3,7 +3,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Type, parse_quote};
 
-use super::super::{ast::{MetalArgumentType, MetalKernelInfo}, enum_path_rewrite::is_enum_c_type};
+use super::super::{
+    ast::{MetalArgumentType, MetalKernelInfo},
+    enum_path_rewrite::is_enum_c_type,
+};
 use crate::common::enum_paths::EnumPaths;
 
 enum SpecializeLowering {

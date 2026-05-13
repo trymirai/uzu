@@ -364,9 +364,7 @@ impl MetalKernelInfo {
     }
 
     pub fn has_groups_direct(&self) -> bool {
-        self.arguments
-            .iter()
-            .any(|a| matches!(&a.argument_type, MetalArgumentType::Groups(MetalGroupsType::Direct(_))))
+        self.arguments.iter().any(|a| matches!(&a.argument_type, MetalArgumentType::Groups(MetalGroupsType::Direct(_))))
     }
 
     pub fn has_groups_indirect(&self) -> bool {
