@@ -1,8 +1,10 @@
+use std::ops::Range;
+
 use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        Allocation, Backend, Encoder, allocation_as_bytes, allocation_as_bytes_mut,
+        Allocation, Backend, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -47,24 +49,6 @@ pub struct KVCacheLayer<B: Backend> {
     pub values: Allocation<B>,
     pub shape: [usize; 3],
     pub data_type: DataType,
-}
-
-fn copy_rows(
-    source_keys_bytes: &[u8],
-    source_values_bytes: &[u8],
-    destination_keys_bytes: &mut [u8],
-    destination_values_bytes: &mut [u8],
-    row_size: usize,
-    row_pairs: impl IntoIterator<Item = (usize, usize)>,
-) {
-    for (source_row, destination_row) in row_pairs {
-        let source_offset = source_row * row_size;
-        let destination_offset = destination_row * row_size;
-        destination_keys_bytes[destination_offset..destination_offset + row_size]
-            .copy_from_slice(&source_keys_bytes[source_offset..source_offset + row_size]);
-        destination_values_bytes[destination_offset..destination_offset + row_size]
-            .copy_from_slice(&source_values_bytes[source_offset..source_offset + row_size]);
-    }
 }
 
 impl<B: Backend> KVCacheLayer<B> {
@@ -214,7 +198,7 @@ impl<B: Backend> KVCacheLayer<B> {
     pub fn slice(
         &self,
         context: &B::Context,
-        range: std::ops::Range<usize>,
+        range: Range<usize>,
     ) -> Option<KVSlice<B>> {
         match self.state {
             KVCacheLayerState::Full {
@@ -235,12 +219,6 @@ impl<B: Backend> KVCacheLayer<B> {
                 let dtype = self.data_type;
                 let row_size = size_for_shape(&[1, num_groups, head_dim], dtype);
 
-                let slice_shape = [len, num_groups, head_dim];
-                let mut slice_keys = context.create_array_uninitialized(&slice_shape, dtype);
-                let mut slice_values = context.create_array_uninitialized(&slice_shape, dtype);
-                let source_keys_bytes = allocation_as_bytes(&self.keys);
-                let source_values_bytes = allocation_as_bytes(&self.values);
-
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
                     .map(|(offset, _)| {
@@ -252,17 +230,19 @@ impl<B: Backend> KVCacheLayer<B> {
                         }
                     })
                     .collect();
+                let row_pairs = slots.iter().enumerate().map(|(dst_row, &src_row)| (src_row, dst_row));
 
-                let destination_keys_bytes = slice_keys.as_bytes_mut();
-                let destination_values_bytes = slice_values.as_bytes_mut();
-
-                copy_rows(
-                    source_keys_bytes,
-                    source_values_bytes,
-                    destination_keys_bytes,
-                    destination_values_bytes,
+                let slice_shape = [len, num_groups, head_dim];
+                let mut dst_keys = context.create_array_uninitialized(&slice_shape, dtype);
+                let mut dst_values = context.create_array_uninitialized(&slice_shape, dtype);
+                Self::copy_rows(
+                    context,
+                    &self.keys,
+                    dst_keys.allocation_mut(),
+                    &self.values,
+                    dst_values.allocation_mut(),
                     row_size,
-                    slots.iter().enumerate().map(|(destination_row, &source_row)| (source_row, destination_row)),
+                    row_pairs,
                 );
 
                 Some(KVSlice::Window {
@@ -270,8 +250,8 @@ impl<B: Backend> KVCacheLayer<B> {
                     base_ring_offset: ring_offset,
                     base_ring_length: ring_length,
                     slots,
-                    keys: slice_keys,
-                    values: slice_values,
+                    keys: dst_keys,
+                    values: dst_values,
                 })
             },
         }
@@ -279,8 +259,9 @@ impl<B: Backend> KVCacheLayer<B> {
 
     pub fn apply_slice(
         &mut self,
+        context: &B::Context,
         slice: &KVSlice<B>,
-        range: Option<std::ops::Range<usize>>,
+        range: Option<Range<usize>>,
     ) {
         match (slice, &mut self.state) {
             (
@@ -316,68 +297,89 @@ impl<B: Backend> KVCacheLayer<B> {
                 *w_len = *window_length;
                 let [_, num_groups, head_dim] = self.shape;
                 let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
-                let source_keys_bytes = keys.as_bytes();
-                let source_values_bytes = values.as_bytes();
-                let destination_keys_bytes = allocation_as_bytes_mut(&mut self.keys);
-                let destination_values_bytes = allocation_as_bytes_mut(&mut self.values);
-                match range {
+
+                let row_pairs: Option<Box<dyn Iterator<Item = (usize, usize)>>> = match range {
                     None => {
                         *ring_offset = *base_ring_offset;
                         *ring_length = *base_ring_length;
-
-                        copy_rows(
-                            source_keys_bytes,
-                            source_values_bytes,
-                            destination_keys_bytes,
-                            destination_values_bytes,
-                            row_size,
-                            slots
-                                .iter()
-                                .enumerate()
-                                .map(|(source_row, &destination_row)| (source_row, destination_row)),
-                        );
+                        let pairs = slots.iter().enumerate().map(|(src_row, &dst_row)| (src_row, dst_row));
+                        Some(Box::new(pairs))
                     },
                     Some(r) => {
                         let len = r.end.saturating_sub(r.start);
                         if len == 0 {
-                            return;
-                        }
-
-                        let accepted = r.start;
-                        let base_len = *base_ring_length;
-                        let w = *window_length;
-
-                        let (new_offset, new_len) = if base_len < w {
-                            let after = base_len.saturating_add(accepted);
-                            if after <= w {
-                                (*base_ring_offset, after)
-                            } else {
-                                let overflow = after - w;
-                                ((base_ring_offset + overflow) % w, w)
-                            }
+                            None
                         } else {
-                            ((base_ring_offset + accepted) % w, w)
-                        };
+                            let accepted = r.start;
+                            let base_len = *base_ring_length;
+                            let w = *window_length;
 
-                        *ring_offset = new_offset;
-                        *ring_length = new_len;
+                            let (new_offset, new_len) = if base_len < w {
+                                let after = base_len.saturating_add(accepted);
+                                if after <= w {
+                                    (*base_ring_offset, after)
+                                } else {
+                                    let overflow = after - w;
+                                    ((base_ring_offset + overflow) % w, w)
+                                }
+                            } else {
+                                ((base_ring_offset + accepted) % w, w)
+                            };
 
-                        copy_rows(
-                            source_keys_bytes,
-                            source_values_bytes,
-                            destination_keys_bytes,
-                            destination_values_bytes,
-                            row_size,
-                            slots[r.clone()]
-                                .iter()
-                                .enumerate()
-                                .map(|(index, &destination_row)| (r.start + index, destination_row)),
-                        );
+                            *ring_offset = new_offset;
+                            *ring_length = new_len;
+
+                            let pairs =
+                                slots[r.clone()].iter().enumerate().map(move |(i, &dst_row)| (r.start + i, dst_row));
+                            Some(Box::new(pairs))
+                        }
                     },
-                }
+                };
+                let Some(row_pairs) = row_pairs else {
+                    return;
+                };
+
+                Self::copy_rows(
+                    context,
+                    keys.allocation(),
+                    &mut self.keys,
+                    values.allocation(),
+                    &mut self.values,
+                    row_size,
+                    row_pairs,
+                );
             },
             _ => {},
         }
+    }
+
+    fn copy_rows(
+        context: &B::Context,
+        src_keys: &Allocation<B>,
+        dst_keys: &mut Allocation<B>,
+        src_values: &Allocation<B>,
+        dst_values: &mut Allocation<B>,
+        row_size: usize,
+        row_pairs: impl IntoIterator<Item = (usize, usize)>,
+    ) {
+        let mut encoder = Encoder::new(context).expect("Failed to create Encoder");
+        for (src_row, dst_row) in row_pairs {
+            let src_offset = src_row * row_size;
+            let dst_offset = dst_row * row_size;
+            encoder.encode_copy(
+                src_keys,
+                src_offset..src_offset + row_size,
+                dst_keys,
+                dst_offset..dst_offset + row_size,
+            );
+            encoder.encode_copy(
+                src_values,
+                src_offset..src_offset + row_size,
+                dst_values,
+                dst_offset..dst_offset + row_size,
+            );
+        }
+        encoder.end_encoding().submit().wait_until_completed().expect("Failed to copy rows");
     }
 }
 

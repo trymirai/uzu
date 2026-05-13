@@ -311,7 +311,7 @@ fn kv_cache_slice_apply_contiguous_window() {
     overwrite_allocation(&mut layer.keys, &[(0, -1.0), (1, -2.0)]);
     overwrite_allocation(&mut layer.values, &[(0, -3.0), (1, -4.0)]);
 
-    layer.apply_slice(&slice, None);
+    layer.apply_slice(&context, &slice, None);
 
     let keys_after: Vec<f32> = allocation_to_vec(&layer.keys);
     let values_after: Vec<f32> = allocation_to_vec(&layer.values);
@@ -342,7 +342,7 @@ fn kv_cache_slice_apply_wrap_window() {
     overwrite_allocation(&mut layer.keys, &[(2, -11.0), (3, -12.0)]);
     overwrite_allocation(&mut layer.values, &[(2, -13.0), (3, -14.0)]);
 
-    layer.apply_slice(&slice, None);
+    layer.apply_slice(&context, &slice, None);
 
     let keys_after: Vec<f32> = allocation_to_vec(&layer.keys);
     let values_after: Vec<f32> = allocation_to_vec(&layer.values);
@@ -375,7 +375,7 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         *prefix_len = 1;
     }
 
-    layer.apply_slice(&slice, None);
+    layer.apply_slice(&context, &slice, None);
 
     if let KVCacheLayerState::Full {
         prefix_len,

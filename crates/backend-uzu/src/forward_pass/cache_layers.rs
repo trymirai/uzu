@@ -351,13 +351,14 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn apply_slice(
         &mut self,
+        context: &B::Context,
         slice: &CacheLayersSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
         for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
-                    kv.apply_slice(&s, range.clone());
+                    kv.apply_slice(context, &s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
@@ -391,7 +392,7 @@ impl<B: Backend> CacheLayers<B> {
                     let copy_rows = source.prefix_segment_length();
                     if copy_rows > 0 && matches!(source.state, KVCacheLayerState::Windowed { .. }) {
                         let slice = source.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
-                        destination.apply_slice(&slice, None);
+                        destination.apply_slice(context, &slice, None);
                     }
                     destination.state = source.state.clone();
                 },
