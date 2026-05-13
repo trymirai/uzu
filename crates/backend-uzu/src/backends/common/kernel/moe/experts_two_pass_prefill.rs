@@ -50,37 +50,32 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         encoder: &mut Encoder<B>,
         args: MoeExpertsTwoPassArguments<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
-        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
-        encoder.encode_fill(&mut hidden, 0);
-
-        self.tile_map.encode_counts(
+        let tile_counts = self.tile_map.encode_counts(
             encoder,
             MoeTileCountsArguments {
                 offsets: args.expert_offsets,
-                tile_counts: &mut *args.tile_counts,
                 e: args.e,
             },
-        );
-        self.tile_map.encode_scan(
+        )?;
+
+        let tile_scan = self.tile_map.encode_scan(
             encoder,
             MoeTileScanArguments {
-                tile_counts: &*args.tile_counts,
-                tile_offsets: &mut *args.tile_offsets,
-                total_tiles: &mut *args.total_tiles,
+                tile_counts: &tile_counts,
                 e: args.e,
             },
-        );
-        self.tile_map.encode_build_map(
+        )?;
+
+        let tile_map = self.tile_map.encode_build_map(
             encoder,
             MoeTileMapBuildArguments {
                 expert_offsets: args.expert_offsets,
-                tile_offsets: &*args.tile_offsets,
-                tile_counts: &*args.tile_counts,
-                tile_map: &mut *args.tile_map,
+                tile_offsets: &tile_scan.tile_offsets,
+                tile_counts: &tile_counts,
+                total_rows: args.total_rows,
                 e: args.e,
             },
-        );
+        )?;
         let d_model_u32 = args.d_model as u32;
         let d_ff_u32 = args.d_ff as u32;
         const COL_TILE_FF: u32 = 32; // Must match PASSA_BN in kernel
@@ -95,17 +90,18 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
         } else {
             (d_model_u32 + COL_TILE_MODEL - 1) / COL_TILE_MODEL
         };
-        self.tile_map.encode_dispatch_args(
+        let pass_a_dispatch_args = self.tile_map.encode_dispatch_args(
             encoder,
             MoeTileDispatchArguments {
-                total_tiles: &*args.total_tiles,
-                dispatch_args: &mut *args.dispatch_args,
+                total_tiles: &tile_scan.total_tiles,
                 num_tiles_x: n_tiles_ff,
             },
-        );
+        )?;
 
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx = DTYPES.iter().position(|t| *t == args.data_type).unwrap();
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
+        encoder.encode_fill(&mut hidden, 0);
 
         let kernel_pass_a = &self.pass_a_indirect[gate_idx][dtype_idx];
         kernel_pass_a.encode(
@@ -122,18 +118,20 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             args.up_clip_min,
             args.up_clip_max,
             args.silu_alpha,
-            &*args.tile_map,
-            &*args.dispatch_args,
+            &tile_map,
+            &pass_a_dispatch_args,
             encoder,
         );
 
-        let dispatch_args = MoeTileDispatchArguments {
-            total_tiles: &*args.total_tiles,
-            dispatch_args: &mut *args.dispatch_args,
-            num_tiles_x: n_tiles_model,
-        };
-        self.tile_map.encode_dispatch_args(encoder, dispatch_args);
+        let pass_b_dispatch_args = self.tile_map.encode_dispatch_args(
+            encoder,
+            MoeTileDispatchArguments {
+                total_tiles: &tile_scan.total_tiles,
+                num_tiles_x: n_tiles_model,
+            },
+        )?;
 
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
         let kernel_pass_b = &self.pass_b_indirect[dtype_idx];
         kernel_pass_b.encode(
             &hidden,
@@ -144,8 +142,8 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             args.d_model as u32,
             args.d_ff as u32,
             args.e as u32,
-            &*args.tile_map,
-            &*args.dispatch_args,
+            &tile_map,
+            &pass_b_dispatch_args,
             encoder,
         );
         Ok(output)
@@ -155,21 +153,14 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
 pub struct MoeExpertsTwoPassArguments<'a, B: Backend> {
     pub x_perm: &'a Allocation<B>,
     pub expert_offsets: &'a Allocation<B>,
-    pub row_expert_map: &'a mut Allocation<B>,
     pub w13_all: &'a Allocation<B>,
     pub w2_all: &'a Allocation<B>,
     pub up_biases: &'a Allocation<B>,
     pub down_biases: &'a Allocation<B>,
-    pub tile_counts: &'a mut Allocation<B>,
-    pub tile_offsets: &'a mut Allocation<B>,
-    pub tile_map: &'a mut Allocation<B>,
-    pub total_tiles: &'a mut Allocation<B>,
-    pub dispatch_args: &'a mut Allocation<B>,
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,
     pub e: usize,
-    pub num_tiles_k: u32,
     pub gating_code: u32,
     pub gate_clip_min: f32,
     pub gate_clip_max: f32,

@@ -264,8 +264,6 @@ impl<B: Backend> DeltaNetMixer<B> {
             encoder.allocate_scratch(size_for_shape(&[suffix_length * self.config.num_heads], DataType::F32))?;
         let mut prep_decay =
             encoder.allocate_scratch(size_for_shape(&[suffix_length * self.config.num_heads], DataType::F32))?;
-        let mut out =
-            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.config.value_dim()], self.data_type))?;
 
         self.prefill_prep.encode(
             in_proj,
@@ -283,6 +281,8 @@ impl<B: Backend> DeltaNetMixer<B> {
             encoder,
         );
 
+        let mut out =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.config.value_dim()], self.data_type))?;
         self.delta_net_prefill.encode(
             &prep_q_norm,
             &prep_k_norm,

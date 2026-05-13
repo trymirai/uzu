@@ -1,5 +1,6 @@
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
         ActivationConfig, Allocation, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel,
     },
@@ -9,6 +10,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     kernel: <B::Kernels as Kernels>::MlpGateActMulKernel,
     activation: ActivationConfig,
     hidden_dim: usize,
+    data_type: DataType,
     hadamard_factors: Option<Allocation<B>>,
 }
 
@@ -25,6 +27,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             kernel,
             activation,
             hidden_dim,
+            data_type,
             hadamard_factors,
         })
     }
@@ -33,21 +36,21 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         &self,
         encoder: &mut Encoder<B>,
         fused_up: &Allocation<B>,
-        hidden: &mut Allocation<B>,
-        m: i32,
-    ) -> Result<(), B::Error> {
+        batch_dim: usize,
+    ) -> Result<Allocation<B>, B::Error> {
         if self.activation.act_type() == ActivationType::IDENTITY {
             panic!("Identity activation is not supported for kernel")
         }
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
         self.kernel.encode(
             fused_up,
-            hidden,
+            &mut hidden,
             self.hadamard_factors.as_ref(),
             self.hidden_dim as i32,
-            m,
+            batch_dim as i32,
             self.activation.act_type(),
             encoder,
         );
-        Ok(())
+        Ok(hidden)
     }
 }

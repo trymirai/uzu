@@ -1,5 +1,6 @@
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{SSDPrefill64Kernel, SSDPrefillKernel, SSDPrefillSequentialKernel},
@@ -20,7 +21,6 @@ pub struct SSDPrefillArguments<'a, B: Backend> {
     pub d: &'a Allocation<B>,
     pub z: &'a Allocation<B>,
     pub state: &'a mut Allocation<B>,
-    pub y: &'a mut Allocation<B>,
     pub suffix_len: usize,
     pub group_size: u32,
     pub state_size: u32,
@@ -36,6 +36,7 @@ pub struct SSDPrefillKernels<B: Backend> {
     single: <B::Kernels as Kernels>::SSDPrefillKernel,
     single_64: <B::Kernels as Kernels>::SSDPrefill64Kernel,
     sequential: <B::Kernels as Kernels>::SSDPrefillSequentialKernel,
+    data_type: DataType,
 }
 
 impl<B: Backend> SSDPrefillKernels<B> {
@@ -50,6 +51,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
             single,
             single_64,
             sequential,
+            data_type,
         })
     }
 
@@ -58,11 +60,13 @@ impl<B: Backend> SSDPrefillKernels<B> {
         encoder: &mut Encoder<B>,
         args: SSDPrefillArguments<B>,
         mode: SSDPrefillMode,
-    ) {
+    ) -> Result<Allocation<B>, B::Error> {
         let x_strides: [u32; 3] = args.x_strides.map(|x| x as u32);
         let dt_strides: [u32; 2] = args.dt_strides.map(|x| x as u32);
         let cb_strides: [u32; 3] = args.cb_strides.map(|x| x as u32);
         let state_strides: [u32; 3] = args.state_strides.map(|x| x as u32);
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[args.suffix_len, args.channels * args.head_dim], self.data_type))?;
 
         if mode == SSDPrefillMode::SinglePass {
             if args.state_size == 64 {
@@ -74,7 +78,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
                     args.d,
                     args.z,
                     args.state,
-                    args.y,
+                    &mut output,
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
@@ -95,7 +99,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
                     args.d,
                     args.z,
                     args.state,
-                    args.y,
+                    &mut output,
                     args.suffix_len as u32,
                     args.group_size,
                     args.state_size,
@@ -117,7 +121,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
                 args.d,
                 args.z,
                 args.state,
-                args.y,
+                &mut output,
                 args.suffix_len as u32,
                 args.group_size,
                 args.state_size,
@@ -130,6 +134,7 @@ impl<B: Backend> SSDPrefillKernels<B> {
                 encoder,
             )
         }
+        Ok(output)
     }
 }
 

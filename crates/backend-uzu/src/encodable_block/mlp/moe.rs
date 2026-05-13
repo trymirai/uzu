@@ -212,7 +212,6 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 
         let e = self.moe_config.num_routed_experts;
         let k = self.moe_config.num_active_routed_experts;
-        let k_tile = 128;
         let total_rows = suffix_length * k;
         let num_blocks = suffix_length.div_ceil(256).max(1);
         let num_tiles = e.div_ceil(512).max(1);
@@ -303,24 +302,18 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             encoder,
         );
 
-        let mut x_perm = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
-        if suffix_length > 0 && k > 0 {
-            encoder.encode_fill(&mut x_perm, 0);
-        }
-
-        self.gather_kernels.encode(
+        let x_perm = self.gather_kernels.encode(
             encoder,
             self.data_type,
             MoeGatherArguments {
                 x: &input,
                 bucketed_ids: &bucketed_ids,
-                x_perm: &mut x_perm,
                 sumk: &sumk,
                 t: suffix_length,
                 k,
                 d_model: self.model_dim,
             },
-        );
+        )?;
 
         let gating_code = Self::gating_code_from_activation(&self.moe_config.expert_config.activation.act_type());
 
@@ -331,38 +324,20 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let up_clip_max = self.moe_config.expert_config.up_clipping[1];
         let silu_alpha = self.moe_config.expert_config.activation.alpha();
 
-        let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;
-        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[e], DataType::U32))?;
-        let mut tile_offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
-        let h_blocks = self.hidden_dim.div_ceil(4);
-        let mut tile_map =
-            encoder.allocate_scratch(size_for_shape(&[total_rows * h_blocks.max(1) * 3], DataType::U32))?;
-        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
-        let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
-
         let y_partial = if suffix_length == 1 {
-            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
-
             self.experts_two_pass_decode_kernel.encode(
                 encoder,
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm,
                     expert_offsets: &offsets,
-                    row_expert_map: &mut row_expert_map,
                     w13_all: &self.shared_weights.w13,
                     w2_all: &self.shared_weights.w2,
                     up_biases: &self.shared_weights.up_biases,
                     down_biases: &self.shared_weights.down_biases,
-                    tile_counts: &mut tile_counts,
-                    tile_offsets: &mut tile_offsets,
-                    tile_map: &mut tile_map,
-                    total_tiles: &mut total_tiles,
-                    dispatch_args: &mut dispatch_args,
                     total_rows,
                     d_model: self.model_dim,
                     d_ff: self.hidden_dim,
                     e,
-                    num_tiles_k,
                     gating_code,
                     gate_clip_min,
                     gate_clip_max,
@@ -373,25 +348,17 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
                 },
             )?
         } else {
-            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
             let args = MoeExpertsTwoPassArguments {
                 x_perm: &x_perm,
                 expert_offsets: &offsets,
-                row_expert_map: &mut row_expert_map,
                 w13_all: &self.shared_weights.w13,
                 w2_all: &self.shared_weights.w2,
                 up_biases: &self.shared_weights.up_biases,
                 down_biases: &self.shared_weights.down_biases,
-                tile_counts: &mut tile_counts,
-                tile_offsets: &mut tile_offsets,
-                tile_map: &mut tile_map,
-                total_tiles: &mut total_tiles,
-                dispatch_args: &mut dispatch_args,
                 total_rows,
                 d_model: self.model_dim,
                 d_ff: self.hidden_dim,
                 e,
-                num_tiles_k,
                 gating_code,
                 gate_clip_min,
                 gate_clip_max,

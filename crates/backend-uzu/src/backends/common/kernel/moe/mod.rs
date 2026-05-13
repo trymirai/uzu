@@ -10,9 +10,10 @@ pub use experts_two_pass_decode::MoeExpertsTwoPassDecodeBlock;
 pub use experts_two_pass_prefill::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock};
 pub use gather::{MoeGatherArguments, MoeGatherKernels};
 pub use tiles_map::{
-    MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels, MoeTileScanArguments,
+    MoeTileCountsArguments, MoeTileDispatchArguments, MoeTileMapBuildArguments, MoeTileMapKernels,
+    MoeTileScanArguments, MoeTileScanOutput,
 };
 pub use tiles_pass_a::{
     MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments, MoePassATileDispatchArguments,
-    MoePassATileKernels, MoePassATileScanArguments,
+    MoePassATileKernels, MoePassATileScanArguments, MoePassATileScanOutput,
 };
