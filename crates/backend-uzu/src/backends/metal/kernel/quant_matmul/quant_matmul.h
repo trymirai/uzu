@@ -706,7 +706,7 @@ template <
     const int BM = 32,
     const int BK = 32,
     const int BN = 32,
-    const QuantizationMethod quant_method = QuantizationMethod::AWQ,
+    const QuantizationMethod quant_method = QuantizationMethod::ScaleZeroPoint,
     const int WM = 2,
     const int WN = 2>
 void qmm_transposed_impl(
@@ -756,7 +756,7 @@ void qmm_transposed_impl(
   loader_x_t loader_x(x_block, in_vec_size, Xs, simd_group, simd_lane);
   mma_t mma_op(simd_group, simd_lane);
 
-  if (quant_method == QuantizationMethod::MLX) {
+  if (quant_method == QuantizationMethod::ScaleBias) {
     using loader_w_t = QuantizedBlockLoaderMlx<
         T,
         BN,

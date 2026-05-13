@@ -1,7 +1,9 @@
 mod activation_config;
+mod allocation_access;
 mod allocator;
 mod backend;
 mod buffer;
+mod buffer_range;
 mod command_buffer;
 mod context;
 mod dense_buffer;
@@ -10,14 +12,16 @@ mod event;
 pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
-pub mod storage;
+mod sparse_buffer;
 
 pub use activation_config::ActivationConfig;
+pub use allocation_access::{
+    AllocationAccessError, allocation_as_bytes, allocation_as_bytes_mut, allocation_copy_from_slice, allocation_to_vec,
+};
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
-pub use buffer::{
-    AsBufferRangeMut, AsBufferRangeRef, Buffer, BufferGpuAddressRangeExt, BufferRangeMut, BufferRangeRef,
-};
+pub use buffer::{Buffer, BufferGpuAddressRangeExt};
+pub use buffer_range::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef};
 pub use command_buffer::{
     AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
     CommandBufferInitial, CommandBufferPending,
@@ -28,4 +32,4 @@ pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
-pub use storage::{Borrowed, Storage};
+pub use sparse_buffer::SparseBuffer;

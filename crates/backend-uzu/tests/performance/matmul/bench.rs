@@ -4,7 +4,7 @@ use backend_uzu::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -13,23 +13,26 @@ use backend_uzu::{
         metal::Metal,
     },
 };
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{dispatch::BenchDispatchPath, error::BenchError, output::PerfResult, shapes::TestShape};
 
 type Ctx = <Metal as Backend>::Context;
-type Buf = Retained<ProtocolObject<dyn MTLBuffer>>;
 
 const WARMUP_ITERATIONS: usize = 3;
 const BENCHMARK_ITERATIONS: usize = 10;
 
 fn fill_buffer_random(
-    buffer: &ProtocolObject<dyn MTLBuffer>,
+    allocation: &mut Allocation<Metal>,
     byte_count: usize,
 ) {
-    let pointer = buffer.contents().as_ptr() as *mut u8;
-    let slice = unsafe { std::slice::from_raw_parts_mut(pointer, byte_count) };
+    let buffer_range = allocation.as_buffer_range_mut();
+    let range = buffer_range.range();
+    let slice = unsafe {
+        std::slice::from_raw_parts_mut(
+            (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+            byte_count,
+        )
+    };
     for (i, byte) in slice.iter_mut().enumerate() {
         *byte = (i % 251) as u8;
     }
@@ -39,29 +42,26 @@ fn encode_and_run(
     context: &Ctx,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
     shape: &TestShape,
-    a_buffer: &Buf,
-    b_buffer: &Buf,
-    d_buffer: &mut Buf,
-    path: BenchDispatchPath,
+    a_allocation: &backend_uzu::backends::common::Allocation<Metal>,
+    b_allocation: &backend_uzu::backends::common::Allocation<Metal>,
+    d_allocation: &mut backend_uzu::backends::common::Allocation<Metal>,
 ) -> Result<f64, BenchError> {
     let mut encoder = Encoder::new(context).map_err(|_| BenchError::CommandBuffer)?;
 
-    let arguments = MatmulArguments {
-        a: a_buffer,
-        a_offset: 0,
-        b: b_buffer,
-        ab_scale: 1.0,
-        c: MatmulArgumentC::None,
-        d: d_buffer,
-        batch_dim: shape.batch as u32,
-        input_dim: shape.input_dim as u32,
-        output_dim: shape.output_dim as u32,
-    };
-
-    match path.metal_dispatch() {
-        None => kernel.encode(context, arguments, &mut encoder),
-        Some(metal_path) => kernel.encode_with_path(context, arguments, &mut encoder, metal_path),
-    }
+    kernel.encode(
+        MatmulArguments {
+            a: a_allocation,
+            a_offset: 0,
+            b: b_allocation,
+            ab_scale: 1.0,
+            c: MatmulArgumentC::None,
+            d: d_allocation,
+            batch_dim: shape.batch as u32,
+            input_dim: shape.input_dim as u32,
+            output_dim: shape.output_dim as u32,
+        },
+        &mut encoder,
+    );
 
     let completed = encoder.end_encoding().submit().wait_until_completed().map_err(|_| BenchError::CommandBuffer)?;
 
@@ -82,35 +82,32 @@ fn run_benchmark(
     let b_byte_count = shape.output_dim * shape.input_dim * elem_size;
     let d_byte_count = shape.batch * shape.output_dim * elem_size;
 
-    let (a_buffer, b_buffer, mut d_buffer) = match (
-        context.device.new_buffer(a_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-        context.device.new_buffer(b_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-        context.device.new_buffer(d_byte_count, MTLResourceOptions::STORAGE_MODE_SHARED),
-    ) {
-        (Some(a), Some(b), Some(d)) => (a, b, d),
-        _ => return Err(BenchError::BufferAllocation),
-    };
+    let mut a_allocation =
+        context.create_allocation(a_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
+    let mut b_allocation =
+        context.create_allocation(b_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
+    let mut d_allocation =
+        context.create_allocation(d_byte_count, AllocationType::Global).map_err(|_| BenchError::BufferAllocation)?;
 
-    fill_buffer_random(&a_buffer, a_byte_count);
-    fill_buffer_random(&b_buffer, b_byte_count);
+    fill_buffer_random(&mut a_allocation, a_byte_count);
+    fill_buffer_random(&mut b_allocation, b_byte_count);
 
     for iteration in 0..WARMUP_ITERATIONS {
-        encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, path).map_err(|source| {
-            BenchError::Warmup {
-                iteration,
-                source: Box::new(source),
-            }
-        })?;
-    }
-
-    let mut gpu_time_total_ms = 0.0;
-    for iteration in 0..BENCHMARK_ITERATIONS {
-        let gpu_ms = encode_and_run(context, &mut kernel, shape, &a_buffer, &b_buffer, &mut d_buffer, path).map_err(
-            |source| BenchError::Benchmark {
+        encode_and_run(context, &mut kernel, shape, &a_allocation, &b_allocation, &mut d_allocation).map_err(
+            |source| BenchError::Warmup {
                 iteration,
                 source: Box::new(source),
             },
         )?;
+    }
+
+    let mut gpu_time_total_ms = 0.0;
+    for iteration in 0..BENCHMARK_ITERATIONS {
+        let gpu_ms = encode_and_run(context, &mut kernel, shape, &a_allocation, &b_allocation, &mut d_allocation)
+            .map_err(|source| BenchError::Benchmark {
+                iteration,
+                source: Box::new(source),
+            })?;
         gpu_time_total_ms += gpu_ms;
     }
 

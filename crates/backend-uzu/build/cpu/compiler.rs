@@ -16,6 +16,7 @@ use crate::common::{
     compiler::Compiler,
     enum_paths::EnumPaths,
     gpu_types::GpuTypes,
+    identifiers::{ArgumentName, KernelName, KernelPath},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
 };
 
@@ -40,7 +41,7 @@ impl FunctionArgument {
         enum_paths: &EnumPaths,
     ) -> Option<KernelArgument> {
         Some(KernelArgument {
-            name: self.name.to_string().into_boxed_str(),
+            name: ArgumentName::from(self.name.to_string()),
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
                 FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
@@ -140,8 +141,8 @@ impl CpuCompiler {
         &self,
         source_path: PathBuf,
         enum_paths: &EnumPaths,
-    ) -> anyhow::Result<(Box<[Box<str>]>, Box<[Kernel]>)> {
-        let src_rel_path: Box<[Box<str>]> = source_path
+    ) -> anyhow::Result<(KernelPath, Box<[Kernel]>)> {
+        let src_rel_path: KernelPath = source_path
             .strip_prefix(&self.src_dir)
             .context("source is not in src_dir")?
             .with_extension("")
@@ -149,7 +150,7 @@ impl CpuCompiler {
             .to_str()
             .unwrap()
             .split("/")
-            .map(|s| s.to_string().into_boxed_str())
+            .map(|s| s.to_string())
             .collect();
 
         let source_contents = fs::read_to_string(&source_path).context("cannot read the source file")?;
@@ -593,7 +594,7 @@ impl CpuCompiler {
         write_tokens(tokens, &out_path).context("cannot write bindings")?;
 
         Ok(Kernel {
-            name: kernel_ident.to_string().into_boxed_str(),
+            name: KernelName::from(kernel_ident.to_string()),
             parameters: kernel_parameters,
             arguments: kernel_arguments,
         })
@@ -618,7 +619,7 @@ impl CpuCompiler {
 
     fn bindgen<'a>(
         &self,
-        objects: impl IntoIterator<Item = &'a (Box<[Box<str>]>, Box<[Kernel]>)> + Clone,
+        objects: impl IntoIterator<Item = &'a (KernelPath, Box<[Kernel]>)> + Clone,
     ) -> anyhow::Result<()> {
         let out_path = self.build_dir.join("dsl.rs");
 
@@ -651,18 +652,17 @@ impl CpuCompiler {
 impl Compiler for CpuCompiler {
     async fn build(
         &self,
-        gpu_types: &GpuTypes,
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
-        let enum_paths = EnumPaths::from_gpu_types(gpu_types);
-
+        _gpu_types: &GpuTypes,
+        enum_paths: &EnumPaths,
+    ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         let objects = WalkDir::new(&self.src_dir)
             .into_iter()
             .filter_map(|entry| entry.ok())
             .filter(|entry| {
                 entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs")
             })
-            .map(|entry| self.compile(entry.into_path(), &enum_paths))
-            .collect::<anyhow::Result<Vec<(Box<[Box<str>]>, Box<[Kernel]>)>>>()
+            .map(|entry| self.compile(entry.into_path(), enum_paths))
+            .collect::<anyhow::Result<Vec<(KernelPath, Box<[Kernel]>)>>>()
             .context("cannot compile cpu sources")?;
 
         self.bindgen(&objects).context("cannot generate bindings")?;

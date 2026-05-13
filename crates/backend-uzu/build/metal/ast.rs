@@ -1,8 +1,9 @@
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::common::kernel::{
-    Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType,
+use crate::common::{
+    identifiers::{ArgumentName, KernelName},
+    kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
 };
 
 pub type MetalAstNode = clang_ast::Node<MetalAstKind>;
@@ -90,25 +91,25 @@ fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box
         .collect()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum MetalBufferAccess {
     Read,
     ReadWrite,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetalConstantType {
     Scalar,
     Array(Option<Box<str>>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetalGroupsType {
     Direct(Box<str>),
     Indirect,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetalArgumentType {
     Buffer(MetalBufferAccess),
     Constant((Box<str>, MetalConstantType)),
@@ -122,9 +123,10 @@ pub enum MetalArgumentType {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetalArgument {
-    pub name: Box<str>,
+    pub name: ArgumentName,
     pub c_type: Box<str>,
-    pub annotation: Option<Box<[Box<str>]>>,
+    pub argument_type: MetalArgumentType,
+    pub condition: Option<Box<str>>,
     pub source: Box<str>,
 }
 
@@ -178,129 +180,152 @@ impl MetalArgument {
 
         let start_offset = range.begin.spelling_loc.context("no start location in source range")?.offset;
         let end_offset = range.end.spelling_loc.context("no end location in source range")?.offset;
-        let source =
+        let source: Box<str> =
             str::from_utf8(&source.as_bytes()[start_offset..=end_offset]).context("source range is not utf-8")?.into();
 
+        let (argument_type, condition) = parse_argument_annotation(&c_type, &source, annotation.as_deref())?;
+
         Ok(Self {
-            name,
+            name: ArgumentName::from(name),
             c_type,
-            annotation,
+            argument_type,
+            condition,
             source,
         })
     }
 
-    pub fn argument_condition(&self) -> anyhow::Result<Option<&str>> {
-        if let Some(annotation) = self.annotation.as_ref()
-            && annotation.first().map(|s| s.as_ref()) == Some("dsl.optional")
-        {
-            assert!(
-                matches!(self.argument_type().unwrap(), MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)),
-                "Only a buffer or a constant can be optional"
-            );
-            if annotation.len() != 2 {
-                bail!("dsl.optional takes 1 argument, found {}", annotation.len() - 1);
-            }
-            Ok(Some(annotation[1].as_ref()))
-        } else {
-            Ok(None)
-        }
+    pub fn argument_condition(&self) -> Option<&str> {
+        self.condition.as_deref()
     }
 
-    pub fn argument_type(&self) -> anyhow::Result<MetalArgumentType> {
-        if let Some(annotation) = self.annotation.as_ref()
-            && annotation.first().map(|s| s.as_ref()) != Some("dsl.optional")
-        {
-            let mut annotation = annotation.to_vec();
-
-            if annotation.is_empty() {
-                bail!("empty annotation");
-            }
-            let annotation_key = annotation.remove(0);
-
-            match &*annotation_key {
-                "dsl.specialize" => {
-                    if !annotation.is_empty() {
-                        bail!("dsl.specialize takes no arguments, got {}", annotation.len());
-                    }
-                    let rust_type = Self::scalar_type_to_rust(&self.c_type)?;
-                    Ok(MetalArgumentType::Specialize(rust_type.into()))
-                },
-                "dsl.axis" => {
-                    if annotation.len() != 2 {
-                        bail!("dsl.axis requires 2 arguments, got {}", annotation.len());
-                    }
-                    Ok(MetalArgumentType::Axis(annotation.remove(0), annotation.remove(0)))
-                },
-                "dsl.groups" => {
-                    if annotation.len() != 1 {
-                        bail!("dsl.groups requires 1 argument, got {}", annotation.len());
-                    }
-                    let dim = annotation.remove(0);
-                    match dim.as_ref() {
-                        "INDIRECT" => Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)),
-                        _ => Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(dim))),
-                    }
-                },
-                "dsl.threads" => {
-                    if annotation.len() != 1 {
-                        bail!("dsl.threads requires 1 argument, got {}", annotation.len());
-                    }
-                    Ok(MetalArgumentType::Threads(annotation.remove(0)))
-                },
-                _ => bail!("unknown annotation: {annotation_key}"),
-            }
-        } else if self.c_type.as_ref() == "ThreadContext" || self.c_type.as_ref() == "const ThreadContext" {
-            Ok(MetalArgumentType::ThreadContext)
-        } else if self.c_type.contains("device") && self.c_type.contains('*') && !self.c_type.contains('&') {
-            Ok(MetalArgumentType::Buffer(if self.c_type.contains("const") {
-                MetalBufferAccess::Read
-            } else {
-                MetalBufferAccess::ReadWrite
-            }))
-        } else if let ["const", "constant", c_type_scalar, "&"] =
-            self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
-        {
-            Ok(MetalArgumentType::Constant((
-                Self::scalar_type_to_rust(c_type_scalar)?.into(),
-                MetalConstantType::Scalar,
-            )))
-        } else if let ["const", "constant", c_type_scalar, "*"] =
-            self.c_type.split_whitespace().collect::<Vec<_>>().as_slice()
-        {
-            let size = if self.source.contains('[') && self.source.contains(']') {
-                let lbracket = self.source.rfind('[').context("sized constant missing size bracket")? + 1;
-                let rbracket = self.source.rfind(']').context("sized constant missing size bracket")?;
-                let size_expr = &self.source[lbracket..rbracket];
-                Some(size_expr.into())
-            } else {
-                None
-            };
-
-            Ok(MetalArgumentType::Constant((
-                Self::scalar_type_to_rust(c_type_scalar)?.into(),
-                MetalConstantType::Array(size),
-            )))
-        } else if self.c_type.contains("threadgroup") && self.c_type.contains('*') {
-            let lbracket = self.source.rfind('[').context("threadgroup missing size bracket")? + 1;
-            let rbracket = self.source.rfind(']').context("threadgroup missing size bracket")?;
-            let size_expr = &self.source[lbracket..rbracket];
-            Ok(MetalArgumentType::Shared(Some(size_expr.into())))
-        } else if self.c_type.contains("threadgroup") && self.c_type.contains('&') {
-            Ok(MetalArgumentType::Shared(None))
-        } else {
-            bail!("cannot parse c type: {}", self.c_type);
-        }
+    pub fn argument_type(&self) -> &MetalArgumentType {
+        &self.argument_type
     }
 
     fn to_parameter(&self) -> Option<KernelParameter> {
-        match self.argument_type().unwrap() {
+        match self.argument_type() {
             MetalArgumentType::Specialize(ty) => Some(KernelParameter {
-                name: self.name.clone(),
-                ty: KernelParameterType::Value(ty),
+                name: Box::from(&*self.name),
+                ty: KernelParameterType::Value(ty.clone()),
             }),
             _ => None,
         }
     }
+}
+
+fn parse_argument_annotation(
+    c_type: &str,
+    source: &str,
+    annotation: Option<&[Box<str>]>,
+) -> anyhow::Result<(MetalArgumentType, Option<Box<str>>)> {
+    if let Some(annotation) = annotation
+        && annotation.first().map(|s| s.as_ref()) == Some("dsl.optional")
+    {
+        if annotation.len() != 2 {
+            bail!("dsl.optional takes 1 argument, found {}", annotation.len() - 1);
+        }
+        let argument_type = parse_argument_type(c_type, source, None)?;
+        if !matches!(argument_type, MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)) {
+            bail!("Only a buffer or a constant can be optional");
+        }
+        return Ok((argument_type, Some(annotation[1].clone())));
+    }
+
+    let argument_type = parse_argument_type(c_type, source, annotation)?;
+    Ok((argument_type, None))
+}
+
+fn parse_argument_type(
+    c_type: &str,
+    source: &str,
+    annotation: Option<&[Box<str>]>,
+) -> anyhow::Result<MetalArgumentType> {
+    if let Some(annotation) = annotation {
+        let mut annotation = annotation.to_vec();
+        if annotation.is_empty() {
+            bail!("empty annotation");
+        }
+        let annotation_key = annotation.remove(0);
+
+        return match &*annotation_key {
+            "dsl.specialize" => {
+                if !annotation.is_empty() {
+                    bail!("dsl.specialize takes no arguments, got {}", annotation.len());
+                }
+                let rust_type = MetalArgument::scalar_type_to_rust(c_type)?;
+                Ok(MetalArgumentType::Specialize(rust_type.into()))
+            },
+            "dsl.axis" => {
+                if annotation.len() != 2 {
+                    bail!("dsl.axis requires 2 arguments, got {}", annotation.len());
+                }
+                Ok(MetalArgumentType::Axis(annotation.remove(0), annotation.remove(0)))
+            },
+            "dsl.groups" => {
+                if annotation.len() != 1 {
+                    bail!("dsl.groups requires 1 argument, got {}", annotation.len());
+                }
+                let dim = annotation.remove(0);
+                match dim.as_ref() {
+                    "INDIRECT" => Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)),
+                    _ => Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(dim))),
+                }
+            },
+            "dsl.threads" => {
+                if annotation.len() != 1 {
+                    bail!("dsl.threads requires 1 argument, got {}", annotation.len());
+                }
+                Ok(MetalArgumentType::Threads(annotation.remove(0)))
+            },
+            _ => bail!("unknown annotation: {annotation_key}"),
+        };
+    }
+
+    if c_type == "ThreadContext" || c_type == "const ThreadContext" {
+        return Ok(MetalArgumentType::ThreadContext);
+    }
+
+    if c_type.contains("device") && c_type.contains('*') && !c_type.contains('&') {
+        return Ok(MetalArgumentType::Buffer(if c_type.contains("const") {
+            MetalBufferAccess::Read
+        } else {
+            MetalBufferAccess::ReadWrite
+        }));
+    }
+
+    if let ["const", "constant", c_type_scalar, "&"] = c_type.split_whitespace().collect::<Vec<_>>().as_slice() {
+        return Ok(MetalArgumentType::Constant((
+            MetalArgument::scalar_type_to_rust(c_type_scalar)?.into(),
+            MetalConstantType::Scalar,
+        )));
+    }
+
+    if let ["const", "constant", c_type_scalar, "*"] = c_type.split_whitespace().collect::<Vec<_>>().as_slice() {
+        let size = if source.contains('[') && source.contains(']') {
+            let lbracket = source.rfind('[').context("sized constant missing size bracket")? + 1;
+            let rbracket = source.rfind(']').context("sized constant missing size bracket")?;
+            Some(source[lbracket..rbracket].into())
+        } else {
+            None
+        };
+
+        return Ok(MetalArgumentType::Constant((
+            MetalArgument::scalar_type_to_rust(c_type_scalar)?.into(),
+            MetalConstantType::Array(size),
+        )));
+    }
+
+    if c_type.contains("threadgroup") && c_type.contains('*') {
+        let lbracket = source.rfind('[').context("threadgroup missing size bracket")? + 1;
+        let rbracket = source.rfind(']').context("threadgroup missing size bracket")?;
+        return Ok(MetalArgumentType::Shared(Some(source[lbracket..rbracket].into())));
+    }
+
+    if c_type.contains("threadgroup") && c_type.contains('&') {
+        return Ok(MetalArgumentType::Shared(None));
+    }
+
+    bail!("cannot parse c type: {}", c_type);
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -331,7 +356,7 @@ impl MetalTemplateParameter {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetalKernelInfo {
     pub public: bool,
-    pub name: Box<str>,
+    pub name: KernelName,
     pub arguments: Box<[MetalArgument]>,
     pub variants: Option<Box<[MetalTemplateParameter]>>,
     pub constraints: Box<[Box<str>]>,
@@ -339,31 +364,29 @@ pub struct MetalKernelInfo {
 
 impl MetalKernelInfo {
     pub fn has_axis(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Axis(..))))
+        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Axis(..)))
     }
 
     pub fn has_groups(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Groups(_))))
+        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(_)))
     }
 
     pub fn has_groups_direct(&self) -> bool {
         self.arguments
             .iter()
-            .any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(_)))))
+            .any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(MetalGroupsType::Direct(_))))
     }
 
     pub fn has_groups_indirect(&self) -> bool {
-        self.arguments
-            .iter()
-            .any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect))))
+        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Groups(MetalGroupsType::Indirect)))
     }
 
     pub fn has_threads(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::Threads(_))))
+        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::Threads(_)))
     }
 
     pub fn has_thread_context(&self) -> bool {
-        self.arguments.iter().any(|a| matches!(a.argument_type(), Ok(MetalArgumentType::ThreadContext)))
+        self.arguments.iter().any(|a| matches!(a.argument_type(), MetalArgumentType::ThreadContext))
     }
 
     pub fn to_kernel(&self) -> Option<Kernel> {
@@ -387,15 +410,15 @@ impl MetalKernelInfo {
                 .arguments
                 .iter()
                 .filter_map(|a| match a.argument_type() {
-                    Ok(MetalArgumentType::Buffer(access)) => Some(KernelArgument {
+                    MetalArgumentType::Buffer(access) => Some(KernelArgument {
                         name: a.name.clone(),
-                        conditional: a.argument_condition().unwrap().is_some(),
+                        conditional: a.argument_condition().is_some(),
                         ty: KernelArgumentType::Buffer(match access {
                             MetalBufferAccess::Read => KernelBufferAccess::Read,
                             MetalBufferAccess::ReadWrite => KernelBufferAccess::ReadWrite,
                         }),
                     }),
-                    Ok(MetalArgumentType::Groups(MetalGroupsType::Indirect)) if !indirect_flag => {
+                    MetalArgumentType::Groups(MetalGroupsType::Indirect) if !indirect_flag => {
                         indirect_flag = true;
                         Some(KernelArgument {
                             name: "__dsl_indirect_dispatch_buffer".into(),
@@ -403,23 +426,21 @@ impl MetalKernelInfo {
                             ty: KernelArgumentType::Buffer(KernelBufferAccess::Read),
                         })
                     },
-                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Scalar))) => Some(KernelArgument {
+                    MetalArgumentType::Constant((ty, MetalConstantType::Scalar)) => Some(KernelArgument {
                         name: a.name.clone(),
-                        conditional: a.argument_condition().unwrap().is_some(),
-                        ty: KernelArgumentType::Constant(ty),
+                        conditional: a.argument_condition().is_some(),
+                        ty: KernelArgumentType::Constant(ty.clone()),
                     }),
-                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array(None)))) => Some(KernelArgument {
+                    MetalArgumentType::Constant((ty, MetalConstantType::Array(None))) => Some(KernelArgument {
                         name: a.name.clone(),
-                        conditional: a.argument_condition().unwrap().is_some(),
+                        conditional: a.argument_condition().is_some(),
                         ty: KernelArgumentType::Constant(format!("&[{ty}]").into_boxed_str()),
                     }),
-                    Ok(MetalArgumentType::Constant((ty, MetalConstantType::Array(Some(size))))) => {
-                        Some(KernelArgument {
-                            name: a.name.clone(),
-                            conditional: a.argument_condition().unwrap().is_some(),
-                            ty: KernelArgumentType::Constant(format!("&[{ty}; {size}]").into_boxed_str()),
-                        })
-                    },
+                    MetalArgumentType::Constant((ty, MetalConstantType::Array(Some(size)))) => Some(KernelArgument {
+                        name: a.name.clone(),
+                        conditional: a.argument_condition().is_some(),
+                        ty: KernelArgumentType::Constant(format!("&[{ty}; {size}]").into_boxed_str()),
+                    }),
                     _ => None,
                 })
                 .collect(),
@@ -577,7 +598,7 @@ impl MetalKernelInfo {
 
         Ok(Some(MetalKernelInfo {
             public,
-            name,
+            name: KernelName::from(name),
             arguments,
             variants,
             constraints,

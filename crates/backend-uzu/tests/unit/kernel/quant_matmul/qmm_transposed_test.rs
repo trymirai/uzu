@@ -4,7 +4,8 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, DenseBuffer, Encoder, Kernels, gpu_types::QuantizationMethod,
+            Allocation, Backend, Context, Encoder, Kernels,
+            gpu_types::QuantizationMethod,
             kernel::QuantizedMatmulQmmTransposedKernel,
         },
         cpu::Cpu,
@@ -18,7 +19,10 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{
-    common::{helpers::alloc_buffer_with_data, type_short_name},
+    common::{
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+        type_short_name,
+    },
     uzu_bench, uzu_test,
 };
 
@@ -60,7 +64,7 @@ fn make_input_basic<T: ArrayElement + Float>(
     };
 
     let (zero_points, biases) = match quant_method {
-        QuantizationMethod::AWQ => {
+        QuantizationMethod::ScaleZeroPoint => {
             let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
             for j in 0..n {
                 for g in 0..num_groups_k {
@@ -78,7 +82,7 @@ fn make_input_basic<T: ArrayElement + Float>(
             }
             (Some(zp_packed), None)
         },
-        QuantizationMethod::MLX => {
+        QuantizationMethod::ScaleBias => {
             let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
             for j in 0..n {
                 for g in 0..num_groups_k {
@@ -135,11 +139,11 @@ fn make_input_edge<T: ArrayElement + Float>(
     };
 
     let (zero_points, biases) = match quant_method {
-        QuantizationMethod::AWQ => {
+        QuantizationMethod::ScaleZeroPoint => {
             let zp_packed = vec![0u8; n * zp_stride];
             (Some(zp_packed), None)
         },
-        QuantizationMethod::MLX => {
+        QuantizationMethod::ScaleBias => {
             let biases: Vec<T> = vec![T::zero(); n * num_groups_k];
             (None, Some(biases))
         },
@@ -191,16 +195,15 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     )
     .expect("Failed to create QuantizedMatmulQmmTransposedKernel");
 
-    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
+    let w_buf = alloc_allocation_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_allocation_with_data::<B, T>(&context, &input.scales);
 
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
-    let had_buf = hadamard_factors.map(|f| alloc_buffer_with_data::<B, i32>(&context, f));
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(&context, b));
+    let had_buf = hadamard_factors.map(|f| alloc_allocation_with_data::<B, i32>(&context, f));
 
-    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+    let x_buf = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<B, T>(&context, (input.m as usize) * (input.n as usize));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -219,9 +222,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+    allocation_to_vec(&y_buf)
 }
 
 fn check_against_expected<T: ArrayElement + Float + Debug + Display>(
@@ -493,20 +494,20 @@ mod tile_bm8 {
 
     basic_tests!(&CFG_BM8;
         // bf16 4-bit ZP has known precision limits
-        #[ignore] fn test_bf16_gs32_4bit_zp:  bf16, 32, 4, QuantizationMethod::AWQ;
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16, 64, 4, QuantizationMethod::AWQ;
-        fn test_bf16_gs32_8bit_zp:  bf16, 32, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs64_8bit_zp:  bf16, 64, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs32_4bit_mlx: bf16, 32, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs64_4bit_mlx: bf16, 64, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs32_8bit_mlx: bf16, 32, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs64_8bit_mlx: bf16, 64, 8, QuantizationMethod::MLX;
+        #[ignore] fn test_bf16_gs32_4bit_zp:  bf16, 32, 4, QuantizationMethod::ScaleZeroPoint;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16, 64, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs32_8bit_zp:  bf16, 32, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs64_8bit_zp:  bf16, 64, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs32_4bit_mlx: bf16, 32, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs64_4bit_mlx: bf16, 64, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs32_8bit_mlx: bf16, 32, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs64_8bit_mlx: bf16, 64, 8, QuantizationMethod::ScaleBias;
     );
 
     edge_tests!(&CFG_BM8;
-        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, QuantizationMethod::MLX;
-        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, QuantizationMethod::MLX;
-        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, QuantizationMethod::AWQ;
+        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, QuantizationMethod::ScaleBias;
+        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, QuantizationMethod::ScaleBias;
+        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, QuantizationMethod::ScaleZeroPoint;
     );
 }
 
@@ -517,54 +518,54 @@ mod tile_32x32 {
 
     basic_tests!(&CFG_32X32;
         // 4-bit, zero points
-        fn test_f32_gs32_4bit_zp:    f32,  32, 4, QuantizationMethod::AWQ;
-        fn test_f32_gs64_4bit_zp:    f32,  64, 4, QuantizationMethod::AWQ;
-        fn test_f32_gs128_4bit_zp:   f32, 128, 4, QuantizationMethod::AWQ;
-        fn test_f16_gs32_4bit_zp:    f16,  32, 4, QuantizationMethod::AWQ;
-        fn test_f16_gs64_4bit_zp:    f16,  64, 4, QuantizationMethod::AWQ;
-        fn test_f16_gs128_4bit_zp:   f16, 128, 4, QuantizationMethod::AWQ;
-        fn test_bf16_gs32_4bit_zp:   bf16, 32, 4, QuantizationMethod::AWQ;
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::AWQ;
-        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::AWQ;
+        fn test_f32_gs32_4bit_zp:    f32,  32, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_f32_gs64_4bit_zp:    f32,  64, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_f32_gs128_4bit_zp:   f32, 128, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_f16_gs32_4bit_zp:    f16,  32, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_f16_gs64_4bit_zp:    f16,  64, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_f16_gs128_4bit_zp:   f16, 128, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs32_4bit_zp:   bf16, 32, 4, QuantizationMethod::ScaleZeroPoint;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::ScaleZeroPoint;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::ScaleZeroPoint;
         // 8-bit, zero points
-        fn test_f32_gs32_8bit_zp:    f32,  32, 8, QuantizationMethod::AWQ;
-        fn test_f32_gs64_8bit_zp:    f32,  64, 8, QuantizationMethod::AWQ;
-        fn test_f32_gs128_8bit_zp:   f32, 128, 8, QuantizationMethod::AWQ;
-        fn test_f16_gs32_8bit_zp:    f16,  32, 8, QuantizationMethod::AWQ;
-        fn test_f16_gs64_8bit_zp:    f16,  64, 8, QuantizationMethod::AWQ;
-        fn test_f16_gs128_8bit_zp:   f16, 128, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs32_8bit_zp:   bf16, 32, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs64_8bit_zp:   bf16, 64, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs128_8bit_zp:  bf16,128, 8, QuantizationMethod::AWQ;
+        fn test_f32_gs32_8bit_zp:    f32,  32, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_f32_gs64_8bit_zp:    f32,  64, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_f32_gs128_8bit_zp:   f32, 128, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_f16_gs32_8bit_zp:    f16,  32, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_f16_gs64_8bit_zp:    f16,  64, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_f16_gs128_8bit_zp:   f16, 128, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs32_8bit_zp:   bf16, 32, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs64_8bit_zp:   bf16, 64, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs128_8bit_zp:  bf16,128, 8, QuantizationMethod::ScaleZeroPoint;
         // 4-bit, mlx quant
-        fn test_f32_gs32_4bit_mlx:   f32,  32, 4, QuantizationMethod::MLX;
-        fn test_f32_gs64_4bit_mlx:   f32,  64, 4, QuantizationMethod::MLX;
-        fn test_f32_gs128_4bit_mlx:  f32, 128, 4, QuantizationMethod::MLX;
-        fn test_f16_gs32_4bit_mlx:   f16,  32, 4, QuantizationMethod::MLX;
-        fn test_f16_gs64_4bit_mlx:   f16,  64, 4, QuantizationMethod::MLX;
-        fn test_f16_gs128_4bit_mlx:  f16, 128, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs32_4bit_mlx:  bf16, 32, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs64_4bit_mlx:  bf16, 64, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs128_4bit_mlx: bf16,128, 4, QuantizationMethod::MLX;
+        fn test_f32_gs32_4bit_mlx:   f32,  32, 4, QuantizationMethod::ScaleBias;
+        fn test_f32_gs64_4bit_mlx:   f32,  64, 4, QuantizationMethod::ScaleBias;
+        fn test_f32_gs128_4bit_mlx:  f32, 128, 4, QuantizationMethod::ScaleBias;
+        fn test_f16_gs32_4bit_mlx:   f16,  32, 4, QuantizationMethod::ScaleBias;
+        fn test_f16_gs64_4bit_mlx:   f16,  64, 4, QuantizationMethod::ScaleBias;
+        fn test_f16_gs128_4bit_mlx:  f16, 128, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs32_4bit_mlx:  bf16, 32, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs64_4bit_mlx:  bf16, 64, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_4bit_mlx: bf16,128, 4, QuantizationMethod::ScaleBias;
         // 8-bit, mlx quant
-        fn test_f32_gs32_8bit_mlx:   f32,  32, 8, QuantizationMethod::MLX;
-        fn test_f32_gs64_8bit_mlx:   f32,  64, 8, QuantizationMethod::MLX;
-        fn test_f32_gs128_8bit_mlx:  f32, 128, 8, QuantizationMethod::MLX;
-        fn test_f16_gs32_8bit_mlx:   f16,  32, 8, QuantizationMethod::MLX;
-        fn test_f16_gs64_8bit_mlx:   f16,  64, 8, QuantizationMethod::MLX;
-        fn test_f16_gs128_8bit_mlx:  f16, 128, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs32_8bit_mlx:  bf16, 32, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs64_8bit_mlx:  bf16, 64, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs128_8bit_mlx: bf16,128, 8, QuantizationMethod::MLX;
+        fn test_f32_gs32_8bit_mlx:   f32,  32, 8, QuantizationMethod::ScaleBias;
+        fn test_f32_gs64_8bit_mlx:   f32,  64, 8, QuantizationMethod::ScaleBias;
+        fn test_f32_gs128_8bit_mlx:  f32, 128, 8, QuantizationMethod::ScaleBias;
+        fn test_f16_gs32_8bit_mlx:   f16,  32, 8, QuantizationMethod::ScaleBias;
+        fn test_f16_gs64_8bit_mlx:   f16,  64, 8, QuantizationMethod::ScaleBias;
+        fn test_f16_gs128_8bit_mlx:  f16, 128, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs32_8bit_mlx:  bf16, 32, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs64_8bit_mlx:  bf16, 64, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_8bit_mlx: bf16,128, 8, QuantizationMethod::ScaleBias;
     );
 
     edge_tests!(&CFG_32X32;
-        fn test_edge_f32_4bit_zp:  f32, 32, 4, QuantizationMethod::AWQ;
-        fn test_edge_f32_8bit_zp:  f32, 32, 8, QuantizationMethod::AWQ;
-        fn test_edge_f16_4bit_zp:  f16, 32, 4, QuantizationMethod::AWQ;
-        fn test_edge_f32_4bit_mlx: f32, 32, 4, QuantizationMethod::MLX;
-        fn test_edge_f32_8bit_mlx: f32, 32, 8, QuantizationMethod::MLX;
-        fn test_edge_f16_4bit_mlx: f16, 32, 4, QuantizationMethod::MLX;
+        fn test_edge_f32_4bit_zp:  f32, 32, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_edge_f32_8bit_zp:  f32, 32, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_edge_f16_4bit_zp:  f16, 32, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_edge_f32_4bit_mlx: f32, 32, 4, QuantizationMethod::ScaleBias;
+        fn test_edge_f32_8bit_mlx: f32, 32, 8, QuantizationMethod::ScaleBias;
+        fn test_edge_f16_4bit_mlx: f16, 32, 4, QuantizationMethod::ScaleBias;
     );
 }
 
@@ -575,28 +576,28 @@ mod tile_wide {
 
     basic_tests!(&CFG_WIDE;
         // 4-bit, zero points
-        fn test_bf16_gs32_4bit_zp:   bf16,  32, 4, QuantizationMethod::AWQ;
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::AWQ;
-        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::AWQ;
+        fn test_bf16_gs32_4bit_zp:   bf16,  32, 4, QuantizationMethod::ScaleZeroPoint;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::ScaleZeroPoint;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::ScaleZeroPoint;
         // 8-bit, zero points
-        fn test_bf16_gs32_8bit_zp:   bf16,  32, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs32_8bit_zp:   bf16,  32, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, QuantizationMethod::ScaleZeroPoint;
         // 4-bit, mlx quant
-        fn test_bf16_gs32_4bit_mlx:  bf16,  32, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs32_4bit_mlx:  bf16,  32, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::ScaleBias;
         // 8-bit, mlx quant
-        fn test_bf16_gs32_8bit_mlx:  bf16,  32, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs32_8bit_mlx:  bf16,  32, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::ScaleBias;
     );
 
     edge_tests!(&CFG_WIDE;
-        fn test_edge_bf16_4bit_zp:  bf16, 32, 4, QuantizationMethod::AWQ;
-        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, QuantizationMethod::AWQ;
-        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, QuantizationMethod::MLX;
-        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, QuantizationMethod::MLX;
+        fn test_edge_bf16_4bit_zp:  bf16, 32, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_edge_bf16_8bit_zp:  bf16, 32, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_edge_bf16_4bit_mlx: bf16, 32, 4, QuantizationMethod::ScaleBias;
+        fn test_edge_bf16_8bit_mlx: bf16, 32, 8, QuantizationMethod::ScaleBias;
     );
 }
 
@@ -607,24 +608,24 @@ mod tile_64x64 {
 
     basic_tests!(&CFG_64X64;
         // 4-bit, zero points
-        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::AWQ;
-        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::AWQ;
+        #[ignore] fn test_bf16_gs64_4bit_zp:  bf16,  64, 4, QuantizationMethod::ScaleZeroPoint;
+        #[ignore] fn test_bf16_gs128_4bit_zp: bf16, 128, 4, QuantizationMethod::ScaleZeroPoint;
         // 8-bit, zero points
-        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, QuantizationMethod::AWQ;
-        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, QuantizationMethod::AWQ;
+        fn test_bf16_gs64_8bit_zp:   bf16,  64, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_bf16_gs128_8bit_zp:  bf16, 128, 8, QuantizationMethod::ScaleZeroPoint;
         // 4-bit, mlx quant
-        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::ScaleBias;
         // 8-bit, mlx quant
-        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::MLX;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::ScaleBias;
     );
 
     edge_tests!(&CFG_64X64;
-        fn test_edge_bf16_4bit_zp:  bf16, 64, 4, QuantizationMethod::AWQ;
-        fn test_edge_bf16_8bit_zp:  bf16, 64, 8, QuantizationMethod::AWQ;
-        fn test_edge_bf16_4bit_mlx: bf16, 64, 4, QuantizationMethod::MLX;
-        fn test_edge_bf16_8bit_mlx: bf16, 64, 8, QuantizationMethod::MLX;
+        fn test_edge_bf16_4bit_zp:  bf16, 64, 4, QuantizationMethod::ScaleZeroPoint;
+        fn test_edge_bf16_8bit_zp:  bf16, 64, 8, QuantizationMethod::ScaleZeroPoint;
+        fn test_edge_bf16_4bit_mlx: bf16, 64, 4, QuantizationMethod::ScaleBias;
+        fn test_edge_bf16_8bit_mlx: bf16, 64, 8, QuantizationMethod::ScaleBias;
     );
 }
 
@@ -635,12 +636,12 @@ mod hadamard {
 
     // f32 at (64,64,64) overflows threadgroup memory (34816 > 32768 bytes).
     hadamard_tests!(
-        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::MLX;
-        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::MLX;
-        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::MLX;
-        fn test_f16_gs64_4bit_mlx:   f16,   64, 4, QuantizationMethod::MLX;
-        fn test_f16_gs128_4bit_mlx:  f16,  128, 4, QuantizationMethod::MLX;
+        fn test_bf16_gs64_4bit_mlx:  bf16,  64, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_4bit_mlx: bf16, 128, 4, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs64_8bit_mlx:  bf16,  64, 8, QuantizationMethod::ScaleBias;
+        fn test_bf16_gs128_8bit_mlx: bf16, 128, 8, QuantizationMethod::ScaleBias;
+        fn test_f16_gs64_4bit_mlx:   f16,   64, 4, QuantizationMethod::ScaleBias;
+        fn test_f16_gs128_4bit_mlx:  f16,  128, 4, QuantizationMethod::ScaleBias;
     );
 }
 
@@ -654,14 +655,9 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
 ) {
     // Use the dispatcher-selected tile configs: BM=8 small tile for M<48, big tile for M>=48.
     // We always use the BM=8 small tile kernel for M in 4..=47 to match the dispatch threshold.
-    let block_size: usize = if bits == 4 {
-        512
-    } else {
-        256
-    };
+    let block_size: usize = if bits == 4 { 512 } else { 256 };
 
-    for (m, n, k) in iproduct!([4usize, 5, 6, 7, 8, 16, 32, 48, 64], [2048usize, 4096, 14336], [2048usize, 4096, 14336])
-    {
+    for (m, n, k) in iproduct!([4usize, 5, 6, 7, 8, 16, 32, 48, 64], [2048usize, 4096, 14336], [2048usize, 4096, 14336]) {
         if n % 32 != 0 || k % block_size != 0 {
             continue;
         }
@@ -692,33 +688,33 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
         )
         .unwrap();
 
-        let w_buf = alloc_buffer_with_data::<B, u32>(
+        let w_buf = alloc_allocation_with_data::<B, u32>(
             context,
             &(0..n * k * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect::<Vec<_>>(),
         );
-        let scales_buf = alloc_buffer_with_data::<B, T>(
+        let scales_buf = alloc_allocation_with_data::<B, T>(
             context,
             &(0..n * num_groups).map(|_| T::from(rng.random_range(0.01f32..1.0f32)).unwrap()).collect::<Vec<_>>(),
         );
-        let x_buf = alloc_buffer_with_data::<B, T>(
+        let x_buf = alloc_allocation_with_data::<B, T>(
             context,
             &(0..m * k).map(|_| T::from(rng.random_range(-1.0f32..1.0f32)).unwrap()).collect::<Vec<_>>(),
         );
-        let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
+        let mut y_buf = alloc_allocation::<B, T>(context, m * n);
 
         let zp_stride = if bits == 4 {
             (num_groups + 1) / 2
         } else {
             num_groups
         };
-        let zp_buf = (quant_method == QuantizationMethod::AWQ).then(|| {
-            alloc_buffer_with_data::<B, u8>(
+        let zp_buf = (quant_method == QuantizationMethod::ScaleZeroPoint).then(|| {
+            alloc_allocation_with_data::<B, u8>(
                 context,
                 &(0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect::<Vec<_>>(),
             )
         });
-        let bias_buf = (quant_method == QuantizationMethod::MLX).then(|| {
-            alloc_buffer_with_data::<B, T>(
+        let bias_buf = (quant_method == QuantizationMethod::ScaleBias).then(|| {
+            alloc_allocation_with_data::<B, T>(
                 context,
                 &(0..n * num_groups).map(|_| T::from(rng.random_range(-0.5f32..0.5f32)).unwrap()).collect::<Vec<_>>(),
             )
@@ -737,7 +733,7 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
                         bias_buf.as_ref(),
                         &x_buf,
                         &mut y_buf,
-                        None::<&B::DenseBuffer>,
+                        None::<&Allocation<B>>,
                         k as u32,
                         n as u32,
                         m as u32,
@@ -755,10 +751,10 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
 fn bench_qmm_transposed(c: &mut Criterion) {
     for_each_backend!(|B| {
         let context = <B as Backend>::Context::new().unwrap();
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, QuantizationMethod::MLX);
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::AWQ);
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, QuantizationMethod::MLX);
-        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::AWQ);
-        bench_qmm_transposed_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::AWQ);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
+        bench_qmm_transposed_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
+        bench_qmm_transposed_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
     });
 }

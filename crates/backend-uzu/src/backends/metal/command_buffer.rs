@@ -1,16 +1,16 @@
 use std::{cell::Cell, time::Duration};
 
 use metal::{
-    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
-    MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
+    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
+    MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
 use crate::backends::{
     common::{
-        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferInitial, CommandBufferPending,
+        AccessFlags, Backend, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+        CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
     metal::error::MetalError,
 };
@@ -120,28 +120,27 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_copy(
         &mut self,
-        src: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        src_range: std::ops::Range<usize>,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
-        dst_range: std::ops::Range<usize>,
+        src: BufferRangeRef<'_, <Metal as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
     ) {
+        let src_range = src.range();
+        let dst_range = dst.range();
         let size = src_range.end - src_range.start;
         assert_eq!(size, dst_range.end - dst_range.start);
-        assert!(src.length() >= src_range.end && dst.length() >= dst_range.end);
 
-        self.ensure_blit().copy_buffer_to_buffer(src, src_range.start, dst, dst_range.start, size);
+        self.ensure_blit().copy_buffer_to_buffer(src.buffer(), src_range.start, dst.buffer(), dst_range.start, size);
     }
 
     fn encode_fill(
         &mut self,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
-        range: std::ops::Range<usize>,
+        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
         value: u8,
     ) {
-        assert!(range.end > range.start && range.end <= dst.length());
+        let range = dst.range();
+        assert!(range.end > range.start);
         assert!(range.start % 4 == 0 && range.end % 4 == 0);
 
-        self.ensure_blit().fill_buffer_range_value(dst, range, value);
+        self.ensure_blit().fill_buffer_range_value(dst.buffer(), range, value);
     }
 
     fn encode_barrier(

@@ -24,7 +24,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-version = "0.4.6"
+version = "0.4.8"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
@@ -57,11 +57,12 @@ download-manager = { path = "crates/download-manager", default-features = false 
 mock-registry = { path = "crates/mock-registry", default-features = false }
 benchmarks = { path = "crates/benchmarks", default-features = false }
 uzu = { path = "crates/uzu", default-features = false }
-xgrammar = { package = "xgrammar-rs", version = "0.1", features = ["hf"] }
+xgrammar = { package = "xgrammar-rs", version = "0.1.33", features = ["hf"] }
 half = { version = "2.7", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_ignored = "0.1"
 thiserror = "2.0"
 tokenizers = { version = "0.22", features = [
     "fancy-regex",
@@ -89,10 +90,10 @@ sysinfo = "0.38"
 itertools = "0.14"
 schemars = { version = "1.2", features = ["derive"] }
 is_close = "0.1"
-serde_json5 = "0.2"
 anyhow = "1.0.102"
 async-trait = "0.1"
 debug-display = { path = "crates/debug-display" }
+derive_more = { version = "2", features = ["from", "deref", "as_ref", "display"] }
 bindgen = "0.72"
 walkdir = "2.5"
 depfile = "0.1"
@@ -114,7 +115,7 @@ indicatif = "0.18"
 inquire = "0.9"
 console = "0.16"
 rocket = { version = "0.5", features = ["json"] }
-uuid = { version = "1.20", features = ["v4", "v5"] }
+uuid = { version = "1.20", features = ["serde", "v4", "v5"] }
 comfy-table = { version = "7.2", default-features = false }
 autocxx = "0.30"
 cxx = "1.0"
@@ -138,7 +139,6 @@ futures-util = "0.3.31"
 http = "1.4.0"
 httparse = "1.10.1"
 stream_throttle = "0.5.1"
-async-fetcher = "0.12"
 reqwest = { version = "0.13.2", features = [
     "json",
     "stream",

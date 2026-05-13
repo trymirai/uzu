@@ -49,14 +49,14 @@ fn build_axis_dispatch(
         .arguments
         .iter()
         .filter_map(|argument| match argument.argument_type() {
-            Ok(MetalArgumentType::Axis(threads_text, threads_per_group_text)) => {
+            MetalArgumentType::Axis(threads_text, threads_per_group_text) => {
                 Some((threads_text, threads_per_group_text))
             },
             _ => None,
         })
         .map(|(threads_text, threads_per_group_text)| -> Result<(TokenStream, TokenStream)> {
-            let threads = variant_path_rewriter.rewrite(&threads_text)?;
-            let threads_per_group = variant_path_rewriter.rewrite(&threads_per_group_text)?;
+            let threads = variant_path_rewriter.rewrite(threads_text)?;
+            let threads_per_group = variant_path_rewriter.rewrite(threads_per_group_text)?;
             Ok((threads, threads_per_group))
         })
         .collect::<Result<_>>()?;
@@ -105,8 +105,8 @@ fn build_direct_dispatch(
         .arguments
         .iter()
         .filter_map(|argument| match argument.argument_type() {
-            Ok(MetalArgumentType::Groups(MetalGroupsType::Direct(groups_text))) => {
-                Some(variant_path_rewriter.rewrite(&groups_text))
+            MetalArgumentType::Groups(MetalGroupsType::Direct(groups_text)) => {
+                Some(variant_path_rewriter.rewrite(groups_text))
             },
             _ => None,
         })
@@ -133,7 +133,7 @@ fn collect_thread_expressions(
         .arguments
         .iter()
         .filter_map(|argument| match argument.argument_type() {
-            Ok(MetalArgumentType::Threads(threads_text)) => Some(variant_path_rewriter.rewrite(&threads_text)),
+            MetalArgumentType::Threads(threads_text) => Some(variant_path_rewriter.rewrite(threads_text)),
             _ => None,
         })
         .collect()

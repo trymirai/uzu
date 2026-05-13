@@ -12,8 +12,8 @@ VARIANTS(BITS, 4, 8)
 PUBLIC KERNEL(QuantizedMatmulQmv)(
     const device uint32_t* weights,
     const device T* scales,
-    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::AWQ),
-    const device T* biases OPTIONAL(quant_method == QuantizationMethod::MLX),
+    const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::ScaleZeroPoint),
+    const device T* biases OPTIONAL(quant_method == QuantizationMethod::ScaleBias),
     const device T* input,
     device T* output,
     const constant uint& in_vec_size,
@@ -61,7 +61,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
         BITS == 4 ? ((in_vec_size_g + 1) / 2) : in_vec_size_g;
     const device uint8_t* zps_row_base = nullptr;
     const device T* biases_row_base = nullptr;
-    if (quant_method == QuantizationMethod::MLX) {
+    if (quant_method == QuantizationMethod::ScaleBias) {
       biases_row_base = biases + out_row * in_vec_size_g;
     } else {
       zps_row_base = zero_points + out_row * zp_stride;
@@ -83,7 +83,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
-        if (quant_method == QuantizationMethod::MLX) {
+        if (quant_method == QuantizationMethod::ScaleBias) {
           const device T* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] +=
@@ -127,7 +127,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
-        if (quant_method == QuantizationMethod::MLX) {
+        if (quant_method == QuantizationMethod::ScaleBias) {
           const device T* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] +=
@@ -164,7 +164,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
         BITS == 4 ? ((in_vec_size_g + 1) / 2) : in_vec_size_g;
     const device uint8_t* zps_row_base = nullptr;
     const device T* biases_row_base = nullptr;
-    if (quant_method == QuantizationMethod::MLX) {
+    if (quant_method == QuantizationMethod::ScaleBias) {
       biases_row_base = biases + used_out_row * in_vec_size_g;
     } else {
       zps_row_base = zero_points + used_out_row * zp_stride;
@@ -184,7 +184,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
-        if (quant_method == QuantizationMethod::MLX) {
+        if (quant_method == QuantizationMethod::ScaleBias) {
           const device T* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] +=
@@ -227,7 +227,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
-        if (quant_method == QuantizationMethod::MLX) {
+        if (quant_method == QuantizationMethod::ScaleBias) {
           const device T* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] += qdot_safe<U, values_per_thread, BITS>(

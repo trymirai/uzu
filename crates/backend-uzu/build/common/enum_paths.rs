@@ -1,35 +1,47 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 
+use anyhow::bail;
 use syn::{Type, TypePath, visit_mut::VisitMut};
 
-use super::gpu_types::{GpuType, GpuTypes};
+use super::gpu_types::{GpuType, GpuTypeName, GpuTypePath, GpuTypes};
 
+#[derive(Clone)]
 pub struct EnumPaths {
-    short_name_to_full_path: HashMap<Box<str>, Box<str>>,
+    short_name_to_full_path: HashMap<GpuTypeName, GpuTypePath>,
 }
 
 impl EnumPaths {
-    pub fn from_gpu_types(gpu_types: &GpuTypes) -> Self {
+    pub fn from_gpu_types(gpu_types: &GpuTypes) -> anyhow::Result<Self> {
         let mut short_name_to_full_path = HashMap::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
                 if let GpuType::Enum(enum_type) = ty {
-                    let full_path = format!("crate::backends::common::gpu_types::{}::{}", file.name, enum_type.name)
-                        .into_boxed_str();
-                    short_name_to_full_path.insert(enum_type.name.clone(), full_path);
+                    let name = GpuTypeName::from(enum_type.name.as_ref());
+                    let path = GpuTypePath::from(format!(
+                        "crate::backends::common::gpu_types::{}::{}",
+                        file.name, enum_type.name
+                    ));
+                    match short_name_to_full_path.entry(name) {
+                        Entry::Occupied(occupied) => {
+                            bail!("gpu type `{}` is duplicated", occupied.key())
+                        },
+                        Entry::Vacant(vacant) => {
+                            vacant.insert(path);
+                        },
+                    }
                 }
             }
         }
-        Self {
+        Ok(Self {
             short_name_to_full_path,
-        }
+        })
     }
 
     pub fn full_path_for(
         &self,
         short_name: &str,
     ) -> Option<&str> {
-        self.short_name_to_full_path.get(short_name).map(|path| path.as_ref())
+        self.short_name_to_full_path.get(short_name).map(|path| &**path)
     }
 
     #[cfg(all(feature = "metal", target_os = "macos"))]

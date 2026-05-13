@@ -10,20 +10,20 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use self::variant_path_rewriter::VariantPathRewriter;
-use super::{ast::MetalKernelInfo, enum_path_rewrite::EnumPathRewriter, wrapper::SpecializeBaseIndices};
-use crate::common::mangling::dynamic_mangle;
+use super::{ast::MetalKernelInfo, wrapper::SpecializeBaseIndices};
+use crate::common::{enum_paths::EnumPaths, mangling::dynamic_mangle};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
     specialize_indices: &SpecializeBaseIndices,
-    enum_path_rewriter: &EnumPathRewriter,
+    enum_paths: &EnumPaths,
 ) -> Result<(TokenStream, Option<TokenStream>)> {
     let kernel_name = kernel.name.as_ref();
     let trait_name = format_ident!("{}Kernel", kernel_name);
     let struct_name = format_ident!("{}MetalKernel", kernel_name);
 
     let variant_binds = variants::parse(kernel)?;
-    let argument_emissions = arguments::parse(kernel, enum_path_rewriter)?;
+    let argument_emissions = arguments::parse(kernel, enum_paths)?;
     let specialize_emission = specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name)?;
     let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
 

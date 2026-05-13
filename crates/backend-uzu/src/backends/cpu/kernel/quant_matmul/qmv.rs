@@ -65,7 +65,7 @@ pub fn qmv<T: ArrayElement + Float>(
                     let scale = (*scales.add(j * num_groups_k + group_idx)).to_f32().unwrap();
 
                     let bias = match quant_method {
-                        QuantizationMethod::AWQ => {
+                        QuantizationMethod::ScaleZeroPoint => {
                             let zp = zero_points.unwrap();
                             // Zero points are [N, zp_stride_k]
                             let zp_val = if bits == 4 {
@@ -81,7 +81,7 @@ pub fn qmv<T: ArrayElement + Float>(
                             };
                             -scale * zp_val
                         },
-                        QuantizationMethod::MLX => {
+                        QuantizationMethod::ScaleBias => {
                             // Biases are [N, num_groups_k]
                             (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap()
                         },
@@ -103,8 +103,8 @@ pub fn qmv<T: ArrayElement + Float>(
 pub fn quantized_matmul_qmv<T: ArrayElement + Float, const GROUP_SIZE: u32, const BITS: u32>(
     weights: *const u32,
     scales: *const T,
-    #[optional(quant_method == QuantizationMethod::AWQ)] zero_points: Option<*const u8>,
-    #[optional(quant_method == QuantizationMethod::MLX)] biases: Option<*const T>,
+    #[optional(quant_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
+    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
     input: *const T,
     output: *mut T,
     in_vec_size: u32,

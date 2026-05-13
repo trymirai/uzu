@@ -1,16 +1,17 @@
-use std::path::Path;
+use std::{fmt::Debug, path::Path, sync::Arc};
 
-use crate::{
-    DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState,
-    prelude::{TokioBroadcastSender, TokioBroadcastStream},
-};
+use tokio::sync::broadcast::Sender as TokioBroadcastSender;
+use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
+
+use crate::{DownloadError, DownloadEventSender, DownloadId, FileCheck, FileDownloadState};
 
 #[async_trait::async_trait]
-pub trait FileDownloadTask: Send + Sync + std::fmt::Debug {
+pub trait FileDownloadTask: Send + Sync + Debug {
     fn download_id(&self) -> DownloadId;
     fn source_url(&self) -> &str;
     fn destination(&self) -> &Path;
     fn file_check(&self) -> &FileCheck;
+    fn expected_bytes(&self) -> Option<u64>;
 
     async fn download(&self) -> Result<(), DownloadError>;
     async fn pause(&self) -> Result<(), DownloadError>;
@@ -23,9 +24,43 @@ pub trait FileDownloadTask: Send + Sync + std::fmt::Debug {
         global_broadcast: DownloadEventSender,
     );
     async fn stop_listening(&self);
-
-    /// Wait for the task to fully complete (download finished, lock released, state updated).
     async fn wait(&self);
 
     fn broadcast_sender(&self) -> TokioBroadcastSender<FileDownloadState>;
+}
+
+#[async_trait::async_trait]
+pub(crate) trait ManagedFileDownloadTask: FileDownloadTask {
+    async fn shutdown_for_removal(&self) -> Result<(), DownloadError>;
+    fn is_stopped(&self) -> bool;
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedFileDownloadTask {
+    public: Arc<dyn FileDownloadTask>,
+    managed: Arc<dyn ManagedFileDownloadTask>,
+}
+
+impl CachedFileDownloadTask {
+    pub(crate) fn new(
+        public: Arc<dyn FileDownloadTask>,
+        managed: Arc<dyn ManagedFileDownloadTask>,
+    ) -> Self {
+        Self {
+            public,
+            managed,
+        }
+    }
+
+    pub(crate) fn public(&self) -> Arc<dyn FileDownloadTask> {
+        Arc::clone(&self.public)
+    }
+
+    pub(crate) fn managed(&self) -> Arc<dyn ManagedFileDownloadTask> {
+        Arc::clone(&self.managed)
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.managed.is_stopped()
+    }
 }

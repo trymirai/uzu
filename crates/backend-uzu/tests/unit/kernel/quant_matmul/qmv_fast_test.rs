@@ -4,7 +4,8 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, DenseBuffer, Encoder, Kernels, gpu_types::QuantizationMethod,
+            Allocation, Backend, Context, Encoder, Kernels, gpu_types::QuantizationMethod,
+
             kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
         },
         cpu::Cpu,
@@ -17,20 +18,22 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use super::{Input, check_tolerance, pack_weights_u32, pack_zero_points};
 use crate::{
-    common::{helpers::alloc_buffer_with_data, type_short_name},
+    common::{
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+        type_short_name,
+    },
     uzu_bench, uzu_test,
 };
 
 fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Failed to create Context");
 
-    let w_buf = alloc_buffer_with_data::<Cpu, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<Cpu, T>(&context, &input.scales);
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<Cpu, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<Cpu, T>(&context, b));
-    let x_buf = alloc_buffer_with_data::<Cpu, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+    let w_buf = alloc_allocation_with_data::<Cpu, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_allocation_with_data::<Cpu, T>(&context, &input.scales);
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<Cpu, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<Cpu, T>(&context, b));
+    let x_buf = alloc_allocation_with_data::<Cpu, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<Cpu, T>(&context, (input.m as usize) * (input.n as usize));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -57,21 +60,18 @@ fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+    allocation_to_vec(&y_buf)
 }
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
-    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
-    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
-    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
-    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
-    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
-    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+    let w_buf = alloc_allocation_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_allocation_with_data::<B, T>(&context, &input.scales);
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(&context, b));
+    let x_buf = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<B, T>(&context, (input.m as usize) * (input.n as usize));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
@@ -91,7 +91,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         bias_buf.as_ref(),
         &x_buf,
         &mut y_buf,
-        None::<&B::DenseBuffer>,
+        None::<&Allocation<B>>,
         input.k,
         input.n,
         input.m,
@@ -100,9 +100,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
-    let y_len = (input.m as usize) * (input.n as usize);
-    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+    allocation_to_vec(&y_buf)
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -143,7 +141,7 @@ fn get_test_data<T: ArrayElement + Float>(
     };
 
     let (zero_points, biases) = match quant_method {
-        QuantizationMethod::AWQ => {
+        QuantizationMethod::ScaleZeroPoint => {
             let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
             for j in 0..n {
                 for g in 0..num_groups_k {
@@ -161,7 +159,7 @@ fn get_test_data<T: ArrayElement + Float>(
             }
             (Some(zp_packed), None)
         },
-        QuantizationMethod::MLX => {
+        QuantizationMethod::ScaleBias => {
             let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
             for j in 0..n {
                 for g in 0..num_groups_k {
@@ -285,18 +283,18 @@ macro_rules! qmv_fast_test {
     };
 }
 
-qmv_fast_test!(test_gs32_4bit_zp, gs = 32, bits = 4, format = QuantizationMethod::AWQ);
-qmv_fast_test!(test_gs64_4bit_zp, gs = 64, bits = 4, format = QuantizationMethod::AWQ);
-qmv_fast_test!(test_gs128_4bit_zp, gs = 128, bits = 4, format = QuantizationMethod::AWQ);
-qmv_fast_test!(test_gs32_8bit_zp, gs = 32, bits = 8, format = QuantizationMethod::AWQ);
-qmv_fast_test!(test_gs64_8bit_zp, gs = 64, bits = 8, format = QuantizationMethod::AWQ);
-qmv_fast_test!(test_gs128_8bit_zp, gs = 128, bits = 8, format = QuantizationMethod::AWQ);
-qmv_fast_test!(test_gs32_4bit_mlx, gs = 32, bits = 4, format = QuantizationMethod::MLX);
-qmv_fast_test!(test_gs64_4bit_mlx, gs = 64, bits = 4, format = QuantizationMethod::MLX);
-qmv_fast_test!(test_gs128_4bit_mlx, gs = 128, bits = 4, format = QuantizationMethod::MLX);
-qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, format = QuantizationMethod::MLX);
-qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, format = QuantizationMethod::MLX);
-qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, format = QuantizationMethod::MLX);
+qmv_fast_test!(test_gs32_4bit_zp, gs = 32, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs64_4bit_zp, gs = 64, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs128_4bit_zp, gs = 128, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs32_8bit_zp, gs = 32, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs64_8bit_zp, gs = 64, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs128_8bit_zp, gs = 128, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs32_4bit_mlx, gs = 32, bits = 4, format = QuantizationMethod::ScaleBias);
+qmv_fast_test!(test_gs64_4bit_mlx, gs = 64, bits = 4, format = QuantizationMethod::ScaleBias);
+qmv_fast_test!(test_gs128_4bit_mlx, gs = 128, bits = 4, format = QuantizationMethod::ScaleBias);
+qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, format = QuantizationMethod::ScaleBias);
+qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, format = QuantizationMethod::ScaleBias);
+qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, format = QuantizationMethod::ScaleBias);
 
 fn gen_random<T: rand::distr::uniform::SampleUniform + PartialOrd + Copy, R: rand::Rng>(
     rng: &mut R,
@@ -340,36 +338,36 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
             )
             .unwrap();
 
-            let w_buf = alloc_buffer_with_data::<B, u32>(
+            let w_buf = alloc_allocation_with_data::<B, u32>(
                 context,
                 &gen_random::<u32, _>(&mut rng, 0..u32::MAX, n * k * bits as usize / 32),
             );
-            let scales_buf = alloc_buffer_with_data::<B, T>(
+            let scales_buf = alloc_allocation_with_data::<B, T>(
                 context,
                 &gen_random::<f32, _>(&mut rng, 0.01..1.0, n * num_groups)
                     .iter()
                     .map(|&v| T::from(v).unwrap())
                     .collect::<Vec<_>>(),
             );
-            let x_buf = alloc_buffer_with_data::<B, T>(
+            let x_buf = alloc_allocation_with_data::<B, T>(
                 context,
                 &gen_random::<f32, _>(&mut rng, -1.0..1.0, m * k)
                     .iter()
                     .map(|&v| T::from(v).unwrap())
                     .collect::<Vec<_>>(),
             );
-            let mut y_buf = context.create_buffer(m * n * std::mem::size_of::<T>()).unwrap();
+            let mut y_buf = alloc_allocation::<B, T>(context, m * n);
 
-            let zp_buf = (quant_method == QuantizationMethod::AWQ).then(|| {
+            let zp_buf = (quant_method == QuantizationMethod::ScaleZeroPoint).then(|| {
                 let zp_stride = if bits == 4 {
                     (num_groups + 1) / 2
                 } else {
                     num_groups
                 };
-                alloc_buffer_with_data::<B, u8>(context, &gen_random::<u8, _>(&mut rng, 0..u8::MAX, n * zp_stride))
+                alloc_allocation_with_data::<B, u8>(context, &gen_random::<u8, _>(&mut rng, 0..u8::MAX, n * zp_stride))
             });
-            let bias_buf = (quant_method == QuantizationMethod::MLX).then(|| {
-                alloc_buffer_with_data::<B, T>(
+            let bias_buf = (quant_method == QuantizationMethod::ScaleBias).then(|| {
+                alloc_allocation_with_data::<B, T>(
                     context,
                     &gen_random::<f32, _>(&mut rng, -0.5..0.5, n * num_groups)
                         .iter()
@@ -390,7 +388,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                             bias_buf.as_ref(),
                             &x_buf,
                             &mut y_buf,
-                            None::<&B::DenseBuffer>,
+                            None::<&Allocation<B>>,
                             k as u32,
                             n as u32,
                             m as u32,
@@ -408,13 +406,13 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
 fn bench_qmv_fast(c: &mut Criterion) {
     for_each_backend!(|B| {
         let context = <B as Backend>::Context::new().unwrap();
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs32", 32, 4, QuantizationMethod::MLX);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, QuantizationMethod::AWQ);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, QuantizationMethod::MLX);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::AWQ);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, QuantizationMethod::MLX);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::AWQ);
-        bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::AWQ);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::AWQ);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs32", 32, 4, QuantizationMethod::ScaleBias);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, QuantizationMethod::ScaleZeroPoint);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "Mlx_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
+        bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
+        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleZeroPoint);
     });
 }

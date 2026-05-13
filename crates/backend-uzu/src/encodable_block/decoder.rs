@@ -4,14 +4,16 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
+#[cfg(feature = "tracing")]
+use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder},
-    config::{DecoderConfig, DecoderLayerType, MixerConfig},
-    encodable_block::{Embedding, EncodingParameters, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
+    config::DecoderConfig,
+    encodable_block::{Embedding, LayerArguments, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
     forward_pass::{
-        model_shape::ModelShape,
-        state::{ArrayId, ForwardPassState, RopeType},
+        cache_layers::CacheLayers,
+        state::{RopeType, SharedBuffers},
     },
     parameters::ParameterTree,
 };
@@ -31,6 +33,27 @@ pub struct Decoder<B: Backend> {
     pub norm: RMSNorm<B>,
 }
 
+pub struct DecoderArguments<'a, B: Backend> {
+    pub token_positions: &'a Allocation<B>,
+    pub token_parents: &'a Allocation<B>,
+    pub token_subtrie_ranges: Option<&'a Allocation<B>>,
+    pub shared_buffers: &'a SharedBuffers<B>,
+    pub cache_layers: Option<&'a mut CacheLayers<B>>,
+    pub batch_dim: usize,
+    pub sampling_start: usize,
+    pub sampling_length: usize,
+    pub rope_max_sequence_length: usize,
+    pub rope_dim: usize,
+    #[cfg(feature = "tracing")]
+    pub trace: Option<&'a mut ActivationTrace<B>>,
+}
+
+pub enum DecoderDecodeInput<'a, B: Backend> {
+    TokenIds(&'a Allocation<B>),
+    #[cfg(metal_backend)]
+    Embeddings(Allocation<B>),
+}
+
 impl<B: Backend> Decoder<B> {
     pub fn new(
         context: &B::Context,
@@ -42,7 +65,7 @@ impl<B: Backend> Decoder<B> {
         let embed = Embedding::new(
             context,
             decoder_config.vocab_size as u32,
-            decoder_config.model_dim as u32,
+            decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &embedding_weight_loader,
         )
@@ -75,7 +98,7 @@ impl<B: Backend> Decoder<B> {
         let embed = Embedding::new_with_lookup_and_readout_trees(
             context,
             decoder_config.vocab_size as u32,
-            decoder_config.model_dim as u32,
+            decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &embedding_weight_loader,
             &readout_weight_loader,
@@ -101,97 +124,42 @@ impl<B: Backend> Decoder<B> {
         let decoder_weight_loader =
             root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
 
-        let attention_data_type = Self::attention_data_type(&decoder_config);
-        let norm_reference_layer =
-            decoder_config.layer_configs.as_ref().map(|configs| &configs[0]).unwrap_or(&decoder_config.layer_config);
-        let norm_data_type: DataType = match &norm_reference_layer.mixer_config {
-            MixerConfig::Attention(attention_config) => {
-                attention_config.qkv_projection_config.activation_precision().into()
-            },
-            MixerConfig::Mamba(mamba_config) => mamba_config.in_projection_config.activation_precision().into(),
-            MixerConfig::ShortConv(short_conv_config) => {
-                short_conv_config.in_projection_config.activation_precision().into()
-            },
-            MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
-        };
+        let tf = &decoder_config.transformer_config;
+        let norm_data_type: DataType = tf.layer_configs[0].mixer_config.activation_precision().into();
 
-        let global_rope = if decoder_config.global_rope_config.is_some() {
-            attention_data_type
-                .as_ref()
-                .map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Global))
-        } else {
-            None
-        };
+        let global_rope =
+            tf.global_rope_config.is_some().then(|| Self::create_rope_block(context, norm_data_type, RopeType::Global));
+        let local_rope =
+            tf.local_rope_config.is_some().then(|| Self::create_rope_block(context, norm_data_type, RopeType::Local));
 
-        let local_rope = if decoder_config.local_rope_config.is_some() {
-            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Local))
-        } else {
-            None
-        };
-
-        let model_shape = ModelShape::from_decoder_config(&decoder_config);
-        let sliding_window_sizes = model_shape.sliding_window_length_per_layer.clone();
-
-        let layers = (0..decoder_config.num_layers)
-            .map(|layer_index| {
-                let layer_config = decoder_config
-                    .layer_configs
-                    .as_ref()
-                    .map(|configs| &configs[layer_index])
-                    .unwrap_or(&decoder_config.layer_config);
-                let layer_type = model_shape.layer_type(layer_index);
-                let rope_for_layer = match layer_type {
-                    DecoderLayerType::Transformer => {
-                        if let Some(_) = sliding_window_sizes[layer_index]
-                            && let Some(local_rope_block) = local_rope.clone()
-                        {
-                            Some(local_rope_block)
-                        } else {
-                            Some(global_rope.clone().expect("Global rope missing for transformer layer"))
-                        }
-                    },
-                    DecoderLayerType::StateSpace {
-                        ..
-                    } => None,
-                    DecoderLayerType::ShortConv {
-                        ..
-                    } => None,
-                    DecoderLayerType::DeltaNet {
-                        ..
-                    } => None,
-                };
+        let layers = tf
+            .layer_configs
+            .iter()
+            .enumerate()
+            .map(|(layer_index, layer_config)| {
+                let rope_for_layer = layer_config.mixer_config.as_attention().map(|attn| {
+                    if attn.sliding_window_size.is_some() {
+                        local_rope.clone().expect("Local rope missing for sliding-window attention layer")
+                    } else {
+                        global_rope.clone().expect("Global rope missing for attention layer")
+                    }
+                });
 
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
-                LayerExecutables::new(
-                    context,
-                    layer_config,
-                    layer_type,
-                    layer_index,
-                    decoder_config.model_dim,
-                    decoder_config.hidden_dim,
-                    decoder_config.num_heads,
-                    decoder_config.head_dim,
-                    decoder_config.num_groups,
-                    decoder_config.attention_scale,
-                    &layer_loader,
-                    rope_for_layer,
-                )
+                LayerExecutables::new(context, tf, layer_config, layer_index, &layer_loader, rope_for_layer)
             })
             .collect::<Vec<_>>();
 
         let norm_block = RMSNorm::new(
             context,
             norm_data_type,
-            decoder_config.output_norm_config.clone(),
-            ArrayId::Main,
-            ArrayId::Main,
+            tf.output_norm_config.clone(),
             &decoder_weight_loader.subtree("output_norm").unwrap(),
             None,
-            Some(ArrayId::Shortcut),
+            true,
             true,
         )
-        .map(RMSNorm::with_sampling_range)
         .expect("Failed to create output RMS norm kernel");
 
         (layers.into_boxed_slice(), norm_block)
@@ -205,48 +173,135 @@ impl<B: Backend> Decoder<B> {
         Rc::new(Rope::<B>::new(context, data_type, rope_type).expect("Failed to create Rope"))
     }
 
-    fn attention_data_type(decoder_config: &DecoderConfig) -> Option<DataType> {
-        (0..decoder_config.num_layers).find_map(|layer_index| {
-            let layer_config = decoder_config
-                .layer_configs
-                .as_ref()
-                .map(|configs| &configs[layer_index])
-                .unwrap_or(&decoder_config.layer_config);
-            layer_config
-                .attention_config()
-                .map(|attention_config| attention_config.qkv_projection_config.activation_precision().into())
-        })
-    }
-
-    pub fn encode(
+    fn run_layers(
         &self,
-        state: &mut ForwardPassState<B>,
-        parameters: &EncodingParameters,
+        args: DecoderArguments<B>,
+        mut main: Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), DecoderError<B>> {
-        self.embed.encode_lookup(state, encoder)?;
+    ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
+        let DecoderArguments {
+            token_positions,
+            token_parents,
+            token_subtrie_ranges,
+            shared_buffers,
+            mut cache_layers,
+            batch_dim,
+            sampling_start,
+            sampling_length,
+            rope_max_sequence_length,
+            rope_dim,
+            #[cfg(feature = "tracing")]
+            trace,
+        } = args;
+        #[cfg(feature = "tracing")]
+        let mut trace = trace;
+
+        let mut shortcut =
+            encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(DecoderError::BackendError)?;
 
         for layer in self.layers.iter() {
-            layer.encode(state, parameters, encoder).map_err(DecoderError::BackendError)?;
+            let rope_type = layer.rope_type();
+            let rope_cosines = rope_type.and_then(|rope_type| shared_buffers.rope_cosines(rope_type));
+            let rope_sines = rope_type.and_then(|rope_type| shared_buffers.rope_sines(rope_type));
+            let attention_sinks = shared_buffers.attention_sinks(layer.layer_index);
+            #[cfg(feature = "tracing")]
+            let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
+
+            let cache_layer = cache_layers.as_deref_mut().map(|cache_layers| &mut cache_layers.data[layer.layer_index]);
+            main = layer
+                .encode(
+                    LayerArguments {
+                        batch_dim,
+                        token_positions,
+                        token_parents,
+                        token_subtrie_ranges,
+                        attention_sinks,
+                        rope_cosines,
+                        rope_sines,
+                        rope_max_sequence_length,
+                        rope_dim,
+                        sampling_start,
+                        sampling_length,
+                        cache_layer,
+                        #[cfg(feature = "tracing")]
+                        trace: layer_trace,
+                    },
+                    main,
+                    &mut shortcut,
+                    encoder,
+                )
+                .map_err(DecoderError::BackendError)?;
         }
 
-        if state.is_prefilling() {
-            return Ok(());
-        }
+        Ok((main, shortcut))
+    }
 
-        self.norm.encode(state, encoder).map_err(DecoderError::BackendError)?;
+    pub fn encode_prefill(
+        &self,
+        args: DecoderArguments<B>,
+        token_ids: &Allocation<B>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, DecoderError<B>> {
+        let main = self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?;
+        let (main, _) = self.run_layers(args, main, encoder)?;
+        Ok(main)
+    }
+
+    pub fn encode_decode<'input>(
+        &self,
+        args: DecoderArguments<B>,
+        input: DecoderDecodeInput<'input, B>,
+        hidden_capture: Option<&mut Allocation<B>>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, DecoderError<B>> {
+        let sampling_start = args.sampling_start;
+        let sampling_length = args.sampling_length;
+        let batch_dim = args.batch_dim;
         #[cfg(feature = "tracing")]
-        {
-            let traces = state.traces().clone();
-            state.encode_copy_array(encoder, ArrayId::Main, traces.borrow().output_norm.clone());
+        let mut trace = args.trace;
+        let main = match input {
+            DecoderDecodeInput::TokenIds(token_ids) => self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?,
+            #[cfg(metal_backend)]
+            DecoderDecodeInput::Embeddings(main) => main,
+        };
+        let (main, mut shortcut) = self.run_layers(
+            DecoderArguments {
+                token_positions: args.token_positions,
+                token_parents: args.token_parents,
+                token_subtrie_ranges: args.token_subtrie_ranges,
+                shared_buffers: args.shared_buffers,
+                cache_layers: args.cache_layers,
+                batch_dim: args.batch_dim,
+                sampling_start,
+                sampling_length,
+                rope_max_sequence_length: args.rope_max_sequence_length,
+                rope_dim: args.rope_dim,
+                #[cfg(feature = "tracing")]
+                trace: trace.as_deref_mut(),
+            },
+            main,
+            encoder,
+        )?;
+
+        let output_norm = self
+            .norm
+            .encode(&main, sampling_start, sampling_length, Some(&mut shortcut), encoder)
+            .map_err(DecoderError::BackendError)?;
+        if let Some(hidden_capture) = hidden_capture {
+            let row_size_bytes = shortcut.as_buffer_range_ref().range().len() / batch_dim;
+            let input_offset = (batch_dim - 1) * row_size_bytes;
+            encoder.encode_copy(&shortcut, input_offset..input_offset + row_size_bytes, hidden_capture, ..);
+        }
+        #[cfg(feature = "tracing")]
+        if let Some(trace) = trace.as_deref_mut() {
+            encoder.encode_copy(&output_norm, .., trace.output_norm.allocation_mut(), ..);
         }
 
-        self.embed.encode_readout(state, encoder)?;
+        let logits = self.embed.encode_readout(sampling_length, &output_norm, encoder)?;
         #[cfg(feature = "tracing")]
-        {
-            let traces = state.traces().clone();
-            state.encode_copy_array(encoder, ArrayId::Logits, traces.borrow().logits.clone());
+        if let Some(trace) = trace.as_deref_mut() {
+            encoder.encode_copy(&logits, .., trace.logits.allocation_mut(), ..);
         }
-        Ok(())
+        Ok(logits)
     }
 }

@@ -9,11 +9,11 @@ use half::{bf16, f16};
 use crate::{
     DataType,
     backends::common::{
-        Backend, Context, DenseBuffer, Encoder,
+        Allocation, AllocationType, Backend, Context, Encoder, allocation_as_bytes,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::quant_matmul::{
             QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-            tests::common::helpers::alloc_buffer_with_data,
+            tests::common::helpers::alloc_allocation_with_data,
         },
     },
 };
@@ -151,11 +151,11 @@ fn cpu_reference(
             for g in 0..num_groups {
                 let scale = scales[j * num_groups + g];
                 let bias = match quantization_method {
-                    QuantizationMethod::AWQ => {
+                    QuantizationMethod::ScaleZeroPoint => {
                         let zp = get_zp_value(zero_points, zero_points_stride, j, g, bits);
                         -scale * zp
                     },
-                    QuantizationMethod::MLX => biases[j * num_groups + g],
+                    QuantizationMethod::ScaleBias => biases[j * num_groups + g],
                 };
                 let l_start = g * group_size;
                 let l_end = (l_start + group_size).min(input_dim);
@@ -213,7 +213,7 @@ fn generate_test_quant_params(
     };
     let mut zero_points = vec![0u8; output_dim * zero_points_stride];
 
-    if quantization_method == QuantizationMethod::AWQ && randomize_zp {
+    if quantization_method == QuantizationMethod::ScaleZeroPoint && randomize_zp {
         for j in 0..output_dim {
             for g in 0..num_groups {
                 let base_val = j + 3 * g;
@@ -242,7 +242,7 @@ fn generate_test_quant_params(
         }
     }
 
-    if quantization_method == QuantizationMethod::MLX {
+    if quantization_method == QuantizationMethod::ScaleBias {
         for j in 0..output_dim {
             for g in 0..num_groups {
                 let base_val = j * 7 + g * 3;
@@ -261,23 +261,23 @@ fn generate_test_quant_params(
     }
 }
 
-fn buffer_from_f32_slice<B: Backend>(
+fn allocation_from_f32_slice<B: Backend>(
     ctx: &B::Context,
     dtype: DataType,
     values: &[f32],
-) -> B::DenseBuffer {
+) -> Allocation<B> {
     match dtype {
         DataType::F16 => {
             let data: Vec<f16> = values.iter().map(|&v| f16::from_f32(v)).collect();
-            alloc_buffer_with_data::<B, f16>(ctx, data.as_slice())
+            alloc_allocation_with_data::<B, f16>(ctx, data.as_slice())
         },
         DataType::BF16 => {
             let data: Vec<bf16> = values.iter().map(|&v| bf16::from_f32(v)).collect();
-            alloc_buffer_with_data::<B, bf16>(ctx, data.as_slice())
+            alloc_allocation_with_data::<B, bf16>(ctx, data.as_slice())
         },
-        DataType::F32 => alloc_buffer_with_data::<B, f32>(ctx, values),
+        DataType::F32 => alloc_allocation_with_data::<B, f32>(ctx, values),
         other => {
-            panic!("Unsupported dtype for buffer_from_f32_slice: {:?}", other)
+            panic!("Unsupported dtype for allocation_from_f32_slice: {:?}", other)
         },
     }
 }
@@ -326,15 +326,17 @@ fn execute_quantized_matmul<B: Backend>(
     };
     let x_quant = quantize_slice(&x_f32, data_type);
 
-    let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
-    let s_buf = buffer_from_f32_slice::<B>(ctx, data_type, &params.scales);
+    let w_buf = alloc_allocation_with_data::<B, u8>(ctx, &weights_packed);
+    let s_buf = allocation_from_f32_slice::<B>(ctx, data_type, &params.scales);
 
     let b_buf = match quantization_method {
-        QuantizationMethod::AWQ => alloc_buffer_with_data::<B, u8>(ctx, &params.zero_points),
-        QuantizationMethod::MLX => buffer_from_f32_slice::<B>(ctx, data_type, &params.biases),
+        QuantizationMethod::ScaleZeroPoint => alloc_allocation_with_data::<B, u8>(ctx, &params.zero_points),
+        QuantizationMethod::ScaleBias => allocation_from_f32_slice::<B>(ctx, data_type, &params.biases),
     };
-    let x_buf = buffer_from_f32_slice::<B>(ctx, data_type, &x_f32);
-    let mut y_buf = ctx.create_buffer(batch * output_dim * data_type.size_in_bytes()).expect("Failed to create buffer");
+    let x_buf = allocation_from_f32_slice::<B>(ctx, data_type, &x_f32);
+    let mut y_buf = ctx
+        .create_allocation(batch * output_dim * data_type.size_in_bytes(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
     let kernel = QuantizedMatmulKernelEncodable::<B>::new(
         &ctx,
@@ -357,17 +359,17 @@ fn execute_quantized_matmul<B: Backend>(
     if iterations > 1 {
         for _ in 0..3 {
             let args = QuantizedMatmulArguments {
-                a_buffer: &x_buf,
+                a: &x_buf,
                 a_offset: 0,
-                b_buffer: &w_buf,
-                scales_buffer: &s_buf,
-                zero_points_or_biases_buffer: &b_buf,
-                output_buffer: &mut y_buf,
+                b: &w_buf,
+                scales: &s_buf,
+                zero_points_or_biases: &b_buf,
+                output: &mut y_buf,
                 hadamard_factors: None,
                 batch_dim: batch,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
-            kernel.encode(&mut encoder, args).unwrap();
+            kernel.encode(&mut encoder, args);
             encoder.end_encoding().submit().wait_until_completed().unwrap();
         }
     }
@@ -375,17 +377,17 @@ fn execute_quantized_matmul<B: Backend>(
     let start = Instant::now();
     for _ in 0..iterations {
         let args = QuantizedMatmulArguments {
-            a_buffer: &x_buf,
+            a: &x_buf,
             a_offset: 0,
-            b_buffer: &w_buf,
-            scales_buffer: &s_buf,
-            zero_points_or_biases_buffer: &b_buf,
-            output_buffer: &mut y_buf,
+            b: &w_buf,
+            scales: &s_buf,
+            zero_points_or_biases: &b_buf,
+            output: &mut y_buf,
             hadamard_factors: None,
             batch_dim: batch,
         };
         let mut encoder = Encoder::new(ctx).unwrap();
-        kernel.encode(&mut encoder, args).unwrap();
+        kernel.encode(&mut encoder, args);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
     let elapsed = start.elapsed();
@@ -409,20 +411,14 @@ fn execute_quantized_matmul<B: Backend>(
 
         let y_out_f32: Vec<f32> = match data_type {
             DataType::F16 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
+                let y_out = bytemuck::cast_slice::<u8, f16>(allocation_as_bytes(&y_buf));
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
             DataType::BF16 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const bf16;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
+                let y_out = bytemuck::cast_slice::<u8, bf16>(allocation_as_bytes(&y_buf));
                 y_out.iter().map(|&v| v.to_f32()).collect()
             },
-            DataType::F32 => {
-                let y_ptr = y_buf.cpu_ptr().as_ptr() as *const f32;
-                let y_out = unsafe { std::slice::from_raw_parts(y_ptr, batch * output_dim) };
-                y_out.to_vec()
-            },
+            DataType::F32 => bytemuck::cast_slice::<u8, f32>(allocation_as_bytes(&y_buf)).to_vec(),
             other => panic!("Unsupported dtype for validation: {:?}", other),
         };
 
@@ -490,7 +486,7 @@ fn run_kernel_test<B: Backend>(
     validate: bool,
     iterations: usize,
 ) -> ExecutionResult {
-    let randomize_zp = config.quant_method == QuantizationMethod::AWQ;
+    let randomize_zp = config.quant_method == QuantizationMethod::ScaleZeroPoint;
 
     execute_quantized_matmul::<B>(
         ctx,
@@ -518,25 +514,25 @@ fn test_quant_gmv_internal<B: Backend>() {
 
     let configs = vec![
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
@@ -561,25 +557,25 @@ fn test_quant_gmm_transposed_internal<B: Backend>() {
 
     let configs = vec![
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 4,
             data_type: DataType::F32,
             group_size: 64,
         },
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 8,
             data_type: DataType::F32,
             group_size: 64,
@@ -615,28 +611,28 @@ fn test_quant_matmul_perf_internal<B: Backend>() {
     let configs = vec![
         // 4-bit Mlx BF16
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 4,
             data_type: DataType::BF16,
             group_size: 128,
         },
         // 8-bit Mlx BF16
         TestConfig {
-            quant_method: QuantizationMethod::MLX,
+            quant_method: QuantizationMethod::ScaleBias,
             bits: 8,
             data_type: DataType::BF16,
             group_size: 128,
         },
         // 4-bit ZP F16
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 4,
             data_type: DataType::F16,
             group_size: 64,
         },
         // 8-bit ZP F16
         TestConfig {
-            quant_method: QuantizationMethod::AWQ,
+            quant_method: QuantizationMethod::ScaleZeroPoint,
             bits: 8,
             data_type: DataType::F16,
             group_size: 64,

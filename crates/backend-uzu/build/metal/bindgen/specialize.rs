@@ -24,7 +24,7 @@ pub fn parse(
         .arguments
         .iter()
         .filter_map(|argument| match argument.argument_type() {
-            Ok(MetalArgumentType::Specialize(rust_type_text)) => Some((argument, rust_type_text)),
+            MetalArgumentType::Specialize(rust_type_text) => Some((argument, rust_type_text)),
             _ => None,
         })
         .enumerate()

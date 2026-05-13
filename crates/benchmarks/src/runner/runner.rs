@@ -68,11 +68,8 @@ impl Runner {
 
         let mut session = ChatSession::new(PathBuf::from(self.model_path.clone()), decoding_config)?;
 
-        let precision = session
-            .model_metadata
-            .model_config
-            .as_language_model()
-            .map(|config| config.model_config.transformer_config.output_norm_config.scale_precision);
+        let precision =
+            session.model_metadata.model_config.model_config.transformer_config.output_norm_config.scale_precision;
 
         let device = self.get_device_info();
 

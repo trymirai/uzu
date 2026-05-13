@@ -15,7 +15,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::{common::Backend, select_backend},
-    config::{MixerConfig, ModelMetadata},
+    config::{LanguageModelConfig, MixerConfig, ModelMetadata},
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
         grammar::{CompiledGrammar, create_compiled_grammar},
@@ -27,6 +27,7 @@ use crate::{
         parameter::{ConfigResolvableValue, ContextMode},
         types::{Error, FinishReason, Input, Output, RunStats, Stats, StepStats, TotalStats},
     },
+    utils::strict_serde::from_reader_strict,
 };
 
 fn nanos_to_secs(nanos: u64) -> f64 {
@@ -47,7 +48,7 @@ struct RunContext {
 
 pub struct ChatSession {
     pub model_path: PathBuf,
-    pub model_metadata: ModelMetadata,
+    pub model_metadata: ModelMetadata<LanguageModelConfig>,
 
     tokenizer: Tokenizer,
     stop_token_ids: Vec<i32>,
@@ -83,23 +84,16 @@ impl ChatSession {
             return Err(Error::UnableToLoadConfig);
         }
         let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata = serde_json::from_reader(BufReader::new(config_file)).map_err(|err| {
-            eprintln!("Failed to parse config.json: {err}");
-            Error::UnableToLoadConfig
-        })?;
+        let model_metadata: ModelMetadata<LanguageModelConfig> = from_reader_strict(BufReader::new(config_file))
+            .map_err(|err| {
+                eprintln!("Failed to parse config.json: {err}");
+                Error::UnableToLoadConfig
+            })?;
 
-        let (has_non_attention_mixer, has_mamba_mixer) = model_metadata
-            .model_config
-            .as_language_model()
-            .and_then(|lm| lm.decoder_config().ok())
-            .and_then(|dc| dc.layer_configs)
-            .map(|layers| {
-                let has_non_attention =
-                    layers.iter().any(|layer| !matches!(layer.mixer_config, MixerConfig::Attention(_)));
-                let has_mamba = layers.iter().any(|layer| matches!(layer.mixer_config, MixerConfig::Mamba(_)));
-                (has_non_attention, has_mamba)
-            })
-            .unwrap_or((false, false));
+        let layers = &model_metadata.model_config.model_config.transformer_config.layer_configs;
+        let has_non_attention_mixer =
+            layers.iter().any(|layer| !matches!(layer.mixer_config, MixerConfig::Attention(_)));
+        let has_mamba_mixer = layers.iter().any(|layer| matches!(layer.mixer_config, MixerConfig::Mamba(_)));
         if has_non_attention_mixer {
             match decoding_config.context_mode {
                 ContextMode::None => {},
@@ -118,8 +112,6 @@ impl ChatSession {
             return Err(Error::UnsupportedSpeculatorConfigForModel);
         }
 
-        let language_model_config = model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
-
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {
             return Err(Error::UnableToLoadTokenizer);
@@ -127,12 +119,12 @@ impl ChatSession {
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
 
         let stop_token_ids: Vec<i32> =
-            language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as i32).collect();
+            model_metadata.model_config.generation_config.stop_token_ids.iter().map(|&x| x as i32).collect();
 
-        let input_processor = InputProcessorDefault::new(language_model_config.message_processor_config.clone());
+        let input_processor = InputProcessorDefault::new(model_metadata.model_config.message_processor_config.clone());
 
         let output_parser =
-            OutputParser::new(language_model_config.message_processor_config.output_parser_regex.clone())?;
+            OutputParser::new(model_metadata.model_config.message_processor_config.output_parser_regex.clone())?;
 
         let llm = Box::new(
             LanguageModelGenerator::<B>::new(&model_path, decoding_config.clone(), &model_metadata)
@@ -239,11 +231,8 @@ impl ChatSession {
             .map(|&id| id as u64)
             .collect();
 
-        let language_model_config =
-            self.model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
-
         let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
-        let context_length = self.decoding_config.context_length.resolve(language_model_config);
+        let context_length = self.decoding_config.context_length.resolve(&self.model_metadata.model_config);
         if tokens.len() >= context_length {
             return Err(Error::ContextLengthExceeded);
         }
@@ -252,9 +241,9 @@ impl ChatSession {
         let prefix_len_before = prefix_offset;
 
         let eos_tokens: Vec<u64> =
-            language_model_config.generation_config.stop_token_ids.iter().map(|&x| x as u64).collect();
+            self.model_metadata.model_config.generation_config.stop_token_ids.iter().map(|&x| x as u64).collect();
 
-        let sampling_method = config.sampling_policy.resolve(language_model_config);
+        let sampling_method = config.sampling_policy.resolve(&self.model_metadata.model_config);
 
         let mut compiled_grammar: Option<Box<dyn CompiledGrammar>> = if let Some(ref config) = config.grammar_config {
             Some(create_compiled_grammar(config, &self.tokenizer, Some(&self.stop_token_ids))?)
@@ -273,9 +262,8 @@ impl ChatSession {
         )?;
         let prefill_tokens = prefill_result.tokens.clone();
         let prefill_duration = prefill_start.elapsed().as_secs_f64();
-        language_model_generator.clear_cache();
 
-        let prefill_suffix_length = self.decoding_config.prefill_step_size.resolve(language_model_config);
+        let prefill_suffix_length = self.decoding_config.prefill_step_size.resolve(&self.model_metadata.model_config);
 
         let run_context = RunContext {
             eos_tokens,
@@ -345,7 +333,6 @@ impl ChatSession {
             )?
         };
 
-        language_model_generator.clear_cache();
         Ok(generate_output.clone_with_duration(run_start.elapsed().as_secs_f64()))
     }
 
@@ -460,8 +447,9 @@ impl ChatSession {
             next_to_submit = batch_end;
 
             for _ in 0..batch_submitted {
-                let (_, token, duration_nanos) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
+                let (idx, token, duration_nanos) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
                 in_flight -= 1;
+                llm.finish_async(idx);
 
                 let duration = nanos_to_secs(duration_nanos);
                 llm.tokens_push(token);
@@ -494,7 +482,8 @@ impl ChatSession {
 
                 if should_stop {
                     while in_flight > 0 {
-                        let _ = receiver.recv();
+                        let (idx, _, _) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
+                        llm.finish_async(idx);
                         in_flight -= 1;
                     }
                     if let Some(slice) = cache_slice {

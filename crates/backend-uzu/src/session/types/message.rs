@@ -2,12 +2,16 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(metal_backend)]
+use crate::config::TtsMessageProcessorConfig;
 use crate::{
-    config::{MessageProcessorConfig, TtsMessageProcessorConfig},
+    config::MessageProcessorConfig,
     session::{parameter::ConfigResolvableValue, types::Role},
 };
 
+#[cfg(metal_backend)]
 pub(crate) const DEFAULT_TTS_SPEAKER_ID: &str = "speaker:0";
+#[cfg(metal_backend)]
 pub(crate) const DEFAULT_TTS_STYLE: &str = "interleave";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -65,6 +69,7 @@ impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>> for 
     }
 }
 
+#[cfg(metal_backend)]
 impl ConfigResolvableValue<TtsMessageProcessorConfig, HashMap<String, String>> for Message {
     fn resolve(
         &self,

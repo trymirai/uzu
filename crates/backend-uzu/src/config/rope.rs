@@ -33,7 +33,8 @@ pub enum RoPEConfig {
         beta_slow: f32,
         truncate: bool,
     },
-    LinearScalingRoPEConfig {
+    #[serde(rename = "LinearScalingRoPEConfig")]
+    LinearScaling {
         #[serde(flatten)]
         common: RopeConfigCommon,
         scaling_factor: f32,
@@ -43,7 +44,7 @@ pub enum RoPEConfig {
 impl RoPEConfig {
     pub fn common(&self) -> &RopeConfigCommon {
         match self {
-            RoPEConfig::Unscaled(config) => &config,
+            RoPEConfig::Unscaled(config) => config,
             RoPEConfig::Llama {
                 common,
                 ..
@@ -52,14 +53,10 @@ impl RoPEConfig {
                 common,
                 ..
             } => common,
-            RoPEConfig::LinearScalingRoPEConfig {
+            RoPEConfig::LinearScaling {
                 common,
                 ..
             } => common,
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/config/rope_test.rs"]
-mod tests;

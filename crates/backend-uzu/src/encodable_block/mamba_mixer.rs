@@ -1,28 +1,36 @@
 //! Mamba2 SSM mixer encodable.
 
-use std::{
-    env,
-    ops::{Deref, DerefMut},
-};
+use std::env;
+
+use thiserror::Error;
 
 use crate::{
     DataType,
-    array::Array,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel,
             ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         },
     },
-    config::{DecoderLayerType, Mamba2Config},
-    encodable_block::linear::Linear,
-    forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::{ParameterTree, resolve_subtree},
+    config::Mamba2Config,
+    encodable_block::linear::{Linear, LinearBlockError},
+    forward_pass::ssm_layer::SSMLayer,
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
+#[derive(Debug, Error)]
+pub enum MambaMixerError<B: Backend> {
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
+    #[error("Linear error: {0}")]
+    LinearError(#[from] Box<LinearBlockError<B>>),
+    #[error("Parameter loader error: {0}")]
+    ParameterLoaderError(#[from] ParameterLoaderError<B>),
+}
+
 pub(crate) struct MambaMixer<B: Backend> {
-    layer_index: usize,
     config: Mamba2Config,
     in_projection: Box<dyn Linear<B>>,
     out_projection: Box<dyn Linear<B>>,
@@ -32,11 +40,29 @@ pub(crate) struct MambaMixer<B: Backend> {
     conv_scan: <B::Kernels as Kernels>::Conv1dScanKernel,
     ssd_prefill: SSDPrefillKernels<B>,
     ssd_update: <B::Kernels as Kernels>::SSDUpdateKernel,
-    conv_weight: Array<B>,
-    conv_bias: Option<Array<B>>,
-    gate_bias: Array<B>,
-    skip_connection_weight: Array<B>,
+    conv_weight: Allocation<B>,
+    conv_bias: Option<Allocation<B>>,
+    gate_bias: Allocation<B>,
+    skip_connection_weight: Allocation<B>,
     prefill_mode: SSDPrefillMode,
+    data_type: DataType,
+}
+
+pub(crate) struct MambaArguments<'a, B: Backend> {
+    pub active_row_count: usize,
+    pub layer: &'a mut SSMLayer<B>,
+}
+
+struct SplitInProjectionOutput<B: Backend> {
+    conv_inputs: Allocation<B>,
+    gate: Allocation<B>,
+    time_step: Allocation<B>,
+}
+
+struct ConvScanOutput<B: Backend> {
+    conv_x: Allocation<B>,
+    state_b: Allocation<B>,
+    state_c: Allocation<B>,
 }
 
 fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
@@ -51,162 +77,150 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
 }
 
 impl<B: Backend> MambaMixer<B> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: &B::Context,
-        layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
-        layer_index: usize,
         model_dim: usize,
-        num_heads: usize,
-        head_dim: usize,
-        num_groups: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-    ) -> Self {
-        let _ = (num_heads, head_dim, num_groups);
-        if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
-            panic!("Layer {} marked as transformer but Mamba mixer config provided", layer_index);
-        }
-        let split_tree = resolve_subtree(decoder_layer_loader, &["mixer"]);
-        let conv_tree = resolve_subtree(&split_tree, &["conv", "conv1d"]);
+    ) -> Result<(Self, Option<Allocation<B>>), MambaMixerError<B>> {
+        let split_tree = decoder_layer_loader.subtree("mixer")?;
+        let conv_tree = split_tree.subtree("conv")?;
 
         let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
 
-        let in_projection = <dyn Linear<B>>::new(
+        let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &mamba_config.in_projection_config,
-            mamba_config.has_in_biases,
             model_dim,
             [mamba_config.conv_dim(), mamba_config.inner_dim(), mamba_config.num_heads],
             context,
-            &resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"]),
-            ArrayId::Main,
-            ArrayId::SsmInProj,
+            &decoder_layer_loader.subtree("mixer.in_projection")?,
         )
-        .expect("Failed to create in-projection kernel");
+        .map_err(|err| MambaMixerError::LinearError(Box::new(err)))?;
 
         let out_projection = <dyn Linear<B>>::new(
             &mamba_config.out_projection_config,
-            mamba_config.has_out_biases,
             mamba_config.inner_dim(),
             [model_dim],
             context,
-            &resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"]),
-            ArrayId::AttentionOutput,
-            ArrayId::Main,
+            &decoder_layer_loader.subtree("mixer.out_projection")?,
         )
-        .expect("Failed to create out-projection kernel");
+        .map_err(|err| MambaMixerError::LinearError(Box::new(err)))?;
 
-        let conv_weight = conv_tree.leaf_array("weights").unwrap();
+        let conv_weight = conv_tree.leaf("weights")?.read_allocation()?;
         let conv_bias = if mamba_config.conv_config.has_biases {
-            Some(conv_tree.leaf_array("biases").unwrap())
+            Some(conv_tree.leaf("biases")?.read_allocation()?)
         } else {
             None
         };
-        let gate_bias = split_tree.leaf_array("gate_bias").unwrap();
-        let skip_connection_weight = split_tree.leaf_array("skip_connection_weight").unwrap();
+        let gate_bias = split_tree.leaf("gate_bias")?.read_allocation()?;
+        let skip_connection_weight = split_tree.leaf("skip_connection_weight")?.read_allocation()?;
 
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
-            .expect("Failed to create split in-projection kernel");
+            .map_err(MambaMixerError::BackendError)?;
         let conv_scan =
             <B::Kernels as Kernels>::Conv1dScanKernel::new(context, data_type, mamba_config.conv_config.has_biases)
-                .expect("Failed to create conv scan kernel");
+                .map_err(MambaMixerError::BackendError)?;
         let conv_decode = <B::Kernels as Kernels>::Conv1dDecodeKernel::new(
             context,
             data_type,
             mamba_config.conv_config.has_biases,
             true,
         )
-        .expect("Failed to create conv decode kernel");
+        .map_err(MambaMixerError::BackendError)?;
         let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, data_type)
-            .expect("Failed to create conv pack kernel");
-        let ssd_prefill = SSDPrefillKernels::new(context, data_type).expect("Failed to create SSD prefill kernel");
+            .map_err(MambaMixerError::BackendError)?;
+        let ssd_prefill = SSDPrefillKernels::new(context, data_type).map_err(MambaMixerError::BackendError)?;
         let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, data_type, true)
-            .expect("Failed to create SSD decode kernel");
+            .map_err(MambaMixerError::BackendError)?;
         let prefill_mode = resolve_prefill_mode_from_env();
 
-        Self {
-            layer_index,
-            config: mamba_config,
-            in_projection,
-            out_projection,
-            split_inproj,
-            conv_decode,
-            conv_pack,
-            conv_scan,
-            ssd_prefill,
-            ssd_update,
-            conv_weight,
-            conv_bias,
-            gate_bias,
-            skip_connection_weight,
-            prefill_mode,
-        }
+        Ok((
+            Self {
+                config: mamba_config,
+                in_projection,
+                out_projection,
+                split_inproj,
+                conv_decode,
+                conv_pack,
+                conv_scan,
+                ssd_prefill,
+                ssd_update,
+                conv_weight,
+                conv_bias,
+                gate_bias,
+                skip_connection_weight,
+                prefill_mode,
+                data_type,
+            },
+            in_projection_input_hadamard_factors,
+        ))
     }
 
     fn run_split_inproj(
         &self,
-        state: &mut ForwardPassState<B>,
-        encoder: &mut Encoder<B>,
+        in_proj: &Allocation<B>,
         suffix_length: usize,
-    ) {
-        let in_proj = state.array(ArrayId::SsmInProj);
-        let conv_inputs = state.array(ArrayId::SsmPacked(self.layer_index));
-        let gate = state.array(ArrayId::SsmZ(self.layer_index));
-        let dt = state.array(ArrayId::SsmDt(self.layer_index));
-
+        encoder: &mut Encoder<B>,
+    ) -> Result<SplitInProjectionOutput<B>, B::Error> {
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let num_heads = self.config.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
-
+        let mut conv_inputs = encoder.allocate_scratch(size_for_shape(&[suffix_length, conv_dim], self.data_type))?;
+        let mut gate = encoder
+            .allocate_scratch(size_for_shape(&[suffix_length, num_heads, self.config.head_dim], self.data_type))?;
+        let mut time_step = encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads], self.data_type))?;
         self.split_inproj.encode(
-            in_proj.buffer().borrow().deref(),
-            conv_inputs.buffer().borrow_mut().deref_mut(),
-            gate.buffer().borrow_mut().deref_mut(),
-            dt.buffer().borrow_mut().deref_mut(),
-            self.gate_bias.buffer().borrow().deref(),
+            in_proj,
+            &mut conv_inputs,
+            &mut gate,
+            &mut time_step,
+            &self.gate_bias,
             suffix_length as u32,
             total_dim as u32,
             conv_dim as u32,
             inner_dim as u32,
             num_heads as u32,
             encoder,
-        )
+        );
+        Ok(SplitInProjectionOutput {
+            conv_inputs,
+            gate,
+            time_step,
+        })
     }
 
     fn run_conv_scan(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut SSMLayer<B>,
+        conv_inputs: &Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
-        let conv_inputs = state.array(ArrayId::SsmPacked(self.layer_index));
-        let conv_state = state.array(ArrayId::SsmConvState(self.layer_index));
-        let x_arr = state.array(ArrayId::SsmX(self.layer_index));
-        let b_arr = state.array(ArrayId::SsmB(self.layer_index));
-        let c_arr = state.array(ArrayId::SsmC(self.layer_index));
-
-        let weight_buf_rc = self.conv_weight.buffer();
-        let weight_buf_borrow = weight_buf_rc.borrow();
-        let bias_buf_rc = self.conv_bias.as_ref().map(|arr| arr.buffer());
-        let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
+    ) -> Result<ConvScanOutput<B>, B::Error> {
         let conv_dim = self.config.conv_dim();
         let inner_dim = self.config.inner_dim();
         let proj_dim = self.config.num_groups * self.config.state_dim;
         let state_stride = self.config.kernel_size.saturating_sub(1);
+        let mut conv_x = encoder.allocate_scratch(size_for_shape(
+            &[suffix_length, self.config.num_heads, self.config.head_dim],
+            self.data_type,
+        ))?;
+        let state_shape = [suffix_length, self.config.num_groups, self.config.state_dim];
+        let mut state_b = encoder.allocate_scratch(size_for_shape(&state_shape, self.data_type))?;
+        let mut state_c = encoder.allocate_scratch(size_for_shape(&state_shape, self.data_type))?;
 
         if suffix_length == 1 {
             if conv_dim > 0 && self.config.kernel_size > 0 {
+                let next_state = layer.conv_state.as_mut().unwrap_or(&mut layer.ssm_state);
                 self.conv_decode.encode(
-                    conv_inputs.buffer().borrow().deref(),
-                    weight_buf_borrow.deref(),
-                    bias_buf_borrow.as_deref(),
-                    None::<&B::DenseBuffer>,
-                    x_arr.buffer().borrow_mut().deref_mut(),
-                    b_arr.buffer().borrow_mut().deref_mut(),
-                    c_arr.buffer().borrow_mut().deref_mut(),
-                    conv_state.buffer().borrow_mut().deref_mut(),
+                    conv_inputs,
+                    &self.conv_weight,
+                    self.conv_bias.as_ref(),
+                    None::<&Allocation<B>>,
+                    &mut conv_x,
+                    &mut state_b,
+                    &mut state_c,
+                    next_state,
                     self.config.kernel_size as u32,
                     conv_dim as u32,
                     state_stride as u32,
@@ -219,39 +233,39 @@ impl<B: Backend> MambaMixer<B> {
                 );
             }
         } else {
-            let padded_buf = if state_stride > 0 {
-                let array = state.conv_padded_buffer().expect("Missing conv padded buffer");
-                let buffer = array.buffer();
-
+            let mut padded = (conv_dim > 0 && state_stride > 0)
+                .then(|| {
+                    encoder.allocate_scratch(size_for_shape(&[suffix_length + state_stride, conv_dim], self.data_type))
+                })
+                .transpose()?;
+            if let Some(padded) = padded.as_mut() {
+                let state_in = layer.conv_state.as_ref().unwrap_or(conv_inputs);
                 self.conv_pack.encode(
-                    conv_state.buffer().borrow().deref(),
-                    conv_inputs.buffer().borrow().deref(),
-                    buffer.borrow_mut().deref_mut(),
+                    state_in,
+                    conv_inputs,
+                    padded,
                     state_stride as u32,
                     conv_dim as u32,
                     suffix_length as u32,
                     conv_dim as u32,
                     encoder,
                 );
-
-                Some(buffer)
-            } else {
-                None
-            };
+            }
 
             if conv_dim > 0 && self.config.kernel_size > 0 {
-                let padded_borrow = padded_buf.as_ref().map(|b| b.borrow());
-                let conv_inputs_borrow = conv_inputs.buffer();
-                let conv_inputs_ref = conv_inputs_borrow.borrow();
-                let conv_source: &B::DenseBuffer = padded_borrow.as_deref().unwrap_or(conv_inputs_ref.deref());
+                let conv_source = match &padded {
+                    Some(padded) => padded,
+                    None => conv_inputs,
+                };
+                let next_state = layer.conv_state.as_mut().unwrap_or(&mut layer.ssm_state);
                 self.conv_scan.encode(
                     conv_source,
-                    weight_buf_borrow.deref(),
-                    bias_buf_borrow.as_deref(),
-                    x_arr.buffer().borrow_mut().deref_mut(),
-                    b_arr.buffer().borrow_mut().deref_mut(),
-                    c_arr.buffer().borrow_mut().deref_mut(),
-                    conv_state.buffer().borrow_mut().deref_mut(),
+                    &self.conv_weight,
+                    self.conv_bias.as_ref(),
+                    &mut conv_x,
+                    &mut state_b,
+                    &mut state_c,
+                    next_state,
                     suffix_length as u32,
                     self.config.kernel_size as u32,
                     conv_dim as u32,
@@ -261,36 +275,40 @@ impl<B: Backend> MambaMixer<B> {
                     proj_dim as u32,
                     self.config.activation.act_type(),
                     encoder,
-                )
+                );
             }
         }
+        Ok(ConvScanOutput {
+            conv_x,
+            state_b,
+            state_c,
+        })
     }
 
     fn run_prefill_ssm(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut SSMLayer<B>,
+        conv_x: &Allocation<B>,
+        state_b: &Allocation<B>,
+        state_c: &Allocation<B>,
+        time_step: &Allocation<B>,
+        gate: &Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
-        let x = state.array(ArrayId::SsmX(self.layer_index));
-        let b = state.array(ArrayId::SsmB(self.layer_index));
-        let c = state.array(ArrayId::SsmC(self.layer_index));
-        let dt = state.array(ArrayId::SsmDt(self.layer_index));
-        let z = state.array(ArrayId::SsmZ(self.layer_index));
-        let state_arr = state.array(ArrayId::SsmState(self.layer_index));
-        let out = state.array(ArrayId::AttentionOutput);
-
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut out =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.config.inner_dim()], self.data_type))?;
         self.ssd_prefill.encode(
             encoder,
             SSDPrefillArguments {
-                x: x.buffer().borrow().deref(),
-                dt: dt.buffer().borrow().deref(),
-                b: b.buffer().borrow().deref(),
-                c: c.buffer().borrow().deref(),
-                d: self.skip_connection_weight.buffer().borrow().deref(),
-                z: z.buffer().borrow().deref(),
-                state: state_arr.buffer().borrow_mut().deref_mut(),
-                y: out.buffer().borrow_mut().deref_mut(),
+                x: conv_x,
+                dt: time_step,
+                b: state_b,
+                c: state_c,
+                d: &self.skip_connection_weight,
+                z: gate,
+                state: &mut layer.ssm_state,
+                y: &mut out,
                 suffix_len: suffix_length,
                 group_size: (self.config.num_heads / self.config.num_groups) as u32,
                 state_size: self.config.state_dim as u32,
@@ -302,23 +320,23 @@ impl<B: Backend> MambaMixer<B> {
                 head_dim: self.config.head_dim,
             },
             self.prefill_mode,
-        )
+        );
+        Ok(out)
     }
 
     fn run_decode_ssm(
         &self,
-        state: &mut ForwardPassState<B>,
+        layer: &mut SSMLayer<B>,
+        conv_x: &Allocation<B>,
+        state_b: &Allocation<B>,
+        state_c: &Allocation<B>,
+        time_step: &Allocation<B>,
+        gate: &Allocation<B>,
         encoder: &mut Encoder<B>,
         suffix_length: usize,
-    ) {
-        let x = state.array(ArrayId::SsmX(self.layer_index));
-        let b = state.array(ArrayId::SsmB(self.layer_index));
-        let c = state.array(ArrayId::SsmC(self.layer_index));
-        let dt = state.array(ArrayId::SsmDt(self.layer_index));
-        let z = state.array(ArrayId::SsmZ(self.layer_index));
-        let state_arr = state.array(ArrayId::SsmState(self.layer_index));
-        let y = state.array(ArrayId::AttentionOutput);
-
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut out =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.config.inner_dim()], self.data_type))?;
         let h = self.config.num_heads as u32;
         let g = self.config.num_groups as u32;
         let dh = self.config.head_dim as u32;
@@ -332,15 +350,15 @@ impl<B: Backend> MambaMixer<B> {
         let state_size = n as i32;
 
         self.ssd_update.encode(
-            x.buffer().borrow().deref(),
-            dt.buffer().borrow().deref(),
-            b.buffer().borrow().deref(),
-            c.buffer().borrow().deref(),
-            self.skip_connection_weight.buffer().borrow().deref(),
-            z.buffer().borrow().deref(),
-            None::<&B::DenseBuffer>,
-            y.buffer().borrow_mut().deref_mut(),
-            state_arr.buffer().borrow_mut().deref_mut(),
+            conv_x,
+            time_step,
+            state_b,
+            state_c,
+            &self.skip_connection_weight,
+            gate,
+            None::<&Allocation<B>>,
+            &mut out,
+            &mut layer.ssm_state,
             group_size as u32,
             state_size as u32,
             &x_strides,
@@ -352,27 +370,40 @@ impl<B: Backend> MambaMixer<B> {
             dh,
             encoder,
         );
+        Ok(out)
     }
 
     pub(crate) fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        args: MambaArguments<B>,
+        input: Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let active_row_count = state.active_row_count();
-        if active_row_count == 0 {
-            return Ok(());
-        }
+    ) -> Result<Allocation<B>, B::Error> {
+        let MambaArguments {
+            active_row_count,
+            layer,
+        } = args;
+        assert!(active_row_count > 0, "Mamba mixer requires at least one active row");
 
-        self.in_projection.encode(state, encoder)?;
-        self.run_split_inproj(state, encoder, active_row_count);
-        self.run_conv_scan(state, encoder, active_row_count);
+        let in_proj = self.in_projection.encode(input, active_row_count, encoder)?;
+        let SplitInProjectionOutput {
+            conv_inputs,
+            gate,
+            time_step,
+        } = self.run_split_inproj(&in_proj, active_row_count, encoder)?;
+        let ConvScanOutput {
+            conv_x,
+            state_b,
+            state_c,
+        } = self.run_conv_scan(layer, &conv_inputs, encoder, active_row_count)?;
         if active_row_count == 1 {
-            self.run_decode_ssm(state, encoder, active_row_count);
+            let ssm_output =
+                self.run_decode_ssm(layer, &conv_x, &state_b, &state_c, &time_step, &gate, encoder, active_row_count)?;
+            self.out_projection.encode(ssm_output, active_row_count, encoder)
         } else {
-            self.run_prefill_ssm(state, encoder, active_row_count);
+            let ssm_output =
+                self.run_prefill_ssm(layer, &conv_x, &state_b, &state_c, &time_step, &gate, encoder, active_row_count)?;
+            self.out_projection.encode(ssm_output, active_row_count, encoder)
         }
-        self.out_projection.encode(state, encoder)?;
-        Ok(())
     }
 }

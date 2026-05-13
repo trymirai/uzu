@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
 };
 
@@ -37,8 +37,9 @@ impl Context for CpuContext {
 
     fn recommended_async_batch_size(
         &self,
-        _model_path: &Path,
+        model_path: &Path,
     ) -> usize {
+        let _ = model_path;
         1
     }
 
@@ -55,6 +56,13 @@ impl Context for CpuContext {
         size: usize,
     ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
         Ok(UnsafeCell::new(Pin::new(vec![0; size].into_boxed_slice())))
+    }
+
+    fn create_buffer_with_data(
+        &self,
+        data: &[u8],
+    ) -> Result<UnsafeCell<Pin<Box<[u8]>>>, CpuError> {
+        Ok(UnsafeCell::new(Pin::new(data.to_vec().into_boxed_slice())))
     }
 
     fn create_allocation(
@@ -80,6 +88,13 @@ impl Context for CpuContext {
         Ok(Box::pin(AtomicU64::new(0)))
     }
 
+    fn create_sparse_buffer(
+        &self,
+        _capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        Err(CpuError::NotSupported)
+    }
+
     fn peak_memory_usage(&self) -> Option<usize> {
         None
     }
@@ -88,7 +103,7 @@ impl Context for CpuContext {
 
     fn start_capture(
         &self,
-        _trace_path: &std::path::Path,
+        _trace_path: &Path,
     ) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
     }

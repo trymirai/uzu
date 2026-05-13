@@ -1,19 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use super::linear::LinearConfig;
-use crate::{DataType, backends::common::ActivationConfig};
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct CausalConv1dConfig {
-    pub precision: DataType,
-    pub has_biases: bool,
-}
+use super::{linear::LinearConfig, short_conv::SeparableCausalConvConfig};
+use crate::backends::common::ActivationConfig;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Mamba2Config {
     pub in_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
-    pub conv_config: CausalConv1dConfig,
+    pub conv_config: SeparableCausalConvConfig,
     pub activation: ActivationConfig,
     pub kernel_size: usize,
     pub num_heads: usize,
@@ -23,6 +17,7 @@ pub struct Mamba2Config {
     pub expansion_factor: usize,
     pub has_in_biases: bool,
     pub has_out_biases: bool,
+    pub chunk_size: usize,
 }
 
 impl Mamba2Config {

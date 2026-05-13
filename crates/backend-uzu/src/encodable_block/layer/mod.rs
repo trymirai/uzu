@@ -3,5 +3,5 @@
 mod executables;
 mod mixer;
 
-pub use executables::LayerExecutables;
+pub use executables::{LayerArguments, LayerExecutables};
 pub(crate) use mixer::MixerExecutables;
