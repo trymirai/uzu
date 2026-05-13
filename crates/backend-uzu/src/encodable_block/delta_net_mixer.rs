@@ -13,7 +13,7 @@ use crate::{
     config::DeltaNetAttentionConfig,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::delta_net_layer::DeltaNetLayer,
-    parameters::{ParameterLoaderError, ParameterTree, try_resolve_subtree},
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -85,15 +85,15 @@ impl<B: Backend> DeltaNetMixer<B> {
         let has_bias = config.conv_config.has_biases;
 
         // Load weights
-        let mixer_tree = try_resolve_subtree(decoder_layer_loader, &["mixer"])?;
-        let conv_tree = try_resolve_subtree(&mixer_tree, &["conv", "conv1d"])?;
+        let mixer_tree = decoder_layer_loader.subtree("mixer")?;
+        let conv_tree = mixer_tree.subtree("conv")?;
 
         let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
             &config.in_proj_config,
             model_dim,
             [config.total_proj_dim()],
             context,
-            &try_resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"])?,
+            &decoder_layer_loader.subtree("mixer.in_proj")?,
         )
         .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
@@ -102,7 +102,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             config.value_dim(),
             [model_dim],
             context,
-            &try_resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"])?,
+            &decoder_layer_loader.subtree("mixer.out_proj")?,
         )
         .map_err(|e| DeltaNetMixerError::InnerLinearError(Box::new(e)))?;
 
@@ -115,7 +115,7 @@ impl<B: Backend> DeltaNetMixer<B> {
 
         let a_log = mixer_tree.leaf("a_log")?.read_allocation()?;
         let dt_bias = mixer_tree.leaf("dt_bias")?.read_allocation()?;
-        let norm_tree = try_resolve_subtree(&mixer_tree, &["norm", "inner_norm"])?;
+        let norm_tree = mixer_tree.subtree("norm")?;
         let norm_weight = norm_tree.leaf("scales")?.read_allocation()?;
 
         // Create kernels

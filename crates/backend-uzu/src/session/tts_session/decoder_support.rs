@@ -445,7 +445,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
             return Err(Error::UnableToLoadConfig);
         }
         let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata =
+        let model_metadata: ModelMetadata<TtsModelConfig> =
             serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         Self::from_model_metadata_with_options(model_path, model_metadata, options)
@@ -461,7 +461,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
 
     fn from_model_metadata_with_options(
         model_path: PathBuf,
-        model_metadata: ModelMetadata,
+        model_metadata: ModelMetadata<TtsModelConfig>,
         options: TtsSessionOptions,
     ) -> Result<Self, Error> {
         let tokenizer_path = model_path.join("tokenizer.json");

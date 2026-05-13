@@ -7,7 +7,6 @@ use crate::{backends::common::Backend, config::TtsConfig};
 pub struct AudioGenerationContext<B: Backend> {
     runtime: Rc<NanoCodecFsqRuntime<B>>,
     codec_cardinality: usize,
-    semantic_codec_cardinality: Option<usize>,
     num_codebooks: usize,
     sample_rate: u32,
 }
@@ -25,7 +24,6 @@ impl<B: Backend> AudioGenerationContext<B> {
             .map_err(|_| super::AudioError::Runtime("audio codec cardinality exceeds usize".to_string()))?;
         Ok(Self {
             codec_cardinality,
-            semantic_codec_cardinality: runtime.config().semantic_codec_cardinality(),
             num_codebooks: runtime.config().num_groups(),
             sample_rate: runtime.config().sample_rate(),
             runtime: Rc::new(runtime),
@@ -38,10 +36,6 @@ impl<B: Backend> AudioGenerationContext<B> {
 
     pub fn codec_cardinality(&self) -> usize {
         self.codec_cardinality
-    }
-
-    pub fn semantic_codec_cardinality(&self) -> Option<usize> {
-        self.semantic_codec_cardinality
     }
 
     pub fn num_codebooks(&self) -> usize {

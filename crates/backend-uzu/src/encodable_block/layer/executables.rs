@@ -10,10 +10,10 @@ use crate::forward_pass::traces::LayerActivationTrace;
 use crate::{
     DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
-    config::{DecoderLayerConfig, DecoderLayerType, MixerConfig},
+    config::{MixerConfig, TransformerConfig, TransformerLayerConfig},
     encodable_block::{
-        Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, EncodingParameters, Linear, MambaArguments,
-        MambaMixer, Mlp, QKNorm, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
+        Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
+        QKNorm, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
     },
     forward_pass::{cache_layers::CacheLayer, state::RopeType},
     parameters::ParameterTree,
@@ -24,9 +24,9 @@ pub struct LayerExecutables<B: Backend> {
     pub layer_index: usize,
     #[cfg(feature = "tracing")]
     pub tensor_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
-    pub pre_attention_norm: RMSNorm<B>,
+    pub pre_mixer_norm: RMSNorm<B>,
     pub(crate) mixer: MixerExecutables<B>,
-    pub post_attention_norm: Option<RMSNorm<B>>,
+    pub post_mixer_norm: Option<RMSNorm<B>>,
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
@@ -38,24 +38,13 @@ impl<B: Backend> LayerExecutables<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: &B::Context,
-        layer_config: &DecoderLayerConfig,
-        layer_type: &DecoderLayerType,
+        transformer_config: &TransformerConfig,
+        layer_config: &TransformerLayerConfig,
         layer_index: usize,
-        model_dim: usize,
-        hidden_dim: usize,
-        num_heads: usize,
-        head_dim: usize,
-        num_groups: usize,
-        attention_scale: Option<f32>,
         decoder_layer_loader: &ParameterTree<B::Context>,
         rope: Option<Rc<Rope<B>>>,
     ) -> Self {
-        let intermediate_data_type: DataType = match &layer_config.mixer_config {
-            MixerConfig::Attention(attention) => attention.qkv_projection_config.activation_precision().into(),
-            MixerConfig::Mamba(mamba) => mamba.in_projection_config.activation_precision().into(),
-            MixerConfig::ShortConv(short_conv) => short_conv.in_projection_config.activation_precision().into(),
-            MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
-        };
+        let intermediate_data_type: DataType = layer_config.mixer_config.activation_precision().into();
 
         #[cfg(feature = "tracing")]
         let tensor_add = TensorAddBiasKernel::new(context, intermediate_data_type, false)
@@ -65,28 +54,19 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::Attention(attention_config) => {
                 let rope_block = rope.expect("RoPE encoder missing for attention layer");
 
-                let layer_num_heads = attention_config.num_heads.unwrap_or(num_heads);
-                let layer_num_groups = attention_config.num_groups.unwrap_or(num_groups);
-                let layer_head_dim = attention_config.head_dim.unwrap_or(head_dim);
-
-                let q_dim = layer_num_heads * layer_head_dim;
-                let kv_dim = layer_num_groups * layer_head_dim;
+                let q_dim = attention_config.num_heads * attention_config.head_dim;
+                let kv_dim = attention_config.num_groups * attention_config.head_dim;
 
                 let (qkv_projection, input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
                     &attention_config.qkv_projection_config,
-                    model_dim,
+                    transformer_config.model_dim,
                     [q_dim, kv_dim, kv_dim],
                     context,
                     &decoder_layer_loader.subtree("mixer.qkv_projection").unwrap(),
                 )
                 .expect("Failed to create qkv projection");
 
-                let has_gate = attention_config.has_gate || attention_config.gate_projection_config.is_some();
-                let gate_projection = has_gate.then(|| {
-                    let gate_config = attention_config
-                        .gate_projection_config
-                        .as_ref()
-                        .unwrap_or(&attention_config.qkv_projection_config);
+                let gate_projection = attention_config.gate_projection_config.as_ref().map(|gate_config| {
                     let gate_tree = decoder_layer_loader.subtree("mixer.gate_projection").unwrap();
                     match (input_hadamard_factors.is_some(), gate_config) {
                         (
@@ -109,7 +89,7 @@ impl<B: Backend> LayerExecutables<B> {
                                 inner_config,
                                 &inner_tree,
                                 output_factors,
-                                model_dim,
+                                transformer_config.model_dim,
                                 q_dim,
                             )
                         },
@@ -122,7 +102,13 @@ impl<B: Backend> LayerExecutables<B> {
                         | (true, _) => {
                             panic!("attention qkv/gate projections must share input hadamard")
                         },
-                        (false, _) => <dyn Linear<B>>::new(gate_config, model_dim, [q_dim], context, &gate_tree),
+                        (false, _) => <dyn Linear<B>>::new(
+                            gate_config,
+                            transformer_config.model_dim,
+                            [q_dim],
+                            context,
+                            &gate_tree,
+                        ),
                     }
                     .expect("Failed to create gate projection")
                 });
@@ -135,9 +121,9 @@ impl<B: Backend> LayerExecutables<B> {
                             attention_config.query_norm_config.clone(),
                             attention_config.key_norm_config.clone(),
                             &decoder_layer_loader.subtree("mixer").unwrap(),
-                            layer_num_heads,
-                            layer_num_groups,
-                            layer_head_dim,
+                            attention_config.num_heads,
+                            attention_config.num_groups,
+                            attention_config.head_dim,
                         ) {
                             Ok(qk_norm) => Some(qk_norm),
                             Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
@@ -149,22 +135,15 @@ impl<B: Backend> LayerExecutables<B> {
                 let out_projection = <dyn Linear<B>>::new(
                     &attention_config.out_projection_config,
                     q_dim,
-                    [model_dim],
+                    [transformer_config.model_dim],
                     context,
                     &decoder_layer_loader.subtree("mixer.out_projection").unwrap(),
                 )
                 .expect("Failed to create out projection");
 
-                let attention = Attention::new(
-                    context,
-                    intermediate_data_type,
-                    attention_scale,
-                    attention_config.has_sinks,
-                    attention_config.is_causal.unwrap_or(true),
-                    attention_config.sliding_window_size,
-                    has_gate,
-                )
-                .expect("Failed to create AttentionWrapper kernel");
+                let attention =
+                    Attention::new(context, intermediate_data_type, attention_config, gate_projection.is_some())
+                        .expect("Failed to create AttentionWrapper kernel");
 
                 (
                     MixerExecutables::Attention {
@@ -175,23 +154,17 @@ impl<B: Backend> LayerExecutables<B> {
                         use_rope: attention_config.use_rope,
                         attention,
                         out_projection,
-                        num_heads: layer_num_heads,
-                        num_groups: layer_num_groups,
-                        head_dim: layer_head_dim,
+                        num_heads: attention_config.num_heads,
+                        num_groups: attention_config.num_groups,
+                        head_dim: attention_config.head_dim,
                     },
                     input_hadamard_factors,
                 )
             },
             MixerConfig::Mamba(mamba_config) => {
-                let (mixer, input_hadamard_factors) = MambaMixer::new(
-                    context,
-                    layer_type.clone(),
-                    mamba_config.clone(),
-                    layer_index,
-                    model_dim,
-                    decoder_layer_loader,
-                )
-                .expect("Failed to create Mamba mixer");
+                let (mixer, input_hadamard_factors) =
+                    MambaMixer::new(context, mamba_config.clone(), transformer_config.model_dim, decoder_layer_loader)
+                        .expect("Failed to create Mamba mixer");
                 (
                     MixerExecutables::StateSpace {
                         mixer,
@@ -202,10 +175,8 @@ impl<B: Backend> LayerExecutables<B> {
             MixerConfig::ShortConv(short_conv_config) => {
                 let (mixer, input_hadamard_factors) = ShortConvMixer::new(
                     context,
-                    layer_type.clone(),
                     short_conv_config.clone(),
-                    layer_index,
-                    model_dim,
+                    transformer_config.model_dim,
                     decoder_layer_loader,
                 )
                 .expect("Failed to create ShortConv mixer");
@@ -217,9 +188,13 @@ impl<B: Backend> LayerExecutables<B> {
                 )
             },
             MixerConfig::DeltaNet(delta_net_config) => {
-                let (mixer, input_hadamard_factors) =
-                    DeltaNetMixer::new(context, delta_net_config.clone(), model_dim, decoder_layer_loader)
-                        .expect("Failed to create DeltaNet mixer");
+                let (mixer, input_hadamard_factors) = DeltaNetMixer::new(
+                    context,
+                    delta_net_config.clone(),
+                    transformer_config.model_dim,
+                    decoder_layer_loader,
+                )
+                .expect("Failed to create DeltaNet mixer");
                 (
                     MixerExecutables::DeltaNet {
                         mixer,
@@ -229,10 +204,10 @@ impl<B: Backend> LayerExecutables<B> {
             },
         };
 
-        let pre_attention_norm = RMSNorm::new(
+        let pre_mixer_norm = RMSNorm::new(
             context,
             intermediate_data_type,
-            layer_config.pre_attention_norm_config.clone(),
+            layer_config.pre_mixer_norm_config.clone().expect("decoder layers require pre_mixer_norm_config"),
             &decoder_layer_loader.subtree("pre_mixer_norm").unwrap(),
             mixer_hadamard_factors,
             true,
@@ -240,7 +215,7 @@ impl<B: Backend> LayerExecutables<B> {
         )
         .expect("Failed to create RMS norm kernel");
 
-        let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
+        let post_mixer_norm = if let Some(norm_config) = &layer_config.post_mixer_norm_config {
             Some(
                 RMSNorm::new(
                     context,
@@ -259,8 +234,8 @@ impl<B: Backend> LayerExecutables<B> {
 
         let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
-            model_dim,
-            hidden_dim,
+            transformer_config.model_dim,
+            transformer_config.hidden_dim,
             context,
             &decoder_layer_loader.subtree("mlp").unwrap(),
         )
@@ -298,21 +273,20 @@ impl<B: Backend> LayerExecutables<B> {
             layer_index,
             #[cfg(feature = "tracing")]
             tensor_add,
-            pre_attention_norm,
+            pre_mixer_norm,
             mixer,
-            post_attention_norm,
+            post_mixer_norm,
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
             #[cfg(feature = "tracing")]
-            model_dim,
+            model_dim: transformer_config.model_dim,
         }
     }
 
     pub fn encode(
         &self,
         args: LayerArguments<B>,
-        parameters: &EncodingParameters,
         input: Allocation<B>,
         shortcut: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
@@ -336,7 +310,7 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         let mut layer_traces = trace;
 
-        let mut hidden = self.pre_attention_norm.encode(&input, 0, batch_dim, Some(shortcut), encoder)?;
+        let mut hidden = self.pre_mixer_norm.encode(&input, 0, batch_dim, Some(shortcut), encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             encoder.encode_copy(shortcut, .., layer_traces.inputs.allocation_mut(), ..);
@@ -393,7 +367,6 @@ impl<B: Backend> LayerExecutables<B> {
                     .map(|layer| layer.as_transformer_mut().expect("Attention layer expects transformer cache"));
                 let attention_output = attention.encode(
                     AttentionArguments {
-                        projection_step: parameters.projection_step.unwrap_or(0),
                         token_subtrie_ranges,
                         attention_sinks,
                         kv_cache_layer,
@@ -470,8 +443,8 @@ impl<B: Backend> LayerExecutables<B> {
             encoder.encode_copy(&hidden, .., layer_traces.attention.allocation_mut(), ..);
         }
 
-        if let Some(post_attention_norm) = &self.post_attention_norm {
-            hidden = post_attention_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
+        if let Some(post_mixer_norm) = &self.post_mixer_norm {
+            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
             #[cfg(feature = "tracing")]
             if let Some(layer_traces) = layer_traces.as_deref_mut() {
                 encoder.encode_copy(&hidden, .., layer_traces.post_attention_norm.allocation_mut(), ..);

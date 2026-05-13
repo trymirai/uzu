@@ -7,28 +7,25 @@ use crate::backends::common::gpu_types::ActivationType;
 pub enum ActivationConfig {
     #[serde(rename = "SiLU")]
     SILU {
-        #[serde(default = "default_silu_alpha")]
         alpha: f32,
     },
     #[serde(rename = "GELU")]
-    GELU,
+    GELU {
+        approximate: bool,
+    },
     #[serde(rename = "Identity")]
     IDENTITY,
 }
 
 impl ActivationConfig {
-    pub fn silu_default() -> ActivationConfig {
-        ActivationConfig::SILU {
-            alpha: 1.0,
-        }
-    }
-
     pub fn act_type(&self) -> ActivationType {
         match self {
             ActivationConfig::SILU {
                 ..
             } => ActivationType::SILU,
-            ActivationConfig::GELU => ActivationType::GELU,
+            ActivationConfig::GELU {
+                ..
+            } => ActivationType::GELU,
             ActivationConfig::IDENTITY => ActivationType::IDENTITY,
         }
     }
@@ -38,12 +35,10 @@ impl ActivationConfig {
             ActivationConfig::SILU {
                 alpha,
             } => *alpha,
-            ActivationConfig::GELU => 1.0,
+            ActivationConfig::GELU {
+                ..
+            } => 1.0,
             ActivationConfig::IDENTITY => 1.0,
         }
     }
-}
-
-fn default_silu_alpha() -> f32 {
-    1.0
 }

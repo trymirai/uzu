@@ -48,16 +48,11 @@ impl<B: Backend> RMSNorm<B> {
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
 
-        let (input_type, scales_type, output_type) = match config.upcast_mode {
-            UpcastMode::OnlyNormalization => (intermediate_data_type, scale_data_type, scale_data_type),
-            UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
-        };
-
         let kernel = <B::Kernels as Kernels>::RMSNormKernel::new(
             context,
-            input_type,
-            scales_type,
-            output_type,
+            intermediate_data_type,
+            scale_data_type,
+            scale_data_type,
             accumulation_data_type,
             false,
             config.upcast_mode == UpcastMode::FullLayer,
@@ -72,8 +67,8 @@ impl<B: Backend> RMSNorm<B> {
             config,
             scales,
             element_count,
-            input_data_type: input_type,
-            output_data_type: output_type,
+            input_data_type: intermediate_data_type,
+            output_data_type: scale_data_type,
             hadamard_factors,
         })
     }
