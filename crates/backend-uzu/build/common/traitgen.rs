@@ -111,7 +111,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -
     let kernel_traits = quote! {
         use crate::backends::common::{
             Buffer,
-            buffer::{AsBufferRangeMut, AsBufferRangeRef},
+            buffer_range::{AsBufferRangeMut, AsBufferRangeRef},
         };
 
         pub trait BufferArg<'a, B: Buffer> {

@@ -3,7 +3,7 @@ use std::cell::Cell;
 use crate::{
     array::size_for_shape,
     backends::common::{AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
-    config::DecoderLayerType,
+    config::MixerConfig,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
         kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVSlice},
@@ -107,11 +107,11 @@ impl<B: Backend> CacheLayers<B> {
             model_shape.kv_cache_layer_shapes(max_prefix_length, max_suffix_length).collect();
 
         let mut data: Box<[CacheLayer<B>]> = model_shape
-            .layer_types()
+            .layer_mixers()
             .iter()
             .enumerate()
-            .map(|(layer_index, layer_type)| match layer_type {
-                DecoderLayerType::Transformer => {
+            .map(|(layer_index, mixer)| match mixer {
+                MixerConfig::Attention(_) => {
                     let shape = kv_shapes[layer_index];
                     let window_length = model_shape.sliding_window_length_per_layer[layer_index]
                         .filter(|&window_size| window_size < total_context_length);
@@ -141,16 +141,9 @@ impl<B: Backend> CacheLayers<B> {
                         data_type: model_shape.kv_cache_data_type(),
                     })
                 },
-                DecoderLayerType::StateSpace {
-                    conv_dim,
-                    kernel_size,
-                    state_dim,
-                    num_heads,
-                    head_dim,
-                    ..
-                } => {
-                    let conv_shape = [*conv_dim, kernel_size.saturating_sub(1)];
-                    let ssm_shape = [*num_heads, *head_dim, *state_dim];
+                MixerConfig::Mamba(c) => {
+                    let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
+                    let ssm_shape = [c.num_heads, c.head_dim, c.state_dim];
                     let dtype = model_shape.activation_data_type();
                     let conv_bytes = size_for_shape(&conv_shape, dtype);
                     let ssm_bytes = size_for_shape(&ssm_shape, dtype);
@@ -169,12 +162,10 @@ impl<B: Backend> CacheLayers<B> {
                         data_type: dtype,
                     })
                 },
-                DecoderLayerType::ShortConv {
-                    kernel_size,
-                } => {
-                    assert!(*kernel_size >= 2, "ShortConv kernel_size must be >= 2, got {}", kernel_size);
-                    let conv_shape = [model_shape.model_dim(), kernel_size - 1];
-                    let suffix_state_shape = [max_suffix_length, model_shape.model_dim(), kernel_size - 1];
+                MixerConfig::ShortConv(c) => {
+                    assert!(c.kernel_size >= 2, "ShortConv kernel_size must be >= 2, got {}", c.kernel_size);
+                    let conv_shape = [model_shape.model_dim(), c.kernel_size - 1];
+                    let suffix_state_shape = [max_suffix_length, model_shape.model_dim(), c.kernel_size - 1];
                     let dtype = model_shape.activation_data_type();
                     let conv_bytes = size_for_shape(&conv_shape, dtype);
                     let suffix_bytes = size_for_shape(&suffix_state_shape, dtype);
@@ -193,16 +184,9 @@ impl<B: Backend> CacheLayers<B> {
                         suffix_state_valid_len: Cell::new(0),
                     })
                 },
-                DecoderLayerType::DeltaNet {
-                    conv_dim,
-                    kernel_size,
-                    num_heads,
-                    head_dim,
-                    value_head_dim,
-                    ..
-                } => {
-                    let conv_shape = [*conv_dim, kernel_size.saturating_sub(1)];
-                    let ssm_shape = [*num_heads, *value_head_dim, *head_dim];
+                MixerConfig::DeltaNet(c) => {
+                    let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
+                    let ssm_shape = [c.num_heads, c.value_head_dim, c.head_dim];
                     let dtype = model_shape.activation_data_type();
                     let conv_bytes = size_for_shape(&conv_shape, dtype);
                     let ssm_bytes = size_for_shape(&ssm_shape, dtype);

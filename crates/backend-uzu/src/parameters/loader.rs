@@ -62,6 +62,13 @@ pub enum ParameterLoaderError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Failed to read data")]
     ArrayLoadingError(#[from] std::io::Error),
+    #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
+    InvalidTensor {
+        shape: Box<[usize]>,
+        data_type: DataType,
+        expected_shape: Box<[usize]>,
+        expected_data_type: DataType,
+    },
 }
 
 pub struct ParameterLoader<'context, 'file, C: Context>
@@ -164,6 +171,24 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
         self.metadata.size
     }
 
+    pub fn validate_shape(
+        &self,
+        expected_shape: &[usize],
+        expected_data_type: DataType,
+    ) -> Result<(), ParameterLoaderError<C::Backend>> {
+        let shape = self.shape();
+        let data_type = self.data_type();
+        if (shape, data_type) != (expected_shape, expected_data_type) {
+            return Err(ParameterLoaderError::InvalidTensor {
+                shape: shape.into(),
+                data_type,
+                expected_shape: expected_shape.into(),
+                expected_data_type,
+            });
+        }
+        Ok(())
+    }
+
     pub fn read_allocation(&self) -> Result<Allocation<C::Backend>, ParameterLoaderError<C::Backend>> {
         let allocation = self
             .loader
@@ -249,16 +274,4 @@ impl<'loader, C: Context> ParameterTree<'loader, C> {
     ) -> Result<(), ParameterLoaderError<C::Backend>> {
         self.loader.read_extract_at(&self.join_prefix(name), buf, shape, data_type)
     }
-}
-
-pub fn try_resolve_subtree<'tree, C: Context>(
-    tree: &'tree ParameterTree<C>,
-    candidates: &[&str],
-) -> Result<ParameterTree<'tree, C>, ParameterLoaderError<C::Backend>> {
-    for candidate in candidates {
-        if let Ok(subtree) = tree.subtree(candidate) {
-            return Ok(subtree);
-        }
-    }
-    Err(ParameterLoaderError::SubtreeNotFound(candidates.join(" or ")))
 }

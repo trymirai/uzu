@@ -20,8 +20,8 @@ use crate::{
     array::Array,
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
-    config::ModelMetadata,
-    encodable_block::{DecoderDecodeInput, EncodingParameters, Sampling},
+    config::{ClassifierModelConfig, LanguageModelConfig, ModelMetadata, ModelType},
+    encodable_block::{DecoderDecodeInput, Sampling},
     forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
@@ -176,26 +176,35 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let metadata: ModelMetadata =
+        let raw_metadata: ModelMetadata<serde_json::Value> =
             serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
-        let context = if metadata.model_config.is_classifier() {
-            let classifier = Classifier::new(model_path, &metadata)?;
-            ModelContext::Classifier(classifier)
-        } else {
-            let prefill_step_size = Self::determine_prefill_step_size(model_path);
-            let decoding_config = DecodingConfig::new(
-                ContextMode::default(),
-                ContextLength::default(),
-                PrefillStepSize::Custom(prefill_step_size),
-                SpeculatorConfig::default(),
-                SamplingSeed::default(),
-                AsyncBatchSize::default(),
-            );
-            let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config, &metadata)?;
-            let desired_suffix_length = prefill_step_size.max(decoding_config.generate_suffix_length());
-            Self::ensure_llm_context_capacity(&decoding_config, desired_suffix_length, &mut llm_context);
-            ModelContext::LanguageModelGenerator(llm_context)
+        let context = match raw_metadata.model_type {
+            ModelType::ClassifierModel => {
+                let metadata: ModelMetadata<ClassifierModelConfig> =
+                    serde_json::from_value(serde_json::to_value(&raw_metadata).map_err(|_| Error::UnableToLoadConfig)?)
+                        .map_err(|_| Error::UnableToLoadConfig)?;
+                ModelContext::Classifier(Classifier::new(model_path, &metadata)?)
+            },
+            ModelType::LanguageModel => {
+                let metadata: ModelMetadata<LanguageModelConfig> =
+                    serde_json::from_value(serde_json::to_value(&raw_metadata).map_err(|_| Error::UnableToLoadConfig)?)
+                        .map_err(|_| Error::UnableToLoadConfig)?;
+                let prefill_step_size = Self::determine_prefill_step_size(model_path);
+                let decoding_config = DecodingConfig::new(
+                    ContextMode::default(),
+                    ContextLength::default(),
+                    PrefillStepSize::Custom(prefill_step_size),
+                    SpeculatorConfig::default(),
+                    SamplingSeed::default(),
+                    AsyncBatchSize::default(),
+                );
+                let mut llm_context = LanguageModelGeneratorContext::new(model_path, &decoding_config, &metadata)?;
+                let desired_suffix_length = prefill_step_size.max(decoding_config.generate_suffix_length());
+                Self::ensure_llm_context_capacity(&decoding_config, desired_suffix_length, &mut llm_context);
+                ModelContext::LanguageModelGenerator(llm_context)
+            },
+            ModelType::TtsModel => return Err(Error::UnableToLoadConfig),
         };
 
         Ok(Self {
@@ -215,14 +224,6 @@ impl<B: Backend> TraceValidator<B> {
             ModelContext::LanguageModelGenerator(ctx) => Self::run_llm_validation(ctx, &traces_path),
             ModelContext::Classifier(classifier) => Self::run_classifier_validation(classifier, &traces_path),
         }
-    }
-
-    pub fn is_classifier(&self) -> bool {
-        matches!(self.context, ModelContext::Classifier(_))
-    }
-
-    pub fn is_language_model_generator(&self) -> bool {
-        matches!(self.context, ModelContext::LanguageModelGenerator(_))
     }
 
     // ========================================================================
@@ -272,7 +273,6 @@ impl<B: Backend> TraceValidator<B> {
                     decoder_arguments,
                     DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
                     None,
-                    &EncodingParameters::new(),
                     &mut encoder,
                 )
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
@@ -935,8 +935,8 @@ impl<B: Backend> TraceValidator<B> {
             desired_suffix_length,
         )));
 
-        let decoder_config = context.model_config.decoder_config().expect("Failed to resolve decoder config");
-        let intermediate_dtype: DataType = decoder_config.output_norm_config.scale_precision.into();
+        let intermediate_dtype: DataType =
+            context.model_config.model_config.transformer_config.output_norm_config.scale_precision.into();
 
         context.kv_cache_update = Box::new(
             KVCacheUpdate::new(context.context.as_ref(), intermediate_dtype, resolved_prefix_length)

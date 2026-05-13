@@ -17,7 +17,7 @@ use crate::{
         },
     },
     config::EmbeddingConfig,
-    parameters::{ParameterLeaf, ParameterLoaderError, ParameterTree},
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -32,13 +32,6 @@ pub enum EmbeddingError<B: Backend> {
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported configuration: {0}")]
     UnsupportedConfiguration(String),
-    #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
-    InvalidTensor {
-        shape: Box<[usize]>,
-        data_type: DataType,
-        expected_shape: Box<[usize]>,
-        expected_data_type: DataType,
-    },
 }
 
 enum TiedEmbeddingType<B: Backend> {
@@ -128,52 +121,7 @@ const SPLIT_TREE_UNTIED_KEYS: UntiedWeightKeys = UntiedWeightKeys {
     readout_biases: "biases",
 };
 
-fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
-    weights_leaf: &ParameterLeaf<'file, 'context, 'leaf, B::Context>,
-    expected_shape: [usize; 2],
-    expected_data_type: DataType,
-) -> Result<(), EmbeddingError<B>> {
-    let shape = weights_leaf.shape();
-    let data_type = weights_leaf.data_type();
-
-    if (shape, data_type) != (expected_shape.as_ref(), expected_data_type) {
-        return Err(EmbeddingError::InvalidTensor {
-            shape: shape.into(),
-            data_type: weights_leaf.data_type(),
-            expected_shape: expected_shape.into(),
-            expected_data_type,
-        });
-    }
-
-    Ok(())
-}
-
 impl<B: Backend> Embedding<B> {
-    fn activation_data_type(config: &EmbeddingConfig) -> DataType {
-        match config {
-            EmbeddingConfig::Tied {
-                precision,
-                ..
-            }
-            | EmbeddingConfig::Untied {
-                precision,
-                ..
-            } => (*precision).into(),
-            EmbeddingConfig::MLXQuantizedTied {
-                activation_precision,
-                ..
-            }
-            | EmbeddingConfig::MLXQuantizedUntied {
-                activation_precision,
-                ..
-            }
-            | EmbeddingConfig::MLXSemiQuantizedUntied {
-                activation_precision,
-                ..
-            } => (*activation_precision).into(),
-        }
-    }
-
     pub fn new(
         context: &B::Context,
         vocab_size: u32,
@@ -231,7 +179,7 @@ impl<B: Backend> Embedding<B> {
                 let data_type = (*precision).into();
 
                 let weights_leaf = lookup_tree.leaf("weights")?;
-                validate_tensor(&weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
+                weights_leaf.validate_shape(&[vocab_size as usize, model_dim as usize], data_type)?;
                 let weights = weights_leaf.read_allocation()?;
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
@@ -253,9 +201,9 @@ impl<B: Backend> Embedding<B> {
                 let data_type = (*precision).into();
 
                 let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
-                validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
+                input_weights_leaf.validate_shape(&[vocab_size as usize, model_dim as usize], data_type)?;
                 let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
-                validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
+                output_weights_leaf.validate_shape(&[vocab_size as usize, model_dim as usize], data_type)?;
 
                 let input_weights = input_weights_leaf.read_allocation()?;
                 let output_weights = output_weights_leaf.read_allocation()?;
@@ -290,15 +238,12 @@ impl<B: Backend> Embedding<B> {
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
                 let weights_leaf = lookup_tree.leaf("weights")?;
-                validate_tensor(
-                    &weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
+                weights_leaf
+                    .validate_shape(&[vocab_size as usize, model_dim as usize / packing_divisor], storage_data_type)?;
                 let scales_leaf = lookup_tree.leaf("scales")?;
-                validate_tensor(&scales_leaf, [vocab_size as usize, num_groups], data_type)?;
+                scales_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
                 let biases_leaf = lookup_tree.leaf("biases")?;
-                validate_tensor(&biases_leaf, [vocab_size as usize, num_groups], data_type)?;
+                biases_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
 
                 let weights = weights_leaf.read_allocation()?;
                 let scales = scales_leaf.read_allocation()?;
@@ -355,26 +300,20 @@ impl<B: Backend> Embedding<B> {
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
                 let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
-                validate_tensor(
-                    &input_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
+                input_weights_leaf
+                    .validate_shape(&[vocab_size as usize, model_dim as usize / packing_divisor], storage_data_type)?;
                 let input_scales_leaf = lookup_tree.leaf(untied_keys.lookup_scales)?;
-                validate_tensor(&input_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
+                input_scales_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
                 let input_biases_leaf = lookup_tree.leaf(untied_keys.lookup_biases)?;
-                validate_tensor(&input_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
+                input_biases_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
 
                 let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
+                output_weights_leaf
+                    .validate_shape(&[vocab_size as usize, model_dim as usize / packing_divisor], storage_data_type)?;
                 let output_scales_leaf = readout_tree.leaf(untied_keys.readout_scales)?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
+                output_scales_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
                 let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
+                output_biases_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
 
                 let input_weights = input_weights_leaf.read_allocation()?;
                 let input_scales = input_scales_leaf.read_allocation()?;
@@ -440,18 +379,15 @@ impl<B: Backend> Embedding<B> {
                 let num_groups = (model_dim as usize).div_ceil(*group_size);
 
                 let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
-                validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
+                input_weights_leaf.validate_shape(&[vocab_size as usize, model_dim as usize], data_type)?;
 
                 let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
+                output_weights_leaf
+                    .validate_shape(&[vocab_size as usize, model_dim as usize / packing_divisor], storage_data_type)?;
                 let output_scales_leaf = readout_tree.leaf(untied_keys.readout_scales)?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
+                output_scales_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
                 let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
+                output_biases_leaf.validate_shape(&[vocab_size as usize, num_groups], data_type)?;
 
                 let input_weights = input_weights_leaf.read_allocation()?;
 
@@ -496,7 +432,7 @@ impl<B: Backend> Embedding<B> {
         };
 
         let input_scale = common.input_scale.unwrap_or(1.0);
-        let activation_data_type = Self::activation_data_type(config);
+        let activation_data_type: DataType = config.activation_precision().into();
 
         if let Some(logit_soft_cap) = common.logit_soft_cap {
             return Err(EmbeddingError::UnsupportedConfiguration(format!("logit_soft_cap={logit_soft_cap:?}")));

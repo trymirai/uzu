@@ -37,16 +37,3 @@ pub(crate) use sampling::SamplingInputs;
 pub use sampling::{Sampling, SamplingArguments};
 pub(crate) use short_conv_mixer::ShortConvArguments;
 pub use short_conv_mixer::ShortConvMixer;
-
-#[derive(Clone)]
-pub struct EncodingParameters {
-    pub projection_step: Option<usize>,
-}
-
-impl EncodingParameters {
-    pub fn new() -> Self {
-        Self {
-            projection_step: None,
-        }
-    }
-}

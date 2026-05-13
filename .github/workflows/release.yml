@@ -230,18 +230,10 @@ jobs:
       # ---------------------------------------------------------------
       # Publish Platform
       # ---------------------------------------------------------------
-      - name: "Publish Platform: Decode bucket credentials"
-        run: |
-          {
-            echo "PLATFORM_CREDENTIALS_JSON<<EOF"
-            echo "${{ secrets.PLATFORM_BUCKET_BASE64_CREDENTIALS }}" | base64 -d
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-
       - name: "Publish Platform: Authenticate to GCS"
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ env.PLATFORM_CREDENTIALS_JSON }}
+          credentials_json: ${{ secrets.PLATFORM_BUCKET_JSON_CREDENTIALS }}
 
       - name: "Publish Platform: Setup gcloud"
         uses: google-github-actions/setup-gcloud@v2
@@ -255,18 +247,10 @@ jobs:
       # ---------------------------------------------------------------
       # Publish Swift
       # ---------------------------------------------------------------
-      - name: "Publish Swift: Decode artifacts bucket credentials"
-        run: |
-          {
-            echo "ARTIFACTS_CREDENTIALS_JSON<<EOF"
-            echo "${{ secrets.ARTIFACTS_BUCKET_BASE64_CREDENTIALS }}" | base64 -d
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-
       - name: "Publish Swift: Authenticate to GCS"
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ env.ARTIFACTS_CREDENTIALS_JSON }}
+          credentials_json: ${{ secrets.ARTIFACTS_BUCKET_JSON_CREDENTIALS }}
 
       - name: "Publish Swift: Setup gcloud"
         uses: google-github-actions/setup-gcloud@v2

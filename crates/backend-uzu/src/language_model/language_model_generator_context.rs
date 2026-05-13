@@ -120,19 +120,15 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,
-        model_metadata: &ModelMetadata,
+        model_metadata: &ModelMetadata<LanguageModelConfig>,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
-        // Extract language model config
-        let language_model_config = model_metadata.model_config.as_language_model().ok_or(Error::UnableToLoadConfig)?;
+        let model_shape = ModelShape::from_decoder_config(&model_metadata.model_config.model_config);
 
-        let decoder_config = language_model_config.decoder_config().map_err(|_| Error::UnableToLoadConfig)?;
-        let model_shape = ModelShape::from_decoder_config(&decoder_config);
-
-        let prefill_step_size = decoding_config.prefill_step_size.resolve(language_model_config);
+        let prefill_step_size = decoding_config.prefill_step_size.resolve(&model_metadata.model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
-        let max_prefix_length: usize = decoding_config.context_length.resolve(language_model_config);
+        let max_prefix_length: usize = decoding_config.context_length.resolve(&model_metadata.model_config);
         let max_suffix_length: usize = std::cmp::max(prefill_step_size, generate_suffix_length);
 
         let weights_path = model_path.join("model.safetensors");
@@ -143,11 +139,12 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
+        let mut shared_buffers =
+            SharedBuffers::new(context.as_ref(), &model_metadata.model_config.model_config, &model_shape);
         shared_buffers.update_data(&root_loader_view);
         let shared_buffers = Rc::new(shared_buffers);
 
-        let executables = Decoder::new(context.as_ref(), &decoder_config, &root_loader_view);
+        let executables = Decoder::new(context.as_ref(), &model_metadata.model_config.model_config, &root_loader_view);
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
@@ -156,7 +153,8 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             max_suffix_length,
         )));
 
-        let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
+        let intermediate_data_type: DataType =
+            model_metadata.model_config.model_config.transformer_config.output_norm_config.scale_precision.into();
         let kv_cache_update = Box::new(
             KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
                 .map_err(|e| Error::UnableToCreateContext(e.into()))?,
@@ -177,7 +175,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             context,
             cache_layers,
             shared_buffers,
-            model_config: language_model_config.clone(),
+            model_config: model_metadata.model_config.clone(),
             model_shape,
             executables,
             kv_cache_update,

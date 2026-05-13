@@ -19,7 +19,7 @@ pub(super) fn build_audio_decoder_backend<B: Backend + Send + Sync>(
 
 pub(super) fn load_tts_runtime<B: Backend + Send + Sync>(
     model_path: &Path,
-    model_metadata: &ModelMetadata,
+    model_metadata: &ModelMetadata<TtsModelConfig>,
     options: &TtsSessionOptions,
 ) -> Result<LoadedTtsRuntime<B>, Error> {
     if model_metadata.model_type != ModelType::TtsModel {
@@ -30,13 +30,11 @@ pub(super) fn load_tts_runtime<B: Backend + Send + Sync>(
         .into());
     }
 
-    let tts_model_config =
-        model_metadata.model_config.as_tts().ok_or(TtsModelConfigError::MissingTtsModelConfig)?.clone();
     let audio: AudioGenerationContext<B> =
-        tts_model_config.create_audio_generation_context_with_model_path(model_path)?;
-    let text_decoder = build_text_decoder_backend(&tts_model_config, &audio, model_path, options)?;
+        model_metadata.model_config.create_audio_generation_context_with_model_path(model_path)?;
+    let text_decoder = build_text_decoder_backend(&model_metadata.model_config, &audio, model_path, options)?;
     let audio_decoder = build_audio_decoder_backend(&audio)?;
-    let message_processor_config = tts_model_config.message_processor_config.clone();
+    let message_processor_config = model_metadata.model_config.message_processor_config.clone();
 
     Ok(LoadedTtsRuntime {
         audio,

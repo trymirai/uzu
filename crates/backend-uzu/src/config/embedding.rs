@@ -58,27 +58,48 @@ impl EmbeddingConfig {
             EmbeddingConfig::Tied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::Untied {
+            }
+            | EmbeddingConfig::Untied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::MLXQuantizedTied {
+            }
+            | EmbeddingConfig::MLXQuantizedTied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::MLXQuantizedUntied {
+            }
+            | EmbeddingConfig::MLXQuantizedUntied {
                 common,
                 ..
-            } => common,
-            EmbeddingConfig::MLXSemiQuantizedUntied {
+            }
+            | EmbeddingConfig::MLXSemiQuantizedUntied {
                 common,
                 ..
             } => common,
         }
     }
-}
 
-#[cfg(test)]
-#[path = "../../tests/unit/config/embedding_test.rs"]
-mod tests;
+    pub fn activation_precision(&self) -> ConfigDataType {
+        match self {
+            EmbeddingConfig::Tied {
+                precision,
+                ..
+            }
+            | EmbeddingConfig::Untied {
+                precision,
+                ..
+            } => *precision,
+            EmbeddingConfig::MLXQuantizedTied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXQuantizedUntied {
+                activation_precision,
+                ..
+            }
+            | EmbeddingConfig::MLXSemiQuantizedUntied {
+                activation_precision,
+                ..
+            } => *activation_precision,
+        }
+    }
+}

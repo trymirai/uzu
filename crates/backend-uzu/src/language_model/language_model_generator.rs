@@ -14,8 +14,8 @@ use crate::{
         Allocation, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
         kernel::TokenCopySampledKernel,
     },
-    config::ModelMetadata,
-    encodable_block::{DecoderDecodeInput, EncodingParameters, SamplingArguments, SamplingInputs},
+    config::{LanguageModelConfig, ModelMetadata},
+    encodable_block::{DecoderDecodeInput, SamplingArguments, SamplingInputs},
     forward_pass::{cache_layers::CacheLayersSlice, kv_cache_layer::INVALID_POSITION, token_inputs::TokenInputs},
     language_model::grammar::CompiledGrammar,
     session::{
@@ -95,7 +95,6 @@ pub trait LanguageModelGeneratorTrait {
         pass_idx: usize,
     );
 
-    fn clear_cache(&mut self);
     fn reset_state(&mut self);
     fn peak_memory_usage(&self) -> Option<usize>;
 
@@ -512,7 +511,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             sampling_length,
             false,
             Some(sampling_method),
-            &EncodingParameters::new(),
             Some(sampling_inputs),
         )?;
 
@@ -591,8 +589,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         }
     }
 
-    fn clear_cache(&mut self) {}
-
     fn reset_state(&mut self) {
         self.context.cache_layers.borrow_mut().clear(self.context.context.as_ref());
         self.tokens.clear();
@@ -664,7 +660,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: DecodingConfig,
-        model_metadata: &ModelMetadata,
+        model_metadata: &ModelMetadata<LanguageModelConfig>,
     ) -> Result<Self, Error> {
         let gpu_capture = GpuCaptureManager::new();
 
@@ -715,7 +711,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             sampling_length,
             is_prefilling,
             sample.then_some(sampling_method),
-            &EncodingParameters::new(),
             sampling_inputs,
         )?;
 
@@ -749,7 +744,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_length: usize,
         is_prefilling: bool,
         sampling_method: Option<SamplingMethod>,
-        parameters: &EncodingParameters,
         sampling_inputs: Option<SamplingInputs<B>>,
     ) -> Result<ForwardPassResources<B>, Error> {
         let mut sampling_output = sampling_method.map(|_| {
@@ -770,7 +764,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             );
             context
                 .executables
-                .encode_prefill(decoder_arguments, token_inputs.token_ids(), parameters, encoder)
+                .encode_prefill(decoder_arguments, token_inputs.token_ids(), encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         } else {
             let mut cache_layers = context.cache_layers.borrow_mut();
@@ -786,13 +780,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             );
             let mut retained_logits = context
                 .executables
-                .encode_decode(
-                    decoder_arguments,
-                    DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
-                    None,
-                    parameters,
-                    encoder,
-                )
+                .encode_decode(decoder_arguments, DecoderDecodeInput::TokenIds(token_inputs.token_ids()), None, encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
             let sampling_inputs = sampling_inputs.as_ref().expect("Sampling requires sampling inputs");

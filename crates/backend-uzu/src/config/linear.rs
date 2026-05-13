@@ -54,7 +54,3 @@ impl LinearConfig {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/config/linear_test.rs"]
-mod tests;
