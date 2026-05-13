@@ -8,6 +8,7 @@ pub struct DecoderConfig {
     pub transformer_config: TransformerConfig,
     pub vocab_size: usize,
     pub pard_token: Option<usize>,
+    pub ple_model_config: Option<serde_json::Value>,
 }
 
 impl DecoderConfig {

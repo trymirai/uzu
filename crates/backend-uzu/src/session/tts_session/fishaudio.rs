@@ -267,12 +267,14 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
         transformer_config: slow_transformer_config,
         vocab_size: config.vocab_size,
         pard_token: None,
+        ple_model_config: None,
     });
     let fast_decoder_config = Rc::new(DecoderConfig {
         embedding_config: config.fast_embeddings_config.to_text_decoder_embedding_config(),
         transformer_config: fast_transformer_config,
         vocab_size: config.codebook_size,
         pard_token: None,
+        ple_model_config: None,
     });
     let text_decoder_context = B::Context::new().map_err(unable_to_create_context)?;
 

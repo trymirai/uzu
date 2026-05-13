@@ -98,6 +98,7 @@ impl StructuredAudioCodecGraph {
             transformer_config: self.config.quantizer_config.post_module_config.clone(),
             vocab_size: 1,
             pard_token: None,
+            ple_model_config: None,
         });
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 

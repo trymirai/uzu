@@ -11,4 +11,8 @@ pub struct TransformerLayerConfig {
     pub mlp_config: MLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
     pub rope_config: Option<RoPEConfig>,
+    pub hidden_dim: Option<usize>,
+    pub ple_config: Option<serde_json::Value>,
+    pub has_post_layer_scalar: bool,
+    pub kv_source_layer: Option<usize>,
 }

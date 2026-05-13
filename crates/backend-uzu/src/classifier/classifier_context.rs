@@ -41,6 +41,7 @@ impl<B: Backend> ClassifierContext<B> {
             transformer_config: model_metadata.model_config.model_config.transformer_config.clone(),
             vocab_size: model_metadata.model_config.model_config.vocab_size,
             pard_token: None,
+            ple_model_config: None,
         });
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
