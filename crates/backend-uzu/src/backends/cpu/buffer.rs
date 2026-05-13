@@ -10,6 +10,6 @@ pub(super) fn cpu_buffer<B: Buffer<Backend = Cpu>>(buffer: &B) -> &UnsafeCell<Pi
     if let Some(buf) = buffer.downcast_ref::<<Cpu as Backend>::DenseBuffer>() {
         buf
     } else {
-        unreachable!("unsupported Metal buffer type")
+        unreachable!("Unsupported Cpu buffer type")
     }
 }

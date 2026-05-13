@@ -15,6 +15,6 @@ pub(super) fn metal_buffer<B: Buffer<Backend = Metal>>(buffer: &B) -> &Retained<
     } else if let Some(buffer) = buffer.downcast_ref::<MetalSparseBuffer>() {
         buffer.mtl_buffer()
     } else {
-        unreachable!("unsupported Metal buffer type")
+        unreachable!("Unsupported Metal buffer type")
     }
 }
