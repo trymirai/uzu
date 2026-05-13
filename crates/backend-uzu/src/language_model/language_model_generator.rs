@@ -637,7 +637,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         range: Range<usize>,
     ) {
         let slice = slice.downcast_ref::<CacheLayersSlice<B>>().unwrap();
-        self.context.cache_layers.borrow_mut().apply_slice(slice, Some(range));
+        self.context.cache_layers.borrow_mut().apply_slice(&self.context.context, slice, Some(range));
     }
 
     fn build_llm_context(&self) -> Box<dyn Any> {
