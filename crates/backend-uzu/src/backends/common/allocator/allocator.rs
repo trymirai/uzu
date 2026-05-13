@@ -15,6 +15,7 @@ pub struct Allocation<B: Backend> {
     allocator: Rc<Allocator<B>>,
     buffer: *const B::DenseBuffer,
     range: Range<usize>,
+    allocation_type: RangeAllocationType,
 }
 
 impl<B: Backend> AsBufferRangeRef for Allocation<B> {
@@ -65,7 +66,7 @@ pub enum AllocationType<'a, B: Backend> {
 
 struct AllocatorBuffer<B: Backend> {
     buffer: Pin<Box<B::DenseBuffer>>,
-    range_allocator: RangeAllocator<usize>,
+    range_allocator: RangeAllocator,
 }
 
 pub struct Allocator<B: Backend> {
@@ -106,18 +107,16 @@ impl<B: Backend> Allocator<B> {
 
         let mut allocator_buffers = self.allocator_buffers.borrow_mut();
 
-        let mut found: Option<(*const B::DenseBuffer, Range<usize>)> = None;
+        let found = allocator_buffers.iter_mut().enumerate().find_map(|(allocator_buffer_index, allocator_buffer)| {
+            let range = allocator_buffer.range_allocator.allocate_range_aligned(size, alignment, allocation_type)?;
+            let buffer = allocator_buffer.buffer.as_ref().get_ref() as *const B::DenseBuffer;
 
-        for allocator_buffer in allocator_buffers.iter_mut() {
-            if let Some(range) =
-                allocator_buffer.range_allocator.allocate_range_aligned(size, alignment, allocation_type.clone())
-            {
-                found = Some((allocator_buffer.buffer.as_ref().get_ref() as *const B::DenseBuffer, range));
-                break;
-            }
-        }
+            Some((allocator_buffer_index, buffer, range))
+        });
 
-        let (buffer, range) = if let Some((buffer, range)) = found {
+        let (buffer, range) = if let Some((allocator_buffer_index, buffer, range)) = found {
+            Self::restore_buffer_order(&mut allocator_buffers, allocator_buffer_index);
+
             (buffer, range)
         } else {
             let new_allocator_buffer_size = usize::max(size, 268_435_456);
@@ -132,6 +131,8 @@ impl<B: Backend> Allocator<B> {
                 allocator_buffer.range_allocator.allocate_range_aligned(size, alignment, allocation_type).unwrap(); // Can never fail
 
             allocator_buffers.push(allocator_buffer);
+            let allocator_buffer_index = allocator_buffers.len() - 1;
+            Self::restore_buffer_order(&mut allocator_buffers, allocator_buffer_index);
 
             *self.peak_memory_usage.borrow_mut() =
                 allocator_buffers.iter().map(|allocator_buffer| allocator_buffer.buffer.size()).sum();
@@ -139,12 +140,11 @@ impl<B: Backend> Allocator<B> {
             (buffer, range)
         };
 
-        allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
-
         Ok(Allocation {
             allocator: self.clone(),
             buffer,
             range,
+            allocation_type,
         })
     }
 
@@ -175,21 +175,22 @@ impl<B: Backend> Allocator<B> {
     ) {
         let mut allocator_buffers = self.allocator_buffers.borrow_mut();
 
-        let (allocator_buffer_index, allocator_buffer) = allocator_buffers
-            .iter_mut()
-            .enumerate()
-            .find(|(_allocator_buffer_index, allocator_buffer)| {
+        let allocator_buffer_index = allocator_buffers
+            .iter()
+            .position(|allocator_buffer| {
                 (allocator_buffer.buffer.as_ref().get_ref() as *const B::DenseBuffer) == allocation.buffer
             })
             .unwrap(); // Can never fail
 
-        allocator_buffer.range_allocator.free_range(allocation.range.clone());
+        allocator_buffers[allocator_buffer_index]
+            .range_allocator
+            .free_range(allocation.range.clone(), allocation.allocation_type);
 
-        if allocator_buffer.range_allocator.is_empty() {
+        if allocator_buffers[allocator_buffer_index].range_allocator.is_empty() {
             allocator_buffers.remove(allocator_buffer_index);
+        } else {
+            Self::restore_buffer_order(&mut allocator_buffers, allocator_buffer_index);
         }
-
-        allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
     }
 
     fn free_pool(
@@ -197,20 +198,36 @@ impl<B: Backend> Allocator<B> {
         pool: &AllocationPool<B>,
     ) {
         let mut allocator_buffers = self.allocator_buffers.borrow_mut();
-        let mut free_idxs = Vec::new();
 
-        for (allocation_buffer_idx, allocation_buffer) in allocator_buffers.iter_mut().enumerate() {
+        allocator_buffers.retain_mut(|allocation_buffer| {
             allocation_buffer.range_allocator.free_pool(pool.pool_number);
-            if allocation_buffer.range_allocator.is_empty() {
-                free_idxs.push(allocation_buffer_idx);
-            }
+            !allocation_buffer.range_allocator.is_empty()
+        });
+
+        if allocator_buffers.len() > 1 {
+            allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
+        }
+    }
+
+    fn restore_buffer_order(
+        allocator_buffers: &mut [AllocatorBuffer<B>],
+        mut index: usize,
+    ) {
+        while index > 0
+            && allocator_buffers[index].range_allocator.total_available()
+                < allocator_buffers[index - 1].range_allocator.total_available()
+        {
+            allocator_buffers.swap(index, index - 1);
+            index -= 1;
         }
 
-        for (i, free_idx) in free_idxs.into_iter().enumerate() {
-            allocator_buffers.remove(free_idx - i);
+        while index + 1 < allocator_buffers.len()
+            && allocator_buffers[index].range_allocator.total_available()
+                > allocator_buffers[index + 1].range_allocator.total_available()
+        {
+            allocator_buffers.swap(index, index + 1);
+            index += 1;
         }
-
-        allocator_buffers.sort_by_key(|allocator_buffer| allocator_buffer.range_allocator.total_available());
     }
 }
 
