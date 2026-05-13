@@ -11,10 +11,10 @@ use std::{
 use crate::{
     backends::{
         common::{
-            AccessFlags, Backend, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+            AccessFlags, Backend, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
             CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
-        cpu::{Cpu, error::CpuError},
+        cpu::{Cpu, buffer::cpu_buffer, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -73,20 +73,24 @@ impl CpuCommandBufferEncoding {
 impl CommandBufferEncoding for CpuCommandBufferEncoding {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn encode_copy(
+    fn encode_copy<Src, Dst>(
         &mut self,
-        src: BufferRangeRef<'_, <Cpu as Backend>::DenseBuffer>,
-        dst: BufferRangeMut<'_, <Cpu as Backend>::DenseBuffer>,
-    ) {
+        src: BufferRangeRef<'_, Src>,
+        dst: BufferRangeMut<'_, Dst>,
+    ) where
+        Src: Buffer<Backend = Cpu>,
+        Dst: Buffer<Backend = Cpu>,
+    {
         let src_range = src.range();
         let dst_range = dst.range();
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
+        assert_eq!(src_range.len(), dst_range.len());
 
-        let src_ptr = SendPtr(unsafe { (&*src.buffer().get()).as_ptr().add(src_range.start) });
-        let dst_ptr = SendPtrMut(unsafe { (&mut *dst.buffer().get()).as_mut_ptr().add(dst_range.start) });
+        let src_buffer = cpu_buffer(src.buffer());
+        let dst_buffer = cpu_buffer(dst.buffer());
+        let src_ptr = SendPtr(unsafe { (&*src_buffer.get()).as_ptr().add(src_range.start) });
+        let dst_ptr = SendPtrMut(unsafe { (&mut *dst_buffer.get()).as_mut_ptr().add(dst_range.start) });
         self.push_command(move || unsafe {
-            std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), size);
+            std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), src_range.len());
         });
     }
 

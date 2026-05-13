@@ -9,10 +9,10 @@ use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use super::Metal;
 use crate::backends::{
     common::{
-        AccessFlags, Backend, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+        AccessFlags, Backend, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
         CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
-    metal::error::MetalError,
+    metal::{buffer::metal_buffer, error::MetalError},
 };
 
 pub struct MetalCommandBuffer;
@@ -118,17 +118,27 @@ impl Drop for MetalCommandBufferEncoding {
 impl CommandBufferEncoding for MetalCommandBufferEncoding {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn encode_copy(
+    fn encode_copy<Src, Dst>(
         &mut self,
-        src: BufferRangeRef<'_, <Metal as Backend>::DenseBuffer>,
-        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
-    ) {
+        src: BufferRangeRef<'_, Src>,
+        dst: BufferRangeMut<'_, Dst>,
+    ) where
+        Src: Buffer<Backend = Metal>,
+        Dst: Buffer<Backend = Metal>,
+    {
         let src_range = src.range();
         let dst_range = dst.range();
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
+        assert_eq!(src_range.len(), dst_range.len());
 
-        self.ensure_blit().copy_buffer_to_buffer(src.buffer(), src_range.start, dst.buffer(), dst_range.start, size);
+        let src_mtl_buffer = metal_buffer(src.buffer());
+        let dst_mtl_buffer = metal_buffer(dst.buffer());
+        self.ensure_blit().copy_buffer_to_buffer(
+            src_mtl_buffer,
+            src_range.start,
+            dst_mtl_buffer,
+            dst_range.start,
+            src_range.len(),
+        );
     }
 
     fn encode_fill(

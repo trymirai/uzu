@@ -8,5 +8,6 @@ mod kernel;
 mod sparse;
 
 pub mod argmax;
+mod buffer;
 
 pub use backend::Cpu;

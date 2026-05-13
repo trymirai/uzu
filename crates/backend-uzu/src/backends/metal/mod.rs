@@ -1,4 +1,5 @@
 mod backend;
+mod buffer;
 mod command_buffer;
 mod context;
 mod dense_buffer;

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Backend, BufferRangeMut, BufferRangeRef};
+use super::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
 
 pub trait CommandBuffer {
     type Backend: Backend<CommandBuffer = Self>;
@@ -70,11 +70,13 @@ impl AccessFlags {
 pub trait CommandBufferEncoding {
     type CommandBuffer: CommandBuffer<Encoding = Self>;
 
-    fn encode_copy(
+    fn encode_copy<Src, Dst>(
         &mut self,
-        src: BufferRangeRef<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
-        dst: BufferRangeMut<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
-    );
+        src: BufferRangeRef<'_, Src>,
+        dst: BufferRangeMut<'_, Dst>,
+    ) where
+        Src: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
+        Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>;
 
     fn encode_fill(
         &mut self,
