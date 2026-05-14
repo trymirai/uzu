@@ -2,9 +2,7 @@ use crate::backends::common::{
     Allocation, Backend,
     gpu_types::{
         GemmParams,
-        gemm::{
-            GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
-        },
+        gemm::{GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig},
     },
     kernel::gemm::{GemmSpecialization, GemmWeights},
 };

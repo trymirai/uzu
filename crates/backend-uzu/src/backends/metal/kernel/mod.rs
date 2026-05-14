@@ -1,6 +1,6 @@
+pub mod gemm;
 pub mod matmul;
 pub mod quant_matmul;
-pub mod gemm;
 
 use crate::backends::common::kernel::ManualKernels;
 

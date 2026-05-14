@@ -365,12 +365,12 @@ impl MatmulMetalKernel {
         match path {
             MatmulDispatchPath::Auto => self.encode(arguments, encoder),
             MatmulDispatchPath::Gemv => self.encode_gemv(encoder, arguments).expect("Failed to encode GEMV"),
-            MatmulDispatchPath::Gemm => self
-                .encode_gemm_simdgroup(context, encoder, arguments)
-                .expect("Failed to encode Gemm"),
-            MatmulDispatchPath::GemmMxu => self
-                .encode_gemm_mxu(context, encoder, arguments)
-                .expect("Failed to encode GemmMxu"),
+            MatmulDispatchPath::Gemm => {
+                self.encode_gemm_simdgroup(context, encoder, arguments).expect("Failed to encode Gemm")
+            },
+            MatmulDispatchPath::GemmMxu => {
+                self.encode_gemm_mxu(context, encoder, arguments).expect("Failed to encode GemmMxu")
+            },
         }
     }
 }
@@ -412,11 +412,9 @@ impl MatmulKernel for MatmulMetalKernel {
         if arguments.batch_dim <= max_gemv_batch_threshold() {
             self.encode_gemv(encoder, arguments).expect("Failed to encode GEMV kernel");
         } else if self.is_mxu_eligible(context) {
-            self.encode_gemm_mxu(context, encoder, arguments)
-                .expect("Failed to encode unified GEMM (MXU)");
+            self.encode_gemm_mxu(context, encoder, arguments).expect("Failed to encode unified GEMM (MXU)");
         } else {
-            self.encode_gemm_simdgroup(context, encoder, arguments)
-                .expect("Failed to encode unified GEMM (simdgroup)");
+            self.encode_gemm_simdgroup(context, encoder, arguments).expect("Failed to encode unified GEMM (simdgroup)");
         }
     }
 }

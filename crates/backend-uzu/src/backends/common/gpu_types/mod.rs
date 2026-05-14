@@ -6,13 +6,13 @@
 pub mod activation_type;
 pub mod argmax;
 pub mod attention;
+pub mod gemm;
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod quantization;
 pub mod quantization_method;
 pub mod ring;
 pub mod trie;
-pub mod gemm;
 
 pub use activation_type::*;
 pub use argmax::*;

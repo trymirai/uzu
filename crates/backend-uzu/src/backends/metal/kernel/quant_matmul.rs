@@ -6,19 +6,19 @@ use crate::backends::{
             gemm::{GemmAlignment, GemmOutputTransformKind},
         },
         kernel::{
+            gemm::GemmWeights,
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable,
             },
-            gemm::GemmWeights,
         },
     },
     metal::{
         Metal,
         context::MetalContext,
         kernel::{
+            gemm::{GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmTilingConfig},
             matmul::MatmulMetalKernel,
-            gemm::{GemmComputeKind, GemmInputPrologueKind, GemmTilingConfig, GemmDispatch},
         },
     },
 };
