@@ -187,8 +187,8 @@ fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected);
 }
 
-fn test_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_input::<T>(4, 4, 8, 2, 128, true);
+fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: u32) {
+    let input = get_input::<T>(4, 4, 8, 2, head_dim, true);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 }
@@ -244,15 +244,30 @@ fn test_gqa_bf16() {
 // Head dim 128
 #[uzu_test]
 fn test_head_dim_128_f32() {
-    test_head_dim_128::<f32>();
+    test_head_dim::<f32>(128);
 }
 
 #[uzu_test]
 fn test_head_dim_128_f16() {
-    test_head_dim_128::<f16>();
+    test_head_dim::<f16>(128);
 }
 
 #[uzu_test]
 fn test_head_dim_128_bf16() {
-    test_head_dim_128::<bf16>();
+    test_head_dim::<bf16>(128);
+}
+
+#[uzu_test]
+fn test_head_dim_512_f32() {
+    test_head_dim::<f32>(512);
+}
+
+#[uzu_test]
+fn test_head_dim_512_f16() {
+    test_head_dim::<f16>(512);
+}
+
+#[uzu_test]
+fn test_head_dim_512_bf16() {
+    test_head_dim::<bf16>(512);
 }

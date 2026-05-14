@@ -154,20 +154,6 @@ impl Context for MetalContext {
         Ok(buffer)
     }
 
-    fn create_buffer_with_data(
-        &self,
-        data: &[u8],
-    ) -> Result<Retained<ProtocolObject<dyn MTLBuffer>>, MetalError> {
-        let buffer = self
-            .device
-            .new_buffer_with_data(data, MTLResourceOptions::STORAGE_MODE_SHARED)
-            .ok_or(MetalError::CannotCreateBuffer)?;
-
-        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
-        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
-        Ok(buffer)
-    }
-
     fn create_allocation(
         &self,
         size: usize,
