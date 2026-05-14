@@ -365,91 +365,92 @@ impl CpuCompiler {
             .collect::<anyhow::Result<_>>()?;
 
         let (encode_lifetimes, buffer_generics, mut encode_args_defs): (Vec<_>, Vec<_>, Vec<_>) = kernel_arguments
-            .iter()
-            .map(|argument| {
-                let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
+			.iter()
+			.map(|argument| {
+				let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
 
-                let (lifetime, generic, mut ty) = match &argument.ty {
-                    KernelArgumentType::Buffer(access) => {
-                        let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
-                        let buffer_type = get_generic_name_stream(argument.name.as_ref());
-                        (
-                            Some(quote! { #buffer_lifetime }),
-                            Some(quote! { #buffer_type }),
-                            match access {
-                                KernelBufferAccess::Read => {
-                                    quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, #buffer_type> }
-                                },
-                                KernelBufferAccess::ReadWrite => {
-                                    quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, #buffer_type> }
-                                },
-                            },
-                        )
-                    },
-                    KernelArgumentType::Constant(ty) => {
-                        let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
-                        (None, None, quote! { #ty })
-                    },
-                };
+				let (lifetime, generic, mut ty) = match &argument.ty {
+					KernelArgumentType::Buffer(access) => {
+						let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
+						let buffer_type = get_generic_name_stream(argument.name.as_ref());
+						(
+							Some(quote! { #buffer_lifetime }),
+							Some(quote! { #buffer_type }),
+							match access {
+								KernelBufferAccess::Read => {
+									quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, #buffer_type> }
+								}
+								KernelBufferAccess::ReadWrite => {
+									quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, #buffer_type> }
+								}
+							},
+						)
+					}
+					KernelArgumentType::Constant(ty) => {
+						let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
+						(None, None, quote! { #ty })
+					}
+				};
 
-                if argument.conditional {
-                    ty = quote! { Option<#ty> };
-                }
+				if argument.conditional {
+					ty = quote! { Option<#ty> };
+				}
 
-                Ok((lifetime, generic, quote! { #argument_ident: #ty }))
-            })
-            .collect::<anyhow::Result<_>>()?;
+				Ok((lifetime, generic, quote! { #argument_ident: #ty }))
+			})
+			.collect::<anyhow::Result<_>>()?;
 
         let mut encode_lifetimes = encode_lifetimes.into_iter().flatten().collect::<Vec<_>>();
         let buffer_generics = buffer_generics.into_iter().flatten().collect::<Vec<_>>();
 
         let argument_copies = function_arguments
-            .iter()
-            .flat_map(|argument| {
-                let argument_ident = &argument.name;
-                match &argument.ty {
-                    FunctionArgumentType::Buffer(access) => {
-                        let (buffer_ptr, buffer_ptr_wrapper) = match access {
-                            KernelBufferAccess::Read => {
-                                (quote! { (&*crate::backends::cpu::Cpu::buffer_downcast(__dsl_buffer).get()).as_ptr() }, quote! { crate::utils::pointers::SendPtr })
-                            },
-                            KernelBufferAccess::ReadWrite => (
-                                quote! { (&mut *crate::backends::cpu::Cpu::buffer_downcast(__dsl_buffer).get()).as_mut_ptr() },
-                                quote! { crate::utils::pointers::SendPtrMut },
-                            ),
-                        };
+			.iter()
+			.flat_map(|argument| {
+				let argument_ident = &argument.name;
+				match &argument.ty {
+					FunctionArgumentType::Buffer(access) => {
+						let (buffer_ptr, buffer_ptr_wrapper) = match access {
+							KernelBufferAccess::Read => (
+								quote! { (&*crate::backends::cpu::CpuBufferDowncastExt::downcast(__dsl_buffer).get()).as_ptr() },
+								quote! { crate::utils::pointers::SendPtr }
+							),
+							KernelBufferAccess::ReadWrite => (
+								quote! { (&mut *crate::backends::cpu::CpuBufferDowncastExt::downcast(__dsl_buffer).get()).as_mut_ptr() },
+								quote! { crate::utils::pointers::SendPtrMut },
+							),
+						};
 
-                        if argument.conditional.is_some() {
-                            Some(quote! {
+						if argument.conditional.is_some() {
+							Some(quote! {
                                 let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
                                     let (__dsl_buffer, __dsl_offset, _) = __dsl_buffer_impl.into_parts();
 
                                     #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
                                 });
                             })
-                        } else {
-                            Some(quote! {
+						} else {
+							Some(quote! {
                                 let #argument_ident = unsafe {
                                     let (__dsl_buffer, __dsl_offset, _) = #argument_ident.into_parts();
 
                                     #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
                                 };
                             })
-                        }
-                    },
-                    FunctionArgumentType::Constant(_, None) => {
-                        Some(quote! { let #argument_ident = #argument_ident.to_vec().into_boxed_slice(); })
-                    },
-                    FunctionArgumentType::Constant(_, Some(_)) => {
-                        Some(quote! { let #argument_ident = Box::new(*#argument_ident); })
-                    },
-                    FunctionArgumentType::Scalar(_) => None,
-                    FunctionArgumentType::Specialization(_) => {
-                        Some(quote! { let #argument_ident = self.#argument_ident; })
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
+						}
+					}
+					FunctionArgumentType::Constant(_, None) => {
+						Some(quote! { let #argument_ident = #argument_ident.to_vec().into_boxed_slice(); })
+					}
+					FunctionArgumentType::Constant(_, Some(_)) => {
+						Some(quote! { let #argument_ident = Box::new(*#argument_ident); })
+					}
+					FunctionArgumentType::Scalar(_) => None,
+					FunctionArgumentType::Specialization(_) => {
+						Some(quote! { let #argument_ident = self.#argument_ident; })
+					}
+				}
+			})
+			.collect::<Vec<_>>();
 
         let make_encode = |generics: TokenStream| -> TokenStream {
             let monomorphized_function = if !generics.is_empty() {
