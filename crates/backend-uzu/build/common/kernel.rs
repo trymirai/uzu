@@ -1,3 +1,5 @@
+use super::identifiers::{ArgumentName, KernelName};
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum KernelBufferAccess {
     Read,
@@ -12,7 +14,7 @@ pub enum KernelArgumentType {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct KernelArgument {
-    pub name: Box<str>,
+    pub name: ArgumentName,
     pub conditional: bool,
     pub ty: KernelArgumentType,
 }
@@ -31,7 +33,7 @@ pub struct KernelParameter {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Kernel {
-    pub name: Box<str>,
+    pub name: KernelName,
     pub parameters: Box<[KernelParameter]>,
     pub arguments: Box<[KernelArgument]>,
 }

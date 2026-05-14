@@ -69,6 +69,7 @@ async-trait.workspace = true
 bindgen.workspace = true
 walkdir.workspace = true
 depfile.workspace = true
+derive_more.workspace = true
 tempfile.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["unbounded_depth"] }
