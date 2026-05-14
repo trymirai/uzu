@@ -1,22 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ModelConfig, ModelType};
-
-fn default_model_type() -> ModelType {
-    ModelType::LanguageModel
-}
+use super::ModelType;
+use crate::backends::common::gpu_types::QuantizationMode;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct ModelMetadata {
+pub struct ModelMetadata<T> {
     pub toolchain_version: String,
     pub vendor: String,
     pub family: String,
     pub name: String,
     pub size: String,
-    pub quantization: Option<String>,
+    pub quantization: Option<QuantizationMode>,
     pub repo: String,
     pub use_cases: Vec<String>,
-    #[serde(default = "default_model_type")]
     pub model_type: ModelType,
-    pub model_config: ModelConfig,
+    pub model_config: T,
+    pub grammar_start_tokens: Vec<String>,
 }

@@ -3,10 +3,8 @@ use std::rc::Rc;
 use crate::{
     DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
-    config::TransformerLayerConfig,
-    encodable_block::{
-        Attention, AttentionArguments, EncodingParameters, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope,
-    },
+    config::{TransformerConfig, TransformerLayerConfig},
+    encodable_block::{Attention, AttentionArguments, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope},
     forward_pass::state::RopeType,
     parameters::ParameterTree,
 };
@@ -33,59 +31,49 @@ pub struct ClassifierLayer<B: Backend> {
 
 impl<B: Backend> ClassifierLayer<B> {
     pub fn new(
-        context: Rc<B::Context>,
+        context: &B::Context,
+        transformer_config: &TransformerConfig,
         layer_config: &TransformerLayerConfig,
         layer_index: usize,
-        model_dim: usize,
-        hidden_dim: usize,
-        num_heads: usize,
-        head_dim: usize,
-        num_groups: usize,
-        attention_scale: Option<f32>,
         layer_loader: &ParameterTree<B::Context>,
         rope: Rc<Rope<B>>,
     ) -> Self {
-        let ctx = context.as_ref(); // Reference for functions expecting &B::Context
         let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
 
-        let pre_attention_norm = if let Some(norm_config) = &layer_config.pre_attention_norm_config {
-            if layer_loader.subtree("pre_mixer_norm").is_ok() {
-                Some(
-                    Normalization::new(
-                        ctx,
-                        intermediate_data_type,
-                        norm_config.clone(),
-                        &layer_loader.subtree("pre_mixer_norm").unwrap(),
-                    )
-                    .expect("Failed to create pre-attention norm kernel"),
-                )
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let pre_attention_norm = layer_config.pre_mixer_norm_config.as_ref().map(|norm_config| {
+            Normalization::new(
+                context,
+                intermediate_data_type,
+                norm_config.clone(),
+                &layer_loader.subtree("pre_mixer_norm").unwrap(),
+            )
+            .expect("Failed to create pre-attention norm kernel")
+        });
 
         let qkv_projection = <dyn Linear<B>>::new(
             &attention_config.qkv_projection_config,
-            model_dim,
-            [num_heads * head_dim, num_groups * head_dim, num_groups * head_dim],
-            ctx,
+            transformer_config.model_dim,
+            [
+                attention_config.num_heads * attention_config.head_dim,
+                attention_config.num_groups * attention_config.head_dim,
+                attention_config.num_groups * attention_config.head_dim,
+            ],
+            context,
             &layer_loader.subtree("mixer.qkv_projection").unwrap(),
         )
         .expect("Failed to create qkv projection");
 
         let qk_norm = if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
             match QKNorm::new(
-                ctx,
+                context,
                 intermediate_data_type,
                 attention_config.query_norm_config.clone(),
                 attention_config.key_norm_config.clone(),
                 &layer_loader.subtree("mixer").unwrap(),
-                num_heads,
-                num_groups,
-                head_dim,
+                attention_config.num_heads,
+                attention_config.num_groups,
+                attention_config.head_dim,
             ) {
                 Ok(norm) => Some(norm),
                 Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
@@ -96,32 +84,28 @@ impl<B: Backend> ClassifierLayer<B> {
 
         let out_projection = <dyn Linear<B>>::new(
             &attention_config.out_projection_config,
-            num_heads * head_dim,
-            [model_dim],
-            ctx,
+            attention_config.num_heads * attention_config.head_dim,
+            [transformer_config.model_dim],
+            context,
             &layer_loader.subtree("mixer.out_projection").unwrap(),
         )
         .expect("Failed to create out projection");
 
-        let post_attention_norm = if let Some(norm_config) = &layer_config.post_attention_norm_config {
-            Some(
-                Normalization::new(
-                    ctx,
-                    intermediate_data_type,
-                    norm_config.clone(),
-                    &layer_loader.subtree("post_mixer_norm").unwrap(),
-                )
-                .expect("Failed to create post-attention norm kernel"),
+        let post_attention_norm = layer_config.post_mixer_norm_config.as_ref().map(|norm_config| {
+            Normalization::new(
+                context,
+                intermediate_data_type,
+                norm_config.clone(),
+                &layer_loader.subtree("post_mixer_norm").unwrap(),
             )
-        } else {
-            None
-        };
+            .expect("Failed to create post-attention norm kernel")
+        });
 
-        let mixer_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(ctx, intermediate_data_type)
+        let mixer_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(context, intermediate_data_type)
             .expect("Failed to create mixer residual add kernel");
 
         let pre_mlp_norm = Normalization::new(
-            ctx,
+            context,
             intermediate_data_type,
             layer_config.pre_mlp_norm_config.clone(),
             &layer_loader.subtree("pre_mlp_norm").unwrap(),
@@ -130,41 +114,29 @@ impl<B: Backend> ClassifierLayer<B> {
 
         let (mlp, mlp_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
-            model_dim,
-            hidden_dim,
-            context.as_ref(),
+            transformer_config.model_dim,
+            transformer_config.hidden_dim,
+            context,
             &layer_loader.subtree("mlp").unwrap(),
         )
         .expect("Failed to create mlp block");
 
         assert!(mlp_hadamard_factors.is_none(), "classifier doesn't support hadamard");
 
-        let post_mlp_norm = if let Some(norm_config) = &layer_config.post_mlp_norm_config {
-            Some(
-                Normalization::new(
-                    ctx,
-                    intermediate_data_type,
-                    norm_config.clone(),
-                    &layer_loader.subtree("post_mlp_norm").unwrap(),
-                )
-                .expect("Failed to create post-MLP norm kernel"),
+        let post_mlp_norm = layer_config.post_mlp_norm_config.as_ref().map(|norm_config| {
+            Normalization::new(
+                context,
+                intermediate_data_type,
+                norm_config.clone(),
+                &layer_loader.subtree("post_mlp_norm").unwrap(),
             )
-        } else {
-            None
-        };
+            .expect("Failed to create post-MLP norm kernel")
+        });
 
-        let attention = Attention::new(
-            ctx,
-            intermediate_data_type,
-            attention_scale,
-            attention_config.has_sinks,
-            false,
-            attention_config.sliding_window_size,
-            false,
-        )
-        .expect("Failed to create attention kernel");
+        let attention = Attention::new(context, intermediate_data_type, attention_config, false)
+            .expect("Failed to create attention kernel");
 
-        let mlp_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(ctx, intermediate_data_type)
+        let mlp_residual_add = <B::Kernels as Kernels>::TensorAddSwapKernel::new(context, intermediate_data_type)
             .expect("Failed to create mlp residual add kernel");
 
         Self {
@@ -181,17 +153,16 @@ impl<B: Backend> ClassifierLayer<B> {
             mlp,
             post_mlp_norm,
             mlp_residual_add,
-            model_dim,
-            num_heads,
-            num_groups,
-            head_dim,
+            model_dim: transformer_config.model_dim,
+            num_heads: attention_config.num_heads,
+            num_groups: attention_config.num_groups,
+            head_dim: attention_config.head_dim,
         }
     }
 
     pub fn encode(
         &self,
         args: LayerArguments<B>,
-        parameters: &EncodingParameters,
         main: Allocation<B>,
         shortcut: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
@@ -253,7 +224,6 @@ impl<B: Backend> ClassifierLayer<B> {
         )?;
         let attention_output = self.attention.encode(
             AttentionArguments {
-                projection_step: parameters.projection_step.unwrap_or(0),
                 token_subtrie_ranges,
                 attention_sinks,
                 kv_cache_layer: None,

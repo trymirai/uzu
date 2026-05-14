@@ -10,12 +10,6 @@ pub struct NormalizationConfig {
     pub epsilon: f32,
     pub scale_offset: Option<f32>,
     pub upcast_mode: UpcastMode,
-    #[serde(default)]
     pub subtract_mean: bool,
-    #[serde(default)]
     pub use_bias: bool,
 }
-
-#[cfg(test)]
-#[path = "../../../tests/unit/config/normalization/normalization_config_test.rs"]
-mod tests;

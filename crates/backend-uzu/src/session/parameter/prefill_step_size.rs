@@ -34,14 +34,11 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
         let model_context_length = config.model_config.transformer_config.context_length;
 
         let minimal_sliding_window_size = config
-            .decoder_config()
-            .ok()
-            .and_then(|dc| dc.sliding_window_sizes)
-            .as_deref()
-            .into_iter()
-            .flatten()
-            .flatten()
-            .copied()
+            .model_config
+            .transformer_config
+            .layer_configs
+            .iter()
+            .filter_map(|l| l.mixer_config.sliding_window_size())
             .min()
             .unwrap_or(usize::MAX);
 

@@ -14,18 +14,16 @@ use crate::{
             ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         },
     },
-    config::{DecoderLayerType, Mamba2Config},
+    config::Mamba2Config,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::ssm_layer::SSMLayer,
-    parameters::{ParameterLoaderError, ParameterTree, try_resolve_subtree},
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum MambaMixerError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
-    #[error("Unsupported configuration: {0}")]
-    UnsupportedConfiguration(String),
     #[error("Linear error: {0}")]
     LinearError(#[from] Box<LinearBlockError<B>>),
     #[error("Parameter loader error: {0}")]
@@ -79,22 +77,14 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
 }
 
 impl<B: Backend> MambaMixer<B> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         context: &B::Context,
-        layer_type: DecoderLayerType,
         mamba_config: Mamba2Config,
-        layer_index: usize,
         model_dim: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
     ) -> Result<(Self, Option<Allocation<B>>), MambaMixerError<B>> {
-        if !matches!(layer_type, DecoderLayerType::StateSpace { .. }) {
-            return Err(MambaMixerError::UnsupportedConfiguration(format!(
-                "layer {layer_index} marked as transformer but Mamba mixer config provided"
-            )));
-        }
-        let split_tree = try_resolve_subtree(decoder_layer_loader, &["mixer"])?;
-        let conv_tree = try_resolve_subtree(&split_tree, &["conv", "conv1d"])?;
+        let split_tree = decoder_layer_loader.subtree("mixer")?;
+        let conv_tree = split_tree.subtree("conv")?;
 
         let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
 
@@ -103,7 +93,7 @@ impl<B: Backend> MambaMixer<B> {
             model_dim,
             [mamba_config.conv_dim(), mamba_config.inner_dim(), mamba_config.num_heads],
             context,
-            &try_resolve_subtree(decoder_layer_loader, &["mixer.in_projection", "mixer.in_proj"])?,
+            &decoder_layer_loader.subtree("mixer.in_projection")?,
         )
         .map_err(|err| MambaMixerError::LinearError(Box::new(err)))?;
 
@@ -112,7 +102,7 @@ impl<B: Backend> MambaMixer<B> {
             mamba_config.inner_dim(),
             [model_dim],
             context,
-            &try_resolve_subtree(decoder_layer_loader, &["mixer.out_projection", "mixer.out_proj"])?,
+            &decoder_layer_loader.subtree("mixer.out_projection")?,
         )
         .map_err(|err| MambaMixerError::LinearError(Box::new(err)))?;
 

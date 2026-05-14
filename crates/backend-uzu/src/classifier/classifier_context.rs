@@ -34,14 +34,16 @@ pub struct ClassifierContext<B: Backend> {
 impl<B: Backend> ClassifierContext<B> {
     pub fn new(
         model_path: &Path,
-        model_metadata: &ModelMetadata,
+        model_metadata: &ModelMetadata<ClassifierModelConfig>,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
-        let classifier_model_config = model_metadata.model_config.as_classifier().ok_or(Error::UnableToLoadConfig)?;
-
-        let decoder_config =
-            Rc::new(classifier_model_config.model_config.to_decoder_config().map_err(|_| Error::UnableToLoadConfig)?);
+        let decoder_config = Rc::new(crate::config::DecoderConfig {
+            embedding_config: model_metadata.model_config.model_config.embedding_config.clone(),
+            transformer_config: model_metadata.model_config.model_config.transformer_config.clone(),
+            vocab_size: model_metadata.model_config.model_config.vocab_size,
+            pard_token: None,
+        });
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let weights_path = model_path.join("model.safetensors");
@@ -53,22 +55,15 @@ impl<B: Backend> ClassifierContext<B> {
         let root_loader_view = loader.tree();
 
         let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
+        shared_buffers.update_data(&root_loader_view);
+        let shared_buffers = Rc::new(shared_buffers);
+
         let transformer_tree = root_loader_view
             .subtree("transformer")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("transformer".to_string())))?;
 
-        if let Some(global_rope) = &mut shared_buffers.global_rope {
-            global_rope.update_data(&transformer_tree, "global_rope");
-        }
-        if let Some(local_rope) = &mut shared_buffers.local_rope {
-            local_rope.update_data(&transformer_tree, "local_rope");
-        }
-        let shared_buffers = Rc::new(shared_buffers);
-
         let data_type = decoder_config
-            .layer_config
-            .mixer_config
-            .as_attention()
+            .first_attention()
             .ok_or(Error::Classifier(ClassifierError::NonAttentionMixer))?
             .qkv_projection_config
             .activation_precision()
@@ -77,14 +72,15 @@ impl<B: Backend> ClassifierContext<B> {
         let embed = Embedding::new(
             context.as_ref(),
             decoder_config.vocab_size as u32,
-            decoder_config.model_dim as u32,
+            decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &root_loader_view.subtree("embedding").expect("Failed to get embedding subtree"),
         )
         .expect("Failed to create embedding");
 
         let global_rope = Self::create_rope_block(&context, data_type, RopeType::Global).map_err(Error::Classifier)?;
-        let local_rope = classifier_model_config
+        let local_rope = model_metadata
+            .model_config
             .model_config
             .transformer_config
             .local_rope_config
@@ -93,46 +89,30 @@ impl<B: Backend> ClassifierContext<B> {
             .transpose()
             .map_err(Error::Classifier)?;
 
-        let layers = classifier_model_config
+        let layers = model_metadata
+            .model_config
             .model_config
             .transformer_config
             .layer_configs
             .iter()
             .enumerate()
             .map(|(layer_index, layer_config)| {
-                let mut rope = global_rope.clone();
-                let attn = layer_config.attention_config().ok_or(ClassifierError::NonAttentionMixer)?;
-
-                if attn.sliding_window_size.is_some() {
-                    if let Some(local_rope_block) = local_rope.clone() {
-                        rope = local_rope_block;
-                    }
-                }
-
-                let num_heads = attn.num_heads.ok_or_else(|| {
-                    ClassifierError::MissingConfigField(format!("num_heads in layer {}", layer_index))
-                })?;
-                let head_dim = attn
-                    .head_dim
-                    .ok_or_else(|| ClassifierError::MissingConfigField(format!("head_dim in layer {}", layer_index)))?;
-                let num_groups = attn.num_groups.ok_or_else(|| {
-                    ClassifierError::MissingConfigField(format!("num_groups in layer {}", layer_index))
-                })?;
+                let attn = layer_config.mixer_config.as_attention().ok_or(ClassifierError::NonAttentionMixer)?;
+                let rope = if attn.sliding_window_size.is_some() && local_rope.is_some() {
+                    local_rope.clone().unwrap()
+                } else {
+                    global_rope.clone()
+                };
 
                 let layer_tree = transformer_tree
                     .subtree(&format!("layers.{}", layer_index))
                     .map_err(|_| ClassifierError::WeightSubtreeNotFound(format!("layers.{}", layer_index)))?;
 
                 Ok(ClassifierLayer::new(
-                    context.clone(),
+                    context.as_ref(),
+                    &model_metadata.model_config.model_config.transformer_config,
                     layer_config,
                     layer_index,
-                    classifier_model_config.model_config.model_dim,
-                    classifier_model_config.model_config.transformer_config.hidden_dim,
-                    num_heads,
-                    head_dim,
-                    num_groups,
-                    attn.scale,
                     &layer_tree,
                     rope,
                 ))
@@ -147,7 +127,7 @@ impl<B: Backend> ClassifierContext<B> {
         let output_norm = Normalization::new(
             context.as_ref(),
             data_type,
-            classifier_model_config.model_config.transformer_config.output_norm_config.clone(),
+            model_metadata.model_config.model_config.transformer_config.output_norm_config.clone(),
             &output_norm_tree,
         )
         .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("output norm: {:?}", e))))?;
@@ -158,14 +138,14 @@ impl<B: Backend> ClassifierContext<B> {
         let embedding_norm = Normalization::new(
             context.as_ref(),
             data_type,
-            classifier_model_config.model_config.embedding_norm_config.clone(),
+            model_metadata.model_config.model_config.embedding_norm_config.clone(),
             &embedding_norm_tree,
         )
         .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("embedding norm: {:?}", e))))?;
 
-        let model_dim = classifier_model_config.model_config.model_dim;
-        let num_labels = classifier_model_config.model_config.num_labels;
-        let prediction_head_config = &classifier_model_config.model_config.prediction_head_config;
+        let model_dim = model_metadata.model_config.model_config.model_dim;
+        let num_labels = model_metadata.model_config.model_config.num_labels;
+        let prediction_head_config = &model_metadata.model_config.model_config.prediction_head_config;
         let prediction_head_tree = root_loader_view
             .subtree("prediction_head")
             .map_err(|_| Error::Classifier(ClassifierError::WeightSubtreeNotFound("prediction_head".to_string())))?;
@@ -216,7 +196,7 @@ impl<B: Backend> ClassifierContext<B> {
         let pooling = Pooling::<B>::new(
             context.as_ref(),
             data_type,
-            classifier_model_config.model_config.classifier_pooling.clone(),
+            model_metadata.model_config.model_config.classifier_pooling.clone(),
             model_dim,
         )
         .map_err(|e| {
@@ -240,7 +220,7 @@ impl<B: Backend> ClassifierContext<B> {
         Ok(Self {
             context,
             shared_buffers,
-            model_config: classifier_model_config.clone(),
+            model_config: model_metadata.model_config.clone(),
             model_shape,
             embed,
             embedding_norm,

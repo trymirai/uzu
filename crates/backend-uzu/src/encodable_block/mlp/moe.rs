@@ -60,6 +60,10 @@ pub enum MoeBlockError<B: Backend> {
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
     #[error("MoE num_active_routed_experts must be greater than 0")]
     InvalidActiveExpertCount,
+    #[error("MoE shared experts are not supported")]
+    UnsupportedSharedExperts,
+    #[error("MoE expert gate is not supported")]
+    UnsupportedExpertGate,
 }
 
 impl<B: Backend> MoeBlock<B> {
@@ -67,11 +71,16 @@ impl<B: Backend> MoeBlock<B> {
         context: &B::Context,
         moe_config: &MixtureOfExpertsConfig,
         model_dim: usize,
-        hidden_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, MoeBlockError<B>> {
         if moe_config.num_active_routed_experts == 0 {
             return Err(MoeBlockError::InvalidActiveExpertCount);
+        }
+        if moe_config.num_shared_experts != 0 {
+            return Err(MoeBlockError::UnsupportedSharedExperts);
+        }
+        if moe_config.gate_config.is_some() {
+            return Err(MoeBlockError::UnsupportedExpertGate);
         }
         let data_type: DataType = moe_config.expert_config.linear_config.activation_precision().into();
 
@@ -79,37 +88,16 @@ impl<B: Backend> MoeBlock<B> {
 
         let router_renorm = matches!(moe_config.routing_function, RoutingFunctionConfig::SoftmaxRouting);
 
-        let router_tree = parameter_tree.subtree("router").map_err(MoeBlockError::ParameterLoaderError)?;
-
-        let router = match &moe_config.router_config {
-            LinearConfig::Quantized(_) => {
-                unimplemented!("Quantized router with fused router+topk not yet supported");
-            },
-            LinearConfig::MLXQuantized(_) => {
-                unimplemented!("MLX quantized router with fused router+topk not yet supported");
-            },
-            LinearConfig::FullPrecision {
-                ..
-            } => {
-                let weights =
-                    router_tree.leaf("weights").map_err(MoeBlockError::ParameterLoaderError)?.read_allocation()?;
-                let biases =
-                    router_tree.leaf("biases").map_err(MoeBlockError::ParameterLoaderError)?.read_allocation()?;
-                RouterBlock {
-                    weights,
-                    biases,
-                }
-            },
-            LinearConfig::QLoRA {
-                ..
-            } => {
-                unimplemented!("QLoRA router not yet supported for MoE");
-            },
-            LinearConfig::RHTLinearWrapper {
-                ..
-            } => {
-                unimplemented!("RHTLinearWrapper router not yet supported for MoE");
-            },
+        let router_tree = parameter_tree.subtree("router")?;
+        let LinearConfig::FullPrecision {
+            ..
+        } = &moe_config.router_config
+        else {
+            unimplemented!("Only FullPrecision MoE router is supported; got {:?}", moe_config.router_config);
+        };
+        let router = RouterBlock {
+            weights: router_tree.leaf_allocation("weights")?,
+            biases: router_tree.leaf_allocation("biases")?,
         };
 
         let router_topk_kernel = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, router_data_type)
@@ -129,41 +117,14 @@ impl<B: Backend> MoeBlock<B> {
         let finalize_kernel =
             <B::Kernels as Kernels>::MoeFinalizeKernel::new(context, data_type).map_err(MoeBlockError::BackendError)?;
 
-        let experts_tree = parameter_tree.subtree("experts").map_err(MoeBlockError::ParameterLoaderError)?;
-
-        let w13 = experts_tree
-            .subtree("up_projection")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("weights")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .read_allocation()?;
-
-        let w2 = experts_tree
-            .subtree("down_projection")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("weights")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .read_allocation()?;
-
-        let up_biases = experts_tree
-            .subtree("up_projection")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .read_allocation()?;
-
-        let down_biases = experts_tree
-            .subtree("down_projection")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .leaf("biases")
-            .map_err(MoeBlockError::ParameterLoaderError)?
-            .read_allocation()?;
-
+        let experts_tree = parameter_tree.subtree("experts")?;
+        let up_tree = experts_tree.subtree("up_projection")?;
+        let down_tree = experts_tree.subtree("down_projection")?;
         let shared_weights = SharedMoeWeights {
-            w13,
-            w2,
-            up_biases,
-            down_biases,
+            w13: up_tree.leaf_allocation("weights")?,
+            w2: down_tree.leaf_allocation("weights")?,
+            up_biases: up_tree.leaf_allocation("biases")?,
+            down_biases: down_tree.leaf_allocation("biases")?,
         };
 
         Ok(Self {
@@ -179,7 +140,7 @@ impl<B: Backend> MoeBlock<B> {
             finalize_kernel,
             moe_config: moe_config.clone(),
             model_dim,
-            hidden_dim,
+            hidden_dim: moe_config.expert_hidden_dim,
             data_type,
             shared_weights,
         })
@@ -317,11 +278,12 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 
         let gating_code = Self::gating_code_from_activation(&self.moe_config.expert_config.activation.act_type());
 
-        // Compute clipping values and alpha for expert kernels
-        let gate_clip_min = self.moe_config.expert_config.gate_clipping[0].unwrap_or(f32::NEG_INFINITY);
-        let gate_clip_max = self.moe_config.expert_config.gate_clipping[1].unwrap_or(f32::INFINITY);
-        let up_clip_min = self.moe_config.expert_config.up_clipping[0];
-        let up_clip_max = self.moe_config.expert_config.up_clipping[1];
+        let (gate_lo, gate_hi) = self.moe_config.expert_config.gate_clipping.unwrap_or_default();
+        let (up_lo, up_hi) = self.moe_config.expert_config.up_clipping.unwrap_or_default();
+        let gate_clip_min = gate_lo.unwrap_or(f32::NEG_INFINITY);
+        let gate_clip_max = gate_hi.unwrap_or(f32::INFINITY);
+        let up_clip_min = up_lo.unwrap_or(f32::NEG_INFINITY);
+        let up_clip_max = up_hi.unwrap_or(f32::INFINITY);
         let silu_alpha = self.moe_config.expert_config.activation.alpha();
 
         let y_partial = if suffix_length == 1 {

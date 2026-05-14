@@ -9,13 +9,10 @@ use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
-    config::{DecoderConfig, DecoderLayerType, MixerConfig},
-    encodable_block::{
-        Embedding, EncodingParameters, LayerArguments, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError,
-    },
+    config::DecoderConfig,
+    encodable_block::{Embedding, LayerArguments, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
     forward_pass::{
         cache_layers::CacheLayers,
-        model_shape::ModelShape,
         state::{RopeType, SharedBuffers},
     },
     parameters::ParameterTree,
@@ -68,7 +65,7 @@ impl<B: Backend> Decoder<B> {
         let embed = Embedding::new(
             context,
             decoder_config.vocab_size as u32,
-            decoder_config.model_dim as u32,
+            decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &embedding_weight_loader,
         )
@@ -101,7 +98,7 @@ impl<B: Backend> Decoder<B> {
         let embed = Embedding::new_with_lookup_and_readout_trees(
             context,
             decoder_config.vocab_size as u32,
-            decoder_config.model_dim as u32,
+            decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &embedding_weight_loader,
             &readout_weight_loader,
@@ -127,89 +124,37 @@ impl<B: Backend> Decoder<B> {
         let decoder_weight_loader =
             root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
 
-        let attention_data_type = Self::attention_data_type(&decoder_config);
-        let norm_reference_layer =
-            decoder_config.layer_configs.as_ref().map(|configs| &configs[0]).unwrap_or(&decoder_config.layer_config);
-        let norm_data_type: DataType = match &norm_reference_layer.mixer_config {
-            MixerConfig::Attention(attention_config) => {
-                attention_config.qkv_projection_config.activation_precision().into()
-            },
-            MixerConfig::Mamba(mamba_config) => mamba_config.in_projection_config.activation_precision().into(),
-            MixerConfig::ShortConv(short_conv_config) => {
-                short_conv_config.in_projection_config.activation_precision().into()
-            },
-            MixerConfig::DeltaNet(config) => config.in_proj_config.activation_precision().into(),
-        };
+        let tf = &decoder_config.transformer_config;
+        let norm_data_type: DataType = tf.layer_configs[0].mixer_config.activation_precision().into();
 
-        let global_rope = if decoder_config.global_rope_config.is_some() {
-            attention_data_type
-                .as_ref()
-                .map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Global))
-        } else {
-            None
-        };
+        let global_rope =
+            tf.global_rope_config.is_some().then(|| Self::create_rope_block(context, norm_data_type, RopeType::Global));
+        let local_rope =
+            tf.local_rope_config.is_some().then(|| Self::create_rope_block(context, norm_data_type, RopeType::Local));
 
-        let local_rope = if decoder_config.local_rope_config.is_some() {
-            attention_data_type.as_ref().map(|data_type| Self::create_rope_block(&context, *data_type, RopeType::Local))
-        } else {
-            None
-        };
-
-        let model_shape = ModelShape::from_decoder_config(&decoder_config);
-        let sliding_window_sizes = model_shape.sliding_window_length_per_layer.clone();
-
-        let layers = (0..decoder_config.num_layers)
-            .map(|layer_index| {
-                let layer_config = decoder_config
-                    .layer_configs
-                    .as_ref()
-                    .map(|configs| &configs[layer_index])
-                    .unwrap_or(&decoder_config.layer_config);
-                let layer_type = model_shape.layer_type(layer_index);
-                let rope_for_layer = match layer_type {
-                    DecoderLayerType::Transformer => {
-                        if let Some(_) = sliding_window_sizes[layer_index]
-                            && let Some(local_rope_block) = local_rope.clone()
-                        {
-                            Some(local_rope_block)
-                        } else {
-                            Some(global_rope.clone().expect("Global rope missing for transformer layer"))
-                        }
-                    },
-                    DecoderLayerType::StateSpace {
-                        ..
-                    } => None,
-                    DecoderLayerType::ShortConv {
-                        ..
-                    } => None,
-                    DecoderLayerType::DeltaNet {
-                        ..
-                    } => None,
-                };
+        let layers = tf
+            .layer_configs
+            .iter()
+            .enumerate()
+            .map(|(layer_index, layer_config)| {
+                let rope_for_layer = layer_config.mixer_config.as_attention().map(|attn| {
+                    if attn.sliding_window_size.is_some() {
+                        local_rope.clone().expect("Local rope missing for sliding-window attention layer")
+                    } else {
+                        global_rope.clone().expect("Global rope missing for attention layer")
+                    }
+                });
 
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
-                LayerExecutables::new(
-                    context,
-                    layer_config,
-                    layer_type,
-                    layer_index,
-                    decoder_config.model_dim,
-                    decoder_config.hidden_dim,
-                    decoder_config.num_heads,
-                    decoder_config.head_dim,
-                    decoder_config.num_groups,
-                    decoder_config.attention_scale,
-                    &layer_loader,
-                    rope_for_layer,
-                )
+                LayerExecutables::new(context, tf, layer_config, layer_index, &layer_loader, rope_for_layer)
             })
             .collect::<Vec<_>>();
 
         let norm_block = RMSNorm::new(
             context,
             norm_data_type,
-            decoder_config.output_norm_config.clone(),
+            tf.output_norm_config.clone(),
             &decoder_weight_loader.subtree("output_norm").unwrap(),
             None,
             true,
@@ -228,24 +173,10 @@ impl<B: Backend> Decoder<B> {
         Rc::new(Rope::<B>::new(context, data_type, rope_type).expect("Failed to create Rope"))
     }
 
-    fn attention_data_type(decoder_config: &DecoderConfig) -> Option<DataType> {
-        (0..decoder_config.num_layers).find_map(|layer_index| {
-            let layer_config = decoder_config
-                .layer_configs
-                .as_ref()
-                .map(|configs| &configs[layer_index])
-                .unwrap_or(&decoder_config.layer_config);
-            layer_config
-                .attention_config()
-                .map(|attention_config| attention_config.qkv_projection_config.activation_precision().into())
-        })
-    }
-
     fn run_layers(
         &self,
         args: DecoderArguments<B>,
         mut main: Allocation<B>,
-        parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
         let DecoderArguments {
@@ -295,7 +226,6 @@ impl<B: Backend> Decoder<B> {
                         #[cfg(feature = "tracing")]
                         trace: layer_trace,
                     },
-                    parameters,
                     main,
                     &mut shortcut,
                     encoder,
@@ -310,11 +240,10 @@ impl<B: Backend> Decoder<B> {
         &self,
         args: DecoderArguments<B>,
         token_ids: &Allocation<B>,
-        parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
         let main = self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?;
-        let (main, _) = self.run_layers(args, main, parameters, encoder)?;
+        let (main, _) = self.run_layers(args, main, encoder)?;
         Ok(main)
     }
 
@@ -323,7 +252,6 @@ impl<B: Backend> Decoder<B> {
         args: DecoderArguments<B>,
         input: DecoderDecodeInput<'input, B>,
         hidden_capture: Option<&mut Allocation<B>>,
-        parameters: &EncodingParameters,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
         let sampling_start = args.sampling_start;
@@ -352,7 +280,6 @@ impl<B: Backend> Decoder<B> {
                 trace: trace.as_deref_mut(),
             },
             main,
-            parameters,
             encoder,
         )?;
 

@@ -1,10 +1,12 @@
 #![allow(unused)]
 use std::{
+    borrow::Borrow,
     env, fs,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context;
+use derive_more::{AsRef, Deref, Display, From};
 use syn::{Attribute, Ident, Item};
 use walkdir::WalkDir;
 
@@ -13,6 +15,24 @@ mod item_struct;
 
 pub use item_enum::GpuTypeEnum;
 pub use item_struct::{GpuTypeStruct, GpuTypeStructFieldType};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
+#[as_ref(str)]
+#[deref(forward)]
+#[from(forward)]
+pub struct GpuTypeName(String);
+
+impl Borrow<str> for GpuTypeName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
+#[as_ref(str)]
+#[deref(forward)]
+#[from(forward)]
+pub struct GpuTypePath(String);
 
 fn ensure_repr_c(attrs: &[Attribute]) -> anyhow::Result<()> {
     anyhow::ensure!(

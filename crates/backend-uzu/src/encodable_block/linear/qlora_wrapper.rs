@@ -17,7 +17,7 @@ use crate::{
         Linear,
         linear::{LinearBlockError, QuantizedLinear, QuantizedLinearError},
     },
-    prelude::{ParameterLeaf, ParameterLoaderError, ParameterTree},
+    prelude::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -28,13 +28,6 @@ pub enum QLoRALinearWrapperError<B: Backend> {
     QuantizedLinearError(#[from] QuantizedLinearError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
-    #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
-    InvalidTensor {
-        shape: Box<[usize]>,
-        data_type: DataType,
-        expected_shape: Box<[usize]>,
-        expected_data_type: DataType,
-    },
     #[error("Matmul error: {0}")]
     MatmulError(#[from] MatmulError<B>),
 }
@@ -49,27 +42,6 @@ pub struct QLoRALinearWrapper<B: Backend> {
     lora_rank: usize,
     lora_scale: f32,
     data_type: DataType,
-}
-
-// TODO: figure out how to make this generic over QLoRAWrapperError::InvalidTensor or make one global "Invalid Tensor" error and make this a common helper
-fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
-    weights_leaf: &ParameterLeaf<'file, 'context, 'leaf, B::Context>,
-    expected_shape: [usize; 2],
-    expected_data_type: DataType,
-) -> Result<(), QLoRALinearWrapperError<B>> {
-    let shape = weights_leaf.shape();
-    let data_type = weights_leaf.data_type();
-
-    if (shape, data_type) != (expected_shape.as_ref(), expected_data_type) {
-        return Err(QLoRALinearWrapperError::InvalidTensor {
-            shape: shape.into(),
-            data_type: weights_leaf.data_type(),
-            expected_shape: expected_shape.into(),
-            expected_data_type,
-        });
-    }
-
-    Ok(())
 }
 
 impl<B: Backend> QLoRALinearWrapper<B> {
@@ -97,11 +69,11 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             RefCell::new(<<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)?);
 
         let adapter_down_leaf = parameter_tree.leaf("down_weights")?;
-        validate_tensor(&adapter_down_leaf, [lora_rank as usize, input_dim as usize], data_type)?;
+        adapter_down_leaf.validate_shape(&[lora_rank, input_dim], data_type)?;
         let adapter_down = adapter_down_leaf.read_allocation()?;
 
         let adapter_up_leaf = parameter_tree.leaf("up_weights")?;
-        validate_tensor(&adapter_up_leaf, [output_dim, lora_rank as usize], data_type)?;
+        adapter_up_leaf.validate_shape(&[output_dim, lora_rank], data_type)?;
         let adapter_up = adapter_up_leaf.read_allocation()?;
 
         Ok(Self {

@@ -37,8 +37,8 @@ use crate::{
             matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
         },
     },
-    config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
-    encodable_block::{Decoder, EncodingParameters, Sampling as GpuSampling},
+    config::{ModelMetadata, TtsMessageProcessorConfig, TtsModelConfig},
+    encodable_block::{Decoder, Sampling as GpuSampling},
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,
     session::{

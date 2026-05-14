@@ -91,7 +91,8 @@ impl<B: Backend> TokenDecoderContext<B> {
         runtime_config: &TextDecoderRuntimeConfig,
     ) -> Result<(Self, DataType), Error> {
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
-        let max_suffix_length = text_decoder_prefill_step_size(runtime_config, decoder_config.context_length).max(32);
+        let max_suffix_length =
+            text_decoder_prefill_step_size(runtime_config, decoder_config.transformer_config.context_length).max(32);
         let max_prefix_length = max_suffix_length;
         let activation_data_type = model_shape.activation_data_type();
         let loaded_model = TokenDecoderLoadedModel::<B>::load(
@@ -112,7 +113,8 @@ impl<B: Backend> TokenDecoderContext<B> {
             max_prefix_length,
             max_suffix_length,
         )));
-        let intermediate_data_type: DataType = decoder_config.output_norm_config.scale_precision.into();
+        let intermediate_data_type: DataType =
+            decoder_config.transformer_config.output_norm_config.scale_precision.into();
         let kv_cache_update = KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
             .map_err(unable_to_create_context)?;
 
@@ -207,7 +209,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             runtime_config,
         )?;
         let context: Rc<B::Context> = Rc::clone(ctx.context());
-        let model_dim = ctx.decoder_config.model_dim;
+        let model_dim = ctx.decoder_config.transformer_config.model_dim;
         let tensor_add_scale =
             <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), activation_data_type)
                 .map_err(unable_to_create_context)?;
@@ -336,7 +338,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         &mut self,
         max_prefix_length: usize,
     ) -> Result<(), Error> {
-        let max_prefix_length = max_prefix_length.max(1).min(self.ctx.decoder_config.context_length);
+        let max_prefix_length = max_prefix_length.max(1).min(self.ctx.decoder_config.transformer_config.context_length);
         let max_suffix_length = text_decoder_prefill_step_size(&self.ctx.runtime_config, max_prefix_length).max(32);
         if self.ctx.current_max_prefix_length == max_prefix_length {
             return Ok(());
@@ -344,7 +346,8 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let context = self.ctx.context.as_ref();
         *self.ctx.cache_layers.borrow_mut() =
             CacheLayers::new(context, &self.ctx.model_shape, max_prefix_length, max_suffix_length);
-        let intermediate_data_type: DataType = self.ctx.decoder_config.output_norm_config.scale_precision.into();
+        let intermediate_data_type: DataType =
+            self.ctx.decoder_config.transformer_config.output_norm_config.scale_precision.into();
         self.ctx.kv_cache_update =
             KVCacheUpdate::new(context, intermediate_data_type, max_prefix_length).map_err(unable_to_create_context)?;
         self.ctx.current_max_prefix_length = max_prefix_length;
@@ -365,8 +368,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let positions: Vec<usize> = (self.next_position..self.next_position + token_count).collect();
             let token_inputs = self.llm_token_inputs(token_ids, &positions, None, None, 0, 0);
 
-            let encoding_parameters = EncodingParameters::new();
-
             let context = Rc::clone(&self.ctx.context);
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
@@ -376,7 +377,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 .encode_prefill(
                     self.decoder_arguments(&token_inputs, token_count, 0, 0, &mut *cache_layers),
                     token_inputs.token_ids(),
-                    &encoding_parameters,
                     &mut encoder,
                 )
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
@@ -562,7 +562,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
         pending_sampling_outputs: &mut Vec<Allocation<B>>,
     ) -> Result<(), Error> {
-        let encoding_parameters = EncodingParameters::new();
         let cache_layers_rc = self.ctx.cache_layers.clone();
         let token_bitmask =
             vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit)).map(Box::<[u32]>::from);
@@ -587,7 +586,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
                             self.decoder_arguments(&token_inputs, 1, 0, 1, &mut *cache_layers),
                             DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
                             None,
-                            &encoding_parameters,
                             encoder,
                         )
                         .map_err(|err| Error::EncodeFailed(Box::new(err)))?
@@ -776,7 +774,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         pending_token_inputs.push(token_inputs);
         let token_inputs = pending_token_inputs.last().expect("token inputs must be pending");
 
-        let encoding_parameters = EncodingParameters::new();
         let mut main = self
             .ctx
             .executables
@@ -816,13 +813,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let hidden_capture = capture_hidden.then_some(&mut self.single_hidden_capture);
             self.ctx
                 .executables
-                .encode_decode(
-                    decoder_arguments,
-                    DecoderDecodeInput::Embeddings(main),
-                    hidden_capture,
-                    &encoding_parameters,
-                    encoder,
-                )
+                .encode_decode(decoder_arguments, DecoderDecodeInput::Embeddings(main), hidden_capture, encoder)
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?
         };
         let mut sampling_output = self.create_sampling_output(sampling_length);
@@ -1000,7 +991,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         main: &mut Allocation<B>,
         override_embedding: &Allocation<B>,
     ) -> Result<(), Error> {
-        let model_dim = self.ctx.decoder_config.model_dim;
+        let model_dim = self.ctx.decoder_config.transformer_config.model_dim;
         let model_dim_bytes = model_dim.checked_mul(self.activation_data_type().size_in_bytes()).ok_or(
             TtsModelConfigError::ModelDimExceedsU32 {
                 model_dim,
@@ -1020,7 +1011,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         if token_count == 0 {
             return Err(Error::GenerateFailed);
         }
-        let model_dim = self.ctx.decoder_config.model_dim;
+        let model_dim = self.ctx.decoder_config.transformer_config.model_dim;
         let model_dim_u32 = u32::try_from(model_dim).map_err(|_| TtsModelConfigError::ModelDimExceedsU32 {
             model_dim,
         })?;

@@ -1,5 +1,3 @@
-//! QK Normalization encodable.
-
 use thiserror::Error;
 
 use crate::{
@@ -17,16 +15,18 @@ pub enum QKNormError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError<B>),
+    ParameterError(#[from] ParameterLoaderError<B>),
+}
+
+struct Head<B: Backend> {
+    kernel: <B::Kernels as Kernels>::QKNormKernel,
+    scales: Allocation<B>,
+    config: NormalizationConfig,
 }
 
 pub struct QKNorm<B: Backend> {
-    query_kernel: Option<<B::Kernels as Kernels>::QKNormKernel>,
-    key_kernel: Option<<B::Kernels as Kernels>::QKNormKernel>,
-    query_config: Option<NormalizationConfig>,
-    key_config: Option<NormalizationConfig>,
-    query_scales: Option<Allocation<B>>,
-    key_scales: Option<Allocation<B>>,
+    query: Option<Head<B>>,
+    key: Option<Head<B>>,
     num_q_heads: usize,
     num_kv_heads: usize,
     head_dim: usize,
@@ -43,79 +43,45 @@ impl<B: Backend> QKNorm<B> {
         num_kv_heads: usize,
         head_dim: usize,
     ) -> Result<Self, QKNormError<B>> {
-        let mut query_kernel = None;
-        let mut key_kernel = None;
-        let mut query_scales = None;
-        let mut key_scales = None;
-
-        // Setup query normalization if configured
-        if let Some(ref q_config) = query_config {
-            let scales = parameter_tree
-                .leaf("query_norm.scales")
-                .map_err(QKNormError::ParameterError)?
-                .read_allocation()
-                .map_err(QKNormError::ParameterError)?;
-
-            let accumulation_data_type: DataType = q_config.accumulation_precision.into();
-            let scale_data_type: DataType = q_config.scale_precision.into();
-            let (input_type, scales_type, output_type) = match q_config.upcast_mode {
-                UpcastMode::OnlyNormalization => (intermediate_data_type, scale_data_type, scale_data_type),
-                UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
-            };
-
-            let kernel = <B::Kernels as Kernels>::QKNormKernel::new(
-                context,
-                input_type,
-                scales_type,
-                output_type,
-                accumulation_data_type,
-                true,
-            )
-            .map_err(QKNormError::BackendError)?;
-
-            query_kernel = Some(kernel);
-            query_scales = Some(scales);
-        }
-
-        // Setup key normalization if configured
-        if let Some(ref k_config) = key_config {
-            let scales = parameter_tree
-                .leaf("key_norm.scales")
-                .map_err(QKNormError::ParameterError)?
-                .read_allocation()
-                .map_err(QKNormError::ParameterError)?;
-
-            let accumulation_data_type: DataType = k_config.accumulation_precision.into();
-            let scale_data_type: DataType = k_config.scale_precision.into();
-            let (input_type, scales_type, output_type) = match k_config.upcast_mode {
-                UpcastMode::OnlyNormalization => (intermediate_data_type, scale_data_type, scale_data_type),
-                UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
-            };
-
-            let kernel = <B::Kernels as Kernels>::QKNormKernel::new(
-                context,
-                input_type,
-                scales_type,
-                output_type,
-                accumulation_data_type,
-                true,
-            )
-            .map_err(QKNormError::BackendError)?;
-
-            key_kernel = Some(kernel);
-            key_scales = Some(scales);
-        }
+        let query = query_config
+            .map(|cfg| Self::build_head(context, intermediate_data_type, cfg, parameter_tree, "query_norm.scales"))
+            .transpose()?;
+        let key = key_config
+            .map(|cfg| Self::build_head(context, intermediate_data_type, cfg, parameter_tree, "key_norm.scales"))
+            .transpose()?;
 
         Ok(Self {
-            query_kernel,
-            key_kernel,
-            query_config,
-            key_config,
-            query_scales,
-            key_scales,
+            query,
+            key,
             num_q_heads,
             num_kv_heads,
             head_dim,
+        })
+    }
+
+    fn build_head(
+        context: &B::Context,
+        intermediate_data_type: DataType,
+        config: NormalizationConfig,
+        parameter_tree: &ParameterTree<B::Context>,
+        scales_leaf: &str,
+    ) -> Result<Head<B>, QKNormError<B>> {
+        let scales = parameter_tree.leaf_allocation(scales_leaf)?;
+        let scale_data_type: DataType = config.scale_precision.into();
+        let accumulation_data_type: DataType = config.accumulation_precision.into();
+        let kernel = <B::Kernels as Kernels>::QKNormKernel::new(
+            context,
+            intermediate_data_type,
+            scale_data_type,
+            scale_data_type,
+            accumulation_data_type,
+            true,
+        )
+        .map_err(QKNormError::BackendError)?;
+        Ok(Head {
+            kernel,
+            scales,
+            config,
         })
     }
 
@@ -125,47 +91,38 @@ impl<B: Backend> QKNorm<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(), B::Error> {
-        // Process query normalization if configured
-        if let (Some(query_kernel), Some(query_scales), Some(query_config)) =
-            (&self.query_kernel, &self.query_scales, &self.query_config)
-        {
-            query_kernel.encode(
-                None::<&Allocation<B>>,
-                query_scales,
-                &mut *qkv,
-                batch_dim as u32,
-                self.num_q_heads as u32,
-                self.num_kv_heads as u32,
-                self.head_dim as u32,
-                query_config.epsilon,
-                query_config.scale_offset.unwrap_or(0.0),
-                0,
-                self.num_q_heads as u32,
-                query_config.upcast_mode == UpcastMode::FullLayer,
-                encoder,
-            );
+        if let Some(query) = &self.query {
+            self.encode_head(query, qkv, batch_dim, 0, self.num_q_heads as u32, encoder);
         }
-
-        // Process key normalization if configured
-        if let (Some(key_kernel), Some(key_scales), Some(key_config)) =
-            (&self.key_kernel, &self.key_scales, &self.key_config)
-        {
-            key_kernel.encode(
-                None::<&Allocation<B>>,
-                key_scales,
-                &mut *qkv,
-                batch_dim as u32,
-                self.num_q_heads as u32,
-                self.num_kv_heads as u32,
-                self.head_dim as u32,
-                key_config.epsilon,
-                key_config.scale_offset.unwrap_or(0.0),
-                self.num_q_heads as u32,
-                self.num_kv_heads as u32,
-                key_config.upcast_mode == UpcastMode::FullLayer,
-                encoder,
-            );
+        if let Some(key) = &self.key {
+            self.encode_head(key, qkv, batch_dim, self.num_q_heads as u32, self.num_kv_heads as u32, encoder);
         }
         Ok(())
+    }
+
+    fn encode_head(
+        &self,
+        head: &Head<B>,
+        qkv: &mut Allocation<B>,
+        batch_dim: usize,
+        range_start: u32,
+        range_end: u32,
+        encoder: &mut Encoder<B>,
+    ) {
+        head.kernel.encode(
+            None::<&Allocation<B>>,
+            &head.scales,
+            &mut *qkv,
+            batch_dim as u32,
+            self.num_q_heads as u32,
+            self.num_kv_heads as u32,
+            self.head_dim as u32,
+            head.config.epsilon,
+            head.config.scale_offset.unwrap_or(0.0),
+            range_start,
+            range_end,
+            head.config.upcast_mode == UpcastMode::FullLayer,
+            encoder,
+        );
     }
 }

@@ -15,7 +15,10 @@ use super::{
     wrapper::{SpecializeBaseIndices, wrappers},
 };
 use crate::{
-    common::{caching, codegen::write_tokens, compiler::Compiler, envs, gpu_types::GpuTypes, kernel::Kernel},
+    common::{
+        caching, codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes,
+        identifiers::KernelPath, kernel::Kernel,
+    },
     debug_log,
     metal::gpu_types::gpu_type_gen,
 };
@@ -31,15 +34,15 @@ struct ObjectInfo {
 }
 
 impl ObjectInfo {
-    fn kernels(&self) -> (Box<[Box<str>]>, Box<[Kernel]>) {
-        let src_rel_path: Box<[Box<str>]> = self
+    fn kernels(&self) -> (KernelPath, Box<[Kernel]>) {
+        let src_rel_path: KernelPath = self
             .src_rel_path
             .with_extension("")
             .as_os_str()
             .to_str()
             .unwrap()
             .split("/")
-            .map(|s| s.to_string().into_boxed_str())
+            .map(|s| s.to_string())
             .collect();
 
         let kernels = self.kernels.iter().filter_map(|ki| ki.to_kernel()).collect();
@@ -116,6 +119,7 @@ impl MetalCompiler {
     async fn compile(
         &self,
         source_path: PathBuf,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<ObjectInfo> {
         let buildsystem_hash =
             caching::build_system_hash().context("cannot get build system cache")?.as_bytes().clone();
@@ -164,7 +168,8 @@ impl MetalCompiler {
 
         let kernel_infos: Vec<MetalKernelInfo> = metal_kernel_infos.collect();
 
-        let (wrapper_strs, specialize_indices) = wrappers(&kernel_infos).context("cannot generate kernel wrappers")?;
+        let (wrapper_strs, specialize_indices) =
+            wrappers(&kernel_infos, enum_paths).context("cannot generate kernel wrappers")?;
 
         let mut footer = String::new();
         for wrapper in wrapper_strs.iter() {
@@ -255,6 +260,7 @@ impl MetalCompiler {
     fn bindgen<'a>(
         &self,
         objects: impl IntoIterator<Item = &'a ObjectInfo> + Clone,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<()> {
         let out_path = self.out_dir.join("dsl.rs");
         let hash_path = self.out_dir.join("dsl.rs.hash");
@@ -274,7 +280,7 @@ impl MetalCompiler {
             .into_iter()
             .flat_map(|o| o.kernels.iter().map(|k| (k, &o.specialize_indices)))
             .map(|(k, specialize_indices)| {
-                super::bindgen::bindgen(k, specialize_indices)
+                super::bindgen::bindgen(k, specialize_indices, enum_paths)
                     .with_context(|| format!("cannot generate bindings for {}", k.name))
             })
             .collect::<anyhow::Result<(Vec<TokenStream>, Vec<Option<TokenStream>>)>>()?;
@@ -321,7 +327,8 @@ impl Compiler for MetalCompiler {
     async fn build(
         &self,
         gpu_types: &GpuTypes,
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+        enum_paths: &EnumPaths,
+    ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         gpu_type_gen(&self.gpu_types_dir, gpu_types).await.context("cannot generate shared gpu types")?;
 
         let metal_sources: Vec<PathBuf> = WalkDir::new(&self.src_dir)
@@ -334,14 +341,14 @@ impl Compiler for MetalCompiler {
         let num_concurrent_compiles = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) * 2;
 
         let objects: Vec<ObjectInfo> = stream::iter(metal_sources)
-            .map(|p| self.compile(p))
+            .map(|p| self.compile(p, enum_paths))
             .buffer_unordered(num_concurrent_compiles)
             .try_collect()
             .await
             .context("cannot compile metal sources")?;
 
         self.link(&objects).await.context("cannot link objects")?;
-        self.bindgen(&objects).context("cannot generate bindings")?;
+        self.bindgen(&objects, enum_paths).context("cannot generate bindings")?;
 
         Ok(objects.iter().map(|o| o.kernels()).collect())
     }
