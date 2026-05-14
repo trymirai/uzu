@@ -1,5 +1,6 @@
 use crate::{
     DataType,
+    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
@@ -9,7 +10,6 @@ use crate::{
 pub struct MoeGatherArguments<'a, B: Backend> {
     pub x: &'a Allocation<B>,
     pub bucketed_ids: &'a Allocation<B>,
-    pub x_perm: &'a mut Allocation<B>,
     pub sumk: &'a Allocation<B>,
     pub t: usize,
     pub k: usize,
@@ -36,12 +36,15 @@ impl<B: Backend> MoeGatherKernels<B> {
         encoder: &mut Encoder<B>,
         dtype: DataType,
         args: MoeGatherArguments<B>,
-    ) {
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut x_perm = encoder.allocate_scratch(size_for_shape(&[args.t * args.k, args.d_model], dtype))?;
+        encoder.encode_fill(&mut x_perm, 0);
+
         match dtype {
             DataType::F32 => self.f32.encode(
                 args.x,
                 args.bucketed_ids,
-                args.x_perm,
+                &mut x_perm,
                 args.sumk,
                 args.d_model as u32,
                 args.t as u32,
@@ -51,7 +54,7 @@ impl<B: Backend> MoeGatherKernels<B> {
             DataType::F16 => self.f16.encode(
                 args.x,
                 args.bucketed_ids,
-                args.x_perm,
+                &mut x_perm,
                 args.sumk,
                 args.d_model as u32,
                 args.t as u32,
@@ -61,7 +64,7 @@ impl<B: Backend> MoeGatherKernels<B> {
             DataType::BF16 => self.bf16.encode(
                 args.x,
                 args.bucketed_ids,
-                args.x_perm,
+                &mut x_perm,
                 args.sumk,
                 args.d_model as u32,
                 args.t as u32,
@@ -70,5 +73,6 @@ impl<B: Backend> MoeGatherKernels<B> {
             ),
             _ => panic!("Unsupported data type: {:?}", dtype),
         };
+        Ok(x_perm)
     }
 }

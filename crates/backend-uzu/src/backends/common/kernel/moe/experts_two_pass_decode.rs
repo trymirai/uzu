@@ -1,7 +1,4 @@
-use super::{
-    MoeExpertsTwoPassArguments, MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments,
-    MoePassATileDispatchArguments, MoePassATileKernels, MoePassATileScanArguments,
-};
+use super::{MoeExpertsTwoPassArguments, MoePassATileKernels};
 use crate::{
     DataType,
     array::size_for_shape,
@@ -49,63 +46,29 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
         encoder: &mut Encoder<B>,
         args: MoeExpertsTwoPassArguments<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
-        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
-
-        // pass a tile
         const BLOCK_M: u32 = 4;
         let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
-        self.pass_a_tile.encode_counts(
+        let tile_counts = self.pass_a_tile.encode_counts(encoder, args.expert_offsets, args.e, h_blocks)?;
+
+        let tile_scan = self.pass_a_tile.encode_scan(encoder, &tile_counts, args.e)?;
+
+        let row_expert_map = self.pass_a_tile.encode_row_map(encoder, args.expert_offsets, args.total_rows, args.e)?;
+
+        let tile_map = self.pass_a_tile.encode_build_map(
             encoder,
-            MoePassATileCountsArguments {
-                expert_offsets: args.expert_offsets,
-                tile_counts: &mut *args.tile_counts,
-                e: args.e,
-                h_blocks,
-            },
-        );
-        self.pass_a_tile.encode_scan(
-            encoder,
-            MoePassATileScanArguments {
-                tile_counts: &*args.tile_counts,
-                tile_offsets: &mut *args.tile_offsets,
-                total_tiles: &mut *args.total_tiles,
-                e: args.e,
-            },
-        );
-        self.pass_a_tile.encode_row_map(
-            encoder,
-            MoePassARowMapArguments {
-                expert_offsets: args.expert_offsets,
-                row_expert_map: &mut *args.row_expert_map,
-                total_rows: args.total_rows,
-                e: args.e,
-            },
-        );
-        self.pass_a_tile.encode_build_map(
-            encoder,
-            MoePassATileBuildArguments {
-                expert_offsets: args.expert_offsets,
-                tile_offsets: &*args.tile_offsets,
-                row_expert_map: &*args.row_expert_map,
-                tile_map: &mut *args.tile_map,
-                total_rows: args.total_rows,
-                h_blocks,
-            },
-        );
-        self.pass_a_tile.encode_dispatch_args(
-            encoder,
-            MoePassATileDispatchArguments {
-                total_tiles: &*args.total_tiles,
-                dispatch_args: &mut *args.dispatch_args,
-                num_tiles_y: 1,
-            },
-        );
+            args.expert_offsets,
+            &tile_scan.tile_offsets,
+            &row_expert_map,
+            args.total_rows,
+            h_blocks,
+        )?;
+
+        let dispatch_args = self.pass_a_tile.encode_dispatch_args(encoder, &tile_scan.total_tiles, 1)?;
 
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
 
-        // pass a
         let pass_a_kernel = &self.pass_a_indirect[gate_idx][dtype_idx];
         pass_a_kernel.encode(
             args.x_perm,
@@ -121,16 +84,16 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
             args.up_clip_min,
             args.up_clip_max,
             args.silu_alpha,
-            &*args.tile_map,
-            &*args.dispatch_args,
+            &tile_map,
+            &dispatch_args,
             encoder,
         );
 
-        // pass b
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
         let pass_b_kernel = &self.fused_down[dtype_idx];
         pass_b_kernel.encode(
             &hidden,
-            &*args.row_expert_map,
+            &row_expert_map,
             args.w2_all,
             args.down_biases,
             &mut output,

@@ -1,6 +1,10 @@
-use crate::backends::common::{
-    Allocation, Backend, Encoder, Kernels,
-    kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
+use crate::{
+    DataType,
+    array::size_for_shape,
+    backends::common::{
+        Allocation, Backend, Encoder, Kernels,
+        kernel::{MoeBuildTileMapKernel, MoeTileCountsKernel, MoeTileScanKernel, MoeWriteDispatchArgsKernel},
+    },
 };
 
 pub struct MoeTileMapKernels<B: Backend> {
@@ -23,66 +27,56 @@ impl<B: Backend> MoeTileMapKernels<B> {
     pub fn encode_counts(
         &self,
         encoder: &mut Encoder<B>,
-        args: MoeTileCountsArguments<B>,
-    ) {
-        self.counts.encode(args.offsets, args.tile_counts, args.e as u32, encoder);
+        offsets: &Allocation<B>,
+        e: usize,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[e], DataType::U32))?;
+        self.counts.encode(offsets, &mut tile_counts, e as u32, encoder);
+        Ok(tile_counts)
     }
 
     pub fn encode_scan(
         &self,
         encoder: &mut Encoder<B>,
-        args: MoeTileScanArguments<B>,
-    ) {
-        self.scan.encode(args.tile_counts, args.tile_offsets, args.total_tiles, args.e as u32, encoder);
+        tile_counts: &Allocation<B>,
+        e: usize,
+    ) -> Result<MoeTileScanOutput<B>, B::Error> {
+        let mut tile_offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
+        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
+        self.scan.encode(tile_counts, &mut tile_offsets, &mut total_tiles, e as u32, encoder);
+        Ok(MoeTileScanOutput {
+            tile_offsets,
+            total_tiles,
+        })
     }
 
     pub fn encode_build_map(
         &self,
         encoder: &mut Encoder<B>,
-        args: MoeTileMapBuildArguments<B>,
-    ) {
-        self.build.encode(
-            args.expert_offsets,
-            args.tile_offsets,
-            args.tile_counts,
-            args.tile_map,
-            args.e as u32,
-            encoder,
-        );
+        expert_offsets: &Allocation<B>,
+        tile_offsets: &Allocation<B>,
+        tile_counts: &Allocation<B>,
+        total_rows: usize,
+        e: usize,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut tile_map = encoder.allocate_scratch(size_for_shape(&[total_rows * 3], DataType::U32))?;
+        self.build.encode(expert_offsets, tile_offsets, tile_counts, &mut tile_map, e as u32, encoder);
+        Ok(tile_map)
     }
 
     pub fn encode_dispatch_args(
         &self,
         encoder: &mut Encoder<B>,
-        args: MoeTileDispatchArguments<B>,
-    ) {
-        self.dispatch.encode(args.total_tiles, args.dispatch_args, args.num_tiles_x, encoder);
+        total_tiles: &Allocation<B>,
+        num_tiles_x: u32,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
+        self.dispatch.encode(total_tiles, &mut dispatch_args, num_tiles_x, encoder);
+        Ok(dispatch_args)
     }
 }
 
-pub struct MoeTileCountsArguments<'a, B: Backend> {
-    pub offsets: &'a Allocation<B>,         // [E+1]
-    pub tile_counts: &'a mut Allocation<B>, // [E]
-    pub e: usize,
-}
-
-pub struct MoeTileScanArguments<'a, B: Backend> {
-    pub tile_counts: &'a Allocation<B>,      // [E]
-    pub tile_offsets: &'a mut Allocation<B>, // [E+1]
-    pub total_tiles: &'a mut Allocation<B>,  // [>=2]
-    pub e: usize,
-}
-
-pub struct MoeTileMapBuildArguments<'a, B: Backend> {
-    pub expert_offsets: &'a Allocation<B>, // [E+1]
-    pub tile_offsets: &'a Allocation<B>,   // [E+1]
-    pub tile_counts: &'a Allocation<B>,    // [E]
-    pub tile_map: &'a mut Allocation<B>,   // [total_tiles * 3]
-    pub e: usize,
-}
-
-pub struct MoeTileDispatchArguments<'a, B: Backend> {
-    pub total_tiles: &'a Allocation<B>,       // [>=1]
-    pub dispatch_args: &'a mut Allocation<B>, // [3]
-    pub num_tiles_x: u32,                     // x dimension for indirect dispatch
+pub struct MoeTileScanOutput<B: Backend> {
+    pub tile_offsets: Allocation<B>,
+    pub total_tiles: Allocation<B>,
 }

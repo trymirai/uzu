@@ -85,7 +85,6 @@ struct SSDPrefillFixture {
     head_dim: usize,
     state_dim: usize,
     group_size: i32,
-    total_x: usize,
     x_strides: [usize; 3],
     dt_strides: [usize; 2],
     cb_strides: [usize; 3],
@@ -132,7 +131,6 @@ impl SSDPrefillFixture {
             head_dim,
             state_dim,
             group_size,
-            total_x,
             x_strides,
             dt_strides,
             cb_strides,
@@ -161,7 +159,6 @@ fn run_prefill_kernel_mode<B: Backend>(
     let d_buf = allocation_from_slice::<B, _>(ctx, &fixture.d_data);
     let z_buf = allocation_from_slice::<B, _>(ctx, &fixture.z_data);
     let mut state_buf = allocation_from_slice::<B, _>(ctx, &fixture.state_init);
-    let mut y_buf = allocation_from_slice::<B, _>(ctx, &vec![0f32; fixture.total_x]);
 
     let args = SSDPrefillArguments {
         x: &x_buf,
@@ -171,7 +168,6 @@ fn run_prefill_kernel_mode<B: Backend>(
         d: &d_buf,
         z: &z_buf,
         state: &mut state_buf,
-        y: &mut y_buf,
         suffix_len: fixture.suffix_len,
         group_size: fixture.group_size as u32,
         state_size: fixture.state_dim as u32,
@@ -184,11 +180,13 @@ fn run_prefill_kernel_mode<B: Backend>(
     };
 
     let mut encoder = Encoder::new(ctx).unwrap();
-    kernel.encode(&mut encoder, args, mode);
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let y_buf = kernel.encode(&mut encoder, args, mode).expect("Failed to encode SSD prefill");
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = allocation_to_vec::<B, f32>(&y_buf);
     let state_vec = allocation_to_vec::<B, f32>(&state_buf);
+    drop(y_buf);
+    drop(completed);
     (y_vec, state_vec, None)
 }
 
