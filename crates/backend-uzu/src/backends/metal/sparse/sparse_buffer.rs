@@ -45,6 +45,10 @@ impl MetalSparseBuffer {
             context,
         })
     }
+
+    pub(crate) fn mtl_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
+        &self.buffer
+    }
 }
 
 impl Debug for MetalSparseBuffer {
