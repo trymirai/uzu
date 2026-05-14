@@ -24,11 +24,16 @@ baselines side by side.
 
 ## Available benchmark groups
 
-| Group id                       | Filter                         |
-| ------------------------------ | ------------------------------ |
-| `Metal/Kernel/Matmul/GEMM_MPP` | `Metal/Kernel/Matmul/GEMM_MPP` |
-| `Metal/Kernel/RMSNorm`         | `Metal/Kernel/RMSNorm`         |
-| `Metal/Kernel/Sampling/Argmax` | `Metal/Kernel/Sampling/Argmax` |
+| Group id                          | Filter                            |
+| --------------------------------- | --------------------------------- |
+| `Metal/Kernel/Matmul/GEMM`        | `Metal/Kernel/Matmul/GEMM`        |
+| `Metal/Kernel/Matmul/GEMM_MXU`    | `Metal/Kernel/Matmul/GEMM_MXU`    |
+| `Metal/Kernel/QmmTransposed/...`  | `Metal/Kernel/QmmTransposed`      |
+| `Metal/Kernel/QmvFast/...`        | `Metal/Kernel/QmvFast`            |
+| `Metal/Kernel/RMSNorm`            | `Metal/Kernel/RMSNorm`            |
+| `Metal/Kernel/Sampling/Argmax`    | `Metal/Kernel/Sampling/Argmax`    |
+
+The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass.
 
 ## Output layout
 
@@ -43,9 +48,9 @@ resolve relative to the package dir:
 
 ```bash
 CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
-  -p uzu \
-  --bench kernel -- "Metal/Kernel/RMSNorm" \
-  --save-baseline rms_norm_baseline_m2_max
+  -p backend-uzu \
+  --bench kernel -- "Metal/Kernel/Matmul" \
+  --save-baseline matmul_baseline_m2_max
 ```
 
 ## Running on iPhone (via `cargo-dinghy`)
@@ -71,13 +76,13 @@ cargo dinghy \
   -d "$DEVICE" \
   -e CRITERION_HOME=target/criterion/a18 \
   --copy-back "Documents/target=$(pwd)/target" \
-  bench -p uzu --bench kernel -- \
-    "Metal/Kernel/Matmul/GEMM_MPP" \
-    --save-baseline matmul_gemm_mpp_baseline_a18
+  bench -p backend-uzu --bench kernel -- \
+    "Metal/Kernel/Matmul" \
+    --save-baseline matmul_baseline_a18
 ```
 
 After the run completes you'll have
-`target/criterion/a18/Metal/Kernel/Matmul/GEMM_MPP/…/matmul_gemm_mpp_baseline_a18/`
+`target/criterion/a18/Metal/Kernel/Matmul/<GEMM|GEMM_MXU>/…/matmul_baseline_a18/`
 on the host, next to any `m2_max/` baselines.
 
 ## Viewing reports
