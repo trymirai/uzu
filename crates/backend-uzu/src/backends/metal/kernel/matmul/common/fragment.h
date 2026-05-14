@@ -60,11 +60,11 @@ struct Fragment {
   METAL_FUNC static constexpr short2 get_position(
       const thread ThreadContext& thread_context
   ) {
-    const ushort simdgroup_index = ushort(thread_context.simdgroup_index);
-    const short quad = simdgroup_index / 4;
-    const short row = (quad & 4) + (simdgroup_index / 2) % 4;
+    const ushort simd_lane_id = ushort(thread_context.simd_lane_id);
+    const short quad = simd_lane_id / 4;
+    const short row = (quad & 4) + (simd_lane_id / 2) % 4;
     const short col =
-        ((quad & 2) + simdgroup_index % 2) * Ops::THREAD_ELEMENT_COLS;
+        ((quad & 2) + simd_lane_id % 2) * Ops::THREAD_ELEMENT_COLS;
     return short2{col, row};
   }
 

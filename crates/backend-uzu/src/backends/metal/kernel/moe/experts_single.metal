@@ -37,7 +37,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
     return;
   const uint expert_u = uint(expert_id);
 
-  const uint h_idx = h_block_idx * 4 + thread_context.threadgroup_index;
+  const uint h_idx = h_block_idx * 4 + thread_context.simdgroup_index;
   if (h_idx >= d_ff)
     return;
 
@@ -55,7 +55,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
   const uint vec_iters = d_model / 128;
 
   for (uint i = 0; i < vec_iters; ++i) {
-    uint base_idx = i * 128 + thread_context.simdgroup_index * 4;
+    uint base_idx = i * 128 + thread_context.simd_lane_id * 4;
 
     device const T* x_vec2 = reinterpret_cast<device const T*>(x + base_idx);
     device const T* w_up_vec2 =
@@ -75,7 +75,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
     }
   }
 
-  uint leftover_start = vec_iters * 128 + thread_context.simdgroup_index;
+  uint leftover_start = vec_iters * 128 + thread_context.simd_lane_id;
   for (uint idx = leftover_start; idx < d_model; idx += 32) {
     float xv = float(x[idx]);
     acc_up += xv * float(w_up_row[idx]);
@@ -89,7 +89,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
     acc_gate = simd_sum(acc_gate);
   }
 
-  if (thread_context.simdgroup_index == 0) {
+  if (thread_context.simd_lane_id == 0) {
     float up_val = clamp(
         acc_up + float(biases[bias_base + h_idx]),
         up_clip_min,
@@ -138,7 +138,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
     const uint d_block GROUPS(d_model.div_ceil(8)),
     const uint tid THREADS(256)
 ) {
-  const uint my_col = d_block * 8 + thread_context.threadgroup_index;
+  const uint my_col = d_block * 8 + thread_context.simdgroup_index;
   if (my_col >= d_model)
     return;
 
@@ -160,7 +160,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
 
     // Vectorized reduction
     for (uint i = 0; i < vec_iters; ++i) {
-      uint base_idx = i * 128 + thread_context.simdgroup_index * 4;
+      uint base_idx = i * 128 + thread_context.simd_lane_id * 4;
 
       float4 h_vec =
           *reinterpret_cast<device const float4*>(hidden_ptr + base_idx);
@@ -173,7 +173,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
     }
 
     // Remainder
-    for (uint idx = vec_iters * 128 + thread_context.simdgroup_index;
+    for (uint idx = vec_iters * 128 + thread_context.simd_lane_id;
          idx < d_ff;
          idx += 32) {
       acc += hidden_ptr[idx] * float(w2_ptr[idx]);
@@ -181,13 +181,13 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
 
     // Simdgroup reduction and accumulate
     float result = simd_sum(acc);
-    if (thread_context.simdgroup_index == 0) {
+    if (thread_context.simd_lane_id == 0) {
       result += float(biases[(ulong)expert_u * (ulong)d_model + (ulong)my_col]);
       final_acc += prob * result;
     }
   }
 
-  if (thread_context.simdgroup_index == 0) {
+  if (thread_context.simd_lane_id == 0) {
     y[my_col] = T(final_acc);
   }
 }

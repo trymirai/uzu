@@ -1,11 +1,11 @@
 #pragma once
 
-#include "../../common/integral_constant.h"
-#include "../../common/thread_context.h"
-#include "../../matmul/common/fragment.h"
-#include "../../matmul/common/mxu_fragment_ops.h"
-#include "../../matmul/common/mxu_gemm_loop.h"
-#include "../../generated/matmul.h"
+#include "../../../common/integral_constant.h"
+#include "../../../common/thread_context.h"
+#include "../../common/fragment.h"
+#include "../../common/mxu_fragment_ops.h"
+#include "../../common/mxu_gemm_loop.h"
+#include "../../../generated/matmul.h"
 #include "block_geometry.h"
 
 using namespace metal;
@@ -17,13 +17,13 @@ template <
     typename T,
     ushort BLOCK_M,
     ushort BLOCK_N,
+    ushort BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN>
 struct MxuMmaCore {
   METAL_CONST ushort SIMDGROUP_BLOCK_M = BLOCK_M / SIMDGROUPS_PER_ROW;
   METAL_CONST ushort SIMDGROUP_BLOCK_N = BLOCK_N / SIMDGROUPS_PER_COLUMN;
   METAL_CONST ushort SIMDGROUP_BLOCK_K = 32;
-  METAL_CONST ushort BLOCK_K = 256;
   METAL_CONST ushort TILES_M =
       SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps::FRAGMENT_ROWS;
   METAL_CONST ushort TILES_N =
@@ -43,8 +43,7 @@ struct MxuMmaCore {
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
-    const uint2 tile_id =
-        morton_block_id(threadgroup_position, params->use_morton);
+    const uint2 tile_id = block_id(threadgroup_position, params);
     const auto geometry =
         BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {

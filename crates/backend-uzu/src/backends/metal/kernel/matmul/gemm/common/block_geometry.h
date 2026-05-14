@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../matmul/common/defines.h"
-#include "../../generated/matmul.h"
+#include "../../common/defines.h"
+#include "../../../generated/matmul.h"
 
 using namespace metal;
 
@@ -35,6 +35,16 @@ morton_block_id(uint2 threadgroup_position, bool use_morton) {
     );
   }
   return threadgroup_position;
+}
+
+static METAL_FUNC uint2 block_id(
+    uint2 threadgroup_position,
+    const constant uzu::matmul::GemmParams* params
+) {
+  if (params->use_morton) {
+    return morton_block_id(threadgroup_position, true);
+  }
+  return swizzled_block_id(threadgroup_position, params->swizzle_log);
 }
 
 template <uint BLOCK_M, uint BLOCK_N>

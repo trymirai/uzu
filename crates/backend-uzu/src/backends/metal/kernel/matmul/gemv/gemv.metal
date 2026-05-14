@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 
-#include "../common/defines.h"
-#include "../common/dsl.h"
-#include "../common/thread_context.h"
+#include "../../common/defines.h"
+#include "../../common/dsl.h"
+#include "../../common/thread_context.h"
 
 #include <metal_simdgroup>
 
@@ -47,7 +47,7 @@ KERNEL(MatmulGemv)(
   }
 
   // Simdgroup guard — kill excess simdgroups beyond what this tile uses
-  if (thread_context.threadgroup_index >= tg_simd_rows * tg_simd_cols) {
+  if (thread_context.simdgroup_index >= tg_simd_rows * tg_simd_cols) {
     return;
   }
 
@@ -68,26 +68,26 @@ KERNEL(MatmulGemv)(
 
   const uint thread_row_in_simdgroup =
       sg_thread_cols != 32
-          ? uint(thread_context.simdgroup_index) / uint(sg_thread_cols)
+          ? uint(thread_context.simd_lane_id) / uint(sg_thread_cols)
           : 0;
   const int thread_col_in_simdgroup =
       sg_thread_cols != 32
-          ? uint(thread_context.simdgroup_index) % uint(sg_thread_cols)
-          : uint(thread_context.simdgroup_index);
+          ? uint(thread_context.simd_lane_id) % uint(sg_thread_cols)
+          : uint(thread_context.simd_lane_id);
 
   const int simdgroup_column_index =
-      tg_simd_cols != 1 ? uint(thread_context.threadgroup_index % tg_simd_cols)
+      tg_simd_cols != 1 ? uint(thread_context.simdgroup_index % tg_simd_cols)
                         : 0;
 
   const uint simdgroup_row_thread_base =
       tg_simd_cols != 1
           ? uint(sg_thread_rows) *
-                uint(thread_context.threadgroup_index / tg_simd_cols)
-          : uint(sg_thread_rows) * uint(thread_context.threadgroup_index);
+                uint(thread_context.simdgroup_index / tg_simd_cols)
+          : uint(sg_thread_rows) * uint(thread_context.simdgroup_index);
   const uint simdgroup_col_thread_base =
       tg_simd_cols != 1
           ? uint(sg_thread_cols) *
-                uint(thread_context.threadgroup_index % tg_simd_cols)
+                uint(thread_context.simdgroup_index % tg_simd_cols)
           : 0;
 
   uint output_block_row_offset =

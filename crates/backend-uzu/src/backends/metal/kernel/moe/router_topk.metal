@@ -52,12 +52,12 @@ PUBLIC KERNEL(MoeRouterTopK)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint row = thread_context.threadgroup_index; row < e;
+  for (uint row = thread_context.simdgroup_index; row < e;
        row += thread_context.simdgroups_per_threadgroup) {
     const device ScalarT* w_vec = weight + (ulong)row * (ulong)vecs * 4;
 
     float4 accum4 = float4(0.0f);
-    for (uint c = thread_context.simdgroup_index; c < vecs; c += 32u) {
+    for (uint c = thread_context.simd_lane_id; c < vecs; c += 32u) {
       const float4 wv = float4(
           w_vec[c * 4 + 0],
           w_vec[c * 4 + 1],

@@ -9,6 +9,7 @@ template <
     typename T,
     uint THREADGROUP_M,
     uint THREADGROUP_N,
+    uint BLOCK_K,
     uint SIMDGROUPS_M,
     uint SIMDGROUPS_N,
     bool VALID =
@@ -29,7 +30,7 @@ struct GemmComputeMxuMma {
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
-    MxuMmaCore<T, THREADGROUP_M, THREADGROUP_N, SIMDGROUPS_N, SIMDGROUPS_M>::
+    MxuMmaCore<T, THREADGROUP_M, THREADGROUP_N, BLOCK_K, SIMDGROUPS_N, SIMDGROUPS_M>::
         run(activations,
             weights,
             result,
@@ -47,12 +48,14 @@ template <
     typename T,
     uint THREADGROUP_M,
     uint THREADGROUP_N,
+    uint BLOCK_K,
     uint SIMDGROUPS_M,
     uint SIMDGROUPS_N>
 struct GemmComputeMxuMma<
     T,
     THREADGROUP_M,
     THREADGROUP_N,
+    BLOCK_K,
     SIMDGROUPS_M,
     SIMDGROUPS_N,
     false> {

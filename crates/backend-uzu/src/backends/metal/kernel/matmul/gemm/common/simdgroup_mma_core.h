@@ -1,8 +1,10 @@
 #pragma once
 
-#include "../../matmul/common/loader.h"
-#include "../../matmul/common/threadgroup_tile.h"
-#include "../../generated/matmul.h"
+#include "../../../common/integral_constant.h"
+#include "../../../common/thread_context.h"
+#include "../../common/loader.h"
+#include "../../common/threadgroup_tile.h"
+#include "../../../generated/matmul.h"
 #include "block_geometry.h"
 
 using namespace metal;
@@ -16,9 +18,7 @@ template <
     int BLOCK_N,
     int BLOCK_K,
     int SIMDGROUPS_PER_ROW,
-    int SIMDGROUPS_PER_COLUMN,
-    bool MN_ALIGNED,
-    bool K_ALIGNED>
+    int SIMDGROUPS_PER_COLUMN>
 struct SimdgroupMmaCore {
   METAL_CONST ushort PADDING_A = 16 / sizeof(T);
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
@@ -56,7 +56,7 @@ struct SimdgroupMmaCore {
       float,
       uzu::matmul::TransformNone<T, float>>;
 
-  template <bool M_aligned, bool N_aligned, bool K_aligned_>
+  template <bool M_aligned, bool N_aligned, bool K_aligned>
   static METAL_FUNC void k_loop(
       threadgroup T* a_shared,
       threadgroup T* b_shared,
@@ -91,7 +91,7 @@ struct SimdgroupMmaCore {
       loader_b.next();
     }
 
-    if (!K_aligned_) {
+    if (!K_aligned) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       short2 last_tile_dimensions_a =
@@ -112,17 +112,18 @@ struct SimdgroupMmaCore {
       const device T* weights,
       device T* result,
       const constant uzu::matmul::GemmParams* params,
+      const bool align_m,
+      const bool align_n,
+      const bool align_k,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
-      uint simd_lane_id,
-      uint simd_group_id,
       uint2 threadgroup_position,
-      uint3 thread_position
+      const thread ThreadContext& thread_context
   ) {
-    (void)thread_position;
+    const uint simd_lane_id = thread_context.simd_lane_id;
+    const uint simd_group_id = thread_context.simdgroup_index;
 
-    const uint2 tile_id =
-        swizzled_block_id(threadgroup_position, params->swizzle_log);
+    const uint2 tile_id = block_id(threadgroup_position, params);
     const auto geometry =
         BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
@@ -154,38 +155,6 @@ struct SimdgroupMmaCore {
     );
     thread TileAccumulator accumulator(simd_group_id, simd_lane_id);
 
-    if (MN_ALIGNED) {
-      for (int k = 0; k < params->aligned_inner_iterations; k++) {
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        loader_a.load_unsafe();
-        loader_b.load_unsafe();
-
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        accumulator.multiply_accumulate(a_shared, b_shared);
-
-        loader_a.next();
-        loader_b.next();
-      }
-
-      threadgroup_barrier(mem_flags::mem_none);
-
-      if (!K_ALIGNED) {
-        int leftover_block_depth =
-            params->K - params->aligned_inner_iterations * BLOCK_K;
-        short2 tile_dimensions_a = short2(leftover_block_depth, BLOCK_M);
-        short2 tile_dimensions_b = short2(leftover_block_depth, BLOCK_N);
-
-        loader_a.load_safe(tile_dimensions_a);
-        loader_b.load_safe(tile_dimensions_b);
-
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        accumulator.multiply_accumulate(a_shared, b_shared);
-      }
-
-      accumulator.store_result(result, params->leading_dimension_d);
-      return;
-    }
-
     const ushort tile_block_rows =
         min(BLOCK_M, ((int)params->M) - int(geometry.block_row_start));
     const ushort tile_block_cols =
@@ -193,71 +162,40 @@ struct SimdgroupMmaCore {
     const ushort leftover_block_depth =
         params->K - params->aligned_inner_iterations * BLOCK_K;
 
-    if (tile_block_rows == BLOCK_M && tile_block_cols == BLOCK_N) {
-      k_loop<true, true, K_ALIGNED>(
-          a_shared,
-          b_shared,
-          params->aligned_inner_iterations,
-          loader_a,
-          loader_b,
-          accumulator,
-          tile_block_rows,
-          tile_block_cols,
-          leftover_block_depth
+    dispatch_bool(align_k, [&](auto aligned_k) {
+      dispatch_bool(
+          align_m || (tile_block_rows == BLOCK_M),
+          [&](auto aligned_m) {
+            dispatch_bool(
+                align_n || (tile_block_cols == BLOCK_N),
+                [&](auto aligned_n) {
+                  k_loop<aligned_m.value, aligned_n.value, aligned_k.value>(
+                      a_shared,
+                      b_shared,
+                      params->aligned_inner_iterations,
+                      loader_a,
+                      loader_b,
+                      accumulator,
+                      tile_block_rows,
+                      tile_block_cols,
+                      leftover_block_depth
+                  );
+                  if constexpr (aligned_m.value && aligned_n.value) {
+                    accumulator.store_result(
+                        result, params->leading_dimension_d
+                    );
+                  } else {
+                    accumulator.store_result_safe(
+                        result,
+                        params->leading_dimension_d,
+                        short2(tile_block_cols, tile_block_rows)
+                    );
+                  }
+                }
+            );
+          }
       );
-      accumulator.store_result(result, params->leading_dimension_d);
-    } else if (tile_block_cols == BLOCK_N) {
-      k_loop<false, true, K_ALIGNED>(
-          a_shared,
-          b_shared,
-          params->aligned_inner_iterations,
-          loader_a,
-          loader_b,
-          accumulator,
-          tile_block_rows,
-          tile_block_cols,
-          leftover_block_depth
-      );
-      accumulator.store_result_safe(
-          result,
-          params->leading_dimension_d,
-          short2(tile_block_cols, tile_block_rows)
-      );
-    } else if (tile_block_rows == BLOCK_M) {
-      k_loop<true, false, K_ALIGNED>(
-          a_shared,
-          b_shared,
-          params->aligned_inner_iterations,
-          loader_a,
-          loader_b,
-          accumulator,
-          tile_block_rows,
-          tile_block_cols,
-          leftover_block_depth
-      );
-      accumulator.store_result_safe(
-          result,
-          params->leading_dimension_d,
-          short2(tile_block_cols, tile_block_rows)
-      );
-    } else {
-      k_loop<false, false, K_ALIGNED>(
-          a_shared,
-          b_shared,
-          params->aligned_inner_iterations,
-          loader_a,
-          loader_b,
-          accumulator,
-          tile_block_rows,
-          tile_block_cols,
-          leftover_block_depth
-      );
-      accumulator.store_result_safe(
-          result,
-          params->leading_dimension_d,
-          short2(tile_block_cols, tile_block_rows)
-      );
-    }
+    });
   }
 };
 

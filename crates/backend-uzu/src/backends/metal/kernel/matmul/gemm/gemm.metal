@@ -1,6 +1,6 @@
-#include "../common/dsl.h"
-#include "../common/defines.h"
-#include "../common/thread_context.h"
+#include "../../common/dsl.h"
+#include "../../common/defines.h"
+#include "../../common/thread_context.h"
 #include "../generated/gemm.h"
 
 #include "common/pipeline.h"
@@ -59,6 +59,9 @@ KERNEL(Gemm)(
   (void)zero_points;
   (void)bits_per_weight;
   (void)group_size;
+  (void)thread_x;
+  (void)thread_y;
+  (void)thread_z;
   GemmPipeline<
       T,
       THREADGROUP_M,
@@ -77,9 +80,6 @@ KERNEL(Gemm)(
           alignment,
           a_shared,
           b_shared,
-          thread_context.simdgroup_index,
-          thread_context.threadgroup_index,
           uint2(group_x, group_y),
-          uint3(thread_x, thread_y, thread_z),
           thread_context);
 }
