@@ -78,13 +78,6 @@ impl Buffer for MetalSparseBuffer {
     fn size(&self) -> usize {
         self.buffer.size()
     }
-
-    fn set_label(
-        &mut self,
-        label: Option<&str>,
-    ) {
-        self.buffer.set_label(label)
-    }
 }
 
 impl SparseBuffer for MetalSparseBuffer {
