@@ -371,12 +371,12 @@ fn test_two_pass_decode_correctness() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
-        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
+        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code)
+            .expect("MoeExpertsTwoPassDecodeKernel::new");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
 
         let y_partial_buf = experts_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
@@ -387,15 +387,14 @@ fn test_two_pass_decode_correctness() {
                     total_rows: sum_k,
                     d_model,
                     d_ff,
-                    e,
-                    gating_code,
+                    num_routed_experts: e,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
                     silu_alpha,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
 
@@ -496,11 +495,10 @@ fn test_two_pass_decode_multi_token() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
 
-        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx).expect("kernel");
+        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let y_partial_buf = experts_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
@@ -511,15 +509,14 @@ fn test_two_pass_decode_multi_token() {
                     total_rows: sum_k,
                     d_model,
                     d_ff,
-                    e,
-                    gating_code,
+                    num_routed_experts: e,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
                     silu_alpha,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -582,7 +579,8 @@ fn test_two_pass_prefill_correctness() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
 
-        let experts_kernel = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx).expect("kernel");
+        let experts_kernel =
+            MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
@@ -594,16 +592,14 @@ fn test_two_pass_prefill_correctness() {
             total_rows: sum_k,
             d_model,
             d_ff,
-            e,
-            gating_code,
+            num_routed_experts: e,
             gate_clip_min: f32::NEG_INFINITY,
             gate_clip_max: f32::INFINITY,
             up_clip_min: f32::NEG_INFINITY,
             up_clip_max: f32::INFINITY,
             silu_alpha,
-            data_type: DataType::BF16,
         };
-        let y_partial_buf = experts_kernel.encode(&mut encoder, args).expect("failed to encode MoE experts");
+        let y_partial_buf = experts_kernel.encode(args, &mut encoder).expect("failed to encode MoE experts");
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
@@ -702,12 +698,12 @@ fn test_fused_single_token_decode() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
         // Run fused decode kernel
-        let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
+        let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx, DataType::BF16, gating_code)
+            .expect("MoeExpertsSingleDecodeKernel::new");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
 
         let y_buf = fused_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsSingleDecodeArguments {
                     x: &x_buf,
                     topk_ids: &topk_ids_buf,
@@ -719,14 +715,13 @@ fn test_fused_single_token_decode() {
                     d_model,
                     d_ff,
                     k,
-                    gating_code,
                     silu_alpha: 1.0, // Standard SiLU for testing
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
 
@@ -827,11 +822,11 @@ fn test_fused_single_token_k4() {
         let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2_all);
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
-        let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx).expect("fused kernel");
+        let fused_kernel =
+            MoeExpertsSingleDecodeKernels::<B>::new(&ctx, DataType::BF16, gating_code).expect("fused kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let y_buf = fused_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsSingleDecodeArguments {
                     x: &x_buf,
                     topk_ids: &topk_ids_buf,
@@ -843,14 +838,13 @@ fn test_fused_single_token_k4() {
                     d_model,
                     d_ff,
                     k,
-                    gating_code,
                     silu_alpha,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();

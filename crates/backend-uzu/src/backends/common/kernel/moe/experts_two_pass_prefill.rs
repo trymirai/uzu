@@ -1,88 +1,75 @@
-use super::MoeTileMapKernels;
 use crate::{
     DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        kernel::{MoeExpertsPrefillPassAKernel, MoeExpertsPrefillPassBKernel},
+        kernel::{
+            MoeBuildTileMapKernel, MoeExpertsPrefillPassAKernel, MoeExpertsPrefillPassBKernel, MoeTileCountsKernel,
+            MoeTileScanKernel, MoeWriteDispatchArgsKernel,
+        },
     },
 };
 
-const DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
-
 pub struct MoeExpertsTwoPassPrefillBlock<B: Backend> {
-    tile_map: MoeTileMapKernels<B>,
-    pass_a_indirect: Vec<Vec<<B::Kernels as Kernels>::MoeExpertsPrefillPassAKernel>>, // [gate][dtype]
-    pass_b_indirect: Vec<<B::Kernels as Kernels>::MoeExpertsPrefillPassBKernel>,      // [dtype]
+    counts: <B::Kernels as Kernels>::MoeTileCountsKernel,
+    scan: <B::Kernels as Kernels>::MoeTileScanKernel,
+    build: <B::Kernels as Kernels>::MoeBuildTileMapKernel,
+    dispatch: <B::Kernels as Kernels>::MoeWriteDispatchArgsKernel,
+    pass_a_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassAKernel,
+    pass_b_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassBKernel,
+    data_type: DataType,
 }
 
 impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
-    pub fn new(ctx: &B::Context) -> Result<Self, B::Error> {
-        let dtypes = [DataType::F16, DataType::BF16, DataType::F32];
-
-        let mut pass_a_indirect = vec![];
-        for gate in 0u32..4u32 {
-            let mut kernels = vec![];
-            for dtype in dtypes {
-                let kernel = <B::Kernels as Kernels>::MoeExpertsPrefillPassAKernel::new(ctx, dtype, gate)?;
-                kernels.push(kernel);
-            }
-            pass_a_indirect.push(kernels);
-        }
-
-        let mut pass_b_indirect = vec![];
-        for dtype in dtypes {
-            let kernel = <B::Kernels as Kernels>::MoeExpertsPrefillPassBKernel::new(ctx, dtype)?;
-            pass_b_indirect.push(kernel);
-        }
-
+    pub fn new(
+        ctx: &B::Context,
+        data_type: DataType,
+        gating_code: u32,
+    ) -> Result<Self, B::Error> {
         Ok(Self {
-            tile_map: MoeTileMapKernels::new(ctx)?,
-            pass_a_indirect,
-            pass_b_indirect,
+            counts: <B::Kernels as Kernels>::MoeTileCountsKernel::new(ctx)?,
+            scan: <B::Kernels as Kernels>::MoeTileScanKernel::new(ctx)?,
+            build: <B::Kernels as Kernels>::MoeBuildTileMapKernel::new(ctx)?,
+            dispatch: <B::Kernels as Kernels>::MoeWriteDispatchArgsKernel::new(ctx)?,
+            pass_a_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassAKernel::new(ctx, data_type, gating_code)?,
+            pass_b_indirect: <B::Kernels as Kernels>::MoeExpertsPrefillPassBKernel::new(ctx, data_type)?,
+            data_type,
         })
     }
 
     pub fn encode(
         &self,
-        encoder: &mut Encoder<B>,
         args: MoeExpertsTwoPassArguments<B>,
+        encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let tile_counts = self.tile_map.encode_counts(encoder, args.expert_offsets, args.e)?;
+        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[args.num_routed_experts], DataType::U32))?;
+        self.counts.encode(args.expert_offsets, &mut tile_counts, args.num_routed_experts as u32, encoder);
 
-        let tile_scan = self.tile_map.encode_scan(encoder, &tile_counts, args.e)?;
+        let mut tile_offsets =
+            encoder.allocate_scratch(size_for_shape(&[args.num_routed_experts + 1], DataType::U32))?;
+        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
+        self.scan.encode(&tile_counts, &mut tile_offsets, &mut total_tiles, args.num_routed_experts as u32, encoder);
 
-        let tile_map = self.tile_map.encode_build_map(
-            encoder,
+        let mut tile_map = encoder.allocate_scratch(size_for_shape(&[args.total_rows * 3], DataType::U32))?;
+        self.build.encode(
             args.expert_offsets,
-            &tile_scan.tile_offsets,
+            &tile_offsets,
             &tile_counts,
-            args.total_rows,
-            args.e,
-        )?;
-        let d_model_u32 = args.d_model as u32;
-        let d_ff_u32 = args.d_ff as u32;
-        const COL_TILE_FF: u32 = 32; // Must match PASSA_BN in kernel
-        const COL_TILE_MODEL: u32 = 64;
-        let n_tiles_ff = if d_ff_u32 == 0 {
-            0
-        } else {
-            (d_ff_u32 + COL_TILE_FF - 1) / COL_TILE_FF
-        };
-        let n_tiles_model = if d_model_u32 == 0 {
-            0
-        } else {
-            (d_model_u32 + COL_TILE_MODEL - 1) / COL_TILE_MODEL
-        };
-        let pass_a_dispatch_args = self.tile_map.encode_dispatch_args(encoder, &tile_scan.total_tiles, n_tiles_ff)?;
+            &mut tile_map,
+            args.num_routed_experts as u32,
+            encoder,
+        );
 
-        let gate_idx = args.gating_code.min(3) as usize;
-        let dtype_idx = DTYPES.iter().position(|t| *t == args.data_type).unwrap();
+        const COL_TILE_FF: usize = 32; // Must match PASSA_BN in kernel
+        let n_tiles_ff = args.d_ff.div_ceil(COL_TILE_FF) as u32;
+
+        let mut pass_a_dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
+        self.dispatch.encode(&total_tiles, &mut pass_a_dispatch_args, n_tiles_ff, encoder);
+
         let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_ff], DataType::F32))?;
         encoder.encode_fill(&mut hidden, 0);
 
-        let kernel_pass_a = &self.pass_a_indirect[gate_idx][dtype_idx];
-        kernel_pass_a.encode(
+        self.pass_a_indirect.encode(
             args.x_perm,
             args.expert_offsets,
             args.w13_all,
@@ -90,7 +77,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             &mut hidden,
             args.d_model as u32,
             args.d_ff as u32,
-            args.e as u32,
+            args.num_routed_experts as u32,
             args.gate_clip_min,
             args.gate_clip_max,
             args.up_clip_min,
@@ -101,12 +88,14 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             encoder,
         );
 
-        let pass_b_dispatch_args =
-            self.tile_map.encode_dispatch_args(encoder, &tile_scan.total_tiles, n_tiles_model)?;
+        const COL_TILE_MODEL: usize = 64;
+        let n_tiles_model = args.d_model.div_ceil(COL_TILE_MODEL) as u32;
 
-        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], args.data_type))?;
-        let kernel_pass_b = &self.pass_b_indirect[dtype_idx];
-        kernel_pass_b.encode(
+        let mut pass_b_dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
+        self.dispatch.encode(&total_tiles, &mut pass_b_dispatch_args, n_tiles_model, encoder);
+
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.total_rows, args.d_model], self.data_type))?;
+        self.pass_b_indirect.encode(
             &hidden,
             args.expert_offsets,
             args.w2_all,
@@ -114,7 +103,7 @@ impl<B: Backend> MoeExpertsTwoPassPrefillBlock<B> {
             &mut output,
             args.d_model as u32,
             args.d_ff as u32,
-            args.e as u32,
+            args.num_routed_experts as u32,
             &tile_map,
             &pass_b_dispatch_args,
             encoder,
@@ -133,12 +122,10 @@ pub struct MoeExpertsTwoPassArguments<'a, B: Backend> {
     pub total_rows: usize,
     pub d_model: usize,
     pub d_ff: usize,
-    pub e: usize,
-    pub gating_code: u32,
+    pub num_routed_experts: usize,
     pub gate_clip_min: f32,
     pub gate_clip_max: f32,
     pub up_clip_min: f32,
     pub up_clip_max: f32,
     pub silu_alpha: f32,
-    pub data_type: DataType,
 }

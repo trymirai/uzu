@@ -7,72 +7,68 @@ use crate::{
     },
 };
 
-pub struct MoeGatherArguments<'a, B: Backend> {
-    pub x: &'a Allocation<B>,
-    pub bucketed_ids: &'a Allocation<B>,
-    pub sumk: &'a Allocation<B>,
-    pub t: usize,
-    pub k: usize,
-    pub d_model: usize,
+enum MoeGatherKernelType<B: Backend> {
+    OneD(<B::Kernels as Kernels>::MoeGatherXPerm1DKernel),
+    TwoD(<B::Kernels as Kernels>::MoeGatherXPerm2DKernel),
 }
 
-pub struct MoeGatherKernels<B: Backend> {
-    bf16: <B::Kernels as Kernels>::MoeGatherXPerm2DKernel,
-    f16: <B::Kernels as Kernels>::MoeGatherXPerm1DKernel,
-    f32: <B::Kernels as Kernels>::MoeGatherXPerm1DKernel,
+pub struct MoeGatherKernel<B: Backend> {
+    kernel: MoeGatherKernelType<B>,
+    data_type: DataType,
 }
 
-impl<B: Backend> MoeGatherKernels<B> {
-    pub fn new(ctx: &B::Context) -> Result<Self, B::Error> {
+impl<B: Backend> MoeGatherKernel<B> {
+    pub fn new(
+        ctx: &B::Context,
+        data_type: DataType,
+    ) -> Result<Self, B::Error> {
         Ok(Self {
-            bf16: <B::Kernels as Kernels>::MoeGatherXPerm2DKernel::new(ctx, DataType::BF16)?,
-            f16: <B::Kernels as Kernels>::MoeGatherXPerm1DKernel::new(ctx, DataType::F16)?,
-            f32: <B::Kernels as Kernels>::MoeGatherXPerm1DKernel::new(ctx, DataType::F32)?,
+            kernel: if data_type == DataType::BF16 {
+                MoeGatherKernelType::TwoD(<B::Kernels as Kernels>::MoeGatherXPerm2DKernel::new(ctx, data_type)?)
+            } else {
+                MoeGatherKernelType::OneD(<B::Kernels as Kernels>::MoeGatherXPerm1DKernel::new(ctx, data_type)?)
+            },
+            data_type,
         })
     }
 
     pub fn encode(
         &self,
+        input: &Allocation<B>,
+        bucketed_ids: &Allocation<B>,
+        sumk: &Allocation<B>,
+        batch_dim: usize,
+        num_active_experts: usize,
+        d_model: usize,
         encoder: &mut Encoder<B>,
-        dtype: DataType,
-        args: MoeGatherArguments<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut x_perm = encoder.allocate_scratch(size_for_shape(&[args.t * args.k, args.d_model], dtype))?;
+        let mut x_perm =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim * num_active_experts, d_model], self.data_type))?;
         encoder.encode_fill(&mut x_perm, 0);
 
-        match dtype {
-            DataType::F32 => self.f32.encode(
-                args.x,
-                args.bucketed_ids,
+        match &self.kernel {
+            MoeGatherKernelType::OneD(kernel) => kernel.encode(
+                input,
+                bucketed_ids,
                 &mut x_perm,
-                args.sumk,
-                args.d_model as u32,
-                args.t as u32,
-                args.k as u32,
+                sumk,
+                d_model as u32,
+                batch_dim as u32,
+                num_active_experts as u32,
                 encoder,
             ),
-            DataType::F16 => self.f16.encode(
-                args.x,
-                args.bucketed_ids,
+            MoeGatherKernelType::TwoD(kernel) => kernel.encode(
+                input,
+                bucketed_ids,
                 &mut x_perm,
-                args.sumk,
-                args.d_model as u32,
-                args.t as u32,
-                args.k as u32,
+                sumk,
+                d_model as u32,
+                batch_dim as u32,
+                num_active_experts as u32,
                 encoder,
             ),
-            DataType::BF16 => self.bf16.encode(
-                args.x,
-                args.bucketed_ids,
-                &mut x_perm,
-                args.sumk,
-                args.d_model as u32,
-                args.t as u32,
-                args.k as u32,
-                encoder,
-            ),
-            _ => panic!("Unsupported data type: {:?}", dtype),
         };
+
         Ok(x_perm)
     }
 }
