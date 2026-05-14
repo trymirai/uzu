@@ -71,10 +71,7 @@ impl<B: Backend> dyn Mlp<B> {
                 )
                 .map_err(MlpBlockError::BackendError)?;
 
-                Ok((
-                    Box::new(DenseMlp::new(up_projection, gate, down_projection, hidden_dimension, data_type)),
-                    up_input_hadamard_factors,
-                ))
+                Ok((Box::new(DenseMlp::new(up_projection, gate, down_projection)), up_input_hadamard_factors))
             },
             MLPConfig::MixtureOfExperts(mixture_of_experts_config) => Ok((
                 Box::new(MoeBlock::new(context, mixture_of_experts_config, model_dimension, parameter_tree)?),
