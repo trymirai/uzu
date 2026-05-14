@@ -466,7 +466,9 @@ fn select_unified_gemm_simdgroup_tile(
 
 fn select_unified_gemm_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
     let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) =
-        if arguments.output_dim < 64 {
+        if arguments.batch_dim >= 256 && arguments.output_dim >= 128 {
+            (128u32, 128u32, 4u32, 4u32)
+        } else if arguments.output_dim < 64 {
             (64u32, 32u32, 4u32, 1u32)
         } else if arguments.batch_dim < 64 {
             (32u32, 64u32, 2u32, 2u32)
