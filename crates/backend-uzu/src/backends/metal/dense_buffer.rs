@@ -1,6 +1,6 @@
 use std::{os::raw::c_void, ptr::NonNull};
 
-use metal::{MTLBuffer, MTLResourceExt};
+use metal::MTLBuffer;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::Metal;
@@ -15,13 +15,6 @@ impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
 
     fn size(&self) -> usize {
         self.length()
-    }
-
-    fn set_label(
-        &mut self,
-        label: Option<&str>,
-    ) {
-        (**self).set_label(label);
     }
 }
 
