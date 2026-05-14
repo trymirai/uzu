@@ -3,14 +3,14 @@ use crate::backends::{
         Encoder,
         gpu_types::{
             GemmParams, QuantizationMethod,
-            unified_gemm::{GemmAlignment, GemmOutputTransformKind},
+            gemm::{GemmAlignment, GemmOutputTransformKind},
         },
         kernel::{
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable,
             },
-            unified_gemm::GemmWeights,
+            gemm::GemmWeights,
         },
     },
     metal::{
@@ -18,7 +18,7 @@ use crate::backends::{
         context::MetalContext,
         kernel::{
             matmul::MatmulMetalKernel,
-            unified_gemm::gemm::{GemmComputeKind, GemmInputPrologueKind, GemmTilingConfig, UnifiedGemmDispatch},
+            gemm::{GemmComputeKind, GemmInputPrologueKind, GemmTilingConfig, GemmDispatch},
         },
     },
 };
@@ -26,7 +26,7 @@ use crate::backends::{
 #[derive(Debug, Clone, Copy)]
 pub enum QuantizedMatmulDispatchPath {
     Auto,
-    UnifiedGemm,
+    Gemm,
 }
 
 pub fn encode_quantized_matmul_with_path(
@@ -43,15 +43,15 @@ pub fn encode_quantized_matmul_with_path(
             encodable.encode(encoder, arguments);
             Ok(())
         },
-        QuantizedMatmulDispatchPath::UnifiedGemm => {
-            let tile = select_unified_quantized_tile(configuration, arguments.batch_dim as u32);
+        QuantizedMatmulDispatchPath::Gemm => {
+            let tile = select_quantized_tile(configuration, arguments.batch_dim as u32);
             let group_size = configuration.group_size as u32;
             let batch_dim = arguments.batch_dim as u32;
             let input_dim = configuration.input_dim as u32;
             let output_dim = configuration.output_dim as u32;
             let group_count_x = output_dim.div_ceil(tile.threadgroup_n);
             let group_count_y = batch_dim.div_ceil(tile.threadgroup_m);
-            let dispatch = UnifiedGemmDispatch {
+            let dispatch = GemmDispatch {
                 tiling_config: tile,
                 input_prologue: GemmInputPrologueKind::FullPrecision,
                 compute: GemmComputeKind::SimdgroupMma,
@@ -96,12 +96,12 @@ pub fn encode_quantized_matmul_with_path(
                 group_count_x,
                 group_count_y,
             };
-            matmul.encode_unified_gemm(context, dispatch, encoder).map_err(QuantizedMatmulError::BackendError)
+            matmul.encode_gemm(context, dispatch, encoder).map_err(QuantizedMatmulError::BackendError)
         },
     }
 }
 
-fn select_unified_quantized_tile(
+fn select_quantized_tile(
     configuration: &QuantizedMatmulConfiguration,
     batch_dim: u32,
 ) -> GemmTilingConfig {

@@ -6,7 +6,7 @@
 using namespace metal;
 
 namespace uzu {
-namespace unified_gemm {
+namespace gemm {
 
 static METAL_FUNC uint2
 swizzled_block_id(uint2 threadgroup_position, uint swizzle_log) {
@@ -56,5 +56,5 @@ struct BlockGeometry {
   }
 };
 
-} // namespace unified_gemm
+} // namespace gemm
 } // namespace uzu

@@ -2,7 +2,7 @@ use crate::{
     DataType,
     backends::common::{
         Allocation, Backend,
-        gpu_types::{QuantizationMode, unified_gemm::GemmWeightPrologueKind},
+        gpu_types::{QuantizationMode, gemm::GemmWeightPrologueKind},
     },
 };
 

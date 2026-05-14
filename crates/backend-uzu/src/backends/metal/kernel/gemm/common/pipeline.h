@@ -4,10 +4,10 @@
 #include "../../common/thread_context.h"
 #include "../axes/compute/mxu_mma.h"
 #include "../axes/compute/simdgroup_mma.h"
-#include "../generated/unified_gemm.h"
+#include "../generated/gemm.h"
 
 namespace uzu {
-namespace unified_gemm {
+namespace gemm {
 
 template <
     typename T,
@@ -154,5 +154,5 @@ struct GemmPipeline {
   }
 };
 
-} // namespace unified_gemm
+} // namespace gemm
 } // namespace uzu

@@ -1,15 +1,15 @@
 #include "../common/dsl.h"
 #include "../common/defines.h"
 #include "../common/thread_context.h"
-#include "../generated/unified_gemm.h"
+#include "../generated/gemm.h"
 
 #include "common/pipeline.h"
 
 using namespace metal;
-using namespace uzu::unified_gemm;
+using namespace uzu::gemm;
 
-#define UNIFIED_GEMM_MAX_THREADGROUP_A 2560
-#define UNIFIED_GEMM_MAX_THREADGROUP_B 1536
+#define GEMM_MAX_THREADGROUP_A 2560
+#define GEMM_MAX_THREADGROUP_B 1536
 
 template <
     typename T,
@@ -25,7 +25,7 @@ VARIANTS(THREADGROUP_K, 16, 32)
 VARIANTS(SIMDGROUPS_M, 1, 2, 4)
 VARIANTS(SIMDGROUPS_N, 1, 2, 4)
 CONSTRAINT(max(THREADGROUP_M, THREADGROUP_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
-KERNEL(UnifiedGemm)(
+KERNEL(Gemm)(
     const device T* activations,
     const device uint8_t* weights,
     device T* result,
@@ -45,8 +45,8 @@ KERNEL(UnifiedGemm)(
     const uint alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
     const uint group_size SPECIALIZE,
-    threadgroup T a_shared[UNIFIED_GEMM_MAX_THREADGROUP_A],
-    threadgroup T b_shared[UNIFIED_GEMM_MAX_THREADGROUP_B],
+    threadgroup T a_shared[GEMM_MAX_THREADGROUP_A],
+    threadgroup T b_shared[GEMM_MAX_THREADGROUP_B],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),

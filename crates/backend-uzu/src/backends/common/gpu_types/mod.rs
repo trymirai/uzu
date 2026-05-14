@@ -12,7 +12,7 @@ pub mod quantization;
 pub mod quantization_method;
 pub mod ring;
 pub mod trie;
-pub mod unified_gemm;
+pub mod gemm;
 
 pub use activation_type::*;
 pub use argmax::*;

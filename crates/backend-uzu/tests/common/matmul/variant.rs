@@ -4,17 +4,17 @@ use derive_more::Display;
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
-    #[display("UnifiedGEMM")]
-    UnifiedGemm,
-    #[display("UnifiedGEMM_MXU")]
-    UnifiedGemmMxu,
+    #[display("GEMM")]
+    Gemm,
+    #[display("GEMM_MXU")]
+    GemmMxu,
 }
 
 impl Variant {
-    pub const ALL: &'static [Variant] = &[Variant::UnifiedGemm, Variant::UnifiedGemmMxu];
+    pub const ALL: &'static [Variant] = &[Variant::Gemm, Variant::GemmMxu];
 
     pub const fn requires_mxu(self) -> bool {
-        matches!(self, Variant::UnifiedGemmMxu)
+        matches!(self, Variant::GemmMxu)
     }
 
     #[cfg(metal_backend)]
@@ -28,8 +28,8 @@ impl Variant {
     #[cfg(metal_backend)]
     pub const fn dispatch_path(self) -> MatmulDispatchPath {
         match self {
-            Variant::UnifiedGemm => MatmulDispatchPath::UnifiedGemm,
-            Variant::UnifiedGemmMxu => MatmulDispatchPath::UnifiedGemmMxuMma,
+            Variant::Gemm => MatmulDispatchPath::Gemm,
+            Variant::GemmMxu => MatmulDispatchPath::GemmMxu,
         }
     }
 }

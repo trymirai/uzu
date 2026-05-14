@@ -11,7 +11,7 @@
 using namespace metal;
 
 namespace uzu {
-namespace unified_gemm {
+namespace gemm {
 
 template <
     typename T,
@@ -142,5 +142,5 @@ struct MxuMmaCore {
   }
 };
 
-} // namespace unified_gemm
+} // namespace gemm
 } // namespace uzu

@@ -3,7 +3,7 @@
 #include "../../common/simdgroup_mma_core.h"
 
 namespace uzu {
-namespace unified_gemm {
+namespace gemm {
 
 template <
     typename T,
@@ -49,5 +49,5 @@ struct GemmComputeSimdgroupMma {
   }
 };
 
-} // namespace unified_gemm
+} // namespace gemm
 } // namespace uzu

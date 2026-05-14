@@ -3,7 +3,7 @@
 #include "../../common/mxu_mma_core.h"
 
 namespace uzu {
-namespace unified_gemm {
+namespace gemm {
 
 template <
     typename T,
@@ -81,5 +81,5 @@ struct GemmComputeMxuMma<
   }
 };
 
-} // namespace unified_gemm
+} // namespace gemm
 } // namespace uzu
