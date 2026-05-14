@@ -32,7 +32,6 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         let shared_buffers = TokenDecoderContext::<B>::build_shared_buffers(
             context,
             decoder_config,
-            model_shape,
             &root_loader_view,
             transformer_subtree,
         )?;
@@ -143,11 +142,10 @@ impl<B: Backend> TokenDecoderContext<B> {
     fn build_shared_buffers(
         context: &Rc<B::Context>,
         decoder_config: &Rc<crate::config::DecoderConfig>,
-        model_shape: &ModelShape,
         root_loader_view: &crate::parameters::ParameterTree<B::Context>,
         transformer_subtree: &str,
     ) -> Result<Rc<SharedBuffers<B>>, Error> {
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), decoder_config, model_shape);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), decoder_config);
         let transformer_tree = root_loader_view.subtree(transformer_subtree).map_err(|_| Error::UnableToLoadWeights)?;
         shared_buffers.update_data_from_transformer_tree(&transformer_tree)?;
         Ok(Rc::new(shared_buffers))

@@ -1,12 +1,16 @@
 use std::{fs::File, path::Path, rc::Rc};
 
+#[cfg(feature = "tracing")]
+use crate::forward_pass::model_shape::ModelShape;
 use crate::{
     DataType,
     backends::common::{Backend, Context},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::{ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope},
-    forward_pass::{model_shape::ModelShape, state::SharedBuffers},
+    encodable_block::{
+        ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, QkUnpack, Rope,
+    },
+    forward_pass::state::SharedBuffers,
     parameters::ParameterLoader,
     session::types::Error,
 };
@@ -43,6 +47,7 @@ impl<B: Backend> ClassifierContext<B> {
             pard_token: None,
             ple_model_config: None,
         });
+        #[cfg(feature = "tracing")]
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let weights_path = model_path.join("model.safetensors");
@@ -53,7 +58,7 @@ impl<B: Backend> ClassifierContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config);
         shared_buffers.update_data(&root_loader_view)?;
         let shared_buffers = Rc::new(shared_buffers);
 
@@ -81,6 +86,10 @@ impl<B: Backend> ClassifierContext<B> {
             Rope::<B>::new(context.as_ref(), data_type)
                 .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e))))?,
         );
+        let qk_unpack = Rc::new(
+            QkUnpack::<B>::new(context.as_ref(), data_type)
+                .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("QkUnpack: {:?}", e))))?,
+        );
 
         let layers = model_metadata
             .model_config
@@ -103,6 +112,7 @@ impl<B: Backend> ClassifierContext<B> {
                     layer_index,
                     &layer_tree,
                     rope.clone(),
+                    qk_unpack.clone(),
                 ))
             })
             .collect::<Result<Vec<_>, ClassifierError>>()
