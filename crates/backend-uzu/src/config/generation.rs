@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::utils::strict_serde::Unsupported;
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct GenerationConfig {
     pub stop_token_ids: Vec<u32>,
@@ -8,7 +10,7 @@ pub struct GenerationConfig {
     pub top_p: Option<f32>,
     pub min_p: Option<f32>,
     pub banned_tokens: Option<Vec<u32>>,
-    pub repetition_penalty: Option<f32>,
-    pub presence_penalty: Option<f32>,
-    pub frequency_penalty: Option<f32>,
+    pub repetition_penalty: Option<Unsupported>,
+    pub presence_penalty: Option<Unsupported>,
+    pub frequency_penalty: Option<Unsupported>,
 }

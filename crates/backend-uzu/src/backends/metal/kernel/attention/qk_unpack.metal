@@ -16,14 +16,6 @@ PUBLIC KERNEL(QkUnpack)(
     const uint token_index AXIS(suffix_length, 1),
     const uint dimension_index AXIS(head_dim, 128)
 ) {
-  if (head_index >= num_heads || token_index >= suffix_length ||
-      dimension_index >= head_dim)
-    return;
-  if (num_groups == 0)
-    return;
-  if (num_heads % num_groups != 0)
-    return;
-
   const uint group_index = head_index / (num_heads / num_groups);
   const uint total_heads = num_heads + 2 * num_groups;
   const uint first_head_in_group = group_index * (num_heads / num_groups);
