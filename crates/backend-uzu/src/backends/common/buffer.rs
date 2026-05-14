@@ -8,11 +8,6 @@ pub trait Buffer: Debug {
     fn gpu_ptr(&self) -> usize;
 
     fn size(&self) -> usize;
-
-    fn set_label(
-        &mut self,
-        label: Option<&str>,
-    );
 }
 
 pub trait BufferGpuAddressRangeExt: Buffer {
