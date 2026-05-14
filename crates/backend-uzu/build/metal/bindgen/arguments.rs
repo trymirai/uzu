@@ -165,10 +165,7 @@ impl ArgumentEmission {
             ArgumentEmission::Buffer(buffer) => emit_buffer_argument_definition(buffer),
             ArgumentEmission::Constant(constant) => emit_constant_argument_definition(constant),
             ArgumentEmission::IndirectDispatch(_) => quote! {
-                __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<
-                    '__dsl_indirect_dispatch_buffer,
-                    Retained<ProtocolObject<dyn MTLBuffer>>,
-                >
+                __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<'__dsl_indirect_dispatch_buffer, Buf>
             },
         }
     }
@@ -240,7 +237,7 @@ fn emit_buffer_argument_definition(buffer: &BufferArgument) -> TokenStream {
         MetalBufferAccess::Read => quote! { crate::backends::common::kernel::BufferArg },
         MetalBufferAccess::ReadWrite => quote! { crate::backends::common::kernel::BufferArgMut },
     };
-    let buffer_argument_type = quote! { impl #trait_path<#lifetime, Retained<ProtocolObject<dyn MTLBuffer>>> };
+    let buffer_argument_type = quote! { impl #trait_path<#lifetime, Buf> };
     if buffer.condition.is_some() {
         quote! { #name: Option<#buffer_argument_type> }
     } else {
@@ -290,7 +287,7 @@ fn emit_buffer_set(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
     let buffer_index = buffer.buffer_index;
     let unconditional_set = quote! {
-        compute_encoder.set_buffer(Some(#name.0), #name.1, #buffer_index);
+        compute_encoder.set_buffer(Some(crate::backends::metal::Metal::buffer_downcast(#name.0)), #name.1, #buffer_index);
     };
     match &buffer.condition {
         Some(condition) => {

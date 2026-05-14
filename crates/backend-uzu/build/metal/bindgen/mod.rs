@@ -11,7 +11,10 @@ use quote::{format_ident, quote};
 
 use self::variant_path_rewriter::VariantPathRewriter;
 use super::{ast::MetalKernelInfo, wrapper::SpecializeBaseIndices};
-use crate::common::{enum_paths::EnumPaths, mangling::dynamic_mangle};
+use crate::{
+    common::{enum_paths::EnumPaths, mangling::dynamic_mangle},
+    metal::bindgen::arguments::ArgumentEmission,
+};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
@@ -36,14 +39,16 @@ pub fn bindgen(
         argument_emissions.iter().filter_map(|argument| argument.struct_field()).collect();
     let conditional_buffer_initializers: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.struct_initializer()).collect();
-    let encode_argument_definitions: Vec<TokenStream> =
+    let mut encode_argument_definitions: Vec<TokenStream> =
         argument_emissions.iter().map(|argument| argument.encode_argument_definition()).collect();
-    let encode_lifetimes: Vec<TokenStream> =
+    let mut encode_lifetimes: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.encode_lifetime()).collect();
     let encode_deconstructs: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.encode_deconstruct()).collect();
     let encode_set_calls: Vec<TokenStream> = argument_emissions.iter().map(|argument| argument.encode_set()).collect();
     let encode_accesses_call = arguments::encode_accesses_call(&argument_emissions);
+    let mut encode_generics: Vec<TokenStream> = Vec::new();
+    let mut encode_where_generics: Vec<TokenStream> = Vec::new();
 
     let variant_struct_fields: Vec<TokenStream> =
         variant_binds.iter().filter_map(|variant| variant.struct_field(&referenced_parameter_names)).collect();
@@ -66,6 +71,28 @@ pub fn bindgen(
     let associate_backend = &trait_wiring.associate_backend;
     let method_visibility = &trait_wiring.method_visibility;
 
+    let have_any_buffer = argument_emissions
+        .iter()
+        .any(|arg| matches!(arg, ArgumentEmission::Buffer(_)) || matches!(arg, ArgumentEmission::IndirectDispatch(_)));
+    if have_any_buffer {
+        encode_generics.push(quote! { Buf });
+        encode_where_generics
+            .push(quote! { Buf: crate::backends::common::Buffer<Backend = crate::backends::metal::Metal> });
+    }
+
+    // 'encoder
+    encode_lifetimes.push(quote! { 'encoder });
+    encode_argument_definitions.push(quote! {
+        encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>
+    });
+
+    // where block
+    let encode_where_block = if encode_where_generics.is_empty() {
+        quote! {}
+    } else {
+        quote! { where #(#encode_where_generics),* }
+    };
+
     let kernel_tokens = quote! {
         pub struct #struct_name {
             pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -87,11 +114,10 @@ pub fn bindgen(
                 Ok(Self { pipeline #(, #conditional_buffer_initializers)* #(, #variant_struct_initializers)* })
             }
 
-            #method_visibility fn encode<#(#encode_lifetimes, )* 'encoder>(
+            #method_visibility fn encode<#(#encode_lifetimes,)*#(#encode_generics),*>(
                 &self,
-                #(#encode_argument_definitions, )*
-                encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>,
-            ) {
+                #(#encode_argument_definitions),*
+            )#encode_where_block {
                 #empty_dispatch_guards
                 #(#encode_deconstructs)*
                 #encode_accesses_call
