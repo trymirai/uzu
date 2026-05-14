@@ -56,8 +56,6 @@ fn check_all_shapes<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
-#[case::gemm(Variant::Gemm)]
-#[case::gemm_mpp(Variant::GemmMpp)]
 #[case::unified(Variant::UnifiedGemm)]
 #[case::unified_mxu(Variant::UnifiedGemmMxu)]
 fn matches_cpu_reference_bf16(#[case] variant: Variant) {
@@ -65,8 +63,6 @@ fn matches_cpu_reference_bf16(#[case] variant: Variant) {
 }
 
 #[rstest]
-#[case::gemm(Variant::Gemm)]
-#[case::gemm_mpp(Variant::GemmMpp)]
 #[case::unified(Variant::UnifiedGemm)]
 #[case::unified_mxu(Variant::UnifiedGemmMxu)]
 fn matches_cpu_reference_f16(#[case] variant: Variant) {
@@ -74,15 +70,12 @@ fn matches_cpu_reference_f16(#[case] variant: Variant) {
 }
 
 #[rstest]
-#[case::gemm(Variant::Gemm)]
 #[case::unified(Variant::UnifiedGemm)]
 fn matches_cpu_reference_f32(#[case] variant: Variant) {
     check_all_shapes::<f32>(variant, 1.0, false, 0.05);
 }
 
 #[rstest]
-#[case::gemm(Variant::Gemm)]
-#[case::gemm_mpp(Variant::GemmMpp)]
 #[case::unified(Variant::UnifiedGemm)]
 #[case::unified_mxu(Variant::UnifiedGemmMxu)]
 fn ab_scale_bf16(#[case] variant: Variant) {
@@ -90,13 +83,13 @@ fn ab_scale_bf16(#[case] variant: Variant) {
 }
 
 #[rstest]
-#[case::gemm_mpp(Variant::GemmMpp)]
+#[case::unified_mxu(Variant::UnifiedGemmMxu)]
 fn accumulate_bf16(#[case] variant: Variant) {
     check_all_shapes::<bf16>(variant, 1.0, true, 1.0);
 }
 
 #[rstest]
-#[case::gemm_mpp(Variant::GemmMpp)]
+#[case::unified_mxu(Variant::UnifiedGemmMxu)]
 fn scale_and_accumulate_bf16(#[case] variant: Variant) {
     check_all_shapes::<bf16>(variant, 0.5, true, 1.0);
 }
