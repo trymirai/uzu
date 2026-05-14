@@ -10,13 +10,12 @@ use crate::{
             Allocation, Encoder,
             gpu_types::{
                 GemmParams,
-                unified_gemm::{
-                    GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind,
-                },
+                unified_gemm::{GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind},
             },
             kernel::{
                 TensorAddBiasKernel,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
+                unified_gemm::GemmWeights,
             },
         },
         metal::{
@@ -24,12 +23,11 @@ use crate::{
             context::MetalContext,
             kernel::{
                 MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
-                unified_matmul::gemm::{GemmTilingConfig, UnifiedGemmDispatch, UnifiedGemmKernel},
+                unified_gemm::gemm::{GemmTilingConfig, UnifiedGemmDispatch, UnifiedGemmKernel},
             },
             metal_extensions::DeviceExt,
         },
     },
-    model::LinearWeights,
 };
 
 mod gemm;
@@ -331,7 +329,7 @@ impl MatmulMetalKernel {
             compute: GemmComputeKind::SimdgroupMma,
             output_transform,
             alignment,
-            weights: LinearWeights::FullPrecision {
+            weights: GemmWeights::FullPrecision {
                 weights: arguments.b,
             },
             activations: arguments.a,
@@ -361,7 +359,7 @@ impl MatmulMetalKernel {
     pub(crate) fn encode_unified_gemm(
         &mut self,
         context: &MetalContext,
-        dispatch: UnifiedGemmDispatch<'_>,
+        dispatch: UnifiedGemmDispatch<'_, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), crate::backends::metal::error::MetalError> {
         self.unified_gemm.encode(context, dispatch, encoder)
@@ -405,7 +403,7 @@ impl MatmulMetalKernel {
             compute: GemmComputeKind::MxuMma,
             output_transform,
             alignment,
-            weights: LinearWeights::FullPrecision {
+            weights: GemmWeights::FullPrecision {
                 weights: arguments.b,
             },
             activations: arguments.a,

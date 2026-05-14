@@ -1,6 +1,6 @@
 pub mod matmul;
 pub mod quant_matmul;
-pub mod unified_matmul;
+pub mod unified_gemm;
 
 use crate::backends::common::kernel::ManualKernels;
 

@@ -14,3 +14,4 @@ pub mod moe;
 pub mod quant_matmul;
 pub mod sampling;
 pub mod ssd_prefill;
+pub mod unified_gemm;

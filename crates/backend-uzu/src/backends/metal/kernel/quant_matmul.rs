@@ -1,28 +1,26 @@
-use crate::{
-    backends::{
-        common::{
-            Encoder,
-            gpu_types::{
-                GemmParams, QuantizationMethod,
-                unified_gemm::{GemmAlignment, GemmOutputTransformKind},
-            },
-            kernel::quant_matmul::{
+use crate::backends::{
+    common::{
+        Encoder,
+        gpu_types::{
+            GemmParams, QuantizationMethod,
+            unified_gemm::{GemmAlignment, GemmOutputTransformKind},
+        },
+        kernel::{
+            quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
                 QuantizedMatmulKernelEncodable,
             },
-        },
-        metal::{
-            Metal,
-            context::MetalContext,
-            kernel::{
-                matmul::MatmulMetalKernel,
-                unified_matmul::gemm::{
-                    GemmComputeKind, GemmInputPrologueKind, GemmTilingConfig, UnifiedGemmDispatch,
-                },
-            },
+            unified_gemm::GemmWeights,
         },
     },
-    model::LinearWeights,
+    metal::{
+        Metal,
+        context::MetalContext,
+        kernel::{
+            matmul::MatmulMetalKernel,
+            unified_gemm::gemm::{GemmComputeKind, GemmInputPrologueKind, GemmTilingConfig, UnifiedGemmDispatch},
+        },
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -64,14 +62,14 @@ pub fn encode_quantized_matmul_with_path(
                     input_dim % tile.threadgroup_k == 0,
                 ),
                 weights: match configuration.quantization_method {
-                    QuantizationMethod::ScaleBias => LinearWeights::ScaleBias {
+                    QuantizationMethod::ScaleBias => GemmWeights::ScaleBias {
                         weights: arguments.b,
                         scales: arguments.scales,
                         biases: arguments.zero_points_or_biases,
                         mode: configuration.mode,
                         group_size,
                     },
-                    QuantizationMethod::ScaleZeroPoint => LinearWeights::ScaleZeroPoint {
+                    QuantizationMethod::ScaleZeroPoint => GemmWeights::ScaleZeroPoint {
                         weights: arguments.b,
                         scales: arguments.scales,
                         zero_points: arguments.zero_points_or_biases,

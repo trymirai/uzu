@@ -3,18 +3,12 @@ use std::collections::{HashMap, hash_map::Entry};
 use crate::{
     DataType,
     backends::{
-        common::Encoder,
-        metal::{
-            Metal,
-            context::MetalContext,
-            error::MetalError,
-            kernel::{
-                UnifiedGemmMetalKernel,
-                unified_matmul::gemm::{UnifiedGemmDispatch, UnifiedGemmSpecialization},
-            },
+        common::{
+            Encoder,
+            kernel::unified_gemm::{GemmWeights, UnifiedGemmDispatch, UnifiedGemmSpecialization},
         },
+        metal::{Metal, context::MetalContext, error::MetalError, kernel::UnifiedGemmMetalKernel},
     },
-    model::LinearWeights,
 };
 
 pub(crate) struct UnifiedGemmKernel {
@@ -66,7 +60,7 @@ impl UnifiedGemmKernel {
     pub(crate) fn encode(
         &mut self,
         context: &MetalContext,
-        dispatch: UnifiedGemmDispatch<'_>,
+        dispatch: UnifiedGemmDispatch<'_, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let specialization = dispatch
@@ -75,16 +69,16 @@ impl UnifiedGemmKernel {
             .map_err(|error| MetalError::CannotCreatePipelineState(format!("{error:?}")))?;
         let kernel = self.get_or_create(context, specialization)?;
         let (weights, scales, biases, zero_points) = match &dispatch.weights {
-            LinearWeights::FullPrecision {
+            GemmWeights::FullPrecision {
                 weights,
             } => (*weights, None, None, None),
-            LinearWeights::ScaleBias {
+            GemmWeights::ScaleBias {
                 weights,
                 scales,
                 biases,
                 ..
             } => (*weights, Some(*scales), Some(*biases), None),
-            LinearWeights::ScaleZeroPoint {
+            GemmWeights::ScaleZeroPoint {
                 weights,
                 scales,
                 zero_points,

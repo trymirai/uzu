@@ -1,35 +1,32 @@
 use crate::{
     DataType,
     backends::common::{
-        Storage,
+        Allocation, Backend,
         gpu_types::{QuantizationMode, unified_gemm::GemmWeightPrologueKind},
     },
 };
 
-/// Layout of the weights for a linear layer, parameterised over the storage
-/// carrier `S` (e.g. `Borrowed<'a, _>` at encode time, `Owned<_>` for loaded
-/// weights, `Schema` for config-only views).
-pub enum LinearWeights<S: Storage> {
+pub enum GemmWeights<'a, B: Backend> {
     FullPrecision {
-        weights: S::Buffer,
+        weights: &'a Allocation<B>,
     },
     ScaleBias {
-        weights: S::Buffer,
-        scales: S::Buffer,
-        biases: S::Buffer,
+        weights: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+        biases: &'a Allocation<B>,
         mode: QuantizationMode,
         group_size: u32,
     },
     ScaleZeroPoint {
-        weights: S::Buffer,
-        scales: S::Buffer,
-        zero_points: S::Buffer,
+        weights: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+        zero_points: &'a Allocation<B>,
         mode: QuantizationMode,
         group_size: u32,
     },
 }
 
-impl<S: Storage> LinearWeights<S> {
+impl<B: Backend> GemmWeights<'_, B> {
     pub fn weight_prologue(&self) -> GemmWeightPrologueKind {
         match self {
             Self::FullPrecision {
