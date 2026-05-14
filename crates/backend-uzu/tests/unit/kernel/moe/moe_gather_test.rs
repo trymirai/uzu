@@ -1,16 +1,16 @@
-use half::bf16;
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 use backend_uzu::{
     ArrayElement,
     backends::{
         common::{
             Backend, Encoder,
-            kernel::moe::{MoeGatherArguments, MoeGatherKernels},
+            kernel::moe::MoeGatherKernel,
         },
         cpu::Cpu,
     },
 };
+use half::bf16;
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
     common::{
@@ -35,20 +35,17 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let x_allocation = alloc_allocation_with_data::<B, T>(&context, &input.x);
     let ids_allocation = alloc_allocation_with_data::<B, i32>(&context, &input.bucket_ids);
     let sumk_allocation = alloc_allocation_with_data::<B, u32>(&context, &sumk_data);
-    let gather = MoeGatherKernels::<B>::new(&context).expect("MoeGatherKernel::new");
+    let gather = MoeGatherKernel::<B>::new(&context, T::data_type()).expect("MoeGatherKernel::new");
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let x_perm_allocation = gather
         .encode(
+            &x_allocation,
+            &ids_allocation,
+            &sumk_allocation,
+            input.t,
+            input.sum_k / input.t,
+            input.d_model,
             &mut encoder,
-            T::data_type(),
-            MoeGatherArguments {
-                x: &x_allocation,
-                bucketed_ids: &ids_allocation,
-                sumk: &sumk_allocation,
-                t: input.t,
-                k: input.sum_k / input.t, // Decompose sum_k into k per token
-                d_model: input.d_model,
-            },
         )
         .expect("Failed to encode MoE gather");
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();

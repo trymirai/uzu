@@ -9,7 +9,7 @@ use crate::{
 
 #[kernel(AttentionSinglePass)]
 #[variants(T, f32, f16, bf16)]
-#[variants(HEAD_DIM, 64, 128, 256)]
+#[variants(HEAD_DIM, 64, 128, 256, 512)]
 pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
     queries: *const T,
     keys: *const T,

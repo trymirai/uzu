@@ -11,6 +11,7 @@ mod metal_extensions;
 mod sparse;
 
 pub use backend::Metal;
+pub use buffer::BufferDowncastExt;
 pub use context::MetalContext;
 pub use device_capabilities::MetalDeviceCapabilities;
 pub use kernel::matmul::MatmulDispatchPath;

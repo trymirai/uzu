@@ -17,6 +17,7 @@ unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
     leading_dimension_a: usize,
     leading_dimension_b: usize,
     leading_dimension_d: usize,
+    b_transpose: bool,
     is_accumulate: bool,
 ) {
     unsafe {
@@ -24,7 +25,11 @@ unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
             let mut acc: f32 = 0.0;
             for i in 0..k {
                 let a_val = *a.0.add(row * leading_dimension_a + i);
-                let b_val = *b.0.add(col * leading_dimension_b + i);
+                let b_val = if b_transpose {
+                    *b.0.add(col * leading_dimension_b + i)
+                } else {
+                    *b.0.add(i * leading_dimension_b + col)
+                };
                 acc = acc + a_val.to_f32().unwrap() * b_val.to_f32().unwrap();
             }
             let d_element = d.0.add(row * leading_dimension_d + col);
@@ -48,6 +53,7 @@ pub fn matmul_gemm_impl<T: ArrayElement + Float>(
     leading_dimension_a: usize,
     leading_dimension_b: usize,
     leading_dimension_d: usize,
+    b_transpose: bool,
     is_accumulate: bool,
 ) {
     let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
@@ -83,6 +89,7 @@ pub fn matmul_gemm_impl<T: ArrayElement + Float>(
                             leading_dimension_a,
                             leading_dimension_b,
                             leading_dimension_d,
+                            b_transpose,
                             is_accumulate,
                         );
                     }

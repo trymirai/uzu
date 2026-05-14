@@ -6,7 +6,7 @@ use backend_uzu::{
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels},
+            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherKernel},
         },
     },
 };
@@ -373,25 +373,12 @@ fn run_moe_parity_test_internal<B: Backend>(
         &mut encoder,
     );
 
-    let gather = MoeGatherKernels::<B>::new(&ctx).expect("gather");
-    let x_perm_buf = gather
-        .encode(
-            &mut encoder,
-            DataType::BF16,
-            MoeGatherArguments {
-                x: &x_buf,
-                bucketed_ids: &bucketed_ids_buf,
-                sumk: &sumk_buf,
-                t,
-                k,
-                d_model,
-            },
-        )
-        .expect("gather");
+    let gather = MoeGatherKernel::<B>::new(&ctx, DataType::BF16).expect("gather");
+    let x_perm_buf = gather.encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder).expect("gather");
 
     let total_rows = t * k;
 
-    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx).expect("experts");
+    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("experts");
     let args = MoeExpertsTwoPassArguments {
         x_perm: &x_perm_buf,
         expert_offsets: &offsets_buf,
@@ -402,16 +389,14 @@ fn run_moe_parity_test_internal<B: Backend>(
         total_rows,
         d_model,
         d_ff,
-        e,
-        gating_code,
+        num_routed_experts: e,
         gate_clip_min: gate_clip.0,
         gate_clip_max: gate_clip.1,
         up_clip_min: up_clip.0,
         up_clip_max: up_clip.1,
         silu_alpha,
-        data_type: DataType::BF16,
     };
-    let y_partial_buf = experts.encode(&mut encoder, args).expect("failed to encode MoE experts");
+    let y_partial_buf = experts.encode(args, &mut encoder).expect("failed to encode MoE experts");
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
     finalize.encode(

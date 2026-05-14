@@ -8,7 +8,7 @@ using namespace uzu::matmul;
 #define GEMM_MAX_THREADGROUP_A 2560
 #define GEMM_MAX_THREADGROUP_B 1536
 
-template <typename T, uint BLOCK_ROWS, uint BLOCK_COLS, uint BLOCK_DEPTH, uint SIMDGROUPS_PER_ROW, uint SIMDGROUPS_PER_COLUMN, bool MN_ALIGNED, bool K_ALIGNED>
+template <typename T, uint BLOCK_ROWS, uint BLOCK_COLS, uint BLOCK_DEPTH, uint SIMDGROUPS_PER_ROW, uint SIMDGROUPS_PER_COLUMN, bool MN_ALIGNED, bool K_ALIGNED, bool TRANSPOSE_B>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(BLOCK_ROWS, 32, 64)
 VARIANTS(BLOCK_COLS, 32, 64)
@@ -17,6 +17,7 @@ VARIANTS(SIMDGROUPS_PER_ROW, 1, 2, 4)
 VARIANTS(SIMDGROUPS_PER_COLUMN, 1, 2)
 VARIANTS(MN_ALIGNED, false, true)
 VARIANTS(K_ALIGNED, false, true)
+VARIANTS(TRANSPOSE_B, false, true)
 CONSTRAINT(max(BLOCK_ROWS, BLOCK_COLS) <= 32 * SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN)
 KERNEL(MatmulGemm)(
     const device T* a,
@@ -45,7 +46,7 @@ KERNEL(MatmulGemm)(
       SIMDGROUPS_PER_ROW,
       SIMDGROUPS_PER_COLUMN,
       false, // transpose_a
-      true,  // transpose_b
+      TRANSPOSE_B,
       MN_ALIGNED,
       K_ALIGNED,
       float>::
