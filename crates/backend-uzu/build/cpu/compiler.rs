@@ -18,6 +18,7 @@ use crate::common::{
     gpu_types::GpuTypes,
     identifiers::{ArgumentName, KernelName, KernelPath},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
+    utils::get_generic_name_stream,
 };
 
 #[derive(PartialEq, Debug)]
@@ -363,31 +364,31 @@ impl CpuCompiler {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let mut have_any_buffer = false;
-        let (encode_generics, mut encode_args_defs): (Vec<_>, Vec<_>) = kernel_arguments
+        let (encode_lifetimes, buffer_generics, mut encode_args_defs): (Vec<_>, Vec<_>, Vec<_>) = kernel_arguments
             .iter()
             .map(|argument| {
                 let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
 
-                let (generic, mut ty) = match &argument.ty {
+                let (lifetime, generic, mut ty) = match &argument.ty {
                     KernelArgumentType::Buffer(access) => {
-                        have_any_buffer = true;
                         let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
+                        let buffer_type = get_generic_name_stream(argument.name.as_ref());
                         (
                             Some(quote! { #buffer_lifetime }),
+                            Some(quote! { #buffer_type }),
                             match access {
                                 KernelBufferAccess::Read => {
-                                    quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Buf> }
+                                    quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, #buffer_type> }
                                 },
                                 KernelBufferAccess::ReadWrite => {
-                                    quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Buf> }
+                                    quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, #buffer_type> }
                                 },
                             },
                         )
                     },
                     KernelArgumentType::Constant(ty) => {
                         let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
-                        (None, quote! { #ty })
+                        (None, None, quote! { #ty })
                     },
                 };
 
@@ -395,12 +396,12 @@ impl CpuCompiler {
                     ty = quote! { Option<#ty> };
                 }
 
-                Ok((generic, quote! { #argument_ident: #ty }))
+                Ok((lifetime, generic, quote! { #argument_ident: #ty }))
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let mut encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
-        let mut where_generics: Vec<TokenStream> = Vec::new();
+        let mut encode_lifetimes = encode_lifetimes.into_iter().flatten().collect::<Vec<_>>();
+        let buffer_generics = buffer_generics.into_iter().flatten().collect::<Vec<_>>();
 
         let argument_copies = function_arguments
             .iter()
@@ -575,15 +576,20 @@ impl CpuCompiler {
             make_encode(quote! {})
         };
 
-        encode_generics.push(quote! { 'encoder });
+        encode_lifetimes.push(quote! { 'encoder });
         encode_args_defs
             .push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu> });
 
-        if have_any_buffer {
-            encode_generics.push(quote! { Buf });
-            where_generics.push(quote! { Buf: crate::backends::common::Buffer<Backend = crate::backends::cpu::Cpu> });
-        }
+        let mut encode_generics: Vec<&TokenStream> = Vec::new();
+        encode_generics.extend(&encode_lifetimes);
+        encode_generics.extend(&buffer_generics);
 
+        let where_generics = buffer_generics
+            .iter()
+            .map(|generic| {
+                quote! { #generic: crate::backends::common::Buffer<Backend = crate::backends::cpu::Cpu> }
+            })
+            .collect::<Vec<_>>();
         let where_block = if where_generics.is_empty() {
             quote! {}
         } else {

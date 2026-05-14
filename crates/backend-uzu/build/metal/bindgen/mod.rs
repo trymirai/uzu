@@ -11,10 +11,7 @@ use quote::{format_ident, quote};
 
 use self::variant_path_rewriter::VariantPathRewriter;
 use super::{ast::MetalKernelInfo, wrapper::SpecializeBaseIndices};
-use crate::{
-    common::{enum_paths::EnumPaths, mangling::dynamic_mangle},
-    metal::bindgen::arguments::ArgumentEmission,
-};
+use crate::common::{enum_paths::EnumPaths, mangling::dynamic_mangle};
 
 pub fn bindgen(
     kernel: &MetalKernelInfo,
@@ -47,8 +44,10 @@ pub fn bindgen(
         argument_emissions.iter().filter_map(|argument| argument.encode_deconstruct()).collect();
     let encode_set_calls: Vec<TokenStream> = argument_emissions.iter().map(|argument| argument.encode_set()).collect();
     let encode_accesses_call = arguments::encode_accesses_call(&argument_emissions);
-    let mut encode_generics: Vec<TokenStream> = Vec::new();
-    let mut encode_where_generics: Vec<TokenStream> = Vec::new();
+    let encode_generics: Vec<TokenStream> =
+        argument_emissions.iter().filter_map(|argument| argument.encode_generic()).collect();
+    let encode_where_generics: Vec<TokenStream> =
+        argument_emissions.iter().filter_map(|argument| argument.encode_where_generic()).collect();
 
     let variant_struct_fields: Vec<TokenStream> =
         variant_binds.iter().filter_map(|variant| variant.struct_field(&referenced_parameter_names)).collect();
@@ -70,15 +69,6 @@ pub fn bindgen(
     let trait_implementation_for = &trait_wiring.trait_implementation_for;
     let associate_backend = &trait_wiring.associate_backend;
     let method_visibility = &trait_wiring.method_visibility;
-
-    let have_any_buffer = argument_emissions
-        .iter()
-        .any(|arg| matches!(arg, ArgumentEmission::Buffer(_)) || matches!(arg, ArgumentEmission::IndirectDispatch(_)));
-    if have_any_buffer {
-        encode_generics.push(quote! { Buf });
-        encode_where_generics
-            .push(quote! { Buf: crate::backends::common::Buffer<Backend = crate::backends::metal::Metal> });
-    }
 
     encode_lifetimes.push(quote! { 'encoder });
     encode_argument_definitions.push(quote! {

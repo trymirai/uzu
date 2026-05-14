@@ -10,6 +10,7 @@ use super::{identifiers::KernelPath, kernel::Kernel};
 use crate::common::{
     codegen::write_tokens,
     kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
+    utils::get_generic_name_stream,
 };
 
 pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
@@ -29,28 +30,30 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         quote! { #name: #ty }
     });
 
-    let mut have_any_buffer = false;
-    let (encode_generics, mut args) = kernel
+    let (encode_lifetime_generics, type_generics, mut args) = kernel
         .arguments
         .iter()
         .map(|a| {
             let name = format_ident!("{}", a.name.as_ref());
 
-            let (generic, mut ty) = match &a.ty {
+            let (lifetime_generic, type_generic, mut ty) = match &a.ty {
                 KernelArgumentType::Buffer(access) => {
-                    have_any_buffer = true;
                     let buffer_lifetime = Lifetime::new(&format!("'{}", a.name.as_ref()), Span::call_site());
+                    let buffer_type = get_generic_name_stream(a.name.as_ref());
                     (
                         Some(quote! { #buffer_lifetime }),
+                        Some(quote! { #buffer_type }),
                         match access {
-                            KernelBufferAccess::Read => quote! { impl BufferArg<#buffer_lifetime, Buf> },
-                            KernelBufferAccess::ReadWrite => quote! { impl BufferArgMut<#buffer_lifetime, Buf> },
+                            KernelBufferAccess::Read => quote! { impl BufferArg<#buffer_lifetime, #buffer_type> },
+                            KernelBufferAccess::ReadWrite => {
+                                quote! { impl BufferArgMut<#buffer_lifetime, #buffer_type> }
+                            },
                         },
                     )
                 },
                 KernelArgumentType::Constant(ty) => {
                     let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
-                    (None, quote! { #ty })
+                    (None, None, quote! { #ty })
                 },
             };
 
@@ -58,20 +61,20 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
                 ty = quote! { Option<#ty> };
             }
 
-            (generic, quote! { #name: #ty })
+            (lifetime_generic, type_generic, quote! { #name: #ty })
         })
-        .collect::<(Vec<_>, Vec<_>)>();
+        .collect::<(Vec<_>, Vec<_>, Vec<_>)>();
 
-    let mut encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+    let mut encode_generics = encode_lifetime_generics.into_iter().flatten().collect::<Vec<_>>();
     let mut where_generics: Vec<TokenStream> = Vec::new();
 
     encode_generics.push(quote! { 'encoder });
     args.push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend> });
 
-    if have_any_buffer {
-        encode_generics.push(quote! { Buf });
-        where_generics.push(quote! { Buf: Buffer<Backend = Self::Backend> });
-    }
+    type_generics.iter().flatten().for_each(|generic| {
+        encode_generics.push(quote! { #generic });
+        where_generics.push(quote! { #generic: Buffer<Backend = Self::Backend> });
+    });
 
     let maybe_where_block = if where_generics.is_empty() {
         quote! {}
