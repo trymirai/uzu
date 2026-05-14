@@ -1,3 +1,5 @@
+// TODO(LuckyIYI): figure out if this was made dead code by accident and restore or delete
+
 use crate::{
     DataType,
     array::size_for_shape,
@@ -6,8 +8,6 @@ use crate::{
         kernel::{MoeExpertsDecodeSinglePassAKernel, MoeExpertsDecodeSinglePassBKernel},
     },
 };
-
-static DTYPES: [DataType; 3] = [DataType::F16, DataType::BF16, DataType::F32];
 
 /// Arguments for single-token MoE decode (T=1 optimized path)
 pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
@@ -31,8 +31,6 @@ pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     pub d_ff: usize,
     /// Number of active experts per token
     pub k: usize,
-    /// Gating activation: 0=GELU, 1=SiLU, 2=SwiGLU, 3=GEGLU
-    pub gating_code: u32,
     /// SiLU activation alpha parameter
     pub silu_alpha: f32,
     /// Gate clipping min
@@ -43,54 +41,35 @@ pub struct MoeExpertsSingleDecodeArguments<'a, B: Backend> {
     pub up_clip_min: f32,
     /// Up clipping max
     pub up_clip_max: f32,
-    /// Data type
-    pub data_type: DataType,
 }
 
 pub struct MoeExpertsSingleDecodeKernels<B: Backend> {
-    pass_a: Vec<Vec<<B::Kernels as Kernels>::MoeExpertsDecodeSinglePassAKernel>>,
-    pass_b: Vec<<B::Kernels as Kernels>::MoeExpertsDecodeSinglePassBKernel>,
+    pass_a: <B::Kernels as Kernels>::MoeExpertsDecodeSinglePassAKernel,
+    pass_b: <B::Kernels as Kernels>::MoeExpertsDecodeSinglePassBKernel,
+    data_type: DataType,
 }
 
 impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
-    pub fn new(ctx: &B::Context) -> Result<Self, B::Error> {
-        let mut pass_a = vec![];
-        for gate in 0..4 {
-            let mut kernels = vec![];
-            for dtype in &DTYPES {
-                let kernel =
-                    <B::Kernels as Kernels>::MoeExpertsDecodeSinglePassAKernel::new(ctx, (*dtype).into(), gate)?;
-                kernels.push(kernel)
-            }
-            pass_a.push(kernels);
-        }
-
-        let mut pass_b = Vec::with_capacity(DTYPES.len());
-        for dtype in &DTYPES {
-            pass_b.push(<B::Kernels as Kernels>::MoeExpertsDecodeSinglePassBKernel::new(ctx, (*dtype).into())?);
-        }
-
+    pub fn new(
+        ctx: &B::Context,
+        data_type: DataType,
+        gating_code: u32,
+    ) -> Result<Self, B::Error> {
         Ok(Self {
-            pass_a,
-            pass_b,
+            pass_a: <B::Kernels as Kernels>::MoeExpertsDecodeSinglePassAKernel::new(ctx, data_type, gating_code)?,
+            pass_b: <B::Kernels as Kernels>::MoeExpertsDecodeSinglePassBKernel::new(ctx, data_type)?,
+            data_type,
         })
     }
 
     pub fn encode(
         &self,
-        encoder: &mut Encoder<B>,
         args: MoeExpertsSingleDecodeArguments<B>,
+        encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        assert!(args.k > 0, "MoE single decode requires at least one active expert");
-
-        let gate_idx = args.gating_code.min(3) as usize;
-        let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();
-        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.k, args.d_ff], DataType::F32))?;
-        let mut output = encoder.allocate_scratch(size_for_shape(&[args.d_model], args.data_type))?;
-
         // Pass A: x @ W13[expert] -> hidden
-        let kernel = &self.pass_a[gate_idx][dtype_idx];
-        kernel.encode(
+        let mut hidden = encoder.allocate_scratch(size_for_shape(&[args.k, args.d_ff], DataType::F32))?;
+        self.pass_a.encode(
             args.x,
             args.topk_ids,
             args.w13_all,
@@ -108,8 +87,8 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
         );
 
         // Pass B: 8 simdgroups (256 threads), outputs final y directly
-        let kernel = &self.pass_b[dtype_idx];
-        kernel.encode(
+        let mut output = encoder.allocate_scratch(size_for_shape(&[args.d_model], self.data_type))?;
+        self.pass_b.encode(
             &hidden,
             args.topk_ids,
             args.topk_probs,
@@ -121,6 +100,7 @@ impl<B: Backend> MoeExpertsSingleDecodeKernels<B> {
             args.k as u32,
             encoder,
         );
+
         Ok(output)
     }
 }
