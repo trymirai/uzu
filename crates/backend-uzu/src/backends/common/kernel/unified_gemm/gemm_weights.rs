@@ -47,10 +47,12 @@ impl<B: Backend> GemmWeights<'_, B> {
                 ..
             } => 0,
             Self::ScaleBias {
-                mode, ..
+                mode,
+                ..
             }
             | Self::ScaleZeroPoint {
-                mode, ..
+                mode,
+                ..
             } => DataType::from(*mode).size_in_bits() as u32,
         }
     }
@@ -61,10 +63,12 @@ impl<B: Backend> GemmWeights<'_, B> {
                 ..
             } => 0,
             Self::ScaleBias {
-                group_size, ..
+                group_size,
+                ..
             }
             | Self::ScaleZeroPoint {
-                group_size, ..
+                group_size,
+                ..
             } => *group_size,
         }
     }

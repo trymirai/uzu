@@ -1,3 +1,5 @@
+#[cfg(metal_backend)]
+use backend_uzu::backends::metal::{Metal, MetalContext};
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -11,12 +13,12 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
-#[cfg(metal_backend)]
-use backend_uzu::backends::metal::{Metal, MetalContext};
 use num_traits::Float;
 
-use super::super::helpers::{alloc_allocation_with_data, allocation_to_vec};
-use super::{Shape, Variant};
+use super::{
+    super::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    Shape, Variant,
+};
 
 #[cfg(metal_backend)]
 pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel;
@@ -30,7 +32,11 @@ pub struct Case {
 
 impl Case {
     pub const fn new(shape: Shape) -> Self {
-        Self { shape, ab_scale: 1.0, accumulate: false }
+        Self {
+            shape,
+            ab_scale: 1.0,
+            accumulate: false,
+        }
     }
 
     pub const fn with_ab_scale(
@@ -58,13 +64,22 @@ pub struct Input<T: ArrayElement + Float> {
 }
 
 pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
-    let Shape { m, k, n } = case.shape;
+    let Shape {
+        m,
+        k,
+        n,
+    } = case.shape;
     let a: Vec<T> = (0..m * k).map(|i| T::from(((i % 13) as f32) * 0.1 - 0.6).unwrap()).collect();
     let b: Vec<T> = (0..n * k).map(|i| T::from(((i % 17) as f32) * 0.1 - 0.8).unwrap()).collect();
     let d_prefill = case.accumulate.then(|| {
         (0..m * n).map(|i| T::from(((i % 7) as f32) * 0.03 - 0.09).unwrap()).collect::<Vec<_>>().into_boxed_slice()
     });
-    Input { a: a.into_boxed_slice(), b: b.into_boxed_slice(), d_prefill, case }
+    Input {
+        a: a.into_boxed_slice(),
+        b: b.into_boxed_slice(),
+        d_prefill,
+        case,
+    }
 }
 
 fn run<B: Backend, T: ArrayElement + Float>(
@@ -73,7 +88,11 @@ fn run<B: Backend, T: ArrayElement + Float>(
     input: &Input<T>,
     encode: impl FnOnce(&mut <B::Kernels as ManualKernels>::MatmulKernel, MatmulArguments<B>, &mut Encoder<B>),
 ) -> Vec<T> {
-    let Shape { m, k, n } = input.case.shape;
+    let Shape {
+        m,
+        k,
+        n,
+    } = input.case.shape;
     let b_array = context.create_array_from(&[n, k], &input.b);
     let a_allocation = alloc_allocation_with_data::<B, T>(context, &input.a);
     let mut d_allocation = if let Some(ref prefill) = input.d_prefill {
@@ -146,15 +165,9 @@ pub fn alloc_bench_buffers<T: ArrayElement>(
 ) -> BenchBuffers {
     let elem = std::mem::size_of::<T>();
     BenchBuffers {
-        a: context
-            .create_allocation(shape.m * shape.k * elem, AllocationType::Global)
-            .expect("a allocation"),
-        b: context
-            .create_allocation(shape.n * shape.k * elem, AllocationType::Global)
-            .expect("b allocation"),
-        d: context
-            .create_allocation(shape.m * shape.n * elem, AllocationType::Global)
-            .expect("d allocation"),
+        a: context.create_allocation(shape.m * shape.k * elem, AllocationType::Global).expect("a allocation"),
+        b: context.create_allocation(shape.n * shape.k * elem, AllocationType::Global).expect("b allocation"),
+        d: context.create_allocation(shape.m * shape.n * elem, AllocationType::Global).expect("d allocation"),
     }
 }
 

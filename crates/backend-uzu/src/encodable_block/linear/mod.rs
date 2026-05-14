@@ -111,14 +111,9 @@ impl<B: Backend> dyn Linear<B> {
         output_dim: usize,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         match config {
-            LinearConfig::Quantized(config) | LinearConfig::ScaleBiasQuantized(config) => Ok(Box::new(QuantizedLinear::new(
-                context,
-                config,
-                input_dim,
-                output_dim,
-                parameter_tree,
-                Some(output_factors),
-            )?)),
+            LinearConfig::Quantized(config) | LinearConfig::ScaleBiasQuantized(config) => Ok(Box::new(
+                QuantizedLinear::new(context, config, input_dim, output_dim, parameter_tree, Some(output_factors))?,
+            )),
             LinearConfig::QLoRA {
                 quantization,
                 lora_rank,

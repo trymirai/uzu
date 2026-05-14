@@ -43,8 +43,10 @@ struct MxuMmaCore {
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
-    const uint2 tile_id = morton_block_id(threadgroup_position, params->use_morton);
-    const auto geometry = BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
+    const uint2 tile_id =
+        morton_block_id(threadgroup_position, params->use_morton);
+    const auto geometry =
+        BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -63,28 +65,30 @@ struct MxuMmaCore {
         SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
     device T* result_simdgroup =
-        result + block_row_long * params->leading_dimension_d
-               + block_col_long
-               + tile_row_offset * params->leading_dimension_d
-               + tile_col_offset;
+        result + block_row_long * params->leading_dimension_d + block_col_long +
+        tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
-        align_m
-            ? SIMDGROUP_BLOCK_M
-            : short(min(int(SIMDGROUP_BLOCK_M),
-                        int(params->M) - int(geometry.block_row_start + tile_row_offset)));
+        align_m ? SIMDGROUP_BLOCK_M
+                : short(
+                      min(int(SIMDGROUP_BLOCK_M),
+                          int(params->M) -
+                              int(geometry.block_row_start + tile_row_offset))
+                  );
     const short simdgroup_limit_n =
-        align_n
-            ? SIMDGROUP_BLOCK_N
-            : short(min(int(SIMDGROUP_BLOCK_N),
-                        int(params->N) - int(geometry.block_col_start + tile_col_offset)));
+        align_n ? SIMDGROUP_BLOCK_N
+                : short(
+                      min(int(SIMDGROUP_BLOCK_N),
+                          int(params->N) -
+                              int(geometry.block_col_start + tile_col_offset))
+                  );
 
     const device T* activations_simdgroup =
-        activations_block
-        + size_t(tile_row_offset) * params->leading_dimension_a;
+        activations_block +
+        size_t(tile_row_offset) * params->leading_dimension_a;
     const device T* weights_simdgroup =
-        weights_block
-        + size_t(tile_col_offset) * int(params->leading_dimension_b);
+        weights_block +
+        size_t(tile_col_offset) * int(params->leading_dimension_b);
 
     const int aligned_k_iterations = int(params->K) / int(BLOCK_K);
 
@@ -115,20 +119,25 @@ struct MxuMmaCore {
                       aligned_k_iterations,
                       simdgroup_limit_m,
                       simdgroup_limit_n,
-                      thread_context);
+                      thread_context
+                  );
 
                   if constexpr (aligned_m.value && aligned_n.value) {
                     accumulator_tile.store(
                         result_simdgroup,
-                        int(params->leading_dimension_d));
+                        int(params->leading_dimension_d)
+                    );
                   } else {
                     accumulator_tile.store_safe(
                         result_simdgroup,
                         int(params->leading_dimension_d),
-                        short2(simdgroup_limit_n, simdgroup_limit_m));
+                        short2(simdgroup_limit_n, simdgroup_limit_m)
+                    );
                   }
-                });
-          });
+                }
+            );
+          }
+      );
     });
   }
 };

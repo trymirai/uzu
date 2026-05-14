@@ -53,31 +53,103 @@ struct GemmPipeline {
     if (compute == GemmComputeKind::SimdgroupMma) {
       const bool mn_aligned = m_aligned && n_aligned;
       if (mn_aligned && k_aligned) {
-        GemmComputeSimdgroupMma<T, THREADGROUP_M, THREADGROUP_N, THREADGROUP_K, SIMDGROUPS_M, SIMDGROUPS_N, true, true>::run(
-            activations, weights, result, params,
-            a_shared, b_shared, simd_lane_id, simd_group_id,
-            threadgroup_position, thread_position);
+        GemmComputeSimdgroupMma<
+            T,
+            THREADGROUP_M,
+            THREADGROUP_N,
+            THREADGROUP_K,
+            SIMDGROUPS_M,
+            SIMDGROUPS_N,
+            true,
+            true>::
+            run(activations,
+                weights,
+                result,
+                params,
+                a_shared,
+                b_shared,
+                simd_lane_id,
+                simd_group_id,
+                threadgroup_position,
+                thread_position);
       } else if (mn_aligned && !k_aligned) {
-        GemmComputeSimdgroupMma<T, THREADGROUP_M, THREADGROUP_N, THREADGROUP_K, SIMDGROUPS_M, SIMDGROUPS_N, true, false>::run(
-            activations, weights, result, params,
-            a_shared, b_shared, simd_lane_id, simd_group_id,
-            threadgroup_position, thread_position);
+        GemmComputeSimdgroupMma<
+            T,
+            THREADGROUP_M,
+            THREADGROUP_N,
+            THREADGROUP_K,
+            SIMDGROUPS_M,
+            SIMDGROUPS_N,
+            true,
+            false>::
+            run(activations,
+                weights,
+                result,
+                params,
+                a_shared,
+                b_shared,
+                simd_lane_id,
+                simd_group_id,
+                threadgroup_position,
+                thread_position);
       } else if (!mn_aligned && k_aligned) {
-        GemmComputeSimdgroupMma<T, THREADGROUP_M, THREADGROUP_N, THREADGROUP_K, SIMDGROUPS_M, SIMDGROUPS_N, false, true>::run(
-            activations, weights, result, params,
-            a_shared, b_shared, simd_lane_id, simd_group_id,
-            threadgroup_position, thread_position);
+        GemmComputeSimdgroupMma<
+            T,
+            THREADGROUP_M,
+            THREADGROUP_N,
+            THREADGROUP_K,
+            SIMDGROUPS_M,
+            SIMDGROUPS_N,
+            false,
+            true>::
+            run(activations,
+                weights,
+                result,
+                params,
+                a_shared,
+                b_shared,
+                simd_lane_id,
+                simd_group_id,
+                threadgroup_position,
+                thread_position);
       } else {
-        GemmComputeSimdgroupMma<T, THREADGROUP_M, THREADGROUP_N, THREADGROUP_K, SIMDGROUPS_M, SIMDGROUPS_N, false, false>::run(
-            activations, weights, result, params,
-            a_shared, b_shared, simd_lane_id, simd_group_id,
-            threadgroup_position, thread_position);
+        GemmComputeSimdgroupMma<
+            T,
+            THREADGROUP_M,
+            THREADGROUP_N,
+            THREADGROUP_K,
+            SIMDGROUPS_M,
+            SIMDGROUPS_N,
+            false,
+            false>::
+            run(activations,
+                weights,
+                result,
+                params,
+                a_shared,
+                b_shared,
+                simd_lane_id,
+                simd_group_id,
+                threadgroup_position,
+                thread_position);
       }
     } else if (compute == GemmComputeKind::MxuMma) {
-      GemmComputeMxuMma<T, THREADGROUP_M, THREADGROUP_N, SIMDGROUPS_M, SIMDGROUPS_N>::run(
-          activations, weights, result, params,
-          m_aligned, n_aligned, k_aligned,
-          simd_group_id, threadgroup_position, thread_context);
+      GemmComputeMxuMma<
+          T,
+          THREADGROUP_M,
+          THREADGROUP_N,
+          SIMDGROUPS_M,
+          SIMDGROUPS_N>::
+          run(activations,
+              weights,
+              result,
+              params,
+              m_aligned,
+              n_aligned,
+              k_aligned,
+              simd_group_id,
+              threadgroup_position,
+              thread_context);
     }
   }
 };

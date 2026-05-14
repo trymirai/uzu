@@ -35,17 +35,17 @@ struct GemmComputeSimdgroupMma {
         SIMDGROUPS_N,
         SIMDGROUPS_M,
         MN_ALIGNED,
-        K_ALIGNED>::run(
-        activations,
-        weights,
-        result,
-        params,
-        a_shared,
-        b_shared,
-        simd_lane_id,
-        simd_group_id,
-        threadgroup_position,
-        thread_position);
+        K_ALIGNED>::
+        run(activations,
+            weights,
+            result,
+            params,
+            a_shared,
+            b_shared,
+            simd_lane_id,
+            simd_group_id,
+            threadgroup_position,
+            thread_position);
   }
 };
 

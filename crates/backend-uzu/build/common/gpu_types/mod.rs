@@ -122,8 +122,8 @@ impl GpuTypeFile {
 
         let mut all_types: Vec<GpuType> = Vec::new();
         for source in sources {
-            let mut types = parse_types_from_file(&source)
-                .with_context(|| format!("Failed to scan {}", source.display()))?;
+            let mut types =
+                parse_types_from_file(&source).with_context(|| format!("Failed to scan {}", source.display()))?;
             all_types.append(&mut types);
         }
 
@@ -164,11 +164,9 @@ impl GpuTypes {
             .into_iter()
             .map(|entry| {
                 if entry.is_dir() {
-                    GpuTypeFile::scan_dir(&entry)
-                        .with_context(|| format!("Failed to scan dir {}", entry.display()))
+                    GpuTypeFile::scan_dir(&entry).with_context(|| format!("Failed to scan dir {}", entry.display()))
                 } else {
-                    GpuTypeFile::scan_file(&entry)
-                        .with_context(|| format!("Failed to scan {}", entry.display()))
+                    GpuTypeFile::scan_file(&entry).with_context(|| format!("Failed to scan {}", entry.display()))
                 }
             })
             .collect::<anyhow::Result<Box<[GpuTypeFile]>>>()?;

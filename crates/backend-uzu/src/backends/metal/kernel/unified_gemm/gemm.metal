@@ -59,21 +59,27 @@ KERNEL(UnifiedGemm)(
   (void)zero_points;
   (void)bits_per_weight;
   (void)group_size;
-  GemmPipeline<T, THREADGROUP_M, THREADGROUP_N, THREADGROUP_K, SIMDGROUPS_M, SIMDGROUPS_N>::run(
-      activations,
-      weights,
-      result,
-      params,
-      input_prologue,
-      weight_prologue,
-      compute,
-      output_transform,
-      alignment,
-      a_shared,
-      b_shared,
-      thread_context.simdgroup_index,
-      thread_context.threadgroup_index,
-      uint2(group_x, group_y),
-      uint3(thread_x, thread_y, thread_z),
-      thread_context);
+  GemmPipeline<
+      T,
+      THREADGROUP_M,
+      THREADGROUP_N,
+      THREADGROUP_K,
+      SIMDGROUPS_M,
+      SIMDGROUPS_N>::
+      run(activations,
+          weights,
+          result,
+          params,
+          input_prologue,
+          weight_prologue,
+          compute,
+          output_transform,
+          alignment,
+          a_shared,
+          b_shared,
+          thread_context.simdgroup_index,
+          thread_context.threadgroup_index,
+          uint2(group_x, group_y),
+          uint3(thread_x, thread_y, thread_z),
+          thread_context);
 }

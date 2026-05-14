@@ -12,6 +12,8 @@ mod sparse;
 pub use backend::Metal;
 pub use context::MetalContext;
 pub use device_capabilities::MetalDeviceCapabilities;
-pub use kernel::matmul::MatmulDispatchPath;
-pub use kernel::quant_matmul::{QuantizedMatmulDispatchPath, encode_quantized_matmul_with_path};
+pub use kernel::{
+    matmul::MatmulDispatchPath,
+    quant_matmul::{QuantizedMatmulDispatchPath, encode_quantized_matmul_with_path},
+};
 pub use metal_extensions::{DeviceExt, DeviceGeneration};

@@ -94,8 +94,10 @@ struct SimdgroupMmaCore {
     if (!K_aligned_) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
-      short2 last_tile_dimensions_a = short2(leftover_block_depth, tile_block_rows);
-      short2 last_tile_dimensions_b = short2(leftover_block_depth, tile_block_cols);
+      short2 last_tile_dimensions_a =
+          short2(leftover_block_depth, tile_block_rows);
+      short2 last_tile_dimensions_b =
+          short2(leftover_block_depth, tile_block_cols);
 
       loader_a.load_safe(last_tile_dimensions_a);
       loader_b.load_safe(last_tile_dimensions_b);
@@ -119,8 +121,10 @@ struct SimdgroupMmaCore {
   ) {
     (void)thread_position;
 
-    const uint2 tile_id = swizzled_block_id(threadgroup_position, params->swizzle_log);
-    const auto geometry = BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
+    const uint2 tile_id =
+        swizzled_block_id(threadgroup_position, params->swizzle_log);
+    const auto geometry =
+        BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -139,13 +143,15 @@ struct SimdgroupMmaCore {
         params->leading_dimension_a,
         a_shared,
         simd_group_id,
-        simd_lane_id);
+        simd_lane_id
+    );
     thread WeightsLoader loader_b(
         weights,
         params->leading_dimension_b,
         b_shared,
         simd_group_id,
-        simd_lane_id);
+        simd_lane_id
+    );
     thread TileAccumulator accumulator(simd_group_id, simd_lane_id);
 
     if (MN_ALIGNED) {
@@ -189,37 +195,68 @@ struct SimdgroupMmaCore {
 
     if (tile_block_rows == BLOCK_M && tile_block_cols == BLOCK_N) {
       k_loop<true, true, K_ALIGNED>(
-          a_shared, b_shared, params->aligned_inner_iterations,
-          loader_a, loader_b, accumulator,
-          tile_block_rows, tile_block_cols, leftover_block_depth);
+          a_shared,
+          b_shared,
+          params->aligned_inner_iterations,
+          loader_a,
+          loader_b,
+          accumulator,
+          tile_block_rows,
+          tile_block_cols,
+          leftover_block_depth
+      );
       accumulator.store_result(result, params->leading_dimension_d);
     } else if (tile_block_cols == BLOCK_N) {
       k_loop<false, true, K_ALIGNED>(
-          a_shared, b_shared, params->aligned_inner_iterations,
-          loader_a, loader_b, accumulator,
-          tile_block_rows, tile_block_cols, leftover_block_depth);
+          a_shared,
+          b_shared,
+          params->aligned_inner_iterations,
+          loader_a,
+          loader_b,
+          accumulator,
+          tile_block_rows,
+          tile_block_cols,
+          leftover_block_depth
+      );
       accumulator.store_result_safe(
           result,
           params->leading_dimension_d,
-          short2(tile_block_cols, tile_block_rows));
+          short2(tile_block_cols, tile_block_rows)
+      );
     } else if (tile_block_rows == BLOCK_M) {
       k_loop<true, false, K_ALIGNED>(
-          a_shared, b_shared, params->aligned_inner_iterations,
-          loader_a, loader_b, accumulator,
-          tile_block_rows, tile_block_cols, leftover_block_depth);
+          a_shared,
+          b_shared,
+          params->aligned_inner_iterations,
+          loader_a,
+          loader_b,
+          accumulator,
+          tile_block_rows,
+          tile_block_cols,
+          leftover_block_depth
+      );
       accumulator.store_result_safe(
           result,
           params->leading_dimension_d,
-          short2(tile_block_cols, tile_block_rows));
+          short2(tile_block_cols, tile_block_rows)
+      );
     } else {
       k_loop<false, false, K_ALIGNED>(
-          a_shared, b_shared, params->aligned_inner_iterations,
-          loader_a, loader_b, accumulator,
-          tile_block_rows, tile_block_cols, leftover_block_depth);
+          a_shared,
+          b_shared,
+          params->aligned_inner_iterations,
+          loader_a,
+          loader_b,
+          accumulator,
+          tile_block_rows,
+          tile_block_cols,
+          leftover_block_depth
+      );
       accumulator.store_result_safe(
           result,
           params->leading_dimension_d,
-          short2(tile_block_cols, tile_block_rows));
+          short2(tile_block_cols, tile_block_rows)
+      );
     }
   }
 };

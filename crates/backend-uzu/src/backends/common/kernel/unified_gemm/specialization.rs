@@ -1,9 +1,8 @@
+use super::UnifiedGemmSpecializationError;
 use crate::backends::common::gpu_types::unified_gemm::{
     GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
     GemmWeightPrologueKind,
 };
-
-use super::UnifiedGemmSpecializationError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UnifiedGemmSpecialization {
