@@ -29,7 +29,8 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         quote! { #name: #ty }
     });
 
-    let (encode_generics, args) = kernel
+    let mut have_any_buffer = false;
+    let (encode_generics, mut args) = kernel
         .arguments
         .iter()
         .map(|a| {
@@ -37,16 +38,13 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
             let (generic, mut ty) = match &a.ty {
                 KernelArgumentType::Buffer(access) => {
+                    have_any_buffer = true;
                     let buffer_lifetime = Lifetime::new(&format!("'{}", a.name.as_ref()), Span::call_site());
                     (
                         Some(quote! { #buffer_lifetime }),
                         match access {
-                            KernelBufferAccess::Read => {
-                                quote! { impl BufferArg<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::DenseBuffer> }
-                            },
-                            KernelBufferAccess::ReadWrite => {
-                                quote! { impl BufferArgMut<#buffer_lifetime, <Self::Backend as crate::backends::common::Backend>::DenseBuffer> }
-                            },
+                            KernelBufferAccess::Read => quote! { impl BufferArg<#buffer_lifetime, Buf> },
+                            KernelBufferAccess::ReadWrite => quote! { impl BufferArgMut<#buffer_lifetime, Buf> },
                         },
                     )
                 },
@@ -64,7 +62,24 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         })
         .collect::<(Vec<_>, Vec<_>)>();
 
-    let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+    let mut encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+    let mut where_generics: Vec<TokenStream> = Vec::new();
+
+    // 'encoder
+    encode_generics.push(quote! { 'encoder });
+    args.push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend> });
+
+    if have_any_buffer {
+        encode_generics.push(quote! { Buf });
+        where_generics.push(quote! { Buf: Buffer<Backend = Self::Backend> });
+    }
+
+    // where
+    let maybe_where_block = if where_generics.is_empty() {
+        quote! {}
+    } else {
+        quote! { where #(#where_generics),* }
+    };
 
     let kernel_trait = quote! {
         pub trait #trait_name: Sized {
@@ -72,7 +87,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
 
             fn new(context: &<Self::Backend as crate::backends::common::Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as crate::backends::common::Backend>::Error>;
 
-            fn encode<#(#encode_generics, )* 'encoder>(&self, #(#args ,)* encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend>);
+            fn encode<#(#encode_generics),*>(&self, #(#args),*)#maybe_where_block;
         }
     };
 
