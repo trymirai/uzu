@@ -17,6 +17,7 @@ mod rms_norm;
 mod rope;
 mod sampling;
 mod short_conv;
+mod softmax;
 mod ssm;
 mod tensor_add_bias;
 mod tensor_add_scale;

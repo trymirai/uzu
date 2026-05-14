@@ -11,7 +11,7 @@ const TOTAL_BLOCKS_COUNT: u32 = 32;
 
 #[kernel(AttentionTwoPass1)]
 #[variants(T, f32, f16, bf16)]
-#[variants(HEAD_DIM, 64, 128, 256)]
+#[variants(HEAD_DIM, 64, 128, 256, 512)]
 pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     queries: *const T,
     keys: *const T,
@@ -139,7 +139,7 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
 
 #[kernel(AttentionTwoPass2)]
 #[variants(T, f32, f16, bf16)]
-#[variants(HEAD_DIM, 64, 128, 256)]
+#[variants(HEAD_DIM, 64, 128, 256, 512)]
 pub fn attention_two_pass2<T: ArrayElement + Float, const HEAD_DIM: u32>(
     partials: *const f32,
     sums: *const f32,
