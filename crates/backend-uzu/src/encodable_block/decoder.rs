@@ -10,7 +10,9 @@ use crate::{
     DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::DecoderConfig,
-    encodable_block::{Embedding, LayerArguments, LayerExecutables, RMSNorm, Rope, embedding::EmbeddingError},
+    encodable_block::{
+        Embedding, LayerArguments, LayerExecutables, QkUnpack, RMSNorm, Rope, embedding::EmbeddingError,
+    },
     forward_pass::{cache_layers::CacheLayers, state::SharedBuffers},
     parameters::ParameterTree,
 };
@@ -122,6 +124,7 @@ impl<B: Backend> Decoder<B> {
         let tf = &decoder_config.transformer_config;
         let norm_data_type: DataType = tf.layer_configs[0].mixer_config.activation_precision().into();
         let rope = Rc::new(Rope::<B>::new(context, norm_data_type).expect("Failed to create Rope"));
+        let qk_unpack = Rc::new(QkUnpack::<B>::new(context, norm_data_type).expect("Failed to create QkUnpack"));
 
         let layers = tf
             .layer_configs
@@ -130,7 +133,7 @@ impl<B: Backend> Decoder<B> {
             .map(|(layer_index, layer_config)| {
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
 
-                LayerExecutables::new(context, tf, layer_config, layer_index, &layer_loader, &rope)
+                LayerExecutables::new(context, tf, layer_config, layer_index, &layer_loader, &rope, &qk_unpack)
             })
             .collect::<Vec<_>>();
 

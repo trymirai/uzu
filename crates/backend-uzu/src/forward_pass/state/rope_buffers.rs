@@ -31,18 +31,6 @@ impl<B: Backend> RopeBuffers<B> {
         }
     }
 
-    pub fn passthrough(
-        context: &B::Context,
-        data_type: DataType,
-    ) -> Self {
-        Self {
-            cosines: context.create_array_zeros(&[1, 1], data_type).into_allocation(),
-            sines: context.create_array_zeros(&[1, 1], data_type).into_allocation(),
-            max_sequence_length: 1,
-            dim: 0,
-        }
-    }
-
     pub fn update_data(
         &mut self,
         parameter_tree: &ParameterTree<B::Context>,

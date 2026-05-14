@@ -6,7 +6,6 @@ use crate::{
     array::ArrayContextExt,
     backends::common::{Allocation, AsBufferRangeMut, Backend, DenseBuffer},
     config::{DecoderConfig, RoPEConfig},
-    forward_pass::model_shape::ModelShape,
     parameters::ParameterTree,
     session::types::Error,
 };
@@ -14,14 +13,11 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LayerRopeKind {
     NoKernel,
-    // TODO: split rope kernel into QKV-unpack + rotate so this variant can be removed.
-    PassThrough,
     Indexed(usize),
 }
 
 pub struct SharedBuffers<B: Backend> {
     pub rope_buffers: Box<[RopeBuffers<B>]>,
-    passthrough_rope: RopeBuffers<B>,
     layer_rope_kinds: Box<[LayerRopeKind]>,
     pub attention_sinks: Box<[Option<Allocation<B>>]>,
 }
@@ -30,7 +26,6 @@ impl<B: Backend> SharedBuffers<B> {
     pub fn new(
         context: &B::Context,
         decoder_config: &DecoderConfig,
-        model_shape: &ModelShape,
     ) -> Self {
         let tf = &decoder_config.transformer_config;
 
@@ -43,7 +38,7 @@ impl<B: Backend> SharedBuffers<B> {
                     return LayerRopeKind::NoKernel;
                 }
                 let Some(rope_config) = &layer_config.rope_config else {
-                    return LayerRopeKind::PassThrough;
+                    return LayerRopeKind::NoKernel;
                 };
                 let index = configs.iter().position(|existing| existing == rope_config).unwrap_or_else(|| {
                     configs.push(rope_config.clone());
@@ -61,8 +56,6 @@ impl<B: Backend> SharedBuffers<B> {
             })
             .collect();
 
-        let passthrough_rope = RopeBuffers::passthrough(context, model_shape.activation_data_type());
-
         let attention_sinks = tf
             .layer_configs
             .iter()
@@ -75,7 +68,6 @@ impl<B: Backend> SharedBuffers<B> {
 
         Self {
             rope_buffers,
-            passthrough_rope,
             layer_rope_kinds,
             attention_sinks,
         }
@@ -144,7 +136,6 @@ impl<B: Backend> SharedBuffers<B> {
     ) -> Option<&RopeBuffers<B>> {
         match self.layer_rope_kinds[layer_index] {
             LayerRopeKind::NoKernel => None,
-            LayerRopeKind::PassThrough => Some(&self.passthrough_rope),
             LayerRopeKind::Indexed(index) => Some(&self.rope_buffers[index]),
         }
     }

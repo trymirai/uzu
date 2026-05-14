@@ -115,7 +115,7 @@ impl StructuredAudioCodecGraph {
             .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
 
         let max_sequence_length = decoder_config.transformer_config.context_length.max(required_sequence_length.max(1));
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config);
         {
             let transformer_tree = root_loader_view
                 .subtree(transformer_subtree_name)
