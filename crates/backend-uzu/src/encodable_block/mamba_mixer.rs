@@ -296,8 +296,6 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut out =
-            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.config.inner_dim()], self.data_type))?;
         self.ssd_prefill.encode(
             encoder,
             SSDPrefillArguments {
@@ -308,7 +306,6 @@ impl<B: Backend> MambaMixer<B> {
                 d: &self.skip_connection_weight,
                 z: gate,
                 state: &mut layer.ssm_state,
-                y: &mut out,
                 suffix_len: suffix_length,
                 group_size: (self.config.num_heads / self.config.num_groups) as u32,
                 state_size: self.config.state_dim as u32,
@@ -320,8 +317,7 @@ impl<B: Backend> MambaMixer<B> {
                 head_dim: self.config.head_dim,
             },
             self.prefill_mode,
-        );
-        Ok(out)
+        )
     }
 
     fn run_decode_ssm(

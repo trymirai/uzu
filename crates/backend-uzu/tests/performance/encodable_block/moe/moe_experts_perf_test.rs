@@ -13,7 +13,7 @@ use backend_uzu::{
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::common::helpers::{alloc_allocation, alloc_allocation_with_data, create_context};
+use crate::common::helpers::{alloc_allocation_with_data, create_context};
 
 fn build_offsets(
     e: usize,
@@ -44,8 +44,6 @@ fn run_decode_case<B: Backend>(
     warmup: usize,
     iters: usize,
 ) {
-    const K_TILE: usize = 64;
-
     let mut rng = StdRng::seed_from_u64(0xDEC0DE1234567890);
     let sum_k = t * k;
 
@@ -84,17 +82,6 @@ fn run_decode_case<B: Backend>(
     let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
     let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
-    let num_tiles_k = d_ff.div_ceil(K_TILE);
-
-    // Buffers for indirect dispatch
-    let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
-    let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
-    let max_tiles = e * sum_k * 16384; // Conservative upper bound
-    let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 1);
-    let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
-    let mut row_expert_map_buf = alloc_allocation::<B, u32>(&ctx, sum_k);
-
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         let output = experts_kernel
@@ -103,21 +90,14 @@ fn run_decode_case<B: Backend>(
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
-                    row_expert_map: &mut row_expert_map_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,
                     up_biases: &up_biases_buf,
                     down_biases: &down_biases_buf,
-                    tile_counts: &mut tile_counts_buf,
-                    tile_offsets: &mut tile_offsets_buf,
-                    tile_map: &mut tile_map_buf,
-                    total_tiles: &mut total_tiles_buf,
-                    dispatch_args: &mut dispatch_args_buf,
                     total_rows: sum_k,
                     d_model,
                     d_ff,
                     e,
-                    num_tiles_k: num_tiles_k as u32,
                     gating_code: 2,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
@@ -128,8 +108,9 @@ fn run_decode_case<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
     }
 
     let mut times = Vec::with_capacity(iters);
@@ -142,21 +123,14 @@ fn run_decode_case<B: Backend>(
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
-                    row_expert_map: &mut row_expert_map_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,
                     up_biases: &up_biases_buf,
                     down_biases: &down_biases_buf,
-                    tile_counts: &mut tile_counts_buf,
-                    tile_offsets: &mut tile_offsets_buf,
-                    tile_map: &mut tile_map_buf,
-                    total_tiles: &mut total_tiles_buf,
-                    dispatch_args: &mut dispatch_args_buf,
                     total_rows: sum_k,
                     d_model,
                     d_ff,
                     e,
-                    num_tiles_k: num_tiles_k as u32,
                     gating_code: 2,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
@@ -167,8 +141,9 @@ fn run_decode_case<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -195,8 +170,6 @@ fn run_two_pass_prefill_case<B: Backend>(
     warmup: usize,
     iters: usize,
 ) {
-    const K_TILE: usize = 64;
-
     let mut rng = StdRng::seed_from_u64(0xDEC0DE1234567890);
     let sum_k = t * k;
 
@@ -233,36 +206,19 @@ fn run_two_pass_prefill_case<B: Backend>(
     let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
     let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
-    let num_tiles_k = d_ff.div_ceil(K_TILE);
-
-    let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
-    let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
-    let max_tiles = e * sum_k * 16384;
-    let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 1);
-    let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
-    let mut row_expert_map_buf = alloc_allocation::<B, u32>(&ctx, sum_k);
-
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
             expert_offsets: &offsets_buf,
-            row_expert_map: &mut row_expert_map_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            tile_counts: &mut tile_counts_buf,
-            tile_offsets: &mut tile_offsets_buf,
-            tile_map: &mut tile_map_buf,
-            total_tiles: &mut total_tiles_buf,
-            dispatch_args: &mut dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
             e,
-            num_tiles_k: num_tiles_k as u32,
             gating_code: 2,
             gate_clip_min: f32::NEG_INFINITY,
             gate_clip_max: f32::INFINITY,
@@ -272,8 +228,9 @@ fn run_two_pass_prefill_case<B: Backend>(
             data_type: DataType::BF16,
         };
         let output = experts_kernel.encode(&mut encoder, args).expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
     }
 
     let mut times = Vec::with_capacity(iters);
@@ -283,21 +240,14 @@ fn run_two_pass_prefill_case<B: Backend>(
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
             expert_offsets: &offsets_buf,
-            row_expert_map: &mut row_expert_map_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            tile_counts: &mut tile_counts_buf,
-            tile_offsets: &mut tile_offsets_buf,
-            tile_map: &mut tile_map_buf,
-            total_tiles: &mut total_tiles_buf,
-            dispatch_args: &mut dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
             e,
-            num_tiles_k: num_tiles_k as u32,
             gating_code: 2,
             gate_clip_min: f32::NEG_INFINITY,
             gate_clip_max: f32::INFINITY,
@@ -307,8 +257,9 @@ fn run_two_pass_prefill_case<B: Backend>(
             data_type: DataType::BF16,
         };
         let output = experts_kernel.encode(&mut encoder, args).expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -389,8 +340,9 @@ fn run_fused_single_token_case<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
     }
 
     let mut times = Vec::with_capacity(iters);
@@ -421,8 +373,9 @@ fn run_fused_single_token_case<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -448,8 +401,6 @@ fn run_indirect_decode_timed<B: Backend>(
     warmup: usize,
     iters: usize,
 ) -> f64 {
-    const K_TILE: usize = 64;
-
     let mut rng = StdRng::seed_from_u64(0xDEC0DE1234567890);
     let sum_k = t * k;
 
@@ -484,15 +435,6 @@ fn run_indirect_decode_timed<B: Backend>(
     let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
     let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
 
-    let num_tiles_k = d_ff.div_ceil(K_TILE);
-    let mut tile_counts_buf = alloc_allocation::<B, u32>(ctx, e);
-    let mut tile_offsets_buf = alloc_allocation::<B, u32>(ctx, e + 1);
-    let max_tiles = e * sum_k * 16384;
-    let mut tile_map_buf = alloc_allocation::<B, u32>(ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_allocation::<B, u32>(ctx, 1);
-    let mut dispatch_args_buf = alloc_allocation::<B, u32>(ctx, 3);
-    let mut row_expert_map_buf = alloc_allocation::<B, u32>(ctx, sum_k);
-
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
         let output = experts_kernel
@@ -501,21 +443,14 @@ fn run_indirect_decode_timed<B: Backend>(
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
-                    row_expert_map: &mut row_expert_map_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,
                     up_biases: &up_biases_buf,
                     down_biases: &down_biases_buf,
-                    tile_counts: &mut tile_counts_buf,
-                    tile_offsets: &mut tile_offsets_buf,
-                    tile_map: &mut tile_map_buf,
-                    total_tiles: &mut total_tiles_buf,
-                    dispatch_args: &mut dispatch_args_buf,
                     total_rows: sum_k,
                     d_model,
                     d_ff,
                     e,
-                    num_tiles_k: num_tiles_k as u32,
                     gating_code: 2,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
@@ -526,8 +461,9 @@ fn run_indirect_decode_timed<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
     }
 
     let mut times = Vec::with_capacity(iters);
@@ -540,21 +476,14 @@ fn run_indirect_decode_timed<B: Backend>(
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
-                    row_expert_map: &mut row_expert_map_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,
                     up_biases: &up_biases_buf,
                     down_biases: &down_biases_buf,
-                    tile_counts: &mut tile_counts_buf,
-                    tile_offsets: &mut tile_offsets_buf,
-                    tile_map: &mut tile_map_buf,
-                    total_tiles: &mut total_tiles_buf,
-                    dispatch_args: &mut dispatch_args_buf,
                     total_rows: sum_k,
                     d_model,
                     d_ff,
                     e,
-                    num_tiles_k: num_tiles_k as u32,
                     gating_code: 2,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
@@ -565,8 +494,9 @@ fn run_indirect_decode_timed<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -635,8 +565,9 @@ fn run_fused_decode_timed<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
     }
 
     let mut times = Vec::with_capacity(iters);
@@ -667,8 +598,9 @@ fn run_fused_decode_timed<B: Backend>(
                 },
             )
             .expect("failed to encode MoE experts");
-        encoder.end_encoding().submit().wait_until_completed().unwrap();
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
         drop(output);
+        drop(completed);
         times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
 
