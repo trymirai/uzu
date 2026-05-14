@@ -363,19 +363,25 @@ impl CpuCompiler {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let (encode_generics, encode_args_defs): (Vec<_>, Vec<_>) = kernel_arguments
+        let mut have_any_buffer = false;
+        let (encode_generics, mut encode_args_defs): (Vec<_>, Vec<_>) = kernel_arguments
             .iter()
             .map(|argument| {
                 let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
 
                 let (generic, mut ty) = match &argument.ty {
                     KernelArgumentType::Buffer(access) => {
+                        have_any_buffer = true;
                         let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
                         (
                             Some(quote! { #buffer_lifetime }),
                             match access {
-                                KernelBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, std::cell::UnsafeCell<std::pin::Pin<Box<[u8]>>>> },
-                                KernelBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, std::cell::UnsafeCell<std::pin::Pin<Box<[u8]>>>> },
+                                KernelBufferAccess::Read => {
+                                    quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, Buf> }
+                                },
+                                KernelBufferAccess::ReadWrite => {
+                                    quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, Buf> }
+                                },
                             },
                         )
                     },
@@ -393,7 +399,8 @@ impl CpuCompiler {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+        let mut encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+        let mut where_generics: Vec<TokenStream> = Vec::new();
 
         let argument_copies = function_arguments
             .iter()
@@ -403,10 +410,10 @@ impl CpuCompiler {
                     FunctionArgumentType::Buffer(access) => {
                         let (buffer_ptr, buffer_ptr_wrapper) = match access {
                             KernelBufferAccess::Read => {
-                                (quote! { (&*__dsl_buffer.get()).as_ptr() }, quote! { crate::utils::pointers::SendPtr })
+                                (quote! { (&*crate::backends::cpu::Cpu::buffer_downcast(__dsl_buffer).get()).as_ptr() }, quote! { crate::utils::pointers::SendPtr })
                             },
                             KernelBufferAccess::ReadWrite => (
-                                quote! { (&mut *__dsl_buffer.get()).as_mut_ptr() },
+                                quote! { (&mut *crate::backends::cpu::Cpu::buffer_downcast(__dsl_buffer).get()).as_mut_ptr() },
                                 quote! { crate::utils::pointers::SendPtrMut },
                             ),
                         };
@@ -568,6 +575,22 @@ impl CpuCompiler {
             make_encode(quote! {})
         };
 
+        // 'encoder
+        encode_generics.push(quote! { 'encoder });
+        encode_args_defs
+            .push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu> });
+
+        if have_any_buffer {
+            encode_generics.push(quote! { Buf });
+            where_generics.push(quote! { Buf: crate::backends::common::Buffer<Backend = crate::backends::cpu::Cpu> });
+        }
+
+        let where_block = if where_generics.is_empty() {
+            quote! {}
+        } else {
+            quote! { where #(#where_generics),* }
+        };
+
         let tokens = quote! {
             #[allow(non_snake_case)]
             pub struct #struct_ident {
@@ -583,7 +606,7 @@ impl CpuCompiler {
                     })
                 }
 
-                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu>) {
+                fn encode<#(#encode_generics),*>(&self, #(#encode_args_defs),*)#where_block {
                     #(#argument_copies)*
                     #encode_body
                 }
