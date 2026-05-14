@@ -6,13 +6,13 @@ use metal::{
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
-use super::Metal;
+use super::{BufferDowncastExt, Metal};
 use crate::backends::{
     common::{
         AccessFlags, Backend, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
         CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
-    metal::{buffer::metal_buffer, error::MetalError},
+    metal::error::MetalError,
 };
 
 pub struct MetalCommandBuffer;
@@ -130,12 +130,10 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         let dst_range = dst.range();
         assert_eq!(src_range.len(), dst_range.len());
 
-        let src_mtl_buffer = metal_buffer(src.buffer());
-        let dst_mtl_buffer = metal_buffer(dst.buffer());
         self.ensure_blit().copy_buffer_to_buffer(
-            src_mtl_buffer,
+            src.buffer().downcast(),
             src_range.start,
-            dst_mtl_buffer,
+            dst.buffer().downcast(),
             dst_range.start,
             src_range.len(),
         );

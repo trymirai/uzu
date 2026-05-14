@@ -14,7 +14,7 @@ use crate::{
             AccessFlags, Backend, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
             CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
-        cpu::{Cpu, buffer::cpu_buffer, error::CpuError},
+        cpu::{BufferDowncastExt, Cpu, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -85,10 +85,12 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         let dst_range = dst.range();
         assert_eq!(src_range.len(), dst_range.len());
 
-        let src_buffer = cpu_buffer(src.buffer());
-        let dst_buffer = cpu_buffer(dst.buffer());
+        let src_buffer = src.buffer().downcast();
         let src_ptr = SendPtr(unsafe { (&*src_buffer.get()).as_ptr().add(src_range.start) });
+
+        let dst_buffer = dst.buffer().downcast();
         let dst_ptr = SendPtrMut(unsafe { (&mut *dst_buffer.get()).as_mut_ptr().add(dst_range.start) });
+
         self.push_command(move || unsafe {
             std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), src_range.len());
         });
