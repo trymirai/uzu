@@ -314,7 +314,7 @@ fn emit_buffer_set(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
     let buffer_index = buffer.buffer_index;
     let unconditional_set = quote! {
-        compute_encoder.set_buffer(Some(crate::backends::metal::Metal::buffer_downcast(#name.0)), #name.1, #buffer_index);
+        compute_encoder.set_buffer(Some(crate::backends::metal::BufferDowncastExt::downcast(#name.0)), #name.1, #buffer_index);
     };
     match &buffer.condition {
         Some(condition) => {

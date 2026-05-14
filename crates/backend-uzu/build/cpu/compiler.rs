@@ -411,11 +411,11 @@ impl CpuCompiler {
 					FunctionArgumentType::Buffer(access) => {
 						let (buffer_ptr, buffer_ptr_wrapper) = match access {
 							KernelBufferAccess::Read => (
-								quote! { (&*crate::backends::cpu::CpuBufferDowncastExt::downcast(__dsl_buffer).get()).as_ptr() },
+								quote! { (&*crate::backends::cpu::BufferDowncastExt::downcast(__dsl_buffer).get()).as_ptr() },
 								quote! { crate::utils::pointers::SendPtr }
 							),
 							KernelBufferAccess::ReadWrite => (
-								quote! { (&mut *crate::backends::cpu::CpuBufferDowncastExt::downcast(__dsl_buffer).get()).as_mut_ptr() },
+								quote! { (&mut *crate::backends::cpu::BufferDowncastExt::downcast(__dsl_buffer).get()).as_mut_ptr() },
 								quote! { crate::utils::pointers::SendPtrMut },
 							),
 						};
