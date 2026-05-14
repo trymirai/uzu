@@ -23,7 +23,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use crate::encodable_block::mlp::moe::tests::{
     common::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
+        helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
     },
     cpu_tile_counts, cpu_tile_scan,
 };
@@ -82,7 +82,6 @@ impl MoeTestData {
 struct ScatterResult {
     x_perm: Vec<bf16>,
     offsets: Vec<u32>,
-    row_expert_map: Vec<u32>,
     perm_idx: Vec<usize>, // original row -> bucketed row (for gather)
 }
 
@@ -118,22 +117,19 @@ fn scatter_by_expert(
         expert_cursors[eid] += 1;
     }
 
-    // Build x_perm and row_expert_map in bucketed order
+    // Build x_perm in bucketed order
     let mut x_perm = vec![bf16::from_f32(0.0); sum_k * d_model];
-    let mut row_expert_map = vec![0u32; sum_k];
     for bucket_row in 0..sum_k {
         let orig_row = inv_perm[bucket_row];
         let tok = orig_row / k;
         for d in 0..d_model {
             x_perm[bucket_row * d_model + d] = x[tok * d_model + d];
         }
-        row_expert_map[bucket_row] = topk_ids[orig_row] as u32;
     }
 
     ScatterResult {
         x_perm,
         offsets,
-        row_expert_map,
         perm_idx,
     }
 }
@@ -330,8 +326,6 @@ fn test_two_pass_decode_correctness() {
             }
         }
 
-        // Build offsets and row_expert_map based on topk_ids
-        // First count rows per expert
         let mut expert_counts = vec![0usize; e];
         for &eid in &topk_ids {
             expert_counts[eid as usize] += 1;
@@ -339,14 +333,6 @@ fn test_two_pass_decode_correctness() {
         let mut offsets = vec![0u32; e + 1];
         for i in 0..e {
             offsets[i + 1] = offsets[i] + expert_counts[i] as u32;
-        }
-
-        // Build row_expert_map (maps permuted row to expert)
-        let mut row_expert_map = vec![0u32; sum_k];
-        let mut expert_row_idx = vec![0usize; e];
-        for (row, &eid) in topk_ids.iter().enumerate() {
-            row_expert_map[row] = eid as u32;
-            expert_row_idx[eid as usize] += 1;
         }
 
         // Generate weights
@@ -380,58 +366,35 @@ fn test_two_pass_decode_correctness() {
         // Prepare GPU buffers
         let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x_perm);
         let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
-        let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &row_expert_map);
         let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
         let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
-        // Tile infrastructure
-        let h_blocks_decode = (d_ff + 3) / 4;
-        let max_total_tiles = sum_k * h_blocks_decode;
-
-        let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
-        let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
-        let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
-        let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_total_tiles * 3);
-        let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
-
-        // Execute 2-pass decode kernel
-        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx).expect("MoeExpertsTwoPassDecodeKernel::new");
+        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code)
+            .expect("MoeExpertsTwoPassDecodeKernel::new");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-
-        const K_TILE: usize = 64;
-        let num_tiles_k = ((d_ff + K_TILE - 1) / K_TILE) as u32;
 
         let y_partial_buf = experts_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
-                    row_expert_map: &mut row_expert_map_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,
                     up_biases: &up_biases_buf,
                     down_biases: &down_biases_buf,
-                    tile_counts: &mut tile_counts_buf,
-                    tile_offsets: &mut tile_offsets_buf,
-                    tile_map: &mut tile_map_buf,
-                    total_tiles: &mut total_tiles_buf,
-                    dispatch_args: &mut dispatch_args_buf,
                     total_rows: sum_k,
                     d_model,
                     d_ff,
-                    e,
-                    num_tiles_k,
-                    gating_code,
+                    num_routed_experts: e,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
                     silu_alpha,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
 
@@ -527,50 +490,33 @@ fn test_two_pass_decode_multi_token() {
         // GPU buffers
         let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
         let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
-        let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
         let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
         let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
-        // Tile infrastructure
-        let max_total_tiles = sum_k * ((d_ff + 3) / 4);
-        let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
-        let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
-        let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
-        let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_total_tiles * 3);
-        let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
 
-        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx).expect("kernel");
+        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let y_partial_buf = experts_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsTwoPassArguments {
                     x_perm: &x_perm_buf,
                     expert_offsets: &offsets_buf,
-                    row_expert_map: &mut row_expert_map_buf,
                     w13_all: &w13_buf,
                     w2_all: &w2_buf,
                     up_biases: &up_biases_buf,
                     down_biases: &down_biases_buf,
-                    tile_counts: &mut tile_counts_buf,
-                    tile_offsets: &mut tile_offsets_buf,
-                    tile_map: &mut tile_map_buf,
-                    total_tiles: &mut total_tiles_buf,
-                    dispatch_args: &mut dispatch_args_buf,
                     total_rows: sum_k,
                     d_model,
                     d_ff,
-                    e,
-                    num_tiles_k: ((d_ff + 63) / 64) as u32,
-                    gating_code,
+                    num_routed_experts: e,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
                     silu_alpha,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -628,48 +574,32 @@ fn test_two_pass_prefill_correctness() {
         // GPU buffers
         let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &scatter.x_perm);
         let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.offsets);
-        let mut row_expert_map_buf = alloc_allocation_with_data::<B, u32>(&ctx, &scatter.row_expert_map);
         let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w13);
         let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.w2);
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &data.down_biases);
-        // Tile infrastructure
-        let max_total_tiles = sum_k * ((d_ff + 3) / 4);
-        let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
-        let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
-        let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
-        let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_total_tiles * 3);
-        let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
 
-        let experts_kernel = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx).expect("kernel");
+        let experts_kernel =
+            MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let args = MoeExpertsTwoPassArguments {
             x_perm: &x_perm_buf,
             expert_offsets: &offsets_buf,
-            row_expert_map: &mut row_expert_map_buf,
             w13_all: &w13_buf,
             w2_all: &w2_buf,
             up_biases: &up_biases_buf,
             down_biases: &down_biases_buf,
-            tile_counts: &mut tile_counts_buf,
-            tile_offsets: &mut tile_offsets_buf,
-            tile_map: &mut tile_map_buf,
-            total_tiles: &mut total_tiles_buf,
-            dispatch_args: &mut dispatch_args_buf,
             total_rows: sum_k,
             d_model,
             d_ff,
-            e,
-            num_tiles_k: ((d_ff + 63) / 64) as u32,
-            gating_code,
+            num_routed_experts: e,
             gate_clip_min: f32::NEG_INFINITY,
             gate_clip_max: f32::INFINITY,
             up_clip_min: f32::NEG_INFINITY,
             up_clip_max: f32::INFINITY,
             silu_alpha,
-            data_type: DataType::BF16,
         };
-        let y_partial_buf = experts_kernel.encode(&mut encoder, args).expect("failed to encode MoE experts");
+        let y_partial_buf = experts_kernel.encode(args, &mut encoder).expect("failed to encode MoE experts");
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
         let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sum_k * d_model);
@@ -768,12 +698,12 @@ fn test_fused_single_token_decode() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
         // Run fused decode kernel
-        let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx).expect("MoeExpertsSingleDecodeKernel::new");
+        let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx, DataType::BF16, gating_code)
+            .expect("MoeExpertsSingleDecodeKernel::new");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
 
         let y_buf = fused_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsSingleDecodeArguments {
                     x: &x_buf,
                     topk_ids: &topk_ids_buf,
@@ -785,14 +715,13 @@ fn test_fused_single_token_decode() {
                     d_model,
                     d_ff,
                     k,
-                    gating_code,
                     silu_alpha: 1.0, // Standard SiLU for testing
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
 
@@ -893,11 +822,11 @@ fn test_fused_single_token_k4() {
         let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2_all);
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
-        let fused_kernel = MoeExpertsSingleDecodeKernels::<B>::new(&ctx).expect("fused kernel");
+        let fused_kernel =
+            MoeExpertsSingleDecodeKernels::<B>::new(&ctx, DataType::BF16, gating_code).expect("fused kernel");
         let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
         let y_buf = fused_kernel
             .encode(
-                &mut encoder,
                 MoeExpertsSingleDecodeArguments {
                     x: &x_buf,
                     topk_ids: &topk_ids_buf,
@@ -909,14 +838,13 @@ fn test_fused_single_token_k4() {
                     d_model,
                     d_ff,
                     k,
-                    gating_code,
                     silu_alpha,
                     gate_clip_min: f32::NEG_INFINITY,
                     gate_clip_max: f32::INFINITY,
                     up_clip_min: f32::NEG_INFINITY,
                     up_clip_max: f32::INFINITY,
-                    data_type: DataType::BF16,
                 },
+                &mut encoder,
             )
             .expect("failed to encode MoE experts");
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();

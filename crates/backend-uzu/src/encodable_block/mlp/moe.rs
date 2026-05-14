@@ -13,7 +13,7 @@ use crate::{
             MoeScatterBucketsMapKernel,
             moe::{
                 MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
-                MoeGatherArguments, MoeGatherKernels,
+                MoeGatherKernel,
             },
         },
     },
@@ -22,34 +22,32 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
-struct RouterBlock<B: Backend> {
-    weights: Allocation<B>,
-    biases: Allocation<B>,
-}
-
-struct SharedMoeWeights<B: Backend> {
-    pub w13: Allocation<B>,
-    pub w2: Allocation<B>,
-    pub up_biases: Allocation<B>,
-    pub down_biases: Allocation<B>,
-}
-
 pub struct MoeBlock<B: Backend> {
-    router: RouterBlock<B>,
-    router_renorm: bool,
     router_topk_kernel: <B::Kernels as Kernels>::MoeRouterTopKKernel,
     counts_offsets_kernel: <B::Kernels as Kernels>::MoeCountsOffsetsFusedKernel,
     scatter_bases_kernel: <B::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel,
     scatter_map_kernel: <B::Kernels as Kernels>::MoeScatterBucketsMapKernel,
-    gather_kernels: MoeGatherKernels<B>,
-    experts_two_pass_decode_kernel: MoeExpertsTwoPassDecodeBlock<B>,
-    experts_two_pass_prefill_kernel: MoeExpertsTwoPassPrefillBlock<B>,
+    gather_kernel: MoeGatherKernel<B>,
+    experts_two_pass_decode_block: MoeExpertsTwoPassDecodeBlock<B>,
+    experts_two_pass_prefill_block: MoeExpertsTwoPassPrefillBlock<B>,
     finalize_kernel: <B::Kernels as Kernels>::MoeFinalizeKernel,
-    moe_config: MixtureOfExpertsConfig,
+    router_weights: Allocation<B>,
+    router_biases: Allocation<B>,
+    router_renorm: bool,
+    w13: Allocation<B>,
+    w2: Allocation<B>,
+    up_biases: Allocation<B>,
+    down_biases: Allocation<B>,
     model_dim: usize,
     hidden_dim: usize,
+    num_routed_experts: usize,
+    num_active_experts: usize,
+    gate_clip_min: f32,
+    gate_clip_max: f32,
+    up_clip_min: f32,
+    up_clip_max: f32,
+    silu_alpha: f32,
     data_type: DataType,
-    shared_weights: SharedMoeWeights<B>,
 }
 
 #[derive(Debug, Error)]
@@ -58,7 +56,11 @@ pub enum MoeBlockError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
-    #[error("MoE num_active_routed_experts must be greater than 0")]
+    #[error("MoE requires model_dim % 4 == 0")]
+    InvalidModelDim,
+    #[error("MoE num_routed_experts must be <= 512")]
+    InvalidRoutedExpertCount,
+    #[error("MoE num_active_routed_experts must be > 0 and <= 128")]
     InvalidActiveExpertCount,
     #[error("MoE shared experts are not supported")]
     UnsupportedSharedExperts,
@@ -73,8 +75,14 @@ impl<B: Backend> MoeBlock<B> {
         model_dim: usize,
         parameter_tree: &ParameterTree<B::Context>,
     ) -> Result<Self, MoeBlockError<B>> {
-        if moe_config.num_active_routed_experts == 0 {
+        if model_dim % 4 != 0 {
+            return Err(MoeBlockError::InvalidModelDim);
+        }
+        if moe_config.num_active_routed_experts == 0 || moe_config.num_active_routed_experts > 128 {
             return Err(MoeBlockError::InvalidActiveExpertCount);
+        }
+        if moe_config.num_routed_experts > 512 {
+            return Err(MoeBlockError::InvalidRoutedExpertCount);
         }
         if moe_config.num_shared_experts != 0 {
             return Err(MoeBlockError::UnsupportedSharedExperts);
@@ -82,23 +90,28 @@ impl<B: Backend> MoeBlock<B> {
         if moe_config.gate_config.is_some() {
             return Err(MoeBlockError::UnsupportedExpertGate);
         }
+
         let data_type: DataType = moe_config.expert_config.linear_config.activation_precision().into();
+        let gating_code = match moe_config.expert_config.activation.act_type() {
+            ActivationType::GELU => 3,
+            ActivationType::SILU {
+                ..
+            } => 2,
+            _ => {
+                panic!("{:?} is not supported for MoE kernels", moe_config.expert_config.activation.act_type())
+            },
+        };
 
         let router_data_type: DataType = moe_config.router_config.activation_precision().into();
 
         let router_renorm = matches!(moe_config.routing_function, RoutingFunctionConfig::SoftmaxRouting);
 
         let router_tree = parameter_tree.subtree("router")?;
-        let LinearConfig::FullPrecision {
-            ..
-        } = &moe_config.router_config
-        else {
+        if !matches!(moe_config.router_config, LinearConfig::FullPrecision { .. }) {
             unimplemented!("Only FullPrecision MoE router is supported; got {:?}", moe_config.router_config);
-        };
-        let router = RouterBlock {
-            weights: router_tree.leaf_allocation("weights")?,
-            biases: router_tree.leaf_allocation("biases")?,
-        };
+        }
+        let router_weights = router_tree.leaf_allocation("weights")?;
+        let router_biases = router_tree.leaf_allocation("biases")?;
 
         let router_topk_kernel = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(context, router_data_type)
             .map_err(MoeBlockError::BackendError)?;
@@ -109,53 +122,53 @@ impl<B: Backend> MoeBlock<B> {
         let scatter_map_kernel = <B::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(context, data_type)
             .map_err(MoeBlockError::BackendError)?;
 
-        let gather_kernels = MoeGatherKernels::new(context).map_err(MoeBlockError::BackendError)?;
-        let experts_two_pass_decode_kernel =
-            MoeExpertsTwoPassDecodeBlock::new(context).map_err(MoeBlockError::BackendError)?;
-        let experts_two_pass_prefill_kernel =
-            MoeExpertsTwoPassPrefillBlock::new(context).map_err(MoeBlockError::BackendError)?;
+        let gather_kernels = MoeGatherKernel::new(context, data_type).map_err(MoeBlockError::BackendError)?;
+        let experts_two_pass_decode_block =
+            MoeExpertsTwoPassDecodeBlock::new(context, data_type, gating_code).map_err(MoeBlockError::BackendError)?;
+        let experts_two_pass_prefill_block =
+            MoeExpertsTwoPassPrefillBlock::new(context, data_type, gating_code).map_err(MoeBlockError::BackendError)?;
         let finalize_kernel =
             <B::Kernels as Kernels>::MoeFinalizeKernel::new(context, data_type).map_err(MoeBlockError::BackendError)?;
 
         let experts_tree = parameter_tree.subtree("experts")?;
         let up_tree = experts_tree.subtree("up_projection")?;
         let down_tree = experts_tree.subtree("down_projection")?;
-        let shared_weights = SharedMoeWeights {
-            w13: up_tree.leaf_allocation("weights")?,
-            w2: down_tree.leaf_allocation("weights")?,
-            up_biases: up_tree.leaf_allocation("biases")?,
-            down_biases: down_tree.leaf_allocation("biases")?,
-        };
+
+        let w13 = up_tree.leaf_allocation("weights")?;
+        let w2 = down_tree.leaf_allocation("weights")?;
+        let up_biases = up_tree.leaf_allocation("biases")?;
+        let down_biases = down_tree.leaf_allocation("biases")?;
+
+        let (gate_lo, gate_hi) = moe_config.expert_config.gate_clipping.unwrap_or_default();
+        let (up_lo, up_hi) = moe_config.expert_config.up_clipping.unwrap_or_default();
 
         Ok(Self {
-            router,
-            router_renorm,
             router_topk_kernel,
             counts_offsets_kernel,
             scatter_bases_kernel,
             scatter_map_kernel,
-            gather_kernels,
-            experts_two_pass_decode_kernel,
-            experts_two_pass_prefill_kernel,
+            gather_kernel: gather_kernels,
+            experts_two_pass_decode_block,
+            experts_two_pass_prefill_block,
             finalize_kernel,
-            moe_config: moe_config.clone(),
+            router_weights,
+            router_biases,
+            router_renorm,
+            w13,
+            w2,
+            up_biases,
+            down_biases,
             model_dim,
             hidden_dim: moe_config.expert_hidden_dim,
+            num_routed_experts: moe_config.num_routed_experts,
+            num_active_experts: moe_config.num_active_routed_experts,
+            gate_clip_min: gate_lo.unwrap_or(f32::NEG_INFINITY),
+            gate_clip_max: gate_hi.unwrap_or(f32::INFINITY),
+            up_clip_min: up_lo.unwrap_or(f32::NEG_INFINITY),
+            up_clip_max: up_hi.unwrap_or(f32::INFINITY),
+            silu_alpha: moe_config.expert_config.activation.alpha(),
             data_type,
-            shared_weights,
         })
-    }
-
-    fn gating_code_from_activation(activation: &ActivationType) -> u32 {
-        match activation {
-            ActivationType::GELU => 3,
-            ActivationType::SILU {
-                ..
-            } => 2,
-            _ => {
-                panic!("{:?} is not supported for MoE kernels", activation)
-            },
-        }
     }
 }
 
@@ -166,53 +179,32 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let suffix_length = batch_dim;
-        if suffix_length == 0 {
-            return Ok(input);
-        }
+        let total_rows = batch_dim * self.num_active_experts;
+        let num_blocks = batch_dim.div_ceil(256);
+        let num_tiles = self.num_routed_experts.div_ceil(512);
 
-        let e = self.moe_config.num_routed_experts;
-        let k = self.moe_config.num_active_routed_experts;
-        let k_tile = 128;
-        let total_rows = suffix_length * k;
-        let num_blocks = suffix_length.div_ceil(256).max(1);
-        let num_tiles = e.div_ceil(512).max(1);
+        let mut topk_ids =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.num_active_experts], DataType::I32))?;
+        let mut topk_probs =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.num_active_experts], self.data_type))?;
 
-        // Use fused Router+TopK kernel for non-quantized routers
-        if self.model_dim % 4 != 0 {
-            panic!("MoE fused router+topk failed: {} % 4 != 0", self.model_dim);
-        }
-        if e > 512 {
-            panic!("MoE fused router+topk failed: {e} > 512");
-        }
-        if k > 128 {
-            panic!("MoE fused router+bottomk failed: {k} > 128");
-        }
+        encoder.encode_fill(&mut topk_ids, 0xFF);
 
-        let mut topk_ids = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], DataType::I32))?;
-        let mut topk_probs = encoder.allocate_scratch(size_for_shape(&[suffix_length, k], self.data_type))?;
+        self.router_topk_kernel.encode(
+            &input,
+            &self.router_weights,
+            &self.router_biases,
+            &mut topk_ids,
+            &mut topk_probs,
+            batch_dim as u32,
+            self.model_dim as u32,
+            self.num_routed_experts as u32,
+            self.num_active_experts as u32,
+            self.router_renorm,
+            encoder,
+        );
 
-        if suffix_length > 0 && k > 0 {
-            encoder.encode_fill(&mut topk_ids, 0xFF);
-        }
-
-        if suffix_length > 0 && e > 0 && k > 0 {
-            self.router_topk_kernel.encode(
-                &input,
-                &self.router.weights,
-                &self.router.biases,
-                &mut topk_ids,
-                &mut topk_probs,
-                suffix_length as u32,
-                self.model_dim as u32,
-                e as u32,
-                k as u32,
-                self.router_renorm,
-                encoder,
-            );
-        }
-
-        let mut offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
+        let mut offsets = encoder.allocate_scratch(size_for_shape(&[self.num_routed_experts + 1], DataType::U32))?;
         let mut sumk = encoder.allocate_scratch(size_for_shape(&[1], DataType::U32))?;
         let scatter_entries = num_blocks * num_tiles * 512;
         let mut partials = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
@@ -221,9 +213,9 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             &mut offsets,
             &mut sumk,
             &mut partials,
-            suffix_length as u32,
-            e as u32,
-            k as u32,
+            batch_dim as u32,
+            self.num_routed_experts as u32,
+            self.num_active_experts as u32,
             encoder,
         );
 
@@ -233,15 +225,13 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         let mut bucketed_probs = encoder.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
         let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
 
-        if suffix_length > 0 && k > 0 {
-            encoder.encode_fill(&mut tok2row, 0xFF);
-        }
+        encoder.encode_fill(&mut tok2row, 0xFF);
 
         self.scatter_bases_kernel.encode(
             &partials,
             &mut block_bases,
             &mut block_alloc,
-            e as u32,
+            self.num_routed_experts as u32,
             num_blocks as u32,
             num_tiles as u32,
             0u32,
@@ -255,125 +245,58 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             &block_alloc,
             &mut bucketed_ids,
             &mut bucketed_probs,
-            suffix_length as u32,
-            e as u32,
-            k as u32,
+            batch_dim as u32,
+            self.num_routed_experts as u32,
+            self.num_active_experts as u32,
             num_blocks as u32,
             num_tiles as u32,
             &mut tok2row,
             encoder,
         );
 
-        let mut x_perm = encoder.allocate_scratch(size_for_shape(&[total_rows, self.model_dim], self.data_type))?;
-        if suffix_length > 0 && k > 0 {
-            encoder.encode_fill(&mut x_perm, 0);
-        }
-
-        self.gather_kernels.encode(
+        let x_perm = self.gather_kernel.encode(
+            &input,
+            &bucketed_ids,
+            &sumk,
+            batch_dim,
+            self.num_active_experts,
+            self.model_dim,
             encoder,
-            self.data_type,
-            MoeGatherArguments {
-                x: &input,
-                bucketed_ids: &bucketed_ids,
-                x_perm: &mut x_perm,
-                sumk: &sumk,
-                t: suffix_length,
-                k,
-                d_model: self.model_dim,
-            },
-        );
+        )?;
 
-        let gating_code = Self::gating_code_from_activation(&self.moe_config.expert_config.activation.act_type());
-
-        let (gate_lo, gate_hi) = self.moe_config.expert_config.gate_clipping.unwrap_or_default();
-        let (up_lo, up_hi) = self.moe_config.expert_config.up_clipping.unwrap_or_default();
-        let gate_clip_min = gate_lo.unwrap_or(f32::NEG_INFINITY);
-        let gate_clip_max = gate_hi.unwrap_or(f32::INFINITY);
-        let up_clip_min = up_lo.unwrap_or(f32::NEG_INFINITY);
-        let up_clip_max = up_hi.unwrap_or(f32::INFINITY);
-        let silu_alpha = self.moe_config.expert_config.activation.alpha();
-
-        let mut row_expert_map = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::U32))?;
-        let mut tile_counts = encoder.allocate_scratch(size_for_shape(&[e], DataType::U32))?;
-        let mut tile_offsets = encoder.allocate_scratch(size_for_shape(&[e + 1], DataType::U32))?;
-        let h_blocks = self.hidden_dim.div_ceil(4);
-        let mut tile_map =
-            encoder.allocate_scratch(size_for_shape(&[total_rows * h_blocks.max(1) * 3], DataType::U32))?;
-        let mut total_tiles = encoder.allocate_scratch(size_for_shape(&[8], DataType::U32))?;
-        let mut dispatch_args = encoder.allocate_scratch(size_for_shape(&[3], DataType::U32))?;
-
-        let y_partial = if suffix_length == 1 {
-            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
-
-            self.experts_two_pass_decode_kernel.encode(
-                encoder,
-                MoeExpertsTwoPassArguments {
-                    x_perm: &x_perm,
-                    expert_offsets: &offsets,
-                    row_expert_map: &mut row_expert_map,
-                    w13_all: &self.shared_weights.w13,
-                    w2_all: &self.shared_weights.w2,
-                    up_biases: &self.shared_weights.up_biases,
-                    down_biases: &self.shared_weights.down_biases,
-                    tile_counts: &mut tile_counts,
-                    tile_offsets: &mut tile_offsets,
-                    tile_map: &mut tile_map,
-                    total_tiles: &mut total_tiles,
-                    dispatch_args: &mut dispatch_args,
-                    total_rows,
-                    d_model: self.model_dim,
-                    d_ff: self.hidden_dim,
-                    e,
-                    num_tiles_k,
-                    gating_code,
-                    gate_clip_min,
-                    gate_clip_max,
-                    up_clip_min,
-                    up_clip_max,
-                    silu_alpha,
-                    data_type: self.data_type,
-                },
-            )?
-        } else {
-            let num_tiles_k = ((self.hidden_dim + k_tile - 1) / k_tile) as u32;
-            let args = MoeExpertsTwoPassArguments {
-                x_perm: &x_perm,
-                expert_offsets: &offsets,
-                row_expert_map: &mut row_expert_map,
-                w13_all: &self.shared_weights.w13,
-                w2_all: &self.shared_weights.w2,
-                up_biases: &self.shared_weights.up_biases,
-                down_biases: &self.shared_weights.down_biases,
-                tile_counts: &mut tile_counts,
-                tile_offsets: &mut tile_offsets,
-                tile_map: &mut tile_map,
-                total_tiles: &mut total_tiles,
-                dispatch_args: &mut dispatch_args,
-                total_rows,
-                d_model: self.model_dim,
-                d_ff: self.hidden_dim,
-                e,
-                num_tiles_k,
-                gating_code,
-                gate_clip_min,
-                gate_clip_max,
-                up_clip_min,
-                up_clip_max,
-                silu_alpha,
-                data_type: self.data_type,
-            };
-            self.experts_two_pass_prefill_kernel.encode(encoder, args)?
+        let args = MoeExpertsTwoPassArguments {
+            x_perm: &x_perm,
+            expert_offsets: &offsets,
+            w13_all: &self.w13,
+            w2_all: &self.w2,
+            up_biases: &self.up_biases,
+            down_biases: &self.down_biases,
+            total_rows,
+            d_model: self.model_dim,
+            d_ff: self.hidden_dim,
+            num_routed_experts: self.num_routed_experts,
+            gate_clip_min: self.gate_clip_min,
+            gate_clip_max: self.gate_clip_max,
+            up_clip_min: self.up_clip_min,
+            up_clip_max: self.up_clip_max,
+            silu_alpha: self.silu_alpha,
         };
 
-        let mut output = encoder.allocate_scratch(size_for_shape(&[suffix_length, self.model_dim], self.data_type))?;
+        let y_partial = if batch_dim == 1 {
+            self.experts_two_pass_decode_block.encode(args, encoder)?
+        } else {
+            self.experts_two_pass_prefill_block.encode(args, encoder)?
+        };
+
+        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.model_dim], self.data_type))?;
         self.finalize_kernel.encode(
             &tok2row,
             &topk_probs,
             &y_partial,
             &mut output,
-            suffix_length as u32,
+            batch_dim as u32,
             self.model_dim as u32,
-            k as u32,
+            self.num_active_experts as u32,
             encoder,
         );
 

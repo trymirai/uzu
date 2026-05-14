@@ -6,7 +6,7 @@ use backend_uzu::{
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels},
+            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherKernel},
         },
     },
 };
@@ -307,16 +307,7 @@ fn run_moe_parity_test_internal<B: Backend>(
     let mut bucketed_ids_buf = alloc_allocation::<B, i32>(&ctx, max_sumk);
     let mut bucketed_probs_buf = alloc_allocation::<B, bf16>(&ctx, max_sumk);
     let mut tok2row_buf = alloc_allocation::<B, i32>(&ctx, t * k);
-    let mut x_perm_buf = alloc_allocation::<B, bf16>(&ctx, max_sumk * d_model);
     let mut y_out_buf = alloc_allocation::<B, bf16>(&ctx, t * d_model);
-    const BLOCK_M_DECODE: usize = 4; // matches two-pass decode kernel configuration
-    let h_blocks_decode = (d_ff + BLOCK_M_DECODE - 1) / BLOCK_M_DECODE;
-    let max_tiles = max_sumk * h_blocks_decode;
-    let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
-    let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
-    let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
-    let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
@@ -382,53 +373,30 @@ fn run_moe_parity_test_internal<B: Backend>(
         &mut encoder,
     );
 
-    let gather = MoeGatherKernels::<B>::new(&ctx).expect("gather");
-    gather.encode(
-        &mut encoder,
-        DataType::BF16,
-        MoeGatherArguments {
-            x: &x_buf,
-            bucketed_ids: &bucketed_ids_buf,
-            x_perm: &mut x_perm_buf,
-            sumk: &sumk_buf,
-            t,
-            k,
-            d_model,
-        },
-    );
+    let gather = MoeGatherKernel::<B>::new(&ctx, DataType::BF16).expect("gather");
+    let x_perm_buf = gather.encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder).expect("gather");
 
     let total_rows = t * k;
-    let mut row_expert_map_buf = alloc_allocation::<B, u32>(&ctx, total_rows);
 
-    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx).expect("experts");
-    let num_tiles_k = ((d_ff + 64 - 1) / 64) as u32;
+    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx, DataType::BF16, gating_code).expect("experts");
     let args = MoeExpertsTwoPassArguments {
         x_perm: &x_perm_buf,
         expert_offsets: &offsets_buf,
-        row_expert_map: &mut row_expert_map_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
         up_biases: &up_biases_buf,
         down_biases: &down_biases_buf,
-        tile_counts: &mut tile_counts_buf,
-        tile_offsets: &mut tile_offsets_buf,
-        tile_map: &mut tile_map_buf,
-        total_tiles: &mut total_tiles_buf,
-        dispatch_args: &mut dispatch_args_buf,
         total_rows,
         d_model,
         d_ff,
-        e,
-        num_tiles_k,
-        gating_code,
+        num_routed_experts: e,
         gate_clip_min: gate_clip.0,
         gate_clip_max: gate_clip.1,
         up_clip_min: up_clip.0,
         up_clip_max: up_clip.1,
         silu_alpha,
-        data_type: DataType::BF16,
     };
-    let y_partial_buf = experts.encode(&mut encoder, args).expect("failed to encode MoE experts");
+    let y_partial_buf = experts.encode(args, &mut encoder).expect("failed to encode MoE experts");
 
     let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
     finalize.encode(
@@ -471,18 +439,8 @@ fn run_moe_parity_test_internal<B: Backend>(
             f32::from(w2_cpu[0])
         );
 
-        // Probe tile bookkeeping
-        let total_tiles_cpu = allocation_prefix_to_vec::<B, u32>(&total_tiles_buf, 2);
-        let dispatch_args_cpu = allocation_prefix_to_vec::<B, u32>(&dispatch_args_buf, 3);
-        let tile_offsets_cpu = allocation_prefix_to_vec::<B, u32>(&tile_offsets_buf, (e + 1).min(8));
         let sumk_val = allocation_to_vec::<B, u32>(&sumk_buf)[0] as usize;
-        eprintln!("[E2E] Tile bookkeeping:");
-        eprintln!(
-            "[E2E]   total_tiles={}, dispatch_args=({}, {}, {})",
-            total_tiles_cpu[0], dispatch_args_cpu[0], dispatch_args_cpu[1], dispatch_args_cpu[2]
-        );
-        eprintln!("[E2E]   tile_offsets[0..{}]={:?}", (e + 1).min(8), &tile_offsets_cpu);
-        eprintln!("[E2E]   sumk={}, num_tiles_k={}", sumk_val, num_tiles_k);
+        eprintln!("[E2E]   sumk={}", sumk_val);
 
         // For multi-token tests with large d_ff, verify gather output (x_perm)
         if t > 1 && d_ff >= 256 {
@@ -497,10 +455,6 @@ fn run_moe_parity_test_internal<B: Backend>(
                     &x_perm_cpu[d_model..d_model + 8].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
                 );
             }
-
-            // Check tile_map for first few tiles
-            let tile_map_cpu = allocation_prefix_to_vec::<B, u32>(&tile_map_buf, 12.min(max_tiles * 3));
-            eprintln!("[E2E] tile_map (first 4 tiles): {:?}", &tile_map_cpu);
 
             // CRITICAL: Check tok2row mapping for multi-token tests
             let tok2row_cpu = allocation_prefix_to_vec::<B, i32>(&tok2row_buf, t * k);
@@ -669,6 +623,7 @@ fn run_moe_parity_test_internal<B: Backend>(
     }
 
     eprintln!("[{}] ✓ PASSED (GPU matches CPU reference)", test_name);
+    drop(x_perm_buf);
     drop(y_partial_buf);
     drop(completed);
 }

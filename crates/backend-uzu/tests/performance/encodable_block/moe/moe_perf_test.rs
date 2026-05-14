@@ -5,7 +5,7 @@ use backend_uzu::{
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherArguments, MoeGatherKernels},
+            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherKernel},
         },
     },
 };
@@ -162,7 +162,6 @@ fn test_moe_pipeline_breakdown_decode() {
         let mut offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
         let mut sumk_buf = alloc_allocation::<B, u32>(&ctx, 1);
         let mut bucketed_ids_buf = alloc_allocation::<B, i32>(&ctx, t * k);
-        let mut x_perm_buf = alloc_allocation::<B, bf16>(&ctx, t * k * d_model);
         let y_partial: Vec<bf16> = (0..t * k * d_model).map(|_| bf16::from_f32(rng.random_range(-1.0..1.0))).collect();
         let y_partial_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &y_partial);
         let mut tok2row_buf = alloc_allocation::<B, i32>(&ctx, t * k);
@@ -196,18 +195,7 @@ fn test_moe_pipeline_breakdown_decode() {
         let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
         let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
 
-        // Experts tiling buffers for two-pass
-        const K_TILE: usize = 64;
         let sum_k = t * k;
-        let num_tiles_k = (d_ff + K_TILE - 1) / K_TILE;
-        let max_tiles = t * k * e * num_tiles_k;
-        let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
-        let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
-        let mut tile_map_buf = alloc_allocation::<B, u32>(&ctx, max_tiles * 3);
-        let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 1);
-        let mut dispatch_args_buf = alloc_allocation::<B, u32>(&ctx, 3);
-
-        let mut row_expert_map_buf = alloc_allocation::<B, u32>(&ctx, sum_k);
 
         // Scatter block bases buffers
         let mut block_bases_buf = alloc_allocation::<B, u32>(&ctx, num_blocks * num_tiles);
@@ -222,8 +210,9 @@ fn test_moe_pipeline_breakdown_decode() {
         let scatter_map_kernel =
             <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(&ctx, DataType::BF16)
                 .expect("<<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel");
-        let gather_kernel = MoeGatherKernels::<B>::new(&ctx).expect("gather");
-        let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx).expect("experts two-pass decode");
+        let gather_kernel = MoeGatherKernel::<B>::new(&ctx, DataType::BF16).expect("gather");
+        let experts_kernel =
+            MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, 2).expect("experts two-pass decode");
         let finalize_kernel =
             <<B as Backend>::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
         let router_topk_fused_kernel =
@@ -297,58 +286,53 @@ fn test_moe_pipeline_breakdown_decode() {
 
         let gather_perf = run_perf_with_warmup("Gather", 2, 5, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            gather_kernel.encode(
-                &mut encoder,
-                DataType::BF16,
-                MoeGatherArguments {
-                    x: &x_buf,
-                    bucketed_ids: &bucketed_ids_buf,
-                    x_perm: &mut x_perm_buf,
-                    sumk: &sumk_buf,
-                    t,
-                    k,
-                    d_model,
-                },
-            );
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
+            let x_perm = gather_kernel
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder)
+                .expect("failed to encode MoE gather");
+            let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+            drop(x_perm);
+            drop(completed);
         });
+
+        let (x_perm_buf, x_perm_completed) = {
+            let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
+            let x_perm = gather_kernel
+                .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder)
+                .expect("failed to encode MoE gather");
+            let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+            (x_perm, completed)
+        };
 
         let experts_perf = run_perf_with_warmup("Experts (MAIN COMPUTE)", 2, 5, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
             let output = experts_kernel
                 .encode(
-                    &mut encoder,
                     MoeExpertsTwoPassArguments {
                         x_perm: &x_perm_buf,
                         expert_offsets: &offsets_buf,
-                        row_expert_map: &mut row_expert_map_buf,
                         w13_all: &w13_buf,
                         w2_all: &w2_buf,
                         up_biases: &up_biases_buf,
                         down_biases: &down_biases_buf,
-                        tile_counts: &mut tile_counts_buf,
-                        tile_offsets: &mut tile_offsets_buf,
-                        tile_map: &mut tile_map_buf,
-                        total_tiles: &mut total_tiles_buf,
-                        dispatch_args: &mut dispatch_args_buf,
                         total_rows: sum_k,
                         d_model,
                         d_ff,
-                        e,
-                        num_tiles_k: num_tiles_k as u32,
-                        gating_code: 2, // SILU
+                        num_routed_experts: e,
                         gate_clip_min: f32::NEG_INFINITY,
                         gate_clip_max: 20.0,
                         up_clip_min: -19.0,
                         up_clip_max: 21.0,
                         silu_alpha: 1.702,
-                        data_type: DataType::BF16,
                     },
+                    &mut encoder,
                 )
                 .expect("failed to encode MoE experts");
-            encoder.end_encoding().submit().wait_until_completed().unwrap();
+            let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
             drop(output);
+            drop(completed);
         });
+        drop(x_perm_buf);
+        drop(x_perm_completed);
 
         let finalize_perf = run_perf_with_warmup("Finalize", 2, 5, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
