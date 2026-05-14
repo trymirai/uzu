@@ -5,18 +5,18 @@ use crate::{
     backends::{
         common::{
             Encoder,
-            kernel::unified_gemm::{GemmWeights, UnifiedGemmDispatch, UnifiedGemmSpecialization},
+            kernel::gemm::{GemmDispatch, GemmSpecialization, GemmWeights},
         },
-        metal::{Metal, context::MetalContext, error::MetalError, kernel::UnifiedGemmMetalKernel},
+        metal::{Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel},
     },
 };
 
-pub(crate) struct UnifiedGemmKernel {
+pub(crate) struct GemmKernel {
     data_type: DataType,
-    kernels: HashMap<UnifiedGemmSpecialization, UnifiedGemmMetalKernel>,
+    kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
 }
 
-impl UnifiedGemmKernel {
+impl GemmKernel {
     pub(crate) fn new(
         context: &MetalContext,
         data_type: DataType,
@@ -31,12 +31,12 @@ impl UnifiedGemmKernel {
     fn get_or_create(
         &mut self,
         context: &MetalContext,
-        specialization: UnifiedGemmSpecialization,
-    ) -> Result<&UnifiedGemmMetalKernel, MetalError> {
+        specialization: GemmSpecialization,
+    ) -> Result<&GemmMetalKernel, MetalError> {
         match self.kernels.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = UnifiedGemmMetalKernel::new(
+                let kernel = GemmMetalKernel::new(
                     context,
                     self.data_type,
                     specialization.tiling_config.threadgroup_m,
@@ -60,7 +60,7 @@ impl UnifiedGemmKernel {
     pub(crate) fn encode(
         &mut self,
         context: &MetalContext,
-        dispatch: UnifiedGemmDispatch<'_, Metal>,
+        dispatch: GemmDispatch<'_, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let specialization = dispatch

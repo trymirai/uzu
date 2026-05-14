@@ -2,14 +2,14 @@ use crate::backends::common::{
     Allocation, Backend,
     gpu_types::{
         GemmParams,
-        unified_gemm::{
+        gemm::{
             GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
         },
     },
-    kernel::unified_gemm::{GemmWeights, UnifiedGemmSpecialization},
+    kernel::gemm::{GemmSpecialization, GemmWeights},
 };
 
-pub struct UnifiedGemmDispatch<'a, B: Backend> {
+pub struct GemmDispatch<'a, B: Backend> {
     pub tiling_config: GemmTilingConfig,
     pub input_prologue: GemmInputPrologueKind,
     pub compute: GemmComputeKind,
@@ -24,9 +24,9 @@ pub struct UnifiedGemmDispatch<'a, B: Backend> {
     pub group_count_y: u32,
 }
 
-impl<B: Backend> UnifiedGemmDispatch<'_, B> {
-    pub(crate) fn specialization(&self) -> UnifiedGemmSpecialization {
-        UnifiedGemmSpecialization {
+impl<B: Backend> GemmDispatch<'_, B> {
+    pub(crate) fn specialization(&self) -> GemmSpecialization {
+        GemmSpecialization {
             tiling_config: self.tiling_config,
             input_prologue: self.input_prologue,
             compute: self.compute,

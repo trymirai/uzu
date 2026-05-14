@@ -1,11 +1,11 @@
-use super::UnifiedGemmSpecializationError;
-use crate::backends::common::gpu_types::unified_gemm::{
+use super::GemmSpecializationError;
+use crate::backends::common::gpu_types::gemm::{
     GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
     GemmWeightPrologueKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct UnifiedGemmSpecialization {
+pub(crate) struct GemmSpecialization {
     pub(crate) tiling_config: GemmTilingConfig,
     pub(crate) input_prologue: GemmInputPrologueKind,
     pub(crate) compute: GemmComputeKind,
@@ -16,8 +16,8 @@ pub(crate) struct UnifiedGemmSpecialization {
     pub(crate) group_size: u32,
 }
 
-impl UnifiedGemmSpecialization {
-    pub(crate) fn try_validate(self) -> Result<Self, UnifiedGemmSpecializationError> {
+impl GemmSpecialization {
+    pub(crate) fn try_validate(self) -> Result<Self, GemmSpecializationError> {
         let tile = &self.tiling_config;
         if [
             tile.threadgroup_m,
@@ -34,11 +34,11 @@ impl UnifiedGemmSpecialization {
         ]
         .contains(&0)
         {
-            return Err(UnifiedGemmSpecializationError::ZeroTileDimension);
+            return Err(GemmSpecializationError::ZeroTileDimension);
         }
 
         if self.group_size != 0 && tile.threadgroup_k > self.group_size {
-            return Err(UnifiedGemmSpecializationError::ThreadgroupKExceedsGroupSize {
+            return Err(GemmSpecializationError::ThreadgroupKExceedsGroupSize {
                 threadgroup_k: tile.threadgroup_k,
                 group_size: self.group_size,
             });

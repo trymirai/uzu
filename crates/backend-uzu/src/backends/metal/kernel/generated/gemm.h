@@ -1,10 +1,10 @@
-// Auto-generated from gpu_types/unified_gemm - do not edit manually
+// Auto-generated from gpu_types/gemm - do not edit manually
 #pragma once
 
 #include <metal_stdlib>
 using namespace metal;
 
-namespace uzu::unified_gemm {
+namespace uzu::gemm {
 enum class GemmComputeKind : uint32_t {
   SimdgroupMma = 0,
   MxuMma = 1,
@@ -45,4 +45,4 @@ enum class GemmWeightPrologueKind : uint32_t {
   ScaleBiasDequant = 1,
   ScaleZeroPointDequant = 2,
 };
-} // namespace uzu::unified_gemm
+} // namespace uzu::gemm

@@ -1,15 +1,15 @@
 #![allow(dead_code)]
 
-mod unified_gemm_kernel;
+mod kernel;
 
 #[allow(unused_imports)]
-pub(crate) use unified_gemm_kernel::UnifiedGemmKernel;
+pub(crate) use kernel::GemmKernel;
 
 #[allow(unused_imports)]
 pub(crate) use crate::backends::common::{
-    gpu_types::unified_gemm::{
+    gpu_types::gemm::{
         GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
         GemmWeightPrologueKind,
     },
-    kernel::unified_gemm::{UnifiedGemmDispatch, UnifiedGemmSpecialization, UnifiedGemmSpecializationError},
+    kernel::gemm::{GemmDispatch, GemmSpecialization, GemmSpecializationError},
 };
