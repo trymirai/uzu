@@ -65,7 +65,6 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let mut encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
     let mut where_generics: Vec<TokenStream> = Vec::new();
 
-    // 'encoder
     encode_generics.push(quote! { 'encoder });
     args.push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend> });
 
@@ -74,7 +73,6 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         where_generics.push(quote! { Buf: Buffer<Backend = Self::Backend> });
     }
 
-    // where
     let maybe_where_block = if where_generics.is_empty() {
         quote! {}
     } else {

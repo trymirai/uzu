@@ -575,7 +575,6 @@ impl CpuCompiler {
             make_encode(quote! {})
         };
 
-        // 'encoder
         encode_generics.push(quote! { 'encoder });
         encode_args_defs
             .push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu> });

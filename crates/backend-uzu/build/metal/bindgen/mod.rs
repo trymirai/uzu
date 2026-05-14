@@ -80,13 +80,11 @@ pub fn bindgen(
             .push(quote! { Buf: crate::backends::common::Buffer<Backend = crate::backends::metal::Metal> });
     }
 
-    // 'encoder
     encode_lifetimes.push(quote! { 'encoder });
     encode_argument_definitions.push(quote! {
         encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::metal::Metal>
     });
 
-    // where block
     let encode_where_block = if encode_where_generics.is_empty() {
         quote! {}
     } else {
