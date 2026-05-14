@@ -21,13 +21,16 @@ pub enum MatmulArgumentC<'a, B: Backend> {
     Bias(&'a Allocation<B>),
 }
 
-// D = ab_scale * (A @ B.T) + C
+// D = ab_scale * (A @ op(B)) + C, where op(B) = B^T when b_transpose else B.
 pub struct MatmulArguments<'a, B: Backend> {
     /// A: [M, K]
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
-    /// B: [N, K]
+    /// B: [N, K] when b_transpose, else [K, N]
     pub b: &'a Allocation<B>,
+    pub b_offset: usize,
+    pub b_leading_dimension: Option<u32>,
+    pub b_transpose: bool,
     /// AB scale: also known as alpha
     pub ab_scale: f32,
     /// C: behavior depends on enum variant

@@ -15,6 +15,7 @@ pub struct GemmSpecialization {
     pub simdgroups_per_column: u32,
     pub align_mn: bool,
     pub align_k: bool,
+    pub transpose_b: bool,
     pub is_accumulate: bool,
 }
 
@@ -30,6 +31,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: false,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
                 Self {
@@ -40,6 +42,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: true,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
                 Self {
@@ -50,6 +53,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: false,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
                 Self {
@@ -60,6 +64,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: true,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
                 Self {
@@ -70,6 +75,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: true,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
             ],
@@ -82,6 +88,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: true,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
                 Self {
@@ -92,6 +99,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: false,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
             ],
@@ -104,6 +112,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: false,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
                 Self {
@@ -114,6 +123,7 @@ impl GemmSpecialization {
                     simdgroups_per_column: 2,
                     align_mn: true,
                     align_k: true,
+                    transpose_b: true,
                     is_accumulate: false,
                 },
             ],
@@ -127,6 +137,7 @@ impl GemmSpecialization {
         batch_dim: u32,
         input_dim: u32,
         output_dim: u32,
+        transpose_b: bool,
         c: &MatmulArgumentC<Metal>,
     ) -> Self {
         let overall_work_elements = batch_dim * output_dim;
@@ -158,6 +169,7 @@ impl GemmSpecialization {
             simdgroups_per_column,
             align_mn: (batch_dim % block_rows) == 0 && (output_dim % block_cols) == 0,
             align_k: (input_dim % block_depth) == 0,
+            transpose_b,
             is_accumulate: matches!(c, MatmulArgumentC::Accumulate),
         }
     }
