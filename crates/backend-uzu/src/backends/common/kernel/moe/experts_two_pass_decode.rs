@@ -1,7 +1,4 @@
-use super::{
-    MoeExpertsTwoPassArguments, MoePassARowMapArguments, MoePassATileBuildArguments, MoePassATileCountsArguments,
-    MoePassATileDispatchArguments, MoePassATileKernels, MoePassATileScanArguments,
-};
+use super::{MoeExpertsTwoPassArguments, MoePassATileKernels};
 use crate::{
     DataType,
     array::size_for_shape,
@@ -51,50 +48,22 @@ impl<B: Backend> MoeExpertsTwoPassDecodeBlock<B> {
     ) -> Result<Allocation<B>, B::Error> {
         const BLOCK_M: u32 = 4;
         let h_blocks = (args.d_ff as u32 + BLOCK_M - 1) / BLOCK_M;
-        let tile_counts = self.pass_a_tile.encode_counts(
-            encoder,
-            MoePassATileCountsArguments {
-                expert_offsets: args.expert_offsets,
-                e: args.e,
-                h_blocks,
-            },
-        )?;
+        let tile_counts = self.pass_a_tile.encode_counts(encoder, args.expert_offsets, args.e, h_blocks)?;
 
-        let tile_scan = self.pass_a_tile.encode_scan(
-            encoder,
-            MoePassATileScanArguments {
-                tile_counts: &tile_counts,
-                e: args.e,
-            },
-        )?;
+        let tile_scan = self.pass_a_tile.encode_scan(encoder, &tile_counts, args.e)?;
 
-        let row_expert_map = self.pass_a_tile.encode_row_map(
-            encoder,
-            MoePassARowMapArguments {
-                expert_offsets: args.expert_offsets,
-                total_rows: args.total_rows,
-                e: args.e,
-            },
-        )?;
+        let row_expert_map = self.pass_a_tile.encode_row_map(encoder, args.expert_offsets, args.total_rows, args.e)?;
 
         let tile_map = self.pass_a_tile.encode_build_map(
             encoder,
-            MoePassATileBuildArguments {
-                expert_offsets: args.expert_offsets,
-                tile_offsets: &tile_scan.tile_offsets,
-                row_expert_map: &row_expert_map,
-                total_rows: args.total_rows,
-                h_blocks,
-            },
+            args.expert_offsets,
+            &tile_scan.tile_offsets,
+            &row_expert_map,
+            args.total_rows,
+            h_blocks,
         )?;
 
-        let dispatch_args = self.pass_a_tile.encode_dispatch_args(
-            encoder,
-            MoePassATileDispatchArguments {
-                total_tiles: &tile_scan.total_tiles,
-                num_tiles_y: 1,
-            },
-        )?;
+        let dispatch_args = self.pass_a_tile.encode_dispatch_args(encoder, &tile_scan.total_tiles, 1)?;
 
         let gate_idx = args.gating_code.min(3) as usize;
         let dtype_idx = DTYPES.iter().position(|dtype| *dtype == args.data_type).unwrap();

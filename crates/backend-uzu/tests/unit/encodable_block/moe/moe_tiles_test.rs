@@ -1,7 +1,4 @@
-use backend_uzu::backends::common::{
-    Encoder,
-    kernel::moe::{MoeTileCountsArguments, MoeTileMapKernels, MoeTileScanArguments},
-};
+use backend_uzu::backends::common::{Encoder, kernel::moe::MoeTileMapKernels};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::encodable_block::mlp::moe::tests::{
@@ -36,15 +33,8 @@ fn test_tile_counts_correctness() {
             // Execute kernel using kernel struct
             let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernel::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_counts_buf = tile_kernel
-                .encode_counts(
-                    &mut encoder,
-                    MoeTileCountsArguments {
-                        offsets: &offsets_buf,
-                        e,
-                    },
-                )
-                .expect("MoeTileMapKernels::encode_counts");
+            let tile_counts_buf =
+                tile_kernel.encode_counts(&mut encoder, &offsets_buf, e).expect("MoeTileMapKernels::encode_counts");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let tile_counts_gpu = allocation_prefix_to_vec::<B, u32>(&tile_counts_buf, e);
@@ -81,15 +71,8 @@ fn test_tile_scan_correctness() {
             // Execute kernel using kernel struct
             let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernel::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_scan = tile_kernel
-                .encode_scan(
-                    &mut encoder,
-                    MoeTileScanArguments {
-                        tile_counts: &tile_counts_buf,
-                        e,
-                    },
-                )
-                .expect("MoeTileMapKernels::encode_scan");
+            let tile_scan =
+                tile_kernel.encode_scan(&mut encoder, &tile_counts_buf, e).expect("MoeTileMapKernels::encode_scan");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let tile_offsets_gpu = allocation_prefix_to_vec::<B, u32>(&tile_scan.tile_offsets, e + 1);
@@ -121,15 +104,8 @@ fn test_tile_edge_cases() {
 
             let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernel::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_counts_buf = tile_kernel
-                .encode_counts(
-                    &mut encoder,
-                    MoeTileCountsArguments {
-                        offsets: &offsets_buf,
-                        e,
-                    },
-                )
-                .expect("MoeTileMapKernels::encode_counts");
+            let tile_counts_buf =
+                tile_kernel.encode_counts(&mut encoder, &offsets_buf, e).expect("MoeTileMapKernels::encode_counts");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let tile_counts_gpu = allocation_prefix_to_vec::<B, u32>(&tile_counts_buf, e);
@@ -152,15 +128,8 @@ fn test_tile_edge_cases() {
 
             let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernels::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_counts_buf = tile_kernel
-                .encode_counts(
-                    &mut encoder,
-                    MoeTileCountsArguments {
-                        offsets: &offsets_buf,
-                        e,
-                    },
-                )
-                .expect("MoeTileMapKernels::encode_counts");
+            let tile_counts_buf =
+                tile_kernel.encode_counts(&mut encoder, &offsets_buf, e).expect("MoeTileMapKernels::encode_counts");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let tile_counts_gpu = allocation_prefix_to_vec::<B, u32>(&tile_counts_buf, e);
