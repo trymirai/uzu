@@ -1,5 +1,6 @@
 use std::collections::{HashMap, hash_map::Entry};
 
+use super::spec::GemvSpecialization;
 use crate::{
     DataType,
     backends::{
@@ -7,8 +8,6 @@ use crate::{
         metal::{Metal, context::MetalContext, kernel::MatmulGemvMetalKernel},
     },
 };
-
-use super::spec::GemvSpecialization;
 
 pub(crate) struct GemvKernel {
     data_type: DataType,

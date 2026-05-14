@@ -1,3 +1,4 @@
+use super::{kernel::GemvKernel, spec::GemvSpecialization};
 use crate::backends::{
     common::{
         Encoder,
@@ -5,8 +6,6 @@ use crate::backends::{
     },
     metal::Metal,
 };
-
-use super::{kernel::GemvKernel, spec::GemvSpecialization};
 
 pub(crate) fn encode(
     kernel: &mut GemvKernel,
@@ -23,6 +22,7 @@ pub(crate) fn encode(
         batch_dim,
         input_dim,
         output_dim,
+        ..
     } = arguments;
 
     let (is_accumulate, output_bias) = match c {

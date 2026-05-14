@@ -1,3 +1,4 @@
+use super::{MatmulMetalKernel, gemm};
 use crate::backends::{
     common::{
         Encoder,
@@ -8,8 +9,6 @@ use crate::backends::{
     },
     metal::{Metal, context::MetalContext},
 };
-
-use super::{MatmulMetalKernel, gemm};
 
 #[derive(Debug, Clone, Copy)]
 pub enum QuantizedMatmulDispatchPath {

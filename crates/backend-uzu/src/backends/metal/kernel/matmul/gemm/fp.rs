@@ -1,3 +1,4 @@
+use super::{GemmDispatch, GemmKernel};
 use crate::{
     DataType,
     backends::{
@@ -5,7 +6,9 @@ use crate::{
             Encoder,
             gpu_types::{
                 GemmParams,
-                gemm::{GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig},
+                gemm::{
+                    GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
+                },
             },
             kernel::{
                 TensorAddBiasKernel,
@@ -16,8 +19,6 @@ use crate::{
         metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel},
     },
 };
-
-use super::{GemmDispatch, GemmKernel};
 
 pub(crate) fn encode_simdgroup(
     gemm: &mut GemmKernel,

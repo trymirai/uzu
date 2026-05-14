@@ -74,8 +74,8 @@ PUBLIC KERNEL(AttentionTwoPass1)(
   thread U q[elements_per_thread];
   thread U o[elements_per_thread] = {0};
 
-  queries += q_offset * HEAD_DIM +
-             thread_context.simd_lane_id * elements_per_thread;
+  queries +=
+      q_offset * HEAD_DIM + thread_context.simd_lane_id * elements_per_thread;
   keys += kv_head_idx * k_head_stride + block_idx * k_seq_stride +
           thread_context.simd_lane_id * elements_per_thread;
   values += kv_head_idx * v_head_stride + block_idx * v_seq_stride +

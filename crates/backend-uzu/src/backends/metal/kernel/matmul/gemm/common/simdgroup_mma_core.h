@@ -182,7 +182,8 @@ struct SimdgroupMmaCore {
                   );
                   if constexpr (aligned_m.value && aligned_n.value) {
                     accumulator.store_result(
-                        result, params->leading_dimension_d
+                        result,
+                        params->leading_dimension_d
                     );
                   } else {
                     accumulator.store_result_safe(

@@ -173,8 +173,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
     }
 
     // Remainder
-    for (uint idx = vec_iters * 128 + thread_context.simd_lane_id;
-         idx < d_ff;
+    for (uint idx = vec_iters * 128 + thread_context.simd_lane_id; idx < d_ff;
          idx += 32) {
       acc += hidden_ptr[idx] * float(w2_ptr[idx]);
     }

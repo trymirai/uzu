@@ -4,6 +4,7 @@ pub mod quant;
 
 use std::sync::OnceLock;
 
+use self::{gemm::GemmKernel, gemv::GemvKernel};
 use crate::{
     DataType,
     backends::{
@@ -14,16 +15,9 @@ use crate::{
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
             },
         },
-        metal::{
-            Metal,
-            context::MetalContext,
-            kernel::TensorAddBiasMetalKernel,
-            metal_extensions::DeviceExt,
-        },
+        metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
     },
 };
-
-use self::{gemm::GemmKernel, gemv::GemvKernel};
 
 pub struct MatmulMetalKernel {
     data_type: DataType,
@@ -81,15 +75,10 @@ impl MatmulMetalKernel {
                 arguments,
             )
             .expect("Failed to encode Gemm"),
-            MatmulDispatchPath::GemmMxu => gemm::fp::encode_mxu(
-                &mut self.gemm,
-                &mut self.bias_add,
-                self.data_type,
-                context,
-                encoder,
-                arguments,
-            )
-            .expect("Failed to encode GemmMxu"),
+            MatmulDispatchPath::GemmMxu => {
+                gemm::fp::encode_mxu(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments)
+                    .expect("Failed to encode GemmMxu")
+            },
         }
     }
 }

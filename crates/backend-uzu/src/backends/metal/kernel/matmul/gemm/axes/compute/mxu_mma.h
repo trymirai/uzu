@@ -30,7 +30,13 @@ struct GemmComputeMxuMma {
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
-    MxuMmaCore<T, THREADGROUP_M, THREADGROUP_N, BLOCK_K, SIMDGROUPS_N, SIMDGROUPS_M>::
+    MxuMmaCore<
+        T,
+        THREADGROUP_M,
+        THREADGROUP_N,
+        BLOCK_K,
+        SIMDGROUPS_N,
+        SIMDGROUPS_M>::
         run(activations,
             weights,
             result,

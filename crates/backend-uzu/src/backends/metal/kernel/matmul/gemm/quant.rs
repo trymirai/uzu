@@ -1,3 +1,4 @@
+use super::{GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmKernel};
 use crate::backends::{
     common::{
         Encoder,
@@ -12,8 +13,6 @@ use crate::backends::{
     },
     metal::{Metal, context::MetalContext},
 };
-
-use super::{GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmKernel};
 
 pub(crate) fn encode(
     gemm: &mut GemmKernel,
