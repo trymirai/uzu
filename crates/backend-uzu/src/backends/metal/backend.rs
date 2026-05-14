@@ -7,8 +7,6 @@ use crate::backends::{common::Backend, metal::sparse::MetalSparseBuffer};
 #[derive(Debug, Clone)]
 pub struct Metal;
 
-impl Metal {}
-
 impl Backend for Metal {
     type Context = MetalContext;
     type CommandBuffer = MetalCommandBuffer;

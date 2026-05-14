@@ -8,8 +8,6 @@ use crate::backends::common::Backend;
 #[derive(Debug, Clone)]
 pub struct Cpu;
 
-impl Cpu {}
-
 impl Backend for Cpu {
     type Context = CpuContext;
     type CommandBuffer = CpuCommandBuffer;

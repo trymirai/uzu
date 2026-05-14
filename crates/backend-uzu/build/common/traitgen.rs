@@ -66,12 +66,13 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         .collect::<(Vec<_>, Vec<_>, Vec<_>)>();
 
     let mut encode_generics = encode_lifetime_generics.into_iter().flatten().collect::<Vec<_>>();
+    let mut type_generics = type_generics.into_iter().flatten().collect::<Vec<_>>();
     let mut where_generics: Vec<TokenStream> = Vec::new();
 
     encode_generics.push(quote! { 'encoder });
     args.push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<Self::Backend> });
 
-    type_generics.iter().flatten().for_each(|generic| {
+    type_generics.iter().for_each(|generic| {
         encode_generics.push(quote! { #generic });
         where_generics.push(quote! { #generic: Buffer<Backend = Self::Backend> });
     });
