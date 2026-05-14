@@ -1,8 +1,13 @@
-use backend_uzu::backends::common::{Encoder, kernel::moe::MoeTileMapKernels};
+use backend_uzu::backends::common::{
+    Backend, Encoder, Kernels,
+    kernel::{MoeTileCountsKernel, MoeTileScanKernel},
+};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::encodable_block::mlp::moe::tests::{
-    common::helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context},
+    common::helpers::{
+        alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
+    },
     cpu_tile_counts, cpu_tile_scan,
 };
 
@@ -31,10 +36,11 @@ fn test_tile_counts_correctness() {
             let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
 
             // Execute kernel using kernel struct
-            let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernel::new");
+            let counts_kernel =
+                <<B as Backend>::Kernels as Kernels>::MoeTileCountsKernel::new(&ctx).expect("MoeTileCountsKernel::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_counts_buf =
-                tile_kernel.encode_counts(&mut encoder, &offsets_buf, e).expect("MoeTileMapKernels::encode_counts");
+            let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
+            counts_kernel.encode(&offsets_buf, &mut tile_counts_buf, e as u32, &mut encoder);
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let tile_counts_gpu = allocation_prefix_to_vec::<B, u32>(&tile_counts_buf, e);
@@ -69,15 +75,18 @@ fn test_tile_scan_correctness() {
             let tile_counts_buf = alloc_allocation_with_data::<B, u32>(&ctx, &tile_counts);
 
             // Execute kernel using kernel struct
-            let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernel::new");
+            let scan_kernel =
+                <<B as Backend>::Kernels as Kernels>::MoeTileScanKernel::new(&ctx).expect("MoeTileScanKernel::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_scan =
-                tile_kernel.encode_scan(&mut encoder, &tile_counts_buf, e).expect("MoeTileMapKernels::encode_scan");
+            let mut tile_offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
+            let mut total_tiles_buf = alloc_allocation::<B, u32>(&ctx, 8);
+            scan_kernel.encode(&tile_counts_buf, &mut tile_offsets_buf, &mut total_tiles_buf, e as u32, &mut encoder);
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-            let tile_offsets_gpu = allocation_prefix_to_vec::<B, u32>(&tile_scan.tile_offsets, e + 1);
-            let total_tiles_gpu = allocation_to_vec::<B, u32>(&tile_scan.total_tiles)[0];
-            drop(tile_scan);
+            let tile_offsets_gpu = allocation_prefix_to_vec::<B, u32>(&tile_offsets_buf, e + 1);
+            let total_tiles_gpu = allocation_to_vec::<B, u32>(&total_tiles_buf)[0];
+            drop(tile_offsets_buf);
+            drop(total_tiles_buf);
             drop(completed);
 
             assert_eq!(tile_offsets_gpu, tile_offsets_cpu, "Tile offsets mismatch for E={}", e);
@@ -102,10 +111,11 @@ fn test_tile_edge_cases() {
 
             let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
 
-            let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernel::new");
+            let counts_kernel =
+                <<B as Backend>::Kernels as Kernels>::MoeTileCountsKernel::new(&ctx).expect("MoeTileCountsKernel::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_counts_buf =
-                tile_kernel.encode_counts(&mut encoder, &offsets_buf, e).expect("MoeTileMapKernels::encode_counts");
+            let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
+            counts_kernel.encode(&offsets_buf, &mut tile_counts_buf, e as u32, &mut encoder);
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let tile_counts_gpu = allocation_prefix_to_vec::<B, u32>(&tile_counts_buf, e);
@@ -126,10 +136,11 @@ fn test_tile_edge_cases() {
 
             let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
 
-            let tile_kernel = MoeTileMapKernels::<B>::new(&ctx).expect("MoeTileMapKernels::new");
+            let counts_kernel =
+                <<B as Backend>::Kernels as Kernels>::MoeTileCountsKernel::new(&ctx).expect("MoeTileCountsKernel::new");
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let tile_counts_buf =
-                tile_kernel.encode_counts(&mut encoder, &offsets_buf, e).expect("MoeTileMapKernels::encode_counts");
+            let mut tile_counts_buf = alloc_allocation::<B, u32>(&ctx, e);
+            counts_kernel.encode(&offsets_buf, &mut tile_counts_buf, e as u32, &mut encoder);
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
             let tile_counts_gpu = allocation_prefix_to_vec::<B, u32>(&tile_counts_buf, e);
