@@ -103,7 +103,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .expect("create d allocation")
     };
 
-    let c_arg = if input.d_prefill.is_some() {
+    let c_arg = if input.case.accumulate {
         MatmulArgumentC::Accumulate
     } else {
         MatmulArgumentC::None
