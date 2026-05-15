@@ -9,6 +9,7 @@ use backend_uzu::{
             Backend, Context, Encoder, Kernels,
             kernel::{QuantizedMatmulQmmTransposedKernel, QuantizedMatmulQmvFastKernel},
         },
+        cpu::nf4_e4m3::f32_to_e4m3,
         metal::{
             Metal,
             kernel::quant_matmul_nf4_bench::{Nf4QmmBench, Nf4QmmTile, Nf4QmvBench, Nf4Variant},
@@ -209,17 +210,15 @@ struct CellResult {
     shape: &'static str,
     m: usize,
     bm_label: &'static str,
-    awq_p50: f64,
-    awq_mean: f64,
-    awq_std: f64,
-    cst_p50: f64,
-    cst_mean: f64,
-    cst_std: f64,
-    tg_p50: f64,
-    tg_mean: f64,
-    tg_std: f64,
+    // Baseline = AWQ-int4 (QmmTransposed).
+    awq: Stats,
+    cst: Stats,
+    tg: Stats,
+    e4m3: Stats,
+    zp: Stats,
 }
 
+/// QMM verdict: lower is better; baseline is AWQ-int4.
 fn verdict(delta_pct: f64) -> &'static str {
     if delta_pct.abs() <= 2.0 {
         "tied"
@@ -228,6 +227,29 @@ fn verdict(delta_pct: f64) -> &'static str {
     } else {
         "AWQ wins"
     }
+}
+
+/// Build a u8 zero-point buffer packed two 4-bit indices per byte, matching
+/// `pack_zero_points` (bits == 4): `zp_stride = (num_groups + 1) / 2` bytes
+/// per output row. Realistic random 4-bit indices.
+fn build_zp_packed(
+    output_dim: usize,
+    num_groups: usize,
+) -> Vec<u8> {
+    let zp_stride = (num_groups + 1) / 2;
+    let mut zp_packed = vec![0u8; output_dim * zp_stride];
+    for j in 0..output_dim {
+        for g in 0..num_groups {
+            let idx = ((j * 5 + g * 3 + 1) % 16) as u8;
+            let byte = j * zp_stride + g / 2;
+            if g % 2 == 0 {
+                zp_packed[byte] |= idx & 0x0F;
+            } else {
+                zp_packed[byte] |= (idx & 0x0F) << 4;
+            }
+        }
+    }
+    zp_packed
 }
 
 fn bench_cell(
@@ -252,9 +274,17 @@ fn bench_cell(
     let scales_f32: Vec<f32> = (0..(output_dim * num_groups)).map(|i| 0.01 + (i % 7) as f32 * 0.001).collect();
     let biases_f32: Vec<f32> = (0..(output_dim * num_groups)).map(|i| (i % 19) as f32 * 0.125).collect();
 
+    // E4M3: 1-byte FP8 scale, built by round-tripping the SAME f32 scales
+    // through E4M3 (fair representation, not random bytes).
+    let scale_bytes_e4m3: Vec<u8> = scales_f32.iter().map(|&s| f32_to_e4m3(s)).collect();
+    // Zp: realistic random 4-bit zero-point indices, packed two-per-byte.
+    let zp_packed = build_zp_packed(output_dim, num_groups);
+
     let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
     let s_buf = bf16_buf(ctx, &scales_f32);
     let b_buf = bf16_buf(ctx, &biases_f32);
+    let s_e4m3_buf = alloc_buffer_with_data::<B, u8>(ctx, &scale_bytes_e4m3);
+    let zp_buf = alloc_buffer_with_data::<B, u8>(ctx, &zp_packed);
 
     let x_f32: Vec<f32> = (0..(m * input_dim)).map(|i| ((i % 257) as f32) / 257.0).collect();
     let x_buf = bf16_buf(ctx, &x_f32);
@@ -337,8 +367,49 @@ fn bench_cell(
     };
     let tg = time_loop(nf4_tg_run);
 
-    let delta_const = (cst.p50 - awq.p50) / awq.p50 * 100.0;
-    let delta_tg = (tg.p50 - awq.p50) / awq.p50 * 100.0;
+    let nf4_e4m3_run = || -> Duration {
+        let mut encoder = Encoder::new(ctx).unwrap();
+        qmm_bench.encode(
+            Nf4Variant::E4m3,
+            tile,
+            &w_buf,
+            &s_e4m3_buf,
+            &x_buf,
+            &mut y_buf,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            &mut encoder,
+        );
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        completed.gpu_execution_time()
+    };
+    let e4m3 = time_loop(nf4_e4m3_run);
+
+    let nf4_zp_run = || -> Duration {
+        let mut encoder = Encoder::new(ctx).unwrap();
+        qmm_bench.encode_zp(
+            tile,
+            &w_buf,
+            &s_buf,
+            &zp_buf,
+            &x_buf,
+            &mut y_buf,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            &mut encoder,
+        );
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        completed.gpu_execution_time()
+    };
+    let zp = time_loop(nf4_zp_run);
+
+    let dpct = |s: &Stats| (s.p50 - awq.p50) / awq.p50 * 100.0;
+    let delta_const = dpct(&cst);
+    let delta_tg = dpct(&tg);
+    let delta_e4m3 = dpct(&e4m3);
+    let delta_zp = dpct(&zp);
 
     println!(
         "  AWQ-int4 (QmmTransposed/{}): mean {:.4} ±{:.4} ms  p50 {:.4} ms  [{}]",
@@ -349,7 +420,7 @@ fn bench_cell(
         modality(&awq.bins)
     );
     println!(
-        "  NF4-const         : mean {:.4} ±{:.4} ms  p50 {:.4} ms  [{}]  Δp50 vs AWQ = {:+.2}% ({})",
+        "  NF4-const : mean {:.4} ±{:.4} ms  p50 {:.4} ms  [{}]  Δp50 vs AWQ = {:+.2}% ({})",
         cst.mean,
         cst.std,
         cst.p50,
@@ -358,7 +429,7 @@ fn bench_cell(
         verdict(delta_const)
     );
     println!(
-        "  NF4-tg            : mean {:.4} ±{:.4} ms  p50 {:.4} ms  [{}]  Δp50 vs AWQ = {:+.2}% ({})",
+        "  NF4-tg    : mean {:.4} ±{:.4} ms  p50 {:.4} ms  [{}]  Δp50 vs AWQ = {:+.2}% ({})",
         tg.mean,
         tg.std,
         tg.p50,
@@ -366,20 +437,34 @@ fn bench_cell(
         delta_tg,
         verdict(delta_tg)
     );
+    println!(
+        "  NF4-e4m3  : mean {:.4} ±{:.4} ms  p50 {:.4} ms  [{}]  Δp50 vs AWQ = {:+.2}% ({})",
+        e4m3.mean,
+        e4m3.std,
+        e4m3.p50,
+        modality(&e4m3.bins),
+        delta_e4m3,
+        verdict(delta_e4m3)
+    );
+    println!(
+        "  NF4-zp    : mean {:.4} ±{:.4} ms  p50 {:.4} ms  [{}]  Δp50 vs AWQ = {:+.2}% ({})",
+        zp.mean,
+        zp.std,
+        zp.p50,
+        modality(&zp.bins),
+        delta_zp,
+        verdict(delta_zp)
+    );
 
     CellResult {
         shape,
         m,
         bm_label,
-        awq_p50: awq.p50,
-        awq_mean: awq.mean,
-        awq_std: awq.std,
-        cst_p50: cst.p50,
-        cst_mean: cst.mean,
-        cst_std: cst.std,
-        tg_p50: tg.p50,
-        tg_mean: tg.mean,
-        tg_std: tg.std,
+        awq,
+        cst,
+        tg,
+        e4m3,
+        zp,
     }
 }
 
@@ -396,52 +481,66 @@ fn qmm_lut_bench() {
     let qmm_bench = Nf4QmmBench::new(&ctx).expect("Nf4QmmBench build");
 
     let mut results: Vec<CellResult> = Vec::new();
-    // Full M sweep × two shapes. M ∈ {5, 8, 16, 32, 48, 64, 128}.
-    for &m in &[5usize, 8, 16, 32, 48, 64, 128] {
+    // Prefill-shaped M sweep × two shapes. M ∈ {5, 16, 32, 64, 128}.
+    // pick_tile: M<48 -> Small (BM=8); M>=48 -> Big (BM=64). Same tile is
+    // applied to every NF4 variant (apples-to-apples vs AWQ).
+    for &m in &[5usize, 16, 32, 64, 128] {
         results.push(bench_cell(&ctx, "ShapeA-2048x2048", 2048, 2048, m, &qmm_bench));
         results.push(bench_cell(&ctx, "ShapeB-2560x6912", 2560, 6912, m, &qmm_bench));
     }
 
-    // Final combined table.
+    // Final combined table. Baseline for Δ = AWQ-int4 (QmmTransposed).
     println!();
-    println!("================== QMM LUT bench summary ==================");
+    println!("================== QMM LUT bench summary (baseline = AWQ-int4) ==================");
     println!(
-        "{:<18} {:>4} {:>6} {:>14} {:>14} {:>14} {:>10} {:>10} {:>12} {:>12}",
-        "Shape", "M", "BM", "AWQ-int4 p50", "NF4-const p50", "NF4-tg p50", "Δ const", "Δ tg", "const", "tg"
+        "{:<18} {:>4} {:>5} {:>12} {:>12} {:>12} {:>12} {:>12} {:>8} {:>8} {:>8} {:>8}",
+        "Shape", "M", "BM", "AWQ p50", "NF4c p50", "NF4tg p50", "E4M3 p50", "Zp p50", "Δ c", "Δ tg", "Δ e4m3", "Δ zp"
     );
     for r in &results {
-        let dc = (r.cst_p50 - r.awq_p50) / r.awq_p50 * 100.0;
-        let dt = (r.tg_p50 - r.awq_p50) / r.awq_p50 * 100.0;
+        let d = |s: &Stats| (s.p50 - r.awq.p50) / r.awq.p50 * 100.0;
         println!(
-            "{:<18} {:>4} {:>6} {:>11.4} ms {:>11.4} ms {:>11.4} ms {:>+9.2}% {:>+9.2}% {:>12} {:>12}",
+            "{:<18} {:>4} {:>5} {:>9.4}ms {:>9.4}ms {:>9.4}ms {:>9.4}ms {:>9.4}ms {:>+7.2}% {:>+7.2}% {:>+7.2}% {:>+7.2}%",
             r.shape,
             r.m,
             r.bm_label,
-            r.awq_p50,
-            r.cst_p50,
-            r.tg_p50,
-            dc,
-            dt,
-            verdict(dc),
-            verdict(dt)
+            r.awq.p50,
+            r.cst.p50,
+            r.tg.p50,
+            r.e4m3.p50,
+            r.zp.p50,
+            d(&r.cst),
+            d(&r.tg),
+            d(&r.e4m3),
+            d(&r.zp)
         );
     }
-    println!("===========================================================");
+    println!("  (trimmed-mean ±σ + modality flag per cell printed in the detail blocks above)");
+    println!("=================================================================================");
 }
 
-// ===================== QMV LUT bench (M ∈ {1,2,4}) =====================
+// ===================== QMV LUT bench (M ∈ {1,2,3,4}) =====================
 //
-// Three-way comparison at small batch (true QMV regime):
-//   * AWQ-int4: production `QuantizedMatmulQmvFastKernel` (MLX bias form, gs=64,
-//     bf16 act, no hadamard, no zero points) — exactly what the production
-//     AWQ dispatcher would emit when batch_dim < 5 (it always falls to QmvFast
-//     in that range).
+// Decode-regime comparison at small batch (true QMV regime). Baseline for Δ
+// is the production `QmvFast` kernel (the main decode QMV).
+//
+//   * QmvFast  (BASELINE): production `QuantizedMatmulQmvFastKernel`,
+//     instantiated MLX-bias form (use_mlx_quant=true, no zero points, no
+//     hadamard, gs=64, bf16 act) — i.e. this *is* the AWQ-int4 QMV path the
+//     production AWQ dispatcher emits for batch_dim < 5. There is no separate
+//     "AWQ QMV" kernel distinct from QmvFast, so one column covers both.
+//     FORMAT CONFOUND: QmvFast consumes int4 weights + a bf16 per-group scale
+//     + bf16 MLX bias (asymmetric int4). The NF4 variants consume the fixed
+//     16-entry NF4 codebook with a symmetric gs=64 scale (E4M3 swaps the
+//     scale dtype; Zp adds a 4-bit zero-point LUT). They are NOT the same
+//     numeric format — this is a kernel-cost comparison at matched shape, not
+//     an isoaccuracy comparison.
 //   * NF4-const: `Nf4QmvConstantMetalKernel` (codebook in `constant` space).
-//   * NF4-tg:    `Nf4QmvTgMetalKernel`       (codebook cooperatively loaded
-//                into threadgroup memory).
+//   * NF4-tg:    `Nf4QmvTgMetalKernel`       (codebook in threadgroup mem).
+//   * NF4-e4m3:  `Nf4QmvE4m3MetalKernel`     (1-byte FP8 per-group scale).
+//   * NF4-zp:    `Nf4QmvZpMetalKernel`       (+4-bit per-group zero-point LUT).
 //
 // Heavier sampling (50 warmup + 1000 timed) so we can compute p25/p50/p75 and
-// a 10-bin histogram per cell.
+// a 10-bin histogram per cell. QMV dispatches are tiny so this stays cheap.
 const QMV_WARMUP: usize = 50;
 const QMV_ITERS: usize = 1000;
 
@@ -451,9 +550,11 @@ struct QmvCellResult {
     input_dim: usize,
     output_dim: usize,
     m: usize,
-    awq: Stats,
+    awq: Stats, // QmvFast (baseline)
     cst: Stats,
     tg: Stats,
+    e4m3: Stats,
+    zp: Stats,
 }
 
 fn bimodal_flag(s: &Stats) -> bool {
@@ -492,15 +593,20 @@ fn bench_qmv_cell(
     let scales_f32: Vec<f32> = (0..(output_dim * num_groups)).map(|i| 0.01 + (i % 7) as f32 * 0.001).collect();
     let biases_f32: Vec<f32> = (0..(output_dim * num_groups)).map(|i| (i % 19) as f32 * 0.125).collect();
 
+    let scale_bytes_e4m3: Vec<u8> = scales_f32.iter().map(|&s| f32_to_e4m3(s)).collect();
+    let zp_packed = build_zp_packed(output_dim, num_groups);
+
     let w_buf = alloc_buffer_with_data::<B, u8>(ctx, &weights_packed);
     let s_buf = bf16_buf(ctx, &scales_f32);
     let b_buf = bf16_buf(ctx, &biases_f32);
+    let s_e4m3_buf = alloc_buffer_with_data::<B, u8>(ctx, &scale_bytes_e4m3);
+    let zp_buf = alloc_buffer_with_data::<B, u8>(ctx, &zp_packed);
 
     let x_f32: Vec<f32> = (0..(m * input_dim)).map(|i| ((i % 257) as f32) / 257.0).collect();
     let x_buf = bf16_buf(ctx, &x_f32);
     let mut y_buf = ctx.create_buffer(m * output_dim * DataType::BF16.size_in_bytes()).expect("y buf");
 
-    // AWQ-int4 via production QmvFast (MLX bias form, no zero points, no hadamard).
+    // QmvFast (baseline): production decode QMV, MLX bias form (= AWQ-int4 QMV).
     let awq_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
         ctx,
         DataType::BF16,
@@ -568,11 +674,50 @@ fn bench_qmv_cell(
     };
     let tg = time_loop_n(QMV_WARMUP, QMV_ITERS, &mut tg_run);
 
-    let dc = (cst.p50 - awq.p50) / awq.p50 * 100.0;
-    let dt = (tg.p50 - awq.p50) / awq.p50 * 100.0;
+    let mut e4m3_run = || -> Duration {
+        let mut encoder = Encoder::new(ctx).unwrap();
+        qmv_bench.encode(
+            Nf4Variant::E4m3,
+            &w_buf,
+            &s_e4m3_buf,
+            &x_buf,
+            &mut y_buf,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            &mut encoder,
+        );
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        completed.gpu_execution_time()
+    };
+    let e4m3 = time_loop_n(QMV_WARMUP, QMV_ITERS, &mut e4m3_run);
+
+    let mut zp_run = || -> Duration {
+        let mut encoder = Encoder::new(ctx).unwrap();
+        qmv_bench.encode_zp(
+            &w_buf,
+            &s_buf,
+            &zp_buf,
+            &x_buf,
+            &mut y_buf,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            &mut encoder,
+        );
+        let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
+        completed.gpu_execution_time()
+    };
+    let zp = time_loop_n(QMV_WARMUP, QMV_ITERS, &mut zp_run);
+
+    let dpct = |s: &Stats| (s.p50 - awq.p50) / awq.p50 * 100.0;
+    let dc = dpct(&cst);
+    let dt = dpct(&tg);
+    let de = dpct(&e4m3);
+    let dz = dpct(&zp);
 
     println!(
-        "  AWQ-int4 QmvFast: mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]",
+        "  QmvFast (baseline): mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]",
         awq.mean,
         awq.std,
         awq.p25,
@@ -580,9 +725,9 @@ fn bench_qmv_cell(
         awq.p75,
         modality(&awq.bins)
     );
-    print_hist_compact("AWQ", &awq);
+    print_hist_compact("Qmv", &awq);
     println!(
-        "  NF4-const       : mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]  Δp50 {:+.2}% ({})",
+        "  NF4-const  : mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]  Δp50 {:+.2}% ({})",
         cst.mean,
         cst.std,
         cst.p25,
@@ -594,7 +739,7 @@ fn bench_qmv_cell(
     );
     print_hist_compact("NF4c", &cst);
     println!(
-        "  NF4-tg          : mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]  Δp50 {:+.2}% ({})",
+        "  NF4-tg     : mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]  Δp50 {:+.2}% ({})",
         tg.mean,
         tg.std,
         tg.p25,
@@ -605,6 +750,30 @@ fn bench_qmv_cell(
         verdict(dt)
     );
     print_hist_compact("NF4tg", &tg);
+    println!(
+        "  NF4-e4m3   : mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]  Δp50 {:+.2}% ({})",
+        e4m3.mean,
+        e4m3.std,
+        e4m3.p25,
+        e4m3.p50,
+        e4m3.p75,
+        modality(&e4m3.bins),
+        de,
+        verdict(de)
+    );
+    print_hist_compact("NF4e4m3", &e4m3);
+    println!(
+        "  NF4-zp     : mean {:.4} ±{:.4} ms  p25 {:.4} p50 {:.4} p75 {:.4}  [{}]  Δp50 {:+.2}% ({})",
+        zp.mean,
+        zp.std,
+        zp.p25,
+        zp.p50,
+        zp.p75,
+        modality(&zp.bins),
+        dz,
+        verdict(dz)
+    );
+    print_hist_compact("NF4zp", &zp);
 
     QmvCellResult {
         shape,
@@ -614,6 +783,8 @@ fn bench_qmv_cell(
         awq,
         cst,
         tg,
+        e4m3,
+        zp,
     }
 }
 
@@ -631,40 +802,40 @@ fn qmv_lut_bench() {
     );
 
     let qmv_bench = Nf4QmvBench::new(&ctx).expect("Nf4QmvBench build");
+    println!(
+        "[QMV_BENCH] baseline = QmvFast (production decode QMV; == AWQ-int4 QMV path). \
+         FORMAT CONFOUND: QmvFast = asymmetric int4 + bf16 scale + MLX bias; \
+         NF4 = fixed 16-entry codebook + symmetric gs=64 scale (E4M3 = FP8 \
+         scale dtype; Zp = +4-bit zero-point LUT). Matched-shape kernel-cost \
+         comparison, NOT isoaccuracy."
+    );
 
-    // 6 production-like shapes × M ∈ {1,2,4} = 18 cells × 3 variants.
-    let shapes: &[(&'static str, usize, usize)] = &[
-        ("LFM-2048", 2048, 2048),
-        ("Qwen-MLPup", 2560, 6912),
-        ("Qwen-MLPdown", 6912, 2560),
-        ("Llama-4096", 4096, 4096),
-        ("Llama-MLPup", 4096, 14336),
-        ("Llama-MLPdown", 14336, 4096),
-    ];
+    // The two real shapes the harness already uses (decode-shaped, M small).
+    let shapes: &[(&'static str, usize, usize)] = &[("ShapeA-2048x2048", 2048, 2048), ("ShapeB-2560x6912", 2560, 6912)];
 
     let mut results: Vec<QmvCellResult> = Vec::new();
     for &(shape, k, n) in shapes {
-        for &m in &[1usize, 2, 4] {
+        for &m in &[1usize, 2, 3, 4] {
             results.push(bench_qmv_cell(&ctx, shape, k, n, m, &qmv_bench));
         }
     }
 
-    // Summary tables: one per M, shape × variant.
+    // Summary tables: one per M, shape × variant. Baseline = QmvFast.
     println!();
-    println!("================== QMV LUT bench summary ==================");
-    for &m_target in &[1usize, 2, 4] {
+    println!("================== QMV LUT bench summary (baseline = QmvFast) ==================");
+    for &m_target in &[1usize, 2, 3, 4] {
         println!();
         println!("--- M = {} ---", m_target);
         println!(
-            "{:<16} {:>14} {:>14} {:>14} {:>9} {:>9}  flags",
-            "Shape", "AWQ p50 (ms)", "NF4-c p50 (ms)", "NF4-tg p50 (ms)", "Δ const", "Δ tg"
+            "{:<18} {:>11} {:>11} {:>11} {:>11} {:>11} {:>7} {:>7} {:>7} {:>7}  flags",
+            "Shape", "Qmv p50", "NF4c p50", "NF4tg p50", "E4M3 p50", "Zp p50", "Δ c", "Δ tg", "Δ e4m3", "Δ zp"
         );
         for r in results.iter().filter(|r| r.m == m_target) {
-            let dc = (r.cst.p50 - r.awq.p50) / r.awq.p50 * 100.0;
-            let dt = (r.tg.p50 - r.awq.p50) / r.awq.p50 * 100.0;
+            let d = |s: &Stats| (s.p50 - r.awq.p50) / r.awq.p50 * 100.0;
+            let (dc, dt, de, dz) = (d(&r.cst), d(&r.tg), d(&r.e4m3), d(&r.zp));
             let mut flags: Vec<&str> = Vec::new();
             if bimodal_flag(&r.awq) {
-                flags.push("AWQ-bimodal");
+                flags.push("Qmv-bimodal");
             }
             if bimodal_flag(&r.cst) {
                 flags.push("NF4c-bimodal");
@@ -672,41 +843,52 @@ fn qmv_lut_bench() {
             if bimodal_flag(&r.tg) {
                 flags.push("NF4tg-bimodal");
             }
-            if dc.abs() < 2.0 {
-                flags.push("const-tied");
+            if bimodal_flag(&r.e4m3) {
+                flags.push("E4M3-bimodal");
             }
-            if dt.abs() < 2.0 {
-                flags.push("tg-tied");
+            if bimodal_flag(&r.zp) {
+                flags.push("Zp-bimodal");
             }
             println!(
-                "{:<16} {:>11.4} ms {:>11.4} ms {:>11.4} ms {:>+8.2}% {:>+8.2}%  {}",
+                "{:<18} {:>8.4}ms {:>8.4}ms {:>8.4}ms {:>8.4}ms {:>8.4}ms {:>+6.2}% {:>+6.2}% {:>+6.2}% {:>+6.2}%  {}",
                 r.shape,
                 r.awq.p50,
                 r.cst.p50,
                 r.tg.p50,
+                r.e4m3.p50,
+                r.zp.p50,
                 dc,
                 dt,
+                de,
+                dz,
                 flags.join(",")
             );
         }
     }
-    println!("===========================================================");
+    println!("  σ (trimmed mean): printed per cell in the detail blocks above.");
+    println!("===============================================================================");
 
-    // M-scaling per shape per variant: ratio M=2/M=1 and M=4/M=2.
+    // M-scaling per shape per variant: ratio p50_M / p50_{M-1}.
     println!();
-    println!("--- NF4 M-scaling ratios (p50_M / p50_{{M/2}}) ---");
-    println!("{:<16} {:>14} {:>14} {:>14} {:>14}", "Shape", "const 2/1", "const 4/2", "tg 2/1", "tg 4/2");
+    println!("--- NF4 M-scaling ratios (p50_M / p50_{{M-1}}) ---");
+    println!(
+        "{:<18} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Shape", "c 2/1", "c 3/2", "c 4/3", "tg 2/1", "e4m3 2/1", "zp 2/1"
+    );
     for &(shape, _k, _n) in shapes {
         let by_m: std::collections::HashMap<usize, &QmvCellResult> =
             results.iter().filter(|r| r.shape == shape).map(|r| (r.m, r)).collect();
-        let r1 = by_m[&1];
-        let r2 = by_m[&2];
-        let r4 = by_m[&4];
-        let c21 = r2.cst.p50 / r1.cst.p50;
-        let c42 = r4.cst.p50 / r2.cst.p50;
-        let t21 = r2.tg.p50 / r1.tg.p50;
-        let t42 = r4.tg.p50 / r2.tg.p50;
-        println!("{:<16} {:>14.3} {:>14.3} {:>14.3} {:>14.3}", shape, c21, c42, t21, t42);
+        let (r1, r2, r3, r4) = (by_m[&1], by_m[&2], by_m[&3], by_m[&4]);
+        println!(
+            "{:<18} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>10.3}",
+            shape,
+            r2.cst.p50 / r1.cst.p50,
+            r3.cst.p50 / r2.cst.p50,
+            r4.cst.p50 / r3.cst.p50,
+            r2.tg.p50 / r1.tg.p50,
+            r2.e4m3.p50 / r1.e4m3.p50,
+            r2.zp.p50 / r1.zp.p50
+        );
     }
     println!();
 }
