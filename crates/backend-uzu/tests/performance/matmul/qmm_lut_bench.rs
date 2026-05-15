@@ -228,10 +228,13 @@ fn build_buffers(
 
 struct QmvCell {
     shape: &'static str,
+    k: usize,
+    n: usize,
     m: usize,
     scalar: Stats,
     awq_lut: Stats,
     nf4: Stats,
+    nf4_byte256: Stats,
 }
 
 fn bench_qmv_cell(
@@ -321,16 +324,40 @@ fn bench_qmv_cell(
         );
     });
 
-    println!("  scalar     : {:.4} ±{:.4} ms", scalar.mean, scalar.std);
-    println!("  awq-lut256 : {:.4} ±{:.4} ms  Δ {:+.1}%", awq_lut.mean, awq_lut.std, dpct(&scalar, &awq_lut));
-    println!("  nf4        : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&scalar, &nf4));
+    let mut y_b = bufs.y_buf.clone();
+    let nf4_byte256 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::Byte256,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_b,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    println!("  scalar      : {:.4} ±{:.4} ms", scalar.mean, scalar.std);
+    println!("  awq-lut256  : {:.4} ±{:.4} ms  Δ {:+.1}%", awq_lut.mean, awq_lut.std, dpct(&scalar, &awq_lut));
+    println!("  nf4-const   : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&scalar, &nf4));
+    println!(
+        "  nf4-byte256 : {:.4} ±{:.4} ms  Δ {:+.1}%",
+        nf4_byte256.mean,
+        nf4_byte256.std,
+        dpct(&scalar, &nf4_byte256)
+    );
 
     QmvCell {
         shape,
+        k: input_dim,
+        n: output_dim,
         m,
         scalar,
         awq_lut,
         nf4,
+        nf4_byte256,
     }
 }
 
@@ -350,8 +377,10 @@ fn qmv_lut_bench() {
     println!(
         "[QMV_LUT_BENCH] baseline = scalar int4 (QmvFast use_zero_points=true \
          use_mlx_quant=false use_lut=false, no bias). Challengers: awq-lut256 \
-         (same kernel/inputs, use_lut=true) and nf4 (Nf4QmvConstant 16-entry \
-         codebook, bf16 scale). FORMAT CONFOUND: uniform int4 vs NF codebook."
+         (same kernel/inputs, use_lut=true), nf4-const (Nf4QmvConstant \
+         16-entry codebook, bf16 scale) and nf4-byte256 (Nf4QmvByte256: same \
+         NF4 math via byte-batched 256-entry threadgroup half2 LUT). FORMAT \
+         CONFOUND: uniform int4 vs NF codebook."
     );
 
     let qmv_bench = Nf4QmvBench::new(&ctx).expect("Nf4QmvBench build");
@@ -373,18 +402,44 @@ fn qmv_lut_bench() {
         }
     }
 
+    // Sanity gate: scalar @ LFM-2048 M=1 must be within ~±40% of the known
+    // good 0.0248 ms (and not ~0.1 ms, which signals broken batched timing).
+    {
+        let gate = results.iter().find(|r| r.shape == "LFM-2048" && r.m == 1).expect("LFM-2048 M=1 cell present");
+        const GATE_REF_MS: f64 = 0.0248;
+        let lo = GATE_REF_MS * 0.60;
+        let hi = GATE_REF_MS * 1.40;
+        println!(
+            "[QMV_LUT_BENCH] sanity gate: scalar LFM-2048 M=1 = {:.4} ms (expect {:.4}±40% => [{:.4}, {:.4}])",
+            gate.scalar.mean, GATE_REF_MS, lo, hi
+        );
+        assert!(
+            gate.scalar.mean >= lo && gate.scalar.mean <= hi,
+            "SANITY GATE FAILED: scalar LFM-2048 M=1 = {:.4} ms outside [{:.4}, {:.4}] \
+             (batched timing likely broken; refusing to report result tables)",
+            gate.scalar.mean,
+            lo,
+            hi
+        );
+    }
+
     println!();
     println!("================== QMV LUT bench summary (baseline = scalar) ==================");
-    println!("{:<16} {:>3} {:>18} {:>14} {:>12}", "Shape", "M", "scalar ms(±σ)", "awq-lut256 Δ%", "nf4 Δ%");
+    println!(
+        "{:<14} {:>11} {:>3} {:>18} {:>14} {:>12} {:>14}",
+        "Shape", "KxN", "M", "scalar ms(±σ)", "awq-lut256 Δ%", "nf4-const Δ%", "nf4-byte256 Δ%"
+    );
     for r in &results {
         println!(
-            "{:<16} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}%",
+            "{:<14} {:>11} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}% {:>+13.1}%",
             r.shape,
+            format!("{}x{}", r.k, r.n),
             r.m,
             r.scalar.mean,
             r.scalar.std,
             dpct(&r.scalar, &r.awq_lut),
-            dpct(&r.scalar, &r.nf4)
+            dpct(&r.scalar, &r.nf4),
+            dpct(&r.scalar, &r.nf4_byte256)
         );
     }
     println!("==============================================================================");

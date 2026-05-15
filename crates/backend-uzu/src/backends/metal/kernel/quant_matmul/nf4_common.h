@@ -149,6 +149,21 @@ inline void nf4_init_tg_codebook(
   }
 }
 
+// Cooperatively initialize a 256-entry byte-batched threadgroup LUT:
+//   byte_lut[b] = half2(nf4_codebook[b & 0x0f], nf4_codebook[(b >> 4) & 0x0f])
+// so one packed weight byte → one threadgroup half2 load → both nibbles'
+// codebook values. The caller MUST `threadgroup_barrier` after.
+inline void nf4_init_byte_lut(
+    threadgroup half2* byte_lut,
+    uint tid,
+    uint tgp_size
+) {
+  for (uint b = tid; b < 256u; b += tgp_size) {
+    byte_lut[b] =
+        half2(nf4_codebook[b & 0x0fu], nf4_codebook[(b >> 4) & 0x0fu]);
+  }
+}
+
 // Decode a 1-byte OCP/NVIDIA E4M3 FP8 scale (1 sign / 4 exp / 3 mantissa,
 // bias 7, no infinities, NaN = S.1111.111, max normal magnitude 448,
 // subnormals: exp==0 -> value = mantissa/8 * 2^-6) into a `half`.

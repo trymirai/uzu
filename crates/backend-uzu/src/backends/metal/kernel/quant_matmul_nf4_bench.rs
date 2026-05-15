@@ -12,7 +12,8 @@ use crate::{
             error::MetalError,
             kernel::{
                 Nf4QmmConstantMetalKernel, Nf4QmmE4m3MetalKernel, Nf4QmmTgMetalKernel, Nf4QmmZpMetalKernel,
-                Nf4QmvConstantMetalKernel, Nf4QmvE4m3MetalKernel, Nf4QmvTgMetalKernel, Nf4QmvZpMetalKernel,
+                Nf4QmvByte256MetalKernel, Nf4QmvConstantMetalKernel, Nf4QmvE4m3MetalKernel, Nf4QmvTgMetalKernel,
+                Nf4QmvZpMetalKernel,
             },
         },
     },
@@ -28,6 +29,9 @@ pub enum Nf4Variant {
     /// Requires a `zero_points` buffer — use `encode_zp` (the plain `encode`
     /// has no zero-point arg and will panic for this variant).
     Zp,
+    /// Byte-batched 256-entry threadgroup `half2` codebook LUT (mirrors the
+    /// int4 `awq-lut256` access pattern). Same math as `Constant`.
+    Byte256,
 }
 
 /// QMV NF4 kernel set (one for each lookup strategy). Built lazily by `new`.
@@ -36,6 +40,7 @@ pub struct Nf4QmvBench {
     tg: Nf4QmvTgMetalKernel,
     e4m3: Nf4QmvE4m3MetalKernel,
     zp: Nf4QmvZpMetalKernel,
+    byte256: Nf4QmvByte256MetalKernel,
 }
 
 impl Nf4QmvBench {
@@ -45,6 +50,7 @@ impl Nf4QmvBench {
             tg: Nf4QmvTgMetalKernel::new(ctx, DataType::BF16, 64)?,
             e4m3: Nf4QmvE4m3MetalKernel::new(ctx, DataType::BF16, 64)?,
             zp: Nf4QmvZpMetalKernel::new(ctx, DataType::BF16, 64)?,
+            byte256: Nf4QmvByte256MetalKernel::new(ctx, DataType::BF16, 64)?,
         })
     }
 
@@ -86,6 +92,9 @@ impl Nf4QmvBench {
             },
             Nf4Variant::E4m3 => {
                 self.e4m3.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            Nf4Variant::Byte256 => {
+                self.byte256.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
             },
             Nf4Variant::Zp => {
                 panic!("Nf4Variant::Zp requires a zero_points buffer; call Nf4QmvBench::encode_zp instead")
@@ -190,6 +199,9 @@ impl Nf4QmmBench {
             },
             (Nf4Variant::E4m3, Nf4QmmTile::Big) => {
                 self.e4m3_big.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            (Nf4Variant::Byte256, _) => {
+                panic!("Nf4Variant::Byte256 is QMV-only; no Nf4QmmByte256 kernel exists")
             },
             (Nf4Variant::Zp, _) => {
                 panic!("Nf4Variant::Zp requires a zero_points buffer; call Nf4QmmBench::encode_zp instead")
