@@ -25,3 +25,7 @@ mod tensor_copy;
 mod token_copy;
 
 include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
+
+/// Public re-export of the NF4-E4M3 CPU reference helpers for the
+/// bench/correctness test crate (NF4 GPU kernels are bench-only).
+pub use quant_matmul::nf4_e4m3;

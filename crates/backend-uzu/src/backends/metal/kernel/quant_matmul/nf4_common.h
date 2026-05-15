@@ -148,3 +148,37 @@ inline void nf4_init_tg_codebook(
     cb[i] = v;
   }
 }
+
+// Decode a 1-byte OCP/NVIDIA E4M3 FP8 scale (1 sign / 4 exp / 3 mantissa,
+// bias 7, no infinities, NaN = S.1111.111, max normal magnitude 448,
+// subnormals: exp==0 -> value = mantissa/8 * 2^-6) into a `half`.
+// Apple GPUs have no native FP8->half convert, so this is a scalar bit
+// unpack. It runs once per group (1 per 64 weights) so it is not on the
+// hot per-weight path.
+inline half e4m3_to_half(uint8_t v) {
+  const uint sign = (v >> 7) & 0x1u;
+  const uint exp = (v >> 3) & 0xFu;
+  const uint mant = v & 0x7u;
+  const half hsign = sign ? -1.0h : 1.0h;
+
+  if (exp == 0u) {
+    // Subnormal (or zero): value = mantissa / 8 * 2^-6.
+    // 2^-6 / 8 == 2^-9 == 1/512.
+    return hsign * (half(mant) * (1.0h / 512.0h));
+  }
+  // NaN encoding: S.1111.111 (exp==15 && mant==7). Return 0 so a corrupt
+  // scale does not poison the whole group; correctness tests never feed it.
+  if (exp == 0xFu && mant == 0x7u) {
+    return 0.0h;
+  }
+  // Normal: value = (1 + mant/8) * 2^(exp - 7).
+  const half mantissa = 1.0h + half(mant) * (1.0h / 8.0h);
+  const int e = int(exp) - 7;
+  half scale_pow;
+  if (e >= 0) {
+    scale_pow = half(1u << uint(e));
+  } else {
+    scale_pow = 1.0h / half(1u << uint(-e));
+  }
+  return hsign * mantissa * scale_pow;
+}

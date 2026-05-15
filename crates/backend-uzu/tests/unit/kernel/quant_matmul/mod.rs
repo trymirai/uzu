@@ -2,6 +2,7 @@
 #[path = "../../../common/mod.rs"]
 mod common;
 
+mod nf4_e4m3_test;
 mod qmm_transposed_test;
 mod qmv_fast_test;
 mod qmv_test;

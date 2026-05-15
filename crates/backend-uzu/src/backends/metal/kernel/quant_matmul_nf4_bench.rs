@@ -10,7 +10,10 @@ use crate::{
         metal::{
             Metal, MetalContext,
             error::MetalError,
-            kernel::{Nf4QmmConstantMetalKernel, Nf4QmmTgMetalKernel, Nf4QmvConstantMetalKernel, Nf4QmvTgMetalKernel},
+            kernel::{
+                Nf4QmmConstantMetalKernel, Nf4QmmE4m3MetalKernel, Nf4QmmTgMetalKernel, Nf4QmvConstantMetalKernel,
+                Nf4QmvE4m3MetalKernel, Nf4QmvTgMetalKernel,
+            },
         },
     },
 };
@@ -20,12 +23,14 @@ use crate::{
 pub enum Nf4Variant {
     Constant,
     Tg,
+    E4m3,
 }
 
 /// QMV NF4 kernel set (one for each lookup strategy). Built lazily by `new`.
 pub struct Nf4QmvBench {
     constant: Nf4QmvConstantMetalKernel,
     tg: Nf4QmvTgMetalKernel,
+    e4m3: Nf4QmvE4m3MetalKernel,
 }
 
 impl Nf4QmvBench {
@@ -33,6 +38,7 @@ impl Nf4QmvBench {
         Ok(Self {
             constant: Nf4QmvConstantMetalKernel::new(ctx, DataType::BF16, 64)?,
             tg: Nf4QmvTgMetalKernel::new(ctx, DataType::BF16, 64)?,
+            e4m3: Nf4QmvE4m3MetalKernel::new(ctx, DataType::BF16, 64)?,
         })
     }
 
@@ -55,6 +61,9 @@ impl Nf4QmvBench {
             Nf4Variant::Tg => {
                 self.tg.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
             },
+            Nf4Variant::E4m3 => {
+                self.e4m3.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
         }
     }
 }
@@ -75,6 +84,8 @@ pub struct Nf4QmmBench {
     constant_big: Nf4QmmConstantMetalKernel,
     tg_small: Nf4QmmTgMetalKernel,
     tg_big: Nf4QmmTgMetalKernel,
+    e4m3_small: Nf4QmmE4m3MetalKernel,
+    e4m3_big: Nf4QmmE4m3MetalKernel,
 }
 
 impl Nf4QmmBench {
@@ -84,6 +95,8 @@ impl Nf4QmmBench {
             constant_big: Nf4QmmConstantMetalKernel::new(ctx, DataType::BF16, 64, 64, 64, 64, 2, 2)?,
             tg_small: Nf4QmmTgMetalKernel::new(ctx, DataType::BF16, 64, 8, 32, 32, 1, 1)?,
             tg_big: Nf4QmmTgMetalKernel::new(ctx, DataType::BF16, 64, 64, 64, 64, 2, 2)?,
+            e4m3_small: Nf4QmmE4m3MetalKernel::new(ctx, DataType::BF16, 64, 8, 32, 32, 1, 1)?,
+            e4m3_big: Nf4QmmE4m3MetalKernel::new(ctx, DataType::BF16, 64, 64, 64, 64, 2, 2)?,
         })
     }
 
@@ -119,6 +132,12 @@ impl Nf4QmmBench {
             },
             (Nf4Variant::Tg, Nf4QmmTile::Big) => {
                 self.tg_big.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            (Nf4Variant::E4m3, Nf4QmmTile::Small) => {
+                self.e4m3_small.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            (Nf4Variant::E4m3, Nf4QmmTile::Big) => {
+                self.e4m3_big.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
             },
         }
     }
