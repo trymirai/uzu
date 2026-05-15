@@ -753,7 +753,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
         if is_prefilling {
             let mut cache_layers = context.cache_layers.borrow_mut();
             let decoder_arguments = token_inputs.decoder_arguments(
-                &context.model_shape,
                 context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
                 batch_dim,
@@ -769,7 +768,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
         } else {
             let mut cache_layers = context.cache_layers.borrow_mut();
             let decoder_arguments = token_inputs.decoder_arguments(
-                &context.model_shape,
                 context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
                 batch_dim,

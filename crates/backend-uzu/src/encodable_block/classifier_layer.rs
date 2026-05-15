@@ -4,8 +4,9 @@ use crate::{
     DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
     config::{TransformerConfig, TransformerLayerConfig},
-    encodable_block::{Attention, AttentionArguments, LayerArguments, Linear, Mlp, Normalization, QKNorm, Rope},
-    forward_pass::state::RopeType,
+    encodable_block::{
+        Attention, AttentionArguments, LayerArguments, Linear, Mlp, Normalization, QKNorm, QkUnpack, Rope,
+    },
     parameters::ParameterTree,
 };
 
@@ -14,7 +15,7 @@ pub struct ClassifierLayer<B: Backend> {
     qkv_projection: Box<dyn Linear<B>>,
     qk_norm: Option<QKNorm<B>>,
     rope: Rc<Rope<B>>,
-    use_rope: bool,
+    qk_unpack: Rc<QkUnpack<B>>,
     attention: Attention<B>,
     out_projection: Box<dyn Linear<B>>,
     post_attention_norm: Option<Normalization<B>>,
@@ -37,6 +38,7 @@ impl<B: Backend> ClassifierLayer<B> {
         layer_index: usize,
         layer_loader: &ParameterTree<B::Context>,
         rope: Rc<Rope<B>>,
+        qk_unpack: Rc<QkUnpack<B>>,
     ) -> Self {
         let attention_config = layer_config.mixer_config.as_attention().expect("Classifier layers must use attention");
         let intermediate_data_type: DataType = attention_config.qkv_projection_config.activation_precision().into();
@@ -144,7 +146,7 @@ impl<B: Backend> ClassifierLayer<B> {
             qkv_projection,
             qk_norm,
             rope,
-            use_rope: attention_config.use_rope,
+            qk_unpack,
             attention,
             out_projection,
             post_attention_norm,
@@ -172,10 +174,7 @@ impl<B: Backend> ClassifierLayer<B> {
             token_positions,
             token_subtrie_ranges,
             attention_sinks,
-            rope_cosines,
-            rope_sines,
-            rope_max_sequence_length,
-            rope_dim,
+            rope_buffers,
             #[cfg(feature = "tracing")]
             trace,
             ..
@@ -206,22 +205,22 @@ impl<B: Backend> ClassifierLayer<B> {
         if let Some(ref qk_norm) = self.qk_norm {
             qk_norm.encode(&mut qkv, batch_dim, encoder)?;
         }
-        let cosines = rope_cosines.expect("Classifier attention layer requires RoPE cosine allocation");
-        let sines = rope_sines.expect("Classifier attention layer requires RoPE sine allocation");
-        let (queries, rotated_keys) = self.rope.encode(
-            &qkv,
-            token_positions,
-            cosines,
-            sines,
-            batch_dim,
-            self.num_heads,
-            self.num_groups,
-            self.head_dim,
-            rope_max_sequence_length,
-            rope_dim,
-            self.use_rope,
-            encoder,
-        )?;
+        let (queries, rotated_keys) = match rope_buffers {
+            Some(rope_buffers) => self.rope.encode(
+                &qkv,
+                token_positions,
+                &rope_buffers.cosines,
+                &rope_buffers.sines,
+                batch_dim,
+                self.num_heads,
+                self.num_groups,
+                self.head_dim,
+                rope_buffers.max_sequence_length(),
+                rope_buffers.dim(),
+                encoder,
+            )?,
+            None => self.qk_unpack.encode(&qkv, batch_dim, self.num_heads, self.num_groups, self.head_dim, encoder)?,
+        };
         let attention_output = self.attention.encode(
             AttentionArguments {
                 token_subtrie_ranges,
@@ -288,9 +287,5 @@ impl<B: Backend> ClassifierLayer<B> {
         }
 
         Ok(main)
-    }
-
-    pub fn rope_type(&self) -> RopeType {
-        self.rope.rope_type()
     }
 }

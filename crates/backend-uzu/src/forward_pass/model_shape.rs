@@ -17,7 +17,6 @@ pub struct ModelShape {
     pub num_layers: usize,
     pub sliding_window_length_per_layer: Box<[Option<usize>]>,
     layer_mixers: Box<[MixerConfig]>,
-    max_rope_dim: usize,
 }
 
 impl ModelShape {
@@ -39,18 +38,6 @@ impl ModelShape {
             MLPConfig::MixtureOfExperts(m) => m.expert_config.linear_config.activation_precision().into(),
         };
 
-        let mut max_rope_dim = 0usize;
-        for layer in layer_configs.iter() {
-            if let MixerConfig::Attention(attn) = &layer.mixer_config
-                && attn.use_rope
-            {
-                max_rope_dim = max_rope_dim.max(attn.partial_rope_dim.unwrap_or(attn.head_dim));
-            }
-        }
-        if max_rope_dim == 0 {
-            max_rope_dim = head_dim;
-        }
-
         let sliding_window_length_per_layer: Box<[Option<usize>]> =
             layer_configs.iter().map(|l| l.mixer_config.sliding_window_size()).collect();
         let layer_mixers: Box<[MixerConfig]> = layer_configs.iter().map(|l| l.mixer_config.clone()).collect();
@@ -66,7 +53,6 @@ impl ModelShape {
             num_layers,
             sliding_window_length_per_layer,
             layer_mixers,
-            max_rope_dim,
         }
     }
 
@@ -76,10 +62,6 @@ impl ModelShape {
 
     pub fn kv_cache_data_type(&self) -> DataType {
         self.kv_cache_type
-    }
-
-    pub fn rope_dim(&self) -> usize {
-        self.max_rope_dim
     }
 
     pub fn num_groups(&self) -> usize {

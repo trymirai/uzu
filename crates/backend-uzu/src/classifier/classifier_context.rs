@@ -1,15 +1,16 @@
 use std::{fs::File, path::Path, rc::Rc};
 
+#[cfg(feature = "tracing")]
+use crate::forward_pass::model_shape::ModelShape;
 use crate::{
     DataType,
     backends::common::{Backend, Context},
     classifier::ClassifierError,
     config::{ClassifierModelConfig, ModelMetadata},
-    encodable_block::{ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, Rope},
-    forward_pass::{
-        model_shape::ModelShape,
-        state::{RopeType, SharedBuffers},
+    encodable_block::{
+        ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, QkUnpack, Rope,
     },
+    forward_pass::state::SharedBuffers,
     parameters::ParameterLoader,
     session::types::Error,
 };
@@ -20,6 +21,7 @@ pub struct ClassifierContext<B: Backend> {
     pub shared_buffers: Rc<SharedBuffers<B>>,
 
     pub model_config: ClassifierModelConfig,
+    #[cfg(feature = "tracing")]
     pub model_shape: ModelShape,
 
     pub embed: Embedding<B>,
@@ -43,7 +45,9 @@ impl<B: Backend> ClassifierContext<B> {
             transformer_config: model_metadata.model_config.model_config.transformer_config.clone(),
             vocab_size: model_metadata.model_config.model_config.vocab_size,
             pard_token: None,
+            ple_model_config: None,
         });
+        #[cfg(feature = "tracing")]
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
         let weights_path = model_path.join("model.safetensors");
@@ -54,8 +58,8 @@ impl<B: Backend> ClassifierContext<B> {
         let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let root_loader_view = loader.tree();
 
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
-        shared_buffers.update_data(&root_loader_view);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config);
+        shared_buffers.update_data(&root_loader_view)?;
         let shared_buffers = Rc::new(shared_buffers);
 
         let transformer_tree = root_loader_view
@@ -78,16 +82,14 @@ impl<B: Backend> ClassifierContext<B> {
         )
         .expect("Failed to create embedding");
 
-        let global_rope = Self::create_rope_block(&context, data_type, RopeType::Global).map_err(Error::Classifier)?;
-        let local_rope = model_metadata
-            .model_config
-            .model_config
-            .transformer_config
-            .local_rope_config
-            .as_ref()
-            .map(|_| Self::create_rope_block(&context, data_type, RopeType::Local))
-            .transpose()
-            .map_err(Error::Classifier)?;
+        let rope = Rc::new(
+            Rope::<B>::new(context.as_ref(), data_type)
+                .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e))))?,
+        );
+        let qk_unpack = Rc::new(
+            QkUnpack::<B>::new(context.as_ref(), data_type)
+                .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("QkUnpack: {:?}", e))))?,
+        );
 
         let layers = model_metadata
             .model_config
@@ -97,12 +99,7 @@ impl<B: Backend> ClassifierContext<B> {
             .iter()
             .enumerate()
             .map(|(layer_index, layer_config)| {
-                let attn = layer_config.mixer_config.as_attention().ok_or(ClassifierError::NonAttentionMixer)?;
-                let rope = if attn.sliding_window_size.is_some() && local_rope.is_some() {
-                    local_rope.clone().unwrap()
-                } else {
-                    global_rope.clone()
-                };
+                layer_config.mixer_config.as_attention().ok_or(ClassifierError::NonAttentionMixer)?;
 
                 let layer_tree = transformer_tree
                     .subtree(&format!("layers.{}", layer_index))
@@ -114,7 +111,8 @@ impl<B: Backend> ClassifierContext<B> {
                     layer_config,
                     layer_index,
                     &layer_tree,
-                    rope,
+                    rope.clone(),
+                    qk_unpack.clone(),
                 ))
             })
             .collect::<Result<Vec<_>, ClassifierError>>()
@@ -221,6 +219,7 @@ impl<B: Backend> ClassifierContext<B> {
             context,
             shared_buffers,
             model_config: model_metadata.model_config.clone(),
+            #[cfg(feature = "tracing")]
             model_shape,
             embed,
             embedding_norm,
@@ -229,15 +228,5 @@ impl<B: Backend> ClassifierContext<B> {
             pooling,
             prediction_head,
         })
-    }
-
-    fn create_rope_block(
-        context: &B::Context,
-        data_type: DataType,
-        rope_type: RopeType,
-    ) -> Result<Rc<Rope<B>>, ClassifierError> {
-        let rotation = Rope::<B>::new(context, data_type, rope_type)
-            .map_err(|e| ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e)))?;
-        Ok(Rc::new(rotation))
     }
 }

@@ -1,26 +1,24 @@
-//! Rope (Rotary Position Embedding) encodable.
-
 use crate::{
     DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        kernel::{Kernels, RopeKernel},
+        kernel::{Kernels, QkUnpackKernel},
     },
 };
 
-pub struct Rope<B: Backend> {
-    kernel: <B::Kernels as Kernels>::RopeKernel,
+pub struct QkUnpack<B: Backend> {
+    unpack_kernel: <B::Kernels as Kernels>::QkUnpackKernel,
     data_type: DataType,
 }
 
-impl<B: Backend> Rope<B> {
+impl<B: Backend> QkUnpack<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
     ) -> Result<Self, B::Error> {
         Ok(Self {
-            kernel: <B::Kernels as Kernels>::RopeKernel::new(context, data_type)?,
+            unpack_kernel: <B::Kernels as Kernels>::QkUnpackKernel::new(context, data_type)?,
             data_type,
         })
     }
@@ -28,36 +26,26 @@ impl<B: Backend> Rope<B> {
     pub fn encode(
         &self,
         qkv: &Allocation<B>,
-        token_positions: &Allocation<B>,
-        cosines: &Allocation<B>,
-        sines: &Allocation<B>,
         suffix_length: usize,
         num_heads: usize,
         num_groups: usize,
         head_dim: usize,
-        rope_max_seq_len: usize,
-        rope_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), B::Error> {
-        let mut rotated_queries =
+        let mut queries =
             encoder.allocate_scratch(size_for_shape(&[num_heads, suffix_length, head_dim], self.data_type))?;
-        let mut rotated_keys =
+        let mut keys =
             encoder.allocate_scratch(size_for_shape(&[num_groups, suffix_length, head_dim], self.data_type))?;
-        self.kernel.encode(
+        self.unpack_kernel.encode(
             qkv,
-            cosines,
-            sines,
-            token_positions,
-            &mut rotated_queries,
-            &mut rotated_keys,
+            &mut queries,
+            &mut keys,
             head_dim as u32,
-            rope_dim as u32,
             num_heads as u32,
             num_groups as u32,
             suffix_length as u32,
-            rope_max_seq_len as u32,
             encoder,
         );
-        Ok((rotated_queries, rotated_keys))
+        Ok((queries, keys))
     }
 }
