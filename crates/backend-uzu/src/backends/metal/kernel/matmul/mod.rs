@@ -10,6 +10,7 @@ use crate::{
     backends::{
         common::{
             Encoder,
+            gpu_types::gemm::GemmComputeKind,
             kernel::{
                 TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
@@ -66,19 +67,26 @@ impl MatmulMetalKernel {
             MatmulDispatchPath::Gemv => {
                 gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV")
             },
-            MatmulDispatchPath::Gemm => gemm::fp::encode_simdgroup(
+            MatmulDispatchPath::Gemm => gemm::fp::encode(
                 &mut self.gemm,
                 &mut self.bias_add,
                 self.data_type,
                 context,
                 encoder,
                 arguments,
+                GemmComputeKind::SimdgroupMma,
             )
             .expect("Failed to encode Gemm"),
-            MatmulDispatchPath::GemmMxu => {
-                gemm::fp::encode_mxu(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments)
-                    .expect("Failed to encode GemmMxu")
-            },
+            MatmulDispatchPath::GemmMxu => gemm::fp::encode(
+                &mut self.gemm,
+                &mut self.bias_add,
+                self.data_type,
+                context,
+                encoder,
+                arguments,
+                GemmComputeKind::MxuMma,
+            )
+            .expect("Failed to encode GemmMxu"),
         }
     }
 }
@@ -114,12 +122,14 @@ impl MatmulKernel for MatmulMetalKernel {
         let context = encoder.context();
         if arguments.batch_dim <= max_gemv_batch_threshold() {
             gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV kernel");
-        } else if self.is_mxu_eligible(context) {
-            gemm::fp::encode_mxu(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments)
-                .expect("Failed to encode GEMM (MXU)");
         } else {
-            gemm::fp::encode_simdgroup(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments)
-                .expect("Failed to encode GEMM (simdgroup)");
+            let compute = if self.is_mxu_eligible(context) {
+                GemmComputeKind::MxuMma
+            } else {
+                GemmComputeKind::SimdgroupMma
+            };
+            gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, compute)
+                .expect("Failed to encode GEMM");
         }
     }
 }
