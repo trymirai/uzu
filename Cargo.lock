@@ -595,7 +595,6 @@ dependencies = [
  "rangemap",
  "regex",
  "rhai",
- "rstest",
  "rustix",
  "schemars 1.2.1",
  "serde",

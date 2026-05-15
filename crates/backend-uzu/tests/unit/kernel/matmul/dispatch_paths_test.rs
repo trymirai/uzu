@@ -9,9 +9,9 @@ use backend_uzu::{
         metal::{Metal, MetalContext},
     },
 };
+use dsl::__internal_uzu_test as uzu_test;
 use half::{bf16, f16};
 use num_traits::Float;
-use rstest::rstest;
 
 use crate::common::{
     assert::assert_eq_float,
@@ -55,41 +55,47 @@ fn check_all_shapes<T: ArrayElement + Float + Debug + Display>(
     }
 }
 
-#[rstest]
-#[case::gemm(Variant::Gemm)]
-#[case::gemm_mxu(Variant::GemmMxu)]
-fn matches_cpu_reference_bf16(#[case] variant: Variant) {
-    check_all_shapes::<bf16>(variant, 1.0, false, 1.0);
+#[uzu_test]
+fn matches_cpu_reference_bf16_gemm() {
+    check_all_shapes::<bf16>(Variant::Gemm, 1.0, false, 1.0);
 }
 
-#[rstest]
-#[case::gemm(Variant::Gemm)]
-#[case::gemm_mxu(Variant::GemmMxu)]
-fn matches_cpu_reference_f16(#[case] variant: Variant) {
-    check_all_shapes::<f16>(variant, 1.0, false, 0.5);
+#[uzu_test]
+fn matches_cpu_reference_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 1.0, false, 1.0);
 }
 
-#[rstest]
-#[case::gemm(Variant::Gemm)]
-fn matches_cpu_reference_f32(#[case] variant: Variant) {
-    check_all_shapes::<f32>(variant, 1.0, false, 0.05);
+#[uzu_test]
+fn matches_cpu_reference_f16_gemm() {
+    check_all_shapes::<f16>(Variant::Gemm, 1.0, false, 0.5);
 }
 
-#[rstest]
-#[case::gemm(Variant::Gemm)]
-#[case::gemm_mxu(Variant::GemmMxu)]
-fn ab_scale_bf16(#[case] variant: Variant) {
-    check_all_shapes::<bf16>(variant, 0.5, false, 1.0);
+#[uzu_test]
+fn matches_cpu_reference_f16_gemm_mxu() {
+    check_all_shapes::<f16>(Variant::GemmMxu, 1.0, false, 0.5);
 }
 
-#[rstest]
-#[case::gemm_mxu(Variant::GemmMxu)]
-fn accumulate_bf16(#[case] variant: Variant) {
-    check_all_shapes::<bf16>(variant, 1.0, true, 1.0);
+#[uzu_test]
+fn matches_cpu_reference_f32_gemm() {
+    check_all_shapes::<f32>(Variant::Gemm, 1.0, false, 0.05);
 }
 
-#[rstest]
-#[case::gemm_mxu(Variant::GemmMxu)]
-fn scale_and_accumulate_bf16(#[case] variant: Variant) {
-    check_all_shapes::<bf16>(variant, 0.5, true, 1.0);
+#[uzu_test]
+fn ab_scale_bf16_gemm() {
+    check_all_shapes::<bf16>(Variant::Gemm, 0.5, false, 1.0);
+}
+
+#[uzu_test]
+fn ab_scale_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 0.5, false, 1.0);
+}
+
+#[uzu_test]
+fn accumulate_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 1.0, true, 1.0);
+}
+
+#[uzu_test]
+fn scale_and_accumulate_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 0.5, true, 1.0);
 }
