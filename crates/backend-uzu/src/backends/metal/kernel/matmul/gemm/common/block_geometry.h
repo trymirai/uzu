@@ -8,15 +8,6 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-static METAL_FUNC uint2
-swizzled_block_id(uint2 threadgroup_position, uint swizzle_log) {
-  const uint stride = pow2(swizzle_log);
-  return uint2(
-      threadgroup_position.x / stride,
-      threadgroup_position.y * stride + (threadgroup_position.x % stride)
-  );
-}
-
 static METAL_FUNC uint morton_expand_bits(uint x) {
   x &= 0x55555555u;
   x = (x | (x >> 1)) & 0x33333333u;
@@ -26,15 +17,11 @@ static METAL_FUNC uint morton_expand_bits(uint x) {
   return x;
 }
 
-static METAL_FUNC uint2
-morton_block_id(uint2 threadgroup_position, bool use_morton) {
-  if (use_morton) {
-    return uint2(
-        morton_expand_bits(threadgroup_position.x),
-        morton_expand_bits(threadgroup_position.x >> 1)
-    );
-  }
-  return threadgroup_position;
+static METAL_FUNC uint2 morton_block_id(uint2 threadgroup_position) {
+  return uint2(
+      morton_expand_bits(threadgroup_position.x),
+      morton_expand_bits(threadgroup_position.x >> 1)
+  );
 }
 
 static METAL_FUNC uint2 block_id(
@@ -42,9 +29,9 @@ static METAL_FUNC uint2 block_id(
     const constant uzu::matmul::GemmParams* params
 ) {
   if (params->use_morton) {
-    return morton_block_id(threadgroup_position, true);
+    return morton_block_id(threadgroup_position);
   }
-  return swizzled_block_id(threadgroup_position, params->swizzle_log);
+  return threadgroup_position;
 }
 
 template <uint BLOCK_M, uint BLOCK_N>
