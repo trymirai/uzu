@@ -9,6 +9,7 @@ pub struct AttentionConfig {
 
     pub query_norm_config: Option<NormalizationConfig>,
     pub key_norm_config: Option<NormalizationConfig>,
+    pub value_norm_config: Option<NormalizationConfig>,
 
     pub num_heads: usize,
     pub num_groups: usize,

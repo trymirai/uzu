@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::{
     backends::common::Backend,
-    encodable_block::{Attention, DeltaNetMixer, MambaMixer, QKNorm, QkUnpack, Rope, ShortConvMixer, linear::Linear},
+    encodable_block::{Attention, DeltaNetMixer, MambaMixer, QKVNorm, QkUnpack, Rope, ShortConvMixer, linear::Linear},
 };
 
 /// Mixer component - either attention, state space, short conv, or delta net.
@@ -12,7 +12,7 @@ pub(crate) enum MixerExecutables<B: Backend> {
     Attention {
         qkv_projection: Box<dyn Linear<B>>,
         gate_projection: Option<Box<dyn Linear<B>>>,
-        qk_norm: Option<QKNorm<B>>,
+        qkv_norm: Option<QKVNorm<B>>,
         rope: Rc<Rope<B>>,
         qk_unpack: Rc<QkUnpack<B>>,
         attention: Attention<B>,

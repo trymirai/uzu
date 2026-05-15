@@ -13,7 +13,7 @@ use crate::{
     config::{MixerConfig, TransformerConfig, TransformerLayerConfig},
     encodable_block::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
-        QKNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
+        QKVNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
     },
     forward_pass::{cache_layers::CacheLayer, state::RopeBuffers},
     parameters::ParameterTree,
@@ -112,24 +112,27 @@ impl<B: Backend> LayerExecutables<B> {
                     .expect("Failed to create gate projection")
                 });
 
-                let qk_norm =
-                    if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
-                        match QKNorm::new(
-                            context,
-                            intermediate_data_type,
-                            attention_config.query_norm_config.clone(),
-                            attention_config.key_norm_config.clone(),
-                            &decoder_layer_loader.subtree("mixer").unwrap(),
-                            attention_config.num_heads,
-                            attention_config.num_groups,
-                            attention_config.head_dim,
-                        ) {
-                            Ok(qk_norm) => Some(qk_norm),
-                            Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
-                        }
-                    } else {
-                        None
-                    };
+                let qkv_norm = if attention_config.query_norm_config.is_some()
+                    || attention_config.key_norm_config.is_some()
+                    || attention_config.value_norm_config.is_some()
+                {
+                    match QKVNorm::new(
+                        context,
+                        intermediate_data_type,
+                        attention_config.query_norm_config.clone(),
+                        attention_config.key_norm_config.clone(),
+                        attention_config.value_norm_config.clone(),
+                        &decoder_layer_loader.subtree("mixer").unwrap(),
+                        attention_config.num_heads,
+                        attention_config.num_groups,
+                        attention_config.head_dim,
+                    ) {
+                        Ok(k) => Some(k),
+                        Err(e) => panic!("Failed to create QKV norm kernel for layer {}: {:?}", layer_index, e),
+                    }
+                } else {
+                    None
+                };
 
                 let out_projection = <dyn Linear<B>>::new(
                     &attention_config.out_projection_config,
@@ -148,7 +151,7 @@ impl<B: Backend> LayerExecutables<B> {
                     MixerExecutables::Attention {
                         qkv_projection,
                         gate_projection,
-                        qk_norm,
+                        qkv_norm,
                         rope: rope.clone(),
                         qk_unpack: qk_unpack.clone(),
                         attention,
@@ -317,7 +320,7 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::Attention {
                 qkv_projection,
                 gate_projection,
-                qk_norm,
+                qkv_norm,
                 rope,
                 qk_unpack,
                 attention,
@@ -339,7 +342,7 @@ impl<B: Backend> LayerExecutables<B> {
                     (Some(gate_proj), Some(gate_input)) => Some(gate_proj.encode(gate_input, batch_dim, encoder)?),
                     _ => None,
                 };
-                if let Some(norm) = qk_norm {
+                if let Some(norm) = qkv_norm {
                     norm.encode(&mut qkv, batch_dim, encoder)?;
                 }
                 let (queries, rotated_keys) = match rope_buffers {
