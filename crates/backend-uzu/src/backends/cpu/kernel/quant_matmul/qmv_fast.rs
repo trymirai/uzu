@@ -22,7 +22,9 @@ pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32,
     #[specialize] use_zero_points: bool,
     #[specialize] use_mlx_quant: bool,
     #[specialize] use_hadamard: bool,
+    #[specialize] use_lut: bool,
 ) {
+    let _ = use_lut; // CPU reference is dequant-path agnostic
     if use_hadamard {
         unimplemented!("not supported yet");
     }

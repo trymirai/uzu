@@ -1,37 +1,28 @@
 #![cfg(metal_backend)]
 
-//! Corrected batched-timing 4-way NF4 vs zp-scalar int4 bench.
+//! 3-way batched-timing bench: scalar vs awq-lut256 vs nf4.
 //!
-//! ROOT-CAUSE FIX vs the prior harness: the old code did, per sample,
-//! `Encoder::new -> encode ONE dispatch -> submit().wait_until_completed()
-//! -> gpu_execution_time()`. For tiny QMV the whole-command-buffer
-//! `gpu_execution_time` (gpuStartTime->gpuEndTime) is dominated by FIXED
-//! per-command-buffer GPU overhead, so absolute times came out 4-8x too
-//! high AND the relative ordering inverted (NF4 wrongly appeared to beat
-//! the int4 baseline).
+//! ROOT-CAUSE TIMING FIX: encode N≈128 dispatches of the SAME kernel into
+//! ONE command buffer, submit once, `wait_until_completed`,
+//! `gpu_execution_time() / N` = per-dispatch time. One-dispatch-per-CB is
+//! swamped by fixed CB overhead (4-8x inflation + inverted ordering).
 //!
-//! Correct approach: encode the SAME kernel N times back-to-back into ONE
-//! `Encoder`, submit once, `wait_until_completed`, take
-//! `gpu_execution_time() / N` as the per-dispatch time. This amortizes the
-//! fixed CB overhead and lets the GPU pipeline successive dispatches.
+//! THREE kernels per shape/M (all gs=64, bf16, no bias):
+//!  - scalar      (BASELINE): QmvFast / QmmTransposed with use_lut=false
+//!                 (int4 mantissa-trick scalar dequant), use_zero_points=true,
+//!                 use_mlx_quant=false, packed 4-bit zero-points + bf16 scale.
+//!  - awq-lut256:  the SAME kernel + SAME inputs, use_lut=true (256-entry
+//!                 threadgroup LUT dequant).
+//!  - nf4:         Nf4QmvConstant / Nf4QmmConstant (16-entry NormalFloat
+//!                 codebook, bf16 per-group scale).
 //!
-//! Reducer (user spec): WARMUP_BATCHES batched-submits warmup, then
-//! MEASURE_BATCHES measured batched-submits; from the measured per-dispatch
-//! values drop the DROP farthest from the median; arithmetic mean of the
-//! remaining. Report mean and ±σ of the kept set.
+//! FORMAT CONFOUND: scalar/awq-lut256 are uniform asymmetric int4; nf4 uses
+//! the fixed 16-entry NF codebook. This is a matched-shape kernel-cost
+//! comparison, NOT an isoaccuracy comparison.
 //!
-//! BASELINE = zp-scalar: the codebase int4 zero-point kernel with *scalar*
-//! dequant (`QuantizedMatmulQmvFastKernel` / `QuantizedMatmulQmmTransposedKernel`
-//! built with `use_zero_points=true, use_mlx_quant=false`), fed a packed
-//! 4-bit `zero_points` buffer + bf16 `scales`, NO bias.
-//!
-//! The 3 NF4 challengers (Δ% vs zp-scalar): nf4 (`Constant`), nf4-e4m3
-//! (`E4m3`, 1-byte FP8 per-group scale), nf4-4bit-lut (`Zp`, +4-bit
-//! per-group zero-point LUT, still a bf16 scale).
-//!
-//! FORMAT CONFOUND: zp-scalar is uniform asymmetric int4; NF4 variants use
-//! the fixed 16-entry NormalFloat codebook. This is a matched-shape
-//! kernel-cost comparison, NOT an isoaccuracy comparison.
+//! Reducer (user spec): 5 warmup batched-submits, 20 measured; from the 20
+//! per-dispatch values drop the 5 farthest from the median; mean ± σ of the
+//! kept 15.
 
 use backend_uzu::{
     DataType,
@@ -40,7 +31,6 @@ use backend_uzu::{
             Backend, Context, Encoder, Kernels,
             kernel::{QuantizedMatmulQmmTransposedKernel, QuantizedMatmulQmvFastKernel},
         },
-        cpu::nf4_e4m3::f32_to_e4m3,
         metal::{
             Metal,
             kernel::quant_matmul_nf4_bench::{Nf4QmmBench, Nf4QmmTile, Nf4QmvBench, Nf4Variant},
@@ -185,14 +175,12 @@ fn dpct(
 // ============================ shared buffers ============================
 
 struct CellBuffers {
-    // zp-scalar (QmvFast / QmmTransposed) inputs:
+    // scalar / awq-lut256 (QmvFast / QmmTransposed) inputs:
     w_u32: <B as Backend>::DenseBuffer, // u32-packed 4-bit weights
     s_bf16: <B as Backend>::DenseBuffer,
     zp_scalar: <B as Backend>::DenseBuffer, // QmvFast-layout packed zero points
-    // NF4 inputs:
-    w_u8: <B as Backend>::DenseBuffer,   // raw u8-packed 4-bit weights
-    s_e4m3: <B as Backend>::DenseBuffer, // 1-byte FP8 per-group scale
-    zp_nf4: <B as Backend>::DenseBuffer, // NF4-layout packed zero points
+    // nf4 inputs:
+    w_u8: <B as Backend>::DenseBuffer, // raw u8-packed 4-bit weights
     x_buf: <B as Backend>::DenseBuffer,
     y_buf: <B as Backend>::DenseBuffer,
 }
@@ -213,7 +201,7 @@ fn build_buffers(
 
     let scales_f32: Vec<f32> = (0..(output_dim * num_groups)).map(|i| 0.01 + (i % 7) as f32 * 0.001).collect();
 
-    // zp-scalar zero points: QmvFast/QmmTransposed expect, per output row,
+    // scalar/awq zero points: QmvFast/QmmTransposed expect, per output row,
     // `zp_stride = (num_groups+1)/2` bytes (4-bit indices two-per-byte).
     let zp_stride = (num_groups + 1) / 2;
     let mut zp_scalar_packed: Vec<u8> = Vec::with_capacity(output_dim * zp_stride);
@@ -224,23 +212,6 @@ fn build_buffers(
         zp_scalar_packed.extend_from_slice(&packed);
     }
 
-    // NF4 zero points: same packing layout used by the NF4 Zp kernel
-    // (two 4-bit indices per byte, `zp_stride` bytes per output row).
-    let mut zp_nf4_packed = vec![0u8; output_dim * zp_stride];
-    for j in 0..output_dim {
-        for g in 0..num_groups {
-            let idx = ((j * 5 + g * 3 + 1) % 16) as u8;
-            let byte = j * zp_stride + g / 2;
-            if g % 2 == 0 {
-                zp_nf4_packed[byte] |= idx & 0x0F;
-            } else {
-                zp_nf4_packed[byte] |= (idx & 0x0F) << 4;
-            }
-        }
-    }
-
-    let scale_bytes_e4m3: Vec<u8> = scales_f32.iter().map(|&s| f32_to_e4m3(s)).collect();
-
     let x_f32: Vec<f32> = (0..(m * input_dim)).map(|i| ((i % 257) as f32) / 257.0).collect();
 
     CellBuffers {
@@ -248,8 +219,6 @@ fn build_buffers(
         s_bf16: bf16_buf(ctx, &scales_f32),
         zp_scalar: alloc_buffer_with_data::<B, u8>(ctx, &zp_scalar_packed),
         w_u8: alloc_buffer_with_data::<B, u8>(ctx, &weights_u8),
-        s_e4m3: alloc_buffer_with_data::<B, u8>(ctx, &scale_bytes_e4m3),
-        zp_nf4: alloc_buffer_with_data::<B, u8>(ctx, &zp_nf4_packed),
         x_buf: bf16_buf(ctx, &x_f32),
         y_buf: ctx.create_buffer(m * output_dim * DataType::BF16.size_in_bytes()).expect("y buf"),
     }
@@ -260,10 +229,9 @@ fn build_buffers(
 struct QmvCell {
     shape: &'static str,
     m: usize,
-    base: Stats,
+    scalar: Stats,
+    awq_lut: Stats,
     nf4: Stats,
-    e4m3: Stats,
-    lut: Stats,
 }
 
 fn bench_qmv_cell(
@@ -277,9 +245,9 @@ fn bench_qmv_cell(
     println!("=== QMV {} | K={} N={} | M={} ===", shape, input_dim, output_dim, m);
     let bufs = build_buffers(ctx, input_dim, output_dim, m);
 
-    // BASELINE: zp-scalar int4 (QmvFast, use_zero_points=true,
-    // use_mlx_quant=false, no bias).
-    let base_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+    // BASELINE: scalar int4 (QmvFast, use_zero_points=true,
+    // use_mlx_quant=false, use_lut=FALSE, no bias).
+    let scalar_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
         ctx,
         DataType::BF16,
         GROUP_SIZE as u32,
@@ -287,18 +255,49 @@ fn bench_qmv_cell(
         true,  // use_zero_points
         false, // use_mlx_quant
         false, // use_hadamard
+        false, // use_lut: scalar mantissa-trick dequant
     )
-    .expect("zp-scalar QmvFast kernel build");
+    .expect("scalar QmvFast kernel build");
 
-    let mut y_base = bufs.y_buf.clone();
-    let base = time_batched(ctx, |enc| {
-        base_kernel.encode(
+    // awq-lut256: SAME kernel/inputs, use_lut=TRUE.
+    let lut_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+        ctx,
+        DataType::BF16,
+        GROUP_SIZE as u32,
+        BITS as u32,
+        true,  // use_zero_points
+        false, // use_mlx_quant
+        false, // use_hadamard
+        true,  // use_lut: 256-entry threadgroup LUT
+    )
+    .expect("awq-lut256 QmvFast kernel build");
+
+    let mut y_s = bufs.y_buf.clone();
+    let scalar = time_batched(ctx, |enc| {
+        scalar_kernel.encode(
             &bufs.w_u32,
             &bufs.s_bf16,
             Some(&bufs.zp_scalar),
             None::<&<B as Backend>::DenseBuffer>,
             &bufs.x_buf,
-            &mut y_base,
+            &mut y_s,
+            None::<&<B as Backend>::DenseBuffer>,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_a = bufs.y_buf.clone();
+    let awq_lut = time_batched(ctx, |enc| {
+        lut_kernel.encode(
+            &bufs.w_u32,
+            &bufs.s_bf16,
+            Some(&bufs.zp_scalar),
+            None::<&<B as Backend>::DenseBuffer>,
+            &bufs.x_buf,
+            &mut y_a,
             None::<&<B as Backend>::DenseBuffer>,
             input_dim as u32,
             output_dim as u32,
@@ -322,48 +321,16 @@ fn bench_qmv_cell(
         );
     });
 
-    let mut y_e = bufs.y_buf.clone();
-    let e4m3 = time_batched(ctx, |enc| {
-        qmv_bench.encode(
-            Nf4Variant::E4m3,
-            &bufs.w_u8,
-            &bufs.s_e4m3,
-            &bufs.x_buf,
-            &mut y_e,
-            input_dim as u32,
-            output_dim as u32,
-            m as u32,
-            enc,
-        );
-    });
-
-    let mut y_l = bufs.y_buf.clone();
-    let lut = time_batched(ctx, |enc| {
-        qmv_bench.encode_zp(
-            &bufs.w_u8,
-            &bufs.s_bf16,
-            &bufs.zp_nf4,
-            &bufs.x_buf,
-            &mut y_l,
-            input_dim as u32,
-            output_dim as u32,
-            m as u32,
-            enc,
-        );
-    });
-
-    println!("  zp-scalar : {:.4} ±{:.4} ms", base.mean, base.std);
-    println!("  nf4       : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&base, &nf4));
-    println!("  nf4-e4m3  : {:.4} ±{:.4} ms  Δ {:+.1}%", e4m3.mean, e4m3.std, dpct(&base, &e4m3));
-    println!("  nf4-4bitlut: {:.4} ±{:.4} ms  Δ {:+.1}%", lut.mean, lut.std, dpct(&base, &lut));
+    println!("  scalar     : {:.4} ±{:.4} ms", scalar.mean, scalar.std);
+    println!("  awq-lut256 : {:.4} ±{:.4} ms  Δ {:+.1}%", awq_lut.mean, awq_lut.std, dpct(&scalar, &awq_lut));
+    println!("  nf4        : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&scalar, &nf4));
 
     QmvCell {
         shape,
         m,
-        base,
+        scalar,
+        awq_lut,
         nf4,
-        e4m3,
-        lut,
     }
 }
 
@@ -381,10 +348,10 @@ fn qmv_lut_bench() {
         N_DISPATCH, WARMUP_BATCHES, MEASURE_BATCHES, DROP
     );
     println!(
-        "[QMV_LUT_BENCH] baseline = zp-scalar int4 (QmvFast use_zero_points=true \
-         use_mlx_quant=false, no bias). Challengers: nf4 (Constant codebook), \
-         nf4-e4m3 (FP8 scale), nf4-4bit-lut (Zp +4-bit zero-point LUT, bf16 \
-         scale). FORMAT CONFOUND: uniform int4 vs fixed NF4 codebook."
+        "[QMV_LUT_BENCH] baseline = scalar int4 (QmvFast use_zero_points=true \
+         use_mlx_quant=false use_lut=false, no bias). Challengers: awq-lut256 \
+         (same kernel/inputs, use_lut=true) and nf4 (Nf4QmvConstant 16-entry \
+         codebook, bf16 scale). FORMAT CONFOUND: uniform int4 vs NF codebook."
     );
 
     let qmv_bench = Nf4QmvBench::new(&ctx).expect("Nf4QmvBench build");
@@ -407,24 +374,20 @@ fn qmv_lut_bench() {
     }
 
     println!();
-    println!("================== QMV LUT bench summary (baseline = zp-scalar) ==================");
-    println!(
-        "{:<16} {:>3} {:>16} {:>10} {:>10} {:>12}",
-        "Shape", "M", "zp-scalar ms", "nf4 Δ%", "e4m3 Δ%", "4bitlut Δ%"
-    );
+    println!("================== QMV LUT bench summary (baseline = scalar) ==================");
+    println!("{:<16} {:>3} {:>18} {:>14} {:>12}", "Shape", "M", "scalar ms(±σ)", "awq-lut256 Δ%", "nf4 Δ%");
     for r in &results {
         println!(
-            "{:<16} {:>3} {:>9.4} ±{:<5.4} {:>+9.1}% {:>+9.1}% {:>+11.1}%",
+            "{:<16} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}%",
             r.shape,
             r.m,
-            r.base.mean,
-            r.base.std,
-            dpct(&r.base, &r.nf4),
-            dpct(&r.base, &r.e4m3),
-            dpct(&r.base, &r.lut)
+            r.scalar.mean,
+            r.scalar.std,
+            dpct(&r.scalar, &r.awq_lut),
+            dpct(&r.scalar, &r.nf4)
         );
     }
-    println!("=================================================================================");
+    println!("==============================================================================");
 }
 
 // ============================== QMM bench ==============================
@@ -433,10 +396,9 @@ struct QmmCell {
     shape: &'static str,
     m: usize,
     bm_label: &'static str,
-    base: Stats,
+    scalar: Stats,
+    awq_lut: Stats,
     nf4: Stats,
-    e4m3: Stats,
-    lut: Stats,
 }
 
 fn bench_qmm_cell(
@@ -451,9 +413,9 @@ fn bench_qmm_cell(
     println!("=== QMM {} | K={} N={} | M={} | {} ===", shape, input_dim, output_dim, m, bm_label);
     let bufs = build_buffers(ctx, input_dim, output_dim, m);
 
-    // BASELINE: zp-scalar int4 (QmmTransposed, use_zero_points=true,
-    // use_mlx_quant=false, no bias). aligned_n: both shapes' N % BN == 0.
-    let base_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+    // BASELINE: scalar int4 (QmmTransposed, use_zero_points=true,
+    // use_mlx_quant=false, use_lut=FALSE, no bias). aligned_n: N % BN == 0.
+    let scalar_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
         ctx,
         DataType::BF16,
         GROUP_SIZE as u32,
@@ -467,18 +429,54 @@ fn bench_qmm_cell(
         false, // use_mlx_quant
         false, // use_hadamard
         true,  // aligned_n
+        false, // use_lut: scalar mantissa-trick dequant
     )
-    .expect("zp-scalar QmmTransposed kernel build");
+    .expect("scalar QmmTransposed kernel build");
 
-    let mut y_base = bufs.y_buf.clone();
-    let base = time_batched(ctx, |enc| {
-        base_kernel.encode(
+    let lut_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmmTransposedKernel::new(
+        ctx,
+        DataType::BF16,
+        GROUP_SIZE as u32,
+        BITS as u32,
+        bm,
+        bk,
+        bn,
+        wm,
+        wn,
+        true,  // use_zero_points
+        false, // use_mlx_quant
+        false, // use_hadamard
+        true,  // aligned_n
+        true,  // use_lut: 256-entry threadgroup LUT
+    )
+    .expect("awq-lut256 QmmTransposed kernel build");
+
+    let mut y_s = bufs.y_buf.clone();
+    let scalar = time_batched(ctx, |enc| {
+        scalar_kernel.encode(
             &bufs.w_u32,
             &bufs.s_bf16,
             Some(&bufs.zp_scalar),
             None::<&<B as Backend>::DenseBuffer>,
             &bufs.x_buf,
-            &mut y_base,
+            &mut y_s,
+            None::<&<B as Backend>::DenseBuffer>,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_a = bufs.y_buf.clone();
+    let awq_lut = time_batched(ctx, |enc| {
+        lut_kernel.encode(
+            &bufs.w_u32,
+            &bufs.s_bf16,
+            Some(&bufs.zp_scalar),
+            None::<&<B as Backend>::DenseBuffer>,
+            &bufs.x_buf,
+            &mut y_a,
             None::<&<B as Backend>::DenseBuffer>,
             input_dim as u32,
             output_dim as u32,
@@ -503,51 +501,17 @@ fn bench_qmm_cell(
         );
     });
 
-    let mut y_e = bufs.y_buf.clone();
-    let e4m3 = time_batched(ctx, |enc| {
-        qmm_bench.encode(
-            Nf4Variant::E4m3,
-            tile,
-            &bufs.w_u8,
-            &bufs.s_e4m3,
-            &bufs.x_buf,
-            &mut y_e,
-            input_dim as u32,
-            output_dim as u32,
-            m as u32,
-            enc,
-        );
-    });
-
-    let mut y_l = bufs.y_buf.clone();
-    let lut = time_batched(ctx, |enc| {
-        qmm_bench.encode_zp(
-            tile,
-            &bufs.w_u8,
-            &bufs.s_bf16,
-            &bufs.zp_nf4,
-            &bufs.x_buf,
-            &mut y_l,
-            input_dim as u32,
-            output_dim as u32,
-            m as u32,
-            enc,
-        );
-    });
-
-    println!("  zp-scalar : {:.4} ±{:.4} ms", base.mean, base.std);
-    println!("  nf4       : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&base, &nf4));
-    println!("  nf4-e4m3  : {:.4} ±{:.4} ms  Δ {:+.1}%", e4m3.mean, e4m3.std, dpct(&base, &e4m3));
-    println!("  nf4-4bitlut: {:.4} ±{:.4} ms  Δ {:+.1}%", lut.mean, lut.std, dpct(&base, &lut));
+    println!("  scalar     : {:.4} ±{:.4} ms", scalar.mean, scalar.std);
+    println!("  awq-lut256 : {:.4} ±{:.4} ms  Δ {:+.1}%", awq_lut.mean, awq_lut.std, dpct(&scalar, &awq_lut));
+    println!("  nf4        : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&scalar, &nf4));
 
     QmmCell {
         shape,
         m,
         bm_label,
-        base,
+        scalar,
+        awq_lut,
         nf4,
-        e4m3,
-        lut,
     }
 }
 
@@ -565,9 +529,9 @@ fn qmm_lut_bench() {
         N_DISPATCH, WARMUP_BATCHES, MEASURE_BATCHES, DROP
     );
     println!(
-        "[QMM_LUT_BENCH] baseline = zp-scalar int4 (QmmTransposed use_zero_points=true \
-         use_mlx_quant=false, no bias). pick_tile: M<48 -> BM=8, M>=48 -> BM=64, \
-         applied identically to every NF4 variant."
+        "[QMM_LUT_BENCH] baseline = scalar int4 (QmmTransposed use_zero_points=true \
+         use_mlx_quant=false use_lut=false, no bias). pick_tile: M<48 -> BM=8, \
+         M>=48 -> BM=64, applied identically to all three kernels."
     );
 
     let qmm_bench = Nf4QmmBench::new(&ctx).expect("Nf4QmmBench build");
@@ -582,23 +546,19 @@ fn qmm_lut_bench() {
     }
 
     println!();
-    println!("================== QMM LUT bench summary (baseline = zp-scalar) ==================");
-    println!(
-        "{:<18} {:>3} {:>5} {:>16} {:>10} {:>10} {:>12}",
-        "Shape", "M", "BM", "zp-scalar ms", "nf4 Δ%", "e4m3 Δ%", "4bitlut Δ%"
-    );
+    println!("================== QMM LUT bench summary (baseline = scalar) ==================");
+    println!("{:<18} {:>3} {:>5} {:>18} {:>14} {:>12}", "Shape", "M", "BM", "scalar ms(±σ)", "awq-lut256 Δ%", "nf4 Δ%");
     for r in &results {
         println!(
-            "{:<18} {:>3} {:>5} {:>9.4} ±{:<5.4} {:>+9.1}% {:>+9.1}% {:>+11.1}%",
+            "{:<18} {:>3} {:>5} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}%",
             r.shape,
             r.m,
             r.bm_label,
-            r.base.mean,
-            r.base.std,
-            dpct(&r.base, &r.nf4),
-            dpct(&r.base, &r.e4m3),
-            dpct(&r.base, &r.lut)
+            r.scalar.mean,
+            r.scalar.std,
+            dpct(&r.scalar, &r.awq_lut),
+            dpct(&r.scalar, &r.nf4)
         );
     }
-    println!("=================================================================================");
+    println!("==============================================================================");
 }

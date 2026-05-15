@@ -123,6 +123,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     use_zero_points,
                     use_mlx_quant,
                     configuration.use_hadamard,
+                    true, // use_lut: preserve current 256-entry LUT dequant
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )
@@ -173,6 +174,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
             use_mlx_quant,
             configuration.use_hadamard,
             aligned_n,
+            true, // use_lut: preserve current 256-entry LUT dequant
         )
         .map_err(QuantizedMatmulError::BackendError)?;
 
@@ -193,6 +195,7 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                 use_mlx_quant,
                 false, // use_hadamard: BM=8 tile does not support hadamard
                 true,  // aligned_n: BN=32, always aligned for the small tile
+                true,  // use_lut: preserve current 256-entry LUT dequant
             )
             .map_err(QuantizedMatmulError::BackendError)?;
             MatrixMatrixKernel::BigAndSmall {

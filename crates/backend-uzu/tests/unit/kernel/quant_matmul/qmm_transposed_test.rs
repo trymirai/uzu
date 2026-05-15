@@ -188,6 +188,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
         input.use_mlx_quant,
         use_hadamard,
         aligned_n,
+        true, // use_lut
     )
     .expect("Failed to create QuantizedMatmulQmmTransposedKernel");
 
@@ -696,6 +697,7 @@ fn bench_qmm_transposed_typed<B: Backend, T: ArrayElement + Float>(
             use_mlx_quant,
             false,
             n % bn as usize == 0,
+            true, // use_lut
         )
         .unwrap();
 

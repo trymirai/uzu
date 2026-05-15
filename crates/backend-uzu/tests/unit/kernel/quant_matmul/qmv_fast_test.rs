@@ -84,6 +84,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         input.use_zero_points,
         input.use_mlx_quant,
         false,
+        true, // use_lut
     )
     .expect("Failed to create QuantizedMatmulQmvFastKernel");
     kernel.encode(
@@ -303,6 +304,95 @@ qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, zp = false, mlx = true);
 qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, zp = false, mlx = true);
 qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, zp = false, mlx = true);
 
+// ---- use_lut equivalence: LUT256 vs scalar int4 dequant ----
+//
+// Same quantized inputs, same kernel, only the dequant path differs
+// (use_lut=true -> 256-entry threadgroup LUT; use_lut=false -> scalar
+// mantissa-trick). They must be numerically equivalent up to fp rounding.
+
+fn get_output_lut<B: Backend, T: ArrayElement + Float>(
+    input: &Input<T>,
+    use_lut: bool,
+) -> Vec<T> {
+    let context = B::Context::new().expect("Failed to create Context");
+
+    let w_buf = alloc_buffer_with_data::<B, u32>(&context, &input.w_packed);
+    let scales_buf = alloc_buffer_with_data::<B, T>(&context, &input.scales);
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_buffer_with_data::<B, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_buffer_with_data::<B, T>(&context, b));
+    let x_buf = alloc_buffer_with_data::<B, T>(&context, &input.x);
+    let output_size = (input.m as usize) * (input.n as usize) * T::data_type().size_in_bytes();
+    let mut y_buf = context.create_buffer(output_size).expect("Failed to create buffer");
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+
+    let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+        &context,
+        T::data_type(),
+        input.group_size,
+        input.bits,
+        input.use_zero_points,
+        input.use_mlx_quant,
+        false,
+        use_lut,
+    )
+    .expect("Failed to create QuantizedMatmulQmvFastKernel");
+    kernel.encode(
+        &w_buf,
+        &scales_buf,
+        zp_buf.as_ref(),
+        bias_buf.as_ref(),
+        &x_buf,
+        &mut y_buf,
+        None::<&B::DenseBuffer>,
+        input.k,
+        input.n,
+        input.m,
+        &mut encoder,
+    );
+
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+
+    let y_ptr = y_buf.cpu_ptr().as_ptr() as *const T;
+    let y_len = (input.m as usize) * (input.n as usize);
+    unsafe { std::slice::from_raw_parts(y_ptr, y_len) }.to_vec()
+}
+
+#[uzu_test]
+fn test_use_lut_equivalence_int4_zp() {
+    // 4-bit zero-point uniform-int4 inputs (same setup as the bench's
+    // scalar baseline). gs=64 to match the production / bench config.
+    for (m, k, n) in [(1usize, 512usize, 64usize), (2, 512, 128), (4, 1024, 256)] {
+        let (input, _expected) = get_test_data::<bf16>(m, k, n, 64, 4, true, false);
+
+        for_each_non_cpu_backend!(|B| {
+            let out_lut = get_output_lut::<B, bf16>(&input, true);
+            let out_scalar = get_output_lut::<B, bf16>(&input, false);
+            assert_eq!(out_lut.len(), out_scalar.len());
+
+            let mut max_rel: f64 = 0.0;
+            for (&a, &b) in out_lut.iter().zip(out_scalar.iter()) {
+                let af = a.to_f32() as f64;
+                let bf = b.to_f32() as f64;
+                let denom = af.abs().max(bf.abs()).max(1e-6);
+                max_rel = max_rel.max((af - bf).abs() / denom);
+            }
+            // Pure fp-rounding tolerance: LUT stores nibbles as half, scalar
+            // path converts via float; differences are tiny.
+            assert!(
+                max_rel < 5e-3,
+                "use_lut mismatch backend={} m={} k={} n={}: max_rel={}",
+                std::any::type_name::<B>(),
+                m,
+                k,
+                n,
+                max_rel
+            );
+            eprintln!("[use_lut_equiv] m={m} k={k} n={n} max_rel={max_rel:.2e}");
+        });
+    }
+}
+
 fn gen_random<T: rand::distr::uniform::SampleUniform + PartialOrd + Copy, R: rand::Rng>(
     rng: &mut R,
     range: std::ops::Range<T>,
@@ -344,6 +434,7 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                 use_zero_points,
                 use_mlx_quant,
                 false,
+                true, // use_lut
             )
             .unwrap();
 

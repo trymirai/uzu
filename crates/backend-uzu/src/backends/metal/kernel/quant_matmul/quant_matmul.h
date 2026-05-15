@@ -369,18 +369,28 @@ inline void dequantize(
     U scale,
     U bias,
     threadgroup U* w_local,
-    const threadgroup half2* q4_lut
+    const threadgroup half2* q4_lut,
+    bool use_lut
 ) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
   if (bits == 4) {
-    // LUT path: q4_lut[byte] = half2(byte & 0xf, (byte>>4) & 0xf).
-    // Multiply by scale directly (no /16 since lut already returns the
-    // un-shifted high nibble in [0,15]).
-    for (int i = 0; i < (N / 2); i++) {
-      const half2 nibbles = q4_lut[w[i]];
-      w_local[2 * i] = scale * static_cast<U>(nibbles.x) + bias;
-      w_local[2 * i + 1] = scale * static_cast<U>(nibbles.y) + bias;
+    if (use_lut) {
+      // LUT path: q4_lut[byte] = half2(byte & 0xf, (byte>>4) & 0xf).
+      // Multiply by scale directly (no /16 since lut already returns the
+      // un-shifted high nibble in [0,15]).
+      for (int i = 0; i < (N / 2); i++) {
+        const half2 nibbles = q4_lut[w[i]];
+        w_local[2 * i] = scale * static_cast<U>(nibbles.x) + bias;
+        w_local[2 * i + 1] = scale * static_cast<U>(nibbles.y) + bias;
+      }
+    } else {
+      // Scalar path: extract nibbles directly (int4 mantissa trick).
+      for (int i = 0; i < (N / 2); i++) {
+        const uint8_t b = w[i];
+        w_local[2 * i] = scale * uint_to_fp<U>(b & 0x0fu) + bias;
+        w_local[2 * i + 1] = scale * uint_to_fp<U>((b >> 4) & 0x0fu) + bias;
+      }
     }
   } else if (bits == 8) {
     for (int i = 0; i < N; i++) {
@@ -399,7 +409,8 @@ inline void dequantize<bfloat, 8, 4>(
     bfloat scale,
     bfloat bias,
     threadgroup bfloat* w_local,
-    const threadgroup half2* /*q4_lut*/
+    const threadgroup half2* /*q4_lut*/,
+    bool /*use_lut*/
 ) {
   const device uint32_t* w_ptr = (const device uint32_t*)w;
   uint32_t packed = *w_ptr;
@@ -467,6 +478,7 @@ struct QuantizedBlockLoaderMlx {
   const device T* scales;
   const device T* biases;
   const threadgroup half2* q4_lut;
+  const bool use_lut;
 
   QuantizedBlockLoaderMlx(
       const device uint8_t* src_,
@@ -475,6 +487,7 @@ struct QuantizedBlockLoaderMlx {
       const int src_ld_,
       threadgroup T* dst_,
       const threadgroup half2* q4_lut_,
+      bool use_lut_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]]
   )
@@ -491,7 +504,8 @@ struct QuantizedBlockLoaderMlx {
         src(src_ + bi * src_ld * bytes_per_pack / pack_factor +
             bj * bytes_per_pack),
         scales(scales_ + bi * src_ld / group_size),
-        biases(biases_ + bi * src_ld / group_size), q4_lut(q4_lut_) {}
+        biases(biases_ + bi * src_ld / group_size), q4_lut(q4_lut_),
+        use_lut(use_lut_) {}
 
   void load_unsafe() const {
     if (BCOLS_PACKED * BROWS < tgp_size && bi >= BROWS) {
@@ -506,7 +520,8 @@ struct QuantizedBlockLoaderMlx {
           scale,
           bias,
           dst + i * pack_factor,
-          q4_lut
+          q4_lut,
+          use_lut
       );
     }
   }
@@ -538,7 +553,8 @@ struct QuantizedBlockLoaderMlx {
           scale,
           bias,
           dst + i * pack_factor,
-          q4_lut
+          q4_lut,
+          use_lut
       );
     }
   }
@@ -612,6 +628,7 @@ struct QuantizedBlockLoaderZp {
   const int out_groups_total;
   const int zp_stride_total;
   const threadgroup half2* q4_lut;
+  const bool use_lut;
 
   QuantizedBlockLoaderZp(
       const device uint8_t* src_,
@@ -621,6 +638,7 @@ struct QuantizedBlockLoaderZp {
       const int groups_per_row_,
       threadgroup T* dst_,
       const threadgroup half2* q4_lut_,
+      bool use_lut_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
       ushort simd_lane_id [[thread_index_in_simdgroup]],
       const int out_group_base_ = 0,
@@ -652,7 +670,7 @@ struct QuantizedBlockLoaderZp {
         out_group_base(per_output_layout ? out_group_base_ : 0),
         out_groups_total(per_output_layout ? out_groups_total_ : 0),
         zp_stride_total(per_output_layout ? zp_stride_total_ : 0),
-        q4_lut(q4_lut_) {}
+        q4_lut(q4_lut_), use_lut(use_lut_) {}
 
   inline void current_scale_bias(
       thread T& out_scale,
@@ -703,7 +721,8 @@ struct QuantizedBlockLoaderZp {
           scale,
           bias,
           dst + i * pack_factor,
-          q4_lut
+          q4_lut,
+          use_lut
       );
     }
   }
@@ -736,7 +755,8 @@ struct QuantizedBlockLoaderZp {
               scale,
               bias,
               dst + i * pack_factor,
-              q4_lut
+              q4_lut,
+              use_lut
           );
 
           // Mask the last pack if needed
@@ -773,7 +793,8 @@ struct QuantizedBlockLoaderZp {
           scale,
           bias,
           dst + i * pack_factor,
-          q4_lut
+          q4_lut,
+          use_lut
       );
     }
   }
@@ -894,6 +915,7 @@ void qmm_transposed_impl(
     threadgroup T* Xs,
     threadgroup T* Ws,
     threadgroup half2* q4_lut,
+    bool use_lut,
     const int in_vec_size,
     const int out_vec_size,
     const int batch_size,
@@ -949,6 +971,7 @@ void qmm_transposed_impl(
         in_vec_size,
         Ws,
         q4_lut,
+        use_lut,
         simd_group,
         simd_lane
     );
@@ -993,6 +1016,7 @@ void qmm_transposed_impl(
         in_vec_size_g,
         Ws,
         q4_lut,
+        use_lut,
         simd_group,
         simd_lane
     );
