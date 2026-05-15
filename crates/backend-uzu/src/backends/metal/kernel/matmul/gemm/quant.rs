@@ -33,7 +33,7 @@ pub(crate) fn encode(
         input_prologue: GemmInputPrologueKind::FullPrecision,
         compute: GemmComputeKind::SimdgroupMma,
         output_transform: GemmOutputTransformKind::Store,
-        alignment: GemmAlignment::from_flags(
+        alignment: GemmAlignment::from_axes(
             batch_dim % tile.threadgroup_m == 0,
             output_dim % tile.threadgroup_n == 0,
             input_dim % tile.threadgroup_k == 0,
@@ -66,7 +66,6 @@ pub(crate) fn encode(
             leading_dimension_d: output_dim,
             threadgroups_per_row: group_count_x,
             threadgroups_per_column: group_count_y,
-            swizzle_log: 0,
             aligned_inner_iterations: input_dim / tile.threadgroup_k,
             ..Default::default()
         },
@@ -91,12 +90,6 @@ fn select_tile(
         threadgroup_m,
         threadgroup_n,
         threadgroup_k,
-        simdgroup_m: threadgroup_m / simdgroups_m,
-        simdgroup_n: threadgroup_n / simdgroups_n,
-        simdgroup_k: threadgroup_k,
-        fragment_m: 8,
-        fragment_n: 8,
-        fragment_k: 8,
         simdgroups_m,
         simdgroups_n,
     }
