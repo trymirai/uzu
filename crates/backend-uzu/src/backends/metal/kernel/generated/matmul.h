@@ -14,8 +14,8 @@ typedef struct {
   uint32_t leading_dimension_d;
   uint32_t threadgroups_per_column;
   uint32_t threadgroups_per_row;
-  uint32_t swizzle_log;
   uint32_t aligned_inner_iterations;
   bool use_morton;
+  float ab_scale;
 } GemmParams;
 } // namespace uzu::matmul
