@@ -43,46 +43,46 @@ struct GemmPipeline {
     const bool k_aligned = alignment.contains(GemmAlignment::K);
     const device T* b = reinterpret_cast<const device T*>(b_packed);
     switch (compute) {
-      case GemmComputeKind::SimdgroupMma:
-        SimdgroupMmaCore<
-            T,
-            THREADGROUP_BLOCK_M,
-            THREADGROUP_BLOCK_N,
-            THREADGROUP_BLOCK_K,
-            SIMDGROUPS_M,
-            SIMDGROUPS_N,
-            TRANSPOSE_B>::
-            run(a,
-                b,
-                d,
-                params,
-                m_aligned,
-                n_aligned,
-                k_aligned,
-                output_transform,
-                a_shared,
-                b_shared,
-                thread_context);
-        break;
-      case GemmComputeKind::MxuMma:
-        MxuMmaCore<
-            T,
-            THREADGROUP_BLOCK_M,
-            THREADGROUP_BLOCK_N,
-            256,
-            SIMDGROUPS_M,
-            SIMDGROUPS_N,
-            TRANSPOSE_B>::
-            run(a,
-                b,
-                d,
-                params,
-                m_aligned,
-                n_aligned,
-                k_aligned,
-                output_transform,
-                thread_context);
-        break;
+    case GemmComputeKind::SimdgroupMma:
+      SimdgroupMmaCore<
+          T,
+          THREADGROUP_BLOCK_M,
+          THREADGROUP_BLOCK_N,
+          THREADGROUP_BLOCK_K,
+          SIMDGROUPS_M,
+          SIMDGROUPS_N,
+          TRANSPOSE_B>::
+          run(a,
+              b,
+              d,
+              params,
+              m_aligned,
+              n_aligned,
+              k_aligned,
+              output_transform,
+              a_shared,
+              b_shared,
+              thread_context);
+      break;
+    case GemmComputeKind::MxuMma:
+      MxuMmaCore<
+          T,
+          THREADGROUP_BLOCK_M,
+          THREADGROUP_BLOCK_N,
+          256,
+          SIMDGROUPS_M,
+          SIMDGROUPS_N,
+          TRANSPOSE_B>::
+          run(a,
+              b,
+              d,
+              params,
+              m_aligned,
+              n_aligned,
+              k_aligned,
+              output_transform,
+              thread_context);
+      break;
     }
   }
 };

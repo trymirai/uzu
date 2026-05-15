@@ -34,8 +34,10 @@ template <
          (THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW) % 16 == 0 &&
          (THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN) % 16 == 0)>
 struct MxuMmaCore {
-  METAL_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
-  METAL_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
+  METAL_CONST ushort SIMDGROUP_BLOCK_M =
+      THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
+  METAL_CONST ushort SIMDGROUP_BLOCK_N =
+      THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
   METAL_CONST ushort SIMDGROUP_BLOCK_K = 32;
   METAL_CONST ushort TILES_M =
       SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps::FRAGMENT_ROWS;
@@ -56,9 +58,11 @@ struct MxuMmaCore {
       const thread ThreadContext& thread_context
   ) {
     const uint simd_group_id = thread_context.simdgroup_index;
-    const uint2 tile_id = block_id(thread_context.threadgroup_position.xy, params);
+    const uint2 tile_id =
+        block_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
-        ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile_id, params);
+        ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
+            compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -66,11 +70,11 @@ struct MxuMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    const device T* a_block =
-        a + block_row * params->leading_dimension_a;
+    const device T* a_block = a + block_row * params->leading_dimension_a;
     // B-block offset by N-block:
-    //   transposed   ([N, K], row-major): skip block_col output-rows of length ld_b.
-    //   non-transposed ([K, N], row-major): skip block_col output-columns within one row.
+    //   transposed   ([N, K], row-major): skip block_col output-rows of length
+    //   ld_b. non-transposed ([K, N], row-major): skip block_col output-columns
+    //   within one row.
     const device T* b_block =
         b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
@@ -104,10 +108,9 @@ struct MxuMmaCore {
     //   transposed: walk `tile_col_offset` output-rows.
     //   non-transposed: walk `tile_col_offset` output-columns within one row.
     const device T* b_simdgroup =
-        b_block +
-        (TRANSPOSE_B
-             ? size_t(tile_col_offset) * int(params->leading_dimension_b)
-             : size_t(tile_col_offset));
+        b_block + (TRANSPOSE_B ? size_t(tile_col_offset) *
+                                     int(params->leading_dimension_b)
+                               : size_t(tile_col_offset));
 
     const int aligned_k_iterations = int(params->K) / int(THREADGROUP_BLOCK_K);
 
@@ -149,7 +152,8 @@ struct MxuMmaCore {
                   );
 
                   if (apply_scale) {
-                    const AccumulatorType scale = AccumulatorType(params->ab_scale);
+                    const AccumulatorType scale =
+                        AccumulatorType(params->ab_scale);
                     METAL_PRAGMA_UNROLL
                     for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
                          i++) {
@@ -158,7 +162,11 @@ struct MxuMmaCore {
                   }
 
                   if (apply_accumulate) {
-                    uzu::matmul::Fragment<T, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>
+                    uzu::matmul::Fragment<
+                        T,
+                        TILES_M,
+                        TILES_N,
+                        uzu::matmul::MxuFragmentOps>
                         existing_output(thread_context);
                     if constexpr (aligned_m.value && aligned_n.value) {
                       existing_output.load(

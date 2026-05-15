@@ -47,6 +47,8 @@ struct GemmAlignment {
   static constant constexpr uint M = 1 << 0;
   static constant constexpr uint N = 1 << 1;
   static constant constexpr uint K = 1 << 2;
-  constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
+  constexpr bool contains(uint flag) const thread {
+    return (raw_value & flag) != 0;
+  }
 };
 } // namespace uzu::gemm

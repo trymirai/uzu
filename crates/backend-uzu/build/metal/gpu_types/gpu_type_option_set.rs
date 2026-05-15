@@ -30,18 +30,11 @@ pub fn gpu_type_gen_option_set(option_set: &GpuTypeOptionSet) -> anyhow::Result<
     writeln!(out, "  constexpr {name}() thread : raw_value(0) {{}}").unwrap();
     writeln!(out, "  constexpr {name}({underlying_c} __dsl_v) thread : raw_value(__dsl_v) {{}}").unwrap();
     for variant in &option_set.variants {
-        writeln!(
-            out,
-            "  static constant constexpr {underlying_c} {} = {};",
-            variant.name, variant.value_expression
-        )
-        .unwrap();
+        writeln!(out, "  static constant constexpr {underlying_c} {} = {};", variant.name, variant.value_expression)
+            .unwrap();
     }
-    writeln!(
-        out,
-        "  constexpr bool contains({underlying_c} flag) const thread {{ return (raw_value & flag) != 0; }}"
-    )
-    .unwrap();
+    writeln!(out, "  constexpr bool contains({underlying_c} flag) const thread {{ return (raw_value & flag) != 0; }}")
+        .unwrap();
     out.push_str("};");
     Ok(out)
 }

@@ -27,7 +27,8 @@ struct SimdgroupMmaCore {
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
   METAL_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
   // Shared-memory stride for the B tile depends on which axis is contiguous
-  // after the load: K when B is row-major [N, K] (transposed), N when row-major [K, N].
+  // after the load: K when B is row-major [N, K] (transposed), N when row-major
+  // [K, N].
   METAL_CONST ushort SHARED_STRIDE_B =
       (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
   METAL_CONST ushort THREADGROUP_THREADS =
@@ -40,8 +41,9 @@ struct SimdgroupMmaCore {
       SHARED_STRIDE_A,
       true,
       THREADGROUP_THREADS>;
-  // B-block layout: (THREADGROUP_BLOCK_N rows × THREADGROUP_BLOCK_K cols) when transposed,
-  // (THREADGROUP_BLOCK_K rows × THREADGROUP_BLOCK_N cols) otherwise.
+  // B-block layout: (THREADGROUP_BLOCK_N rows × THREADGROUP_BLOCK_K cols) when
+  // transposed, (THREADGROUP_BLOCK_K rows × THREADGROUP_BLOCK_N cols)
+  // otherwise.
   using BLoader = uzu::matmul::ThreadgroupLoader<
       T,
       TRANSPOSE_B ? THREADGROUP_BLOCK_N : THREADGROUP_BLOCK_K,
@@ -77,11 +79,12 @@ struct SimdgroupMmaCore {
       thread const ushort& leftover_block_depth
   ) {
     // `short2(cols, rows)` per loader's load_safe contract. A is always
-    // non-transposed (THREADGROUP_BLOCK_K cols × tile_block_rows rows). B's axes swap with
-    // TRANSPOSE_B.
+    // non-transposed (THREADGROUP_BLOCK_K cols × tile_block_rows rows). B's
+    // axes swap with TRANSPOSE_B.
     short2 tile_dimensions_a = short2(THREADGROUP_BLOCK_K, tile_block_rows);
-    short2 tile_dimensions_b = TRANSPOSE_B ? short2(THREADGROUP_BLOCK_K, tile_block_cols)
-                                           : short2(tile_block_cols, THREADGROUP_BLOCK_K);
+    short2 tile_dimensions_b =
+        TRANSPOSE_B ? short2(THREADGROUP_BLOCK_K, tile_block_cols)
+                    : short2(tile_block_cols, THREADGROUP_BLOCK_K);
 
     for (int k = 0; k < aligned_k_iterations; k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -136,9 +139,11 @@ struct SimdgroupMmaCore {
     const uint simd_lane_id = thread_context.simd_lane_id;
     const uint simd_group_id = thread_context.simdgroup_index;
 
-    const uint2 tile_id = block_id(thread_context.threadgroup_position.xy, params);
+    const uint2 tile_id =
+        block_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
-        ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile_id, params);
+        ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
+            compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -150,8 +155,9 @@ struct SimdgroupMmaCore {
 
     a += block_row * params->leading_dimension_a;
     // B-pointer offset by N-block:
-    //   transposed   ([N, K], row-major): skip block_col output-rows of length ld_b.
-    //   non-transposed ([K, N], row-major): skip block_col output-columns within one row.
+    //   transposed   ([N, K], row-major): skip block_col output-rows of length
+    //   ld_b. non-transposed ([K, N], row-major): skip block_col output-columns
+    //   within one row.
     b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
     d += block_row * params->leading_dimension_d + block_col;
 
@@ -172,13 +178,16 @@ struct SimdgroupMmaCore {
     thread TileAccumulator accumulator(simd_group_id, simd_lane_id);
 
     const ushort tile_block_rows =
-        min(THREADGROUP_BLOCK_M, ((int)params->M) - int(geometry.block_row_start));
+        min(THREADGROUP_BLOCK_M,
+            ((int)params->M) - int(geometry.block_row_start));
     const ushort tile_block_cols =
-        min(THREADGROUP_BLOCK_N, ((int)params->N) - int(geometry.block_col_start));
+        min(THREADGROUP_BLOCK_N,
+            ((int)params->N) - int(geometry.block_col_start));
     const ushort leftover_block_depth =
         params->K - params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
 
-    const bool needs_epilogue = output_transform != GemmOutputTransformKind::Store;
+    const bool needs_epilogue =
+        output_transform != GemmOutputTransformKind::Store;
     const float alpha =
         (output_transform == GemmOutputTransformKind::Scale ||
          output_transform == GemmOutputTransformKind::ScaleAccumulate)
@@ -212,13 +221,13 @@ struct SimdgroupMmaCore {
                   if constexpr (aligned_m.value && aligned_n.value) {
                     if (needs_epilogue) {
                       accumulator.apply_epilogue(
-                          d, params->leading_dimension_d, 1, epilogue
+                          d,
+                          params->leading_dimension_d,
+                          1,
+                          epilogue
                       );
                     }
-                    accumulator.store_result(
-                        d,
-                        params->leading_dimension_d
-                    );
+                    accumulator.store_result(d, params->leading_dimension_d);
                   } else {
                     if (needs_epilogue) {
                       accumulator.apply_epilogue_safe(
