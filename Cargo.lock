@@ -569,7 +569,6 @@ dependencies = [
  "criterion-macro",
  "depfile",
  "derive_more",
- "dsl",
  "futures",
  "half",
  "indicatif",
@@ -587,6 +586,7 @@ dependencies = [
  "objc2-foundation",
  "prettyplease",
  "proc-macro2",
+ "proc-macros",
  "proptest",
  "quote",
  "rand 0.10.1",
@@ -1952,15 +1952,6 @@ dependencies = [
  "tracing",
  "uuid",
  "wiremock",
-]
-
-[[package]]
-name = "dsl"
-version = "0.4.9"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -4816,6 +4807,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macros"
+version = "0.4.9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
