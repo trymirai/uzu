@@ -56,14 +56,6 @@ impl Case {
         self.accumulate = accumulate;
         self
     }
-
-    pub const fn with_b_transpose(
-        mut self,
-        b_transpose: bool,
-    ) -> Self {
-        self.b_transpose = b_transpose;
-        self
-    }
 }
 
 pub struct Input<T: ArrayElement + Float> {

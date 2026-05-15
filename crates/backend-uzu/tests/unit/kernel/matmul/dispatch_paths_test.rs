@@ -112,7 +112,10 @@ fn check_b_transpose_false<T: ArrayElement + Float + Debug + Display>(
     let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("MatmulKernel");
     for shape in all_correctness_shapes() {
-        let case = Case::new(shape).with_b_transpose(false);
+        let case = Case {
+            b_transpose: false,
+            ..Case::new(shape)
+        };
         check_case::<T>(&context, &mut kernel, variant, case, tolerance);
     }
 }
