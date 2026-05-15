@@ -29,7 +29,6 @@ struct GemmPipeline {
       GemmAlignment alignment,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
-      uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
     // Weight/input prologues other than FullPrecision are scaffolding for the
@@ -42,45 +41,45 @@ struct GemmPipeline {
     const bool n_aligned = alignment.contains(GemmAlignment::N);
     const bool k_aligned = alignment.contains(GemmAlignment::K);
     const device T* weights = reinterpret_cast<const device T*>(weights_packed);
-    if (compute == GemmComputeKind::SimdgroupMma) {
-      SimdgroupMmaCore<
-          T,
-          THREADGROUP_M,
-          THREADGROUP_N,
-          THREADGROUP_K,
-          SIMDGROUPS_M,
-          SIMDGROUPS_N>::
-          run(activations,
-              weights,
-              result,
-              params,
-              m_aligned,
-              n_aligned,
-              k_aligned,
-              output_transform,
-              a_shared,
-              b_shared,
-              threadgroup_position,
-              thread_context);
-    } else if (compute == GemmComputeKind::MxuMma) {
-      MxuMmaCore<
-          T,
-          THREADGROUP_M,
-          THREADGROUP_N,
-          256,
-          SIMDGROUPS_M,
-          SIMDGROUPS_N>::
-          run(activations,
-              weights,
-              result,
-              params,
-              m_aligned,
-              n_aligned,
-              k_aligned,
-              output_transform,
-              thread_context.simdgroup_index,
-              threadgroup_position,
-              thread_context);
+    switch (compute) {
+      case GemmComputeKind::SimdgroupMma:
+        SimdgroupMmaCore<
+            T,
+            THREADGROUP_M,
+            THREADGROUP_N,
+            THREADGROUP_K,
+            SIMDGROUPS_M,
+            SIMDGROUPS_N>::
+            run(activations,
+                weights,
+                result,
+                params,
+                m_aligned,
+                n_aligned,
+                k_aligned,
+                output_transform,
+                a_shared,
+                b_shared,
+                thread_context);
+        break;
+      case GemmComputeKind::MxuMma:
+        MxuMmaCore<
+            T,
+            THREADGROUP_M,
+            THREADGROUP_N,
+            256,
+            SIMDGROUPS_M,
+            SIMDGROUPS_N>::
+            run(activations,
+                weights,
+                result,
+                params,
+                m_aligned,
+                n_aligned,
+                k_aligned,
+                output_transform,
+                thread_context);
+        break;
     }
   }
 };

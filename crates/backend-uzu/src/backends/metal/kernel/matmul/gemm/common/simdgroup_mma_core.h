@@ -120,13 +120,12 @@ struct SimdgroupMmaCore {
       GemmOutputTransformKind output_transform,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
-      uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
     const uint simd_lane_id = thread_context.simd_lane_id;
     const uint simd_group_id = thread_context.simdgroup_index;
 
-    const uint2 tile_id = block_id(threadgroup_position, params);
+    const uint2 tile_id = block_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
@@ -135,12 +134,12 @@ struct SimdgroupMmaCore {
 
     threadgroup_barrier(mem_flags::mem_none);
 
-    const size_t block_row_long = size_t(geometry.block_row_start);
-    const size_t block_col_long = size_t(geometry.block_col_start);
+    const size_t block_row = size_t(geometry.block_row_start);
+    const size_t block_col = size_t(geometry.block_col_start);
 
-    activations += block_row_long * params->leading_dimension_a;
-    weights += block_col_long * params->leading_dimension_b;
-    result += block_row_long * params->leading_dimension_d + block_col_long;
+    activations += block_row * params->leading_dimension_a;
+    weights += block_col * params->leading_dimension_b;
+    result += block_row * params->leading_dimension_d + block_col;
 
     thread ActivationsLoader loader_a(
         activations,

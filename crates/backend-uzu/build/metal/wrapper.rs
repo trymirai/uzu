@@ -211,7 +211,7 @@ fn kernel_wrappers(
             wrapper_arguments.push("uint3 __dsl_axis_idx [[thread_position_in_grid]]".into());
         }
 
-        if kernel.has_groups() {
+        if kernel.has_groups() || kernel.has_thread_context() {
             wrapper_arguments.push("uint3 __dsl_group_idx [[threadgroup_position_in_grid]]".into());
         }
 
@@ -257,7 +257,7 @@ fn kernel_wrappers(
                     MetalArgumentType::Threads(_) => {
                         format!("__dsl_thread_idx.{}", thread_axis_letters.next().unwrap())
                     },
-                    MetalArgumentType::ThreadContext => "ThreadContext { .simd_lane_id = __dsl_simd_lane_idx, .simdgroup_index = __dsl_simd_group_idx, .simdgroup_size = __dsl_simd_group_size, .simdgroups_per_threadgroup = __dsl_simd_group_per_threadgroup }".into(),
+                    MetalArgumentType::ThreadContext => "ThreadContext { .simd_lane_id = __dsl_simd_lane_idx, .simdgroup_index = __dsl_simd_group_idx, .simdgroup_size = __dsl_simd_group_size, .simdgroups_per_threadgroup = __dsl_simd_group_per_threadgroup, .threadgroup_position = __dsl_group_idx }".into(),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")

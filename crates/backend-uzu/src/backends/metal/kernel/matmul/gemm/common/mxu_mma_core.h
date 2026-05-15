@@ -46,24 +46,23 @@ struct MxuMmaCore {
       const bool align_n,
       const bool align_k,
       GemmOutputTransformKind output_transform,
-      uint simd_group_id,
-      uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
-    const uint2 tile_id = block_id(threadgroup_position, params);
+    const uint simd_group_id = thread_context.simdgroup_index;
+    const uint2 tile_id = block_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
 
-    const size_t block_row_long = size_t(geometry.block_row_start);
-    const size_t block_col_long = size_t(geometry.block_col_start);
+    const size_t block_row = size_t(geometry.block_row_start);
+    const size_t block_col = size_t(geometry.block_col_start);
 
     const device T* activations_block =
-        activations + block_row_long * params->leading_dimension_a;
+        activations + block_row * params->leading_dimension_a;
     const device T* weights_block =
-        weights + block_col_long * params->leading_dimension_b;
+        weights + block_col * params->leading_dimension_b;
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
@@ -71,7 +70,7 @@ struct MxuMmaCore {
         SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
     device T* result_simdgroup =
-        result + block_row_long * params->leading_dimension_d + block_col_long +
+        result + block_row * params->leading_dimension_d + block_col +
         tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
@@ -211,8 +210,6 @@ struct MxuMmaCore<
       bool,
       bool,
       GemmOutputTransformKind,
-      uint,
-      uint2,
       const thread ThreadContext&
   ) {}
 };

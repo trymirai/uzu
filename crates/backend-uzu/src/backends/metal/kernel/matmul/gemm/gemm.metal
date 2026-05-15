@@ -59,6 +59,8 @@ KERNEL(Gemm)(
   (void)zero_points;
   (void)bits_per_weight;
   (void)group_size;
+  (void)group_x;
+  (void)group_y;
   (void)thread_x;
   (void)thread_y;
   (void)thread_z;
@@ -80,6 +82,5 @@ KERNEL(Gemm)(
           alignment,
           a_shared,
           b_shared,
-          uint2(group_x, group_y),
           thread_context);
 }
