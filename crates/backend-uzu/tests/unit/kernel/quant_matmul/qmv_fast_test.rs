@@ -84,7 +84,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         input.use_zero_points,
         input.use_mlx_quant,
         false,
-        true, // use_lut
+        true,  // use_lut
+        false, // use_nf4
     )
     .expect("Failed to create QuantizedMatmulQmvFastKernel");
     kernel.encode(
@@ -335,6 +336,7 @@ fn get_output_lut<B: Backend, T: ArrayElement + Float>(
         input.use_mlx_quant,
         false,
         use_lut,
+        false, // use_nf4
     )
     .expect("Failed to create QuantizedMatmulQmvFastKernel");
     kernel.encode(
@@ -434,7 +436,8 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
                 use_zero_points,
                 use_mlx_quant,
                 false,
-                true, // use_lut
+                true,  // use_lut
+                false, // use_nf4
             )
             .unwrap();
 

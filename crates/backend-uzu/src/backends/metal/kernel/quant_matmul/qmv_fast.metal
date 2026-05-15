@@ -1,7 +1,36 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
 #include "../hadamard_transform/hadamard_transform.h"
+#include "nf4_common.h"
 #include "quant_matmul.h"
+
+// NF4-graft per-weight dequant: identical byte/nibble stride to int4 `qdot`
+// (reads `w[2*i]`, `w[2*i+1]`, 4 nibbles low->high), but the nibble is a
+// 16-entry NF4 codebook index instead of a uniform int4 magnitude. Scale-only
+// (NO zero_points / NO bias): out = scale * Σ codebook[nibble] · x. This is
+// the exact same math as `qdot_nf4_constant`; only the kernel skeleton
+// (tiling/occupancy/loop) is the production QmvFast one.
+template <int values_per_thread>
+inline float qdot_nf4_graft(
+    const device uint8_t* w,
+    const thread float* x_thread,
+    float scale
+) {
+  using U4 = vec<float, 4>;
+  float accum = 0;
+  const thread U4* x4 = (const thread U4*)x_thread;
+  for (int i = 0; i < (values_per_thread / 4); i++) {
+    uint8_t b0 = w[2 * i];
+    uint8_t b1 = w[2 * i + 1];
+    half h0 = nf4_codebook[b0 & 0x0f];
+    half h1 = nf4_codebook[(b0 >> 4) & 0x0f];
+    half h2 = nf4_codebook[b1 & 0x0f];
+    half h3 = nf4_codebook[(b1 >> 4) & 0x0f];
+    U4 w_vec = U4(float(h0), float(h1), float(h2), float(h3));
+    accum += dot(x4[i], w_vec);
+  }
+  return scale * accum;
+}
 
 template <uint BITS, int values_per_thread>
 inline float qdot_qmv_fast_experiment(
@@ -9,12 +38,16 @@ inline float qdot_qmv_fast_experiment(
     const thread float* x_thread,
     const threadgroup half2* lut,
     bool use_lut,
+    bool use_nf4,
     float scale,
     float bias,
     float sum
 ) {
   if (BITS == 4) {
-    if (use_lut) {
+    if (use_nf4) {
+      // Scale-only NF4 codebook dequant; bias/sum (zero-point term) unused.
+      return qdot_nf4_graft<values_per_thread>(w, x_thread, scale);
+    } else if (use_lut) {
       return qdot_q4_byte_lut_half<values_per_thread>(
           w,
           x_thread,
@@ -50,6 +83,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const bool use_mlx_quant SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
     const bool use_lut SPECIALIZE,
+    const bool use_nf4 SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
     threadgroup half2 q4_lut[256],
     const uint batch_idx GROUPS(batch_size),
@@ -134,6 +168,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s0,
             b0,
             sum
@@ -143,6 +178,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s1,
             b1,
             sum
@@ -152,6 +188,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s2,
             b2,
             sum
@@ -161,29 +198,36 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s3,
             b3,
             sum
         );
       } else {
-        uchar4 zp_bytes = uchar4(
-            zps[0],
-            zps[zp_stride],
-            zps[2 * zp_stride],
-            zps[3 * zp_stride]
-        );
-        uchar4 zp_nibbles;
-        if (BITS == 4) {
-          const uint8_t shift = high_nibble ? 4u : 0u;
-          zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
-        } else {
-          zp_nibbles = zp_bytes;
+        // NF4 graft is scale-only: skip the zero-point load entirely so it
+        // works with `zero_points == nullptr` (no zp buffer bound). The
+        // bias it would produce is unused on the use_nf4 path anyway.
+        uchar4 zp_nibbles = uchar4(0);
+        if (!use_nf4) {
+          uchar4 zp_bytes = uchar4(
+              zps[0],
+              zps[zp_stride],
+              zps[2 * zp_stride],
+              zps[3 * zp_stride]
+          );
+          if (BITS == 4) {
+            const uint8_t shift = high_nibble ? 4u : 0u;
+            zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
+          } else {
+            zp_nibbles = zp_bytes;
+          }
         }
         result[0] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl0,
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s0,
             -s0 * static_cast<U>(zp_nibbles.x),
             sum
@@ -193,6 +237,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s1,
             -s1 * static_cast<U>(zp_nibbles.y),
             sum
@@ -202,6 +247,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s2,
             -s2 * static_cast<U>(zp_nibbles.z),
             sum
@@ -211,6 +257,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             x_thread,
             q4_lut,
             use_lut,
+            use_nf4,
             s3,
             -s3 * static_cast<U>(zp_nibbles.w),
             sum

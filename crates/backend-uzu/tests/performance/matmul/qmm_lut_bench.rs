@@ -235,6 +235,7 @@ struct QmvCell {
     awq_lut: Stats,
     nf4: Stats,
     nf4_byte256: Stats,
+    nf4_grafted: Stats,
 }
 
 fn bench_qmv_cell(
@@ -259,6 +260,7 @@ fn bench_qmv_cell(
         false, // use_mlx_quant
         false, // use_hadamard
         false, // use_lut: scalar mantissa-trick dequant
+        false, // use_nf4
     )
     .expect("scalar QmvFast kernel build");
 
@@ -272,8 +274,25 @@ fn bench_qmv_cell(
         false, // use_mlx_quant
         false, // use_hadamard
         true,  // use_lut: 256-entry threadgroup LUT
+        false, // use_nf4
     )
     .expect("awq-lut256 QmvFast kernel build");
+
+    // nf4-grafted: SAME QmvFast skeleton, ONLY the per-weight dequant swapped
+    // to the 16-entry NF4 codebook (scale-only, no zero-points). Built with
+    // use_zero_points=FALSE so no zp buffer is needed (graft skips zp load).
+    let nf4_graft_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+        ctx,
+        DataType::BF16,
+        GROUP_SIZE as u32,
+        BITS as u32,
+        false, // use_zero_points: NF4 graft is scale-only
+        false, // use_mlx_quant
+        false, // use_hadamard
+        false, // use_lut
+        true,  // use_nf4: 16-entry NF4 codebook dequant in QmvFast skeleton
+    )
+    .expect("nf4-grafted QmvFast kernel build");
 
     let mut y_s = bufs.y_buf.clone();
     let scalar = time_batched(ctx, |enc| {
@@ -339,6 +358,27 @@ fn bench_qmv_cell(
         );
     });
 
+    // nf4-grafted: NF4 codebook dequant inside the QmvFast skeleton. Feed it
+    // the SAME NF4 packed u8 weights + SAME bf16 scale as nf4-const (the
+    // kernel reads weights as uint8_t* with identical byte/nibble stride), no
+    // zero-points (use_zero_points=false → graft skips the zp load).
+    let mut y_g = bufs.y_buf.clone();
+    let nf4_grafted = time_batched(ctx, |enc| {
+        nf4_graft_kernel.encode(
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            None::<&<B as Backend>::DenseBuffer>,
+            None::<&<B as Backend>::DenseBuffer>,
+            &bufs.x_buf,
+            &mut y_g,
+            None::<&<B as Backend>::DenseBuffer>,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
     println!("  scalar      : {:.4} ±{:.4} ms", scalar.mean, scalar.std);
     println!("  awq-lut256  : {:.4} ±{:.4} ms  Δ {:+.1}%", awq_lut.mean, awq_lut.std, dpct(&scalar, &awq_lut));
     println!("  nf4-const   : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&scalar, &nf4));
@@ -347,6 +387,12 @@ fn bench_qmv_cell(
         nf4_byte256.mean,
         nf4_byte256.std,
         dpct(&scalar, &nf4_byte256)
+    );
+    println!(
+        "  nf4-grafted : {:.4} ±{:.4} ms  Δ {:+.1}%",
+        nf4_grafted.mean,
+        nf4_grafted.std,
+        dpct(&scalar, &nf4_grafted)
     );
 
     QmvCell {
@@ -358,6 +404,7 @@ fn bench_qmv_cell(
         awq_lut,
         nf4,
         nf4_byte256,
+        nf4_grafted,
     }
 }
 
@@ -426,12 +473,12 @@ fn qmv_lut_bench() {
     println!();
     println!("================== QMV LUT bench summary (baseline = scalar) ==================");
     println!(
-        "{:<14} {:>11} {:>3} {:>18} {:>14} {:>12} {:>14}",
-        "Shape", "KxN", "M", "scalar ms(±σ)", "awq-lut256 Δ%", "nf4-const Δ%", "nf4-byte256 Δ%"
+        "{:<14} {:>11} {:>3} {:>18} {:>14} {:>12} {:>14} {:>14}",
+        "Shape", "KxN", "M", "scalar ms(±σ)", "awq-lut256 Δ%", "nf4-const Δ%", "nf4-byte256 Δ%", "nf4-grafted Δ%"
     );
     for r in &results {
         println!(
-            "{:<14} {:>11} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}% {:>+13.1}%",
+            "{:<14} {:>11} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}% {:>+13.1}% {:>+13.1}%",
             r.shape,
             format!("{}x{}", r.k, r.n),
             r.m,
@@ -439,7 +486,8 @@ fn qmv_lut_bench() {
             r.scalar.std,
             dpct(&r.scalar, &r.awq_lut),
             dpct(&r.scalar, &r.nf4),
-            dpct(&r.scalar, &r.nf4_byte256)
+            dpct(&r.scalar, &r.nf4_byte256),
+            dpct(&r.scalar, &r.nf4_grafted)
         );
     }
     println!("==============================================================================");

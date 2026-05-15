@@ -123,7 +123,8 @@ impl<B: Backend> QuantizedMatmulKernelEncodable<B> {
                     use_zero_points,
                     use_mlx_quant,
                     configuration.use_hadamard,
-                    true, // use_lut: preserve current 256-entry LUT dequant
+                    true,  // use_lut: preserve current 256-entry LUT dequant
+                    false, // use_nf4: production path is int4, not NF4 graft
                 )
                 .map_err(QuantizedMatmulError::BackendError)?,
             )

@@ -23,8 +23,10 @@ pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32,
     #[specialize] use_mlx_quant: bool,
     #[specialize] use_hadamard: bool,
     #[specialize] use_lut: bool,
+    #[specialize] use_nf4: bool,
 ) {
     let _ = use_lut; // CPU reference is dequant-path agnostic
+    let _ = use_nf4; // CPU reference is dequant-path agnostic (NF4 graft is Metal-only)
     if use_hadamard {
         unimplemented!("not supported yet");
     }
