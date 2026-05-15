@@ -4,7 +4,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -354,15 +354,24 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    fn copy_rows(
+    fn copy_rows<SrcKeys, DstKeys, SrcValues, DstValues>(
         encoder: &mut Encoder<B>,
-        src_keys: &Allocation<B>,
-        dst_keys: &mut Allocation<B>,
-        src_values: &Allocation<B>,
-        dst_values: &mut Allocation<B>,
+        src_keys: &SrcKeys,
+        dst_keys: &mut DstKeys,
+        src_values: &SrcValues,
+        dst_values: &mut DstValues,
         row_size: usize,
         row_pairs: impl IntoIterator<Item = (usize, usize)>,
-    ) {
+    ) where
+        SrcKeys: AsBufferRangeRef,
+        SrcKeys::Buffer: Buffer<Backend = B>,
+        DstKeys: AsBufferRangeMut,
+        DstKeys::Buffer: Buffer<Backend = B>,
+        SrcValues: AsBufferRangeRef,
+        SrcValues::Buffer: Buffer<Backend = B>,
+        DstValues: AsBufferRangeMut,
+        DstValues::Buffer: Buffer<Backend = B>,
+    {
         for (src_row, dst_row) in row_pairs {
             let src_offset = src_row * row_size;
             let dst_offset = dst_row * row_size;
