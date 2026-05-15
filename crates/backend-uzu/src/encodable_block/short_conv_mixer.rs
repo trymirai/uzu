@@ -39,7 +39,7 @@ pub struct ShortConvMixer<B: Backend> {
     data_type: DataType,
 }
 
-pub(crate) struct ShortConvArguments<'a, B: Backend> {
+pub struct ShortConvArguments<'a, B: Backend> {
     pub active_row_count: usize,
     pub sampling_start: usize,
     pub sampling_length: usize,
