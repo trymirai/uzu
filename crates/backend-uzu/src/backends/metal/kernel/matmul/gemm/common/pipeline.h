@@ -11,17 +11,17 @@ namespace gemm {
 
 template <
     typename T,
-    uint THREADGROUP_M,
-    uint THREADGROUP_N,
-    uint THREADGROUP_K,
+    uint THREADGROUP_BLOCK_M,
+    uint THREADGROUP_BLOCK_N,
+    uint THREADGROUP_BLOCK_K,
     uint SIMDGROUPS_M,
     uint SIMDGROUPS_N,
-    bool TRANSPOSE_WEIGHTS>
+    bool TRANSPOSE_B>
 struct GemmPipeline {
   static METAL_FUNC void run(
-      const device T* activations,
-      const device uint8_t* weights_packed,
-      device T* result,
+      const device T* a,
+      const device uint8_t* b_packed,
+      device T* d,
       const constant uzu::matmul::GemmParams* params,
       GemmInputPrologueKind input_prologue,
       GemmWeightPrologueKind weight_prologue,
@@ -41,20 +41,20 @@ struct GemmPipeline {
     const bool m_aligned = alignment.contains(GemmAlignment::M);
     const bool n_aligned = alignment.contains(GemmAlignment::N);
     const bool k_aligned = alignment.contains(GemmAlignment::K);
-    const device T* weights = reinterpret_cast<const device T*>(weights_packed);
+    const device T* b = reinterpret_cast<const device T*>(b_packed);
     switch (compute) {
       case GemmComputeKind::SimdgroupMma:
         SimdgroupMmaCore<
             T,
-            THREADGROUP_M,
-            THREADGROUP_N,
-            THREADGROUP_K,
+            THREADGROUP_BLOCK_M,
+            THREADGROUP_BLOCK_N,
+            THREADGROUP_BLOCK_K,
             SIMDGROUPS_M,
             SIMDGROUPS_N,
-            TRANSPOSE_WEIGHTS>::
-            run(activations,
-                weights,
-                result,
+            TRANSPOSE_B>::
+            run(a,
+                b,
+                d,
                 params,
                 m_aligned,
                 n_aligned,
@@ -67,15 +67,15 @@ struct GemmPipeline {
       case GemmComputeKind::MxuMma:
         MxuMmaCore<
             T,
-            THREADGROUP_M,
-            THREADGROUP_N,
+            THREADGROUP_BLOCK_M,
+            THREADGROUP_BLOCK_N,
             256,
             SIMDGROUPS_M,
             SIMDGROUPS_N,
-            TRANSPOSE_WEIGHTS>::
-            run(activations,
-                weights,
-                result,
+            TRANSPOSE_B>::
+            run(a,
+                b,
+                d,
                 params,
                 m_aligned,
                 n_aligned,

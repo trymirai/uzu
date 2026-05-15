@@ -13,24 +13,24 @@ using namespace uzu::gemm;
 
 template <
     typename T,
-    uint THREADGROUP_M,
-    uint THREADGROUP_N,
-    uint THREADGROUP_K,
+    uint THREADGROUP_BLOCK_M,
+    uint THREADGROUP_BLOCK_N,
+    uint THREADGROUP_BLOCK_K,
     uint SIMDGROUPS_M,
     uint SIMDGROUPS_N,
-    bool TRANSPOSE_WEIGHTS>
+    bool TRANSPOSE_B>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(THREADGROUP_M, 32, 64, 128)
-VARIANTS(THREADGROUP_N, 32, 64, 128)
-VARIANTS(THREADGROUP_K, 16, 32)
+VARIANTS(THREADGROUP_BLOCK_M, 32, 64, 128)
+VARIANTS(THREADGROUP_BLOCK_N, 32, 64, 128)
+VARIANTS(THREADGROUP_BLOCK_K, 16, 32)
 VARIANTS(SIMDGROUPS_M, 1, 2, 4)
 VARIANTS(SIMDGROUPS_N, 1, 2, 4)
-VARIANTS(TRANSPOSE_WEIGHTS, false, true)
-CONSTRAINT(max(THREADGROUP_M, THREADGROUP_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
+VARIANTS(TRANSPOSE_B, false, true)
+CONSTRAINT(max(THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
 KERNEL(Gemm)(
-    const device T* activations,
-    const device uint8_t* weights,
-    device T* result,
+    const device T* a,
+    const device uint8_t* b,
+    device T* d,
     const device T* scales
         OPTIONAL(weight_prologue != GemmWeightPrologueKind::FullPrecision),
     const device T* biases
@@ -68,15 +68,15 @@ KERNEL(Gemm)(
   (void)thread_z;
   GemmPipeline<
       T,
-      THREADGROUP_M,
-      THREADGROUP_N,
-      THREADGROUP_K,
+      THREADGROUP_BLOCK_M,
+      THREADGROUP_BLOCK_N,
+      THREADGROUP_BLOCK_K,
       SIMDGROUPS_M,
       SIMDGROUPS_N,
-      TRANSPOSE_WEIGHTS>::
-      run(activations,
-          weights,
-          result,
+      TRANSPOSE_B>::
+      run(a,
+          b,
+          d,
           params,
           input_prologue,
           weight_prologue,

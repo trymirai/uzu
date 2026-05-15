@@ -14,7 +14,7 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-// MXU (MPP) matmul core. The `TRANSPOSE_WEIGHTS` template arg selects the B
+// MXU (MPP) matmul core. The `TRANSPOSE_B` template arg selects the B
 // layout: `true` for B = [N, K] row-major (the canonical attention/linear
 // layout), `false` for B = [K, N] row-major. The MPP descriptor in
 // `MxuFragmentOps::mma_impl` natively supports both via its
@@ -22,20 +22,20 @@ namespace gemm {
 // Programming Guide §2; MSL Spec §6.18 `matmul2d_descriptor`).
 template <
     typename T,
-    ushort BLOCK_M,
-    ushort BLOCK_N,
-    ushort BLOCK_K,
+    ushort THREADGROUP_BLOCK_M,
+    ushort THREADGROUP_BLOCK_N,
+    ushort THREADGROUP_BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_WEIGHTS,
+    bool TRANSPOSE_B,
     bool VALID =
-        (BLOCK_M % SIMDGROUPS_PER_ROW == 0 &&
-         BLOCK_N % SIMDGROUPS_PER_COLUMN == 0 &&
-         (BLOCK_M / SIMDGROUPS_PER_ROW) % 16 == 0 &&
-         (BLOCK_N / SIMDGROUPS_PER_COLUMN) % 16 == 0)>
+        (THREADGROUP_BLOCK_M % SIMDGROUPS_PER_ROW == 0 &&
+         THREADGROUP_BLOCK_N % SIMDGROUPS_PER_COLUMN == 0 &&
+         (THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW) % 16 == 0 &&
+         (THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN) % 16 == 0)>
 struct MxuMmaCore {
-  METAL_CONST ushort SIMDGROUP_BLOCK_M = BLOCK_M / SIMDGROUPS_PER_ROW;
-  METAL_CONST ushort SIMDGROUP_BLOCK_N = BLOCK_N / SIMDGROUPS_PER_COLUMN;
+  METAL_CONST ushort SIMDGROUP_BLOCK_M = THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
+  METAL_CONST ushort SIMDGROUP_BLOCK_N = THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
   METAL_CONST ushort SIMDGROUP_BLOCK_K = 32;
   METAL_CONST ushort TILES_M =
       SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps::FRAGMENT_ROWS;
@@ -45,9 +45,9 @@ struct MxuMmaCore {
   using AccumulatorType = float;
 
   static METAL_FUNC void run(
-      const device T* activations,
-      const device T* weights,
-      device T* result,
+      const device T* a,
+      const device T* b,
+      device T* d,
       const constant uzu::matmul::GemmParams* params,
       const bool align_m,
       const bool align_n,
@@ -58,7 +58,7 @@ struct MxuMmaCore {
     const uint simd_group_id = thread_context.simdgroup_index;
     const uint2 tile_id = block_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
-        BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
+        ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -66,24 +66,22 @@ struct MxuMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    const device T* activations_block =
-        activations + block_row * params->leading_dimension_activations;
+    const device T* a_block =
+        a + block_row * params->leading_dimension_a;
     // B-block offset by N-block:
-    //   transposed   ([N, K], row-major): skip block_col output-rows of length ld_weights.
+    //   transposed   ([N, K], row-major): skip block_col output-rows of length ld_b.
     //   non-transposed ([K, N], row-major): skip block_col output-columns within one row.
-    const device T* weights_block =
-        weights +
-        (TRANSPOSE_WEIGHTS ? block_col * params->leading_dimension_weights
-                           : block_col);
+    const device T* b_block =
+        b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
     const ushort tile_col_offset =
         SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
-    device T* result_simdgroup =
-        result + block_row * params->leading_dimension_result + block_col +
-        tile_row_offset * params->leading_dimension_result + tile_col_offset;
+    device T* d_simdgroup =
+        d + block_row * params->leading_dimension_d + block_col +
+        tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
         align_m ? SIMDGROUP_BLOCK_M
@@ -100,19 +98,18 @@ struct MxuMmaCore {
                               int(geometry.block_col_start + tile_col_offset))
                   );
 
-    const device T* activations_simdgroup =
-        activations_block +
-        size_t(tile_row_offset) * params->leading_dimension_activations;
+    const device T* a_simdgroup =
+        a_block + size_t(tile_row_offset) * params->leading_dimension_a;
     // Per-simdgroup B offset mirrors the per-block one:
     //   transposed: walk `tile_col_offset` output-rows.
     //   non-transposed: walk `tile_col_offset` output-columns within one row.
-    const device T* weights_simdgroup =
-        weights_block +
-        (TRANSPOSE_WEIGHTS
-             ? size_t(tile_col_offset) * int(params->leading_dimension_weights)
+    const device T* b_simdgroup =
+        b_block +
+        (TRANSPOSE_B
+             ? size_t(tile_col_offset) * int(params->leading_dimension_b)
              : size_t(tile_col_offset));
 
-    const int aligned_k_iterations = int(params->K) / int(BLOCK_K);
+    const int aligned_k_iterations = int(params->K) / int(THREADGROUP_BLOCK_K);
 
     const bool apply_scale =
         output_transform == GemmOutputTransformKind::Scale ||
@@ -133,17 +130,17 @@ struct MxuMmaCore {
                       SIMDGROUP_BLOCK_M,
                       SIMDGROUP_BLOCK_N,
                       SIMDGROUP_BLOCK_K,
-                      BLOCK_K,
+                      THREADGROUP_BLOCK_K,
                       false,
-                      TRANSPOSE_WEIGHTS,
+                      TRANSPOSE_B,
                       aligned_m.value,
                       aligned_n.value,
                       aligned_k.value,
                       AccumulatorType>(
-                      activations_simdgroup,
-                      weights_simdgroup,
-                      int(params->leading_dimension_activations),
-                      int(params->leading_dimension_weights),
+                      a_simdgroup,
+                      b_simdgroup,
+                      int(params->leading_dimension_a),
+                      int(params->leading_dimension_b),
                       int(params->K),
                       aligned_k_iterations,
                       simdgroup_limit_m,
@@ -165,13 +162,13 @@ struct MxuMmaCore {
                         existing_output(thread_context);
                     if constexpr (aligned_m.value && aligned_n.value) {
                       existing_output.load(
-                          result_simdgroup,
-                          int(params->leading_dimension_result)
+                          d_simdgroup,
+                          int(params->leading_dimension_d)
                       );
                     } else {
                       existing_output.load_safe(
-                          result_simdgroup,
-                          int(params->leading_dimension_result),
+                          d_simdgroup,
+                          int(params->leading_dimension_d),
                           short2(simdgroup_limit_n, simdgroup_limit_m)
                       );
                     }
@@ -185,13 +182,13 @@ struct MxuMmaCore {
 
                   if constexpr (aligned_m.value && aligned_n.value) {
                     accumulator_tile.store(
-                        result_simdgroup,
-                        int(params->leading_dimension_result)
+                        d_simdgroup,
+                        int(params->leading_dimension_d)
                     );
                   } else {
                     accumulator_tile.store_safe(
-                        result_simdgroup,
-                        int(params->leading_dimension_result),
+                        d_simdgroup,
+                        int(params->leading_dimension_d),
                         short2(simdgroup_limit_n, simdgroup_limit_m)
                     );
                   }
@@ -208,20 +205,20 @@ struct MxuMmaCore {
 // simdgroup core.
 template <
     typename T,
-    ushort BLOCK_M,
-    ushort BLOCK_N,
-    ushort BLOCK_K,
+    ushort THREADGROUP_BLOCK_M,
+    ushort THREADGROUP_BLOCK_N,
+    ushort THREADGROUP_BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_WEIGHTS>
+    bool TRANSPOSE_B>
 struct MxuMmaCore<
     T,
-    BLOCK_M,
-    BLOCK_N,
-    BLOCK_K,
+    THREADGROUP_BLOCK_M,
+    THREADGROUP_BLOCK_N,
+    THREADGROUP_BLOCK_K,
     SIMDGROUPS_PER_ROW,
     SIMDGROUPS_PER_COLUMN,
-    TRANSPOSE_WEIGHTS,
+    TRANSPOSE_B,
     false> {
   static METAL_FUNC void run(
       const device T*,

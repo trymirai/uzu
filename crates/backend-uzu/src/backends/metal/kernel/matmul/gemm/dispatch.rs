@@ -80,18 +80,22 @@ impl<B: Backend> GemmWeights<'_, B> {
     }
 }
 
+/// GEMM dispatch arguments, named in BLAS-style `a`/`b`/`d` (matches the kernel
+/// signature and external `MatmulArguments`). `b` is wrapped in `GemmWeights` —
+/// that's a quantization-protocol enum, not a layout name, so its type keeps the
+/// "Weights" label even though the field uses the `b` GEMM convention.
 pub struct GemmDispatch<'a, B: Backend> {
     pub tiling_config: GemmTilingConfig,
     pub input_prologue: GemmInputPrologueKind,
     pub compute: GemmComputeKind,
     pub output_transform: GemmOutputTransformKind,
     pub alignment: GemmAlignment,
-    pub transpose_weights: bool,
-    pub weights: GemmWeights<'a, B>,
-    pub weights_offset: usize,
-    pub activations: &'a Allocation<B>,
-    pub activations_offset: usize,
-    pub result: &'a mut Allocation<B>,
+    pub transpose_b: bool,
+    pub a: &'a Allocation<B>,
+    pub a_offset: usize,
+    pub b: GemmWeights<'a, B>,
+    pub b_offset: usize,
+    pub d: &'a mut Allocation<B>,
     pub params: GemmParams,
     pub group_count_x: u32,
     pub group_count_y: u32,
@@ -105,10 +109,10 @@ impl<B: Backend> GemmDispatch<'_, B> {
             compute: self.compute,
             output_transform: self.output_transform,
             alignment: self.alignment,
-            transpose_weights: self.transpose_weights,
-            weight_prologue: self.weights.weight_prologue(),
-            bits_per_weight: self.weights.bits_per_weight(),
-            group_size: self.weights.group_size(),
+            transpose_b: self.transpose_b,
+            weight_prologue: self.b.weight_prologue(),
+            bits_per_weight: self.b.bits_per_weight(),
+            group_size: self.b.group_size(),
         }
     }
 }
@@ -120,7 +124,7 @@ pub(crate) struct GemmSpecialization {
     pub(crate) compute: GemmComputeKind,
     pub(crate) output_transform: GemmOutputTransformKind,
     pub(crate) alignment: GemmAlignment,
-    pub(crate) transpose_weights: bool,
+    pub(crate) transpose_b: bool,
     pub(crate) weight_prologue: GemmWeightPrologueKind,
     pub(crate) bits_per_weight: u32,
     pub(crate) group_size: u32,

@@ -41,7 +41,7 @@ impl GemmKernel {
                     specialization.tiling_config.threadgroup_k,
                     specialization.tiling_config.simdgroups_m,
                     specialization.tiling_config.simdgroups_n,
-                    specialization.transpose_weights,
+                    specialization.transpose_b,
                     specialization.input_prologue,
                     specialization.weight_prologue,
                     specialization.compute,
@@ -66,7 +66,7 @@ impl GemmKernel {
             .try_validate()
             .map_err(|error| MetalError::CannotCreatePipelineState(format!("{error:?}")))?;
         let kernel = self.get_or_create(context, specialization)?;
-        let (weights, scales, biases, zero_points) = match &dispatch.weights {
+        let (b, scales, biases, zero_points) = match &dispatch.b {
             GemmWeights::FullPrecision {
                 weights,
             } => (*weights, None, None, None),
@@ -84,9 +84,9 @@ impl GemmKernel {
             } => (*weights, Some(*scales), None, Some(*zero_points)),
         };
         kernel.encode(
-            (dispatch.activations, dispatch.activations_offset),
-            (weights, dispatch.weights_offset),
-            dispatch.result,
+            (dispatch.a, dispatch.a_offset),
+            (b, dispatch.b_offset),
+            dispatch.d,
             scales,
             biases,
             zero_points,

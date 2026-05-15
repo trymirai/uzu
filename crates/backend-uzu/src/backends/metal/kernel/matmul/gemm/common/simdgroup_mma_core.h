@@ -16,49 +16,49 @@ namespace gemm {
 
 template <
     typename T,
-    int BLOCK_M,
-    int BLOCK_N,
-    int BLOCK_K,
+    int THREADGROUP_BLOCK_M,
+    int THREADGROUP_BLOCK_N,
+    int THREADGROUP_BLOCK_K,
     int SIMDGROUPS_PER_ROW,
     int SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_WEIGHTS>
+    bool TRANSPOSE_B>
 struct SimdgroupMmaCore {
   METAL_CONST ushort PADDING_A = 16 / sizeof(T);
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
-  METAL_CONST ushort SHARED_STRIDE_A = BLOCK_K + PADDING_A;
+  METAL_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
   // Shared-memory stride for the B tile depends on which axis is contiguous
   // after the load: K when B is row-major [N, K] (transposed), N when row-major [K, N].
   METAL_CONST ushort SHARED_STRIDE_B =
-      (TRANSPOSE_WEIGHTS ? BLOCK_K : BLOCK_N) + PADDING_B;
+      (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
   METAL_CONST ushort THREADGROUP_THREADS =
       SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * METAL_SIMD_SIZE;
 
-  using ActivationsLoader = uzu::matmul::ThreadgroupLoader<
+  using ALoader = uzu::matmul::ThreadgroupLoader<
       T,
-      BLOCK_M,
-      BLOCK_K,
+      THREADGROUP_BLOCK_M,
+      THREADGROUP_BLOCK_K,
       SHARED_STRIDE_A,
       true,
       THREADGROUP_THREADS>;
-  // B-block layout: (BLOCK_N rows × BLOCK_K cols) when transposed,
-  // (BLOCK_K rows × BLOCK_N cols) otherwise.
-  using WeightsLoader = uzu::matmul::ThreadgroupLoader<
+  // B-block layout: (THREADGROUP_BLOCK_N rows × THREADGROUP_BLOCK_K cols) when transposed,
+  // (THREADGROUP_BLOCK_K rows × THREADGROUP_BLOCK_N cols) otherwise.
+  using BLoader = uzu::matmul::ThreadgroupLoader<
       T,
-      TRANSPOSE_WEIGHTS ? BLOCK_N : BLOCK_K,
-      TRANSPOSE_WEIGHTS ? BLOCK_K : BLOCK_N,
+      TRANSPOSE_B ? THREADGROUP_BLOCK_N : THREADGROUP_BLOCK_K,
+      TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N,
       SHARED_STRIDE_B,
-      TRANSPOSE_WEIGHTS,
+      TRANSPOSE_B,
       THREADGROUP_THREADS>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
       T,
       T,
-      BLOCK_M,
-      BLOCK_N,
-      BLOCK_K,
+      THREADGROUP_BLOCK_M,
+      THREADGROUP_BLOCK_N,
+      THREADGROUP_BLOCK_K,
       SIMDGROUPS_PER_ROW,
       SIMDGROUPS_PER_COLUMN,
       false,
-      TRANSPOSE_WEIGHTS,
+      TRANSPOSE_B,
       SHARED_STRIDE_A,
       SHARED_STRIDE_B,
       float,
@@ -69,19 +69,19 @@ struct SimdgroupMmaCore {
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       const int aligned_k_iterations,
-      thread ActivationsLoader& loader_a,
-      thread WeightsLoader& loader_b,
+      thread ALoader& loader_a,
+      thread BLoader& loader_b,
       thread TileAccumulator& accumulator,
       thread const ushort& tile_block_rows,
       thread const ushort& tile_block_cols,
       thread const ushort& leftover_block_depth
   ) {
     // `short2(cols, rows)` per loader's load_safe contract. A is always
-    // non-transposed (BLOCK_K cols × tile_block_rows rows). B's axes swap with
-    // TRANSPOSE_WEIGHTS.
-    short2 tile_dimensions_a = short2(BLOCK_K, tile_block_rows);
-    short2 tile_dimensions_b = TRANSPOSE_WEIGHTS ? short2(BLOCK_K, tile_block_cols)
-                                           : short2(tile_block_cols, BLOCK_K);
+    // non-transposed (THREADGROUP_BLOCK_K cols × tile_block_rows rows). B's axes swap with
+    // TRANSPOSE_B.
+    short2 tile_dimensions_a = short2(THREADGROUP_BLOCK_K, tile_block_rows);
+    short2 tile_dimensions_b = TRANSPOSE_B ? short2(THREADGROUP_BLOCK_K, tile_block_cols)
+                                           : short2(tile_block_cols, THREADGROUP_BLOCK_K);
 
     for (int k = 0; k < aligned_k_iterations; k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -109,7 +109,7 @@ struct SimdgroupMmaCore {
       short2 last_tile_dimensions_a =
           short2(leftover_block_depth, tile_block_rows);
       short2 last_tile_dimensions_b =
-          TRANSPOSE_WEIGHTS ? short2(leftover_block_depth, tile_block_cols)
+          TRANSPOSE_B ? short2(leftover_block_depth, tile_block_cols)
                       : short2(tile_block_cols, leftover_block_depth);
 
       loader_a.load_safe(last_tile_dimensions_a);
@@ -121,9 +121,9 @@ struct SimdgroupMmaCore {
   }
 
   static METAL_FUNC void run(
-      const device T* activations,
-      const device T* weights,
-      device T* result,
+      const device T* a,
+      const device T* b,
+      device T* d,
       const constant uzu::matmul::GemmParams* params,
       const bool align_m,
       const bool align_n,
@@ -138,7 +138,7 @@ struct SimdgroupMmaCore {
 
     const uint2 tile_id = block_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
-        BlockGeometry<BLOCK_M, BLOCK_N>::compute(tile_id, params);
+        ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::compute(tile_id, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -148,23 +148,23 @@ struct SimdgroupMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    activations += block_row * params->leading_dimension_activations;
+    a += block_row * params->leading_dimension_a;
     // B-pointer offset by N-block:
     //   transposed   ([N, K], row-major): skip block_col output-rows of length ld_b.
     //   non-transposed ([K, N], row-major): skip block_col output-columns within one row.
-    weights += TRANSPOSE_WEIGHTS ? block_col * params->leading_dimension_weights : block_col;
-    result += block_row * params->leading_dimension_result + block_col;
+    b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
+    d += block_row * params->leading_dimension_d + block_col;
 
-    thread ActivationsLoader loader_a(
-        activations,
-        params->leading_dimension_activations,
+    thread ALoader loader_a(
+        a,
+        params->leading_dimension_a,
         a_shared,
         simd_group_id,
         simd_lane_id
     );
-    thread WeightsLoader loader_b(
-        weights,
-        params->leading_dimension_weights,
+    thread BLoader loader_b(
+        b,
+        params->leading_dimension_b,
         b_shared,
         simd_group_id,
         simd_lane_id
@@ -172,11 +172,11 @@ struct SimdgroupMmaCore {
     thread TileAccumulator accumulator(simd_group_id, simd_lane_id);
 
     const ushort tile_block_rows =
-        min(BLOCK_M, ((int)params->M) - int(geometry.block_row_start));
+        min(THREADGROUP_BLOCK_M, ((int)params->M) - int(geometry.block_row_start));
     const ushort tile_block_cols =
-        min(BLOCK_N, ((int)params->N) - int(geometry.block_col_start));
+        min(THREADGROUP_BLOCK_N, ((int)params->N) - int(geometry.block_col_start));
     const ushort leftover_block_depth =
-        params->K - params->aligned_inner_iterations * BLOCK_K;
+        params->K - params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
 
     const bool needs_epilogue = output_transform != GemmOutputTransformKind::Store;
     const float alpha =
@@ -193,10 +193,10 @@ struct SimdgroupMmaCore {
 
     dispatch_bool(align_k, [&](auto aligned_k) {
       dispatch_bool(
-          align_m || (tile_block_rows == BLOCK_M),
+          align_m || (tile_block_rows == THREADGROUP_BLOCK_M),
           [&](auto aligned_m) {
             dispatch_bool(
-                align_n || (tile_block_cols == BLOCK_N),
+                align_n || (tile_block_cols == THREADGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   k_loop<aligned_m.value, aligned_n.value, aligned_k.value>(
                       a_shared,
@@ -212,26 +212,26 @@ struct SimdgroupMmaCore {
                   if constexpr (aligned_m.value && aligned_n.value) {
                     if (needs_epilogue) {
                       accumulator.apply_epilogue(
-                          result, params->leading_dimension_result, 1, epilogue
+                          d, params->leading_dimension_d, 1, epilogue
                       );
                     }
                     accumulator.store_result(
-                        result,
-                        params->leading_dimension_result
+                        d,
+                        params->leading_dimension_d
                     );
                   } else {
                     if (needs_epilogue) {
                       accumulator.apply_epilogue_safe(
-                          result,
-                          params->leading_dimension_result,
+                          d,
+                          params->leading_dimension_d,
                           1,
                           short2(tile_block_cols, tile_block_rows),
                           epilogue
                       );
                     }
                     accumulator.store_result_safe(
-                        result,
-                        params->leading_dimension_result,
+                        d,
+                        params->leading_dimension_d,
                         short2(tile_block_cols, tile_block_rows)
                     );
                   }

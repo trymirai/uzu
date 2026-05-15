@@ -9,9 +9,9 @@ typedef struct {
   uint32_t M;
   uint32_t N;
   uint32_t K;
-  uint32_t leading_dimension_activations;
-  uint32_t leading_dimension_weights;
-  uint32_t leading_dimension_result;
+  uint32_t leading_dimension_a;
+  uint32_t leading_dimension_b;
+  uint32_t leading_dimension_d;
   uint32_t threadgroups_per_column;
   uint32_t threadgroups_per_row;
   uint32_t aligned_inner_iterations;
