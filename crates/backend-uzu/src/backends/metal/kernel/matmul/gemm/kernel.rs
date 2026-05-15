@@ -18,10 +18,9 @@ pub(crate) struct GemmKernel {
 
 impl GemmKernel {
     pub(crate) fn new(
-        context: &MetalContext,
+        _context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MetalError> {
-        let _ = context;
         Ok(Self {
             data_type,
             kernels: HashMap::new(),
