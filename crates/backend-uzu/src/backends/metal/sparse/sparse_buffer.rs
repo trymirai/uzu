@@ -11,7 +11,7 @@ use rangemap::RangeSet;
 
 use crate::{
     backends::{
-        common::{Backend, Buffer, SparseBuffer},
+        common::{Backend, Buffer, Context, DenseBuffer, Encoder, SparseBuffer},
         metal::{Metal, error::MetalError, metal_extensions::SparsePageSizeExt},
     },
     prelude::MetalContext,
@@ -74,6 +74,24 @@ impl Drop for MetalSparseBuffer {
 
 impl Buffer for MetalSparseBuffer {
     type Backend = Metal;
+
+    fn as_bytes_slice_range(
+        &self,
+        context: Option<&<Self::Backend as Backend>::Context>,
+        range: Range<usize>,
+    ) -> Result<&[u8], MetalError> {
+        let context = context.ok_or(MetalError::ContextRequired)?;
+        let dst_buffer_length = range.len();
+        let mut dst_buffer = context.create_buffer(dst_buffer_length)?;
+
+        let mut encoder = Encoder::<Self::Backend>::new(context)?;
+        encoder.encode_copy(self, range, &mut dst_buffer, 0..dst_buffer_length);
+        encoder.end_encoding().submit().wait_until_completed()?;
+
+        let bytes =
+            unsafe { std::slice::from_raw_parts(dst_buffer.cpu_ptr().as_ptr() as *const u8, dst_buffer_length) };
+        Ok(bytes)
+    }
 
     fn gpu_ptr(&self) -> usize {
         self.buffer.gpu_ptr()

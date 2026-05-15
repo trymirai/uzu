@@ -5,6 +5,12 @@ use crate::backends::common::Backend;
 pub trait Buffer: Any + Debug {
     type Backend: Backend;
 
+    fn as_bytes_slice_range(
+        &self,
+        context: Option<&<Self::Backend as Backend>::Context>,
+        range: Range<usize>,
+    ) -> Result<&[u8], <Self::Backend as Backend>::Error>;
+
     fn gpu_ptr(&self) -> usize;
 
     fn size(&self) -> usize;

@@ -11,6 +11,14 @@ pub struct CpuSparseBuffer {}
 impl Buffer for CpuSparseBuffer {
     type Backend = Cpu;
 
+    fn as_bytes_slice_range(
+        &self,
+        _context: Option<&<Self::Backend as Backend>::Context>,
+        _range: Range<usize>,
+    ) -> Result<&[u8], <Self::Backend as Backend>::Error> {
+        todo!()
+    }
+
     fn gpu_ptr(&self) -> usize {
         todo!()
     }

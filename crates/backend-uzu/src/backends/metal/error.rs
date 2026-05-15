@@ -24,6 +24,8 @@ pub enum MetalError {
     CannotCreateFunction,
     #[error("Cannot create pipeline state: {0}")]
     CannotCreatePipelineState(String),
+    #[error("Context required")]
+    ContextRequired,
     #[error("Can not allocate buffer with size={0}")]
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]
