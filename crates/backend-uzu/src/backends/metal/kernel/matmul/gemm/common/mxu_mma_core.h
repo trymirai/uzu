@@ -14,6 +14,12 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
+// MXU (MPP) matmul core. The `TRANSPOSE_WEIGHTS` template arg selects the B
+// layout: `true` for B = [N, K] row-major (the canonical attention/linear
+// layout), `false` for B = [K, N] row-major. The MPP descriptor in
+// `MxuFragmentOps::mma_impl` natively supports both via its
+// `transpose_left`/`transpose_right` flags (see Metal Performance Primitives
+// Programming Guide §2; MSL Spec §6.18 `matmul2d_descriptor`).
 template <
     typename T,
     ushort BLOCK_M,
@@ -21,6 +27,7 @@ template <
     ushort BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
+    bool TRANSPOSE_WEIGHTS,
     bool VALID =
         (BLOCK_M % SIMDGROUPS_PER_ROW == 0 &&
          BLOCK_N % SIMDGROUPS_PER_COLUMN == 0 &&
@@ -60,9 +67,14 @@ struct MxuMmaCore {
     const size_t block_col = size_t(geometry.block_col_start);
 
     const device T* activations_block =
-        activations + block_row * params->leading_dimension_a;
+        activations + block_row * params->leading_dimension_activations;
+    // B-block offset by N-block:
+    //   transposed   ([N, K], row-major): skip block_col output-rows of length ld_weights.
+    //   non-transposed ([K, N], row-major): skip block_col output-columns within one row.
     const device T* weights_block =
-        weights + block_col * params->leading_dimension_b;
+        weights +
+        (TRANSPOSE_WEIGHTS ? block_col * params->leading_dimension_weights
+                           : block_col);
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
@@ -70,8 +82,8 @@ struct MxuMmaCore {
         SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
 
     device T* result_simdgroup =
-        result + block_row * params->leading_dimension_d + block_col +
-        tile_row_offset * params->leading_dimension_d + tile_col_offset;
+        result + block_row * params->leading_dimension_result + block_col +
+        tile_row_offset * params->leading_dimension_result + tile_col_offset;
 
     const short simdgroup_limit_m =
         align_m ? SIMDGROUP_BLOCK_M
@@ -90,10 +102,15 @@ struct MxuMmaCore {
 
     const device T* activations_simdgroup =
         activations_block +
-        size_t(tile_row_offset) * params->leading_dimension_a;
+        size_t(tile_row_offset) * params->leading_dimension_activations;
+    // Per-simdgroup B offset mirrors the per-block one:
+    //   transposed: walk `tile_col_offset` output-rows.
+    //   non-transposed: walk `tile_col_offset` output-columns within one row.
     const device T* weights_simdgroup =
         weights_block +
-        size_t(tile_col_offset) * int(params->leading_dimension_b);
+        (TRANSPOSE_WEIGHTS
+             ? size_t(tile_col_offset) * int(params->leading_dimension_weights)
+             : size_t(tile_col_offset));
 
     const int aligned_k_iterations = int(params->K) / int(BLOCK_K);
 
@@ -118,15 +135,15 @@ struct MxuMmaCore {
                       SIMDGROUP_BLOCK_K,
                       BLOCK_K,
                       false,
-                      true,
+                      TRANSPOSE_WEIGHTS,
                       aligned_m.value,
                       aligned_n.value,
                       aligned_k.value,
                       AccumulatorType>(
                       activations_simdgroup,
                       weights_simdgroup,
-                      int(params->leading_dimension_a),
-                      int(params->leading_dimension_b),
+                      int(params->leading_dimension_activations),
+                      int(params->leading_dimension_weights),
                       int(params->K),
                       aligned_k_iterations,
                       simdgroup_limit_m,
@@ -149,12 +166,12 @@ struct MxuMmaCore {
                     if constexpr (aligned_m.value && aligned_n.value) {
                       existing_output.load(
                           result_simdgroup,
-                          int(params->leading_dimension_d)
+                          int(params->leading_dimension_result)
                       );
                     } else {
                       existing_output.load_safe(
                           result_simdgroup,
-                          int(params->leading_dimension_d),
+                          int(params->leading_dimension_result),
                           short2(simdgroup_limit_n, simdgroup_limit_m)
                       );
                     }
@@ -169,12 +186,12 @@ struct MxuMmaCore {
                   if constexpr (aligned_m.value && aligned_n.value) {
                     accumulator_tile.store(
                         result_simdgroup,
-                        int(params->leading_dimension_d)
+                        int(params->leading_dimension_result)
                     );
                   } else {
                     accumulator_tile.store_safe(
                         result_simdgroup,
-                        int(params->leading_dimension_d),
+                        int(params->leading_dimension_result),
                         short2(simdgroup_limit_n, simdgroup_limit_m)
                     );
                   }
@@ -186,13 +203,17 @@ struct MxuMmaCore {
   }
 };
 
+// Empty body for tile shapes that don't satisfy the MXU 16-element-per-axis
+// fragment constraint. The dispatcher routes such combinations to the
+// simdgroup core.
 template <
     typename T,
     ushort BLOCK_M,
     ushort BLOCK_N,
     ushort BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
-    ushort SIMDGROUPS_PER_COLUMN>
+    ushort SIMDGROUPS_PER_COLUMN,
+    bool TRANSPOSE_WEIGHTS>
 struct MxuMmaCore<
     T,
     BLOCK_M,
@@ -200,6 +221,7 @@ struct MxuMmaCore<
     BLOCK_K,
     SIMDGROUPS_PER_ROW,
     SIMDGROUPS_PER_COLUMN,
+    TRANSPOSE_WEIGHTS,
     false> {
   static METAL_FUNC void run(
       const device T*,

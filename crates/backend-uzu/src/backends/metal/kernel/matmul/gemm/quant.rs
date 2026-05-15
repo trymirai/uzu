@@ -35,6 +35,7 @@ pub(crate) fn encode(
             output_dim % tile.threadgroup_n == 0,
             input_dim % tile.threadgroup_k == 0,
         ),
+        transpose_weights: true,
         weights: match configuration.quantization_method {
             QuantizationMethod::ScaleBias => GemmWeights::ScaleBias {
                 weights: arguments.b,
@@ -51,6 +52,7 @@ pub(crate) fn encode(
                 group_size,
             },
         },
+        weights_offset: 0,
         activations: arguments.a,
         activations_offset: arguments.a_offset,
         result: arguments.output,
@@ -58,9 +60,9 @@ pub(crate) fn encode(
             M: batch_dim,
             N: output_dim,
             K: input_dim,
-            leading_dimension_a: input_dim,
-            leading_dimension_b: input_dim,
-            leading_dimension_d: output_dim,
+            leading_dimension_activations: input_dim,
+            leading_dimension_weights: input_dim,
+            leading_dimension_result: output_dim,
             threadgroups_per_row: group_count_x,
             threadgroups_per_column: group_count_y,
             aligned_inner_iterations: input_dim / tile.threadgroup_k,

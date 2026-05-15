@@ -119,17 +119,29 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
+        // Routing notes:
+        // - gemv only supports the canonical B layout (transposed, contiguous, no
+        //   offset); non-canonical inputs skip it.
+        // - GEMM (both SimdgroupMma and MxuMma) templates on TRANSPOSE_WEIGHTS and
+        //   threads `b_offset` / `b_leading_dimension` end-to-end, so either compute
+        //   path is correct for any layout. We prefer MXU when the device supports it.
         let context = encoder.context();
-        if arguments.batch_dim <= max_gemv_batch_threshold() {
+        let gemv_eligible = arguments.b_transpose
+            && arguments.b_offset == 0
+            && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.input_dim)
+            && arguments.batch_dim <= max_gemv_batch_threshold();
+
+        if gemv_eligible {
             gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV kernel");
-        } else {
-            let compute = if self.is_mxu_eligible(context) {
-                GemmComputeKind::MxuMma
-            } else {
-                GemmComputeKind::SimdgroupMma
-            };
-            gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, compute)
-                .expect("Failed to encode GEMM");
+            return;
         }
+
+        let compute = if self.is_mxu_eligible(context) {
+            GemmComputeKind::MxuMma
+        } else {
+            GemmComputeKind::SimdgroupMma
+        };
+        gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, compute)
+            .expect("Failed to encode GEMM");
     }
 }

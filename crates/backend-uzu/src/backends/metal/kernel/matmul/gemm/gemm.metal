@@ -17,13 +17,15 @@ template <
     uint THREADGROUP_N,
     uint THREADGROUP_K,
     uint SIMDGROUPS_M,
-    uint SIMDGROUPS_N>
+    uint SIMDGROUPS_N,
+    bool TRANSPOSE_WEIGHTS>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(THREADGROUP_M, 32, 64, 128)
 VARIANTS(THREADGROUP_N, 32, 64, 128)
 VARIANTS(THREADGROUP_K, 16, 32)
 VARIANTS(SIMDGROUPS_M, 1, 2, 4)
 VARIANTS(SIMDGROUPS_N, 1, 2, 4)
+VARIANTS(TRANSPOSE_WEIGHTS, false, true)
 CONSTRAINT(max(THREADGROUP_M, THREADGROUP_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
 KERNEL(Gemm)(
     const device T* activations,
@@ -70,7 +72,8 @@ KERNEL(Gemm)(
       THREADGROUP_N,
       THREADGROUP_K,
       SIMDGROUPS_M,
-      SIMDGROUPS_N>::
+      SIMDGROUPS_N,
+      TRANSPOSE_WEIGHTS>::
       run(activations,
           weights,
           result,

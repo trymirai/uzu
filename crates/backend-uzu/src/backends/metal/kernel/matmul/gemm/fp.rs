@@ -81,9 +81,11 @@ pub(crate) fn encode(
         compute,
         output_transform,
         alignment,
+        transpose_weights: arguments.b_transpose,
         weights: GemmWeights::FullPrecision {
             weights: arguments.b,
         },
+        weights_offset: arguments.b_offset,
         activations: arguments.a,
         activations_offset: arguments.a_offset as usize,
         result: &mut *arguments.d,
@@ -155,13 +157,18 @@ fn build_params(
     arguments: &MatmulArguments<Metal>,
     tile: &GemmTilingConfig,
 ) -> GemmParams {
+    let default_ldb = if arguments.b_transpose {
+        arguments.input_dim
+    } else {
+        arguments.output_dim
+    };
     GemmParams {
         M: arguments.batch_dim,
         N: arguments.output_dim,
         K: arguments.input_dim,
-        leading_dimension_a: arguments.input_dim,
-        leading_dimension_b: arguments.input_dim,
-        leading_dimension_d: arguments.output_dim,
+        leading_dimension_activations: arguments.input_dim,
+        leading_dimension_weights: arguments.b_leading_dimension.unwrap_or(default_ldb),
+        leading_dimension_result: arguments.output_dim,
         threadgroups_per_row: arguments.output_dim.div_ceil(tile.threadgroup_n),
         threadgroups_per_column: arguments.batch_dim.div_ceil(tile.threadgroup_m),
         aligned_inner_iterations: arguments.input_dim / tile.threadgroup_k,

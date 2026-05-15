@@ -41,6 +41,7 @@ impl GemmKernel {
                     specialization.tiling_config.threadgroup_k,
                     specialization.tiling_config.simdgroups_m,
                     specialization.tiling_config.simdgroups_n,
+                    specialization.transpose_weights,
                     specialization.input_prologue,
                     specialization.weight_prologue,
                     specialization.compute,
@@ -84,7 +85,7 @@ impl GemmKernel {
         };
         kernel.encode(
             (dispatch.activations, dispatch.activations_offset),
-            weights,
+            (weights, dispatch.weights_offset),
             dispatch.result,
             scales,
             biases,

@@ -15,7 +15,8 @@ template <
     uint THREADGROUP_N,
     uint THREADGROUP_K,
     uint SIMDGROUPS_M,
-    uint SIMDGROUPS_N>
+    uint SIMDGROUPS_N,
+    bool TRANSPOSE_WEIGHTS>
 struct GemmPipeline {
   static METAL_FUNC void run(
       const device T* activations,
@@ -49,7 +50,8 @@ struct GemmPipeline {
             THREADGROUP_N,
             THREADGROUP_K,
             SIMDGROUPS_M,
-            SIMDGROUPS_N>::
+            SIMDGROUPS_N,
+            TRANSPOSE_WEIGHTS>::
             run(activations,
                 weights,
                 result,
@@ -69,7 +71,8 @@ struct GemmPipeline {
             THREADGROUP_N,
             256,
             SIMDGROUPS_M,
-            SIMDGROUPS_N>::
+            SIMDGROUPS_N,
+            TRANSPOSE_WEIGHTS>::
             run(activations,
                 weights,
                 result,

@@ -16,14 +16,22 @@ pub(crate) fn encode(
         a,
         a_offset,
         b,
+        b_offset,
+        b_leading_dimension,
+        b_transpose,
         ab_scale,
         c,
         d,
         batch_dim,
         input_dim,
         output_dim,
-        ..
     } = arguments;
+    assert!(b_transpose, "encode_gemv does not support b_transpose=false");
+    assert!(b_offset == 0, "encode_gemv does not support nonzero b_offset");
+    assert!(
+        b_leading_dimension.is_none_or(|ld| ld == input_dim),
+        "encode_gemv does not support custom b_leading_dimension"
+    );
 
     let (is_accumulate, output_bias) = match c {
         MatmulArgumentC::Accumulate => (true, None),
