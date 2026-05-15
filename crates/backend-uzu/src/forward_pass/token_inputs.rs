@@ -76,7 +76,6 @@ impl<B: Backend> TokenInputs<B> {
 
     pub fn decoder_arguments<'a>(
         &'a self,
-        model_shape: &ModelShape,
         shared_buffers: &'a SharedBuffers<B>,
         cache_layers: Option<&'a mut CacheLayers<B>>,
         batch_dim: usize,
@@ -93,8 +92,6 @@ impl<B: Backend> TokenInputs<B> {
             batch_dim,
             sampling_start,
             sampling_length,
-            rope_max_sequence_length: model_shape.context_length(),
-            rope_dim: model_shape.rope_dim(),
             #[cfg(feature = "tracing")]
             trace,
         }

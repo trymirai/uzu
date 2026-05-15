@@ -580,6 +580,7 @@ dependencies = [
  "memmap2",
  "minijinja",
  "minijinja-contrib",
+ "monostate",
  "mtl-rs",
  "ndarray",
  "num-traits",

@@ -1,18 +1,24 @@
 use half::{bf16, f16};
 
-use super::{RopeBuffers, RopeType};
+use super::RopeBuffers;
 use crate::{
     DataType,
     array::ArrayContextExt,
     backends::common::{Allocation, AsBufferRangeMut, Backend, DenseBuffer},
-    config::DecoderConfig,
-    forward_pass::model_shape::ModelShape,
+    config::{DecoderConfig, RoPEConfig},
     parameters::ParameterTree,
+    session::types::Error,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerRopeKind {
+    NoKernel,
+    Indexed(usize),
+}
+
 pub struct SharedBuffers<B: Backend> {
-    pub global_rope: Option<RopeBuffers<B>>,
-    pub local_rope: Option<RopeBuffers<B>>,
+    pub rope_buffers: Box<[RopeBuffers<B>]>,
+    layer_rope_kinds: Box<[LayerRopeKind]>,
     pub attention_sinks: Box<[Option<Allocation<B>>]>,
 }
 
@@ -20,11 +26,35 @@ impl<B: Backend> SharedBuffers<B> {
     pub fn new(
         context: &B::Context,
         decoder_config: &DecoderConfig,
-        model_shape: &ModelShape,
     ) -> Self {
         let tf = &decoder_config.transformer_config;
-        let global_rope = tf.global_rope_config.is_some().then(|| RopeBuffers::new(context, model_shape));
-        let local_rope = tf.local_rope_config.is_some().then(|| RopeBuffers::new(context, model_shape));
+
+        let mut configs = Vec::<RoPEConfig>::new();
+        let layer_rope_kinds: Box<[LayerRopeKind]> = tf
+            .layer_configs
+            .iter()
+            .map(|layer_config| {
+                if layer_config.mixer_config.as_attention().is_none() {
+                    return LayerRopeKind::NoKernel;
+                }
+                let Some(rope_config) = &layer_config.rope_config else {
+                    return LayerRopeKind::NoKernel;
+                };
+                let index = configs.iter().position(|existing| existing == rope_config).unwrap_or_else(|| {
+                    configs.push(rope_config.clone());
+                    configs.len() - 1
+                });
+                LayerRopeKind::Indexed(index)
+            })
+            .collect();
+
+        let rope_buffers: Box<[RopeBuffers<B>]> = configs
+            .iter()
+            .map(|config| {
+                let common = config.common();
+                RopeBuffers::new(context, common.max_sequence_length, common.head_dim, common.precision.into())
+            })
+            .collect();
 
         let attention_sinks = tf
             .layer_configs
@@ -37,8 +67,8 @@ impl<B: Backend> SharedBuffers<B> {
             .collect();
 
         Self {
-            global_rope,
-            local_rope,
+            rope_buffers,
+            layer_rope_kinds,
             attention_sinks,
         }
     }
@@ -46,16 +76,19 @@ impl<B: Backend> SharedBuffers<B> {
     pub fn update_data(
         &mut self,
         parameter_tree: &ParameterTree<B::Context>,
-    ) {
-        let transformer_tree = parameter_tree.subtree("transformer").expect("transformer subtree not found");
+    ) -> Result<(), Error> {
+        let transformer_tree = parameter_tree.subtree("transformer").map_err(|_| Error::UnableToLoadWeights)?;
+        self.update_data_from_transformer_tree(&transformer_tree)?;
+        Ok(())
+    }
 
-        if let Some(global_rope) = &mut self.global_rope {
-            global_rope.update_data(&transformer_tree, "global_rope");
+    pub fn update_data_from_transformer_tree(
+        &mut self,
+        transformer_tree: &ParameterTree<B::Context>,
+    ) -> Result<(), Error> {
+        for (rope_index, rope_buffers) in self.rope_buffers.iter_mut().enumerate() {
+            rope_buffers.update_data(transformer_tree, rope_index)?;
         }
-        if let Some(local_rope) = &mut self.local_rope {
-            local_rope.update_data(&transformer_tree, "local_rope");
-        }
-
         for (layer_idx, sink_cell) in self.attention_sinks.iter_mut().enumerate() {
             let Some(sink_cell) = sink_cell.as_mut() else {
                 continue;
@@ -94,25 +127,16 @@ impl<B: Backend> SharedBuffers<B> {
                 },
             }
         }
+        Ok(())
     }
 
-    pub fn rope_cosines(
+    pub fn rope_buffers_for_layer(
         &self,
-        rope_type: RopeType,
-    ) -> Option<&Allocation<B>> {
-        match rope_type {
-            RopeType::Global => self.global_rope.as_ref().map(|rope| &rope.cosines),
-            RopeType::Local => self.local_rope.as_ref().map(|rope| &rope.cosines),
-        }
-    }
-
-    pub fn rope_sines(
-        &self,
-        rope_type: RopeType,
-    ) -> Option<&Allocation<B>> {
-        match rope_type {
-            RopeType::Global => self.global_rope.as_ref().map(|rope| &rope.sines),
-            RopeType::Local => self.local_rope.as_ref().map(|rope| &rope.sines),
+        layer_index: usize,
+    ) -> Option<&RopeBuffers<B>> {
+        match self.layer_rope_kinds[layer_index] {
+            LayerRopeKind::NoKernel => None,
+            LayerRopeKind::Indexed(index) => Some(&self.rope_buffers[index]),
         }
     }
 

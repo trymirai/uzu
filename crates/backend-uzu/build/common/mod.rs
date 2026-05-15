@@ -12,3 +12,4 @@ pub mod kernel;
 pub mod logging;
 pub mod mangling;
 pub mod traitgen;
+pub mod utils;

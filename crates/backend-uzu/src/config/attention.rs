@@ -22,6 +22,4 @@ pub struct AttentionConfig {
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
     pub gate_projection_config: Option<LinearConfig>,
-    pub use_rope: bool,
-    pub partial_rope_dim: Option<usize>,
 }

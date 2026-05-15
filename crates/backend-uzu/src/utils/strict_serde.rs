@@ -1,6 +1,12 @@
 use std::io::Read;
 
-use serde::de::{DeserializeOwned, Error as _};
+use serde::{
+    Deserialize, Serialize,
+    de::{DeserializeOwned, Error as _},
+};
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum Unsupported {}
 
 pub fn from_reader_strict<T: DeserializeOwned>(reader: impl Read) -> Result<T, serde_json::Error> {
     let value: serde_json::Value = serde_json::from_reader(reader)?;
