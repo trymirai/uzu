@@ -2,9 +2,9 @@
 
 #include "../../../common/dsl.h"
 #include "../../../common/thread_context.h"
-#include "../axes/compute/mxu_mma.h"
-#include "../axes/compute/simdgroup_mma.h"
 #include "../generated/gemm.h"
+#include "mxu_mma_core.h"
+#include "simdgroup_mma_core.h"
 
 namespace uzu {
 namespace gemm {
@@ -32,9 +32,10 @@ struct GemmPipeline {
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
   ) {
+    // Weight/input prologues other than FullPrecision are scaffolding for the
+    // upcoming quant unification — not yet implemented in the cores.
     if (weight_prologue != GemmWeightPrologueKind::FullPrecision ||
-        input_prologue != GemmInputPrologueKind::FullPrecision ||
-        output_transform != GemmOutputTransformKind::Store) {
+        input_prologue != GemmInputPrologueKind::FullPrecision) {
       return;
     }
     const bool m_aligned = alignment.contains(GemmAlignment::M);
@@ -42,7 +43,7 @@ struct GemmPipeline {
     const bool k_aligned = alignment.contains(GemmAlignment::K);
     const device T* weights = reinterpret_cast<const device T*>(weights_packed);
     if (compute == GemmComputeKind::SimdgroupMma) {
-      GemmComputeSimdgroupMma<
+      SimdgroupMmaCore<
           T,
           THREADGROUP_M,
           THREADGROUP_N,
@@ -56,12 +57,13 @@ struct GemmPipeline {
               m_aligned,
               n_aligned,
               k_aligned,
+              output_transform,
               a_shared,
               b_shared,
               threadgroup_position,
               thread_context);
     } else if (compute == GemmComputeKind::MxuMma) {
-      GemmComputeMxuMma<
+      MxuMmaCore<
           T,
           THREADGROUP_M,
           THREADGROUP_N,
@@ -75,7 +77,8 @@ struct GemmPipeline {
               m_aligned,
               n_aligned,
               k_aligned,
-              thread_context.simd_lane_id,
+              output_transform,
+              thread_context.simdgroup_index,
               threadgroup_position,
               thread_context);
     }

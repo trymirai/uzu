@@ -6,6 +6,7 @@
 #include "../../common/mxu_fragment_ops.h"
 #include "../../common/mxu_gemm_loop.h"
 #include "../../../generated/matmul.h"
+#include "../generated/gemm.h"
 #include "block_geometry.h"
 
 using namespace metal;
@@ -19,7 +20,12 @@ template <
     ushort BLOCK_N,
     ushort BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
-    ushort SIMDGROUPS_PER_COLUMN>
+    ushort SIMDGROUPS_PER_COLUMN,
+    bool VALID =
+        (BLOCK_M % SIMDGROUPS_PER_ROW == 0 &&
+         BLOCK_N % SIMDGROUPS_PER_COLUMN == 0 &&
+         (BLOCK_M / SIMDGROUPS_PER_ROW) % 16 == 0 &&
+         (BLOCK_N / SIMDGROUPS_PER_COLUMN) % 16 == 0)>
 struct MxuMmaCore {
   METAL_CONST ushort SIMDGROUP_BLOCK_M = BLOCK_M / SIMDGROUPS_PER_ROW;
   METAL_CONST ushort SIMDGROUP_BLOCK_N = BLOCK_N / SIMDGROUPS_PER_COLUMN;
@@ -39,6 +45,7 @@ struct MxuMmaCore {
       const bool align_m,
       const bool align_n,
       const bool align_k,
+      GemmOutputTransformKind output_transform,
       uint simd_group_id,
       uint2 threadgroup_position,
       const thread ThreadContext& thread_context
@@ -91,6 +98,13 @@ struct MxuMmaCore {
 
     const int aligned_k_iterations = int(params->K) / int(BLOCK_K);
 
+    const bool apply_scale =
+        output_transform == GemmOutputTransformKind::Scale ||
+        output_transform == GemmOutputTransformKind::ScaleAccumulate;
+    const bool apply_accumulate =
+        output_transform == GemmOutputTransformKind::Accumulate ||
+        output_transform == GemmOutputTransformKind::ScaleAccumulate;
+
     dispatch_bool(align_k, [&](auto aligned_k) {
       dispatch_bool(
           align_m || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
@@ -121,6 +135,38 @@ struct MxuMmaCore {
                       thread_context
                   );
 
+                  if (apply_scale) {
+                    const AccumulatorType scale = AccumulatorType(params->ab_scale);
+                    METAL_PRAGMA_UNROLL
+                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
+                         i++) {
+                      accumulator_tile.elements()[i] *= scale;
+                    }
+                  }
+
+                  if (apply_accumulate) {
+                    uzu::matmul::Fragment<T, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>
+                        existing_output(thread_context);
+                    if constexpr (aligned_m.value && aligned_n.value) {
+                      existing_output.load(
+                          result_simdgroup,
+                          int(params->leading_dimension_d)
+                      );
+                    } else {
+                      existing_output.load_safe(
+                          result_simdgroup,
+                          int(params->leading_dimension_d),
+                          short2(simdgroup_limit_n, simdgroup_limit_m)
+                      );
+                    }
+                    METAL_PRAGMA_UNROLL
+                    for (ushort i = 0; i < accumulator_tile.ELEMENTS_PER_TILE;
+                         i++) {
+                      accumulator_tile.elements()[i] +=
+                          AccumulatorType(existing_output.elements()[i]);
+                    }
+                  }
+
                   if constexpr (aligned_m.value && aligned_n.value) {
                     accumulator_tile.store(
                         result_simdgroup,
@@ -139,6 +185,36 @@ struct MxuMmaCore {
       );
     });
   }
+};
+
+template <
+    typename T,
+    ushort BLOCK_M,
+    ushort BLOCK_N,
+    ushort BLOCK_K,
+    ushort SIMDGROUPS_PER_ROW,
+    ushort SIMDGROUPS_PER_COLUMN>
+struct MxuMmaCore<
+    T,
+    BLOCK_M,
+    BLOCK_N,
+    BLOCK_K,
+    SIMDGROUPS_PER_ROW,
+    SIMDGROUPS_PER_COLUMN,
+    false> {
+  static METAL_FUNC void run(
+      const device T*,
+      const device T*,
+      device T*,
+      const constant uzu::matmul::GemmParams*,
+      bool,
+      bool,
+      bool,
+      GemmOutputTransformKind,
+      uint,
+      uint2,
+      const thread ThreadContext&
+  ) {}
 };
 
 } // namespace gemm

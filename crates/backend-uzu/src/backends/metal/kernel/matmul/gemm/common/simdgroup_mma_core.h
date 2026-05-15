@@ -2,9 +2,11 @@
 
 #include "../../../common/integral_constant.h"
 #include "../../../common/thread_context.h"
+#include "../../common/defines.h"
 #include "../../common/loader.h"
 #include "../../common/threadgroup_tile.h"
 #include "../../../generated/matmul.h"
+#include "../generated/gemm.h"
 #include "block_geometry.h"
 
 using namespace metal;
@@ -115,6 +117,7 @@ struct SimdgroupMmaCore {
       const bool align_m,
       const bool align_n,
       const bool align_k,
+      GemmOutputTransformKind output_transform,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       uint2 threadgroup_position,
@@ -162,6 +165,19 @@ struct SimdgroupMmaCore {
     const ushort leftover_block_depth =
         params->K - params->aligned_inner_iterations * BLOCK_K;
 
+    const bool needs_epilogue = output_transform != GemmOutputTransformKind::Store;
+    const float alpha =
+        (output_transform == GemmOutputTransformKind::Scale ||
+         output_transform == GemmOutputTransformKind::ScaleAccumulate)
+            ? params->ab_scale
+            : 1.0f;
+    const float beta =
+        (output_transform == GemmOutputTransformKind::Accumulate ||
+         output_transform == GemmOutputTransformKind::ScaleAccumulate)
+            ? 1.0f
+            : 0.0f;
+    uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
+
     dispatch_bool(align_k, [&](auto aligned_k) {
       dispatch_bool(
           align_m || (tile_block_rows == BLOCK_M),
@@ -181,11 +197,25 @@ struct SimdgroupMmaCore {
                       leftover_block_depth
                   );
                   if constexpr (aligned_m.value && aligned_n.value) {
+                    if (needs_epilogue) {
+                      accumulator.apply_epilogue(
+                          result, params->leading_dimension_d, 1, epilogue
+                      );
+                    }
                     accumulator.store_result(
                         result,
                         params->leading_dimension_d
                     );
                   } else {
+                    if (needs_epilogue) {
+                      accumulator.apply_epilogue_safe(
+                          result,
+                          params->leading_dimension_d,
+                          1,
+                          short2(tile_block_cols, tile_block_rows),
+                          epilogue
+                      );
+                    }
                     accumulator.store_result_safe(
                         result,
                         params->leading_dimension_d,
