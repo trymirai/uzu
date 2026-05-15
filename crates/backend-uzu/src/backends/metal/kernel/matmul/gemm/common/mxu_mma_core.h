@@ -14,7 +14,8 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-// MPP `matmul2d_descriptor.transpose_right` drives `TRANSPOSE_B` (MSL Spec 6.18).
+// MPP `matmul2d_descriptor.transpose_right` drives `TRANSPOSE_B` (MSL
+// Spec 6.18).
 template <
     typename T,
     ushort THREADGROUP_BLOCK_M,
