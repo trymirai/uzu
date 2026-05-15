@@ -182,3 +182,53 @@ inline half e4m3_to_half(uint8_t v) {
   }
   return hsign * mantissa * scale_pow;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NF4-ZP (asymmetric per-group offset) extension.
+//
+// A 4-bit per-group zero-point *index* selects one of 16 fixed offsets from
+// `nf4_zp_lut`. Dequant becomes:
+//     out = scale * Σ (codebook[nibble] + zp_lut[zp_idx_for_group]) · x
+//
+// The LUT spans a symmetric range, evenly spaced:
+//     nf4_zp_lut[i] = (i / 15.0) - 0.5,  i ∈ [0, 15]
+//   → index 0 → -0.5, index 7/8 → ≈0, index 15 → +0.5, step = 1/15 ≈ 0.06667
+//
+// This is roughly ±0.5 of a codebook step (the NF4 codebook spans [-1, 1] in
+// 15 intervals, mean step 2/15 ≈ 0.1333), giving sub-step bias correction.
+// These exact values MUST be mirrored by the CPU reference and any bench.
+constant half nf4_zp_lut[16] = {
+    -0.5h,
+    -0.43333334h,
+    -0.36666667h,
+    -0.3h,
+    -0.23333333h,
+    -0.16666667h,
+    -0.1h,
+    -0.033333335h,
+    0.033333335h,
+    0.1h,
+    0.16666667h,
+    0.23333333h,
+    0.3h,
+    0.36666667h,
+    0.43333334h,
+    0.5h,
+};
+
+// Look up the per-group zero-point offset for output row `row`, group
+// `group_idx`. Zero-point indices are 4-bit, packed two-per-byte, row-major:
+// byte = zp[row * zp_stride + (group_idx >> 1)]; even group → low nibble,
+// odd group → high nibble. `zp_stride` = ceil(num_groups / 2). This matches
+// the AWQ 4-bit zero-point packing convention used elsewhere in the codebase.
+inline half nf4_zp_lookup(
+    const device uint8_t* zero_points,
+    uint row,
+    uint zp_stride,
+    uint group_idx
+) {
+  uint8_t byte = zero_points[row * zp_stride + (group_idx >> 1)];
+  uint8_t idx =
+      ((group_idx & 1u) == 0u) ? (byte & 0x0fu) : ((byte >> 4) & 0x0fu);
+  return nf4_zp_lut[idx];
+}

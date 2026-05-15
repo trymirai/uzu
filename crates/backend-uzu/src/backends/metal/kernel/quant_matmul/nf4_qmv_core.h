@@ -31,6 +31,32 @@ inline float qdot_nf4_constant(
   return scale * accum;
 }
 
+// NF4-ZP qdot: 4-bit nibble → codebook lookup (constant addr space) plus a
+// per-group zero-point offset `zp_off` added to each codebook value before the
+// scale multiply: out = scale * Σ (codebook[nibble] + zp_off) · x.
+template <int values_per_thread>
+inline float qdot_nf4_zp(
+    const device uint8_t* w,
+    const thread float* x_thread,
+    float scale,
+    float zp_off
+) {
+  using U4 = vec<float, 4>;
+  float accum = 0;
+  const thread U4* x4 = (const thread U4*)x_thread;
+  for (int i = 0; i < (values_per_thread / 4); i++) {
+    uint8_t b0 = w[2 * i];
+    uint8_t b1 = w[2 * i + 1];
+    float h0 = float(nf4_codebook[b0 & 0x0f]) + zp_off;
+    float h1 = float(nf4_codebook[(b0 >> 4) & 0x0f]) + zp_off;
+    float h2 = float(nf4_codebook[b1 & 0x0f]) + zp_off;
+    float h3 = float(nf4_codebook[(b1 >> 4) & 0x0f]) + zp_off;
+    U4 w_vec = U4(h0, h1, h2, h3);
+    accum += dot(x4[i], w_vec);
+  }
+  return scale * accum;
+}
+
 // NF4 qdot with an E4M3 (1-byte FP8) per-group scale. Identical to
 // qdot_nf4_constant except the caller passes the raw FP8 byte and we
 // decode it once here. Decode is amortized once per group.

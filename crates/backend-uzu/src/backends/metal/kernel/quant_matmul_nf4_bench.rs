@@ -11,8 +11,8 @@ use crate::{
             Metal, MetalContext,
             error::MetalError,
             kernel::{
-                Nf4QmmConstantMetalKernel, Nf4QmmE4m3MetalKernel, Nf4QmmTgMetalKernel, Nf4QmvConstantMetalKernel,
-                Nf4QmvE4m3MetalKernel, Nf4QmvTgMetalKernel,
+                Nf4QmmConstantMetalKernel, Nf4QmmE4m3MetalKernel, Nf4QmmTgMetalKernel, Nf4QmmZpMetalKernel,
+                Nf4QmvConstantMetalKernel, Nf4QmvE4m3MetalKernel, Nf4QmvTgMetalKernel, Nf4QmvZpMetalKernel,
             },
         },
     },
@@ -24,6 +24,10 @@ pub enum Nf4Variant {
     Constant,
     Tg,
     E4m3,
+    /// Asymmetric: constant codebook + 4-bit per-group zero-point LUT offset.
+    /// Requires a `zero_points` buffer — use `encode_zp` (the plain `encode`
+    /// has no zero-point arg and will panic for this variant).
+    Zp,
 }
 
 /// QMV NF4 kernel set (one for each lookup strategy). Built lazily by `new`.
@@ -31,6 +35,7 @@ pub struct Nf4QmvBench {
     constant: Nf4QmvConstantMetalKernel,
     tg: Nf4QmvTgMetalKernel,
     e4m3: Nf4QmvE4m3MetalKernel,
+    zp: Nf4QmvZpMetalKernel,
 }
 
 impl Nf4QmvBench {
@@ -39,7 +44,25 @@ impl Nf4QmvBench {
             constant: Nf4QmvConstantMetalKernel::new(ctx, DataType::BF16, 64)?,
             tg: Nf4QmvTgMetalKernel::new(ctx, DataType::BF16, 64)?,
             e4m3: Nf4QmvE4m3MetalKernel::new(ctx, DataType::BF16, 64)?,
+            zp: Nf4QmvZpMetalKernel::new(ctx, DataType::BF16, 64)?,
         })
+    }
+
+    /// Encode the NF4-ZP QMV kernel (needs a `zero_points` buffer).
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_zp(
+        &self,
+        weights: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        scales: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        zero_points: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        input: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        output: &mut <Metal as crate::backends::common::Backend>::DenseBuffer,
+        in_vec_size: u32,
+        out_vec_size: u32,
+        batch_size: u32,
+        encoder: &mut Encoder<Metal>,
+    ) {
+        self.zp.encode(weights, scales, zero_points, input, output, in_vec_size, out_vec_size, batch_size, encoder)
     }
 
     pub fn encode(
@@ -64,6 +87,9 @@ impl Nf4QmvBench {
             Nf4Variant::E4m3 => {
                 self.e4m3.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
             },
+            Nf4Variant::Zp => {
+                panic!("Nf4Variant::Zp requires a zero_points buffer; call Nf4QmvBench::encode_zp instead")
+            },
         }
     }
 }
@@ -86,6 +112,8 @@ pub struct Nf4QmmBench {
     tg_big: Nf4QmmTgMetalKernel,
     e4m3_small: Nf4QmmE4m3MetalKernel,
     e4m3_big: Nf4QmmE4m3MetalKernel,
+    zp_small: Nf4QmmZpMetalKernel,
+    zp_big: Nf4QmmZpMetalKernel,
 }
 
 impl Nf4QmmBench {
@@ -97,7 +125,31 @@ impl Nf4QmmBench {
             tg_big: Nf4QmmTgMetalKernel::new(ctx, DataType::BF16, 64, 64, 64, 64, 2, 2)?,
             e4m3_small: Nf4QmmE4m3MetalKernel::new(ctx, DataType::BF16, 64, 8, 32, 32, 1, 1)?,
             e4m3_big: Nf4QmmE4m3MetalKernel::new(ctx, DataType::BF16, 64, 64, 64, 64, 2, 2)?,
+            zp_small: Nf4QmmZpMetalKernel::new(ctx, DataType::BF16, 64, 8, 32, 32, 1, 1)?,
+            zp_big: Nf4QmmZpMetalKernel::new(ctx, DataType::BF16, 64, 64, 64, 64, 2, 2)?,
         })
+    }
+
+    /// Encode the NF4-ZP QMM kernel (needs a `zero_points` buffer).
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_zp(
+        &self,
+        tile: Nf4QmmTile,
+        weights: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        scales: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        zero_points: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        input: &<Metal as crate::backends::common::Backend>::DenseBuffer,
+        output: &mut <Metal as crate::backends::common::Backend>::DenseBuffer,
+        in_vec_size: u32,
+        out_vec_size: u32,
+        batch_size: u32,
+        encoder: &mut Encoder<Metal>,
+    ) {
+        let k = match tile {
+            Nf4QmmTile::Small => &self.zp_small,
+            Nf4QmmTile::Big => &self.zp_big,
+        };
+        k.encode(weights, scales, zero_points, input, output, in_vec_size, out_vec_size, batch_size, encoder)
     }
 
     pub fn encode(
@@ -138,6 +190,9 @@ impl Nf4QmmBench {
             },
             (Nf4Variant::E4m3, Nf4QmmTile::Big) => {
                 self.e4m3_big.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            (Nf4Variant::Zp, _) => {
+                panic!("Nf4Variant::Zp requires a zero_points buffer; call Nf4QmmBench::encode_zp instead")
             },
         }
     }
