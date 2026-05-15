@@ -6,7 +6,7 @@ use std::{
 use crate::{
     DataType,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
         gpu_types::{AttnParams, ring::RingParams},
         kernel::AttentionGemmKernel,
     },
@@ -14,10 +14,10 @@ use crate::{
 
 const BQ: usize = 32;
 
-pub struct AttentionGemmArguments<'a, B: Backend> {
+pub struct AttentionGemmArguments<'a, B: Backend, Keys: AsBufferRangeRef, Values: AsBufferRangeRef> {
     pub queries: &'a Allocation<B>,
-    pub keys: &'a Allocation<B>,
-    pub values: &'a Allocation<B>,
+    pub keys: &'a Keys,
+    pub values: &'a Values,
     pub output: &'a mut Allocation<B>,
     pub trie: Option<&'a Allocation<B>>,
     pub sinks: Option<&'a Allocation<B>>,
@@ -56,11 +56,17 @@ impl<B: Backend> AttentionGemmBlock<B> {
         }
     }
 
-    pub fn encode(
+    pub fn encode<Keys, Values>(
         &self,
         encoder: &mut Encoder<B>,
-        args: AttentionGemmArguments<B>,
-    ) -> Result<(), B::Error> {
+        args: AttentionGemmArguments<B, Keys, Values>,
+    ) -> Result<(), B::Error>
+    where
+        Keys: AsBufferRangeRef,
+        Keys::Buffer: Buffer<Backend = B>,
+        Values: AsBufferRangeRef,
+        Values::Buffer: Buffer<Backend = B>,
+    {
         let bk: usize = if args.head_dim < 128 {
             32
         } else {

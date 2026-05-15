@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            Allocation, Backend, Context, Encoder,
             kernel::attention::{AttentionGemmArguments, AttentionGemmBlock},
         },
         cpu::Cpu,
@@ -96,7 +96,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
 
-    let args = AttentionGemmArguments::<B> {
+    let args = AttentionGemmArguments::<B, Allocation<B>, Allocation<B>> {
         queries: &queries_allocation,
         keys: &keys_allocation,
         values: &values_allocation,
