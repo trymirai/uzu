@@ -14,12 +14,7 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-// MXU (MPP) matmul core. The `TRANSPOSE_B` template arg selects the B
-// layout: `true` for B = [N, K] row-major (the canonical attention/linear
-// layout), `false` for B = [K, N] row-major. The MPP descriptor in
-// `MxuFragmentOps::mma_impl` natively supports both via its
-// `transpose_left`/`transpose_right` flags (see Metal Performance Primitives
-// Programming Guide §2; MSL Spec §6.18 `matmul2d_descriptor`).
+// MPP `matmul2d_descriptor.transpose_right` drives `TRANSPOSE_B` (MSL Spec 6.18).
 template <
     typename T,
     ushort THREADGROUP_BLOCK_M,
@@ -71,10 +66,6 @@ struct MxuMmaCore {
     const size_t block_col = size_t(geometry.block_col_start);
 
     const device T* a_block = a + block_row * params->leading_dimension_a;
-    // B-block offset by N-block:
-    //   transposed   ([N, K], row-major): skip block_col output-rows of length
-    //   ld_b. non-transposed ([K, N], row-major): skip block_col output-columns
-    //   within one row.
     const device T* b_block =
         b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
@@ -104,9 +95,6 @@ struct MxuMmaCore {
 
     const device T* a_simdgroup =
         a_block + size_t(tile_row_offset) * params->leading_dimension_a;
-    // Per-simdgroup B offset mirrors the per-block one:
-    //   transposed: walk `tile_col_offset` output-rows.
-    //   non-transposed: walk `tile_col_offset` output-columns within one row.
     const device T* b_simdgroup =
         b_block + (TRANSPOSE_B ? size_t(tile_col_offset) *
                                      int(params->leading_dimension_b)
@@ -208,9 +196,8 @@ struct MxuMmaCore {
   }
 };
 
-// Empty body for tile shapes that don't satisfy the MXU 16-element-per-axis
-// fragment constraint. The dispatcher routes such combinations to the
-// simdgroup core.
+// Empty body for tile combinations that fail MXU's 16-element fragment
+// constraint; `select_mxu_tile` never dispatches into them.
 template <
     typename T,
     ushort THREADGROUP_BLOCK_M,

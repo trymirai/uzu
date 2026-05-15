@@ -119,12 +119,7 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
-        // Routing notes:
-        // - gemv only supports the canonical B layout (transposed, contiguous, no
-        //   offset); non-canonical inputs skip it.
-        // - GEMM (both SimdgroupMma and MxuMma) templates on TRANSPOSE_WEIGHTS and
-        //   threads `b_offset` / `b_leading_dimension` end-to-end, so either compute
-        //   path is correct for any layout. We prefer MXU when the device supports it.
+        // gemv only handles the canonical B layout; non-canonical inputs go to GEMM.
         let context = encoder.context();
         let gemv_eligible = arguments.b_transpose
             && arguments.b_offset == 0

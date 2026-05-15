@@ -32,8 +32,7 @@ struct GemmPipeline {
       threadgroup T* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    // Weight/input prologues other than FullPrecision are scaffolding for the
-    // upcoming quant unification — not yet implemented in the cores.
+    // Scaffolding: only FullPrecision prologues are implemented today.
     if (weight_prologue != GemmWeightPrologueKind::FullPrecision ||
         input_prologue != GemmInputPrologueKind::FullPrecision) {
       return;

@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 use crate::common::gpu_types::GpuTypeOptionSet;
 
 fn r2c(ty: &str) -> anyhow::Result<&'static str> {
@@ -24,17 +22,21 @@ pub fn gpu_type_gen_option_set(option_set: &GpuTypeOptionSet) -> anyhow::Result<
     let name = &option_set.name;
     let underlying_c = r2c(&option_set.underlying_type)?;
 
-    let mut out = String::new();
-    writeln!(out, "struct {name} {{").unwrap();
-    writeln!(out, "  {underlying_c} raw_value;").unwrap();
-    writeln!(out, "  constexpr {name}() thread : raw_value(0) {{}}").unwrap();
-    writeln!(out, "  constexpr {name}({underlying_c} __dsl_v) thread : raw_value(__dsl_v) {{}}").unwrap();
-    for variant in &option_set.variants {
-        writeln!(out, "  static constant constexpr {underlying_c} {} = {};", variant.name, variant.value_expression)
-            .unwrap();
-    }
-    writeln!(out, "  constexpr bool contains({underlying_c} flag) const thread {{ return (raw_value & flag) != 0; }}")
-        .unwrap();
-    out.push_str("};");
-    Ok(out)
+    let variants = option_set
+        .variants
+        .iter()
+        .map(|variant| {
+            format!("  static constant constexpr {underlying_c} {} = {};\n", variant.name, variant.value_expression)
+        })
+        .collect::<String>();
+
+    Ok(format!(
+        "struct {name} {{\n\
+         \x20 {underlying_c} raw_value;\n\
+         \x20 constexpr {name}() thread : raw_value(0) {{}}\n\
+         \x20 constexpr {name}({underlying_c} __dsl_v) thread : raw_value(__dsl_v) {{}}\n\
+         {variants}\
+         \x20 constexpr bool contains({underlying_c} flag) const thread {{ return (raw_value & flag) != 0; }}\n\
+         }};"
+    ))
 }

@@ -26,9 +26,6 @@ struct SimdgroupMmaCore {
   METAL_CONST ushort PADDING_A = 16 / sizeof(T);
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
   METAL_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
-  // Shared-memory stride for the B tile depends on which axis is contiguous
-  // after the load: K when B is row-major [N, K] (transposed), N when row-major
-  // [K, N].
   METAL_CONST ushort SHARED_STRIDE_B =
       (TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N) + PADDING_B;
   METAL_CONST ushort THREADGROUP_THREADS =
@@ -41,9 +38,6 @@ struct SimdgroupMmaCore {
       SHARED_STRIDE_A,
       true,
       THREADGROUP_THREADS>;
-  // B-block layout: (THREADGROUP_BLOCK_N rows × THREADGROUP_BLOCK_K cols) when
-  // transposed, (THREADGROUP_BLOCK_K rows × THREADGROUP_BLOCK_N cols)
-  // otherwise.
   using BLoader = uzu::matmul::ThreadgroupLoader<
       T,
       TRANSPOSE_B ? THREADGROUP_BLOCK_N : THREADGROUP_BLOCK_K,
@@ -78,9 +72,6 @@ struct SimdgroupMmaCore {
       thread const ushort& tile_block_cols,
       thread const ushort& leftover_block_depth
   ) {
-    // `short2(cols, rows)` per loader's load_safe contract. A is always
-    // non-transposed (THREADGROUP_BLOCK_K cols × tile_block_rows rows). B's
-    // axes swap with TRANSPOSE_B.
     short2 tile_dimensions_a = short2(THREADGROUP_BLOCK_K, tile_block_rows);
     short2 tile_dimensions_b =
         TRANSPOSE_B ? short2(THREADGROUP_BLOCK_K, tile_block_cols)
@@ -88,12 +79,12 @@ struct SimdgroupMmaCore {
 
     for (int k = 0; k < aligned_k_iterations; k++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      if (M_aligned) {
+      if constexpr (M_aligned) {
         loader_a.load_unsafe();
       } else {
         loader_a.load_safe(tile_dimensions_a);
       }
-      if (N_aligned) {
+      if constexpr (N_aligned) {
         loader_b.load_unsafe();
       } else {
         loader_b.load_safe(tile_dimensions_b);
@@ -106,7 +97,7 @@ struct SimdgroupMmaCore {
       loader_b.next();
     }
 
-    if (!K_aligned) {
+    if constexpr (!K_aligned) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       short2 last_tile_dimensions_a =
@@ -154,10 +145,6 @@ struct SimdgroupMmaCore {
     const size_t block_col = size_t(geometry.block_col_start);
 
     a += block_row * params->leading_dimension_a;
-    // B-pointer offset by N-block:
-    //   transposed   ([N, K], row-major): skip block_col output-rows of length
-    //   ld_b. non-transposed ([K, N], row-major): skip block_col output-columns
-    //   within one row.
     b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
     d += block_row * params->leading_dimension_d + block_col;
 

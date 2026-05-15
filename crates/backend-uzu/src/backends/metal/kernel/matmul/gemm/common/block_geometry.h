@@ -17,6 +17,8 @@ static METAL_FUNC uint morton_expand_bits(uint x) {
   return x;
 }
 
+// Morton-unpacks a 1D dispatch index (`fp.rs` sets `group_count_y = 1`) into
+// 2D.
 static METAL_FUNC uint2 morton_block_id(uint2 threadgroup_position) {
   return uint2(
       morton_expand_bits(threadgroup_position.x),
@@ -34,10 +36,7 @@ static METAL_FUNC uint2 block_id(
   return threadgroup_position;
 }
 
-// Per-threadgroup placement in the output matrix `D`: the (possibly
-// morton/swizzle-rewritten) tile id, whether that tile is in-bounds for the
-// actual grid (morton padding can produce out-of-range ids), and the row/col
-// origin of this threadgroup's tile in `D`.
+// `out_of_bounds` accounts for morton-padded tile ids past the actual grid.
 template <uint THREADGROUP_BLOCK_M, uint THREADGROUP_BLOCK_N>
 struct ThreadgroupTileGeometry {
   uint2 tile_id;

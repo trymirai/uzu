@@ -19,10 +19,9 @@ use crate::{
     },
 };
 
-/// K-axis block size consumed per kernel iteration on the MXU path. The
-/// `GemmTilingConfig::threadgroup_k` field on MXU tiles is the per-simdgroup
-/// K-block, not this outer block size, so alignment must use this constant.
-const MXU_BLOCK_K: u32 = 256;
+// K-block hardcoded by `pipeline.h` when instantiating `MxuMmaCore`.
+// `tile.threadgroup_k` on MXU tiles is the per-simdgroup K (MPP fragment).
+const MXU_THREADGROUP_BLOCK_K: u32 = 256;
 
 pub(crate) fn encode(
     gemm: &mut GemmKernel,
@@ -33,17 +32,18 @@ pub(crate) fn encode(
     arguments: MatmulArguments<Metal>,
     compute: GemmComputeKind,
 ) -> Result<(), MatmulError<Metal>> {
+    // `encode_with_path(GemmMxu)` from tests can bypass production routing.
     if compute == GemmComputeKind::MxuMma && !context.device.supports_mxu() {
         return Err(MatmulError::UnsupportedDataType(data_type));
     }
 
-    let tile = match compute {
-        GemmComputeKind::SimdgroupMma => select_simdgroup_tile(data_type, &arguments),
-        GemmComputeKind::MxuMma => select_mxu_tile(&arguments),
-    };
-    let k_divisor = match compute {
-        GemmComputeKind::SimdgroupMma => tile.threadgroup_k,
-        GemmComputeKind::MxuMma => MXU_BLOCK_K,
+    let (tile, k_block) = match compute {
+        GemmComputeKind::SimdgroupMma => {
+            let tile = select_simdgroup_tile(data_type, &arguments);
+            let k_block = tile.threadgroup_k;
+            (tile, k_block)
+        },
+        GemmComputeKind::MxuMma => (select_mxu_tile(&arguments), MXU_THREADGROUP_BLOCK_K),
     };
 
     let threadgroups_per_row = arguments.output_dim.div_ceil(tile.threadgroup_n);
@@ -69,10 +69,10 @@ pub(crate) fn encode(
     let alignment = GemmAlignment::from_axes(
         arguments.batch_dim % tile.threadgroup_m == 0,
         arguments.output_dim % tile.threadgroup_n == 0,
-        arguments.input_dim % k_divisor == 0,
+        arguments.input_dim % k_block == 0,
     );
     let output_transform = output_transform_from(&arguments);
-    let mut params = build_params(&arguments, &tile);
+    let mut params = build_params(&arguments, &tile, k_block);
     params.use_morton = use_morton;
 
     let dispatch = GemmDispatch {
@@ -83,12 +83,12 @@ pub(crate) fn encode(
         alignment,
         transpose_b: arguments.b_transpose,
         a: arguments.a,
-        a_offset: arguments.a_offset as usize,
+        a_offset: arguments.a_offset,
         b: GemmWeights::FullPrecision {
             weights: arguments.b,
         },
         b_offset: arguments.b_offset,
-        d: &mut *arguments.d,
+        d: arguments.d,
         params,
         group_count_x,
         group_count_y,
@@ -156,6 +156,7 @@ fn select_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
 fn build_params(
     arguments: &MatmulArguments<Metal>,
     tile: &GemmTilingConfig,
+    k_block: u32,
 ) -> GemmParams {
     let default_ldb = if arguments.b_transpose {
         arguments.input_dim
@@ -171,7 +172,7 @@ fn build_params(
         leading_dimension_d: arguments.output_dim,
         threadgroups_per_row: arguments.output_dim.div_ceil(tile.threadgroup_n),
         threadgroups_per_column: arguments.batch_dim.div_ceil(tile.threadgroup_m),
-        aligned_inner_iterations: arguments.input_dim / tile.threadgroup_k,
+        aligned_inner_iterations: arguments.input_dim / k_block,
         ab_scale: arguments.ab_scale,
         ..Default::default()
     }

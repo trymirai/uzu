@@ -99,3 +99,30 @@ fn accumulate_bf16_gemm_mxu() {
 fn scale_and_accumulate_bf16_gemm_mxu() {
     check_all_shapes::<bf16>(Variant::GemmMxu, 0.5, true, 1.0);
 }
+
+fn check_b_transpose_false<T: ArrayElement + Float + Debug + Display>(
+    variant: Variant,
+    tolerance: f32,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    if !variant.supported(&context) {
+        eprintln!("Skipping {variant:?}: device does not support MXU");
+        return;
+    }
+    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
+        .expect("MatmulKernel");
+    for shape in all_correctness_shapes() {
+        let case = Case::new(shape).with_b_transpose(false);
+        check_case::<T>(&context, &mut kernel, variant, case, tolerance);
+    }
+}
+
+#[uzu_test]
+fn b_transpose_false_bf16_gemm() {
+    check_b_transpose_false::<bf16>(Variant::Gemm, 1.0);
+}
+
+#[uzu_test]
+fn b_transpose_false_bf16_gemm_mxu() {
+    check_b_transpose_false::<bf16>(Variant::GemmMxu, 1.0);
+}

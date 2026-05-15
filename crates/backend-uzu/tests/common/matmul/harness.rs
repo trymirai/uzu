@@ -28,6 +28,7 @@ pub struct Case {
     pub shape: Shape,
     pub ab_scale: f32,
     pub accumulate: bool,
+    pub b_transpose: bool,
 }
 
 impl Case {
@@ -36,6 +37,7 @@ impl Case {
             shape,
             ab_scale: 1.0,
             accumulate: false,
+            b_transpose: true,
         }
     }
 
@@ -52,6 +54,14 @@ impl Case {
         accumulate: bool,
     ) -> Self {
         self.accumulate = accumulate;
+        self
+    }
+
+    pub const fn with_b_transpose(
+        mut self,
+        b_transpose: bool,
+    ) -> Self {
+        self.b_transpose = b_transpose;
         self
     }
 }
@@ -93,7 +103,11 @@ fn run<B: Backend, T: ArrayElement + Float>(
         k,
         n,
     } = input.case.shape;
-    let b_array = context.create_array_from(&[n, k], &input.b);
+    let b_array = if input.case.b_transpose {
+        context.create_array_from(&[n, k], &input.b)
+    } else {
+        context.create_array_from(&[k, n], &input.b)
+    };
     let a_allocation = alloc_allocation_with_data::<B, T>(context, &input.a);
     let mut d_allocation = if let Some(ref prefill) = input.d_prefill {
         alloc_allocation_with_data::<B, T>(context, prefill)
@@ -118,7 +132,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             b: b_array.allocation(),
             b_offset: 0,
             b_leading_dimension: None,
-            b_transpose: true,
+            b_transpose: input.case.b_transpose,
             ab_scale: input.case.ab_scale,
             c: c_arg,
             d: &mut d_allocation,
