@@ -45,4 +45,14 @@ typedef struct {
   uint32_t simdgroups_m;
   uint32_t simdgroups_n;
 } GemmTilingConfig;
+
+struct GemmAlignment {
+  uint raw_value;
+  constexpr GemmAlignment() thread : raw_value(0) {}
+  constexpr GemmAlignment(uint __dsl_v) thread : raw_value(__dsl_v) {}
+  static constant constexpr uint M = 1 << 0;
+  static constant constexpr uint N = 1 << 1;
+  static constant constexpr uint K = 1 << 2;
+  constexpr bool contains(uint flag) const thread { return (raw_value & flag) != 0; }
+};
 } // namespace uzu::gemm

@@ -11,9 +11,11 @@ use syn::{Attribute, Ident, Item};
 use walkdir::WalkDir;
 
 mod item_enum;
+mod item_option_set;
 mod item_struct;
 
 pub use item_enum::GpuTypeEnum;
+pub use item_option_set::{GpuTypeOptionSet, GpuTypeOptionSetVariant};
 pub use item_struct::{GpuTypeStruct, GpuTypeStructFieldType};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, AsRef, Deref, Display)]
@@ -47,6 +49,7 @@ fn ensure_repr_c(attrs: &[Attribute]) -> anyhow::Result<()> {
 pub enum GpuType {
     Enum(GpuTypeEnum),
     Struct(GpuTypeStruct),
+    OptionSet(GpuTypeOptionSet),
 }
 
 #[derive(Debug)]
@@ -68,6 +71,9 @@ impl GpuTypeFile {
             .filter_map(|item| match item {
                 Item::Enum(item) => Some(GpuTypeEnum::parse(item).map(GpuType::Enum)),
                 Item::Struct(item) => Some(GpuTypeStruct::parse(item).map(GpuType::Struct)),
+                Item::Macro(item) if item.mac.path.is_ident("bitflags") => {
+                    Some(GpuTypeOptionSet::parse(item.mac.tokens).map(GpuType::OptionSet))
+                },
                 _ => None,
             })
             .collect::<anyhow::Result<Box<[GpuType]>>>()?;

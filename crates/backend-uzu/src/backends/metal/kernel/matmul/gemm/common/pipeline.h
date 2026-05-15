@@ -17,12 +17,6 @@ template <
     uint SIMDGROUPS_M,
     uint SIMDGROUPS_N>
 struct GemmPipeline {
-  // Bit positions for the `alignment` uint32_t function-constant — must match
-  // the `bitflags!` definition of `GemmAlignment` on the Rust side.
-  static constant constexpr uint32_t kAlignmentM = 1u << 0;
-  static constant constexpr uint32_t kAlignmentN = 1u << 1;
-  static constant constexpr uint32_t kAlignmentK = 1u << 2;
-
   static METAL_FUNC void run(
       const device T* activations,
       const device uint8_t* weights_packed,
@@ -32,7 +26,7 @@ struct GemmPipeline {
       GemmWeightPrologueKind weight_prologue,
       GemmComputeKind compute,
       GemmOutputTransformKind output_transform,
-      uint32_t alignment,
+      GemmAlignment alignment,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       uint2 threadgroup_position,
@@ -43,9 +37,9 @@ struct GemmPipeline {
         output_transform != GemmOutputTransformKind::Store) {
       return;
     }
-    const bool m_aligned = (alignment & kAlignmentM) != 0;
-    const bool n_aligned = (alignment & kAlignmentN) != 0;
-    const bool k_aligned = (alignment & kAlignmentK) != 0;
+    const bool m_aligned = alignment.contains(GemmAlignment::M);
+    const bool n_aligned = alignment.contains(GemmAlignment::N);
+    const bool k_aligned = alignment.contains(GemmAlignment::K);
     const device T* weights = reinterpret_cast<const device T*>(weights_packed);
     if (compute == GemmComputeKind::SimdgroupMma) {
       GemmComputeSimdgroupMma<
