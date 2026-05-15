@@ -8,19 +8,16 @@ use syn::{
 
 #[derive(Debug)]
 pub struct GpuTypeOptionSetVariant {
-    pub name: Box<str>,
-    /// The raw expression assigned to this variant (e.g. `1 << 0`). Emitted
-    /// verbatim into the generated C++ — bitflags syntax matches C++ on the
-    /// expressions we care about.
-    pub value_expression: Box<str>,
+    pub name: String,
+    /// Raw expression (e.g. `1 << 0`) emitted verbatim into C++.
+    pub value_expression: String,
 }
 
 #[derive(Debug)]
 pub struct GpuTypeOptionSet {
-    pub name: Box<str>,
-    /// Underlying primitive type as written on the Rust side (e.g. `u32`).
-    pub underlying_type: Box<str>,
-    pub variants: Box<[GpuTypeOptionSetVariant]>,
+    pub name: String,
+    pub underlying_type: String,
+    pub variants: Vec<GpuTypeOptionSetVariant>,
 }
 
 impl GpuTypeOptionSet {
@@ -28,14 +25,14 @@ impl GpuTypeOptionSet {
     pub fn parse(tokens: TokenStream) -> anyhow::Result<Self> {
         let block: BitflagsBlock = syn::parse2(tokens).context("Cannot parse bitflags! contents")?;
         Ok(Self {
-            name: block.name.to_string().into(),
-            underlying_type: block.underlying.to_string().into(),
+            name: block.name.to_string(),
+            underlying_type: block.underlying.to_string(),
             variants: block
                 .variants
                 .into_iter()
                 .map(|(name, expression)| GpuTypeOptionSetVariant {
-                    name: name.to_string().into(),
-                    value_expression: expression.into_token_stream().to_string().into(),
+                    name: name.to_string(),
+                    value_expression: expression.into_token_stream().to_string(),
                 })
                 .collect(),
         })

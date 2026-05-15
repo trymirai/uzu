@@ -1,6 +1,4 @@
-use std::iter::once;
-
-use itertools::Itertools;
+use std::fmt::Write;
 
 use crate::common::gpu_types::GpuTypeOptionSet;
 
@@ -23,29 +21,27 @@ fn r2c(ty: &str) -> anyhow::Result<&'static str> {
 /// Implicit conversions from the underlying type allow a `uint` function
 /// constant to be passed where the struct is expected.
 pub fn gpu_type_gen_option_set(option_set: &GpuTypeOptionSet) -> anyhow::Result<String> {
-    let name = option_set.name.as_ref();
-    let underlying_c = r2c(option_set.underlying_type.as_ref())?;
+    let name = &option_set.name;
+    let underlying_c = r2c(&option_set.underlying_type)?;
 
-    let constants = option_set
-        .variants
-        .iter()
-        .map(|variant| {
-            format!(
-                "  static constant constexpr {underlying_c} {} = {};",
-                variant.name, variant.value_expression
-            )
-        });
-
-    Ok(once(format!("struct {name} {{"))
-        .chain(once(format!("  {underlying_c} raw_value;")))
-        .chain(once(format!("  constexpr {name}() thread : raw_value(0) {{}}")))
-        .chain(once(format!(
-            "  constexpr {name}({underlying_c} __dsl_v) thread : raw_value(__dsl_v) {{}}"
-        )))
-        .chain(constants)
-        .chain(once(format!(
-            "  constexpr bool contains({underlying_c} flag) const thread {{ return (raw_value & flag) != 0; }}"
-        )))
-        .chain(once("};".into()))
-        .join("\n"))
+    let mut out = String::new();
+    writeln!(out, "struct {name} {{").unwrap();
+    writeln!(out, "  {underlying_c} raw_value;").unwrap();
+    writeln!(out, "  constexpr {name}() thread : raw_value(0) {{}}").unwrap();
+    writeln!(out, "  constexpr {name}({underlying_c} __dsl_v) thread : raw_value(__dsl_v) {{}}").unwrap();
+    for variant in &option_set.variants {
+        writeln!(
+            out,
+            "  static constant constexpr {underlying_c} {} = {};",
+            variant.name, variant.value_expression
+        )
+        .unwrap();
+    }
+    writeln!(
+        out,
+        "  constexpr bool contains({underlying_c} flag) const thread {{ return (raw_value & flag) != 0; }}"
+    )
+    .unwrap();
+    out.push_str("};");
+    Ok(out)
 }
