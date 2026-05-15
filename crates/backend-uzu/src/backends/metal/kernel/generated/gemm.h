@@ -26,6 +26,12 @@ enum class GemmOutputTransformKind : uint32_t {
   ScaleAccumulateBiasRht = 7,
 };
 
+enum class GemmWeightPrologueKind : uint32_t {
+  FullPrecision = 0,
+  ScaleBiasDequant = 1,
+  ScaleZeroPointDequant = 2,
+};
+
 typedef struct {
   uint32_t threadgroup_m;
   uint32_t threadgroup_n;
@@ -39,10 +45,4 @@ typedef struct {
   uint32_t simdgroups_m;
   uint32_t simdgroups_n;
 } GemmTilingConfig;
-
-enum class GemmWeightPrologueKind : uint32_t {
-  FullPrecision = 0,
-  ScaleBiasDequant = 1,
-  ScaleZeroPointDequant = 2,
-};
 } // namespace uzu::gemm

@@ -2,7 +2,7 @@ use anyhow::{Context, anyhow, bail};
 use quote::ToTokens;
 use syn::{Expr, ExprLit, Fields, ItemStruct, Lit, Type, TypeArray, TypePath};
 
-use crate::common::gpu_types::{ensure_repr_c, parse_repr_alignment};
+use crate::common::gpu_types::ensure_repr_c;
 
 #[derive(Debug)]
 pub enum GpuTypeStructFieldType {
@@ -58,21 +58,11 @@ pub struct GpuTypeStructField {
 pub struct GpuTypeStruct {
     pub name: Box<str>,
     pub fields: Box<[GpuTypeStructField]>,
-    pub alignment: Option<u32>,
 }
 
 impl GpuTypeStruct {
-    pub fn is_uint_compatible(&self) -> bool {
-        let all_bytes = self.fields.iter().all(|f| match &f.ty {
-            GpuTypeStructFieldType::Scalar(ty) => matches!(ty.as_ref(), "bool" | "i8" | "u8"),
-            _ => false,
-        });
-        all_bytes && self.fields.len() <= 4 && self.alignment == Some(4)
-    }
-
     pub fn parse(item: ItemStruct) -> anyhow::Result<Self> {
         ensure_repr_c(&item.attrs)?;
-        let alignment = parse_repr_alignment(&item.attrs);
 
         let name = item.ident.to_string().into();
 
@@ -94,7 +84,6 @@ impl GpuTypeStruct {
         Ok(Self {
             name,
             fields,
-            alignment,
         })
     }
 }

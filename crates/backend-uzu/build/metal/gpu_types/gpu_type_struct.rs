@@ -24,59 +24,14 @@ fn r2c(ty: &str) -> anyhow::Result<&'static str> {
 }
 
 pub fn gpu_type_gen_struct(gpu_type_struct: &GpuTypeStruct) -> anyhow::Result<String> {
-    let uint_compatible = gpu_type_struct.is_uint_compatible();
-
-    let name = gpu_type_struct.name.as_ref();
-
-    let field_lines: Vec<String> = gpu_type_struct
-        .fields
-        .iter()
-        .map(|field| match &field.ty {
+    once(Ok("typedef struct {".into()))
+        .chain(gpu_type_struct.fields.iter().map(|field| match &field.ty {
             GpuTypeStructFieldType::Scalar(ty) => Ok(format!("  {} {};", r2c(ty.as_ref())?, field.name)),
             GpuTypeStructFieldType::Array {
                 element,
                 length,
             } => Ok(format!("  {} {}[{}];", r2c(element.as_ref())?, field.name, *length)),
-        })
-        .collect::<anyhow::Result<_>>()?;
-
-    let alignas = match gpu_type_struct.alignment {
-        Some(n) => format!(" alignas({n})"),
-        None => String::new(),
-    };
-
-    if uint_compatible {
-        let init_lines = gpu_type_struct
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(i, field)| {
-                let shift = i * 8;
-                let expr = if shift == 0 {
-                    "uint8_t(__dsl_v)".to_string()
-                } else {
-                    format!("uint8_t(__dsl_v >> {shift})")
-                };
-                if i == 0 {
-                    format!("    : {}({expr})", field.name)
-                } else {
-                    format!("    , {}({expr})", field.name)
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Ok(once(format!("struct{alignas} {name} {{"))
-            .chain(field_lines.into_iter())
-            .chain(once(format!("  inline {name}() = default;")))
-            .chain(once(format!("  inline {name}(uint __dsl_v)")))
-            .chain(init_lines.into_iter())
-            .chain(once("  {}".into()))
-            .chain(once("};".into()))
-            .join("\n"))
-    } else {
-        Ok(once(format!("typedef struct{alignas} {{"))
-            .chain(field_lines.into_iter())
-            .chain(once(format!("}} {name};")))
-            .join("\n"))
-    }
+        }))
+        .chain(once(Ok(format!("}} {};", gpu_type_struct.name.as_ref()))))
+        .process_results(|mut it| it.join("\n"))
 }
