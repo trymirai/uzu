@@ -42,12 +42,6 @@ pub struct GemmTilingConfig {
     pub threadgroup_m: u32,
     pub threadgroup_n: u32,
     pub threadgroup_k: u32,
-    pub simdgroup_m: u32,
-    pub simdgroup_n: u32,
-    pub simdgroup_k: u32,
-    pub fragment_m: u32,
-    pub fragment_n: u32,
-    pub fragment_k: u32,
     pub simdgroups_m: u32,
     pub simdgroups_n: u32,
 }
@@ -66,33 +60,15 @@ bitflags! {
 }
 
 impl GemmAlignment {
-    pub fn from_flags(
+    pub fn from_axes(
         m: bool,
         n: bool,
         k: bool,
     ) -> Self {
         let mut bits = Self::empty();
-        if m {
-            bits |= Self::M;
-        }
-        if n {
-            bits |= Self::N;
-        }
-        if k {
-            bits |= Self::K;
-        }
+        bits.set(Self::M, m);
+        bits.set(Self::N, n);
+        bits.set(Self::K, k);
         bits
-    }
-
-    pub fn m_aligned(self) -> bool {
-        self.contains(Self::M)
-    }
-
-    pub fn n_aligned(self) -> bool {
-        self.contains(Self::N)
-    }
-
-    pub fn k_aligned(self) -> bool {
-        self.contains(Self::K)
     }
 }

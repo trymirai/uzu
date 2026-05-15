@@ -36,12 +36,6 @@ typedef struct {
   uint32_t threadgroup_m;
   uint32_t threadgroup_n;
   uint32_t threadgroup_k;
-  uint32_t simdgroup_m;
-  uint32_t simdgroup_n;
-  uint32_t simdgroup_k;
-  uint32_t fragment_m;
-  uint32_t fragment_n;
-  uint32_t fragment_k;
   uint32_t simdgroups_m;
   uint32_t simdgroups_n;
 } GemmTilingConfig;
