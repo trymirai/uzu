@@ -10,7 +10,7 @@ license.workspace = true
 build = "build/main.rs"
 
 [dependencies]
-dsl.workspace = true
+proc-macros.workspace = true
 shoji.workspace = true
 half.workspace = true
 ndarray.workspace = true
