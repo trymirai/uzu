@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{PoolingType, PredictionHeadConfig};
 use crate::config::{EmbeddingConfig, LinearConfig, NormalizationConfig, TransformerConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct ClassifierConfig {
     pub embedding_config: EmbeddingConfig,
     pub embedding_norm_config: NormalizationConfig,

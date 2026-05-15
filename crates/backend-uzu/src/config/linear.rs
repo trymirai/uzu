@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::{ConfigDataType, backends::common::gpu_types::QuantizationMode};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct QuantizationConfig {
     pub group_size: usize,
     pub weight_quantization_mode: QuantizationMode,
@@ -10,7 +10,7 @@ pub struct QuantizationConfig {
     pub activation_precision: ConfigDataType,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum LinearConfig {
     #[serde(rename = "FullPrecisionLinearConfig")]
