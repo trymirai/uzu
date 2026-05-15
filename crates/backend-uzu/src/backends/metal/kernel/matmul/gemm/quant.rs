@@ -1,4 +1,4 @@
-use super::{GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmKernel};
+use super::{GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmKernel, GemmWeights};
 use crate::backends::{
     common::{
         Encoder,
@@ -6,10 +6,7 @@ use crate::backends::{
             GemmParams, QuantizationMethod,
             gemm::{GemmAlignment, GemmOutputTransformKind, GemmTilingConfig},
         },
-        kernel::{
-            gemm::GemmWeights,
-            quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
-        },
+        kernel::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
     },
     metal::{Metal, context::MetalContext},
 };

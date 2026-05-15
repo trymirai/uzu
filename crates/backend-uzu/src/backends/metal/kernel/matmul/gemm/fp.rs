@@ -1,4 +1,4 @@
-use super::{GemmDispatch, GemmKernel};
+use super::{GemmDispatch, GemmKernel, GemmWeights};
 use crate::{
     DataType,
     backends::{
@@ -12,7 +12,6 @@ use crate::{
             },
             kernel::{
                 TensorAddBiasKernel,
-                gemm::GemmWeights,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulError},
             },
         },

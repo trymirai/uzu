@@ -7,8 +7,6 @@ pub trait ManualKernels: Kernels {
 }
 
 pub mod attention;
-#[cfg(metal_backend)]
-pub mod gemm;
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod mlp_gate_act_mul;

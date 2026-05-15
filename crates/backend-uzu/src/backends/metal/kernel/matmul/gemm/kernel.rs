@@ -1,12 +1,10 @@
 use std::collections::{HashMap, hash_map::Entry};
 
+use super::dispatch::{GemmDispatch, GemmSpecialization, GemmWeights};
 use crate::{
     DataType,
     backends::{
-        common::{
-            Encoder,
-            kernel::gemm::{GemmDispatch, GemmSpecialization, GemmWeights},
-        },
+        common::Encoder,
         metal::{Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel},
     },
 };
