@@ -67,6 +67,12 @@ impl Model {
 
     #[bindings::export(Method(Getter))]
     pub fn cache_identifier(&self) -> String {
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
         self.identifier.replace(":", "-").replace("/", "-")
     }
 

@@ -154,6 +154,12 @@ impl LanguageBackend for SwiftLanguageBackend {
             .with_context(|| format!("Failed to read {}", source_package_swift.display()))?;
         let url = FRAMEWORK_URL_TEMPLATE.replace("{version}", version);
         let replacement = format!("url: \"{url}\",\n            checksum: \"{checksum}\"");
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
         let body = body.replace("path: \"uzu.xcframework\"", &replacement);
 
         // Inject `path:` after `dependencies:` so the resulting argument order
