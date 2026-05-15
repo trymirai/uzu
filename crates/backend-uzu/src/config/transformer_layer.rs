@@ -1,4 +1,3 @@
-use monostate::MustBe;
 use serde::{Deserialize, Serialize};
 
 use super::{MLPConfig, MixerConfig, NormalizationConfig, RoPEConfig};
@@ -15,6 +14,6 @@ pub struct TransformerLayerConfig {
     pub rope_config: Option<RoPEConfig>,
     pub hidden_dim: Option<usize>,
     pub ple_config: Option<Unsupported>,
-    pub has_post_layer_scalar: MustBe!(false),
+    pub has_post_layer_scalar: bool,
     pub kv_source_layer: Option<Unsupported>,
 }

@@ -2,6 +2,8 @@
 
 use std::rc::Rc;
 
+use half::{bf16, f16};
+
 use super::MixerExecutables;
 #[cfg(feature = "tracing")]
 use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
@@ -9,11 +11,11 @@ use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
 use crate::forward_pass::traces::LayerActivationTrace;
 use crate::{
     DataType,
-    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, allocation_to_vec},
     config::{MixerConfig, TransformerConfig, TransformerLayerConfig},
     encodable_block::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
-        QKNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
+        PostLayerScalar, QKNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
     },
     forward_pass::{cache_layers::CacheLayer, state::RopeBuffers},
     parameters::ParameterTree,
@@ -46,6 +48,29 @@ impl<B: Backend> LayerExecutables<B> {
         qk_unpack: &Rc<QkUnpack<B>>,
     ) -> Self {
         let intermediate_data_type: DataType = layer_config.mixer_config.activation_precision().into();
+
+        let post_layer_scalar = if layer_config.has_post_layer_scalar {
+            assert!(
+                layer_config.post_mlp_norm_config.is_some(),
+                "layer {layer_index} sets post_layer_scalar but has no post_mlp_norm"
+            );
+            let leaf = decoder_layer_loader.leaf("post_layer_scalar").expect("Failed to read post_layer_scalar weight");
+            let allocation = leaf.read_allocation().expect("Failed to read post_layer_scalar weight");
+            let scalar = match leaf.data_type() {
+                DataType::BF16 => Some(allocation_to_vec::<B, bf16>(&allocation)[0].to_f32()),
+                DataType::F16 => Some(allocation_to_vec::<B, f16>(&allocation)[0].to_f32()),
+                DataType::F32 => Some(allocation_to_vec::<B, f32>(&allocation)[0]),
+                _ => None,
+            }
+            .expect("post_layer_scalar must be a float dtype");
+            Some(scalar)
+        } else {
+            None
+        };
+        let (residual_sum_scalar, output_scalar) = match post_layer_scalar {
+            Some(scalar) => (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar)),
+            None => (PostLayerScalar::None, PostLayerScalar::None),
+        };
 
         #[cfg(feature = "tracing")]
         let tensor_add = TensorAddBiasKernel::new(context, intermediate_data_type, false)
@@ -211,6 +236,7 @@ impl<B: Backend> LayerExecutables<B> {
             mixer_hadamard_factors,
             true,
             layer_index > 0,
+            PostLayerScalar::None,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -224,6 +250,7 @@ impl<B: Backend> LayerExecutables<B> {
                     None,
                     false,
                     false,
+                    PostLayerScalar::None,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
@@ -248,6 +275,7 @@ impl<B: Backend> LayerExecutables<B> {
             mlp_input_hadamard_factors,
             true,
             true,
+            residual_sum_scalar,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -261,6 +289,7 @@ impl<B: Backend> LayerExecutables<B> {
                     None,
                     false,
                     false,
+                    output_scalar,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
