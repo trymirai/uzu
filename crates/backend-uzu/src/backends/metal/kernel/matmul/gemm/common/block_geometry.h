@@ -34,21 +34,25 @@ static METAL_FUNC uint2 block_id(
   return threadgroup_position;
 }
 
-template <uint BLOCK_M, uint BLOCK_N>
-struct BlockGeometry {
+// Per-threadgroup placement in the output matrix `D`: the (possibly
+// morton/swizzle-rewritten) tile id, whether that tile is in-bounds for the
+// actual grid (morton padding can produce out-of-range ids), and the row/col
+// origin of this threadgroup's tile in `D`.
+template <uint THREADGROUP_BLOCK_M, uint THREADGROUP_BLOCK_N>
+struct ThreadgroupTileGeometry {
   uint2 tile_id;
   uint block_row_start;
   uint block_col_start;
   bool out_of_bounds;
 
-  static METAL_FUNC BlockGeometry
+  static METAL_FUNC ThreadgroupTileGeometry
   compute(uint2 tile_id, const constant uzu::matmul::GemmParams* params) {
-    BlockGeometry geometry;
+    ThreadgroupTileGeometry geometry;
     geometry.tile_id = tile_id;
     geometry.out_of_bounds = (tile_id.x >= params->threadgroups_per_row) ||
                              (tile_id.y >= params->threadgroups_per_column);
-    geometry.block_row_start = tile_id.y * BLOCK_M;
-    geometry.block_col_start = tile_id.x * BLOCK_N;
+    geometry.block_row_start = tile_id.y * THREADGROUP_BLOCK_M;
+    geometry.block_col_start = tile_id.x * THREADGROUP_BLOCK_N;
     return geometry;
   }
 };
