@@ -1,5 +1,5 @@
-use dsl::kernel;
 use half::{bf16, f16};
+use proc_macros::kernel;
 
 use crate::ArrayElement;
 
