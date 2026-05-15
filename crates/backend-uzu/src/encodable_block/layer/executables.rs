@@ -13,9 +13,9 @@ use crate::{
     config::{MixerConfig, TransformerConfig, TransformerLayerConfig},
     encodable_block::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
-        QKNorm, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
+        QKNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
     },
-    forward_pass::{cache_layers::CacheLayer, state::RopeType},
+    forward_pass::{cache_layers::CacheLayer, state::RopeBuffers},
     parameters::ParameterTree,
 };
 
@@ -42,7 +42,8 @@ impl<B: Backend> LayerExecutables<B> {
         layer_config: &TransformerLayerConfig,
         layer_index: usize,
         decoder_layer_loader: &ParameterTree<B::Context>,
-        rope: Option<Rc<Rope<B>>>,
+        rope: &Rc<Rope<B>>,
+        qk_unpack: &Rc<QkUnpack<B>>,
     ) -> Self {
         let intermediate_data_type: DataType = layer_config.mixer_config.activation_precision().into();
 
@@ -52,8 +53,6 @@ impl<B: Backend> LayerExecutables<B> {
 
         let (mixer, mixer_hadamard_factors) = match &layer_config.mixer_config {
             MixerConfig::Attention(attention_config) => {
-                let rope_block = rope.expect("RoPE encoder missing for attention layer");
-
                 let q_dim = attention_config.num_heads * attention_config.head_dim;
                 let kv_dim = attention_config.num_groups * attention_config.head_dim;
 
@@ -150,8 +149,8 @@ impl<B: Backend> LayerExecutables<B> {
                         qkv_projection,
                         gate_projection,
                         qk_norm,
-                        rope: rope_block,
-                        use_rope: attention_config.use_rope,
+                        rope: rope.clone(),
+                        qk_unpack: qk_unpack.clone(),
                         attention,
                         out_projection,
                         num_heads: attention_config.num_heads,
@@ -297,10 +296,7 @@ impl<B: Backend> LayerExecutables<B> {
             token_parents,
             token_subtrie_ranges,
             attention_sinks,
-            rope_cosines,
-            rope_sines,
-            rope_max_sequence_length,
-            rope_dim,
+            rope_buffers,
             sampling_start,
             sampling_length,
             mut cache_layer,
@@ -323,7 +319,7 @@ impl<B: Backend> LayerExecutables<B> {
                 gate_projection,
                 qk_norm,
                 rope,
-                use_rope,
+                qk_unpack,
                 attention,
                 out_projection,
                 num_heads,
@@ -346,22 +342,22 @@ impl<B: Backend> LayerExecutables<B> {
                 if let Some(norm) = qk_norm {
                     norm.encode(&mut qkv, batch_dim, encoder)?;
                 }
-                let cosines = rope_cosines.expect("Attention layer requires RoPE cosine allocation");
-                let sines = rope_sines.expect("Attention layer requires RoPE sine allocation");
-                let (queries, rotated_keys) = rope.encode(
-                    &qkv,
-                    token_positions,
-                    cosines,
-                    sines,
-                    batch_dim,
-                    *num_heads,
-                    *num_groups,
-                    *head_dim,
-                    rope_max_sequence_length,
-                    rope_dim,
-                    *use_rope,
-                    encoder,
-                )?;
+                let (queries, rotated_keys) = match rope_buffers {
+                    Some(rope_buffers) => rope.encode(
+                        &qkv,
+                        token_positions,
+                        &rope_buffers.cosines,
+                        &rope_buffers.sines,
+                        batch_dim,
+                        *num_heads,
+                        *num_groups,
+                        *head_dim,
+                        rope_buffers.max_sequence_length(),
+                        rope_buffers.dim(),
+                        encoder,
+                    )?,
+                    None => qk_unpack.encode(&qkv, batch_dim, *num_heads, *num_groups, *head_dim, encoder)?,
+                };
                 let kv_cache_layer = cache_layer
                     .as_deref_mut()
                     .map(|layer| layer.as_transformer_mut().expect("Attention layer expects transformer cache"));
@@ -487,24 +483,6 @@ impl<B: Backend> LayerExecutables<B> {
 
         Ok(hidden)
     }
-
-    pub fn rope_type(&self) -> Option<RopeType> {
-        match &self.mixer {
-            MixerExecutables::Attention {
-                rope,
-                ..
-            } => Some(rope.rope_type()),
-            MixerExecutables::StateSpace {
-                ..
-            }
-            | MixerExecutables::ShortConv {
-                ..
-            }
-            | MixerExecutables::DeltaNet {
-                ..
-            } => None,
-        }
-    }
 }
 
 pub struct LayerArguments<'a, B: Backend> {
@@ -513,10 +491,7 @@ pub struct LayerArguments<'a, B: Backend> {
     pub token_parents: &'a Allocation<B>,
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub attention_sinks: Option<&'a Allocation<B>>,
-    pub rope_cosines: Option<&'a Allocation<B>>,
-    pub rope_sines: Option<&'a Allocation<B>>,
-    pub rope_max_sequence_length: usize,
-    pub rope_dim: usize,
+    pub rope_buffers: Option<&'a RopeBuffers<B>>,
     pub sampling_start: usize,
     pub sampling_length: usize,
     pub cache_layer: Option<&'a mut CacheLayer<B>>,

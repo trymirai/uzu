@@ -98,6 +98,7 @@ impl StructuredAudioCodecGraph {
             transformer_config: self.config.quantizer_config.post_module_config.clone(),
             vocab_size: 1,
             pard_token: None,
+            ple_model_config: None,
         });
         let model_shape = ModelShape::from_decoder_config(&decoder_config);
 
@@ -114,17 +115,14 @@ impl StructuredAudioCodecGraph {
             .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
 
         let max_sequence_length = decoder_config.transformer_config.context_length.max(required_sequence_length.max(1));
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config);
         {
             let transformer_tree = root_loader_view
                 .subtree(transformer_subtree_name)
                 .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
-            if let Some(global_rope) = &mut shared_buffers.global_rope {
-                global_rope.update_data(&transformer_tree, "global_rope");
-            }
-            if let Some(local_rope) = &mut shared_buffers.local_rope {
-                local_rope.update_data(&transformer_tree, "local_rope");
-            }
+            shared_buffers.update_data_from_transformer_tree(&transformer_tree).map_err(|err| {
+                AudioError::Runtime(format!("failed to update structured audio post_module shared buffers: {err}"))
+            })?;
         }
         let shared_buffers = Rc::new(shared_buffers);
         let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(
@@ -304,7 +302,7 @@ impl StructuredAudioCodecGraph {
             .allocate_scratch(main.as_buffer_range_ref().range().len())
             .map_err(|err| AudioError::Runtime(format!("post_module shortcut allocation failed: {err}")))?;
         for layer in runtime.layers.iter() {
-            let rope_type = layer.rope_type();
+            let rope_buffers = runtime.shared_buffers.rope_buffers_for_layer(layer.layer_index);
             main = layer
                 .encode(
                     LayerArguments {
@@ -313,10 +311,7 @@ impl StructuredAudioCodecGraph {
                         token_parents: token_inputs.token_parents(),
                         token_subtrie_ranges: None,
                         attention_sinks: runtime.shared_buffers.attention_sinks(layer.layer_index),
-                        rope_cosines: rope_type.and_then(|rope_type| runtime.shared_buffers.rope_cosines(rope_type)),
-                        rope_sines: rope_type.and_then(|rope_type| runtime.shared_buffers.rope_sines(rope_type)),
-                        rope_max_sequence_length: runtime.model_shape.context_length(),
-                        rope_dim: runtime.model_shape.rope_dim(),
+                        rope_buffers,
                         sampling_start: 0,
                         sampling_length: batch_dim,
                         cache_layer: None,
