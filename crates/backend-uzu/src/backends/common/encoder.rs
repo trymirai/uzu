@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::backends::common::{
-    AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend,
+    AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
     BufferGpuAddressRangeExt, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
     CommandBufferInitial, CommandBufferPending, Context,
     hazard_tracker::{Access, HazardTracker},
@@ -79,13 +79,18 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         )
     }
 
-    pub fn encode_copy(
+    pub fn encode_copy<Src, Dst>(
         &mut self,
-        src: &Allocation<B>,
+        src: &Src,
         src_range: impl RangeBounds<usize>,
-        dst: &mut Allocation<B>,
+        dst: &mut Dst,
         dst_range: impl RangeBounds<usize>,
-    ) {
+    ) where
+        Src: AsBufferRangeRef,
+        Src::Buffer: Buffer<Backend = B>,
+        Dst: AsBufferRangeMut,
+        Dst::Buffer: Buffer<Backend = B>,
+    {
         let src_buffer_range = src.as_buffer_range_ref();
         let dst_buffer_range = dst.as_buffer_range_mut();
         let src_range = resolve_copy_range(src_range, src_buffer_range.range().len(), "source");
@@ -108,11 +113,14 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         self.command_buffer.encode_copy(src_buffer_range, dst_buffer_range);
     }
 
-    pub fn encode_fill(
+    pub fn encode_fill<Dst>(
         &mut self,
-        dst: &mut Allocation<B>,
+        dst: &mut Dst,
         value: u8,
-    ) {
+    ) where
+        Dst: AsBufferRangeMut,
+        Dst::Buffer: Buffer<Backend = B>,
+    {
         let dst_buffer_range = dst.as_buffer_range_mut();
         assert!(!dst_buffer_range.range().is_empty(), "zero-sized fills are not allowed");
         self.access(&[Access {

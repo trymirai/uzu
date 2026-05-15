@@ -11,7 +11,7 @@ use std::{
 use crate::{
     backends::{
         common::{
-            AccessFlags, Backend, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
             CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
         cpu::{BufferDowncastExt, Cpu, error::CpuError},
@@ -96,14 +96,16 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         });
     }
 
-    fn encode_fill(
+    fn encode_fill<Dst>(
         &mut self,
-        dst: BufferRangeMut<'_, <Cpu as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, Dst>,
         value: u8,
-    ) {
+    ) where
+        Dst: Buffer<Backend = Cpu>,
+    {
         let range = dst.range();
         let size = range.end - range.start;
-        let dst = SendPtrMut(unsafe { (&mut *dst.buffer().get()).as_mut_ptr().add(range.start) });
+        let dst = SendPtrMut(unsafe { (&mut *dst.buffer().downcast().get()).as_mut_ptr().add(range.start) });
         self.push_command(move || unsafe {
             dst.as_ptr().write_bytes(value, size);
         });

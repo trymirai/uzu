@@ -78,11 +78,12 @@ pub trait CommandBufferEncoding {
         Src: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
         Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>;
 
-    fn encode_fill(
+    fn encode_fill<Dst>(
         &mut self,
-        dst: BufferRangeMut<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, Dst>,
         value: u8,
-    );
+    ) where
+        Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>;
 
     fn encode_barrier(
         &mut self,

@@ -9,7 +9,7 @@ use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use super::{BufferDowncastExt, Metal};
 use crate::backends::{
     common::{
-        AccessFlags, Backend, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+        AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
         CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
     metal::error::MetalError,
@@ -139,16 +139,17 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         );
     }
 
-    fn encode_fill(
+    fn encode_fill<Dst>(
         &mut self,
-        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, Dst>,
         value: u8,
-    ) {
+    ) where
+        Dst: Buffer<Backend = Metal>,
+    {
         let range = dst.range();
         assert!(range.end > range.start);
         assert!(range.start % 4 == 0 && range.end % 4 == 0);
-
-        self.ensure_blit().fill_buffer_range_value(dst.buffer(), range, value);
+        self.ensure_blit().fill_buffer_range_value(dst.buffer().downcast(), range, value);
     }
 
     fn encode_barrier(
