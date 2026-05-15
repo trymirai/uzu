@@ -99,6 +99,7 @@ impl MatmulMetalKernel {
                     specialization.simdgroups_per_column as u32,
                     specialization.align_mn,
                     specialization.align_k,
+                    specialization.transpose_b,
                     specialization.is_accumulate,
                 )
                 .map_err(MatmulError::BackendError)?;
@@ -143,6 +144,9 @@ impl MatmulMetalKernel {
             a,
             a_offset,
             b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
             ab_scale,
             c,
             d,
@@ -150,6 +154,7 @@ impl MatmulMetalKernel {
             input_dim,
             output_dim,
         } = arguments;
+        assert!(b_transpose, "encode_gemv does not yet support b_transpose=false");
 
         let (is_accumulate, output_bias) = match c {
             MatmulArgumentC::Accumulate => (true, None),
@@ -161,13 +166,13 @@ impl MatmulMetalKernel {
             gemv::GemvSpecialization::select(input_dim, output_dim, is_accumulate, output_bias.is_some());
 
         self.get_or_create_gemv(encoder.context(), specialization)?.encode(
-            b,
+            (b, b_offset),
             (a, a_offset),
             output_bias,
             d,
             input_dim,
             output_dim,
-            input_dim,
+            b_leading_dimension.unwrap_or(input_dim),
             ab_scale,
             batch_dim,
             specialization.output_rows_per_threadgroup(),
@@ -186,6 +191,9 @@ impl MatmulMetalKernel {
             a,
             a_offset,
             b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
             ab_scale,
             c,
             d,
@@ -194,18 +202,30 @@ impl MatmulMetalKernel {
             output_dim,
         } = arguments;
 
-        let specialization =
-            gemm::GemmSpecialization::select(encoder.context(), self.data_type, batch_dim, input_dim, output_dim, &c);
+        let specialization = gemm::GemmSpecialization::select(
+            encoder.context(),
+            self.data_type,
+            batch_dim,
+            input_dim,
+            output_dim,
+            b_transpose,
+            &c,
+        );
 
         let threadgroups_per_row = output_dim.div_ceil(specialization.block_cols);
         let threadgroups_per_column = batch_dim.div_ceil(specialization.block_rows);
 
+        let default_ldb = if b_transpose {
+            input_dim
+        } else {
+            output_dim
+        };
         let params = GemmParams {
             M: batch_dim,
             N: output_dim,
             K: input_dim,
             leading_dimension_a: input_dim,
-            leading_dimension_b: input_dim,
+            leading_dimension_b: b_leading_dimension.unwrap_or(default_ldb),
             leading_dimension_d: output_dim,
             threadgroups_per_row,
             threadgroups_per_column,
@@ -218,7 +238,7 @@ impl MatmulMetalKernel {
 
         kernel.encode(
             (a, a_offset),
-            b,
+            (b, b_offset),
             &mut *d,
             std::slice::from_ref(&params),
             threadgroups_per_row,
@@ -243,6 +263,9 @@ impl MatmulMetalKernel {
             a,
             a_offset,
             b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
             ab_scale,
             c,
             d,
@@ -250,6 +273,7 @@ impl MatmulMetalKernel {
             input_dim,
             output_dim,
         } = arguments;
+        assert!(b_transpose, "encode_gemm_mpp does not yet support b_transpose=false");
         let is_accumulate = matches!(c, MatmulArgumentC::Accumulate);
         let specialization =
             gemm_mpp::GemmMppSpecialization::select(batch_dim, output_dim, input_dim, is_accumulate, ab_scale != 1.0);
@@ -271,7 +295,7 @@ impl MatmulMetalKernel {
             N: output_dim,
             K: input_dim,
             leading_dimension_a: input_dim,
-            leading_dimension_b: input_dim,
+            leading_dimension_b: b_leading_dimension.unwrap_or(input_dim),
             leading_dimension_d: output_dim,
             threadgroups_per_row,
             threadgroups_per_column,
@@ -289,7 +313,7 @@ impl MatmulMetalKernel {
         let kernel = self.get_or_create_gemm_mpp(encoder.context(), specialization)?;
         kernel.encode(
             (a, a_offset),
-            b,
+            (b, b_offset),
             &mut *d,
             std::slice::from_ref(&params),
             group_count_x,
@@ -372,7 +396,9 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
-        if arguments.batch_dim <= max_gemv_batch_threshold() {
+        if !arguments.b_transpose {
+            self.encode_gemm(encoder, arguments).expect("Failed to encode GEMM kernel");
+        } else if arguments.batch_dim <= max_gemv_batch_threshold() {
             self.encode_gemv(encoder, arguments).expect("Failed to encode GEMV kernel");
         } else if self.is_mpp_eligible(encoder.context()) {
             self.encode_gemm_mpp(encoder, arguments).expect("Failed to encode GEMM MPP kernel");

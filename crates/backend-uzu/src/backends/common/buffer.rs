@@ -1,18 +1,13 @@
-use std::{fmt::Debug, ops::Range};
+use std::{any::Any, fmt::Debug, ops::Range};
 
 use crate::backends::common::Backend;
 
-pub trait Buffer: Debug {
+pub trait Buffer: Any + Debug {
     type Backend: Backend;
 
     fn gpu_ptr(&self) -> usize;
 
     fn size(&self) -> usize;
-
-    fn set_label(
-        &mut self,
-        label: Option<&str>,
-    );
 }
 
 pub trait BufferGpuAddressRangeExt: Buffer {

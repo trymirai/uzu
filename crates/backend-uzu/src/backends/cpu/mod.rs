@@ -1,4 +1,5 @@
 mod backend;
+mod buffer;
 mod command_buffer;
 mod context;
 mod dense_buffer;
@@ -10,3 +11,4 @@ mod sparse;
 pub mod argmax;
 
 pub use backend::Cpu;
+pub use buffer::BufferDowncastExt;

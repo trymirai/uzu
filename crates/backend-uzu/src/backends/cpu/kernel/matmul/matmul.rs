@@ -40,6 +40,9 @@ impl MatmulKernel for MatmulCpuKernel {
             a,
             a_offset,
             b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
             ab_scale,
             c,
             d,
@@ -52,14 +55,18 @@ impl MatmulKernel for MatmulCpuKernel {
         let n = output_dim as usize;
         let k = input_dim as usize;
         let lda = k;
-        let ldb = k;
+        let ldb = b_leading_dimension.map(|n| n as usize).unwrap_or(if b_transpose {
+            k
+        } else {
+            n
+        });
         let ldd = n;
         let data_type = self.data_type;
         let a_buffer_range = a.as_buffer_range_ref();
         let b_buffer_range = b.as_buffer_range_ref();
         let d_buffer_range = d.as_buffer_range_mut();
         let a_offset = a_buffer_range.range().start + a_offset;
-        let b_offset = b_buffer_range.range().start;
+        let b_offset = b_buffer_range.range().start + b_offset;
         let d_offset = d_buffer_range.range().start;
 
         let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_offset));
@@ -95,6 +102,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     lda,
                     ldb,
                     ldd,
+                    b_transpose,
                     is_accumulate,
                 );
                 if let Some(bias) = bias_ptr {
@@ -113,6 +121,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     lda,
                     ldb,
                     ldd,
+                    b_transpose,
                     is_accumulate,
                 );
                 if let Some(bias) = bias_ptr {
@@ -131,6 +140,7 @@ impl MatmulKernel for MatmulCpuKernel {
                     lda,
                     ldb,
                     ldd,
+                    b_transpose,
                     is_accumulate,
                 );
                 if let Some(bias) = bias_ptr {

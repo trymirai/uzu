@@ -45,6 +45,10 @@ impl MetalSparseBuffer {
             context,
         })
     }
+
+    pub(crate) fn mtl_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
+        &self.buffer
+    }
 }
 
 impl Debug for MetalSparseBuffer {
@@ -77,13 +81,6 @@ impl Buffer for MetalSparseBuffer {
 
     fn size(&self) -> usize {
         self.buffer.size()
-    }
-
-    fn set_label(
-        &mut self,
-        label: Option<&str>,
-    ) {
-        self.buffer.set_label(label)
     }
 }
 

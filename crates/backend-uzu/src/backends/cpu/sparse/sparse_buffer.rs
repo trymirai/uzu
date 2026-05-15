@@ -18,13 +18,6 @@ impl Buffer for CpuSparseBuffer {
     fn size(&self) -> usize {
         todo!()
     }
-
-    fn set_label(
-        &mut self,
-        _label: Option<&str>,
-    ) {
-        todo!()
-    }
 }
 
 impl SparseBuffer for CpuSparseBuffer {

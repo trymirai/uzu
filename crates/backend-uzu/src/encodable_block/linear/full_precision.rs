@@ -133,6 +133,9 @@ impl<B: Backend> Linear<B> for FullPrecisionLinear<B> {
                 a: &input,
                 a_offset: 0,
                 b: &self.weights,
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
                 ab_scale: 1.0,
                 c: match self.bias.as_ref() {
                     Some(bias) => MatmulArgumentC::Bias(bias),
