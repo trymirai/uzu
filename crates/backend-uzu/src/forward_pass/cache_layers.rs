@@ -127,19 +127,8 @@ impl<B: Backend> CacheLayers<B> {
                             prefix_len: 0,
                         }
                     };
-                    let kv_bytes = size_for_shape(&shape, model_shape.kv_cache_data_type());
 
-                    CacheLayer::Transformer(KVCacheLayer {
-                        state: state.clone(),
-                        keys: context
-                            .create_allocation(kv_bytes, AllocationType::Global)
-                            .expect("Failed to create kv keys allocation"),
-                        values: context
-                            .create_allocation(kv_bytes, AllocationType::Global)
-                            .expect("Failed to create kv values allocation"),
-                        shape,
-                        data_type: model_shape.kv_cache_data_type(),
-                    })
+                    CacheLayer::Transformer(KVCacheLayer::new(context, &state, shape, model_shape.kv_cache_data_type()))
                 },
                 MixerConfig::Mamba(c) => {
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
@@ -493,21 +482,7 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [new_total_len, num_groups, head_dim];
-                    let new_bytes = size_for_shape(&new_shape, dtype);
-                    let new_keys = context
-                        .create_allocation(new_bytes, AllocationType::Global)
-                        .expect("Failed to create kv keys clone allocation");
-                    let new_values = context
-                        .create_allocation(new_bytes, AllocationType::Global)
-                        .expect("Failed to create kv values clone allocation");
-
-                    CacheLayer::Transformer(KVCacheLayer {
-                        state: layer.state.clone(),
-                        keys: new_keys,
-                        values: new_values,
-                        shape: new_shape,
-                        data_type: dtype,
-                    })
+                    CacheLayer::Transformer(KVCacheLayer::new(context, &layer.state, new_shape, dtype))
                 },
                 CacheLayer::StateSpace(layer) => {
                     let conv_bytes = size_for_shape(&layer.conv_shape, layer.data_type);

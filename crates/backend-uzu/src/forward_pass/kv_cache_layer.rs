@@ -4,7 +4,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder,
+        Allocation, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -52,6 +52,26 @@ pub struct KVCacheLayer<B: Backend> {
 }
 
 impl<B: Backend> KVCacheLayer<B> {
+    pub fn new(
+        context: &B::Context,
+        state: &KVCacheLayerState,
+        shape: [usize; 3],
+        data_type: DataType,
+    ) -> Self {
+        let kv_bytes = size_for_shape(&shape, data_type);
+        Self {
+            state: state.clone(),
+            keys: context
+                .create_allocation(kv_bytes, AllocationType::Global)
+                .expect("Failed to create kv keys allocation"),
+            values: context
+                .create_allocation(kv_bytes, AllocationType::Global)
+                .expect("Failed to create kv values allocation"),
+            shape,
+            data_type,
+        }
+    }
+
     pub fn encode_copy_prefix_rows_to(
         &self,
         destination: &mut KVCacheLayer<B>,
