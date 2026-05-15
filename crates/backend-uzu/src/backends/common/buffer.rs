@@ -11,10 +11,6 @@ pub trait Buffer: Any + Debug {
 }
 
 pub trait BufferGpuAddressRangeExt: Buffer {
-    fn gpu_address_range(&self) -> Range<usize> {
-        self.gpu_ptr()..(self.gpu_ptr() + self.size())
-    }
-
     fn gpu_address_subrange(
         &self,
         subrange: Range<usize>,
