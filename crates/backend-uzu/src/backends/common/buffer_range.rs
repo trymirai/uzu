@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use crate::backends::common::Buffer;
+use crate::backends::common::{Backend, Buffer};
 
 pub struct BufferRangeRef<'a, B: Buffer> {
     buffer: &'a B,
@@ -21,6 +21,13 @@ impl<'a, B: Buffer> BufferRangeRef<'a, B> {
             buffer,
             range,
         }
+    }
+
+    pub fn as_bytes_slice(
+        &self,
+        context: &<<B as Buffer>::Backend as Backend>::Context,
+    ) -> Result<&[u8], <<B as Buffer>::Backend as Backend>::Error> {
+        self.buffer.as_bytes_slice_range(Some(context), self.range.clone())
     }
 
     pub fn buffer(&self) -> &'a B {
