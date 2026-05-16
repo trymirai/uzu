@@ -203,6 +203,8 @@ impl<B: Backend> CacheLayers<B> {
             CacheLayer::Transformer(kv) => {
                 let keys_total_pages = kv.keys.size() / kv.keys.page_size_bytes();
                 kv.keys.map(context, &(0..keys_total_pages)).expect("Failed to map transformer keys pages");
+                let values_total_pages = kv.values.size() / kv.values.page_size_bytes();
+                kv.values.map(context, &(0..values_total_pages)).expect("Failed to map transformer values pages");
             },
             _ => (),
         });

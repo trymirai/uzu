@@ -4,7 +4,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        Allocation, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
+        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -43,10 +43,10 @@ pub const INVALID_POSITION: usize = i32::MAX as usize;
 
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
-    /// up to [max_prefix_length + max_suffix_length, num_groups, head_dim]
+    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
     pub keys: B::SparseBuffer,
     /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub values: Allocation<B>,
+    pub values: B::SparseBuffer,
     pub shape: [usize; 3],
     pub data_type: DataType,
 }
@@ -62,7 +62,7 @@ impl<B: Backend> KVCacheLayer<B> {
         Ok(Self {
             state: state.clone(),
             keys: context.create_sparse_buffer(buffer_size)?,
-            values: context.create_allocation(buffer_size, AllocationType::Global)?,
+            values: context.create_sparse_buffer(buffer_size)?,
             shape,
             data_type,
         })

@@ -4,13 +4,13 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
+    backends::common::{Backend, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
 };
 
 pub struct KVLayerData<'a, B: Backend> {
     pub key_allocation: &'a mut B::SparseBuffer,
     pub key_shape: [usize; 3],
-    pub value_allocation: &'a mut Allocation<B>,
+    pub value_allocation: &'a mut B::SparseBuffer,
     pub value_shape: [usize; 3],
 }
 
