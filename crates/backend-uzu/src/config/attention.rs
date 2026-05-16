@@ -28,18 +28,16 @@ pub struct AttentionConfig {
 }
 
 impl AttentionConfig {
-    /// Scale-free RMSNorm on values; precision mirrors query/key norm.
     pub fn value_norm_config(&self) -> Option<NormalizationConfig> {
         if !self.normalize_values {
             return None;
         }
-        let base = self.query_norm_config.as_ref().or(self.key_norm_config.as_ref());
         Some(NormalizationConfig {
-            scale_precision: base.map_or(ConfigDataType::Float32, |norm| norm.scale_precision),
-            accumulation_precision: base.map_or(ConfigDataType::Float32, |norm| norm.accumulation_precision),
+            scale_precision: self.qkv_projection_config.activation_precision(),
+            accumulation_precision: ConfigDataType::Float32,
             epsilon: VALUE_NORM_EPSILON,
             scale_offset: None,
-            upcast_mode: base.map_or(UpcastMode::FullLayer, |norm| norm.upcast_mode.clone()),
+            upcast_mode: UpcastMode::FullLayer,
             subtract_mean: false,
             use_bias: false,
         })
