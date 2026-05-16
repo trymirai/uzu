@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use super::safetensors_metadata::{HashMetadata as STMetadata, HeaderLoadingError, read_metadata as read_st_metadata};
 use crate::{
-    DataType,
+    ArrayElement, DataType,
     array::{Array, ArrayContextExt},
     backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
     utils::fs::file_read_exact_at,
@@ -187,6 +187,13 @@ impl<'file, 'context, 'leaf, C: Context> ParameterLeaf<'file, 'context, 'leaf, C
             });
         }
         Ok(())
+    }
+
+    pub fn read_slice<T: ArrayElement>(&self) -> Result<Box<[T]>, ParameterLoaderError<C::Backend>> {
+        let element_count = self.metadata.size / std::mem::size_of::<T>();
+        let mut data = vec![T::zeroed(); element_count];
+        file_read_exact_at(self.loader.file, bytemuck::cast_slice_mut(&mut data), self.metadata.offset as u64)?;
+        Ok(data.into_boxed_slice())
     }
 
     pub fn read_allocation(&self) -> Result<Allocation<C::Backend>, ParameterLoaderError<C::Backend>> {

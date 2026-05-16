@@ -11,7 +11,7 @@ use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
 use crate::forward_pass::traces::LayerActivationTrace;
 use crate::{
     DataType,
-    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, allocation_to_vec},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::{MixerConfig, TransformerConfig, TransformerLayerConfig},
     encodable_block::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
@@ -49,27 +49,23 @@ impl<B: Backend> LayerExecutables<B> {
     ) -> Self {
         let intermediate_data_type: DataType = layer_config.mixer_config.activation_precision().into();
 
-        let post_layer_scalar = if layer_config.has_post_layer_scalar {
+        let (residual_sum_scalar, output_scalar) = if layer_config.has_post_layer_scalar {
             assert!(
                 layer_config.post_mlp_norm_config.is_some(),
                 "layer {layer_index} sets post_layer_scalar but has no post_mlp_norm"
             );
             let leaf = decoder_layer_loader.leaf("post_layer_scalar").expect("Failed to read post_layer_scalar weight");
-            let allocation = leaf.read_allocation().expect("Failed to read post_layer_scalar weight");
             let scalar = match leaf.data_type() {
-                DataType::BF16 => Some(allocation_to_vec::<B, bf16>(&allocation)[0].to_f32()),
-                DataType::F16 => Some(allocation_to_vec::<B, f16>(&allocation)[0].to_f32()),
-                DataType::F32 => Some(allocation_to_vec::<B, f32>(&allocation)[0]),
-                _ => None,
-            }
-            .expect("post_layer_scalar must be a float dtype");
-            Some(scalar)
+                DataType::BF16 => {
+                    leaf.read_slice::<bf16>().expect("Failed to read post_layer_scalar weight")[0].to_f32()
+                },
+                DataType::F16 => leaf.read_slice::<f16>().expect("Failed to read post_layer_scalar weight")[0].to_f32(),
+                DataType::F32 => leaf.read_slice::<f32>().expect("Failed to read post_layer_scalar weight")[0],
+                other => panic!("post_layer_scalar must be a float dtype, got {other:?}"),
+            };
+            (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar))
         } else {
-            None
-        };
-        let (residual_sum_scalar, output_scalar) = match post_layer_scalar {
-            Some(scalar) => (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar)),
-            None => (PostLayerScalar::None, PostLayerScalar::None),
+            (PostLayerScalar::None, PostLayerScalar::None)
         };
 
         #[cfg(feature = "tracing")]
