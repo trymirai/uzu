@@ -53,11 +53,9 @@ pub trait MatmulKernel: Sized {
         data_type: DataType,
     ) -> Result<Self, MatmulError<Self::Backend>>;
 
-    fn encode<TB>(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Self::Backend>>>(
         &mut self,
         arguments: MatmulArguments<Self::Backend, TB>,
         encoder: &mut Encoder<Self::Backend>,
-    ) where
-        TB: AsBufferRangeRef,
-        TB::Buffer: Buffer<Backend = Self::Backend>;
+    );
 }

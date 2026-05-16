@@ -73,14 +73,11 @@ impl CpuCommandBufferEncoding {
 impl CommandBufferEncoding for CpuCommandBufferEncoding {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn encode_copy<Src, Dst>(
+    fn encode_copy<Src: Buffer<Backend = Cpu>, Dst: Buffer<Backend = Cpu>>(
         &mut self,
         src: BufferRangeRef<'_, Src>,
         dst: BufferRangeMut<'_, Dst>,
-    ) where
-        Src: Buffer<Backend = Cpu>,
-        Dst: Buffer<Backend = Cpu>,
-    {
+    ) {
         let src_range = src.range();
         let dst_range = dst.range();
         assert_eq!(src_range.len(), dst_range.len());
@@ -96,13 +93,11 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         });
     }
 
-    fn encode_fill<Dst>(
+    fn encode_fill<Dst: Buffer<Backend = Cpu>>(
         &mut self,
         dst: BufferRangeMut<'_, Dst>,
         value: u8,
-    ) where
-        Dst: Buffer<Backend = Cpu>,
-    {
+    ) {
         let range = dst.range();
         let size = range.end - range.start;
         let dst = SendPtrMut(unsafe { (&mut *dst.buffer().downcast().get()).as_mut_ptr().add(range.start) });

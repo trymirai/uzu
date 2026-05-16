@@ -31,14 +31,11 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn encode<TB>(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
         &mut self,
         arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
-    ) where
-        TB: AsBufferRangeRef,
-        TB::Buffer: Buffer<Backend = Cpu>,
-    {
+    ) {
         let MatmulArguments {
             a,
             a_offset,

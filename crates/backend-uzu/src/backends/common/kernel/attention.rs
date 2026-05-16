@@ -56,17 +56,14 @@ impl<B: Backend> AttentionGemmBlock<B> {
         }
     }
 
-    pub fn encode<Keys, Values>(
+    pub fn encode<
+        Keys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        Values: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+    >(
         &self,
         encoder: &mut Encoder<B>,
         args: AttentionGemmArguments<B, Keys, Values>,
-    ) -> Result<(), B::Error>
-    where
-        Keys: AsBufferRangeRef,
-        Keys::Buffer: Buffer<Backend = B>,
-        Values: AsBufferRangeRef,
-        Values::Buffer: Buffer<Backend = B>,
-    {
+    ) -> Result<(), B::Error> {
         let bk: usize = if args.head_dim < 128 {
             32
         } else {

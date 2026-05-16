@@ -118,14 +118,11 @@ impl Drop for MetalCommandBufferEncoding {
 impl CommandBufferEncoding for MetalCommandBufferEncoding {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn encode_copy<Src, Dst>(
+    fn encode_copy<Src: Buffer<Backend = Metal>, Dst: Buffer<Backend = Metal>>(
         &mut self,
         src: BufferRangeRef<'_, Src>,
         dst: BufferRangeMut<'_, Dst>,
-    ) where
-        Src: Buffer<Backend = Metal>,
-        Dst: Buffer<Backend = Metal>,
-    {
+    ) {
         let src_range = src.range();
         let dst_range = dst.range();
         assert_eq!(src_range.len(), dst_range.len());
@@ -139,13 +136,11 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         );
     }
 
-    fn encode_fill<Dst>(
+    fn encode_fill<Dst: Buffer<Backend = Metal>>(
         &mut self,
         dst: BufferRangeMut<'_, Dst>,
         value: u8,
-    ) where
-        Dst: Buffer<Backend = Metal>,
-    {
+    ) {
         let range = dst.range();
         assert!(range.end > range.start);
         assert!(range.start % 4 == 0 && range.end % 4 == 0);

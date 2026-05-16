@@ -374,7 +374,10 @@ impl<B: Backend> Attention<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_attention_variant<Keys, Values>(
+    fn encode_attention_variant<
+        Keys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        Values: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+    >(
         &self,
         variant: KernelVariant,
         kernel_key: &KernelKey,
@@ -398,13 +401,7 @@ impl<B: Backend> Attention<B> {
         max_sequence_length: usize,
         head_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error>
-    where
-        Keys: AsBufferRangeRef,
-        Keys::Buffer: Buffer<Backend = B>,
-        Values: AsBufferRangeRef,
-        Values::Buffer: Buffer<Backend = B>,
-    {
+    ) -> Result<Allocation<B>, B::Error> {
         let mut attention_output =
             encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads * head_dim], self.data_type))?;
         match variant {
@@ -527,7 +524,10 @@ impl<B: Backend> Attention<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_fallback<Keys, Values>(
+    fn encode_fallback<
+        Keys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        Values: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+    >(
         &self,
         is_kv_cache_ring: bool,
         queries: &Allocation<B>,
@@ -548,13 +548,7 @@ impl<B: Backend> Attention<B> {
         suffix_length: usize,
         head_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error>
-    where
-        Keys: AsBufferRangeRef,
-        Keys::Buffer: Buffer<Backend = B>,
-        Values: AsBufferRangeRef,
-        Values::Buffer: Buffer<Backend = B>,
-    {
+    ) -> Result<(), B::Error> {
         let matmul = self.matmul_kernel.as_ref().expect("MatmulKernel required for head_dim=512 fallback");
         let scatter_scores =
             self.fallback_scatter_scores_kernels.get(&is_kv_cache_ring).expect("scatter_scores kernel missing");
