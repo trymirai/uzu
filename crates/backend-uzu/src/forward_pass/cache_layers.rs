@@ -322,20 +322,6 @@ impl<B: Backend> CacheLayers<B> {
         }
     }
 
-    pub fn layer(
-        &self,
-        layer_index: usize,
-    ) -> Option<&CacheLayer<B>> {
-        match self.bindings[layer_index] {
-            LayerCacheBinding::Owned {
-                entry,
-            } => Some(&self.entries[entry.0]),
-            LayerCacheBinding::Shared {
-                ..
-            } => None,
-        }
-    }
-
     pub fn iter_layers(&self) -> impl Iterator<Item = (usize, &CacheLayer<B>)> {
         self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
             LayerCacheBinding::Owned {
