@@ -117,7 +117,7 @@ impl<B: Backend> ClassifierLayer<B> {
         let (mlp, mlp_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             transformer_config.model_dim,
-            transformer_config.hidden_dim,
+            layer_config.hidden_dim.unwrap_or(transformer_config.hidden_dim),
             context,
             &layer_loader.subtree("mlp").unwrap(),
         )

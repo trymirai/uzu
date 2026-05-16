@@ -257,7 +257,7 @@ impl<B: Backend> LayerExecutables<B> {
         let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             transformer_config.model_dim,
-            transformer_config.hidden_dim,
+            layer_config.hidden_dim.unwrap_or(transformer_config.hidden_dim),
             context,
             &decoder_layer_loader.subtree("mlp").unwrap(),
         )
