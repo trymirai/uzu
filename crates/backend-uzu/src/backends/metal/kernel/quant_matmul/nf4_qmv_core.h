@@ -31,6 +31,32 @@ inline float qdot_nf4_constant(
   return scale * accum;
 }
 
+// NF4 qdot: 4-bit nibble → codebook value via a zero-memory in-thread
+// switch-of-literals select (`nf4_select_entry`). No constant/threadgroup
+// codebook, no cross-lane op, no array indexing. Numerically identical to
+// `qdot_nf4_constant` (same 16 half literals; only the value source differs).
+template <int values_per_thread>
+inline float qdot_nf4_select(
+    const device uint8_t* w,
+    const thread float* x_thread,
+    float scale
+) {
+  using U4 = vec<float, 4>;
+  float accum = 0;
+  const thread U4* x4 = (const thread U4*)x_thread;
+  for (int i = 0; i < (values_per_thread / 4); i++) {
+    uint8_t b0 = w[2 * i];
+    uint8_t b1 = w[2 * i + 1];
+    half h0 = nf4_select_entry(b0 & 0x0f);
+    half h1 = nf4_select_entry((b0 >> 4) & 0x0f);
+    half h2 = nf4_select_entry(b1 & 0x0f);
+    half h3 = nf4_select_entry((b1 >> 4) & 0x0f);
+    U4 w_vec = U4(float(h0), float(h1), float(h2), float(h3));
+    accum += dot(x4[i], w_vec);
+  }
+  return scale * accum;
+}
+
 // NF4-ZP qdot: 4-bit nibble → codebook lookup (constant addr space) plus a
 // per-group zero-point offset `zp_off` added to each codebook value before the
 // scale multiply: out = scale * Σ (codebook[nibble] + zp_off) · x.

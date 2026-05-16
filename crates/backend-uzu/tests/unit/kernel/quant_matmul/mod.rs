@@ -5,6 +5,7 @@ mod common;
 mod nf4_byte256_test;
 mod nf4_e4m3_test;
 mod nf4_graft_test;
+mod nf4_select_test;
 mod nf4_shuffle_test;
 mod nf4_zp_test;
 mod qmm_transposed_test;

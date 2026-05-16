@@ -87,6 +87,49 @@ inline half nf4_my_shuffle_entry(uint simd_lane) {
   }
 }
 
+// Zero-memory in-thread *select* of the NF4 codebook value for a 4-bit
+// nibble. Every thread "holds" all 16 codebook entries as compile-time
+// constants; the dequant is a switch-of-literals on the nibble (NOT a
+// register array indexed dynamically, which would spill). Numerically
+// identical to `nf4_codebook[nibble]` — same 16 half literals, only the
+// value *source* differs (in-register select vs constant-space gather).
+inline half nf4_select_entry(uint nibble) {
+  switch (nibble & 0x0fu) {
+  case 0:
+    return -1.0h;
+  case 1:
+    return -0.6961928h;
+  case 2:
+    return -0.5250730h;
+  case 3:
+    return -0.39491748h;
+  case 4:
+    return -0.28444138h;
+  case 5:
+    return -0.18477343h;
+  case 6:
+    return -0.09105003h;
+  case 7:
+    return 0.0h;
+  case 8:
+    return 0.07958029h;
+  case 9:
+    return 0.16093750h;
+  case 10:
+    return 0.24611230h;
+  case 11:
+    return 0.33791524h;
+  case 12:
+    return 0.44070983h;
+  case 13:
+    return 0.56261432h;
+  case 14:
+    return 0.72295684h;
+  default:
+    return 1.0h;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Zero-memory *shuffle* codebook helpers (size-parameterized S ∈ {8,16,32}).
 //
