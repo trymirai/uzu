@@ -112,23 +112,26 @@ impl<B: Backend> LayerExecutables<B> {
                     .expect("Failed to create gate projection")
                 });
 
+                let value_norm_config = attention_config.value_norm_config();
                 let qkv_norm = if attention_config.query_norm_config.is_some()
                     || attention_config.key_norm_config.is_some()
-                    || attention_config.value_norm_config.is_some()
+                    || value_norm_config.is_some()
                 {
                     match QKVNorm::new(
                         context,
                         intermediate_data_type,
                         attention_config.query_norm_config.clone(),
                         attention_config.key_norm_config.clone(),
-                        attention_config.value_norm_config.clone(),
+                        value_norm_config,
                         &decoder_layer_loader.subtree("mixer").unwrap(),
                         attention_config.num_heads,
                         attention_config.num_groups,
                         attention_config.head_dim,
                     ) {
-                        Ok(k) => Some(k),
-                        Err(e) => panic!("Failed to create QKV norm kernel for layer {}: {:?}", layer_index, e),
+                        Ok(qkv_norm) => Some(qkv_norm),
+                        Err(error) => {
+                            panic!("Failed to create QKV norm kernel for layer {}: {:?}", layer_index, error)
+                        },
                     }
                 } else {
                     None
