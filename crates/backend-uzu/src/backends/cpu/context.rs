@@ -88,6 +88,10 @@ impl Context for CpuContext {
         Err(CpuError::NotSupported)
     }
 
+    fn wait_for_pending_sparse_mappings(&self) -> Result<(), CpuError> {
+        Ok(())
+    }
+
     fn peak_memory_usage(&self) -> Option<usize> {
         None
     }

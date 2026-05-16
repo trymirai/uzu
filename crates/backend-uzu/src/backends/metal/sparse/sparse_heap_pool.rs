@@ -3,8 +3,8 @@ use std::{
     ops::Range,
 };
 
-use metal::{MTLBuffer, MTLSparsePageSize};
-use objc2::runtime::ProtocolObject;
+use metal::{MTL4CommandQueue, MTLBuffer, MTLDeviceExt, MTLSharedEvent, MTLSparsePageSize};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     backends::metal::{
@@ -19,18 +19,32 @@ pub struct MetalSparseHeapPool {
     heaps: Vec<MetalSparseHeap>,
     heap_capacity: usize,
     page_size: MTLSparsePageSize,
+
+    /// Signaled on `command_queue4` after every batch of map/unmap ops.
+    /// Lets other queues (and the CPU) wait until the GPU has finished applying pending sparse mappings.
+    mapping_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
+
+    /// Value last scheduled to be signaled on `mapping_event`.
+    /// Bumped before each `signal_event_value` call so the latest value always represents
+    /// "all map/unmap ops issued so far are complete on the GPU".
+    pending_mapping_value: u64,
 }
 
 impl MetalSparseHeapPool {
     pub fn new(
+        device: &ProtocolObject<dyn metal::MTLDevice>,
         page_size: MTLSparsePageSize,
         heap_capacity: usize,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, MetalError> {
+        let mapping_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
+        mapping_event.set_signaled_value(0);
+        Ok(Self {
             heaps: Vec::new(),
             page_size,
             heap_capacity,
-        }
+            mapping_event,
+            pending_mapping_value: 0,
+        })
     }
 
     pub fn map(
@@ -97,11 +111,13 @@ impl MetalSparseHeapPool {
                     for (heap_pos, mappings) in existing_heaps_mappings {
                         self.heaps[heap_pos].execute(buffer, &context.command_queue4, &mappings, false);
                     }
+                    self.signal_pending(&context.command_queue4);
                     return Err(err);
                 },
             };
         }
 
+        self.signal_pending(&context.command_queue4);
         Ok(())
     }
 
@@ -138,6 +154,7 @@ impl MetalSparseHeapPool {
         // Remove empty heaps
         self.heaps.retain(|heap| !heap.is_empty());
 
+        self.signal_pending(&context.command_queue4);
         Ok(())
     }
 
@@ -157,6 +174,24 @@ impl MetalSparseHeapPool {
 
     pub fn page_size(&self) -> MTLSparsePageSize {
         self.page_size
+    }
+
+    pub fn wait_pending(&self) -> Result<(), MetalError> {
+        if self.pending_mapping_value == 0 {
+            return Ok(());
+        }
+        if self.mapping_event.wait_until_signaled_value_timeout_ms(self.pending_mapping_value, 1000) {
+            return Ok(());
+        }
+        Err(MetalError::CommandBufferExecutionFailed("Timed out waiting for sparse buffer mapping updates".to_string()))
+    }
+
+    fn signal_pending(
+        &mut self,
+        cmd_queue: &ProtocolObject<dyn MTL4CommandQueue>,
+    ) {
+        self.pending_mapping_value += 1;
+        cmd_queue.signal_event_value(ProtocolObject::from_ref(&*self.mapping_event), self.pending_mapping_value);
     }
 }
 
