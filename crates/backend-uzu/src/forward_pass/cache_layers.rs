@@ -97,13 +97,17 @@ pub struct CacheLayersSlice<B: Backend> {
 }
 
 #[derive(Clone, Copy)]
+struct CacheEntryIndex {
+    index: usize,
+}
+
+#[derive(Clone, Copy)]
 enum LayerCacheBinding {
-    /// Indices into `entries`.
     Owned {
-        entry: usize,
+        entry: CacheEntryIndex,
     },
     Shared {
-        source: usize,
+        source: CacheEntryIndex,
     },
 }
 
@@ -247,7 +251,7 @@ impl<B: Backend> CacheLayers<B> {
                 },
             };
             bindings.push(LayerCacheBinding::Owned {
-                entry: entries.len(),
+                entry: CacheEntryIndex { index: entries.len() },
             });
             entries.push(layer);
         }
@@ -295,12 +299,12 @@ impl<B: Backend> CacheLayers<B> {
             LayerCacheBinding::Owned {
                 entry,
             } => LayerCacheAccess::Owned {
-                entry: &mut self.entries[entry],
+                entry: &mut self.entries[entry.index],
             },
             LayerCacheBinding::Shared {
                 source,
             } => LayerCacheAccess::Shared {
-                source: &self.entries[source],
+                source: &self.entries[source.index],
             },
         }
     }
@@ -309,7 +313,7 @@ impl<B: Backend> CacheLayers<B> {
         self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
             LayerCacheBinding::Owned {
                 entry,
-            } => Some((index, &self.entries[*entry])),
+            } => Some((index, &self.entries[entry.index])),
             LayerCacheBinding::Shared {
                 ..
             } => None,
