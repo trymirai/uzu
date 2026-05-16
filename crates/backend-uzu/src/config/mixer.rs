@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{AttentionConfig, ConfigDataType, DeltaNetAttentionConfig, Mamba2Config, ShortConvConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum MixerConfig {
     #[serde(rename = "AttentionConfig")]

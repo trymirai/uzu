@@ -1,14 +1,14 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{common::ConfigDataType, linear::LinearConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct SeparableCausalConvConfig {
     pub precision: ConfigDataType,
     pub has_biases: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct ShortConvConfig {
     pub in_projection_config: LinearConfig,
     pub conv_config: SeparableCausalConvConfig,

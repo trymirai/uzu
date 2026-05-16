@@ -1,8 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::DataType;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Copy, Clone)]
+#[derive(Eq, Copy)]
+#[uzu_config]
 #[serde(rename = "DataType")]
 #[serde(rename_all = "lowercase")]
 pub enum ConfigDataType {

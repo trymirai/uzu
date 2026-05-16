@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::config::{ClassifierConfig, MessageProcessorConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct ClassifierModelConfig {
     pub model_config: ClassifierConfig,
     pub message_processor_config: MessageProcessorConfig,

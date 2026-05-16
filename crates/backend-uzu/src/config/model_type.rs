@@ -1,6 +1,7 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Eq)]
+#[uzu_config]
 #[serde(rename_all = "snake_case")]
 pub enum ModelType {
     LanguageModel,
