@@ -1,9 +1,10 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::DataType;
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Copy, Eq)]
+#[uzu_config]
 #[serde(rename_all = "lowercase")]
 pub enum QuantizationMode {
     UINT4,

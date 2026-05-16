@@ -1,6 +1,6 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::{Float, ToPrimitive};
+use proc_macros::kernel;
 
 use crate::ArrayElement;
 
@@ -24,11 +24,14 @@ pub fn rms_norm<
     element_count: u32,
     epsilon: f32,
     scale_offset: f32,
+    post_layer_scalar: f32,
     #[specialize] in_place: bool,
     #[specialize] full_layer: bool,
     #[specialize] copy_to_shortcut: bool,
     #[specialize] residual_add: bool,
     #[specialize] use_hadamard: bool,
+    #[specialize] scale_residual_sum: bool,
+    #[specialize] scale_output: bool,
 ) {
     if use_hadamard {
         unimplemented!("not supported yet");
@@ -58,6 +61,9 @@ pub fn rms_norm<
                 let skip_ptr = unsafe { shortcut.unwrap().add(batch_offset + i) };
                 if residual_add {
                     val = val + unsafe { *skip_ptr };
+                    if scale_residual_sum {
+                        val = val * InputT::from(post_layer_scalar).unwrap();
+                    }
                 }
                 unsafe { *skip_ptr = val };
             }
@@ -85,6 +91,11 @@ pub fn rms_norm<
                 let normalized_out = OutputT::from(normalized).unwrap();
                 let scale_with_offset_out = OutputT::from(scale_val + scale_offset).unwrap();
                 normalized_out * scale_with_offset_out
+            };
+            let result = if scale_output {
+                result * OutputT::from(post_layer_scalar).unwrap()
+            } else {
+                result
             };
             unsafe { *output.add(batch_offset + i) = result };
         }

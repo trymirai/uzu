@@ -11,7 +11,8 @@ use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::DecoderConfig,
     encodable_block::{
-        Embedding, LayerArguments, LayerExecutables, QkUnpack, RMSNorm, Rope, embedding::EmbeddingError,
+        Embedding, LayerArguments, LayerExecutables, PostLayerScalar, QkUnpack, RMSNorm, Rope,
+        embedding::EmbeddingError,
     },
     forward_pass::{cache_layers::CacheLayers, state::SharedBuffers},
     parameters::ParameterTree,
@@ -145,6 +146,7 @@ impl<B: Backend> Decoder<B> {
             None,
             true,
             true,
+            PostLayerScalar::None,
         )
         .expect("Failed to create output RMS norm kernel");
 
