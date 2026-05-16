@@ -298,7 +298,7 @@ impl<B: Backend> Attention<B> {
             is_kv_cache_ring,
         };
 
-        let (keys, values) = if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
+        let mut attention_output = if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
             self.update_kv_cache_kernel.encode(
                 Some(&rotated_keys),
                 qkv,
@@ -312,35 +312,57 @@ impl<B: Backend> Attention<B> {
                 max_sequence_length as u32,
                 encoder,
             );
-            (&layer.keys, &layer.values)
+            self.encode_attention_variant(
+                variant,
+                &kernel_key,
+                queries,
+                &layer.keys,
+                &layer.values,
+                trie_allocation,
+                sinks_allocation,
+                gqa_factor,
+                sequence_length,
+                k_head_stride,
+                k_seq_stride,
+                v_head_stride,
+                v_seq_stride,
+                ring_params,
+                scale,
+                num_heads,
+                num_groups,
+                suffix_length,
+                segment_prefix_length,
+                max_sequence_length,
+                head_dim,
+                encoder,
+            )?
         } else {
-            (&rotated_keys, extracted_values.as_ref().expect("Missing extracted values for classifier attention"))
+            let values = extracted_values.as_ref().expect("Missing extracted values for classifier attention");
+            self.encode_attention_variant(
+                variant,
+                &kernel_key,
+                queries,
+                &rotated_keys,
+                values,
+                trie_allocation,
+                sinks_allocation,
+                gqa_factor,
+                sequence_length,
+                k_head_stride,
+                k_seq_stride,
+                v_head_stride,
+                v_seq_stride,
+                ring_params,
+                scale,
+                num_heads,
+                num_groups,
+                suffix_length,
+                segment_prefix_length,
+                max_sequence_length,
+                head_dim,
+                encoder,
+            )?
         };
-
-        let mut attention_output = self.encode_attention_variant(
-            variant,
-            &kernel_key,
-            queries,
-            keys,
-            values,
-            trie_allocation,
-            sinks_allocation,
-            gqa_factor,
-            sequence_length,
-            k_head_stride,
-            k_seq_stride,
-            v_head_stride,
-            v_seq_stride,
-            ring_params,
-            scale,
-            num_heads,
-            num_groups,
-            suffix_length,
-            segment_prefix_length,
-            max_sequence_length,
-            head_dim,
-            encoder,
-        )?;
 
         if let Some(gate_kernel) = &self.gate_kernel {
             let total_elements = (suffix_length * num_heads * head_dim) as u32;
