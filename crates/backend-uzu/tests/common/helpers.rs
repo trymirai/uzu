@@ -78,18 +78,28 @@ pub fn sparse_buffer_create_with<B: Backend, T: ArrayElement>(
     buffer
 }
 
-pub fn sparse_buffer_read<B: Backend, T: ArrayElement>(
+pub fn sparse_buffer_read_allocation<B: Backend>(
     context: &B::Context,
     buffer: &B::SparseBuffer,
-    elements_count: usize,
-) -> Vec<T> {
-    let mut allocation = alloc_allocation::<B, T>(context, elements_count);
-    let range = 0..allocation_size_bytes::<T>(elements_count);
+    size: usize,
+) -> Allocation<B> {
+    let mut allocation = alloc_allocation::<B, u8>(context, size);
+    let range = 0..size;
 
     let mut encoder = Encoder::new(context).expect("Failed to create encoder");
     encoder.encode_copy(buffer, range.clone(), &mut allocation, range.clone());
     submit_encoder(encoder);
 
+    allocation
+}
+
+pub fn sparse_buffer_read_vec<B: Backend, T: ArrayElement>(
+    context: &B::Context,
+    buffer: &B::SparseBuffer,
+    elements_count: usize,
+) -> Vec<T> {
+    let allocation =
+        sparse_buffer_read_allocation::<B>(context, buffer, elements_count * T::data_type().size_in_bytes());
     allocation_to_vec(&allocation)
 }
 

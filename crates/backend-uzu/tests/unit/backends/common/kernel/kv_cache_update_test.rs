@@ -89,11 +89,12 @@ fn test_random_pattern<B: Backend>(context: &B::Context) {
     let shape = [seq_len, num_heads, head_dim];
     let elements_count = shape.iter().product();
 
-    let key_values: Vec<f32> = common::helpers::sparse_buffer_read::<B, f32>(context, &key_buffer, elements_count);
+    let key_values: Vec<f32> = common::helpers::sparse_buffer_read_vec::<B, f32>(context, &key_buffer, elements_count);
     let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_values)
         .expect("Failed to convert key result to ndarray");
 
-    let value_values: Vec<f32> = common::helpers::sparse_buffer_read::<B, f32>(context, &value_buffer, elements_count);
+    let value_values: Vec<f32> =
+        common::helpers::sparse_buffer_read_vec::<B, f32>(context, &value_buffer, elements_count);
     let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_values)
         .expect("Failed to convert value result to ndarray");
 

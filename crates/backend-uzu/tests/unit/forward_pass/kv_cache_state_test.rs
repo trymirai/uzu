@@ -63,7 +63,7 @@ fn overwrite_sparse_buffer<B: Backend>(
     elements_count: usize,
     updates: &[(usize, f32)],
 ) {
-    let mut data: Vec<f32> = common::helpers::sparse_buffer_read::<B, f32>(context, buffer, elements_count);
+    let mut data: Vec<f32> = common::helpers::sparse_buffer_read_vec::<B, f32>(context, buffer, elements_count);
     for (index, value) in updates {
         data[*index] = *value;
     }
@@ -176,11 +176,11 @@ fn run_scenario<B: Backend>(
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
     let actual_keys: Vec<f32> =
-        common::helpers::sparse_buffer_read::<B, f32>(context, &layer.keys, expected_keys.len());
+        common::helpers::sparse_buffer_read_vec::<B, f32>(context, &layer.keys, expected_keys.len());
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
     let actual_values: Vec<f32> =
-        common::helpers::sparse_buffer_read::<B, f32>(context, &layer.values, expected_values.len());
+        common::helpers::sparse_buffer_read_vec::<B, f32>(context, &layer.values, expected_values.len());
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
 
     match &layer.state {
@@ -324,9 +324,10 @@ fn kv_cache_slice_apply_contiguous_window() {
     layer.apply_slice(&mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
-    let keys_after: Vec<f32> = common::helpers::sparse_buffer_read::<Metal, f32>(&context, &layer.keys, elements_count);
+    let keys_after: Vec<f32> =
+        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
     let values_after: Vec<f32> =
-        common::helpers::sparse_buffer_read::<Metal, f32>(&context, &layer.values, elements_count);
+        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for contiguous slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
@@ -362,9 +363,10 @@ fn kv_cache_slice_apply_wrap_window() {
     layer.apply_slice(&mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
-    let keys_after: Vec<f32> = common::helpers::sparse_buffer_read::<Metal, f32>(&context, &layer.keys, elements_count);
+    let keys_after: Vec<f32> =
+        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
     let values_after: Vec<f32> =
-        common::helpers::sparse_buffer_read::<Metal, f32>(&context, &layer.values, elements_count);
+        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for wrapped slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }
