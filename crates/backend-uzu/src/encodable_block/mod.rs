@@ -33,7 +33,7 @@ pub use pooling::Pooling;
 pub use prediction_head::ClassifierPredictionHead;
 pub use qk_unpack::QkUnpack;
 pub use qkv_norm::QKVNorm;
-pub use rms_norm::{RMSNorm, RMSNormError};
+pub use rms_norm::{PostLayerScalar, RMSNorm, RMSNormError};
 pub use rope::Rope;
 pub(crate) use sampling::SamplingInputs;
 pub use sampling::{Sampling, SamplingArguments};
