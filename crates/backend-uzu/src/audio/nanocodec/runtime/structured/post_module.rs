@@ -315,6 +315,7 @@ impl StructuredAudioCodecGraph {
                         sampling_start: 0,
                         sampling_length: batch_dim,
                         cache_layer: None,
+                        kv_source: None,
                         #[cfg(feature = "tracing")]
                         trace: None,
                     },

@@ -183,7 +183,25 @@ impl<B: Backend> Decoder<B> {
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
 
-            let cache_layer = cache_layers.as_deref_mut().map(|cache_layers| &mut cache_layers.data[layer.layer_index]);
+            // Resolve a KV-sharing source (Gemma 3n / Gemma 4). Source index is
+            // strictly less than this layer, so split_at_mut yields the source
+            // immutably (already written this step) and the sharer mutably.
+            let (cache_layer, kv_source) = match cache_layers.as_deref_mut() {
+                None => (None, None),
+                Some(cache_layers) => {
+                    let i = layer.layer_index;
+                    let source_index = cache_layers.data[i]
+                        .as_transformer()
+                        .and_then(|kv| kv.kv_source_layer);
+                    match source_index {
+                        None => (Some(&mut cache_layers.data[i]), None),
+                        Some(src) => {
+                            let (head, tail) = cache_layers.data.split_at_mut(i);
+                            (Some(&mut tail[0]), Some(&head[src]))
+                        },
+                    }
+                },
+            };
             main = layer
                 .encode(
                     LayerArguments {
@@ -196,6 +214,7 @@ impl<B: Backend> Decoder<B> {
                         sampling_start,
                         sampling_length,
                         cache_layer,
+                        kv_source,
                         #[cfg(feature = "tracing")]
                         trace: layer_trace,
                     },

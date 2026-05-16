@@ -41,12 +41,40 @@ pub const INVALID_POSITION: usize = i32::MAX as usize;
 
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
-    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub keys: Allocation<B>,
-    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub values: Allocation<B>,
+    /// [max_prefix_length + max_suffix_length, num_groups, head_dim].
+    /// `Some` for owners; `None` for sharers (they own no KV memory).
+    pub keys: Option<Allocation<B>>,
+    /// [max_prefix_length + max_suffix_length, num_groups, head_dim].
+    /// `Some` for owners; `None` for sharers (they own no KV memory).
+    pub values: Option<Allocation<B>>,
     pub shape: [usize; 3],
     pub data_type: DataType,
+    /// `Some(j)` => sharer reusing layer `j`'s KV cache read-only (Gemma 3n /
+    /// Gemma 4). Owners (`None`) own `keys`/`values`; sharers hold `None`.
+    pub kv_source_layer: Option<usize>,
+}
+
+impl<B: Backend> KVCacheLayer<B> {
+    pub fn is_owner(&self) -> bool {
+        self.kv_source_layer.is_none()
+    }
+
+    /// Owner KV buffers; unreachable for sharers (resolved via kv_source_layer).
+    pub fn keys(&self) -> &Allocation<B> {
+        self.keys.as_ref().expect("owner KV buffer; sharers resolve via kv_source_layer")
+    }
+
+    pub fn keys_mut(&mut self) -> &mut Allocation<B> {
+        self.keys.as_mut().expect("owner KV buffer; sharers resolve via kv_source_layer")
+    }
+
+    pub fn values(&self) -> &Allocation<B> {
+        self.values.as_ref().expect("owner KV buffer; sharers resolve via kv_source_layer")
+    }
+
+    pub fn values_mut(&mut self) -> &mut Allocation<B> {
+        self.values.as_mut().expect("owner KV buffer; sharers resolve via kv_source_layer")
+    }
 }
 
 fn copy_rows(
@@ -89,8 +117,8 @@ impl<B: Backend> KVCacheLayer<B> {
         let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
         let copy_size = row_count * row_size;
 
-        encoder.encode_copy(&self.keys, 0..copy_size, &mut destination.keys, 0..copy_size);
-        encoder.encode_copy(&self.values, 0..copy_size, &mut destination.values, 0..copy_size);
+        encoder.encode_copy(self.keys(), 0..copy_size, destination.keys_mut(), 0..copy_size);
+        encoder.encode_copy(self.values(), 0..copy_size, destination.values_mut(), 0..copy_size);
     }
 
     pub fn prefix_segment_length(&self) -> usize {
@@ -178,11 +206,12 @@ impl<B: Backend> KVCacheLayer<B> {
             return;
         }
 
+        let shape = self.shape;
         let mut layer_data = KVLayerData {
-            key_allocation: &mut self.keys,
-            key_shape: self.shape,
-            value_allocation: &mut self.values,
-            value_shape: self.shape,
+            key_allocation: self.keys.as_mut().expect("owner KV buffer"),
+            key_shape: shape,
+            value_allocation: self.values.as_mut().expect("owner KV buffer"),
+            value_shape: shape,
         };
 
         let _ =
@@ -238,8 +267,8 @@ impl<B: Backend> KVCacheLayer<B> {
                 let slice_shape = [len, num_groups, head_dim];
                 let mut slice_keys = context.create_array_uninitialized(&slice_shape, dtype);
                 let mut slice_values = context.create_array_uninitialized(&slice_shape, dtype);
-                let source_keys_bytes = allocation_as_bytes(&self.keys);
-                let source_values_bytes = allocation_as_bytes(&self.values);
+                let source_keys_bytes = allocation_as_bytes(self.keys());
+                let source_values_bytes = allocation_as_bytes(self.values());
 
                 let slots: Vec<usize> = (range.start..range.end)
                     .enumerate()
@@ -318,8 +347,10 @@ impl<B: Backend> KVCacheLayer<B> {
                 let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
                 let source_keys_bytes = keys.as_bytes();
                 let source_values_bytes = values.as_bytes();
-                let destination_keys_bytes = allocation_as_bytes_mut(&mut self.keys);
-                let destination_values_bytes = allocation_as_bytes_mut(&mut self.values);
+                let destination_keys_bytes =
+                    allocation_as_bytes_mut(self.keys.as_mut().expect("owner KV buffer"));
+                let destination_values_bytes =
+                    allocation_as_bytes_mut(self.values.as_mut().expect("owner KV buffer"));
                 match range {
                     None => {
                         *ring_offset = *base_ring_offset;

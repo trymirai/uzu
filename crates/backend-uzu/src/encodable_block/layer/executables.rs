@@ -325,6 +325,7 @@ impl<B: Backend> LayerExecutables<B> {
             sampling_start,
             sampling_length,
             mut cache_layer,
+            kv_source,
             #[cfg(feature = "tracing")]
             trace,
         } = args;
@@ -386,11 +387,14 @@ impl<B: Backend> LayerExecutables<B> {
                 let kv_cache_layer = cache_layer
                     .as_deref_mut()
                     .map(|layer| layer.as_transformer_mut().expect("Attention layer expects transformer cache"));
+                let kv_source = kv_source
+                    .map(|layer| layer.as_transformer().expect("kv_source must reference a transformer cache"));
                 let attention_output = attention.encode(
                     AttentionArguments {
                         token_subtrie_ranges,
                         attention_sinks,
                         kv_cache_layer,
+                        kv_source,
                     },
                     &qkv,
                     &queries,
@@ -520,6 +524,8 @@ pub struct LayerArguments<'a, B: Backend> {
     pub sampling_start: usize,
     pub sampling_length: usize,
     pub cache_layer: Option<&'a mut CacheLayer<B>>,
+    /// Resolved owner cache layer when this layer shares KV (Gemma 3n / 4).
+    pub kv_source: Option<&'a CacheLayer<B>>,
     #[cfg(feature = "tracing")]
     pub trace: Option<&'a mut LayerActivationTrace<B>>,
 }
