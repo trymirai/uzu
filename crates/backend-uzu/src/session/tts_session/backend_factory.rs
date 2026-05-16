@@ -51,10 +51,7 @@ pub(super) fn build_text_decoder_backend<B: Backend>(
     options: &TtsSessionOptions,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
     match &tts_model_config.tts_config.text_decoder_config {
-        TtsTextDecoderConfig::FishAudioTextDecoderConfig {
-            config,
-        } => {
-            fishaudio::validate_fishaudio_message_processor_config(&tts_model_config.message_processor_config)?;
+        TtsTextDecoderConfig::FishAudio(config) => {
             fishaudio::build_fishaudio_text_decoder_runtime(config, audio, model_path, &options.text_decoder)
         },
     }
