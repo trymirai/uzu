@@ -8,9 +8,9 @@ use crate::{
 };
 
 pub struct KVLayerData<'a, B: Backend> {
-    pub key_allocation: &'a mut B::SparseBuffer,
+    pub key_buffer: &'a mut B::SparseBuffer,
     pub key_shape: [usize; 3],
-    pub value_allocation: &'a mut B::SparseBuffer,
+    pub value_buffer: &'a mut B::SparseBuffer,
     pub value_shape: [usize; 3],
 }
 
@@ -80,8 +80,8 @@ impl<B: Backend> KVCacheUpdate<B> {
             // non-inline is not supported yet (and is broken anyways due to a data race)
             for swaps_chunk in swaps.chunks(max_inline_swaps) {
                 self.kernel.encode(
-                    &mut *layer_data.key_allocation,
-                    &mut *layer_data.value_allocation,
+                    &mut *layer_data.key_buffer,
+                    &mut *layer_data.value_buffer,
                     swaps_chunk,
                     swaps_chunk.len() as u32,
                     num_heads as u32,

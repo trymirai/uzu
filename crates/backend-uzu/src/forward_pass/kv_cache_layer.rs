@@ -179,9 +179,9 @@ impl<B: Backend> KVCacheLayer<B> {
         }
 
         let mut layer_data = KVLayerData {
-            key_allocation: &mut self.keys,
+            key_buffer: &mut self.keys,
             key_shape: self.shape,
-            value_allocation: &mut self.values,
+            value_buffer: &mut self.values,
             value_shape: self.shape,
         };
 

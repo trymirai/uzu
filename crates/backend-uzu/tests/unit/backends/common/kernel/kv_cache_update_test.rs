@@ -70,9 +70,9 @@ fn test_random_pattern<B: Backend>(context: &B::Context) {
     let mut encoder = Encoder::<B>::new(context).unwrap();
     {
         let mut kv_layers = [KVLayerData::<B> {
-            key_allocation: &mut key_buffer,
+            key_buffer: &mut key_buffer,
             key_shape: [seq_len, num_heads, head_dim],
-            value_allocation: &mut value_buffer,
+            value_buffer: &mut value_buffer,
             value_shape: [seq_len, num_heads, head_dim],
         }];
         match kv_cache_update.encode(&mut kv_layers, &source_indices, &destination_indices, &mut encoder) {
