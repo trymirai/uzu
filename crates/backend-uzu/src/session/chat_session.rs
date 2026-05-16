@@ -27,7 +27,6 @@ use crate::{
         parameter::{ConfigResolvableValue, ContextMode},
         types::{Error, FinishReason, Input, Output, RunStats, Stats, StepStats, TotalStats},
     },
-    utils::strict_serde::from_reader_strict,
 };
 
 fn nanos_to_secs(nanos: u64) -> f64 {
@@ -84,11 +83,11 @@ impl ChatSession {
             return Err(Error::UnableToLoadConfig);
         }
         let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata<LanguageModelConfig> = from_reader_strict(BufReader::new(config_file))
+        let model_metadata: ModelMetadata<LanguageModelConfig> = serde_json::from_reader(BufReader::new(config_file))
             .map_err(|err| {
-                eprintln!("Failed to parse config.json: {err}");
-                Error::UnableToLoadConfig
-            })?;
+            eprintln!("Failed to parse config.json: {err}");
+            Error::UnableToLoadConfig
+        })?;
 
         let layers = &model_metadata.model_config.model_config.transformer_config.layer_configs;
         let has_non_attention_mixer =

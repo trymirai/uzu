@@ -1,4 +1,5 @@
 mod dsl;
+mod uzu_config;
 mod uzu_test;
 
 use proc_macro::TokenStream;
@@ -9,6 +10,14 @@ pub fn kernel(
     input: TokenStream,
 ) -> TokenStream {
     dsl::kernel(args, input)
+}
+
+#[proc_macro_attribute]
+pub fn uzu_config(
+    args: TokenStream,
+    input: TokenStream,
+) -> TokenStream {
+    uzu_config::uzu_config(args, input)
 }
 
 #[proc_macro_attribute]

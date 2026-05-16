@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{linear::LinearConfig, short_conv::SeparableCausalConvConfig};
 use crate::backends::common::ActivationConfig;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct Mamba2Config {
     pub in_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,

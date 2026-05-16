@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::ModelType;
 use crate::backends::common::gpu_types::QuantizationMode;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct ModelMetadata<T> {
     pub toolchain_version: String,
     pub vendor: String,
