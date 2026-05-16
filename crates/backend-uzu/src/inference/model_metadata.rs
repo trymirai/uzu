@@ -1,9 +1,8 @@
 use std::{fs::File, io::BufReader, path::Path};
 
-use serde::de::IgnoredAny;
 use shoji::types::model::ModelSpecialization;
 
-use crate::config::{ModelMetadata as InnerModelMetadata, ModelType};
+use crate::config::{ModelConfig, ModelMetadata as InnerModelMetadata, ModelType};
 
 pub struct ModelMetadata {
     pub toolchain_version: String,
@@ -13,7 +12,7 @@ pub struct ModelMetadata {
 pub fn resolve_model_metadata(model_path: &Path) -> Option<ModelMetadata> {
     let config_path = model_path.join("config.json");
     let file = File::open(&config_path).ok()?;
-    let metadata: InnerModelMetadata<IgnoredAny> = serde_json::from_reader(BufReader::new(file)).ok()?;
+    let metadata: InnerModelMetadata<ModelConfig> = serde_json::from_reader(BufReader::new(file)).ok()?;
     let specialization = match metadata.model_type {
         ModelType::LanguageModel => ModelSpecialization::Chat {},
         ModelType::ClassifierModel => ModelSpecialization::Classification {},

@@ -1,74 +1,45 @@
-use std::collections::BTreeMap;
 #[cfg(metal_backend)]
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-use super::{EmbeddingConfig, EmbeddingConfigCommon, LinearConfig, TransformerConfig};
-use crate::ConfigDataType;
+use super::{EmbeddingConfig, EmbeddingConfigCommon, NormalizationConfig, TransformerConfig};
+use crate::{ConfigDataType, backends::common::ActivationConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TtsMessageProcessorConfig {
     pub prompt_template: String,
-    #[serde(default = "default_drop_initial_newline")]
     pub drop_initial_newline: bool,
-    #[serde(default = "default_system_role_name")]
-    pub system_role_name: String,
-    #[serde(default = "default_user_role_name")]
-    pub user_role_name: String,
-    #[serde(default = "default_assistant_role_name")]
-    pub assistant_role_name: String,
-    #[serde(default = "default_tts_message_fields")]
-    pub default_message_fields: BTreeMap<String, String>,
 }
 
-fn default_drop_initial_newline() -> bool {
-    true
-}
-
-fn default_system_role_name() -> String {
-    String::from("system")
-}
-
-fn default_user_role_name() -> String {
-    String::from("user")
-}
-
-fn default_assistant_role_name() -> String {
-    String::from("assistant")
-}
-
-fn default_tts_message_fields() -> BTreeMap<String, String> {
-    BTreeMap::new()
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TtsConfig {
     pub text_decoder_config: TtsTextDecoderConfig,
     pub audio_decoder_config: TtsAudioDecoderConfig,
-    #[serde(default)]
-    pub activation_precision: Option<ConfigDataType>,
+    pub vocoder_config: NoopVocoderConfig,
+    pub activation_precision: ConfigDataType,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
+pub struct NoopVocoderConfig {}
+
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum TtsTextDecoderConfig {
-    FishAudioTextDecoderConfig {
-        #[serde(flatten)]
-        config: FishAudioTextDecoderConfig,
-    },
+    #[serde(rename = "FishAudioTextDecoderConfig")]
+    FishAudio(FishAudioTextDecoderConfig),
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct FishAudioTextDecoderConfig {
-    pub slow_embeddings_config: FishAudioEmbeddingConfig,
+    pub slow_embeddings_config: TiedEmbeddingConfig,
     pub slow_model_config: TransformerConfig,
-    pub slow_readout_config: FishAudioLinearConfig,
-    pub fast_embeddings_config: FishAudioEmbeddingConfig,
+    pub slow_readout_config: FullPrecisionLinearConfig,
+    pub fast_embeddings_config: TiedEmbeddingConfig,
     pub fast_model_config: TransformerConfig,
-    pub fast_readout_config: FishAudioLinearConfig,
-    pub codebook_embeddings_config: FishAudioEmbeddingConfig,
-    pub fast_model_projection_config: Option<FishAudioLinearConfig>,
+    pub fast_readout_config: FullPrecisionLinearConfig,
+    pub codebook_embeddings_config: TiedEmbeddingConfig,
+    pub fast_model_projection_config: Option<FullPrecisionLinearConfig>,
     pub semantic_token_begin_id: i64,
     pub semantic_token_end_id: i64,
     pub im_end_token_id: i64,
@@ -79,90 +50,41 @@ pub struct FishAudioTextDecoderConfig {
     pub num_codebooks: usize,
     pub max_seq_len: usize,
     pub scale_codebook_embeddings: bool,
-    #[serde(default)]
-    pub precision: Option<ConfigDataType>,
+    pub precision: ConfigDataType,
     pub short_logits_size: usize,
     pub repeat_window_size: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(untagged)]
-pub enum FishAudioLinearConfig {
-    Tagged(LinearConfig),
-    UntaggedFullPrecision {
-        #[serde(rename = "precision")]
-        precision: ConfigDataType,
-    },
+#[uzu_config]
+pub struct FullPrecisionLinearConfig {
+    pub precision: ConfigDataType,
 }
 
-impl FishAudioLinearConfig {
-    pub fn is_full_precision(&self) -> bool {
-        matches!(
-            self,
-            FishAudioLinearConfig::Tagged(LinearConfig::FullPrecision { .. })
-                | FishAudioLinearConfig::UntaggedFullPrecision { .. }
-        )
-    }
+#[uzu_config]
+pub struct TiedEmbeddingConfig {
+    #[serde(flatten)]
+    pub common: EmbeddingConfigCommon,
+    pub precision: ConfigDataType,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(untagged)]
-pub enum FishAudioEmbeddingConfig {
-    Tagged(EmbeddingConfig),
-    UntaggedFullPrecision {
-        input_scale: Option<f32>,
-        logit_soft_cap: Option<f32>,
-        precision: ConfigDataType,
-    },
-}
-
-impl FishAudioEmbeddingConfig {
-    pub fn to_embedding_config(&self) -> EmbeddingConfig {
-        match self {
-            FishAudioEmbeddingConfig::Tagged(config) => config.clone(),
-            FishAudioEmbeddingConfig::UntaggedFullPrecision {
-                input_scale,
-                logit_soft_cap,
-                precision,
-            } => EmbeddingConfig::Tied {
-                common: EmbeddingConfigCommon {
-                    input_scale: *input_scale,
-                    logit_soft_cap: *logit_soft_cap,
-                },
-                precision: *precision,
-            },
-        }
-    }
-
+impl TiedEmbeddingConfig {
     #[cfg(metal_backend)]
     pub(crate) fn to_text_decoder_embedding_config(&self) -> EmbeddingConfig {
-        match self {
-            FishAudioEmbeddingConfig::Tagged(config) => config.clone(),
-            FishAudioEmbeddingConfig::UntaggedFullPrecision {
-                input_scale,
-                logit_soft_cap,
-                precision,
-            } => EmbeddingConfig::Untied {
-                common: EmbeddingConfigCommon {
-                    input_scale: *input_scale,
-                    logit_soft_cap: *logit_soft_cap,
-                },
-                precision: *precision,
-            },
+        EmbeddingConfig::Untied {
+            common: self.common.clone(),
+            precision: self.precision,
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum TtsAudioDecoderConfig {
-    DescriptAudioCodecConfig {
-        #[serde(flatten)]
-        config: DescriptAudioCodecConfig,
-    },
+    #[serde(rename = "DescriptAudioCodecConfig")]
+    DescriptAudioCodec(DescriptAudioCodecConfig),
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct DescriptAudioCodecConfig {
     pub precision: ConfigDataType,
     pub quantizer_config: DescriptAudioQuantizerConfig,
@@ -180,8 +102,7 @@ pub struct DescriptAudioCodecConfig {
     pub semantic_codebook_size: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+#[uzu_config]
 pub struct DescriptAudioDacDecoderConfig {
     pub precision: ConfigDataType,
     pub conv_config: DescriptAudioCausalConv1dConfig,
@@ -190,8 +111,7 @@ pub struct DescriptAudioDacDecoderConfig {
     pub causal: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+#[uzu_config]
 pub struct DescriptAudioDacDecoderBlockConfig {
     pub precision: ConfigDataType,
     pub snake_config: DescriptAudioSnake1dConfig,
@@ -200,8 +120,7 @@ pub struct DescriptAudioDacDecoderBlockConfig {
     pub causal: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+#[uzu_config]
 pub struct DescriptAudioResidualUnitConfig {
     pub precision: ConfigDataType,
     pub snake_config: DescriptAudioSnake1dConfig,
@@ -209,59 +128,67 @@ pub struct DescriptAudioResidualUnitConfig {
     pub causal: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+#[uzu_config]
 pub struct DescriptAudioCausalConv1dConfig {
     pub precision: ConfigDataType,
     pub has_biases: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+#[uzu_config]
 pub struct DescriptAudioCausalTransposeConv1dConfig {
     pub precision: ConfigDataType,
     pub has_biases: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+#[uzu_config]
 pub struct DescriptAudioSnake1dConfig {
     pub precision: ConfigDataType,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct DescriptAudioQuantizerConfig {
-    #[serde(default)]
-    pub precision: Option<ConfigDataType>,
+    pub precision: ConfigDataType,
+    pub semantic_quantizer_config: DescriptAudioResidualVectorQuantizeConfig,
+    pub quantizer_config: DescriptAudioResidualVectorQuantizeConfig,
     pub post_module_config: TransformerConfig,
     pub upsampler_config: DescriptAudioUpsamplerConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
+pub struct DescriptAudioResidualVectorQuantizeConfig {
+    pub precision: ConfigDataType,
+    pub vq_config: DescriptAudioVectorQuantizeConfig,
+}
+
+#[uzu_config]
+pub struct DescriptAudioVectorQuantizeConfig {
+    pub precision: ConfigDataType,
+    pub codebook_config: TiedEmbeddingConfig,
+    pub out_proj_config: FullPrecisionLinearConfig,
+}
+
+#[uzu_config]
 pub struct DescriptAudioUpsamplerConfig {
     pub block_configs: Vec<DescriptAudioUpsamplingBlockConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct DescriptAudioUpsamplingBlockConfig {
+    pub precision: ConfigDataType,
+    pub trans_conv_config: DescriptAudioCausalTransposeConv1dConfig,
     pub convnext_config: DescriptAudioConvNeXtConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct DescriptAudioConvNeXtConfig {
-    pub norm_config: DescriptAudioConvNeXtNormConfig,
+    pub precision: ConfigDataType,
+    pub activation: ActivationConfig,
+    pub dwconv_config: DescriptAudioCausalConv1dConfig,
+    pub norm_config: NormalizationConfig,
+    pub pwconv_config: FullPrecisionLinearConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct DescriptAudioConvNeXtNormConfig {
-    pub epsilon: f32,
-    #[serde(default)]
-    pub subtract_mean: bool,
-    #[serde(default)]
-    pub use_bias: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TtsModelConfig {
     pub tts_config: TtsConfig,
     pub message_processor_config: TtsMessageProcessorConfig,

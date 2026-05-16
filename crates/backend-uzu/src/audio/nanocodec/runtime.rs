@@ -22,8 +22,8 @@ use crate::{
         },
     },
     config::{
-        ConfigDataType, DecoderConfig, DescriptAudioCodecConfig, DescriptAudioConvNeXtNormConfig, EmbeddingConfig,
-        EmbeddingConfigCommon, TtsAudioDecoderConfig, TtsConfig,
+        ConfigDataType, DecoderConfig, DescriptAudioCodecConfig, EmbeddingConfig, EmbeddingConfigCommon,
+        NormalizationConfig, TtsAudioDecoderConfig, TtsConfig,
     },
     encodable_block::{Decoder, LayerExecutables, RMSNorm},
     forward_pass::{model_shape::ModelShape, state::SharedBuffers},
