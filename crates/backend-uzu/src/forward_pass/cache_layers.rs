@@ -88,11 +88,34 @@ impl<B: Backend> CacheLayer<B> {
 pub struct CacheLayers<B: Backend> {
     max_suffix_length: usize,
     max_prefix_length: usize,
-    pub data: Box<[CacheLayer<B>]>,
+    entries: Box<[CacheLayer<B>]>,
+    bindings: Box<[LayerCacheBinding]>,
 }
 
 pub struct CacheLayersSlice<B: Backend> {
     pub layers: Vec<CacheLayerSlice<B>>,
+}
+
+#[derive(Clone, Copy)]
+struct CacheEntryIndex(usize);
+
+#[derive(Clone, Copy)]
+enum LayerCacheBinding {
+    OwnCache {
+        entry: CacheEntryIndex,
+    },
+    SharedKvSource {
+        source: CacheEntryIndex,
+    },
+}
+
+pub enum LayerCacheAccess<'a, B: Backend> {
+    OwnCache {
+        entry: &'a mut CacheLayer<B>,
+    },
+    SharedKvSource {
+        source: &'a CacheLayer<B>,
+    },
 }
 
 impl<B: Backend> CacheLayers<B> {
@@ -106,11 +129,45 @@ impl<B: Backend> CacheLayers<B> {
 
         let kv_source_layers = model_shape.kv_source_layers();
 
-        let mut data: Box<[CacheLayer<B>]> = model_shape
-            .layer_mixers()
-            .iter()
-            .enumerate()
-            .map(|(layer_index, mixer)| match mixer {
+        let mut entries: Vec<CacheLayer<B>> = Vec::with_capacity(model_shape.layer_mixers().len());
+        let mut bindings: Vec<LayerCacheBinding> = Vec::with_capacity(model_shape.layer_mixers().len());
+        for (layer_index, mixer) in model_shape.layer_mixers().iter().enumerate() {
+            if let Some(source_layer_index) = kv_source_layers.get(layer_index).copied().flatten() {
+                assert!(
+                    source_layer_index < layer_index,
+                    "kv_source_layer ({source_layer_index}) must be strictly less than the sharer index ({layer_index})"
+                );
+                assert!(
+                    kv_source_layers.get(source_layer_index).copied().flatten().is_none(),
+                    "kv_source_layer source {source_layer_index} must itself be an owner (no chained sharing)"
+                );
+                let MixerConfig::Attention(source_attention) = &model_shape.layer_mixers()[source_layer_index] else {
+                    panic!("kv_source_layer {source_layer_index} must reference an attention layer");
+                };
+                let MixerConfig::Attention(attention) = mixer else {
+                    panic!("kv_source_layer set on a non-attention layer {layer_index}");
+                };
+                assert_eq!(
+                    (source_attention.num_groups, source_attention.head_dim),
+                    (attention.num_groups, attention.head_dim),
+                    "KV cache sharing requires identical [num_groups, head_dim]"
+                );
+                assert_eq!(
+                    source_attention.sliding_window_size, attention.sliding_window_size,
+                    "KV cache sharing requires identical sliding-window length"
+                );
+                let LayerCacheBinding::OwnCache {
+                    entry: source_entry,
+                } = bindings[source_layer_index] else {
+                    unreachable!("kv_source validation rejects chained sharing");
+                };
+                bindings.push(LayerCacheBinding::SharedKvSource {
+                    source: source_entry,
+                });
+                continue;
+            }
+
+            let layer = match mixer {
                 MixerConfig::Attention(attn) => {
                     let sliding_window = attn.sliding_window_size;
                     let length = sliding_window.unwrap_or(max_prefix_length);
@@ -129,60 +186,18 @@ impl<B: Backend> CacheLayers<B> {
                             prefix_len: 0,
                         }
                     };
-                    let kv_source_layer = kv_source_layers.get(layer_index).copied().flatten();
-                    if let Some(source) = kv_source_layer {
-                        // Sharer (Gemma 3n / Gemma 4): owns no KV; attention
-                        // resolves the source owner's buffers at the read site.
-                        // Source must precede the sharer (its K/V for this step
-                        // is written first) and itself be an owner.
-                        assert!(
-                            source < layer_index,
-                            "kv_source_layer ({source}) must be strictly less than the sharer index ({layer_index})"
-                        );
-                        assert!(
-                            kv_source_layers.get(source).copied().flatten().is_none(),
-                            "kv_source_layer source {source} must itself be an owner (no chained sharing)"
-                        );
-                        let MixerConfig::Attention(src) = &model_shape.layer_mixers()[source] else {
-                            panic!("kv_source_layer {source} must reference an attention layer");
-                        };
-                        assert_eq!(
-                            (src.num_groups, src.head_dim),
-                            (attn.num_groups, attn.head_dim),
-                            "KV cache sharing requires identical [num_groups, head_dim]"
-                        );
-                        assert_eq!(
-                            src.sliding_window_size, attn.sliding_window_size,
-                            "KV cache sharing requires identical sliding-window length"
-                        );
-                    }
-                    // Sharers own no KV memory (resolve the source owner's
-                    // buffers at the read site); owners allocate the real one.
-                    let (keys, values) = if kv_source_layer.is_some() {
-                        (None, None)
-                    } else {
-                        let kv_bytes = size_for_shape(&shape, model_shape.kv_cache_data_type());
-                        (
-                            Some(
-                                context
-                                    .create_allocation(kv_bytes, AllocationType::Global)
-                                    .expect("Failed to create kv keys allocation"),
-                            ),
-                            Some(
-                                context
-                                    .create_allocation(kv_bytes, AllocationType::Global)
-                                    .expect("Failed to create kv values allocation"),
-                            ),
-                        )
-                    };
+                    let kv_bytes = size_for_shape(&shape, model_shape.kv_cache_data_type());
 
                     CacheLayer::Transformer(KVCacheLayer {
-                        state: state.clone(),
-                        keys,
-                        values,
+                        state,
+                        keys: context
+                            .create_allocation(kv_bytes, AllocationType::Global)
+                            .expect("Failed to create kv keys allocation"),
+                        values: context
+                            .create_allocation(kv_bytes, AllocationType::Global)
+                            .expect("Failed to create kv values allocation"),
                         shape,
                         data_type: model_shape.kv_cache_data_type(),
-                        kv_source_layer,
                     })
                 },
                 MixerConfig::Mamba(c) => {
@@ -247,19 +262,21 @@ impl<B: Backend> CacheLayers<B> {
                         data_type: dtype,
                     })
                 },
-            })
-            .collect();
+            };
+            bindings.push(LayerCacheBinding::OwnCache {
+                entry: CacheEntryIndex(entries.len()),
+            });
+            entries.push(layer);
+        }
+        let mut entries = entries.into_boxed_slice();
+        let bindings = bindings.into_boxed_slice();
 
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
-        for layer in data.iter_mut() {
+        for layer in entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
-                    // Sharers own no buffers; the owner fills the real one.
-                    if !layer.is_owner() {
-                        continue;
-                    }
-                    encoder.encode_fill(layer.keys_mut(), 0);
-                    encoder.encode_fill(layer.values_mut(), 0);
+                    encoder.encode_fill(&mut layer.keys, 0);
+                    encoder.encode_fill(&mut layer.values, 0);
                 },
                 CacheLayer::StateSpace(layer) => {
                     if let Some(conv_state) = layer.conv_state.as_mut() {
@@ -282,8 +299,52 @@ impl<B: Backend> CacheLayers<B> {
         Self {
             max_suffix_length,
             max_prefix_length,
-            data,
+            entries,
+            bindings,
         }
+    }
+
+    pub fn cache_for_layer(
+        &mut self,
+        layer_index: usize,
+    ) -> LayerCacheAccess<'_, B> {
+        match self.bindings[layer_index] {
+            LayerCacheBinding::OwnCache {
+                entry,
+            } => LayerCacheAccess::OwnCache {
+                entry: &mut self.entries[entry.0],
+            },
+            LayerCacheBinding::SharedKvSource {
+                source,
+            } => LayerCacheAccess::SharedKvSource {
+                source: &self.entries[source.0],
+            },
+        }
+    }
+
+    pub fn layer(
+        &self,
+        layer_index: usize,
+    ) -> Option<&CacheLayer<B>> {
+        match self.bindings[layer_index] {
+            LayerCacheBinding::OwnCache {
+                entry,
+            } => Some(&self.entries[entry.0]),
+            LayerCacheBinding::SharedKvSource {
+                ..
+            } => None,
+        }
+    }
+
+    pub fn iter_layers(&self) -> impl Iterator<Item = (usize, &CacheLayer<B>)> {
+        self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
+            LayerCacheBinding::OwnCache {
+                entry,
+            } => Some((index, &self.entries[entry.0])),
+            LayerCacheBinding::SharedKvSource {
+                ..
+            } => None,
+        })
     }
 
     pub fn clear(
@@ -291,9 +352,9 @@ impl<B: Backend> CacheLayers<B> {
         context: &B::Context,
     ) {
         let mut encoder: Option<Encoder<B>> = None;
-        for layer in self.data.iter_mut() {
+        for layer in self.entries.iter_mut() {
             match layer {
-                CacheLayer::Transformer(layer) if layer.is_owner() => match &mut layer.state {
+                CacheLayer::Transformer(layer) => match &mut layer.state {
                     KVCacheLayerState::Full {
                         prefix_len,
                     } => {
@@ -308,8 +369,6 @@ impl<B: Backend> CacheLayers<B> {
                         *ring_length = 0;
                     },
                 },
-                // Sharers own no state; their owner is cleared separately.
-                CacheLayer::Transformer(_) => {},
                 CacheLayer::StateSpace(layer) => {
                     let encoder = encoder
                         .get_or_insert_with(|| Encoder::new(context).expect("Failed to create cache clear encoder"));
@@ -354,12 +413,9 @@ impl<B: Backend> CacheLayers<B> {
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
-        for layer in self.data.iter_mut() {
+        for layer in self.entries.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                // Sharers own no KV; the owner's acceptance is handled separately.
-                if layer.is_owner() {
-                    layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
-                }
+                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
             } else if let Some(layer) = layer.as_short_conv_mut() {
                 layer.commit_from_suffix_state_if_valid(short_conv_commit_index, encoder);
             }
@@ -370,12 +426,9 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         number_of_accepted_tokens: usize,
     ) {
-        for layer in self.data.iter_mut() {
+        for layer in self.entries.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                // Sharers own no state; the owner advances separately.
-                if layer.is_owner() {
-                    layer.register_accepted_tokens(number_of_accepted_tokens);
-                }
+                layer.register_accepted_tokens(number_of_accepted_tokens);
             }
         }
     }
@@ -385,17 +438,10 @@ impl<B: Backend> CacheLayers<B> {
         context: &B::Context,
         range: std::ops::Range<usize>,
     ) -> Option<CacheLayersSlice<B>> {
-        let mut layers = Vec::with_capacity(self.data.len());
-        for layer in self.data.iter() {
+        let mut layers = Vec::with_capacity(self.entries.len());
+        for layer in self.entries.iter() {
             match layer {
                 CacheLayer::Transformer(kv) => {
-                    // Sharers own no state; placeholder slice, skipped on apply.
-                    if !kv.is_owner() {
-                        layers.push(CacheLayerSlice::Transformer(KVSlice::Full {
-                            base_prefix_len: 0,
-                        }));
-                        continue;
-                    }
                     let Some(slice) = kv.slice(context, range.clone()) else {
                         return None;
                     };
@@ -417,13 +463,10 @@ impl<B: Backend> CacheLayers<B> {
         slice: &CacheLayersSlice<B>,
         range: Option<std::ops::Range<usize>>,
     ) {
-        for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
+        for (layer, snapshot) in self.entries.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
-                    // Sharers own no state; their owner is restored separately.
-                    if kv.is_owner() {
-                        kv.apply_slice(&s, range.clone());
-                    }
+                    kv.apply_slice(&s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
@@ -449,15 +492,11 @@ impl<B: Backend> CacheLayers<B> {
         source: &Self,
         context: &B::Context,
     ) {
-        assert_eq!(source.data.len(), self.data.len(), "cache layer count mismatch");
+        assert_eq!(source.entries.len(), self.entries.len(), "cache layer count mismatch");
 
-        for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
+        for (source_layer, destination_layer) in source.entries.iter().zip(self.entries.iter_mut()) {
             match (source_layer, destination_layer) {
                 (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
-                    // Sharers own no state; their owner is copied separately.
-                    if !source.is_owner() {
-                        continue;
-                    }
                     let copy_rows = source.prefix_segment_length();
                     if copy_rows > 0 && matches!(source.state, KVCacheLayerState::Windowed { .. }) {
                         let slice = source.slice(context, 0..copy_rows).expect("Failed to slice KV cache layer");
@@ -480,15 +519,11 @@ impl<B: Backend> CacheLayers<B> {
         source: &Self,
         encoder: &mut Encoder<B>,
     ) {
-        assert_eq!(source.data.len(), self.data.len(), "cache layer count mismatch");
+        assert_eq!(source.entries.len(), self.entries.len(), "cache layer count mismatch");
 
-        for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
+        for (source_layer, destination_layer) in source.entries.iter().zip(self.entries.iter_mut()) {
             match (source_layer, destination_layer) {
                 (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
-                    // Sharers own no buffers; their owner is copied separately.
-                    if !source.is_owner() {
-                        continue;
-                    }
                     if matches!(source.state, KVCacheLayerState::Full { .. }) {
                         source.encode_copy_prefix_rows_to(destination, source.prefix_segment_length(), encoder);
                     }
@@ -520,38 +555,29 @@ impl<B: Backend> CacheLayers<B> {
         context: &B::Context,
     ) -> Self {
         let mut max_prefix_capacity_across_layers = 0usize;
-        let mut data: Box<[CacheLayer<B>]> = self
-            .data
+        let mut entries: Box<[CacheLayer<B>]> = self
+            .entries
             .iter()
             .map(|layer| match layer {
                 CacheLayer::Transformer(layer) => {
-                    let [_, num_groups, head_dim] = layer.shape;
+                    let shape = layer.shape;
+                    let [_, num_groups, head_dim] = shape;
                     let dtype = layer.data_type;
-                    // Sharers own no buffers (keys/values stay None); only
-                    // owners contribute to the prefix capacity / get resized.
-                    let (new_shape, new_keys, new_values) = if layer.is_owner() {
-                        let copy_rows = layer.prefix_segment_length();
-                        if copy_rows > max_prefix_capacity_across_layers {
-                            max_prefix_capacity_across_layers = copy_rows;
-                        }
-                        let s = [copy_rows + self.max_suffix_length, num_groups, head_dim];
-                        let new_bytes = size_for_shape(&s, dtype);
-                        (
-                            s,
-                            Some(
-                                context
-                                    .create_allocation(new_bytes, AllocationType::Global)
-                                    .expect("Failed to create kv keys clone allocation"),
-                            ),
-                            Some(
-                                context
-                                    .create_allocation(new_bytes, AllocationType::Global)
-                                    .expect("Failed to create kv values clone allocation"),
-                            ),
-                        )
-                    } else {
-                        (layer.shape, None, None)
-                    };
+                    let copy_rows = layer.prefix_segment_length();
+
+                    let new_total_len = copy_rows + self.max_suffix_length;
+                    if copy_rows > max_prefix_capacity_across_layers {
+                        max_prefix_capacity_across_layers = copy_rows;
+                    }
+
+                    let new_shape = [new_total_len, num_groups, head_dim];
+                    let new_bytes = size_for_shape(&new_shape, dtype);
+                    let new_keys = context
+                        .create_allocation(new_bytes, AllocationType::Global)
+                        .expect("Failed to create kv keys clone allocation");
+                    let new_values = context
+                        .create_allocation(new_bytes, AllocationType::Global)
+                        .expect("Failed to create kv values clone allocation");
 
                     CacheLayer::Transformer(KVCacheLayer {
                         state: layer.state.clone(),
@@ -559,7 +585,6 @@ impl<B: Backend> CacheLayers<B> {
                         values: new_values,
                         shape: new_shape,
                         data_type: dtype,
-                        kv_source_layer: layer.kv_source_layer,
                     })
                 },
                 CacheLayer::StateSpace(layer) => {
@@ -624,15 +649,11 @@ impl<B: Backend> CacheLayers<B> {
             .collect();
 
         let mut zero_encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache clone zero encoder");
-        for layer in data.iter_mut() {
+        for layer in entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
-                    // Sharers own no buffers; the owner zero-fills the real one.
-                    if !layer.is_owner() {
-                        continue;
-                    }
-                    zero_encoder.encode_fill(layer.keys_mut(), 0);
-                    zero_encoder.encode_fill(layer.values_mut(), 0);
+                    zero_encoder.encode_fill(&mut layer.keys, 0);
+                    zero_encoder.encode_fill(&mut layer.values, 0);
                 },
                 CacheLayer::ShortConv(layer) => {
                     zero_encoder.encode_fill(&mut layer.suffix_state, 0);
@@ -645,7 +666,8 @@ impl<B: Backend> CacheLayers<B> {
         let mut cloned = Self {
             max_suffix_length: self.max_suffix_length,
             max_prefix_length: max_prefix_capacity_across_layers,
-            data,
+            entries,
+            bindings: self.bindings.clone(),
         };
         cloned.copy_from(self, context);
         cloned

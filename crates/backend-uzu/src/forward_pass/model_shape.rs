@@ -15,8 +15,6 @@ pub struct ModelShape {
     num_groups: usize,
     pub num_layers: usize,
     layer_mixers: Box<[MixerConfig]>,
-    /// Per-layer KV cache sharing source; `Some(j)` => layer reuses layer `j`'s
-    /// KV cache (Gemma 3n / Gemma 4).
     kv_source_layers: Box<[Option<usize>]>,
 }
 
@@ -70,12 +68,12 @@ impl ModelShape {
         self.model_dim
     }
 
-    pub fn layer_mixers(&self) -> &[MixerConfig] {
-        &self.layer_mixers
-    }
-
     pub fn kv_source_layers(&self) -> &[Option<usize>] {
         &self.kv_source_layers
+    }
+
+    pub fn layer_mixers(&self) -> &[MixerConfig] {
+        &self.layer_mixers
     }
 
     pub fn main_shape(

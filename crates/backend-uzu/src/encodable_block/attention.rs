@@ -19,7 +19,10 @@ use crate::{
         },
     },
     config::AttentionConfig,
-    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
+    forward_pass::{
+        cache_layers::LayerCacheAccess,
+        kv_cache_layer::KVCacheLayerState,
+    },
 };
 
 fn env_gemm_attention_enabled() -> bool {
@@ -60,10 +63,7 @@ pub struct Attention<B: Backend> {
 pub struct AttentionArguments<'a, B: Backend> {
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub attention_sinks: Option<&'a Allocation<B>>,
-    pub kv_cache_layer: Option<&'a mut KVCacheLayer<B>>,
-    /// Resolved owner KV for a sharer layer (Gemma 3n / Gemma 4): the sharer
-    /// writes no K/V and attends over this owner's persisted cache.
-    pub kv_source: Option<&'a KVCacheLayer<B>>,
+    pub cache_access: Option<LayerCacheAccess<'a, B>>,
 }
 
 impl<B: Backend> Attention<B> {
@@ -203,7 +203,7 @@ impl<B: Backend> Attention<B> {
 
     pub fn encode(
         &self,
-        mut args: AttentionArguments<B>,
+        args: AttentionArguments<B>,
         qkv: &Allocation<B>,
         queries: &Allocation<B>,
         mut rotated_keys: Allocation<B>,
@@ -216,14 +216,20 @@ impl<B: Backend> Attention<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let is_trie = args.token_subtrie_ranges.is_some();
 
-        // Sharer (Gemma 3n / Gemma 4): attend over the resolved owner's
-        // persisted KV; the sharer itself writes/owns nothing.
-        let is_kv_sharer = args.kv_source.is_some();
-        // Effective KV layer for state/shape/read: the owner when sharing.
-        let kv_layer = args.kv_source.or(args.kv_cache_layer.as_deref());
+        let cache_layer = args.cache_access.as_ref().map(|a| {
+            match a {
+                LayerCacheAccess::OwnCache {
+                    entry,
+                } => entry.as_transformer(),
+                LayerCacheAccess::SharedKvSource {
+                    source,
+                } => source.as_transformer(),
+            }
+            .expect("attention expects transformer cache")
+        });
 
         let (max_sequence_length, segment_prefix_length, ring_params) =
-            if let Some(layer) = kv_layer {
+            if let Some(layer) = cache_layer {
                 let max_sequence_length = layer.shape[0];
                 let ring_params = match layer.state {
                     KVCacheLayerState::Windowed {
@@ -264,8 +270,7 @@ impl<B: Backend> Attention<B> {
         let sinks_allocation = args.attention_sinks;
         let trie_allocation = args.token_subtrie_ranges;
 
-        // Get KV cache buffers only if KV cache exists (LLM mode)
-        let has_kv_cache = args.kv_cache_layer.is_some();
+        let has_kv_cache = args.cache_access.is_some();
         let extracted_values = (!has_kv_cache)
             .then(|| {
                 let mut values =
@@ -307,28 +312,36 @@ impl<B: Backend> Attention<B> {
             is_kv_cache_ring,
         };
 
-        let (keys, values) = if is_kv_sharer {
-            // PERF TODO: the sharer still ran the Q|K|V GEMM + k/v norm +
-            // rope-on-K whose K/V are discarded; a Q-only variant would skip it.
-            let source = args.kv_source.expect("kv sharer requires resolved source");
-            (source.keys(), source.values())
-        } else if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
-            self.update_kv_cache_kernel.encode(
-                Some(&rotated_keys),
-                qkv,
-                layer.keys.as_mut().expect("owner KV buffer"),
-                layer.values.as_mut().expect("owner KV buffer"),
-                num_groups as u32,
-                num_heads as u32,
-                head_dim as u32,
-                suffix_length as u32,
-                segment_prefix_length as u32,
-                max_sequence_length as u32,
-                encoder,
-            );
-            (layer.keys(), layer.values())
-        } else {
-            (&rotated_keys, extracted_values.as_ref().expect("Missing extracted values for classifier attention"))
+        let (keys, values) = match args.cache_access {
+            Some(LayerCacheAccess::SharedKvSource {
+                source,
+            }) => {
+                let source = source.as_transformer().expect("kv_source must be a transformer cache");
+                (&source.keys, &source.values)
+            },
+            Some(LayerCacheAccess::OwnCache {
+                entry,
+            }) => {
+                let layer = entry.as_transformer_mut().expect("Attention layer expects transformer cache");
+                self.update_kv_cache_kernel.encode(
+                    Some(&rotated_keys),
+                    qkv,
+                    &mut layer.keys,
+                    &mut layer.values,
+                    num_groups as u32,
+                    num_heads as u32,
+                    head_dim as u32,
+                    suffix_length as u32,
+                    segment_prefix_length as u32,
+                    max_sequence_length as u32,
+                    encoder,
+                );
+                (&layer.keys, &layer.values)
+            },
+            None => (
+                &rotated_keys,
+                extracted_values.as_ref().expect("Missing extracted values for classifier attention"),
+            ),
         };
 
         let mut attention_output = self.encode_attention_variant(

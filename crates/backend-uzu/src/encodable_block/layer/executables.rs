@@ -17,7 +17,7 @@ use crate::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
         PostLayerScalar, QKNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
     },
-    forward_pass::{cache_layers::CacheLayer, state::RopeBuffers},
+    forward_pass::{cache_layers::LayerCacheAccess, state::RopeBuffers},
     parameters::ParameterTree,
 };
 
@@ -324,8 +324,7 @@ impl<B: Backend> LayerExecutables<B> {
             rope_buffers,
             sampling_start,
             sampling_length,
-            mut cache_layer,
-            kv_source,
+            cache_access,
             #[cfg(feature = "tracing")]
             trace,
         } = args;
@@ -384,17 +383,11 @@ impl<B: Backend> LayerExecutables<B> {
                     )?,
                     None => qk_unpack.encode(&qkv, batch_dim, *num_heads, *num_groups, *head_dim, encoder)?,
                 };
-                let kv_cache_layer = cache_layer
-                    .as_deref_mut()
-                    .map(|layer| layer.as_transformer_mut().expect("Attention layer expects transformer cache"));
-                let kv_source = kv_source
-                    .map(|layer| layer.as_transformer().expect("kv_source must reference a transformer cache"));
                 let attention_output = attention.encode(
                     AttentionArguments {
                         token_subtrie_ranges,
                         attention_sinks,
-                        kv_cache_layer,
-                        kv_source,
+                        cache_access,
                     },
                     &qkv,
                     &queries,
@@ -411,11 +404,12 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                let layer = cache_layer
-                    .as_deref_mut()
-                    .expect("State-space layer requires cache state")
-                    .as_state_space_mut()
-                    .expect("State-space mixer expects SSM cache layer");
+                let Some(LayerCacheAccess::OwnCache {
+                    entry,
+                }) = cache_access else {
+                    panic!("State-space layer requires writable cache state");
+                };
+                let layer = entry.as_state_space_mut().expect("State-space mixer expects SSM cache layer");
                 mixer.encode(
                     MambaArguments {
                         active_row_count: batch_dim,
@@ -428,11 +422,12 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                let layer = cache_layer
-                    .as_deref_mut()
-                    .expect("ShortConv layer requires cache state")
-                    .as_short_conv_mut()
-                    .expect("ShortConv mixer expects ShortConv cache layer");
+                let Some(LayerCacheAccess::OwnCache {
+                    entry,
+                }) = cache_access else {
+                    panic!("ShortConv layer requires writable cache state");
+                };
+                let layer = entry.as_short_conv_mut().expect("ShortConv mixer expects ShortConv cache layer");
                 mixer.encode(
                     ShortConvArguments {
                         active_row_count: batch_dim,
@@ -448,11 +443,12 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::DeltaNet {
                 mixer,
             } => {
-                let layer = cache_layer
-                    .as_deref_mut()
-                    .expect("DeltaNet layer requires cache state")
-                    .as_delta_net_mut()
-                    .expect("DeltaNet mixer expects DeltaNet cache layer");
+                let Some(LayerCacheAccess::OwnCache {
+                    entry,
+                }) = cache_access else {
+                    panic!("DeltaNet layer requires writable cache state");
+                };
+                let layer = entry.as_delta_net_mut().expect("DeltaNet mixer expects DeltaNet cache layer");
                 mixer.encode(
                     DeltaNetArguments {
                         active_row_count: batch_dim,
@@ -523,9 +519,7 @@ pub struct LayerArguments<'a, B: Backend> {
     pub rope_buffers: Option<&'a RopeBuffers<B>>,
     pub sampling_start: usize,
     pub sampling_length: usize,
-    pub cache_layer: Option<&'a mut CacheLayer<B>>,
-    /// Resolved owner cache layer when this layer shares KV (Gemma 3n / 4).
-    pub kv_source: Option<&'a CacheLayer<B>>,
+    pub cache_access: Option<LayerCacheAccess<'a, B>>,
     #[cfg(feature = "tracing")]
     pub trace: Option<&'a mut LayerActivationTrace<B>>,
 }
