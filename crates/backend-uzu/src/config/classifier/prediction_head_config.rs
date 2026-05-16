@@ -1,11 +1,11 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::{
     backends::common::ActivationConfig,
     config::{LinearConfig, NormalizationConfig},
 };
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct PredictionHeadConfig {
     pub dense_config: LinearConfig,
     pub activation: ActivationConfig,

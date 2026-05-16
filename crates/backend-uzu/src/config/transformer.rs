@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{NormalizationConfig, TransformerLayerConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TransformerConfig {
     pub layer_configs: Vec<TransformerLayerConfig>,
     pub output_norm_config: NormalizationConfig,

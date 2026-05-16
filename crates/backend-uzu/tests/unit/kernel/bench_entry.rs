@@ -17,6 +17,6 @@ fn bench_runner(benches: &[&dyn Fn()]) {
     criterion::runner(benches);
 }
 
-use dsl::{__internal_uzu_bench as uzu_bench, __internal_uzu_ignored as uzu_test};
+use proc_macros::{__internal_uzu_bench as uzu_bench, __internal_uzu_ignored as uzu_test};
 
 include!("mod.rs");

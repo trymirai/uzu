@@ -1,10 +1,11 @@
-use serde::{Deserialize, Serialize};
+use monostate::MustBe;
+use proc_macros::uzu_config;
 
 use super::{ConfigDataType, LinearConfig, NormalizationConfig, UpcastMode};
 
 pub const VALUE_NORM_EPSILON: f32 = 1e-6;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct AttentionConfig {
     pub qkv_projection_config: LinearConfig,
     pub out_projection_config: LinearConfig,
@@ -26,6 +27,7 @@ pub struct AttentionConfig {
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
     pub gate_projection_config: Option<LinearConfig>,
+    pub normalize_values: MustBe!(false),
 }
 
 impl AttentionConfig {
