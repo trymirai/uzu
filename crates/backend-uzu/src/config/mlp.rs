@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::{backends::common::ActivationConfig, config::LinearConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum MLPConfig {
     #[serde(rename = "DenseMLPConfig")]
@@ -11,7 +11,7 @@ pub enum MLPConfig {
     MixtureOfExperts(MixtureOfExpertsConfig),
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct DenseMLPConfig {
     pub linear_config: LinearConfig,
     pub activation: ActivationConfig,
@@ -21,7 +21,7 @@ pub struct DenseMLPConfig {
     pub up_clipping: Option<(Option<f32>, Option<f32>)>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct MixtureOfExpertsConfig {
     pub expert_config: DenseMLPConfig,
     pub router_config: LinearConfig,
@@ -34,7 +34,7 @@ pub struct MixtureOfExpertsConfig {
     pub gate_config: Option<LinearConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum RoutingFunctionConfig {
     #[serde(rename = "SoftmaxRouting")]

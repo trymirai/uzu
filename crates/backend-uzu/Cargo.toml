@@ -10,13 +10,13 @@ license.workspace = true
 build = "build/main.rs"
 
 [dependencies]
-dsl.workspace = true
+proc-macros.workspace = true
 shoji.workspace = true
 half.workspace = true
 ndarray.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_ignored.workspace = true
+monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 rangemap.workspace = true

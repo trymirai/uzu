@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::UpcastMode;
 use crate::ConfigDataType;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct NormalizationConfig {
     pub scale_precision: ConfigDataType,
     pub accumulation_precision: ConfigDataType,

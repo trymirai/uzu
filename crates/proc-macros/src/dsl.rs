@@ -2,7 +2,6 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{FnArg, ItemFn, parse_macro_input};
 
-#[proc_macro_attribute]
 pub fn kernel(
     args: TokenStream,
     input: TokenStream,
@@ -25,48 +24,6 @@ pub fn kernel(
     quote! {
         #func
         include!(concat!(env!("OUT_DIR"), #file));
-    }
-    .into()
-}
-
-#[proc_macro_attribute]
-pub fn __internal_uzu_test(
-    _args: TokenStream,
-    input: TokenStream,
-) -> TokenStream {
-    let func = parse_macro_input!(input as ItemFn);
-
-    quote! {
-        #[test]
-        #func
-    }
-    .into()
-}
-
-#[proc_macro_attribute]
-pub fn __internal_uzu_bench(
-    _args: TokenStream,
-    input: TokenStream,
-) -> TokenStream {
-    let func = parse_macro_input!(input as ItemFn);
-
-    quote! {
-        #[::criterion_macro::criterion]
-        #func
-    }
-    .into()
-}
-
-#[proc_macro_attribute]
-pub fn __internal_uzu_ignored(
-    _args: TokenStream,
-    input: TokenStream,
-) -> TokenStream {
-    let func = parse_macro_input!(input as ItemFn);
-
-    quote! {
-        #[allow(unused)]
-        #func
     }
     .into()
 }

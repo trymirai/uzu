@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::utils::strict_serde::Unsupported;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct GenerationConfig {
     pub stop_token_ids: Vec<u32>,
     pub temperature: Option<f32>,

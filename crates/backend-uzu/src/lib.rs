@@ -4,21 +4,13 @@ extern crate self as backend_uzu;
 
 mod array;
 mod audio;
-mod classifier;
-mod config;
 mod data_type;
-mod encodable_block;
-mod forward_pass;
-pub mod inference;
-mod language_model;
-mod parameters;
 mod speculators;
-#[cfg(feature = "tracing")]
-mod tracer;
 mod trie;
 mod utils;
 
 pub mod backends;
+pub mod inference;
 pub mod prelude;
 pub mod session;
 
@@ -30,6 +22,27 @@ pub use config::ConfigDataType;
 pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};
-#[cfg(feature = "tracing")]
-pub use tracer::TraceValidator;
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
+
+// The following modules are private in production builds, but exposed publicly
+// when the `tracing` feature is enabled so the trace-validation integration
+// test (`tests/integration/tracer/trace_validator.rs`) can reach internal types.
+macro_rules! tracing_visible_mod {
+    ($($name:ident),* $(,)?) => {
+        $(
+            #[cfg(feature = "tracing")]
+            pub mod $name;
+            #[cfg(not(feature = "tracing"))]
+            mod $name;
+        )*
+    };
+}
+
+tracing_visible_mod! {
+    classifier,
+    config,
+    encodable_block,
+    forward_pass,
+    language_model,
+    parameters,
+}

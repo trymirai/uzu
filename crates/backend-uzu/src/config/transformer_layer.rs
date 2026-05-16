@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{MLPConfig, MixerConfig, NormalizationConfig, RoPEConfig};
 use crate::utils::strict_serde::Unsupported;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TransformerLayerConfig {
     pub pre_mixer_norm_config: Option<NormalizationConfig>,
     pub mixer_config: MixerConfig,

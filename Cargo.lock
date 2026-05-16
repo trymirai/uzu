@@ -569,7 +569,6 @@ dependencies = [
  "criterion-macro",
  "depfile",
  "derive_more",
- "dsl",
  "futures",
  "half",
  "indicatif",
@@ -579,6 +578,7 @@ dependencies = [
  "memmap2",
  "minijinja",
  "minijinja-contrib",
+ "monostate",
  "mtl-rs",
  "ndarray",
  "num-traits",
@@ -586,6 +586,7 @@ dependencies = [
  "objc2-foundation",
  "prettyplease",
  "proc-macro2",
+ "proc-macros",
  "proptest",
  "quote",
  "rand 0.10.1",
@@ -596,7 +597,6 @@ dependencies = [
  "rustix",
  "schemars 1.2.1",
  "serde",
- "serde_ignored",
  "serde_json",
  "shoji",
  "syn 2.0.117",
@@ -1951,15 +1951,6 @@ dependencies = [
  "tracing",
  "uuid",
  "wiremock",
-]
-
-[[package]]
-name = "dsl"
-version = "0.4.9"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -4818,6 +4809,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macros"
+version = "0.4.9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6050,16 +6050,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "serde_ignored"
-version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798"
-dependencies = [
- "serde",
- "serde_core",
 ]
 
 [[package]]

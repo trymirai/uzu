@@ -10,7 +10,6 @@ use crate::{
         helpers::{InputProcessor, InputProcessorDefault},
         types::{Error, Input},
     },
-    utils::strict_serde::from_reader_strict,
 };
 
 pub struct ClassificationSession {
@@ -32,7 +31,7 @@ impl ClassificationSession {
 
         let config_file = std::fs::File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
         let model_metadata: ModelMetadata<ClassifierModelConfig> =
-            from_reader_strict(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
+            serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
         let tokenizer_path = model_path.join("tokenizer.json");
         if !tokenizer_path.exists() {
