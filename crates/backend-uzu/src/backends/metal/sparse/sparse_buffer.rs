@@ -21,6 +21,7 @@ pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     mapped_pages: RangeSet<usize>,
     context: Rc<MetalContext>,
+    page_size: MTLSparsePageSize,
 }
 
 impl MetalSparseBuffer {
@@ -43,6 +44,7 @@ impl MetalSparseBuffer {
             buffer,
             mapped_pages: RangeSet::new(),
             context,
+            page_size,
         })
     }
 
@@ -112,6 +114,10 @@ impl SparseBuffer for MetalSparseBuffer {
                 self.mapped_pages.remove(range);
                 Ok(())
             })
+    }
+
+    fn page_size_bytes(&self) -> usize {
+        self.page_size.in_bytes()
     }
 }
 

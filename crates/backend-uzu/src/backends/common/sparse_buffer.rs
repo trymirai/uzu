@@ -14,4 +14,6 @@ pub trait SparseBuffer: Buffer<Backend: Backend<SparseBuffer = Self>> {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
+
+    fn page_size_bytes(&self) -> usize;
 }
