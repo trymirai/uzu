@@ -236,6 +236,9 @@ struct QmvCell {
     nf4: Stats,
     nf4_byte256: Stats,
     nf4_grafted: Stats,
+    nf4_shuf8: Stats,
+    nf4_shuf16: Stats,
+    nf4_shuf32: Stats,
 }
 
 fn bench_qmv_cell(
@@ -379,6 +382,51 @@ fn bench_qmv_cell(
         );
     });
 
+    let mut y_h8 = bufs.y_buf.clone();
+    let nf4_shuf8 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::Shuffle8,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_h8,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_h16 = bufs.y_buf.clone();
+    let nf4_shuf16 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::Shuffle16,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_h16,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_h32 = bufs.y_buf.clone();
+    let nf4_shuf32 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::Shuffle32,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_h32,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
     println!("  scalar      : {:.4} ±{:.4} ms", scalar.mean, scalar.std);
     println!("  awq-lut256  : {:.4} ±{:.4} ms  Δ {:+.1}%", awq_lut.mean, awq_lut.std, dpct(&scalar, &awq_lut));
     println!("  nf4-const   : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4.mean, nf4.std, dpct(&scalar, &nf4));
@@ -394,6 +442,9 @@ fn bench_qmv_cell(
         nf4_grafted.std,
         dpct(&scalar, &nf4_grafted)
     );
+    println!("  nf4-shuf8   : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_shuf8.mean, nf4_shuf8.std, dpct(&scalar, &nf4_shuf8));
+    println!("  nf4-shuf16  : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_shuf16.mean, nf4_shuf16.std, dpct(&scalar, &nf4_shuf16));
+    println!("  nf4-shuf32  : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_shuf32.mean, nf4_shuf32.std, dpct(&scalar, &nf4_shuf32));
 
     QmvCell {
         shape,
@@ -405,6 +456,9 @@ fn bench_qmv_cell(
         nf4,
         nf4_byte256,
         nf4_grafted,
+        nf4_shuf8,
+        nf4_shuf16,
+        nf4_shuf32,
     }
 }
 
@@ -473,12 +527,22 @@ fn qmv_lut_bench() {
     println!();
     println!("================== QMV LUT bench summary (baseline = scalar) ==================");
     println!(
-        "{:<14} {:>11} {:>3} {:>18} {:>14} {:>12} {:>14} {:>14}",
-        "Shape", "KxN", "M", "scalar ms(±σ)", "awq-lut256 Δ%", "nf4-const Δ%", "nf4-byte256 Δ%", "nf4-grafted Δ%"
+        "{:<14} {:>11} {:>3} {:>18} {:>14} {:>12} {:>14} {:>14} {:>12} {:>12} {:>12}",
+        "Shape",
+        "KxN",
+        "M",
+        "scalar ms(±σ)",
+        "awq-lut256 Δ%",
+        "nf4-const Δ%",
+        "nf4-byte256 Δ%",
+        "nf4-grafted Δ%",
+        "nf4-shuf8 Δ%",
+        "nf4-shuf16 Δ%",
+        "nf4-shuf32 Δ%"
     );
     for r in &results {
         println!(
-            "{:<14} {:>11} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}% {:>+13.1}% {:>+13.1}%",
+            "{:<14} {:>11} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}% {:>+13.1}% {:>+13.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}%",
             r.shape,
             format!("{}x{}", r.k, r.n),
             r.m,
@@ -487,7 +551,10 @@ fn qmv_lut_bench() {
             dpct(&r.scalar, &r.awq_lut),
             dpct(&r.scalar, &r.nf4),
             dpct(&r.scalar, &r.nf4_byte256),
-            dpct(&r.scalar, &r.nf4_grafted)
+            dpct(&r.scalar, &r.nf4_grafted),
+            dpct(&r.scalar, &r.nf4_shuf8),
+            dpct(&r.scalar, &r.nf4_shuf16),
+            dpct(&r.scalar, &r.nf4_shuf32)
         );
     }
     println!("==============================================================================");

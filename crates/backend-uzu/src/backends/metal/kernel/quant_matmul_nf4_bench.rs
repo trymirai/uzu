@@ -12,8 +12,8 @@ use crate::{
             error::MetalError,
             kernel::{
                 Nf4QmmConstantMetalKernel, Nf4QmmE4m3MetalKernel, Nf4QmmTgMetalKernel, Nf4QmmZpMetalKernel,
-                Nf4QmvByte256MetalKernel, Nf4QmvConstantMetalKernel, Nf4QmvE4m3MetalKernel, Nf4QmvTgMetalKernel,
-                Nf4QmvZpMetalKernel,
+                Nf4QmvByte256MetalKernel, Nf4QmvConstantMetalKernel, Nf4QmvE4m3MetalKernel, Nf4QmvShuffleMetalKernel,
+                Nf4QmvTgMetalKernel, Nf4QmvZpMetalKernel,
             },
         },
     },
@@ -32,6 +32,15 @@ pub enum Nf4Variant {
     /// Byte-batched 256-entry threadgroup `half2` codebook LUT (mirrors the
     /// int4 `awq-lut256` access pattern). Same math as `Constant`.
     Byte256,
+    /// Zero-memory register *shuffle* codebook, size 8 (synthetic 3-bit
+    /// timing probe). Dequant via `simd_shuffle` of a register-held entry.
+    Shuffle8,
+    /// Zero-memory register *shuffle* codebook, size 16 (real NF4 codebook;
+    /// numerically equivalent to `Constant`).
+    Shuffle16,
+    /// Zero-memory register *shuffle* codebook, size 32 (synthetic 5-bit
+    /// timing probe; weights still 4-bit nibbles).
+    Shuffle32,
 }
 
 /// QMV NF4 kernel set (one for each lookup strategy). Built lazily by `new`.
@@ -41,6 +50,9 @@ pub struct Nf4QmvBench {
     e4m3: Nf4QmvE4m3MetalKernel,
     zp: Nf4QmvZpMetalKernel,
     byte256: Nf4QmvByte256MetalKernel,
+    shuffle8: Nf4QmvShuffleMetalKernel,
+    shuffle16: Nf4QmvShuffleMetalKernel,
+    shuffle32: Nf4QmvShuffleMetalKernel,
 }
 
 impl Nf4QmvBench {
@@ -51,6 +63,9 @@ impl Nf4QmvBench {
             e4m3: Nf4QmvE4m3MetalKernel::new(ctx, DataType::BF16, 64)?,
             zp: Nf4QmvZpMetalKernel::new(ctx, DataType::BF16, 64)?,
             byte256: Nf4QmvByte256MetalKernel::new(ctx, DataType::BF16, 64)?,
+            shuffle8: Nf4QmvShuffleMetalKernel::new(ctx, DataType::BF16, 64, 8)?,
+            shuffle16: Nf4QmvShuffleMetalKernel::new(ctx, DataType::BF16, 64, 16)?,
+            shuffle32: Nf4QmvShuffleMetalKernel::new(ctx, DataType::BF16, 64, 32)?,
         })
     }
 
@@ -95,6 +110,15 @@ impl Nf4QmvBench {
             },
             Nf4Variant::Byte256 => {
                 self.byte256.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            Nf4Variant::Shuffle8 => {
+                self.shuffle8.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            Nf4Variant::Shuffle16 => {
+                self.shuffle16.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
+            },
+            Nf4Variant::Shuffle32 => {
+                self.shuffle32.encode(weights, scales, input, output, in_vec_size, out_vec_size, batch_size, encoder)
             },
             Nf4Variant::Zp => {
                 panic!("Nf4Variant::Zp requires a zero_points buffer; call Nf4QmvBench::encode_zp instead")
@@ -202,6 +226,9 @@ impl Nf4QmmBench {
             },
             (Nf4Variant::Byte256, _) => {
                 panic!("Nf4Variant::Byte256 is QMV-only; no Nf4QmmByte256 kernel exists")
+            },
+            (Nf4Variant::Shuffle8 | Nf4Variant::Shuffle16 | Nf4Variant::Shuffle32, _) => {
+                panic!("Nf4Variant::Shuffle* is QMV-only; no Nf4QmmShuffle kernel exists")
             },
             (Nf4Variant::Zp, _) => {
                 panic!("Nf4Variant::Zp requires a zero_points buffer; call Nf4QmmBench::encode_zp instead")

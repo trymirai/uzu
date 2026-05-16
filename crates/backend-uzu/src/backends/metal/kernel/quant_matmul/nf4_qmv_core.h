@@ -107,6 +107,42 @@ inline float qdot_nf4_byte_lut(
   return scale * accum;
 }
 
+// NF4 qdot: zero-memory register-shuffle codebook. `my_entry` is THIS lane's
+// register-held codebook value (lane i holds entry i for i<S). Each weight
+// nibble n is dequantized via `simd_shuffle(my_entry, n)` — a cross-lane
+// register op with NO memory/LSU traffic. The per-group scale is applied once
+// on accumulate, exactly as `qdot_nf4_constant`. For S=8 the nibble is masked
+// to 3 bits so the shuffle source lane stays in [0, 7]; for S=16/32 the 4-bit
+// nibble (0..15) is a valid source lane. The shuffle op cost is independent
+// of S.
+template <int values_per_thread, uint S>
+inline float qdot_nf4_shuffle(
+    const device uint8_t* w,
+    const thread float* x_thread,
+    half my_entry,
+    float scale
+) {
+  using U4 = vec<float, 4>;
+  constexpr uint NIBBLE_MASK = (S == 8u) ? 0x07u : 0x0fu;
+  float accum = 0;
+  const thread U4* x4 = (const thread U4*)x_thread;
+  for (int i = 0; i < (values_per_thread / 4); i++) {
+    uint8_t b0 = w[2 * i];
+    uint8_t b1 = w[2 * i + 1];
+    ushort n0 = ushort(b0 & NIBBLE_MASK);
+    ushort n1 = ushort((b0 >> 4) & NIBBLE_MASK);
+    ushort n2 = ushort(b1 & NIBBLE_MASK);
+    ushort n3 = ushort((b1 >> 4) & NIBBLE_MASK);
+    half h0 = simd_shuffle(my_entry, n0);
+    half h1 = simd_shuffle(my_entry, n1);
+    half h2 = simd_shuffle(my_entry, n2);
+    half h3 = simd_shuffle(my_entry, n3);
+    U4 w_vec = U4(float(h0), float(h1), float(h2), float(h3));
+    accum += dot(x4[i], w_vec);
+  }
+  return scale * accum;
+}
+
 // NF4 qdot: 4-bit nibble → codebook lookup via threadgroup memory.
 template <int values_per_thread>
 inline float qdot_nf4_tg(

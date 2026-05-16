@@ -87,6 +87,133 @@ inline half nf4_my_shuffle_entry(uint simd_lane) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Zero-memory *shuffle* codebook helpers (size-parameterized S ∈ {8,16,32}).
+//
+// Each of lanes 0..(S-1) of a 32-lane simdgroup holds ONE codebook entry in a
+// register (computed once via a switch-of-literals — NO array, so no spill).
+// Per-weight dequant then fetches the needed entry via
+//   half cb = simd_shuffle(my_entry, nibble)
+// a pure cross-lane register op with no memory/LSU traffic.
+//
+// S=16 = the real NF4 codebook (numerically identical to `nf4_codebook` and
+// hence to `Nf4QmvConstant`). S=8 and S=32 are SYNTHETIC monotonic tables,
+// evenly spaced in [-1, 1] (entry i = -1 + 2*i/(S-1)); their VALUES are
+// irrelevant — they are timing probes for the shuffle mechanism cost. The CPU
+// reference MUST mirror these exact literals.
+
+// S=8 synthetic: entry i = -1 + 2*i/7, i ∈ [0, 7].
+inline half nf4_my_shuffle_entry_s8(uint simd_lane) {
+  const uint i = simd_lane & 7u;
+  switch (i) {
+  case 0:
+    return -1.0h;
+  case 1:
+    return -0.71428573h;
+  case 2:
+    return -0.42857143h;
+  case 3:
+    return -0.14285715h;
+  case 4:
+    return 0.14285713h;
+  case 5:
+    return 0.42857146h;
+  case 6:
+    return 0.71428573h;
+  default:
+    return 1.0h;
+  }
+}
+
+// S=16 synthetic == the real NF4 codebook (must match `nf4_codebook`).
+inline half nf4_my_shuffle_entry_s16(uint simd_lane) {
+  return nf4_my_shuffle_entry(simd_lane);
+}
+
+// S=32 synthetic: entry i = -1 + 2*i/31, i ∈ [0, 31].
+inline half nf4_my_shuffle_entry_s32(uint simd_lane) {
+  const uint i = simd_lane & 31u;
+  switch (i) {
+  case 0:
+    return -1.0h;
+  case 1:
+    return -0.93548387h;
+  case 2:
+    return -0.87096774h;
+  case 3:
+    return -0.80645161h;
+  case 4:
+    return -0.74193548h;
+  case 5:
+    return -0.67741935h;
+  case 6:
+    return -0.61290323h;
+  case 7:
+    return -0.5483871h;
+  case 8:
+    return -0.48387097h;
+  case 9:
+    return -0.41935484h;
+  case 10:
+    return -0.35483871h;
+  case 11:
+    return -0.29032258h;
+  case 12:
+    return -0.22580645h;
+  case 13:
+    return -0.16129032h;
+  case 14:
+    return -0.09677419h;
+  case 15:
+    return -0.03225806h;
+  case 16:
+    return 0.03225806h;
+  case 17:
+    return 0.09677419h;
+  case 18:
+    return 0.16129032h;
+  case 19:
+    return 0.22580645h;
+  case 20:
+    return 0.29032258h;
+  case 21:
+    return 0.35483871h;
+  case 22:
+    return 0.41935484h;
+  case 23:
+    return 0.48387097h;
+  case 24:
+    return 0.5483871h;
+  case 25:
+    return 0.61290323h;
+  case 26:
+    return 0.67741935h;
+  case 27:
+    return 0.74193548h;
+  case 28:
+    return 0.80645161h;
+  case 29:
+    return 0.87096774h;
+  case 30:
+    return 0.93548387h;
+  default:
+    return 1.0h;
+  }
+}
+
+// Size-parameterized dispatch: returns this lane's register-held codebook
+// entry for codebook size S (compile-time). Pure switch-of-literals, no array.
+template <uint S>
+inline half nf4_my_shuffle_entry_n(uint simd_lane) {
+  if (S == 8u) {
+    return nf4_my_shuffle_entry_s8(simd_lane);
+  } else if (S == 32u) {
+    return nf4_my_shuffle_entry_s32(simd_lane);
+  } else {
+    return nf4_my_shuffle_entry_s16(simd_lane);
+  }
+}
+
 // Cooperatively initialize a threadgroup codebook (16 entries).
 inline void nf4_init_tg_codebook(
     threadgroup half* cb,
