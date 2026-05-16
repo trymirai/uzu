@@ -19,7 +19,7 @@ use crate::{
         },
     },
     config::AttentionConfig,
-    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
+    forward_pass::kv_cache_layer::{KVCacheLayerState, KVCacheLayerTrait},
 };
 
 fn env_gemm_attention_enabled() -> bool {
@@ -60,7 +60,7 @@ pub struct Attention<B: Backend> {
 pub struct AttentionArguments<'a, B: Backend> {
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub attention_sinks: Option<&'a Allocation<B>>,
-    pub kv_cache_layer: Option<&'a mut KVCacheLayer<B>>,
+    pub kv_cache_layer: Option<&'a mut Box<dyn KVCacheLayerTrait<Backend = B>>>,
 }
 
 impl<B: Backend> Attention<B> {
@@ -215,8 +215,8 @@ impl<B: Backend> Attention<B> {
 
         let (max_sequence_length, segment_prefix_length, ring_params) =
             if let Some(layer) = args.kv_cache_layer.as_deref() {
-                let max_sequence_length = layer.shape[0];
-                let ring_params = match layer.state {
+                let max_sequence_length = layer.shape()[0];
+                let ring_params = match layer.state() {
                     KVCacheLayerState::Windowed {
                         ring_offset,
                         ring_length,
@@ -302,8 +302,8 @@ impl<B: Backend> Attention<B> {
             self.update_kv_cache_kernel.encode(
                 Some(&rotated_keys),
                 qkv,
-                &mut layer.keys,
-                &mut layer.values,
+                &mut layer.keys_mut(),
+                &mut layer.values_mut(),
                 num_groups as u32,
                 num_heads as u32,
                 head_dim as u32,
@@ -316,8 +316,8 @@ impl<B: Backend> Attention<B> {
                 variant,
                 &kernel_key,
                 queries,
-                &layer.keys,
-                &layer.values,
+                layer.keys(),
+                layer.values(),
                 trie_allocation,
                 sinks_allocation,
                 gqa_factor,

@@ -16,7 +16,7 @@ use crate::{
     },
     config::{LanguageModelConfig, ModelMetadata},
     encodable_block::{DecoderDecodeInput, SamplingArguments, SamplingInputs},
-    forward_pass::{cache_layers::CacheLayersSlice, kv_cache_layer::INVALID_POSITION, token_inputs::TokenInputs},
+    forward_pass::{cache_layers::CacheLayersSlice, token_inputs::TokenInputs},
     language_model::grammar::CompiledGrammar,
     session::{
         config::DecodingConfig,
@@ -27,6 +27,8 @@ use crate::{
     trie::{TrieCreationConfig, TrieNode},
     utils::pointers::SendPtr,
 };
+
+pub const INVALID_POSITION: usize = i32::MAX as usize;
 
 #[derive(Debug, Clone)]
 struct Task<'a> {

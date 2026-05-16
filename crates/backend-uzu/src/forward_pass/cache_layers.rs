@@ -3,12 +3,12 @@ use std::cell::Cell;
 use crate::{
     array::size_for_shape,
     backends::common::{
-        AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer, kernel::kv_cache_update::KVCacheUpdate,
+        AllocationType, Backend, Context, Encoder, SparseBuffer, kernel::kv_cache_update::KVCacheUpdate,
     },
     config::MixerConfig,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
-        kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVSlice},
+        kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVCacheLayerTrait, KVSlice, new_kv_cache_layer},
         model_shape::ModelShape,
         short_conv_layer::ShortConvLayer,
         ssm_layer::SSMLayer,
@@ -16,7 +16,7 @@ use crate::{
 };
 
 pub enum CacheLayer<B: Backend> {
-    Transformer(KVCacheLayer<B>),
+    Transformer(Box<dyn KVCacheLayerTrait<Backend = B>>),
     StateSpace(SSMLayer<B>),
     ShortConv(ShortConvLayer<B>),
     DeltaNet(DeltaNetLayer<B>),
@@ -30,14 +30,14 @@ pub enum CacheLayerSlice<B: Backend> {
 }
 
 impl<B: Backend> CacheLayer<B> {
-    pub fn as_transformer(&self) -> Option<&KVCacheLayer<B>> {
+    pub fn as_transformer(&self) -> Option<&Box<dyn KVCacheLayerTrait<Backend = B>>> {
         match self {
             CacheLayer::Transformer(layer) => Some(layer),
             _ => None,
         }
     }
 
-    pub fn as_transformer_mut(&mut self) -> Option<&mut KVCacheLayer<B>> {
+    pub fn as_transformer_mut(&mut self) -> Option<&mut Box<dyn KVCacheLayerTrait<Backend = B>>> {
         match self {
             CacheLayer::Transformer(layer) => Some(layer),
             _ => None,
@@ -130,9 +130,8 @@ impl<B: Backend> CacheLayers<B> {
                         }
                     };
 
-                    let kv_layer = KVCacheLayer::new(context, &state, shape, model_shape.kv_cache_data_type())
-                        .expect("Failed to create KVCacheLayer");
-                    CacheLayer::Transformer(kv_layer)
+                    let layer = new_kv_cache_layer(context, &state, shape, model_shape.kv_cache_data_type());
+                    CacheLayer::Transformer(layer)
                 },
                 MixerConfig::Mamba(c) => {
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
@@ -199,23 +198,26 @@ impl<B: Backend> CacheLayers<B> {
             })
             .collect();
 
-        data.iter_mut().for_each(|layer| match layer {
-            CacheLayer::Transformer(kv) => {
-                let keys_total_pages = kv.keys.size() / kv.keys.page_size_bytes();
-                kv.keys.map(context, &(0..keys_total_pages)).expect("Failed to map transformer keys pages");
-                let values_total_pages = kv.values.size() / kv.values.page_size_bytes();
-                kv.values.map(context, &(0..values_total_pages)).expect("Failed to map transformer values pages");
-            },
-            _ => (),
-        });
-        context.wait_for_pending_sparse_mappings().expect("Failed to synchronize sparse buffer mappings");
+        #[cfg(metal_backend)]
+        {
+            data.iter_mut().for_each(|layer| match layer {
+                CacheLayer::Transformer(kv) => {
+                    let keys_total_pages = kv.keys().size() / kv.keys().page_size_bytes();
+                    kv.keys().map(context, &(0..keys_total_pages)).expect("Failed to map transformer keys pages");
+                    let values_total_pages = kv.values().size() / kv.values().page_size_bytes();
+                    kv.values().map(context, &(0..values_total_pages)).expect("Failed to map transformer values pages");
+                },
+                _ => (),
+            });
+            context.wait_for_pending_sparse_mappings().expect("Failed to synchronize sparse buffer mappings");
+        }
 
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
         for layer in data.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
-                    encoder.encode_fill(&mut layer.keys, 0);
-                    encoder.encode_fill(&mut layer.values, 0);
+                    encoder.encode_fill(&mut layer.keys(), 0);
+                    encoder.encode_fill(&mut layer.values(), 0);
                 },
                 CacheLayer::StateSpace(layer) => {
                     if let Some(conv_state) = layer.conv_state.as_mut() {
@@ -249,7 +251,7 @@ impl<B: Backend> CacheLayers<B> {
         let mut encoder: Option<Encoder<B>> = None;
         for layer in self.data.iter_mut() {
             match layer {
-                CacheLayer::Transformer(layer) => match &mut layer.state {
+                CacheLayer::Transformer(layer) => match &mut layer.state() {
                     KVCacheLayerState::Full {
                         prefix_len,
                     } => {
@@ -415,7 +417,7 @@ impl<B: Backend> CacheLayers<B> {
             match (source_layer, destination_layer) {
                 (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
                     let copy_rows = source.prefix_segment_length();
-                    if copy_rows > 0 && matches!(source.state, KVCacheLayerState::Windowed { .. }) {
+                    if copy_rows > 0 && matches!(source.state(), KVCacheLayerState::Windowed { .. }) {
                         let encoder =
                             encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
                         let slice =
@@ -423,7 +425,7 @@ impl<B: Backend> CacheLayers<B> {
                         destination.apply_slice(encoder, &slice, None);
                         pending_slices.push(slice);
                     }
-                    destination.state = source.state.clone();
+                    destination.set_state(source.state());
                 },
                 (CacheLayer::StateSpace(_), CacheLayer::StateSpace(_)) => {},
                 (CacheLayer::ShortConv(_), CacheLayer::ShortConv(destination)) => {
@@ -450,7 +452,7 @@ impl<B: Backend> CacheLayers<B> {
         for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
             match (source_layer, destination_layer) {
                 (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
-                    if matches!(source.state, KVCacheLayerState::Full { .. }) {
+                    if matches!(source.state(), KVCacheLayerState::Full { .. }) {
                         source.encode_copy_prefix_rows_to(destination, source.prefix_segment_length(), encoder);
                     }
                 },
@@ -486,9 +488,10 @@ impl<B: Backend> CacheLayers<B> {
             .iter()
             .map(|layer| match layer {
                 CacheLayer::Transformer(layer) => {
-                    let shape = layer.shape;
-                    let [_, num_groups, head_dim] = shape;
-                    let dtype = layer.data_type;
+                    let shape = layer.shape();
+                    let num_groups = shape[1];
+                    let head_dim = shape[2];
+                    let dtype = layer.data_type();
                     let copy_rows = layer.prefix_segment_length();
 
                     let new_total_len = copy_rows + self.max_suffix_length;
@@ -497,9 +500,8 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [new_total_len, num_groups, head_dim];
-                    let kv_layer = KVCacheLayer::new(context, &layer.state, new_shape, dtype)
-                        .expect("Failed to create KVCacheLayer");
-                    CacheLayer::Transformer(kv_layer)
+                    let layer = new_kv_cache_layer(context, &layer.state(), shape, dtype);
+                    CacheLayer::Transformer(layer)
                 },
                 CacheLayer::StateSpace(layer) => {
                     let conv_bytes = size_for_shape(&layer.conv_shape, layer.data_type);
@@ -566,8 +568,8 @@ impl<B: Backend> CacheLayers<B> {
         for layer in data.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
-                    zero_encoder.encode_fill(&mut layer.keys, 0);
-                    zero_encoder.encode_fill(&mut layer.values, 0);
+                    zero_encoder.encode_fill(&mut layer.keys_mut(), 0);
+                    zero_encoder.encode_fill(&mut layer.values_mut(), 0);
                 },
                 CacheLayer::ShortConv(layer) => {
                     zero_encoder.encode_fill(&mut layer.suffix_state, 0);
