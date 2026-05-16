@@ -1,37 +1,25 @@
 use super::*;
 
 pub(super) fn resolve_descript_audio_codec_vocoder_data_type(
-    top_level_precision: Option<ConfigDataType>,
+    top_level_precision: ConfigDataType,
     config: &DescriptAudioCodecConfig,
 ) -> AudioResult<DataType> {
-    let mut resolved_precision: Option<ConfigDataType> = None;
+    let resolved_precision = top_level_precision;
     for (field_name, precision) in [
-        ("tts_config.activation_precision", top_level_precision),
-        ("tts_config.audio_decoder_config.precision", Some(config.precision)),
+        ("tts_config.audio_decoder_config.precision", config.precision),
         ("tts_config.audio_decoder_config.quantizer_config.precision", config.quantizer_config.precision),
     ] {
-        if let Some(precision) = precision {
-            if let Some(existing) = resolved_precision {
-                if existing != precision {
-                    return Err(AudioError::Runtime(format!(
-                        "conflicting DescriptAudioCodec precision in Lalamo export: {field_name}={precision:?} conflicts with {existing:?}"
-                    )));
-                }
-            } else {
-                resolved_precision = Some(precision);
-            }
+        if resolved_precision != precision {
+            return Err(AudioError::Runtime(format!(
+                "conflicting DescriptAudioCodec precision in Lalamo export: {field_name}={precision:?} conflicts with {resolved_precision:?}"
+            )));
         }
     }
 
-    let precision = resolved_precision.ok_or(AudioError::Runtime(
-        "missing DescriptAudioCodec precision in Lalamo export; expected one of tts_config.activation_precision, \
-tts_config.audio_decoder_config.precision, or tts_config.audio_decoder_config.quantizer_config.precision"
-            .to_string(),
-    ))?;
-    let data_type: DataType = precision.into();
+    let data_type: DataType = resolved_precision.into();
     if !matches!(data_type, DataType::F32 | DataType::F16 | DataType::BF16) {
         return Err(AudioError::Runtime(format!(
-            "unsupported DescriptAudioCodec vocoder precision in Lalamo export: {precision:?} (expected float32/float16/bfloat16)"
+            "unsupported DescriptAudioCodec vocoder precision in Lalamo export: {resolved_precision:?} (expected float32/float16/bfloat16)"
         )));
     }
     Ok(data_type)
@@ -42,9 +30,7 @@ pub(super) fn load_audio_runtime_from_tts_config(
     model_path: &Path,
 ) -> AudioResult<(RuntimeConfigJson, StructuredAudioCodecGraph)> {
     let cfg = match &tts_config.audio_decoder_config {
-        TtsAudioDecoderConfig::DescriptAudioCodecConfig {
-            config,
-        } => config,
+        TtsAudioDecoderConfig::DescriptAudioCodec(config) => config,
     };
     let fishaudio_weights = model_path.join("model.safetensors");
     if !fishaudio_weights.is_file() {

@@ -160,14 +160,6 @@ pub enum TtsModelConfigError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TtsPromptConfigError {
-    #[error("FishAudio prompt template references message.{field}, but default_message_fields does not provide it")]
-    MissingDefaultMessageField {
-        field: Box<str>,
-    },
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Model folder not found")]
@@ -184,8 +176,6 @@ pub enum Error {
     InvalidTtsModelConfig(#[from] TtsModelConfigError),
     #[error("Invalid TTS run config: {0}")]
     InvalidTtsRunConfig(#[from] TtsRunConfigError),
-    #[error("Invalid TTS prompt config: {0}")]
-    InvalidTtsPromptConfig(#[from] TtsPromptConfigError),
     #[error("Unable to load model weights")]
     UnableToLoadWeights,
     #[error("Unable to load tokenizer")]

@@ -73,21 +73,12 @@ impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>> for 
 impl ConfigResolvableValue<TtsMessageProcessorConfig, HashMap<String, String>> for Message {
     fn resolve(
         &self,
-        config: &TtsMessageProcessorConfig,
+        _config: &TtsMessageProcessorConfig,
     ) -> HashMap<String, String> {
-        let role = match self.role {
-            Role::System => config.system_role_name.clone(),
-            Role::User => config.user_role_name.clone(),
-            Role::Assistant => config.assistant_role_name.clone(),
-        };
-        let mut result: HashMap<String, String> = config.default_message_fields.clone().into_iter().collect();
-        result.entry(String::from("speaker_id")).or_insert_with(|| String::from(DEFAULT_TTS_SPEAKER_ID));
-        result.entry(String::from("style")).or_insert_with(|| String::from(DEFAULT_TTS_STYLE));
-        result.insert(String::from("role"), role);
-        result.insert(String::from("content"), self.content.clone());
-        if let Some(reasoning_content) = self.reasoning_content.clone() {
-            result.insert(String::from("reasoning_content"), reasoning_content);
-        }
-        result
+        HashMap::from([
+            (String::from("content"), self.content.clone()),
+            (String::from("speaker_id"), String::from(DEFAULT_TTS_SPEAKER_ID)),
+            (String::from("style"), String::from(DEFAULT_TTS_STYLE)),
+        ])
     }
 }

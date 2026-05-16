@@ -1,2 +1,2 @@
-pub mod qk_norm;
+pub mod qkv_norm;
 pub mod rms_norm;
