@@ -133,6 +133,8 @@ fn get_output<
         false,
         false,
         false,
+        false,
+        false,
     )
     .expect("Failed to create RMSNormKernel");
 
@@ -158,6 +160,7 @@ fn get_output<
         input.element_count,
         input.epsilon,
         input.scale_offset,
+        1.0,
         &mut encoder,
     );
 
@@ -390,6 +393,69 @@ fn test_edge_f16_f16_f16_f16() {
     test_edge::<f16, f16, f16, f16>();
 }
 
+fn run_scaled_rms<B: Backend>(with_shortcut: bool, scale_residual_sum: bool, scale_output: bool) -> (Vec<f32>, Vec<f32>) {
+    let (batch, dim) = (2usize, 64usize);
+    let total = batch * dim;
+    let mut rng = SmallRng::seed_from_u64(99);
+    let input: Vec<f32> = (0..total).map(|_| rng.random_range(-2.0f32..2.0f32)).collect();
+    let scales: Vec<f32> = (0..dim).map(|_| rng.random_range(0.1f32..3.0f32)).collect();
+    let shortcut: Vec<f32> = (0..total).map(|_| rng.random_range(-1.0f32..1.0f32)).collect();
+
+    let context = B::Context::new().expect("Failed to create Context");
+    let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
+        &context,
+        f32::data_type(),
+        f32::data_type(),
+        f32::data_type(),
+        f32::data_type(),
+        false,
+        false,
+        with_shortcut,
+        with_shortcut,
+        false,
+        scale_residual_sum,
+        scale_output,
+    )
+    .expect("Failed to create RMSNormKernel");
+
+    let input_buffer = context.create_array_from(&[total], &input).into_allocation();
+    let scales_buffer = context.create_array_from(&[dim], &scales).into_allocation();
+    let mut output = context.create_array_uninitialized(&[total], f32::data_type()).into_allocation();
+    let mut shortcut_buffer = with_shortcut.then(|| context.create_array_from(&[total], &shortcut).into_allocation());
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        Some(&input_buffer),
+        &scales_buffer,
+        &mut output,
+        shortcut_buffer.as_mut(),
+        None::<&Allocation<B>>,
+        batch as u32,
+        dim as u32,
+        1e-6,
+        0.0,
+        0.7,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+
+    let output_values = crate::common::helpers::allocation_to_vec(&output);
+    let shortcut_values = shortcut_buffer.as_ref().map(crate::common::helpers::allocation_to_vec).unwrap_or_default();
+    (output_values, shortcut_values)
+}
+
+#[uzu_test]
+fn test_post_layer_scalar_metal_matches_cpu() {
+    for &(shortcut, residual_sum, output) in &[(false, false, true), (true, true, false)] {
+        let (cpu_out, cpu_shortcut) = run_scaled_rms::<Cpu>(shortcut, residual_sum, output);
+        for_each_non_cpu_backend!(|B| {
+            let (out, sc) = run_scaled_rms::<B>(shortcut, residual_sum, output);
+            assert_eq_float::<f32>(&cpu_out, &out, 1e-5, "post_layer_scalar output: metal != cpu");
+            assert_eq_float::<f32>(&cpu_shortcut, &sc, 1e-5, "post_layer_scalar shortcut: metal != cpu");
+        });
+    }
+}
+
 // benchmarks
 #[uzu_bench]
 fn bench_rms_norm(c: &mut Criterion) {
@@ -406,6 +472,8 @@ fn bench_rms_norm(c: &mut Criterion) {
             T::data_type(),
             T::data_type(),
             T::data_type(),
+            false,
+            false,
             false,
             false,
             false,
@@ -452,6 +520,7 @@ fn bench_rms_norm(c: &mut Criterion) {
                             model_dim as u32,
                             epsilon,
                             scale_offset,
+                            1.0,
                             &mut encoder,
                         );
                     }

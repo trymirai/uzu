@@ -11,13 +11,8 @@ use std::{
     rc::Rc,
 };
 
-use half::{bf16, f16};
-use ndarray::{IxDyn, s};
-use num_traits::NumCast;
-
-use crate::{
-    ArrayElement, DataType, allocation_to_vec,
-    array::Array,
+use backend_uzu::{
+    Array, ArrayElement, DataType, allocation_to_vec,
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
     config::{ClassifierModelConfig, LanguageModelConfig, ModelMetadata, ModelType},
@@ -34,6 +29,9 @@ use crate::{
         types::Error,
     },
 };
+use half::{bf16, f16};
+use ndarray::{IxDyn, s};
+use num_traits::NumCast;
 
 // ============================================================================
 // Validation Types
@@ -43,6 +41,7 @@ use crate::{
 pub struct TracerValidationMetrics {
     pub atol: f32,
     pub rtol: f32,
+    #[allow(unused)]
     pub fraction_of_allowed_violations: f32,
     pub reference_shape: Vec<usize>,
     pub result_shape: Vec<usize>,
@@ -128,10 +127,6 @@ impl TracerValidationResults {
     pub fn number_of_allowed_tokens_violations(&self) -> usize {
         let threshold: f64 = 0.01;
         (self.suffix_length as f64 * threshold).ceil() as usize
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.number_of_tokens_violations() <= self.number_of_allowed_tokens_violations()
     }
 }
 

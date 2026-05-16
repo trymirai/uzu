@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{AttentionConfig, EmbeddingConfig, TransformerConfig};
 use crate::utils::strict_serde::Unsupported;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct DecoderConfig {
     pub embedding_config: EmbeddingConfig,
     pub transformer_config: TransformerConfig,

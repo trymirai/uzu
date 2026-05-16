@@ -1,8 +1,9 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::backends::common::gpu_types::ActivationType;
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Copy)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum ActivationConfig {
     #[serde(rename = "SiLU")]
