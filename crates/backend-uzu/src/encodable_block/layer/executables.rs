@@ -410,7 +410,7 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                let Some(LayerCacheAccess::OwnCache {
+                let Some(LayerCacheAccess::Owned {
                     entry,
                 }) = cache_access else {
                     panic!("State-space layer requires writable cache state");
@@ -428,7 +428,7 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                let Some(LayerCacheAccess::OwnCache {
+                let Some(LayerCacheAccess::Owned {
                     entry,
                 }) = cache_access else {
                     panic!("ShortConv layer requires writable cache state");
@@ -449,7 +449,7 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::DeltaNet {
                 mixer,
             } => {
-                let Some(LayerCacheAccess::OwnCache {
+                let Some(LayerCacheAccess::Owned {
                     entry,
                 }) = cache_access else {
                     panic!("DeltaNet layer requires writable cache state");

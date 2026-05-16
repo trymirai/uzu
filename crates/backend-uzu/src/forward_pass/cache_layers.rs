@@ -101,19 +101,19 @@ struct CacheEntryIndex(usize);
 
 #[derive(Clone, Copy)]
 enum LayerCacheBinding {
-    OwnCache {
+    Owned {
         entry: CacheEntryIndex,
     },
-    SharedKvSource {
+    Shared {
         source: CacheEntryIndex,
     },
 }
 
 pub enum LayerCacheAccess<'a, B: Backend> {
-    OwnCache {
+    Owned {
         entry: &'a mut CacheLayer<B>,
     },
-    SharedKvSource {
+    Shared {
         source: &'a CacheLayer<B>,
     },
 }
@@ -156,12 +156,12 @@ impl<B: Backend> CacheLayers<B> {
                     source_attention.sliding_window_size, attention.sliding_window_size,
                     "KV cache sharing requires identical sliding-window length"
                 );
-                let LayerCacheBinding::OwnCache {
+                let LayerCacheBinding::Owned {
                     entry: source_entry,
                 } = bindings[source_layer_index] else {
                     unreachable!("kv_source validation rejects chained sharing");
                 };
-                bindings.push(LayerCacheBinding::SharedKvSource {
+                bindings.push(LayerCacheBinding::Shared {
                     source: source_entry,
                 });
                 continue;
@@ -263,7 +263,7 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
             };
-            bindings.push(LayerCacheBinding::OwnCache {
+            bindings.push(LayerCacheBinding::Owned {
                 entry: CacheEntryIndex(entries.len()),
             });
             entries.push(layer);
@@ -309,14 +309,14 @@ impl<B: Backend> CacheLayers<B> {
         layer_index: usize,
     ) -> LayerCacheAccess<'_, B> {
         match self.bindings[layer_index] {
-            LayerCacheBinding::OwnCache {
+            LayerCacheBinding::Owned {
                 entry,
-            } => LayerCacheAccess::OwnCache {
+            } => LayerCacheAccess::Owned {
                 entry: &mut self.entries[entry.0],
             },
-            LayerCacheBinding::SharedKvSource {
+            LayerCacheBinding::Shared {
                 source,
-            } => LayerCacheAccess::SharedKvSource {
+            } => LayerCacheAccess::Shared {
                 source: &self.entries[source.0],
             },
         }
@@ -327,10 +327,10 @@ impl<B: Backend> CacheLayers<B> {
         layer_index: usize,
     ) -> Option<&CacheLayer<B>> {
         match self.bindings[layer_index] {
-            LayerCacheBinding::OwnCache {
+            LayerCacheBinding::Owned {
                 entry,
             } => Some(&self.entries[entry.0]),
-            LayerCacheBinding::SharedKvSource {
+            LayerCacheBinding::Shared {
                 ..
             } => None,
         }
@@ -338,10 +338,10 @@ impl<B: Backend> CacheLayers<B> {
 
     pub fn iter_layers(&self) -> impl Iterator<Item = (usize, &CacheLayer<B>)> {
         self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
-            LayerCacheBinding::OwnCache {
+            LayerCacheBinding::Owned {
                 entry,
             } => Some((index, &self.entries[entry.0])),
-            LayerCacheBinding::SharedKvSource {
+            LayerCacheBinding::Shared {
                 ..
             } => None,
         })

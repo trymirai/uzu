@@ -218,10 +218,10 @@ impl<B: Backend> Attention<B> {
 
         let cache_layer = args.cache_access.as_ref().map(|a| {
             match a {
-                LayerCacheAccess::OwnCache {
+                LayerCacheAccess::Owned {
                     entry,
                 } => entry.as_transformer(),
-                LayerCacheAccess::SharedKvSource {
+                LayerCacheAccess::Shared {
                     source,
                 } => source.as_transformer(),
             }
@@ -313,13 +313,13 @@ impl<B: Backend> Attention<B> {
         };
 
         let (keys, values) = match args.cache_access {
-            Some(LayerCacheAccess::SharedKvSource {
+            Some(LayerCacheAccess::Shared {
                 source,
             }) => {
                 let source = source.as_transformer().expect("kv_source must be a transformer cache");
                 (&source.keys, &source.values)
             },
-            Some(LayerCacheAccess::OwnCache {
+            Some(LayerCacheAccess::Owned {
                 entry,
             }) => {
                 let layer = entry.as_transformer_mut().expect("Attention layer expects transformer cache");
