@@ -103,18 +103,17 @@ impl<B: Backend> CacheLayers<B> {
         max_suffix_length: usize,
     ) -> Self {
         let total_context_length = max_prefix_length.max(max_suffix_length);
-        let kv_shapes: Vec<[usize; 3]> =
-            model_shape.kv_cache_layer_shapes(max_prefix_length, max_suffix_length).collect();
 
         let mut data: Box<[CacheLayer<B>]> = model_shape
             .layer_mixers()
             .iter()
-            .enumerate()
-            .map(|(layer_index, mixer)| match mixer {
-                MixerConfig::Attention(_) => {
-                    let shape = kv_shapes[layer_index];
-                    let window_length = model_shape.sliding_window_length_per_layer[layer_index]
-                        .filter(|&window_size| window_size < total_context_length);
+            .map(|mixer| match mixer {
+                MixerConfig::Attention(attn) => {
+                    let sliding_window = attn.sliding_window_size;
+                    let length = sliding_window.unwrap_or(max_prefix_length);
+                    let shape = [length + max_suffix_length, attn.num_groups, attn.head_dim];
+                    let window_length =
+                        sliding_window.filter(|&window_size| window_size < total_context_length);
 
                     let state = if let Some(w) = window_length {
                         KVCacheLayerState::Windowed {
