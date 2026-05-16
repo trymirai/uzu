@@ -97,15 +97,13 @@ pub struct CacheLayersSlice<B: Backend> {
 }
 
 #[derive(Clone, Copy)]
-struct CacheEntryIndex(usize);
-
-#[derive(Clone, Copy)]
 enum LayerCacheBinding {
+    /// Indices into `entries`.
     Owned {
-        entry: CacheEntryIndex,
+        entry: usize,
     },
     Shared {
-        source: CacheEntryIndex,
+        source: usize,
     },
 }
 
@@ -133,36 +131,21 @@ impl<B: Backend> CacheLayers<B> {
         let mut bindings: Vec<LayerCacheBinding> = Vec::with_capacity(model_shape.layer_mixers().len());
         for (layer_index, mixer) in model_shape.layer_mixers().iter().enumerate() {
             if let Some(source_layer_index) = kv_source_layers.get(layer_index).copied().flatten() {
-                assert!(
-                    source_layer_index < layer_index,
-                    "kv_source_layer ({source_layer_index}) must be strictly less than the sharer index ({layer_index})"
-                );
-                assert!(
-                    kv_source_layers.get(source_layer_index).copied().flatten().is_none(),
-                    "kv_source_layer source {source_layer_index} must itself be an owner (no chained sharing)"
-                );
-                let MixerConfig::Attention(source_attention) = &model_shape.layer_mixers()[source_layer_index] else {
-                    panic!("kv_source_layer {source_layer_index} must reference an attention layer");
-                };
-                let MixerConfig::Attention(attention) = mixer else {
-                    panic!("kv_source_layer set on a non-attention layer {layer_index}");
-                };
-                assert_eq!(
-                    (source_attention.num_groups, source_attention.head_dim),
-                    (attention.num_groups, attention.head_dim),
-                    "KV cache sharing requires identical [num_groups, head_dim]"
-                );
-                assert_eq!(
-                    source_attention.sliding_window_size, attention.sliding_window_size,
-                    "KV cache sharing requires identical sliding-window length"
-                );
                 let LayerCacheBinding::Owned {
-                    entry: source_entry,
+                    entry: source,
                 } = bindings[source_layer_index] else {
-                    unreachable!("kv_source validation rejects chained sharing");
+                    panic!("kv_source_layer {source_layer_index} (layer {layer_index}) must be a prior owner");
                 };
+                let geometry = |m: &MixerConfig| {
+                    m.as_attention().map(|a| (a.num_groups, a.head_dim, a.sliding_window_size))
+                };
+                assert_eq!(
+                    geometry(&model_shape.layer_mixers()[source_layer_index]),
+                    geometry(mixer),
+                    "KV cache sharing requires identical attention geometry"
+                );
                 bindings.push(LayerCacheBinding::Shared {
-                    source: source_entry,
+                    source,
                 });
                 continue;
             }
@@ -264,7 +247,7 @@ impl<B: Backend> CacheLayers<B> {
                 },
             };
             bindings.push(LayerCacheBinding::Owned {
-                entry: CacheEntryIndex(entries.len()),
+                entry: entries.len(),
             });
             entries.push(layer);
         }
@@ -312,12 +295,12 @@ impl<B: Backend> CacheLayers<B> {
             LayerCacheBinding::Owned {
                 entry,
             } => LayerCacheAccess::Owned {
-                entry: &mut self.entries[entry.0],
+                entry: &mut self.entries[entry],
             },
             LayerCacheBinding::Shared {
                 source,
             } => LayerCacheAccess::Shared {
-                source: &self.entries[source.0],
+                source: &self.entries[source],
             },
         }
     }
@@ -326,7 +309,7 @@ impl<B: Backend> CacheLayers<B> {
         self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
             LayerCacheBinding::Owned {
                 entry,
-            } => Some((index, &self.entries[entry.0])),
+            } => Some((index, &self.entries[*entry])),
             LayerCacheBinding::Shared {
                 ..
             } => None,
