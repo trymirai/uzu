@@ -190,7 +190,7 @@ pub(super) fn read_convnext_layer<B: Backend>(
     context: &Rc<B::Context>,
     tree: &BackendParameterTree<B>,
     data_type: DataType,
-    norm_config: &DescriptAudioConvNeXtNormConfig,
+    norm_config: &NormalizationConfig,
 ) -> AudioResult<StructuredAudioConvNeXt<B>> {
     let depthwise_tree = tree.subtree("dwconv")?;
     let (depthwise_shape, depthwise_weight) = read_float_array::<B, 3>(&depthwise_tree, "weights", data_type)?;

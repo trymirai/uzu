@@ -1,15 +1,11 @@
-use std::{collections::BTreeSet, sync::LazyLock};
-
-use regex::Regex;
-
 use super::*;
 use crate::{
     array::ArrayContextExt,
     backends::common::{Allocation, AsBufferRangeRef, DenseBuffer},
-    config::{DecoderConfig, TtsMessageProcessorConfig},
+    config::DecoderConfig,
     encodable_block::SamplingInputs,
     forward_pass::token_inputs::TokenInputs,
-    session::types::{TtsModelConfigError, TtsPromptConfigError},
+    session::types::TtsModelConfigError,
 };
 
 pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
@@ -194,29 +190,6 @@ fn validate_fishaudio_decoder_contract(
     Ok(semantic_cardinality)
 }
 
-static MESSAGE_FIELD_REF_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"message\.([A-Za-z_][A-Za-z0-9_]*)").expect("message field regex"));
-
-pub(super) fn validate_fishaudio_message_processor_config(config: &TtsMessageProcessorConfig) -> Result<(), Error> {
-    let builtin_fields =
-        ["role", "content", "reasoning_content", "speaker_id", "style"].into_iter().collect::<BTreeSet<_>>();
-    let referenced_fields = MESSAGE_FIELD_REF_REGEX
-        .captures_iter(config.prompt_template.as_str())
-        .filter_map(|capture| capture.get(1).map(|field| field.as_str().to_owned()))
-        .collect::<BTreeSet<_>>();
-
-    for field in referenced_fields {
-        if !builtin_fields.contains(field.as_str()) && !config.default_message_fields.contains_key(field.as_str()) {
-            return Err(TtsPromptConfigError::MissingDefaultMessageField {
-                field: field.into_boxed_str(),
-            }
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
 pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
     config: &crate::config::FishAudioTextDecoderConfig,
     audio: &AudioGenerationContext<B>,
@@ -235,12 +208,6 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
         audio.codec_cardinality(),
         audio_semantic_cardinality,
     )?;
-    if !config.slow_readout_config.is_full_precision() {
-        return Err(Error::UnableToLoadConfig);
-    }
-    if !config.fast_readout_config.is_full_precision() {
-        return Err(Error::UnableToLoadConfig);
-    }
     if config.slow_model_config.model_dim != config.slow_model_dim {
         return Err(Error::UnableToLoadConfig);
     }

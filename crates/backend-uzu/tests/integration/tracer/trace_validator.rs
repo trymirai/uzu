@@ -15,7 +15,7 @@ use backend_uzu::{
     Array, ArrayElement, DataType, allocation_to_vec,
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
-    config::{ClassifierModelConfig, LanguageModelConfig, ModelMetadata, ModelType},
+    config::{ModelConfig, ModelMetadata, ModelType},
     encodable_block::{DecoderDecodeInput, Sampling},
     forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
     language_model::{
@@ -171,20 +171,46 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let raw_metadata: ModelMetadata<serde_json::Value> =
+        let raw_metadata: ModelMetadata<ModelConfig> =
             serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
-        let context = match raw_metadata.model_type {
+        let context = match raw_metadata.model_type.clone() {
             ModelType::ClassifierModel => {
-                let metadata: ModelMetadata<ClassifierModelConfig> =
-                    serde_json::from_value(serde_json::to_value(&raw_metadata).map_err(|_| Error::UnableToLoadConfig)?)
-                        .map_err(|_| Error::UnableToLoadConfig)?;
+                let ModelConfig::ClassifierModel(model_config) = raw_metadata.model_config.clone() else {
+                    return Err(Error::UnableToLoadConfig);
+                };
+                let metadata = ModelMetadata {
+                    toolchain_version: raw_metadata.toolchain_version,
+                    vendor: raw_metadata.vendor,
+                    family: raw_metadata.family,
+                    name: raw_metadata.name,
+                    size: raw_metadata.size,
+                    quantization: raw_metadata.quantization,
+                    repo: raw_metadata.repo,
+                    use_cases: raw_metadata.use_cases,
+                    model_type: raw_metadata.model_type,
+                    model_config,
+                    grammar_start_tokens: raw_metadata.grammar_start_tokens,
+                };
                 ModelContext::Classifier(Classifier::new(model_path, &metadata)?)
             },
             ModelType::LanguageModel => {
-                let metadata: ModelMetadata<LanguageModelConfig> =
-                    serde_json::from_value(serde_json::to_value(&raw_metadata).map_err(|_| Error::UnableToLoadConfig)?)
-                        .map_err(|_| Error::UnableToLoadConfig)?;
+                let ModelConfig::LanguageModel(model_config) = raw_metadata.model_config.clone() else {
+                    return Err(Error::UnableToLoadConfig);
+                };
+                let metadata = ModelMetadata {
+                    toolchain_version: raw_metadata.toolchain_version,
+                    vendor: raw_metadata.vendor,
+                    family: raw_metadata.family,
+                    name: raw_metadata.name,
+                    size: raw_metadata.size,
+                    quantization: raw_metadata.quantization,
+                    repo: raw_metadata.repo,
+                    use_cases: raw_metadata.use_cases,
+                    model_type: raw_metadata.model_type,
+                    model_config,
+                    grammar_start_tokens: raw_metadata.grammar_start_tokens,
+                };
                 let prefill_step_size = Self::determine_prefill_step_size(model_path);
                 let decoding_config = DecodingConfig::new(
                     ContextMode::default(),
