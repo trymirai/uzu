@@ -4,19 +4,19 @@ use proc_macros::kernel;
 
 use crate::ArrayElement;
 
-#[kernel(QKNorm)]
+#[kernel(QKVNorm)]
 #[variants(InputT, f32, f16, bf16)]
 #[variants(ScaleT, f32, f16, bf16)]
 #[variants(OutputT, f32, f16, bf16)]
 #[variants(AccumT, f32, f16)]
-pub fn qk_norm<
+pub fn qkv_norm<
     InputT: ArrayElement + Float,
     ScaleT: ArrayElement + Float,
     OutputT: ArrayElement + Float,
     AccumT: ArrayElement + Float,
 >(
     #[optional(!in_place)] qkv_input: Option<*const InputT>,
-    scales: *const ScaleT,
+    #[optional(!scale_free)] scales: Option<*const ScaleT>,
     qkv_output: *mut OutputT,
     batch_size: u32,
     num_q_heads: u32,
@@ -28,6 +28,7 @@ pub fn qk_norm<
     head_count: u32,
     full_layer: bool,
     #[specialize] in_place: bool,
+    #[specialize] scale_free: bool,
 ) {
     let qkv_input = match in_place {
         true => qkv_output as *const InputT,
@@ -56,15 +57,19 @@ pub fn qk_norm<
 
             for i in 0..head_dim {
                 let input_val = unsafe { AccumT::from(*qkv_input.add(offset + i)).unwrap() };
-                let scale_val = unsafe { AccumT::from(*scales.add(i)).unwrap() };
                 let normalized: AccumT = input_val * rms_norm;
-                let result: OutputT = if full_layer {
-                    let scale_with_offset: AccumT = scale_val + scale_offset;
-                    OutputT::from(normalized * scale_with_offset).unwrap()
+                let result: OutputT = if scale_free {
+                    OutputT::from(normalized).unwrap()
                 } else {
-                    let normalized_low = OutputT::from(normalized).unwrap();
-                    let scale_value_low = OutputT::from(scale_val + scale_offset).unwrap();
-                    normalized_low * scale_value_low
+                    let scale_val = unsafe { AccumT::from(*scales.unwrap().add(i)).unwrap() };
+                    if full_layer {
+                        let scale_with_offset: AccumT = scale_val + scale_offset;
+                        OutputT::from(normalized * scale_with_offset).unwrap()
+                    } else {
+                        let normalized_low = OutputT::from(normalized).unwrap();
+                        let scale_value_low = OutputT::from(scale_val + scale_offset).unwrap();
+                        normalized_low * scale_value_low
+                    }
                 };
                 unsafe { *qkv_output.add(offset + i) = result };
             }

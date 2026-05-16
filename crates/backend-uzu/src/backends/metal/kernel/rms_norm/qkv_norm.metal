@@ -5,7 +5,7 @@
 using namespace metal;
 #define GRAIN_SIZE 4
 
-// QK norm: normalize per-head vectors (small head_dim) efficiently.
+// QKV norm: normalize per-head vectors (small head_dim) efficiently.
 //
 // Strategy:
 // - One SIMD-group (32 threads) processes one head.
@@ -15,9 +15,9 @@ VARIANTS(InputT, float, half, bfloat)
 VARIANTS(ScaleT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(AccumT, float, half)
-PUBLIC KERNEL(QKNorm)(
+PUBLIC KERNEL(QKVNorm)(
     const device InputT* qkv_input OPTIONAL(!in_place),
-    const device ScaleT* scales,
+    const device ScaleT* scales OPTIONAL(!scale_free),
     device OutputT* qkv_output,
     constant uint& batch_size,
     constant uint& num_q_heads,
@@ -31,7 +31,8 @@ PUBLIC KERNEL(QKNorm)(
     const uint batch_idx GROUPS(batch_size),
     const uint head_idx GROUPS(head_count),
     const uint lane_id THREADS(METAL_SIMD_SIZE),
-    const bool in_place SPECIALIZE
+    const bool in_place SPECIALIZE,
+    const bool scale_free SPECIALIZE
 ) {
   if (in_place) {
     qkv_input = (const device InputT*)qkv_output;
@@ -93,7 +94,9 @@ PUBLIC KERNEL(QKNorm)(
 
       AccumT normalized_high = vals[j] * rms_norm;
 
-      if (full_layer) {
+      if (scale_free) {
+        output_data[i] = static_cast<OutputT>(normalized_high);
+      } else if (full_layer) {
         AccumT scale_value_high = static_cast<AccumT>(scales_data[i]) +
                                   static_cast<AccumT>(scale_offset);
         output_data[i] =
