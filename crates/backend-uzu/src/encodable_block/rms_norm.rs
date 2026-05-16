@@ -13,6 +13,13 @@ use crate::{
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PostLayerScalar {
+    None,
+    ScaleResidualSum(f32),
+    ScaleOutput(f32),
+}
+
 #[derive(Debug, Error)]
 pub enum RMSNormError<B: Backend> {
     #[error("Backend error: {0}")]
@@ -29,6 +36,7 @@ pub struct RMSNorm<B: Backend> {
     input_data_type: DataType,
     output_data_type: DataType,
     hadamard_factors: Option<Allocation<B>>,
+    post_layer_scalar_value: f32,
 }
 
 impl<B: Backend> RMSNorm<B> {
@@ -40,6 +48,7 @@ impl<B: Backend> RMSNorm<B> {
         hadamard_factors: Option<Allocation<B>>,
         use_shortcut: bool,
         residual_add: bool,
+        post_layer_scalar: PostLayerScalar,
     ) -> Result<Self, RMSNormError<B>> {
         let scales_leaf = parameter_tree.leaf("scales").map_err(RMSNormError::ParameterError)?;
         let element_count = scales_leaf.shape()[0];
@@ -47,6 +56,12 @@ impl<B: Backend> RMSNorm<B> {
 
         let accumulation_data_type: DataType = config.accumulation_precision.into();
         let scale_data_type: DataType = config.scale_precision.into();
+
+        let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
+            PostLayerScalar::None => (false, false, 1.0),
+            PostLayerScalar::ScaleResidualSum(value) => (true, false, value),
+            PostLayerScalar::ScaleOutput(value) => (false, true, value),
+        };
 
         let kernel = <B::Kernels as Kernels>::RMSNormKernel::new(
             context,
@@ -59,6 +74,8 @@ impl<B: Backend> RMSNorm<B> {
             use_shortcut,
             residual_add,
             hadamard_factors.is_some(),
+            scale_residual_sum,
+            scale_output,
         )
         .map_err(RMSNormError::BackendError)?;
 
@@ -70,6 +87,7 @@ impl<B: Backend> RMSNorm<B> {
             input_data_type: intermediate_data_type,
             output_data_type: scale_data_type,
             hadamard_factors,
+            post_layer_scalar_value,
         })
     }
 
@@ -96,6 +114,7 @@ impl<B: Backend> RMSNorm<B> {
             self.element_count as u32,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
+            self.post_layer_scalar_value,
             encoder,
         );
         Ok(output)
