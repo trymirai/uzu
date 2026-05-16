@@ -2,7 +2,9 @@ use std::cell::Cell;
 
 use crate::{
     array::size_for_shape,
-    backends::common::{AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{
+        AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer, kernel::kv_cache_update::KVCacheUpdate,
+    },
     config::MixerConfig,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
@@ -128,7 +130,9 @@ impl<B: Backend> CacheLayers<B> {
                         }
                     };
 
-                    CacheLayer::Transformer(KVCacheLayer::new(context, &state, shape, model_shape.kv_cache_data_type()))
+                    let kv_layer = KVCacheLayer::new(context, &state, shape, model_shape.kv_cache_data_type())
+                        .expect("Failed to create KVCacheLayer");
+                    CacheLayer::Transformer(kv_layer)
                 },
                 MixerConfig::Mamba(c) => {
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
@@ -194,6 +198,15 @@ impl<B: Backend> CacheLayers<B> {
                 },
             })
             .collect();
+
+        data.iter_mut().for_each(|layer| match layer {
+            CacheLayer::Transformer(kv) => {
+                let keys_total_pages = kv.keys.size() / kv.keys.page_size_bytes();
+                kv.keys.map(context, &(0..keys_total_pages)).expect("Failed to map transformer keys pages");
+            },
+            _ => (),
+        });
+        context.wait_for_pending_sparse_mappings().expect("Failed to synchronize sparse buffer mappings");
 
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
         for layer in data.iter_mut() {
@@ -482,7 +495,9 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [new_total_len, num_groups, head_dim];
-                    CacheLayer::Transformer(KVCacheLayer::new(context, &layer.state, new_shape, dtype))
+                    let kv_layer = KVCacheLayer::new(context, &layer.state, new_shape, dtype)
+                        .expect("Failed to create KVCacheLayer");
+                    CacheLayer::Transformer(kv_layer)
                 },
                 CacheLayer::StateSpace(layer) => {
                     let conv_bytes = size_for_shape(&layer.conv_shape, layer.data_type);

@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub struct KVLayerData<'a, B: Backend> {
-    pub key_allocation: &'a mut Allocation<B>,
+    pub key_allocation: &'a mut B::SparseBuffer,
     pub key_shape: [usize; 3],
     pub value_allocation: &'a mut Allocation<B>,
     pub value_shape: [usize; 3],

@@ -43,8 +43,8 @@ pub const INVALID_POSITION: usize = i32::MAX as usize;
 
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
-    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub keys: Allocation<B>,
+    /// up to [max_prefix_length + max_suffix_length, num_groups, head_dim]
+    pub keys: B::SparseBuffer,
     /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
     pub values: Allocation<B>,
     pub shape: [usize; 3],
@@ -57,19 +57,15 @@ impl<B: Backend> KVCacheLayer<B> {
         state: &KVCacheLayerState,
         shape: [usize; 3],
         data_type: DataType,
-    ) -> Self {
-        let kv_bytes = size_for_shape(&shape, data_type);
-        Self {
+    ) -> Result<Self, B::Error> {
+        let buffer_size = size_for_shape(&shape, data_type);
+        Ok(Self {
             state: state.clone(),
-            keys: context
-                .create_allocation(kv_bytes, AllocationType::Global)
-                .expect("Failed to create kv keys allocation"),
-            values: context
-                .create_allocation(kv_bytes, AllocationType::Global)
-                .expect("Failed to create kv values allocation"),
+            keys: context.create_sparse_buffer(buffer_size)?,
+            values: context.create_allocation(buffer_size, AllocationType::Global)?,
             shape,
             data_type,
-        }
+        })
     }
 
     pub fn encode_copy_prefix_rows_to(
