@@ -1,4 +1,3 @@
-use monostate::MustBe;
 use proc_macros::uzu_config;
 
 use super::{ConfigDataType, LinearConfig, NormalizationConfig, UpcastMode};
@@ -12,7 +11,6 @@ pub struct AttentionConfig {
 
     pub query_norm_config: Option<NormalizationConfig>,
     pub key_norm_config: Option<NormalizationConfig>,
-    #[serde(default)]
     pub normalize_values: bool,
 
     pub num_heads: usize,
@@ -27,7 +25,6 @@ pub struct AttentionConfig {
     pub has_qkv_biases: bool,
     pub has_out_biases: bool,
     pub gate_projection_config: Option<LinearConfig>,
-    pub normalize_values: MustBe!(false),
 }
 
 impl AttentionConfig {
