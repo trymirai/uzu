@@ -8,7 +8,7 @@ use crate::{
     DataType,
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
         gpu_types::ring::RingParams,
         kernel::{
             AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
@@ -352,13 +352,13 @@ impl<B: Backend> Attention<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_attention_variant(
+    fn encode_attention_variant<Keys, Values>(
         &self,
         variant: KernelVariant,
         kernel_key: &KernelKey,
         queries: &Allocation<B>,
-        keys: &Allocation<B>,
-        values: &Allocation<B>,
+        keys: &Keys,
+        values: &Values,
         trie_allocation: Option<&Allocation<B>>,
         sinks_allocation: Option<&Allocation<B>>,
         gqa_factor: usize,
@@ -376,7 +376,13 @@ impl<B: Backend> Attention<B> {
         max_sequence_length: usize,
         head_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+    ) -> Result<Allocation<B>, B::Error>
+    where
+        Keys: AsBufferRangeRef,
+        Keys::Buffer: Buffer<Backend = B>,
+        Values: AsBufferRangeRef,
+        Values::Buffer: Buffer<Backend = B>,
+    {
         let mut attention_output =
             encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads * head_dim], self.data_type))?;
         match variant {
@@ -499,12 +505,12 @@ impl<B: Backend> Attention<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_fallback(
+    fn encode_fallback<Keys, Values>(
         &self,
         is_kv_cache_ring: bool,
         queries: &Allocation<B>,
-        keys: &Allocation<B>,
-        values: &Allocation<B>,
+        keys: &Keys,
+        values: &Values,
         attention_output: &mut Allocation<B>,
         sinks_allocation: Option<&Allocation<B>>,
         gqa_factor: usize,
@@ -520,7 +526,13 @@ impl<B: Backend> Attention<B> {
         suffix_length: usize,
         head_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), B::Error>
+    where
+        Keys: AsBufferRangeRef,
+        Keys::Buffer: Buffer<Backend = B>,
+        Values: AsBufferRangeRef,
+        Values::Buffer: Buffer<Backend = B>,
+    {
         let matmul = self.matmul_kernel.as_ref().expect("MatmulKernel required for head_dim=512 fallback");
         let scatter_scores =
             self.fallback_scatter_scores_kernels.get(&is_kv_cache_ring).expect("scatter_scores kernel missing");

@@ -4,10 +4,10 @@ use crate::{
     DataType,
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Encoder,
+            AsBufferRangeMut, AsBufferRangeRef, Buffer, Encoder,
             kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
         },
-        cpu::{Cpu, context::CpuContext},
+        cpu::{BufferDowncastExt, Cpu, context::CpuContext},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -31,11 +31,14 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn encode(
+    fn encode<TB>(
         &mut self,
-        arguments: MatmulArguments<Cpu>,
+        arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
-    ) {
+    ) where
+        TB: AsBufferRangeRef,
+        TB::Buffer: Buffer<Backend = Cpu>,
+    {
         let MatmulArguments {
             a,
             a_offset,
@@ -70,7 +73,7 @@ impl MatmulKernel for MatmulCpuKernel {
         let d_offset = d_buffer_range.range().start;
 
         let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_offset));
-        let b_ptr = SendPtr(unsafe { &*b_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(b_offset));
+        let b_ptr = SendPtr(unsafe { &*b_buffer_range.buffer().downcast().get() }.as_ptr().wrapping_byte_add(b_offset));
         let d_ptr =
             SendPtrMut(unsafe { (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_offset) as *mut u8 });
 

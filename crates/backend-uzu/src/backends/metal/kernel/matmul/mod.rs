@@ -7,7 +7,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Allocation, Encoder,
+            Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::GemmParams,
             kernel::{
                 TensorAddBiasKernel,
@@ -135,11 +135,15 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn encode_gemv(
+    fn encode_gemv<TB>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
+        arguments: MatmulArguments<Metal, TB>,
+    ) -> Result<(), MatmulError<Metal>>
+    where
+        TB: AsBufferRangeRef,
+        TB::Buffer: Buffer<Backend = Metal>,
+    {
         let MatmulArguments {
             a,
             a_offset,
@@ -182,11 +186,15 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn encode_gemm(
+    fn encode_gemm<TB>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
+        arguments: MatmulArguments<Metal, TB>,
+    ) -> Result<(), MatmulError<Metal>>
+    where
+        TB: AsBufferRangeRef,
+        TB::Buffer: Buffer<Backend = Metal>,
+    {
         let MatmulArguments {
             a,
             a_offset,
@@ -254,11 +262,15 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn encode_gemm_mpp(
+    fn encode_gemm_mpp<TB>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
+        arguments: MatmulArguments<Metal, TB>,
+    ) -> Result<(), MatmulError<Metal>>
+    where
+        TB: AsBufferRangeRef,
+        TB::Buffer: Buffer<Backend = Metal>,
+    {
         let MatmulArguments {
             a,
             a_offset,
@@ -340,12 +352,15 @@ pub enum MatmulDispatchPath {
 }
 
 impl MatmulMetalKernel {
-    pub fn encode_with_path(
+    pub fn encode_with_path<TB>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
-    ) {
+    ) where
+        TB: AsBufferRangeRef,
+        TB::Buffer: Buffer<Backend = Metal>,
+    {
         match path {
             MatmulDispatchPath::Auto => self.encode(arguments, encoder),
             MatmulDispatchPath::Gemv => self.encode_gemv(encoder, arguments).expect("Failed to encode GEMV"),
@@ -391,11 +406,14 @@ impl MatmulKernel for MatmulMetalKernel {
         Ok(kernel)
     }
 
-    fn encode(
+    fn encode<TB>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
-    ) {
+    ) where
+        TB: AsBufferRangeRef,
+        TB::Buffer: Buffer<Backend = Metal>,
+    {
         if !arguments.b_transpose {
             self.encode_gemm(encoder, arguments).expect("Failed to encode GEMM kernel");
         } else if arguments.batch_dim <= max_gemv_batch_threshold() {

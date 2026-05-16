@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder, kernel::ManualKernels},
+    backends::common::{Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, kernel::ManualKernels},
 };
 
 #[derive(Debug, Error)]
@@ -22,12 +22,12 @@ pub enum MatmulArgumentC<'a, B: Backend> {
 }
 
 // D = ab_scale * (A @ op(B)) + C, where op(B) = B^T when b_transpose else B.
-pub struct MatmulArguments<'a, B: Backend> {
+pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef> {
     /// A: [M, K]
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
     /// B: [N, K] when b_transpose, else [K, N]
-    pub b: &'a Allocation<B>,
+    pub b: &'a TB,
     pub b_offset: usize,
     pub b_leading_dimension: Option<u32>,
     pub b_transpose: bool,
@@ -53,9 +53,11 @@ pub trait MatmulKernel: Sized {
         data_type: DataType,
     ) -> Result<Self, MatmulError<Self::Backend>>;
 
-    fn encode(
+    fn encode<TB>(
         &mut self,
-        arguments: MatmulArguments<Self::Backend>,
+        arguments: MatmulArguments<Self::Backend, TB>,
         encoder: &mut Encoder<Self::Backend>,
-    );
+    ) where
+        TB: AsBufferRangeRef,
+        TB::Buffer: Buffer<Backend = Self::Backend>;
 }
