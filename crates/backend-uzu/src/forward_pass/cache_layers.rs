@@ -208,7 +208,7 @@ impl<B: Backend> CacheLayers<B> {
             },
             _ => (),
         });
-        context.wait_for_pending_sparse_mappings().expect("Failed to synchronize sparse buffer mappings");
+        // TODO agolokoz: context.wait_for_pending_sparse_mappings().expect("Failed to synchronize sparse buffer mappings");
 
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
         for layer in data.iter_mut() {

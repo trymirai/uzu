@@ -98,7 +98,7 @@ impl Context for MetalContext {
 
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = 64 * 4 * page_size.in_bytes();
-        let sparse_pool = MetalSparseHeapPool::new(device.as_ref(), page_size, heap_capacity)?;
+        let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity)?;
 
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
@@ -186,10 +186,6 @@ impl Context for MetalContext {
         let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
         let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
         Ok(MetalSparseBuffer::new(context, capacity, sparse_page_size)?)
-    }
-
-    fn wait_for_pending_sparse_mappings(&self) -> Result<(), MetalError> {
-        self.sparse_heap_pool.borrow().wait_pending()
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
