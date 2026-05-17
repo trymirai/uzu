@@ -15,6 +15,7 @@ pub struct ModelShape {
     num_groups: usize,
     pub num_layers: usize,
     layer_mixers: Box<[MixerConfig]>,
+    kv_source_layers: Box<[Option<usize>]>,
 }
 
 impl ModelShape {
@@ -36,6 +37,7 @@ impl ModelShape {
         };
 
         let layer_mixers: Box<[MixerConfig]> = layer_configs.iter().map(|l| l.mixer_config.clone()).collect();
+        let kv_source_layers: Box<[Option<usize>]> = layer_configs.iter().map(|l| l.kv_source_layer).collect();
 
         Self {
             activation_type,
@@ -46,6 +48,7 @@ impl ModelShape {
             num_groups,
             num_layers,
             layer_mixers,
+            kv_source_layers,
         }
     }
 
@@ -63,6 +66,10 @@ impl ModelShape {
 
     pub fn model_dim(&self) -> usize {
         self.model_dim
+    }
+
+    pub fn kv_source_layers(&self) -> &[Option<usize>] {
+        &self.kv_source_layers
     }
 
     pub fn layer_mixers(&self) -> &[MixerConfig] {

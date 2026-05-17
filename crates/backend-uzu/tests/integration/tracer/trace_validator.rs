@@ -306,14 +306,11 @@ impl<B: Backend> TraceValidator<B> {
         let mut results = Self::validate_layer_traces(&traces, &traces_view, data_type);
 
         // LLM-specific: KV cache validation
-        let transformer_layers: Vec<usize> = {
-            let cache = ctx.cache_layers.borrow();
-            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_transformer().map(|_| index)).collect()
-        };
-
-        for index in transformer_layers {
-            let cache = ctx.cache_layers.borrow();
-            let kv = cache.data[index].as_transformer().expect("Expected transformer layer");
+        let cache = ctx.cache_layers.borrow();
+        for (index, layer) in cache.iter_layers() {
+            let Some(kv) = layer.as_transformer() else {
+                continue;
+            };
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
                 results.push(TracerValidationResult {
@@ -343,14 +340,10 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         // LLM-specific: SSM state validation
-        let ssm_layers: Vec<usize> = {
-            let cache = ctx.cache_layers.borrow();
-            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_state_space().map(|_| index)).collect()
-        };
-
-        for index in ssm_layers {
-            let cache = ctx.cache_layers.borrow();
-            let ssm = cache.data[index].as_state_space().expect("Expected SSM layer");
+        for (index, layer) in cache.iter_layers() {
+            let Some(ssm) = layer.as_state_space() else {
+                continue;
+            };
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -384,14 +377,10 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         // LLM-specific: DeltaNet state validation
-        let delta_net_layers: Vec<usize> = {
-            let cache = ctx.cache_layers.borrow();
-            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
-        };
-
-        for index in delta_net_layers {
-            let cache = ctx.cache_layers.borrow();
-            let delta = cache.data[index].as_delta_net().expect("Expected DeltaNet layer");
+        for (index, layer) in cache.iter_layers() {
+            let Some(delta) = layer.as_delta_net() else {
+                continue;
+            };
 
             for path in [
                 format!("updated_state.{}.conv_state", index),

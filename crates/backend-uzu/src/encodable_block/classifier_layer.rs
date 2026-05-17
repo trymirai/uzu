@@ -230,7 +230,7 @@ impl<B: Backend> ClassifierLayer<B> {
             AttentionArguments {
                 token_subtrie_ranges,
                 attention_sinks,
-                kv_cache_layer: None,
+                cache_access: None,
             },
             &qkv,
             &queries,

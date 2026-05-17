@@ -15,5 +15,5 @@ pub struct TransformerLayerConfig {
     pub hidden_dim: Option<usize>,
     pub ple_config: Option<Unsupported>,
     pub has_post_layer_scalar: bool,
-    pub kv_source_layer: Option<Unsupported>,
+    pub kv_source_layer: Option<usize>,
 }
