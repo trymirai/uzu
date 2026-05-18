@@ -7,10 +7,13 @@ use metal::{MTLBuffer, MTLSparsePageSize};
 use objc2::runtime::ProtocolObject;
 
 use crate::{
-    backends::metal::{
-        error::MetalError,
-        metal_extensions::SparsePageSizeExt,
-        sparse::{sparse_heap::MetalSparseHeap, sparse_utils::MetalSparseHeapMappingParameters},
+    backends::{
+        common::Context,
+        metal::{
+            error::MetalError,
+            metal_extensions::SparsePageSizeExt,
+            sparse::{sparse_heap::MetalSparseHeap, sparse_utils::MetalSparseHeapMappingParameters},
+        },
     },
     prelude::MetalContext,
 };
@@ -97,6 +100,7 @@ impl MetalSparseHeapPool {
                     for (heap_pos, mappings) in existing_heaps_mappings {
                         self.heaps[heap_pos].execute(&context, buffer, &mappings, false);
                     }
+                    context.sparse_mappings_signal();
                     return Err(err);
                 },
             };
