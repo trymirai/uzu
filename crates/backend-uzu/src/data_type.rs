@@ -3,6 +3,10 @@ use half::{bf16, f16};
 use num_traits::NumCast;
 use serde::{Deserialize, Serialize};
 
+use crate::utils::strict_serde::DeserializeStrict;
+
+impl<'de> DeserializeStrict<'de> for DataType {}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub enum DataType {
     // Floating point

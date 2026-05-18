@@ -9,7 +9,7 @@ use backend_uzu::{
         metal::{Metal, MetalContext},
     },
 };
-use dsl::__internal_uzu_test as uzu_test;
+use proc_macros::__internal_uzu_test as uzu_test;
 use half::{bf16, f16};
 use num_traits::Float;
 

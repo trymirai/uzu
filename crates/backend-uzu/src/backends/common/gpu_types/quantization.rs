@@ -1,8 +1,9 @@
-use proc_macros::uzu_config;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
-use crate::DataType;
+use crate::{DataType, utils::strict_serde::DeserializeStrict};
+
+impl<'de> DeserializeStrict<'de> for QuantizationMode {}
 
 #[repr(C)]
 #[derive(Debug, Display, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

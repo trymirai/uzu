@@ -46,6 +46,8 @@ fn bench_rms_norm(c: &mut Criterion) {
             false,
             false,
             false,
+            false,
+            false,
         )
         .unwrap();
 
@@ -87,6 +89,7 @@ fn bench_rms_norm(c: &mut Criterion) {
                             model_dim as u32,
                             epsilon,
                             scale_offset,
+                            1.0,
                             &mut encoder,
                         );
                     }

@@ -10,12 +10,15 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
+use criterion::{BenchmarkId, Criterion, Throughput};
 use half::{bf16, f16};
+use itertools::iproduct;
 use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use crate::{
-    common::assert::assert_eq_float,
-    uzu_test,
+    common::{assert::assert_eq_float, type_short_name},
+    uzu_bench, uzu_test,
 };
 
 static BOOL_ALL: &[bool] = &[true, false];
@@ -240,6 +243,24 @@ fn test_edge<
         let (input, expected) = get_test_data_edge::<InputT, ScaleT, OutputT, AccumT>(false, *in_place);
         test_internal::<InputT, ScaleT, OutputT, AccumT>(&input, expected.as_slice())
     }
+}
+
+fn get_rms_norm_data(
+    seed: u64,
+    batch_size: usize,
+    model_dim: usize,
+) -> (Box<[f32]>, Box<[f32]>) {
+    let mut rng = SmallRng::seed_from_u64(seed);
+    let input_size = batch_size * model_dim;
+    let mut input_data = vec![0.0f32; input_size];
+    for x in input_data.iter_mut() {
+        *x = rng.random_range(-2.0f32..2.0f32);
+    }
+    let mut scale_data = vec![0.0f32; model_dim];
+    for x in scale_data.iter_mut() {
+        *x = rng.random_range(0.1f32..3.0f32);
+    }
+    (input_data.into_boxed_slice(), scale_data.into_boxed_slice())
 }
 
 // AccumT f32

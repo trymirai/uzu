@@ -64,7 +64,7 @@ pub struct FullPrecisionLinearConfig {
 pub struct TiedEmbeddingConfig {
     #[serde(flatten)]
     pub common: EmbeddingConfigCommon,
-    pub precision: ConfigDataType,
+    pub precision: DataType,
 }
 
 impl TiedEmbeddingConfig {
@@ -156,13 +156,13 @@ pub struct DescriptAudioQuantizerConfig {
 
 #[uzu_config]
 pub struct DescriptAudioResidualVectorQuantizeConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub vq_config: DescriptAudioVectorQuantizeConfig,
 }
 
 #[uzu_config]
 pub struct DescriptAudioVectorQuantizeConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub codebook_config: TiedEmbeddingConfig,
     pub out_proj_config: FullPrecisionLinearConfig,
 }
@@ -174,14 +174,14 @@ pub struct DescriptAudioUpsamplerConfig {
 
 #[uzu_config]
 pub struct DescriptAudioUpsamplingBlockConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub trans_conv_config: DescriptAudioCausalTransposeConv1dConfig,
     pub convnext_config: DescriptAudioConvNeXtConfig,
 }
 
 #[uzu_config]
 pub struct DescriptAudioConvNeXtConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub activation: ActivationConfig,
     pub dwconv_config: DescriptAudioCausalConv1dConfig,
     pub norm_config: NormalizationConfig,
