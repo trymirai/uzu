@@ -14,6 +14,7 @@ pub enum GpuTypeKind {
 #[derive(Clone)]
 struct GpuTypeEntry {
     path: GpuTypePath,
+    #[allow(dead_code)]
     kind: GpuTypeKind,
 }
 
@@ -60,6 +61,7 @@ impl EnumPaths {
         self.short_name_to_entry.get(short_name).map(|entry| &*entry.path)
     }
 
+    #[allow(dead_code)]
     pub fn kind_for(
         &self,
         short_name: &str,
