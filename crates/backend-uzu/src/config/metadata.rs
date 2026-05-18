@@ -1,10 +1,21 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-use super::ModelType;
-use crate::backends::common::gpu_types::QuantizationMode;
+use super::{ClassifierModelConfig, LanguageModelConfig, ModelType};
+#[cfg(metal_backend)]
+use super::TtsModelConfig;
+use crate::{backends::common::gpu_types::QuantizationMode, utils::strict_serde::DeserializeStrictOwned};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct ModelMetadata<T> {
+#[uzu_config]
+#[serde(untagged)]
+pub enum ModelConfig {
+    LanguageModel(LanguageModelConfig),
+    ClassifierModel(ClassifierModelConfig),
+    #[cfg(metal_backend)]
+    TtsModel(TtsModelConfig),
+}
+
+#[uzu_config]
+pub struct ModelMetadata<T: DeserializeStrictOwned> {
     pub toolchain_version: String,
     pub vendor: String,
     pub family: String,

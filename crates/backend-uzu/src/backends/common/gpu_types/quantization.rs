@@ -1,3 +1,4 @@
+use proc_macros::uzu_config;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 

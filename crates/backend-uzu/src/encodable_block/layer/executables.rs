@@ -2,6 +2,8 @@
 
 use std::rc::Rc;
 
+use half::{bf16, f16};
+
 use super::MixerExecutables;
 #[cfg(feature = "tracing")]
 use crate::backends::common::{Kernels, kernel::TensorAddBiasKernel};
@@ -13,9 +15,9 @@ use crate::{
     config::{MixerConfig, TransformerConfig, TransformerLayerConfig},
     encodable_block::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
-        QKNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
+        PostLayerScalar, QKVNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
     },
-    forward_pass::{cache_layers::CacheLayer, state::RopeBuffers},
+    forward_pass::{cache_layers::LayerCacheAccess, state::RopeBuffers},
     parameters::ParameterTree,
 };
 
@@ -46,6 +48,25 @@ impl<B: Backend> LayerExecutables<B> {
         qk_unpack: &Rc<QkUnpack<B>>,
     ) -> Self {
         let intermediate_data_type: DataType = layer_config.mixer_config.activation_precision().into();
+
+        let (residual_sum_scalar, output_scalar) = if layer_config.has_post_layer_scalar {
+            assert!(
+                layer_config.post_mlp_norm_config.is_some(),
+                "layer {layer_index} sets post_layer_scalar but has no post_mlp_norm"
+            );
+            let leaf = decoder_layer_loader.leaf("post_layer_scalar").expect("Failed to read post_layer_scalar weight");
+            let scalar = match leaf.data_type() {
+                DataType::BF16 => {
+                    leaf.read_slice::<bf16>().expect("Failed to read post_layer_scalar weight")[0].to_f32()
+                },
+                DataType::F16 => leaf.read_slice::<f16>().expect("Failed to read post_layer_scalar weight")[0].to_f32(),
+                DataType::F32 => leaf.read_slice::<f32>().expect("Failed to read post_layer_scalar weight")[0],
+                other => panic!("post_layer_scalar must be a float dtype, got {other:?}"),
+            };
+            (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar))
+        } else {
+            (PostLayerScalar::None, PostLayerScalar::None)
+        };
 
         #[cfg(feature = "tracing")]
         let tensor_add = TensorAddBiasKernel::new(context, intermediate_data_type, false)
@@ -112,24 +133,30 @@ impl<B: Backend> LayerExecutables<B> {
                     .expect("Failed to create gate projection")
                 });
 
-                let qk_norm =
-                    if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
-                        match QKNorm::new(
-                            context,
-                            intermediate_data_type,
-                            attention_config.query_norm_config.clone(),
-                            attention_config.key_norm_config.clone(),
-                            &decoder_layer_loader.subtree("mixer").unwrap(),
-                            attention_config.num_heads,
-                            attention_config.num_groups,
-                            attention_config.head_dim,
-                        ) {
-                            Ok(qk_norm) => Some(qk_norm),
-                            Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
-                        }
-                    } else {
-                        None
-                    };
+                let value_norm_config = attention_config.value_norm_config();
+                let qkv_norm = if attention_config.query_norm_config.is_some()
+                    || attention_config.key_norm_config.is_some()
+                    || value_norm_config.is_some()
+                {
+                    match QKVNorm::new(
+                        context,
+                        intermediate_data_type,
+                        attention_config.query_norm_config.clone(),
+                        attention_config.key_norm_config.clone(),
+                        value_norm_config,
+                        &decoder_layer_loader.subtree("mixer").unwrap(),
+                        attention_config.num_heads,
+                        attention_config.num_groups,
+                        attention_config.head_dim,
+                    ) {
+                        Ok(qkv_norm) => Some(qkv_norm),
+                        Err(error) => {
+                            panic!("Failed to create QKV norm kernel for layer {}: {:?}", layer_index, error)
+                        },
+                    }
+                } else {
+                    None
+                };
 
                 let out_projection = <dyn Linear<B>>::new(
                     &attention_config.out_projection_config,
@@ -148,7 +175,7 @@ impl<B: Backend> LayerExecutables<B> {
                     MixerExecutables::Attention {
                         qkv_projection,
                         gate_projection,
-                        qk_norm,
+                        qkv_norm,
                         rope: rope.clone(),
                         qk_unpack: qk_unpack.clone(),
                         attention,
@@ -211,6 +238,7 @@ impl<B: Backend> LayerExecutables<B> {
             mixer_hadamard_factors,
             true,
             layer_index > 0,
+            PostLayerScalar::None,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -224,6 +252,7 @@ impl<B: Backend> LayerExecutables<B> {
                     None,
                     false,
                     false,
+                    PostLayerScalar::None,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
@@ -234,7 +263,7 @@ impl<B: Backend> LayerExecutables<B> {
         let (mlp, mlp_input_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             transformer_config.model_dim,
-            transformer_config.hidden_dim,
+            layer_config.hidden_dim.unwrap_or(transformer_config.hidden_dim),
             context,
             &decoder_layer_loader.subtree("mlp").unwrap(),
         )
@@ -248,6 +277,7 @@ impl<B: Backend> LayerExecutables<B> {
             mlp_input_hadamard_factors,
             true,
             true,
+            residual_sum_scalar,
         )
         .expect("Failed to create RMS norm kernel");
 
@@ -261,6 +291,7 @@ impl<B: Backend> LayerExecutables<B> {
                     None,
                     false,
                     false,
+                    output_scalar,
                 )
                 .expect("Failed to create RMS norm kernel"),
             )
@@ -299,7 +330,7 @@ impl<B: Backend> LayerExecutables<B> {
             rope_buffers,
             sampling_start,
             sampling_length,
-            mut cache_layer,
+            cache_access,
             #[cfg(feature = "tracing")]
             trace,
         } = args;
@@ -317,7 +348,7 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::Attention {
                 qkv_projection,
                 gate_projection,
-                qk_norm,
+                qkv_norm,
                 rope,
                 qk_unpack,
                 attention,
@@ -339,7 +370,7 @@ impl<B: Backend> LayerExecutables<B> {
                     (Some(gate_proj), Some(gate_input)) => Some(gate_proj.encode(gate_input, batch_dim, encoder)?),
                     _ => None,
                 };
-                if let Some(norm) = qk_norm {
+                if let Some(norm) = qkv_norm {
                     norm.encode(&mut qkv, batch_dim, encoder)?;
                 }
                 let (queries, rotated_keys) = match rope_buffers {
@@ -358,14 +389,11 @@ impl<B: Backend> LayerExecutables<B> {
                     )?,
                     None => qk_unpack.encode(&qkv, batch_dim, *num_heads, *num_groups, *head_dim, encoder)?,
                 };
-                let kv_cache_layer = cache_layer
-                    .as_deref_mut()
-                    .map(|layer| layer.as_transformer_mut().expect("Attention layer expects transformer cache"));
                 let attention_output = attention.encode(
                     AttentionArguments {
                         token_subtrie_ranges,
                         attention_sinks,
-                        kv_cache_layer,
+                        cache_access,
                     },
                     &qkv,
                     &queries,
@@ -382,11 +410,12 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::StateSpace {
                 mixer,
             } => {
-                let layer = cache_layer
-                    .as_deref_mut()
-                    .expect("State-space layer requires cache state")
-                    .as_state_space_mut()
-                    .expect("State-space mixer expects SSM cache layer");
+                let Some(LayerCacheAccess::Owned {
+                    entry,
+                }) = cache_access else {
+                    panic!("State-space layer requires writable cache state");
+                };
+                let layer = entry.as_state_space_mut().expect("State-space mixer expects SSM cache layer");
                 mixer.encode(
                     MambaArguments {
                         active_row_count: batch_dim,
@@ -399,11 +428,12 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::ShortConv {
                 mixer,
             } => {
-                let layer = cache_layer
-                    .as_deref_mut()
-                    .expect("ShortConv layer requires cache state")
-                    .as_short_conv_mut()
-                    .expect("ShortConv mixer expects ShortConv cache layer");
+                let Some(LayerCacheAccess::Owned {
+                    entry,
+                }) = cache_access else {
+                    panic!("ShortConv layer requires writable cache state");
+                };
+                let layer = entry.as_short_conv_mut().expect("ShortConv mixer expects ShortConv cache layer");
                 mixer.encode(
                     ShortConvArguments {
                         active_row_count: batch_dim,
@@ -419,11 +449,12 @@ impl<B: Backend> LayerExecutables<B> {
             MixerExecutables::DeltaNet {
                 mixer,
             } => {
-                let layer = cache_layer
-                    .as_deref_mut()
-                    .expect("DeltaNet layer requires cache state")
-                    .as_delta_net_mut()
-                    .expect("DeltaNet mixer expects DeltaNet cache layer");
+                let Some(LayerCacheAccess::Owned {
+                    entry,
+                }) = cache_access else {
+                    panic!("DeltaNet layer requires writable cache state");
+                };
+                let layer = entry.as_delta_net_mut().expect("DeltaNet mixer expects DeltaNet cache layer");
                 mixer.encode(
                     DeltaNetArguments {
                         active_row_count: batch_dim,
@@ -494,7 +525,7 @@ pub struct LayerArguments<'a, B: Backend> {
     pub rope_buffers: Option<&'a RopeBuffers<B>>,
     pub sampling_start: usize,
     pub sampling_length: usize,
-    pub cache_layer: Option<&'a mut CacheLayer<B>>,
+    pub cache_access: Option<LayerCacheAccess<'a, B>>,
     #[cfg(feature = "tracing")]
     pub trace: Option<&'a mut LayerActivationTrace<B>>,
 }

@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{linear::LinearConfig, normalization::NormalizationConfig, short_conv::SeparableCausalConvConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct DeltaNetAttentionConfig {
     pub in_proj_config: LinearConfig,
     pub conv_config: SeparableCausalConvConfig,

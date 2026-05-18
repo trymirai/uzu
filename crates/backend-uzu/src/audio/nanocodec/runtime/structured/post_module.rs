@@ -314,7 +314,7 @@ impl StructuredAudioCodecGraph {
                         rope_buffers,
                         sampling_start: 0,
                         sampling_length: batch_dim,
-                        cache_layer: None,
+                        cache_access: None,
                         #[cfg(feature = "tracing")]
                         trace: None,
                     },

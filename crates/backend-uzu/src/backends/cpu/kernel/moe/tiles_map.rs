@@ -1,5 +1,5 @@
-use dsl::kernel;
 use num_traits::Float;
+use proc_macros::kernel;
 
 use crate::ArrayElement;
 

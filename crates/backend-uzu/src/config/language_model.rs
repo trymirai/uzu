@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::config::{DecoderConfig, GenerationConfig, MessageProcessorConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct LanguageModelConfig {
     pub model_config: DecoderConfig,
     pub message_processor_config: MessageProcessorConfig,

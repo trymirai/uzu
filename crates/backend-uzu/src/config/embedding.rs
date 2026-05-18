@@ -1,14 +1,14 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use crate::{DataType, backends::common::gpu_types::QuantizationMode};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct EmbeddingConfigCommon {
     pub input_scale: Option<f32>,
     pub logit_soft_cap: Option<f32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum EmbeddingConfig {
     #[serde(rename = "TiedEmbeddingConfig")]

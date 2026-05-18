@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct MessageProcessorConfig {
     pub prompt_template: String,
     pub output_parser_regex: Option<String>,
