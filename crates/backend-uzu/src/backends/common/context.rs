@@ -36,8 +36,6 @@ pub trait Context: Sized {
         reusable: bool,
     ) -> AllocationPool<Self::Backend>;
 
-    fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
-
     fn create_sparse_buffer(
         &self,
         capacity: usize,

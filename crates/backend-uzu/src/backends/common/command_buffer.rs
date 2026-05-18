@@ -91,18 +91,6 @@ pub trait CommandBufferEncoding {
         before: AccessFlags,
     );
 
-    fn encode_wait_for_event(
-        &mut self,
-        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Event,
-        value: u64,
-    );
-
-    fn encode_signal_event(
-        &mut self,
-        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Event,
-        value: u64,
-    );
-
     fn add_completion_handler(
         &mut self,
         handler: impl FnOnce(

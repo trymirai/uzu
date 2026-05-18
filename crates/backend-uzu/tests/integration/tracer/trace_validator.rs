@@ -15,7 +15,7 @@ use backend_uzu::{
     Array, ArrayElement, DataType, allocation_to_vec,
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     classifier::Classifier,
-    config::{ClassifierModelConfig, LanguageModelConfig, ModelMetadata, ModelType},
+    config::{ModelConfig, ModelMetadata, ModelType},
     encodable_block::{DecoderDecodeInput, Sampling},
     forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
     language_model::{
@@ -171,20 +171,46 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let raw_metadata: ModelMetadata<serde_json::Value> =
+        let raw_metadata: ModelMetadata<ModelConfig> =
             serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
 
-        let context = match raw_metadata.model_type {
+        let context = match raw_metadata.model_type.clone() {
             ModelType::ClassifierModel => {
-                let metadata: ModelMetadata<ClassifierModelConfig> =
-                    serde_json::from_value(serde_json::to_value(&raw_metadata).map_err(|_| Error::UnableToLoadConfig)?)
-                        .map_err(|_| Error::UnableToLoadConfig)?;
+                let ModelConfig::ClassifierModel(model_config) = raw_metadata.model_config.clone() else {
+                    return Err(Error::UnableToLoadConfig);
+                };
+                let metadata = ModelMetadata {
+                    toolchain_version: raw_metadata.toolchain_version,
+                    vendor: raw_metadata.vendor,
+                    family: raw_metadata.family,
+                    name: raw_metadata.name,
+                    size: raw_metadata.size,
+                    quantization: raw_metadata.quantization,
+                    repo: raw_metadata.repo,
+                    use_cases: raw_metadata.use_cases,
+                    model_type: raw_metadata.model_type,
+                    model_config,
+                    grammar_start_tokens: raw_metadata.grammar_start_tokens,
+                };
                 ModelContext::Classifier(Classifier::new(model_path, &metadata)?)
             },
             ModelType::LanguageModel => {
-                let metadata: ModelMetadata<LanguageModelConfig> =
-                    serde_json::from_value(serde_json::to_value(&raw_metadata).map_err(|_| Error::UnableToLoadConfig)?)
-                        .map_err(|_| Error::UnableToLoadConfig)?;
+                let ModelConfig::LanguageModel(model_config) = raw_metadata.model_config.clone() else {
+                    return Err(Error::UnableToLoadConfig);
+                };
+                let metadata = ModelMetadata {
+                    toolchain_version: raw_metadata.toolchain_version,
+                    vendor: raw_metadata.vendor,
+                    family: raw_metadata.family,
+                    name: raw_metadata.name,
+                    size: raw_metadata.size,
+                    quantization: raw_metadata.quantization,
+                    repo: raw_metadata.repo,
+                    use_cases: raw_metadata.use_cases,
+                    model_type: raw_metadata.model_type,
+                    model_config,
+                    grammar_start_tokens: raw_metadata.grammar_start_tokens,
+                };
                 let prefill_step_size = Self::determine_prefill_step_size(model_path);
                 let decoding_config = DecodingConfig::new(
                     ContextMode::default(),
@@ -280,14 +306,11 @@ impl<B: Backend> TraceValidator<B> {
         let mut results = Self::validate_layer_traces(&traces, &traces_view, data_type);
 
         // LLM-specific: KV cache validation
-        let transformer_layers: Vec<usize> = {
-            let cache = ctx.cache_layers.borrow();
-            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_transformer().map(|_| index)).collect()
-        };
-
-        for index in transformer_layers {
-            let cache = ctx.cache_layers.borrow();
-            let kv = cache.data[index].as_transformer().expect("Expected transformer layer");
+        let cache = ctx.cache_layers.borrow();
+        for (index, layer) in cache.iter_layers() {
+            let Some(kv) = layer.as_transformer() else {
+                continue;
+            };
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
                 results.push(TracerValidationResult {
@@ -317,14 +340,10 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         // LLM-specific: SSM state validation
-        let ssm_layers: Vec<usize> = {
-            let cache = ctx.cache_layers.borrow();
-            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_state_space().map(|_| index)).collect()
-        };
-
-        for index in ssm_layers {
-            let cache = ctx.cache_layers.borrow();
-            let ssm = cache.data[index].as_state_space().expect("Expected SSM layer");
+        for (index, layer) in cache.iter_layers() {
+            let Some(ssm) = layer.as_state_space() else {
+                continue;
+            };
 
             for path in [
                 format!("updated_state.{}.conv_state", index),
@@ -358,14 +377,10 @@ impl<B: Backend> TraceValidator<B> {
         }
 
         // LLM-specific: DeltaNet state validation
-        let delta_net_layers: Vec<usize> = {
-            let cache = ctx.cache_layers.borrow();
-            cache.data.iter().enumerate().filter_map(|(index, layer)| layer.as_delta_net().map(|_| index)).collect()
-        };
-
-        for index in delta_net_layers {
-            let cache = ctx.cache_layers.borrow();
-            let delta = cache.data[index].as_delta_net().expect("Expected DeltaNet layer");
+        for (index, layer) in cache.iter_layers() {
+            let Some(delta) = layer.as_delta_net() else {
+                continue;
+            };
 
             for path in [
                 format!("updated_state.{}.conv_state", index),

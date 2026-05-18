@@ -147,7 +147,7 @@ impl<B: Backend> Classifier<B> {
                         rope_buffers,
                         sampling_start: 0,
                         sampling_length: batch_dim,
-                        cache_layer: None,
+                        cache_access: None,
                         #[cfg(feature = "tracing")]
                         trace: trace.as_deref_mut().map(|traces| &mut traces.layer_results[layer_index]),
                     },

@@ -5,7 +5,7 @@ use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
     config::{TransformerConfig, TransformerLayerConfig},
     encodable_block::{
-        Attention, AttentionArguments, LayerArguments, Linear, Mlp, Normalization, QKNorm, QkUnpack, Rope,
+        Attention, AttentionArguments, LayerArguments, Linear, Mlp, Normalization, QKVNorm, QkUnpack, Rope,
     },
     parameters::ParameterTree,
 };
@@ -13,7 +13,7 @@ use crate::{
 pub struct ClassifierLayer<B: Backend> {
     pre_attention_norm: Option<Normalization<B>>,
     qkv_projection: Box<dyn Linear<B>>,
-    qk_norm: Option<QKNorm<B>>,
+    qkv_norm: Option<QKVNorm<B>>,
     rope: Rc<Rope<B>>,
     qk_unpack: Rc<QkUnpack<B>>,
     attention: Attention<B>,
@@ -66,19 +66,24 @@ impl<B: Backend> ClassifierLayer<B> {
         )
         .expect("Failed to create qkv projection");
 
-        let qk_norm = if attention_config.query_norm_config.is_some() || attention_config.key_norm_config.is_some() {
-            match QKNorm::new(
+        let value_norm_config = attention_config.value_norm_config();
+        let qkv_norm = if attention_config.query_norm_config.is_some()
+            || attention_config.key_norm_config.is_some()
+            || value_norm_config.is_some()
+        {
+            match QKVNorm::new(
                 context,
                 intermediate_data_type,
                 attention_config.query_norm_config.clone(),
                 attention_config.key_norm_config.clone(),
+                value_norm_config,
                 &layer_loader.subtree("mixer").unwrap(),
                 attention_config.num_heads,
                 attention_config.num_groups,
                 attention_config.head_dim,
             ) {
-                Ok(norm) => Some(norm),
-                Err(e) => panic!("Failed to create QK norm kernel for layer {}: {:?}", layer_index, e),
+                Ok(qkv_norm) => Some(qkv_norm),
+                Err(error) => panic!("Failed to create QKV norm kernel for layer {}: {:?}", layer_index, error),
             }
         } else {
             None
@@ -117,7 +122,7 @@ impl<B: Backend> ClassifierLayer<B> {
         let (mlp, mlp_hadamard_factors) = <dyn Mlp<B>>::new(
             &layer_config.mlp_config,
             transformer_config.model_dim,
-            transformer_config.hidden_dim,
+            layer_config.hidden_dim.unwrap_or(transformer_config.hidden_dim),
             context,
             &layer_loader.subtree("mlp").unwrap(),
         )
@@ -144,7 +149,7 @@ impl<B: Backend> ClassifierLayer<B> {
         Self {
             pre_attention_norm,
             qkv_projection,
-            qk_norm,
+            qkv_norm,
             rope,
             qk_unpack,
             attention,
@@ -202,8 +207,8 @@ impl<B: Backend> ClassifierLayer<B> {
         }
 
         let mut qkv = self.qkv_projection.encode(main, batch_dim, encoder)?;
-        if let Some(ref qk_norm) = self.qk_norm {
-            qk_norm.encode(&mut qkv, batch_dim, encoder)?;
+        if let Some(ref qkv_norm) = self.qkv_norm {
+            qkv_norm.encode(&mut qkv, batch_dim, encoder)?;
         }
         let (queries, rotated_keys) = match rope_buffers {
             Some(rope_buffers) => self.rope.encode(
@@ -225,7 +230,7 @@ impl<B: Backend> ClassifierLayer<B> {
             AttentionArguments {
                 token_subtrie_ranges,
                 attention_sinks,
-                kv_cache_layer: None,
+                cache_access: None,
             },
             &qkv,
             &queries,

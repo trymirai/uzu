@@ -183,7 +183,7 @@ impl<B: Backend> Decoder<B> {
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
 
-            let cache_layer = cache_layers.as_deref_mut().map(|cache_layers| &mut cache_layers.data[layer.layer_index]);
+            let cache_access = cache_layers.as_deref_mut().map(|cache_layers| cache_layers.cache_for_layer(layer.layer_index));
             main = layer
                 .encode(
                     LayerArguments {
@@ -195,7 +195,7 @@ impl<B: Backend> Decoder<B> {
                         rope_buffers,
                         sampling_start,
                         sampling_length,
-                        cache_layer,
+                        cache_access,
                         #[cfg(feature = "tracing")]
                         trace: layer_trace,
                     },

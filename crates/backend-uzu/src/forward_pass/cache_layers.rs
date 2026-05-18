@@ -88,11 +88,36 @@ impl<B: Backend> CacheLayer<B> {
 pub struct CacheLayers<B: Backend> {
     max_suffix_length: usize,
     max_prefix_length: usize,
-    pub data: Box<[CacheLayer<B>]>,
+    entries: Box<[CacheLayer<B>]>,
+    bindings: Box<[LayerCacheBinding]>,
 }
 
 pub struct CacheLayersSlice<B: Backend> {
     pub layers: Vec<CacheLayerSlice<B>>,
+}
+
+#[derive(Clone, Copy)]
+struct CacheEntryIndex {
+    index: usize,
+}
+
+#[derive(Clone, Copy)]
+enum LayerCacheBinding {
+    Owned {
+        entry: CacheEntryIndex,
+    },
+    Shared {
+        source: CacheEntryIndex,
+    },
+}
+
+pub enum LayerCacheAccess<'a, B: Backend> {
+    Owned {
+        entry: &'a mut CacheLayer<B>,
+    },
+    Shared {
+        source: &'a CacheLayer<B>,
+    },
 }
 
 impl<B: Backend> CacheLayers<B> {
@@ -103,18 +128,38 @@ impl<B: Backend> CacheLayers<B> {
         max_suffix_length: usize,
     ) -> Self {
         let total_context_length = max_prefix_length.max(max_suffix_length);
-        let kv_shapes: Vec<[usize; 3]> =
-            model_shape.kv_cache_layer_shapes(max_prefix_length, max_suffix_length).collect();
 
-        let mut data: Box<[CacheLayer<B>]> = model_shape
-            .layer_mixers()
-            .iter()
-            .enumerate()
-            .map(|(layer_index, mixer)| match mixer {
-                MixerConfig::Attention(_) => {
-                    let shape = kv_shapes[layer_index];
-                    let window_length = model_shape.sliding_window_length_per_layer[layer_index]
-                        .filter(|&window_size| window_size < total_context_length);
+        let kv_source_layers = model_shape.kv_source_layers();
+
+        let mut entries: Vec<CacheLayer<B>> = Vec::with_capacity(model_shape.layer_mixers().len());
+        let mut bindings: Vec<LayerCacheBinding> = Vec::with_capacity(model_shape.layer_mixers().len());
+        for (layer_index, mixer) in model_shape.layer_mixers().iter().enumerate() {
+            if let Some(source_layer_index) = kv_source_layers.get(layer_index).copied().flatten() {
+                let LayerCacheBinding::Owned {
+                    entry: source,
+                } = bindings[source_layer_index]
+                else {
+                    panic!("kv_source_layer {source_layer_index} (layer {layer_index}) must be a prior owner");
+                };
+                let geometry =
+                    |m: &MixerConfig| m.as_attention().map(|a| (a.num_groups, a.head_dim, a.sliding_window_size));
+                assert_eq!(
+                    geometry(&model_shape.layer_mixers()[source_layer_index]),
+                    geometry(mixer),
+                    "KV cache sharing requires identical attention geometry"
+                );
+                bindings.push(LayerCacheBinding::Shared {
+                    source,
+                });
+                continue;
+            }
+
+            let layer = match mixer {
+                MixerConfig::Attention(attn) => {
+                    let sliding_window = attn.sliding_window_size;
+                    let length = sliding_window.unwrap_or(max_prefix_length);
+                    let shape = [length + max_suffix_length, attn.num_groups, attn.head_dim];
+                    let window_length = sliding_window.filter(|&window_size| window_size < total_context_length);
 
                     let state = if let Some(w) = window_length {
                         KVCacheLayerState::Windowed {
@@ -130,7 +175,7 @@ impl<B: Backend> CacheLayers<B> {
                     let kv_bytes = size_for_shape(&shape, model_shape.kv_cache_data_type());
 
                     CacheLayer::Transformer(KVCacheLayer {
-                        state: state.clone(),
+                        state,
                         keys: context
                             .create_allocation(kv_bytes, AllocationType::Global)
                             .expect("Failed to create kv keys allocation"),
@@ -203,11 +248,19 @@ impl<B: Backend> CacheLayers<B> {
                         data_type: dtype,
                     })
                 },
-            })
-            .collect();
+            };
+            bindings.push(LayerCacheBinding::Owned {
+                entry: CacheEntryIndex {
+                    index: entries.len(),
+                },
+            });
+            entries.push(layer);
+        }
+        let mut entries = entries.into_boxed_slice();
+        let bindings = bindings.into_boxed_slice();
 
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
-        for layer in data.iter_mut() {
+        for layer in entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
                     encoder.encode_fill(&mut layer.keys, 0);
@@ -234,8 +287,38 @@ impl<B: Backend> CacheLayers<B> {
         Self {
             max_suffix_length,
             max_prefix_length,
-            data,
+            entries,
+            bindings,
         }
+    }
+
+    pub fn cache_for_layer(
+        &mut self,
+        layer_index: usize,
+    ) -> LayerCacheAccess<'_, B> {
+        match self.bindings[layer_index] {
+            LayerCacheBinding::Owned {
+                entry,
+            } => LayerCacheAccess::Owned {
+                entry: &mut self.entries[entry.index],
+            },
+            LayerCacheBinding::Shared {
+                source,
+            } => LayerCacheAccess::Shared {
+                source: &self.entries[source.index],
+            },
+        }
+    }
+
+    pub fn iter_layers(&self) -> impl Iterator<Item = (usize, &CacheLayer<B>)> {
+        self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
+            LayerCacheBinding::Owned {
+                entry,
+            } => Some((index, &self.entries[entry.index])),
+            LayerCacheBinding::Shared {
+                ..
+            } => None,
+        })
     }
 
     pub fn clear(
@@ -243,7 +326,7 @@ impl<B: Backend> CacheLayers<B> {
         context: &B::Context,
     ) {
         let mut encoder: Option<Encoder<B>> = None;
-        for layer in self.data.iter_mut() {
+        for layer in self.entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => match &mut layer.state {
                     KVCacheLayerState::Full {
@@ -304,7 +387,7 @@ impl<B: Backend> CacheLayers<B> {
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
-        for layer in self.data.iter_mut() {
+        for layer in self.entries.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
                 layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
             } else if let Some(layer) = layer.as_short_conv_mut() {
@@ -317,7 +400,7 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         number_of_accepted_tokens: usize,
     ) {
-        for layer in self.data.iter_mut() {
+        for layer in self.entries.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
                 layer.register_accepted_tokens(number_of_accepted_tokens);
             }
@@ -329,10 +412,10 @@ impl<B: Backend> CacheLayers<B> {
         context: &B::Context,
         range: std::ops::Range<usize>,
     ) -> Option<CacheLayersSlice<B>> {
-        let mut layers = Vec::with_capacity(self.data.len());
+        let mut layers = Vec::with_capacity(self.entries.len());
         let mut encoder: Option<Encoder<B>> = None;
 
-        for layer in self.data.iter() {
+        for layer in self.entries.iter() {
             match layer {
                 CacheLayer::Transformer(kv) => {
                     let mut encoder =
@@ -364,8 +447,7 @@ impl<B: Backend> CacheLayers<B> {
         range: Option<std::ops::Range<usize>>,
     ) {
         let mut encoder: Option<Encoder<B>> = None;
-
-        for (layer, snapshot) in self.data.iter_mut().zip(slice.layers.iter()) {
+        for (layer, snapshot) in self.entries.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
                     let mut encoder =
@@ -400,14 +482,14 @@ impl<B: Backend> CacheLayers<B> {
         source: &Self,
         context: &B::Context,
     ) {
-        assert_eq!(source.data.len(), self.data.len(), "cache layer count mismatch");
+        assert_eq!(source.entries.len(), self.entries.len(), "cache layer count mismatch");
 
         // Key/value arrays stay alive until after encoder.submit().wait_until_completed() returns, then explicitly drops them.
         // This prevents the slice buffers from being freed while the GPU is still reading from them during windowed cache cloning.
         let mut pending_slices: Vec<KVSlice<B>> = Vec::new();
         let mut encoder: Option<Encoder<B>> = None;
 
-        for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
+        for (source_layer, destination_layer) in source.entries.iter().zip(self.entries.iter_mut()) {
             match (source_layer, destination_layer) {
                 (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
                     let copy_rows = source.prefix_segment_length();
@@ -441,9 +523,9 @@ impl<B: Backend> CacheLayers<B> {
         source: &Self,
         encoder: &mut Encoder<B>,
     ) {
-        assert_eq!(source.data.len(), self.data.len(), "cache layer count mismatch");
+        assert_eq!(source.entries.len(), self.entries.len(), "cache layer count mismatch");
 
-        for (source_layer, destination_layer) in source.data.iter().zip(self.data.iter_mut()) {
+        for (source_layer, destination_layer) in source.entries.iter().zip(self.entries.iter_mut()) {
             match (source_layer, destination_layer) {
                 (CacheLayer::Transformer(source), CacheLayer::Transformer(destination)) => {
                     if matches!(source.state, KVCacheLayerState::Full { .. }) {
@@ -477,8 +559,8 @@ impl<B: Backend> CacheLayers<B> {
         context: &B::Context,
     ) -> Self {
         let mut max_prefix_capacity_across_layers = 0usize;
-        let mut data: Box<[CacheLayer<B>]> = self
-            .data
+        let mut entries: Box<[CacheLayer<B>]> = self
+            .entries
             .iter()
             .map(|layer| match layer {
                 CacheLayer::Transformer(layer) => {
@@ -571,7 +653,7 @@ impl<B: Backend> CacheLayers<B> {
             .collect();
 
         let mut zero_encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache clone zero encoder");
-        for layer in data.iter_mut() {
+        for layer in entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
                     zero_encoder.encode_fill(&mut layer.keys, 0);
@@ -588,7 +670,8 @@ impl<B: Backend> CacheLayers<B> {
         let mut cloned = Self {
             max_suffix_length: self.max_suffix_length,
             max_prefix_length: max_prefix_capacity_across_layers,
-            data,
+            entries,
+            bindings: self.bindings.clone(),
         };
         cloned.copy_from(self, context);
         cloned

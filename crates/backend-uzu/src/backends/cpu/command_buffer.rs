@@ -1,10 +1,5 @@
 use std::{
-    pin::Pin,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
-    thread,
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -116,30 +111,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
-    }
-
-    fn encode_wait_for_event(
-        &mut self,
-        event: &Pin<Box<AtomicU64>>,
-        value: u64,
-    ) {
-        let event = SendPtr(event.as_ref().get_ref() as *const AtomicU64);
-        self.push_command(move || unsafe {
-            while (&*event.as_ptr()).load(Ordering::Acquire) < value {
-                thread::yield_now();
-            }
-        })
-    }
-
-    fn encode_signal_event(
-        &mut self,
-        event: &Pin<Box<AtomicU64>>,
-        value: u64,
-    ) {
-        let event = SendPtr(event.as_ref().get_ref() as *const AtomicU64);
-        self.push_command(Box::new(move || unsafe {
-            (&*event.as_ptr()).store(value, Ordering::Release);
-        }))
     }
 
     fn add_completion_handler(

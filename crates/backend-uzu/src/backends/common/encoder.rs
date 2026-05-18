@@ -139,22 +139,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         }
     }
 
-    pub fn encode_wait_for_event(
-        &mut self,
-        event: &B::Event,
-        value: u64,
-    ) {
-        self.command_buffer.encode_wait_for_event(event, value);
-    }
-
-    pub fn encode_signal_event(
-        &mut self,
-        event: &B::Event,
-        value: u64,
-    ) {
-        self.command_buffer.encode_signal_event(event, value);
-    }
-
     pub fn add_completion_handler(
         &mut self,
         handler: impl FnOnce(Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>) + Send + 'static,

@@ -5,7 +5,6 @@ mod context;
 mod dense_buffer;
 mod device_capabilities;
 mod error;
-mod event;
 mod kernel;
 mod metal_extensions;
 mod sparse;
