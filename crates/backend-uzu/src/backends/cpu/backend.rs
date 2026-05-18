@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, pin::Pin, sync::atomic::AtomicU64};
+use std::{cell::UnsafeCell, pin::Pin};
 
 use super::{
     command_buffer::CpuCommandBuffer, context::CpuContext, error::CpuError, kernel::CpuKernels, sparse::CpuSparseBuffer,
@@ -13,7 +13,6 @@ impl Backend for Cpu {
     type CommandBuffer = CpuCommandBuffer;
     type DenseBuffer = UnsafeCell<Pin<Box<[u8]>>>;
     type SparseBuffer = CpuSparseBuffer;
-    type Event = Pin<Box<AtomicU64>>;
     type Kernels = CpuKernels;
     type Error = CpuError;
 

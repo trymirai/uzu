@@ -36,17 +36,10 @@ pub trait Context: Sized {
         reusable: bool,
     ) -> AllocationPool<Self::Backend>;
 
-    fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
-
     fn create_sparse_buffer(
         &self,
         capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
-
-    /// Block until every sparse map/unmap operation issued so far has been committed on the GPU.
-    /// Must be called before any kernel on the main command queue can read or write pages that were just mapped,
-    /// because sparse mapping ops run on a separate (MTL4) queue.
-    fn wait_for_pending_sparse_mappings(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn peak_memory_usage(&self) -> Option<usize>;
 

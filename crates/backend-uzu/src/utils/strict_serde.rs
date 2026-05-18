@@ -5,6 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 pub enum Unsupported {}
 
 pub trait DeserializeStrict<'de>: Deserialize<'de> {}
+pub trait DeserializeStrictOwned: for<'de> DeserializeStrict<'de> {}
+impl<T> DeserializeStrictOwned for T where T: for<'de> DeserializeStrict<'de> {}
 
 macro_rules! impl_strict {
   ($($ty:ty),* $(,)?) => {
@@ -12,7 +14,7 @@ macro_rules! impl_strict {
   };
 }
 
-impl_strict!(Unsupported, String, f32, u32, usize, bool);
+impl_strict!(Unsupported, String, f32, i64, u32, usize, bool);
 
 impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Box<T> {}
 impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Vec<T> {}

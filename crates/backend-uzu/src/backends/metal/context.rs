@@ -5,6 +5,7 @@ use std::{
     collections::HashMap,
     path::Path,
     rc::{Rc, Weak},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use metal::{
@@ -37,6 +38,8 @@ pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    timeline_event: Retained<ProtocolObject<dyn MTLEvent>>,
+    timeline_value: AtomicU64,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
@@ -76,6 +79,14 @@ impl MetalContext {
     pub(super) fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
         self.sparse_heap_pool.borrow_mut()
     }
+
+    pub(super) fn timeline_get_and_increment(&self) -> u64 {
+        self.timeline_value.fetch_add(1, Ordering::Release)
+    }
+
+    pub(super) fn timeline_event(&self) -> &ProtocolObject<dyn MTLEvent> {
+        &self.timeline_event
+    }
 }
 
 impl Context for MetalContext {
@@ -98,12 +109,15 @@ impl Context for MetalContext {
 
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = 64 * 4 * page_size.in_bytes();
-        let sparse_pool = MetalSparseHeapPool::new(device.as_ref(), page_size, heap_capacity)?;
+        let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
+        let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
 
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
             command_queue4,
+            timeline_event,
+            timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: RefCell::new(0),
             device_capabilities,
@@ -172,11 +186,8 @@ impl Context for MetalContext {
     fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
         Ok(MetalCommandBufferInitial::new(
             self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
+            self.weak_self.upgrade().unwrap(), // never fails
         ))
-    }
-
-    fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
-        self.device.new_event().ok_or(MetalError::CannotCreateEvent)
     }
 
     fn create_sparse_buffer(
@@ -186,10 +197,6 @@ impl Context for MetalContext {
         let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
         let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
         Ok(MetalSparseBuffer::new(context, capacity, sparse_page_size)?)
-    }
-
-    fn wait_for_pending_sparse_mappings(&self) -> Result<(), MetalError> {
-        self.sparse_heap_pool.borrow().wait_pending()
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {

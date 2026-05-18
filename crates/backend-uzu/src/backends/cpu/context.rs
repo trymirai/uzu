@@ -1,11 +1,4 @@
-use std::{
-    cell::UnsafeCell,
-    path::Path,
-    pin::Pin,
-    rc::Rc,
-    sync::{atomic::AtomicU64, mpsc},
-    thread,
-};
+use std::{cell::UnsafeCell, path::Path, pin::Pin, rc::Rc, sync::mpsc, thread};
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
@@ -77,19 +70,11 @@ impl Context for CpuContext {
         Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
     }
 
-    fn create_event(&self) -> Result<Pin<Box<AtomicU64>>, CpuError> {
-        Ok(Box::pin(AtomicU64::new(0)))
-    }
-
     fn create_sparse_buffer(
         &self,
         _capacity: usize,
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         Err(CpuError::NotSupported)
-    }
-
-    fn wait_for_pending_sparse_mappings(&self) -> Result<(), CpuError> {
-        Ok(())
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {

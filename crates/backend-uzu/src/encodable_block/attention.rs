@@ -19,7 +19,7 @@ use crate::{
         },
     },
     config::AttentionConfig,
-    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
+    forward_pass::{cache_layers::LayerCacheAccess, kv_cache_layer::KVCacheLayerState},
 };
 
 fn env_gemm_attention_enabled() -> bool {
@@ -60,7 +60,7 @@ pub struct Attention<B: Backend> {
 pub struct AttentionArguments<'a, B: Backend> {
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub attention_sinks: Option<&'a Allocation<B>>,
-    pub kv_cache_layer: Option<&'a mut KVCacheLayer<B>>,
+    pub cache_access: Option<LayerCacheAccess<'a, B>>,
 }
 
 impl<B: Backend> Attention<B> {
@@ -200,7 +200,7 @@ impl<B: Backend> Attention<B> {
 
     pub fn encode(
         &self,
-        mut args: AttentionArguments<B>,
+        args: AttentionArguments<B>,
         qkv: &Allocation<B>,
         queries: &Allocation<B>,
         mut rotated_keys: Allocation<B>,
@@ -213,27 +213,38 @@ impl<B: Backend> Attention<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let is_trie = args.token_subtrie_ranges.is_some();
 
-        let (max_sequence_length, segment_prefix_length, ring_params) =
-            if let Some(layer) = args.kv_cache_layer.as_deref() {
-                let max_sequence_length = layer.shape[0];
-                let ring_params = match layer.state {
-                    KVCacheLayerState::Windowed {
-                        ring_offset,
-                        ring_length,
-                        window_length,
-                    } => {
-                        let overflow = ring_length.saturating_sub(window_length);
-                        Some(RingParams {
-                            ring_offset: ((ring_offset + overflow) % window_length) as u32,
-                            ring_length: ring_length.min(window_length) as u32,
-                        })
-                    },
-                    _ => None,
-                };
-                (max_sequence_length, layer.prefix_segment_length(), ring_params)
-            } else {
-                (suffix_length, 0, None)
+        let cache_layer = args.cache_access.as_ref().map(|a| {
+            match a {
+                LayerCacheAccess::Owned {
+                    entry,
+                } => entry.as_transformer(),
+                LayerCacheAccess::Shared {
+                    source,
+                } => source.as_transformer(),
+            }
+            .expect("attention expects transformer cache")
+        });
+
+        let (max_sequence_length, segment_prefix_length, ring_params) = if let Some(layer) = cache_layer {
+            let max_sequence_length = layer.shape[0];
+            let ring_params = match layer.state {
+                KVCacheLayerState::Windowed {
+                    ring_offset,
+                    ring_length,
+                    window_length,
+                } => {
+                    let overflow = ring_length.saturating_sub(window_length);
+                    Some(RingParams {
+                        ring_offset: ((ring_offset + overflow) % window_length) as u32,
+                        ring_length: ring_length.min(window_length) as u32,
+                    })
+                },
+                _ => None,
             };
+            (max_sequence_length, layer.prefix_segment_length(), ring_params)
+        } else {
+            (suffix_length, 0, None)
+        };
 
         let is_kv_cache_ring = ring_params.is_some();
 
@@ -255,8 +266,7 @@ impl<B: Backend> Attention<B> {
         let sinks_allocation = args.attention_sinks;
         let trie_allocation = args.token_subtrie_ranges;
 
-        // Get KV cache buffers only if KV cache exists (LLM mode)
-        let has_kv_cache = args.kv_cache_layer.is_some();
+        let has_kv_cache = args.cache_access.is_some();
         let extracted_values = (!has_kv_cache)
             .then(|| {
                 let mut values =
@@ -298,26 +308,41 @@ impl<B: Backend> Attention<B> {
             is_kv_cache_ring,
         };
 
-        let mut attention_output = if let Some(layer) = args.kv_cache_layer.as_deref_mut() {
-            self.update_kv_cache_kernel.encode(
-                Some(&rotated_keys),
-                qkv,
-                &mut layer.keys,
-                &mut layer.values,
-                num_groups as u32,
-                num_heads as u32,
-                head_dim as u32,
-                suffix_length as u32,
-                segment_prefix_length as u32,
-                max_sequence_length as u32,
-                encoder,
-            );
+        let mut attention_output = if let Some(access) = args.cache_access {
+            let (keys, values) = match access {
+                LayerCacheAccess::Owned {
+                    entry,
+                } => {
+                    let layer = entry.as_transformer_mut().expect("Attention layer expects transformer cache");
+                    self.update_kv_cache_kernel.encode(
+                        Some(&rotated_keys),
+                        qkv,
+                        &mut layer.keys,
+                        &mut layer.values,
+                        num_groups as u32,
+                        num_heads as u32,
+                        head_dim as u32,
+                        suffix_length as u32,
+                        segment_prefix_length as u32,
+                        max_sequence_length as u32,
+                        encoder,
+                    );
+                    (&layer.keys, &layer.values)
+                },
+                LayerCacheAccess::Shared {
+                    source,
+                } => {
+                    let source = source.as_transformer().expect("kv_source must be a transformer cache");
+                    (&source.keys, &source.values)
+                },
+            };
+
             self.encode_attention_variant(
                 variant,
                 &kernel_key,
                 queries,
-                &layer.keys,
-                &layer.values,
+                keys,
+                values,
                 trie_allocation,
                 sinks_allocation,
                 gqa_factor,
