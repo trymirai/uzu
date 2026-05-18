@@ -16,13 +16,17 @@ pub(crate) struct GemmKernel {
 
 impl GemmKernel {
     pub(crate) fn new(
-        _context: &MetalContext,
+        context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MetalError> {
-        Ok(Self {
+        let mut kernel = Self {
             data_type,
             kernels: HashMap::new(),
-        })
+        };
+        for specialization in GemmSpecialization::precompile_configs(data_type) {
+            kernel.get_or_create(context, specialization)?;
+        }
+        Ok(kernel)
     }
 
     fn get_or_create(
@@ -61,10 +65,8 @@ impl GemmKernel {
         dispatch: GemmDispatch<'_, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let specialization = dispatch
-            .specialization()
-            .try_validate()
-            .map_err(|error| MetalError::CannotCreatePipelineState(format!("{error:?}")))?;
+        let specialization = dispatch.specialization();
+        specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
         let kernel = self.get_or_create(context, specialization)?;
         let (b, scales, biases, zero_points) = match &dispatch.b {
             GemmWeights::FullPrecision {

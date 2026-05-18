@@ -12,6 +12,22 @@ use crate::{
     },
 };
 
+pub struct GemmAlignmentAxes {
+    pub m: bool,
+    pub n: bool,
+    pub k: bool,
+}
+
+impl GemmAlignment {
+    pub fn from_axes(axes: GemmAlignmentAxes) -> Self {
+        let mut bits = Self::empty();
+        bits.set(Self::M, axes.m);
+        bits.set(Self::N, axes.n);
+        bits.set(Self::K, axes.k);
+        bits
+    }
+}
+
 pub enum GemmWeights<'a, B: Backend> {
     FullPrecision {
         weights: &'a Allocation<B>,
@@ -80,10 +96,6 @@ impl<B: Backend> GemmWeights<'_, B> {
     }
 }
 
-/// GEMM dispatch arguments, named in BLAS-style `a`/`b`/`d` (matches the kernel
-/// signature and external `MatmulArguments`). `b` is wrapped in `GemmWeights` —
-/// that's a quantization-protocol enum, not a layout name, so its type keeps the
-/// "Weights" label even though the field uses the `b` GEMM convention.
 pub struct GemmDispatch<'a, B: Backend> {
     pub tiling_config: GemmTilingConfig,
     pub input_prologue: GemmInputPrologueKind,
@@ -131,19 +143,104 @@ pub(crate) struct GemmSpecialization {
 }
 
 impl GemmSpecialization {
-    pub(crate) fn try_validate(self) -> Result<Self, GemmSpecializationError> {
+    pub(crate) fn validate(&self) -> Result<(), GemmSpecializationError> {
         if self.group_size != 0 && self.tiling_config.threadgroup_k > self.group_size {
             return Err(GemmSpecializationError::ThreadgroupKExceedsGroupSize {
                 threadgroup_k: self.tiling_config.threadgroup_k,
                 group_size: self.group_size,
             });
         }
-        Ok(self)
+        Ok(())
+    }
+
+    pub(crate) fn precompile_configs(data_type: DataType) -> Vec<Self> {
+        let mut out = Vec::new();
+        for &(threadgroup_m, threadgroup_n, threadgroup_k) in simdgroup_tile_set(data_type) {
+            for align_mn in [true, false] {
+                let alignment = GemmAlignment::from_axes(GemmAlignmentAxes {
+                    m: align_mn,
+                    n: align_mn,
+                    k: true,
+                });
+                out.push(Self {
+                    tiling_config: GemmTilingConfig {
+                        threadgroup_m,
+                        threadgroup_n,
+                        threadgroup_k,
+                        simdgroups_m: 2,
+                        simdgroups_n: 2,
+                    },
+                    input_prologue: GemmInputPrologueKind::FullPrecision,
+                    compute: GemmComputeKind::SimdgroupMma,
+                    output_transform: GemmOutputTransformKind::Store,
+                    alignment,
+                    transpose_b: true,
+                    weight_prologue: GemmWeightPrologueKind::FullPrecision,
+                    bits_per_weight: 0,
+                    group_size: 0,
+                });
+            }
+        }
+
+        for &(threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) in mxu_tile_set(data_type) {
+            for align_m in [true, false] {
+                for align_n in [true, false] {
+                    for align_k in [true, false] {
+                        let alignment = GemmAlignment::from_axes(GemmAlignmentAxes {
+                            m: align_m,
+                            n: align_n,
+                            k: align_k,
+                        });
+                        for output_transform in [
+                            GemmOutputTransformKind::Store,
+                            GemmOutputTransformKind::Scale,
+                            GemmOutputTransformKind::Accumulate,
+                            GemmOutputTransformKind::ScaleAccumulate,
+                        ] {
+                            out.push(Self {
+                                tiling_config: GemmTilingConfig {
+                                    threadgroup_m,
+                                    threadgroup_n,
+                                    threadgroup_k: 32,
+                                    simdgroups_m,
+                                    simdgroups_n,
+                                },
+                                input_prologue: GemmInputPrologueKind::FullPrecision,
+                                compute: GemmComputeKind::MxuMma,
+                                output_transform,
+                                alignment,
+                                transpose_b: true,
+                                weight_prologue: GemmWeightPrologueKind::FullPrecision,
+                                bits_per_weight: 0,
+                                group_size: 0,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
+fn simdgroup_tile_set(data_type: DataType) -> &'static [(u32, u32, u32)] {
+    match data_type {
+        DataType::BF16 => &[(64, 32, 32), (64, 64, 16)],
+        DataType::F16 => &[(64, 64, 16), (64, 32, 32)],
+        DataType::F32 => &[(32, 64, 16)],
+        _ => &[],
+    }
+}
+
+fn mxu_tile_set(data_type: DataType) -> &'static [(u32, u32, u32, u32)] {
+    if !matches!(data_type, DataType::F16 | DataType::BF16) {
+        return &[];
+    }
+    &[(64, 64, 2, 2), (32, 64, 2, 2), (64, 32, 4, 1), (128, 128, 4, 4)]
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GemmSpecializationError {
+pub enum GemmSpecializationError {
     ThreadgroupKExceedsGroupSize {
         threadgroup_k: u32,
         group_size: u32,

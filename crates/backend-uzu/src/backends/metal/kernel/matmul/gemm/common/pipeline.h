@@ -68,7 +68,6 @@ struct GemmPipeline {
           T,
           THREADGROUP_BLOCK_M,
           THREADGROUP_BLOCK_N,
-          256,
           SIMDGROUPS_M,
           SIMDGROUPS_N,
           TRANSPOSE_B>::

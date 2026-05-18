@@ -1,4 +1,4 @@
-use super::{GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmKernel, GemmWeights};
+use super::{GemmAlignmentAxes, GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmKernel, GemmWeights};
 use crate::backends::{
     common::{
         Encoder,
@@ -23,18 +23,18 @@ pub(crate) fn encode(
     let batch_dim = arguments.batch_dim as u32;
     let input_dim = configuration.input_dim as u32;
     let output_dim = configuration.output_dim as u32;
-    let group_count_x = output_dim.div_ceil(tile.threadgroup_n);
-    let group_count_y = batch_dim.div_ceil(tile.threadgroup_m);
+    let threadgroups_per_row = output_dim.div_ceil(tile.threadgroup_n);
+    let threadgroups_per_column = batch_dim.div_ceil(tile.threadgroup_m);
     let dispatch = GemmDispatch {
         tiling_config: tile,
         input_prologue: GemmInputPrologueKind::FullPrecision,
         compute: GemmComputeKind::SimdgroupMma,
         output_transform: GemmOutputTransformKind::Store,
-        alignment: GemmAlignment::from_axes(
-            batch_dim % tile.threadgroup_m == 0,
-            output_dim % tile.threadgroup_n == 0,
-            input_dim % tile.threadgroup_k == 0,
-        ),
+        alignment: GemmAlignment::from_axes(GemmAlignmentAxes {
+            m: batch_dim % tile.threadgroup_m == 0,
+            n: output_dim % tile.threadgroup_n == 0,
+            k: input_dim % tile.threadgroup_k == 0,
+        }),
         transpose_b: true,
         a: arguments.a,
         a_offset: arguments.a_offset,
@@ -63,13 +63,14 @@ pub(crate) fn encode(
             leading_dimension_a: input_dim,
             leading_dimension_b: input_dim,
             leading_dimension_d: output_dim,
-            threadgroups_per_row: group_count_x,
-            threadgroups_per_column: group_count_y,
+            threadgroups_per_row,
+            threadgroups_per_column,
             aligned_inner_iterations: input_dim / tile.threadgroup_k,
-            ..Default::default()
+            use_morton: false,
+            ab_scale: 1.0,
         },
-        group_count_x,
-        group_count_y,
+        group_count_x: threadgroups_per_row,
+        group_count_y: threadgroups_per_column,
     };
     gemm.encode(context, dispatch, encoder).map_err(QuantizedMatmulError::BackendError)
 }

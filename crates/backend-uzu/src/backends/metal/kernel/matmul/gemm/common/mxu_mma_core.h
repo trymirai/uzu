@@ -20,7 +20,6 @@ template <
     typename T,
     ushort THREADGROUP_BLOCK_M,
     ushort THREADGROUP_BLOCK_N,
-    ushort THREADGROUP_BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
     bool TRANSPOSE_B,
@@ -35,6 +34,7 @@ struct MxuMmaCore {
   METAL_CONST ushort SIMDGROUP_BLOCK_N =
       THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN;
   METAL_CONST ushort SIMDGROUP_BLOCK_K = 32;
+  METAL_CONST ushort THREADGROUP_BLOCK_K = 256;
   METAL_CONST ushort TILES_M =
       SIMDGROUP_BLOCK_M / uzu::matmul::MxuFragmentOps::FRAGMENT_ROWS;
   METAL_CONST ushort TILES_N =
@@ -203,7 +203,6 @@ template <
     typename T,
     ushort THREADGROUP_BLOCK_M,
     ushort THREADGROUP_BLOCK_N,
-    ushort THREADGROUP_BLOCK_K,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
     bool TRANSPOSE_B>
@@ -211,7 +210,6 @@ struct MxuMmaCore<
     T,
     THREADGROUP_BLOCK_M,
     THREADGROUP_BLOCK_N,
-    THREADGROUP_BLOCK_K,
     SIMDGROUPS_PER_ROW,
     SIMDGROUPS_PER_COLUMN,
     TRANSPOSE_B,

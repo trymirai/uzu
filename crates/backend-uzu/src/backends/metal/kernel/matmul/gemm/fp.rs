@@ -1,4 +1,4 @@
-use super::{GemmDispatch, GemmKernel, GemmWeights};
+use super::{GemmAlignmentAxes, GemmDispatch, GemmKernel, GemmWeights, MXU_THREADGROUP_BLOCK_K};
 use crate::{
     DataType,
     backends::{
@@ -19,10 +19,6 @@ use crate::{
     },
 };
 
-// K-block hardcoded by `pipeline.h` when instantiating `MxuMmaCore`.
-// `tile.threadgroup_k` on MXU tiles is the per-simdgroup K (MPP fragment).
-const MXU_THREADGROUP_BLOCK_K: u32 = 256;
-
 pub(crate) fn encode(
     gemm: &mut GemmKernel,
     bias_add: &mut TensorAddBiasMetalKernel,
@@ -32,48 +28,63 @@ pub(crate) fn encode(
     arguments: MatmulArguments<Metal>,
     compute: GemmComputeKind,
 ) -> Result<(), MatmulError<Metal>> {
-    // `encode_with_path(GemmMxu)` from tests can bypass production routing.
     if compute == GemmComputeKind::MxuMma && !context.device.supports_mxu() {
         return Err(MatmulError::UnsupportedDataType(data_type));
     }
 
-    let (tile, k_block) = match compute {
-        GemmComputeKind::SimdgroupMma => {
-            let tile = select_simdgroup_tile(data_type, &arguments);
-            let k_block = tile.threadgroup_k;
-            (tile, k_block)
-        },
-        GemmComputeKind::MxuMma => (select_mxu_tile(&arguments), MXU_THREADGROUP_BLOCK_K),
+    let tile = match compute {
+        GemmComputeKind::SimdgroupMma => select_simdgroup_tile(data_type, &arguments),
+        GemmComputeKind::MxuMma => select_mxu_tile(&arguments),
+    };
+    let k_block = match compute {
+        GemmComputeKind::SimdgroupMma => tile.threadgroup_k,
+        GemmComputeKind::MxuMma => MXU_THREADGROUP_BLOCK_K,
     };
 
     let threadgroups_per_row = arguments.output_dim.div_ceil(tile.threadgroup_n);
     let threadgroups_per_column = arguments.batch_dim.div_ceil(tile.threadgroup_m);
 
-    let (use_morton, morton_total) = if compute == GemmComputeKind::MxuMma {
+    let (use_morton, group_count_x, group_count_y) = if compute == GemmComputeKind::MxuMma {
         let max_dim = threadgroups_per_row.max(threadgroups_per_column);
         let min_dim = threadgroups_per_row.min(threadgroups_per_column);
         let morton_dim = max_dim.next_power_of_two();
         let morton_total = morton_dim.saturating_mul(morton_dim);
         let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
         let use_morton = min_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
-        (use_morton, morton_total)
+        if use_morton {
+            (true, morton_total, 1)
+        } else {
+            (false, threadgroups_per_row, threadgroups_per_column)
+        }
     } else {
-        (false, 0)
-    };
-    let (group_count_x, group_count_y) = if use_morton {
-        (morton_total, 1)
-    } else {
-        (threadgroups_per_row, threadgroups_per_column)
+        (false, threadgroups_per_row, threadgroups_per_column)
     };
 
-    let alignment = GemmAlignment::from_axes(
-        arguments.batch_dim % tile.threadgroup_m == 0,
-        arguments.output_dim % tile.threadgroup_n == 0,
-        arguments.input_dim % k_block == 0,
-    );
+    let alignment = GemmAlignment::from_axes(GemmAlignmentAxes {
+        m: arguments.batch_dim % tile.threadgroup_m == 0,
+        n: arguments.output_dim % tile.threadgroup_n == 0,
+        k: arguments.input_dim % k_block == 0,
+    });
     let output_transform = output_transform_from(&arguments);
-    let mut params = build_params(&arguments, &tile, k_block);
-    params.use_morton = use_morton;
+
+    let default_ldb = if arguments.b_transpose {
+        arguments.input_dim
+    } else {
+        arguments.output_dim
+    };
+    let params = GemmParams {
+        M: arguments.batch_dim,
+        N: arguments.output_dim,
+        K: arguments.input_dim,
+        leading_dimension_a: arguments.input_dim,
+        leading_dimension_b: arguments.b_leading_dimension.unwrap_or(default_ldb),
+        leading_dimension_d: arguments.output_dim,
+        threadgroups_per_row,
+        threadgroups_per_column,
+        aligned_inner_iterations: arguments.input_dim / k_block,
+        use_morton,
+        ab_scale: arguments.ab_scale,
+    };
 
     let dispatch = GemmDispatch {
         tiling_config: tile,
@@ -150,31 +161,6 @@ fn select_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
         threadgroup_k: 32,
         simdgroups_m,
         simdgroups_n,
-    }
-}
-
-fn build_params(
-    arguments: &MatmulArguments<Metal>,
-    tile: &GemmTilingConfig,
-    k_block: u32,
-) -> GemmParams {
-    let default_ldb = if arguments.b_transpose {
-        arguments.input_dim
-    } else {
-        arguments.output_dim
-    };
-    GemmParams {
-        M: arguments.batch_dim,
-        N: arguments.output_dim,
-        K: arguments.input_dim,
-        leading_dimension_a: arguments.input_dim,
-        leading_dimension_b: arguments.b_leading_dimension.unwrap_or(default_ldb),
-        leading_dimension_d: arguments.output_dim,
-        threadgroups_per_row: arguments.output_dim.div_ceil(tile.threadgroup_n),
-        threadgroups_per_column: arguments.batch_dim.div_ceil(tile.threadgroup_m),
-        aligned_inner_iterations: arguments.input_dim / k_block,
-        ab_scale: arguments.ab_scale,
-        ..Default::default()
     }
 }
 

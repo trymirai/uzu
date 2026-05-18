@@ -47,28 +47,11 @@ pub struct GemmTilingConfig {
 }
 
 bitflags! {
-    /// Which GEMM axes are evenly divisible by the tile shape. Passed to the
-    /// kernel through a `uint32_t` function-constant slot whose bits the
-    /// Metal side tests directly — there is no corresponding GPU struct.
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct GemmAlignment: u32 {
         const M = 1 << 0;
         const N = 1 << 1;
         const K = 1 << 2;
-    }
-}
-
-impl GemmAlignment {
-    pub fn from_axes(
-        m: bool,
-        n: bool,
-        k: bool,
-    ) -> Self {
-        let mut bits = Self::empty();
-        bits.set(Self::M, m);
-        bits.set(Self::N, n);
-        bits.set(Self::K, k);
-        bits
     }
 }
