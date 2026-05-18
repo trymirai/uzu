@@ -1,4 +1,4 @@
-use super::{GemmAlignmentAxes, GemmComputeKind, GemmDispatch, GemmInputPrologueKind, GemmKernel, GemmWeights};
+use super::{GemmAlignmentAxes, GemmDispatch, GemmInputPrologueKind, GemmKernel, GemmWeights};
 use crate::backends::{
     common::{
         Encoder,
@@ -28,7 +28,7 @@ pub(crate) fn encode(
     let dispatch = GemmDispatch {
         tiling_config: tile,
         input_prologue: GemmInputPrologueKind::FullPrecision,
-        compute: GemmComputeKind::SimdgroupMma,
+        use_mxu: false,
         output_transform: GemmOutputTransformKind::Store,
         alignment: GemmAlignment::from_axes(GemmAlignmentAxes {
             m: batch_dim % tile.threadgroup_m == 0,

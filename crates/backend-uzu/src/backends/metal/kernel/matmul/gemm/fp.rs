@@ -6,9 +6,7 @@ use crate::{
             Encoder,
             gpu_types::{
                 GemmParams,
-                gemm::{
-                    GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
-                },
+                gemm::{GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig},
             },
             kernel::{
                 TensorAddBiasKernel,
@@ -26,25 +24,27 @@ pub(crate) fn encode(
     context: &MetalContext,
     encoder: &mut Encoder<Metal>,
     arguments: MatmulArguments<Metal>,
-    compute: GemmComputeKind,
+    use_mxu: bool,
 ) -> Result<(), MatmulError<Metal>> {
-    if compute == GemmComputeKind::MxuMma && !context.device.supports_mxu() {
+    if use_mxu && !context.device.supports_mxu() {
         return Err(MatmulError::UnsupportedDataType(data_type));
     }
 
-    let tile = match compute {
-        GemmComputeKind::SimdgroupMma => select_simdgroup_tile(data_type, &arguments),
-        GemmComputeKind::MxuMma => select_mxu_tile(&arguments),
+    let tile = if use_mxu {
+        select_mxu_tile(&arguments)
+    } else {
+        select_simdgroup_tile(data_type, &arguments)
     };
-    let k_block = match compute {
-        GemmComputeKind::SimdgroupMma => tile.threadgroup_k,
-        GemmComputeKind::MxuMma => MXU_THREADGROUP_BLOCK_K,
+    let k_block = if use_mxu {
+        MXU_THREADGROUP_BLOCK_K
+    } else {
+        tile.threadgroup_k
     };
 
     let threadgroups_per_row = arguments.output_dim.div_ceil(tile.threadgroup_n);
     let threadgroups_per_column = arguments.batch_dim.div_ceil(tile.threadgroup_m);
 
-    let (use_morton, group_count_x, group_count_y) = if compute == GemmComputeKind::MxuMma {
+    let (use_morton, group_count_x, group_count_y) = if use_mxu {
         let max_dim = threadgroups_per_row.max(threadgroups_per_column);
         let min_dim = threadgroups_per_row.min(threadgroups_per_column);
         let morton_dim = max_dim.next_power_of_two();
@@ -89,7 +89,7 @@ pub(crate) fn encode(
     let dispatch = GemmDispatch {
         tiling_config: tile,
         input_prologue: GemmInputPrologueKind::FullPrecision,
-        compute,
+        use_mxu,
         output_transform,
         alignment,
         transpose_b: arguments.b_transpose,

@@ -125,14 +125,10 @@ struct SimdgroupMmaCore {
       threadgroup T* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    const uint simd_lane_id = thread_context.simd_lane_id;
-    const uint simd_group_id = thread_context.simdgroup_index;
-
-    const uint2 tile_id =
-        block_id(thread_context.threadgroup_position.xy, params);
+    const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
-            compute(tile_id, params);
+            compute(tile, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -146,21 +142,11 @@ struct SimdgroupMmaCore {
     b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
     d += block_row * params->leading_dimension_d + block_col;
 
-    thread ALoader loader_a(
-        a,
-        params->leading_dimension_a,
-        a_shared,
-        simd_group_id,
-        simd_lane_id
-    );
-    thread BLoader loader_b(
-        b,
-        params->leading_dimension_b,
-        b_shared,
-        simd_group_id,
-        simd_lane_id
-    );
-    thread TileAccumulator accumulator(simd_group_id, simd_lane_id);
+    thread ALoader
+        loader_a(a, params->leading_dimension_a, a_shared, thread_context);
+    thread BLoader
+        loader_b(b, params->leading_dimension_b, b_shared, thread_context);
+    thread TileAccumulator accumulator(thread_context);
 
     const ushort tile_block_rows =
         min(THREADGROUP_BLOCK_M,

@@ -5,11 +5,6 @@
 using namespace metal;
 
 namespace uzu::gemm {
-enum class GemmComputeKind : uint32_t {
-  SimdgroupMma = 0,
-  MxuMma = 1,
-};
-
 enum class GemmInputPrologueKind : uint32_t {
   FullPrecision = 0,
   ExternalRht = 1,

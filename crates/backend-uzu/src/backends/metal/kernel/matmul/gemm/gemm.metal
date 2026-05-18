@@ -19,7 +19,8 @@ template <
     uint THREADGROUP_BLOCK_K,
     uint SIMDGROUPS_M,
     uint SIMDGROUPS_N,
-    bool TRANSPOSE_B>
+    bool TRANSPOSE_B,
+    bool USE_MXU>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(THREADGROUP_BLOCK_M, 32, 64, 128)
 VARIANTS(THREADGROUP_BLOCK_N, 32, 64, 128)
@@ -27,7 +28,12 @@ VARIANTS(THREADGROUP_BLOCK_K, 16, 32)
 VARIANTS(SIMDGROUPS_M, 1, 2, 4)
 VARIANTS(SIMDGROUPS_N, 1, 2, 4)
 VARIANTS(TRANSPOSE_B, false, true)
-CONSTRAINT(max(THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
+VARIANTS(USE_MXU, false, true)
+CONSTRAINT(!USE_MXU || THREADGROUP_BLOCK_M % SIMDGROUPS_M == 0)
+CONSTRAINT(!USE_MXU || THREADGROUP_BLOCK_N % SIMDGROUPS_N == 0)
+CONSTRAINT(!USE_MXU || (THREADGROUP_BLOCK_M / SIMDGROUPS_M) % 16 == 0)
+CONSTRAINT(!USE_MXU || (THREADGROUP_BLOCK_N / SIMDGROUPS_N) % 16 == 0)
+CONSTRAINT(USE_MXU || max(THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
 KERNEL(Gemm)(
     const device T* a,
     const device uint8_t* b_packed,
@@ -43,7 +49,6 @@ KERNEL(Gemm)(
     const constant uint& group_count_y,
     const GemmInputPrologueKind input_prologue SPECIALIZE,
     const GemmWeightPrologueKind weight_prologue SPECIALIZE,
-    const GemmComputeKind compute SPECIALIZE,
     const GemmOutputTransformKind output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
@@ -73,8 +78,16 @@ KERNEL(Gemm)(
     return;
   }
   const device T* b = reinterpret_cast<const device T*>(b_packed);
-  switch (compute) {
-  case GemmComputeKind::SimdgroupMma:
+  if constexpr (USE_MXU) {
+    MxuMmaCore<
+        T,
+        THREADGROUP_BLOCK_M,
+        THREADGROUP_BLOCK_N,
+        SIMDGROUPS_M,
+        SIMDGROUPS_N,
+        TRANSPOSE_B>::
+        run(a, b, d, params, alignment, output_transform, thread_context);
+  } else {
     SimdgroupMmaCore<
         T,
         THREADGROUP_BLOCK_M,
@@ -92,16 +105,5 @@ KERNEL(Gemm)(
             a_shared,
             b_shared,
             thread_context);
-    break;
-  case GemmComputeKind::MxuMma:
-    MxuMmaCore<
-        T,
-        THREADGROUP_BLOCK_M,
-        THREADGROUP_BLOCK_N,
-        SIMDGROUPS_M,
-        SIMDGROUPS_N,
-        TRANSPOSE_B>::
-        run(a, b, d, params, alignment, output_transform, thread_context);
-    break;
   }
 }

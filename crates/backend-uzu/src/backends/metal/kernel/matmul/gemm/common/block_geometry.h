@@ -19,19 +19,19 @@ static METAL_FUNC uint morton_expand_bits(uint x) {
 
 // Morton-unpacks a 1D dispatch index (`fp.rs` sets `group_count_y = 1`) into
 // 2D.
-static METAL_FUNC uint2 morton_block_id(uint2 threadgroup_position) {
+static METAL_FUNC uint2 morton_tile_id(uint2 threadgroup_position) {
   return uint2(
       morton_expand_bits(threadgroup_position.x),
       morton_expand_bits(threadgroup_position.x >> 1)
   );
 }
 
-static METAL_FUNC uint2 block_id(
+static METAL_FUNC uint2 tile_id(
     uint2 threadgroup_position,
     const constant uzu::matmul::GemmParams* params
 ) {
   if (params->use_morton) {
-    return morton_block_id(threadgroup_position);
+    return morton_tile_id(threadgroup_position);
   }
   return threadgroup_position;
 }

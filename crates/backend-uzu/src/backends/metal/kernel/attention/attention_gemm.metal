@@ -139,27 +139,11 @@ PUBLIC KERNEL(AttentionGemm)(
   const int key_source_stride = int(params.k_strides[2]);
   const int value_source_stride = int(params.v_strides[2]);
 
-  thread QueryLoader query_loader(
-      q,
-      query_source_stride,
-      query_shared,
-      thread_context.simdgroup_index,
-      thread_context.simd_lane_id
-  );
-  thread KeyLoader key_loader(
-      k,
-      key_source_stride,
-      key_shared,
-      thread_context.simdgroup_index,
-      thread_context.simd_lane_id
-  );
-  thread ValueLoader value_loader(
-      v,
-      value_source_stride,
-      value_shared,
-      thread_context.simdgroup_index,
-      thread_context.simd_lane_id
-  );
+  thread QueryLoader
+      query_loader(q, query_source_stride, query_shared, thread_context);
+  thread KeyLoader key_loader(k, key_source_stride, key_shared, thread_context);
+  thread ValueLoader
+      value_loader(v, value_source_stride, value_shared, thread_context);
 
   TransformScale<T> ts(static_cast<T>(params.scale * M_LOG2E_F));
 

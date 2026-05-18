@@ -5,8 +5,7 @@ use crate::{
         gpu_types::{
             GemmParams, QuantizationMode,
             gemm::{
-                GemmAlignment, GemmComputeKind, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
-                GemmWeightPrologueKind,
+                GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig, GemmWeightPrologueKind,
             },
         },
     },
@@ -99,7 +98,7 @@ impl<B: Backend> GemmWeights<'_, B> {
 pub struct GemmDispatch<'a, B: Backend> {
     pub tiling_config: GemmTilingConfig,
     pub input_prologue: GemmInputPrologueKind,
-    pub compute: GemmComputeKind,
+    pub use_mxu: bool,
     pub output_transform: GemmOutputTransformKind,
     pub alignment: GemmAlignment,
     pub transpose_b: bool,
@@ -118,7 +117,7 @@ impl<B: Backend> GemmDispatch<'_, B> {
         GemmSpecialization {
             tiling_config: self.tiling_config,
             input_prologue: self.input_prologue,
-            compute: self.compute,
+            use_mxu: self.use_mxu,
             output_transform: self.output_transform,
             alignment: self.alignment,
             transpose_b: self.transpose_b,
@@ -133,7 +132,7 @@ impl<B: Backend> GemmDispatch<'_, B> {
 pub(crate) struct GemmSpecialization {
     pub(crate) tiling_config: GemmTilingConfig,
     pub(crate) input_prologue: GemmInputPrologueKind,
-    pub(crate) compute: GemmComputeKind,
+    pub(crate) use_mxu: bool,
     pub(crate) output_transform: GemmOutputTransformKind,
     pub(crate) alignment: GemmAlignment,
     pub(crate) transpose_b: bool,
@@ -171,7 +170,7 @@ impl GemmSpecialization {
                         simdgroups_n: 2,
                     },
                     input_prologue: GemmInputPrologueKind::FullPrecision,
-                    compute: GemmComputeKind::SimdgroupMma,
+                    use_mxu: false,
                     output_transform: GemmOutputTransformKind::Store,
                     alignment,
                     transpose_b: true,
@@ -206,7 +205,7 @@ impl GemmSpecialization {
                                     simdgroups_n,
                                 },
                                 input_prologue: GemmInputPrologueKind::FullPrecision,
-                                compute: GemmComputeKind::MxuMma,
+                                use_mxu: true,
                                 output_transform,
                                 alignment,
                                 transpose_b: true,

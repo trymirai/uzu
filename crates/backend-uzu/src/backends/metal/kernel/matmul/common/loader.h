@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../common/defines.h"
+#include "../../common/thread_context.h"
 
 using namespace metal;
 
@@ -44,14 +45,16 @@ struct ThreadgroupLoader {
       const device T* source_ptr,
       const int source_leading_dim,
       threadgroup T* destination_ptr,
-      ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]]
+      const thread ThreadContext& thread_context
   )
       : source_leading_dimension(source_leading_dim),
         tile_stride(
             REDUCTION_DIMENSION ? BLOCK_COLS : BLOCK_ROWS * source_leading_dim
         ),
-        thread_index(simd_group_id * METAL_SIMD_SIZE + simd_lane_id),
+        thread_index(
+            thread_context.simdgroup_index * METAL_SIMD_SIZE +
+            thread_context.simd_lane_id
+        ),
         block_row_index(thread_index / THREAD_COLS),
         block_col_index(READS_PER_THREAD * (thread_index % THREAD_COLS)),
         destination(

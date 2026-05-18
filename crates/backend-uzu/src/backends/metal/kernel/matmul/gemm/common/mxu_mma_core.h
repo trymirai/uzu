@@ -22,12 +22,7 @@ template <
     ushort THREADGROUP_BLOCK_N,
     ushort SIMDGROUPS_PER_ROW,
     ushort SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_B,
-    bool VALID =
-        (THREADGROUP_BLOCK_M % SIMDGROUPS_PER_ROW == 0 &&
-         THREADGROUP_BLOCK_N % SIMDGROUPS_PER_COLUMN == 0 &&
-         (THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW) % 16 == 0 &&
-         (THREADGROUP_BLOCK_N / SIMDGROUPS_PER_COLUMN) % 16 == 0)>
+    bool TRANSPOSE_B>
 struct MxuMmaCore {
   METAL_CONST ushort SIMDGROUP_BLOCK_M =
       THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
@@ -51,12 +46,10 @@ struct MxuMmaCore {
       GemmOutputTransformKind output_transform,
       const thread ThreadContext& thread_context
   ) {
-    const uint simd_group_id = thread_context.simdgroup_index;
-    const uint2 tile_id =
-        block_id(thread_context.threadgroup_position.xy, params);
+    const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
-            compute(tile_id, params);
+            compute(tile, params);
     if (geometry.out_of_bounds) {
       return;
     }
@@ -69,9 +62,11 @@ struct MxuMmaCore {
         b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
     const ushort tile_row_offset =
-        SIMDGROUP_BLOCK_M * (simd_group_id / SIMDGROUPS_PER_COLUMN);
+        SIMDGROUP_BLOCK_M *
+        (thread_context.simdgroup_index / SIMDGROUPS_PER_COLUMN);
     const ushort tile_col_offset =
-        SIMDGROUP_BLOCK_N * (simd_group_id % SIMDGROUPS_PER_COLUMN);
+        SIMDGROUP_BLOCK_N *
+        (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
     device T* d_simdgroup =
         d + block_row * params->leading_dimension_d + block_col +
@@ -197,34 +192,6 @@ struct MxuMmaCore {
       );
     });
   }
-};
-
-// Empty body for tile combinations that fail MXU's 16-element fragment
-// constraint; `select_mxu_tile` never dispatches into them.
-template <
-    typename T,
-    ushort THREADGROUP_BLOCK_M,
-    ushort THREADGROUP_BLOCK_N,
-    ushort SIMDGROUPS_PER_ROW,
-    ushort SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_B>
-struct MxuMmaCore<
-    T,
-    THREADGROUP_BLOCK_M,
-    THREADGROUP_BLOCK_N,
-    SIMDGROUPS_PER_ROW,
-    SIMDGROUPS_PER_COLUMN,
-    TRANSPOSE_B,
-    false> {
-  static METAL_FUNC void run(
-      const device T*,
-      const device T*,
-      device T*,
-      const constant uzu::matmul::GemmParams*,
-      GemmAlignment,
-      GemmOutputTransformKind,
-      const thread ThreadContext&
-  ) {}
 };
 
 } // namespace gemm
