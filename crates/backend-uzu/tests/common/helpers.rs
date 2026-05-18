@@ -2,7 +2,11 @@ use std::{mem::size_of, rc::Rc};
 
 use backend_uzu::{
     ArrayElement, allocation_copy_from_slice,
-    backends::common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer},
+    backends::{
+        common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer},
+        metal::Metal,
+    },
+    prelude::MetalContext,
 };
 
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
@@ -61,10 +65,17 @@ pub fn sparse_buffer_create<B: Backend>(
     context: &B::Context,
     capacity: usize,
 ) -> B::SparseBuffer {
-    let mut buffer = context.create_sparse_buffer(capacity).expect("Failed to create sparse buffer");
+    context.create_sparse_buffer(capacity).expect("Failed to create sparse buffer")
+}
+
+pub fn sparse_buffer_create_mapped<B: Backend>(
+    context: &B::Context,
+    capacity: usize,
+) -> B::SparseBuffer {
+    let mut buffer = sparse_buffer_create::<B>(context, capacity);
     let total_pages = buffer.size() / buffer.page_size_bytes();
     buffer.map(context, &(0..total_pages)).expect("Failed to map sparse buffer");
-    // TODO agolokoz: context.wait_for_pending_sparse_mappings().expect("Failed to wait for sparse mappings");
+    context.sparse_mappings_wait().expect("Failed to wait for sparse mappings");
     buffer
 }
 
@@ -73,7 +84,7 @@ pub fn sparse_buffer_create_with<B: Backend, T: ArrayElement>(
     data: &[T],
 ) -> B::SparseBuffer {
     let capacity_bytes = allocation_size_bytes::<T>(data.len());
-    let mut buffer = sparse_buffer_create::<B>(context, capacity_bytes);
+    let mut buffer = sparse_buffer_create_mapped::<B>(context, capacity_bytes);
     sparse_buffer_write::<B, T>(context, &mut buffer, data);
     buffer
 }

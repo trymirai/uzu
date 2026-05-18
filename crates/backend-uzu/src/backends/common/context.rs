@@ -57,4 +57,7 @@ pub trait Context: Sized {
     fn tf32_enabled() -> bool {
         env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
     }
+
+    #[cfg(test)]
+    fn sparse_mappings_wait(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 }

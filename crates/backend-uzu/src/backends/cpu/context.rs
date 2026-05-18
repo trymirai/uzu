@@ -104,4 +104,9 @@ impl Context for CpuContext {
     fn stop_capture(&self) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
     }
+
+    #[cfg(test)]
+    fn sparse_mappings_wait(&self) -> Result<(), <Self::Backend as Backend>::Error> {
+        todo!()
+    }
 }

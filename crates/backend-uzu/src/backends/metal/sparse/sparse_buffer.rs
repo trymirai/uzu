@@ -68,9 +68,8 @@ impl Debug for MetalSparseBuffer {
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
         let context = self.context.clone();
-        for range in self.mapped_pages.iter() {
-            context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range).expect("Failed to unmap");
-        }
+        let pages_count = self.size() / self.page_size.in_bytes();
+        self.unmap(&context, &(0..pages_count)).expect("Failed to unmap");
     }
 }
 
@@ -92,11 +91,13 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        self.mapped_pages.gaps(pages).collect::<Vec<_>>().into_iter().try_for_each(|gap| {
+        let result = self.mapped_pages.gaps(pages).collect::<Vec<_>>().into_iter().try_for_each(|gap| {
             context.sparse_heap_pool_mut().map(context, &self.buffer, &gap)?;
             self.mapped_pages.insert(gap);
             Ok(())
-        })
+        });
+        context.sparse_mappings_signal();
+        result
     }
 
     fn unmap(
@@ -104,7 +105,8 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        self.mapped_pages
+        let result = self
+            .mapped_pages
             .overlapping(pages)
             .map(|range| max(range.start, pages.start)..min(range.end, pages.end))
             .collect::<Vec<_>>()
@@ -113,7 +115,9 @@ impl SparseBuffer for MetalSparseBuffer {
                 context.sparse_heap_pool_mut().unmap(context, &self.buffer, &range)?;
                 self.mapped_pages.remove(range);
                 Ok(())
-            })
+            });
+        context.sparse_mappings_signal();
+        result
     }
 
     fn page_size_bytes(&self) -> usize {

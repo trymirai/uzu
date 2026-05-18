@@ -66,7 +66,7 @@ impl MetalSparseHeapPool {
                 }
             }
 
-            heap.execute(buffer, &context.command_queue4, &mappings, true);
+            heap.execute(&context, buffer, &mappings, true);
             existing_heaps_mappings.push((i, mappings.into_boxed_slice()));
 
             if pages_to_map.len() == 0 {
@@ -87,7 +87,7 @@ impl MetalSparseHeapPool {
             match MetalSparseHeap::new(context, self.heap_capacity, self.page_size) {
                 Ok(mut heap) => {
                     let operations = [op_params];
-                    heap.execute(buffer, &context.command_queue4, &operations, true);
+                    heap.execute(&context, buffer, &operations, true);
                     self.heaps.push(heap);
                     pages_to_map.start += map_pages_count;
                     existing_heaps_mappings.push((self.heaps.len() - 1, Box::new(operations)));
@@ -95,8 +95,9 @@ impl MetalSparseHeapPool {
                 Err(err) => {
                     // it's necessary to unmap previously mapped pages in existing heaps
                     for (heap_pos, mappings) in existing_heaps_mappings {
-                        self.heaps[heap_pos].execute(buffer, &context.command_queue4, &mappings, false);
+                        self.heaps[heap_pos].execute(&context, buffer, &mappings, false);
                     }
+                    context.sparse_mappings_signal();
                     return Err(err);
                 },
             };
@@ -132,7 +133,7 @@ impl MetalSparseHeapPool {
                     })
                 })
                 .collect();
-            heap.execute(buffer, &context.command_queue4, &unmappings, false);
+            heap.execute(&context, buffer, &unmappings, false);
         });
 
         // Remove empty heaps

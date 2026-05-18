@@ -1,8 +1,8 @@
 use std::{collections::HashMap, ops::Range};
 
 use metal::{
-    MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap,
-    MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
+    MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor, MTLHeapType,
+    MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::{RangeMap, RangeSet};
@@ -78,8 +78,8 @@ impl MetalSparseHeap {
     /// It is the responsibility of the caller.
     pub fn execute(
         &mut self,
+        context: &MetalContext,
         buffer: &ProtocolObject<dyn MTLBuffer>,
-        cmd_queue: &ProtocolObject<dyn MTL4CommandQueue>,
         operations: &[MetalSparseHeapMappingParameters],
         map: bool,
     ) {
@@ -99,24 +99,24 @@ impl MetalSparseHeap {
             })
             .collect();
 
-        cmd_queue.update_buffer_mappings(buffer, Some(&self.heap), &mtl_operations);
+        context.sparse_mappings_update(buffer, &self.heap, &mtl_operations);
 
         let buffer_address = buffer.gpu_address();
-        let entry = self.buffer_mappings.entry(buffer_address).or_default();
-        mtl_operations.iter().for_each(|mtl_op| {
+        let entry_mappings = self.buffer_mappings.entry(buffer_address).or_default();
+        for mtl_op in mtl_operations {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
             if map {
                 let buffer_range = mtl_op.buffer_range();
                 let buffer_mapping = MetalSparseHeapBufferMapping::new(mtl_op.heap_offset, buffer_range.start);
-                entry.insert(heap_range.clone(), buffer_mapping);
+                entry_mappings.insert(heap_range.clone(), buffer_mapping);
                 self.free_pages.remove(heap_range);
             } else {
-                entry.remove(heap_range.clone());
+                entry_mappings.remove(heap_range.clone());
                 self.free_pages.insert(heap_range);
             }
-        });
+        }
 
-        if entry.is_empty() {
+        if entry_mappings.is_empty() {
             self.buffer_mappings.remove(&buffer_address);
         }
     }

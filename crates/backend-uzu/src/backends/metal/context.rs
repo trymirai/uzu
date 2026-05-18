@@ -1,16 +1,17 @@
 #[cfg(test)]
 use std::cell::Ref;
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Cell, RefCell, RefMut},
     collections::HashMap,
     path::Path,
     rc::{Rc, Weak},
 };
 
 use metal::{
-    MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
-    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLCaptureDescriptor,
+    MTLCaptureDestination, MTLCaptureManager, MTLCommandBuffer, MTLCommandQueue, MTLCommandQueueExt,
+    MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLHeap, MTLLibrary,
+    MTLResourceOptions, MTLSharedEvent, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -42,8 +43,12 @@ pub struct MetalContext {
     device_capabilities: MetalDeviceCapabilities,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
-    sparse_heap_pool: RefCell<MetalSparseHeapPool>,
     weak_self: Weak<MetalContext>,
+
+    sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    sparse_mapping_event: Retained<ProtocolObject<dyn MTLEvent>>,
+    sparse_mapping_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
+    sparse_mapping_value: Cell<u64>,
 }
 
 impl MetalContext {
@@ -76,6 +81,32 @@ impl MetalContext {
     pub(super) fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
         self.sparse_heap_pool.borrow_mut()
     }
+
+    pub(super) fn sparse_mappings_update(
+        &self,
+        buffer: &ProtocolObject<dyn MTLBuffer>,
+        heap: &ProtocolObject<dyn MTLHeap>,
+        operations: &[MTL4UpdateSparseBufferMappingOperation],
+    ) {
+        self.command_queue4.update_buffer_mappings(buffer, Some(heap), &operations);
+    }
+
+    pub(super) fn sparse_mappings_signal(&self) {
+        let new_value = self.sparse_mapping_value.get() + 1;
+        self.command_queue4.signal_event_value(&self.sparse_mapping_event, new_value);
+        self.command_queue4.signal_event_value(ProtocolObject::from_ref(&*self.sparse_mapping_shared_event), new_value);
+        self.sparse_mapping_value.set(new_value);
+    }
+
+    pub(super) fn sparse_mappings_encode_wait(
+        &self,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
+    ) {
+        let value = self.sparse_mapping_value.get();
+        if value > 0 {
+            command_buffer.encode_wait_for_event_value(&self.sparse_mapping_event, value);
+        }
+    }
 }
 
 impl Context for MetalContext {
@@ -99,6 +130,9 @@ impl Context for MetalContext {
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = 64 * 4 * page_size.in_bytes();
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity)?;
+        let sparse_mapping_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
+        let sparse_mapping_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
+        let sparse_mapping_value = Cell::new(0u64);
 
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
@@ -109,8 +143,12 @@ impl Context for MetalContext {
             device_capabilities,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
-            sparse_heap_pool: RefCell::new(sparse_pool),
             weak_self: weak_self.clone(),
+
+            sparse_heap_pool: RefCell::new(sparse_pool),
+            sparse_mapping_event,
+            sparse_mapping_shared_event,
+            sparse_mapping_value,
         }))
     }
 
@@ -170,9 +208,9 @@ impl Context for MetalContext {
     }
 
     fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
-        Ok(MetalCommandBufferInitial::new(
-            self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
-        ))
+        let command_buffer = self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?;
+        self.sparse_mappings_encode_wait(&command_buffer);
+        Ok(MetalCommandBufferInitial::new(command_buffer))
     }
 
     fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
@@ -221,5 +259,17 @@ impl Context for MetalContext {
         MTLCaptureManager::shared_capture_manager().stop_capture();
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn sparse_mappings_wait(&self) -> Result<(), <Self::Backend as Backend>::Error> {
+        let value = self.sparse_mapping_value.get();
+        if value == 0 {
+            return Ok(());
+        }
+        if self.sparse_mapping_shared_event.wait_until_signaled_value_timeout_ms(value, 1000) {
+            return Ok(());
+        }
+        Err(MetalError::CommandBufferExecutionFailed("Timed out waiting for sparse buffer mapping updates".to_string()))
     }
 }
