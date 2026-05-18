@@ -8,7 +8,6 @@ mod command_buffer;
 mod context;
 mod dense_buffer;
 mod encoder;
-mod event;
 pub mod gpu_types;
 mod hazard_tracker;
 pub mod kernel;
@@ -29,7 +28,6 @@ pub use command_buffer::{
 pub use context::Context;
 pub use dense_buffer::DenseBuffer;
 pub use encoder::{Completed, Encoder, Executable, Pending};
-pub use event::Event;
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
 pub use sparse_buffer::SparseBuffer;

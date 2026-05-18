@@ -1,4 +1,4 @@
-use metal::{MTLBuffer, MTLEvent};
+use metal::MTLBuffer;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{command_buffer::MetalCommandBuffer, context::MetalContext, error::MetalError, kernel::MetalKernels};
@@ -12,7 +12,6 @@ impl Backend for Metal {
     type CommandBuffer = MetalCommandBuffer;
     type DenseBuffer = Retained<ProtocolObject<dyn MTLBuffer>>;
     type SparseBuffer = MetalSparseBuffer;
-    type Event = Retained<ProtocolObject<dyn MTLEvent>>;
     type Kernels = MetalKernels;
     type Error = MetalError;
 
