@@ -1,6 +1,6 @@
 use proc_macros::uzu_config;
 
-use crate::{ConfigDataType, backends::common::gpu_types::QuantizationMode};
+use crate::{DataType, backends::common::gpu_types::QuantizationMode};
 
 #[uzu_config]
 pub struct EmbeddingConfigCommon {
@@ -15,40 +15,40 @@ pub enum EmbeddingConfig {
     Tied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
-        precision: ConfigDataType,
+        precision: DataType,
     },
     #[serde(rename = "UntiedEmbeddingConfig")]
     Untied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
-        precision: ConfigDataType,
+        precision: DataType,
     },
-    #[serde(rename = "MLXQuantizedTiedEmbeddingConfig")]
-    MLXQuantizedTied {
+    #[serde(rename = "ScaleBiasQuantizedTiedEmbeddingConfig")]
+    ScaleBiasQuantizedTied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
         group_size: usize,
         embedding_quantization_mode: QuantizationMode,
         activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
+        activation_precision: DataType,
     },
-    #[serde(rename = "MLXQuantizedUntiedEmbeddingConfig")]
-    MLXQuantizedUntied {
+    #[serde(rename = "ScaleBiasQuantizedUntiedEmbeddingConfig")]
+    ScaleBiasQuantizedUntied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
         group_size: usize,
         embedding_quantization_mode: QuantizationMode,
         activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
+        activation_precision: DataType,
     },
-    #[serde(rename = "MLXSemiQuantizedUntiedEmbeddingConfig")]
-    MLXSemiQuantizedUntied {
+    #[serde(rename = "ScaleBiasSemiQuantizedUntiedEmbeddingConfig")]
+    ScaleBiasSemiQuantizedUntied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
         group_size: usize,
         embedding_quantization_mode: QuantizationMode,
         activation_quantization_mode: Option<QuantizationMode>,
-        activation_precision: ConfigDataType,
+        activation_precision: DataType,
     },
 }
 
@@ -63,22 +63,22 @@ impl EmbeddingConfig {
                 common,
                 ..
             }
-            | EmbeddingConfig::MLXQuantizedTied {
+            | EmbeddingConfig::ScaleBiasQuantizedTied {
                 common,
                 ..
             }
-            | EmbeddingConfig::MLXQuantizedUntied {
+            | EmbeddingConfig::ScaleBiasQuantizedUntied {
                 common,
                 ..
             }
-            | EmbeddingConfig::MLXSemiQuantizedUntied {
+            | EmbeddingConfig::ScaleBiasSemiQuantizedUntied {
                 common,
                 ..
             } => common,
         }
     }
 
-    pub fn activation_precision(&self) -> ConfigDataType {
+    pub fn activation_precision(&self) -> DataType {
         match self {
             EmbeddingConfig::Tied {
                 precision,
@@ -88,15 +88,15 @@ impl EmbeddingConfig {
                 precision,
                 ..
             } => *precision,
-            EmbeddingConfig::MLXQuantizedTied {
+            EmbeddingConfig::ScaleBiasQuantizedTied {
                 activation_precision,
                 ..
             }
-            | EmbeddingConfig::MLXQuantizedUntied {
+            | EmbeddingConfig::ScaleBiasQuantizedUntied {
                 activation_precision,
                 ..
             }
-            | EmbeddingConfig::MLXSemiQuantizedUntied {
+            | EmbeddingConfig::ScaleBiasSemiQuantizedUntied {
                 activation_precision,
                 ..
             } => *activation_precision,

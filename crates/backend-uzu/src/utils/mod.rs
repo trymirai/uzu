@@ -6,5 +6,4 @@ pub mod model_size;
 pub mod pointers;
 pub mod strict_serde;
 pub mod version;
-
 pub use version::{TOOLCHAIN_VERSION, VERSION};

@@ -1,10 +1,10 @@
 use proc_macros::uzu_config;
 
-use crate::ConfigDataType;
+use crate::DataType;
 
 #[uzu_config]
 pub struct RopeConfigCommon {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub base: f32,
     pub max_sequence_length: usize,
     pub head_dim: usize,

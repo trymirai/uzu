@@ -44,7 +44,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
     return;
 
   // Each simdgroup outputs one hidden element
-  const uint h_idx = h_block_idx * 4 + thread_context.threadgroup_index;
+  const uint h_idx = h_block_idx * 4 + thread_context.simdgroup_index;
   if (h_idx >= d_ff)
     return;
 
@@ -66,7 +66,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
   const uint vec_iters = d_model / 128;
 
   for (uint i = 0; i < vec_iters; ++i) {
-    uint base_idx = i * 128 + thread_context.simdgroup_index * 4;
+    uint base_idx = i * 128 + thread_context.simd_lane_id * 4;
 
     device const T* x_vec = reinterpret_cast<device const T*>(x_ptr + base_idx);
     device const T* w_up_vec =
@@ -87,7 +87,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
   }
 
   // Handle leftover elements
-  uint leftover_start = vec_iters * 128 + thread_context.simdgroup_index;
+  uint leftover_start = vec_iters * 128 + thread_context.simd_lane_id;
   for (uint idx = leftover_start; idx < d_model; idx += 32) {
     float xv = float(x_ptr[idx]);
     acc_up += xv * float(w_up_row[idx]);
@@ -103,7 +103,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
   }
 
   // Lane 0 applies activation and writes result
-  if (thread_context.simdgroup_index == 0) {
+  if (thread_context.simd_lane_id == 0) {
     float up_val = acc_up + float(up_biases[bias_base + h_idx]);
     up_val = clamp(up_val, up_clip_min, up_clip_max);
 
@@ -152,7 +152,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Each simdgroup computes one output column
   const uint my_col =
-      tgpig_x * SIMDGROUPS_PER_TG + thread_context.threadgroup_index;
+      tgpig_x * SIMDGROUPS_PER_TG + thread_context.simdgroup_index;
   if (my_col >= d_model)
     return;
 
@@ -174,7 +174,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
 
   for (uint iter = 0; iter < k_vec_iters; ++iter) {
     const uint k_base =
-        iter * (8 * THREADS_PER_SIMD) + thread_context.simdgroup_index;
+        iter * (8 * THREADS_PER_SIMD) + thread_context.simd_lane_id;
 
     // hidden: stride-32 per lane, already f32 from Pass A
     const AccumT h0 = hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD];
@@ -220,7 +220,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Handle remaining full iterations
   for (uint iter = k_vec_iters * 8; iter < k_iters; ++iter) {
-    const uint k = iter * THREADS_PER_SIMD + thread_context.simdgroup_index;
+    const uint k = iter * THREADS_PER_SIMD + thread_context.simd_lane_id;
     acc =
         fma(AccumT(hidden[hidden_base + k]),
             AccumT(w2_all[w2_col_base + k]),
@@ -229,8 +229,8 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Handle leftover elements (d_ff % 32)
   const uint leftover_start = k_iters * THREADS_PER_SIMD;
-  if (leftover_start + thread_context.simdgroup_index < d_ff) {
-    const uint k = leftover_start + thread_context.simdgroup_index;
+  if (leftover_start + thread_context.simd_lane_id < d_ff) {
+    const uint k = leftover_start + thread_context.simd_lane_id;
     acc =
         fma(AccumT(hidden[hidden_base + k]),
             AccumT(w2_all[w2_col_base + k]),
@@ -241,7 +241,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
   AccumT result = simd_sum(acc);
 
   // Lane 0 writes result
-  if (thread_context.simdgroup_index == 0) {
+  if (thread_context.simd_lane_id == 0) {
     const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)my_col;
     result += AccumT(down_biases[bias_idx]);
 

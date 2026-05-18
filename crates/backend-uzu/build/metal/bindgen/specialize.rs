@@ -1,17 +1,18 @@
 use anyhow::{Context, Result};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Ident, Type, parse_quote};
+use syn::{Ident, Type};
 
 use super::super::{
     ast::{MetalArgumentType, MetalKernelInfo},
-    enum_path_rewrite::is_enum_c_type,
+    enum_path_rewrite::gpu_type_kind_for_c_type,
 };
-use crate::common::enum_paths::EnumPaths;
+use crate::common::enum_paths::{EnumPaths, GpuTypeKind};
 
 enum SpecializeLowering {
     Direct,
-    CastTo(Type),
+    Enum,
+    OptionSet,
 }
 
 struct SpecializeArgument {
@@ -45,10 +46,10 @@ pub fn parse(
                 format!("specialize type `{}` in kernel `{}` cannot be parsed", rust_type_text, kernel_name)
             })?;
             let function_constant_index = base_function_constant_index.unwrap_or(0) + offset;
-            let lowering = if is_enum_c_type(enum_paths, &argument.c_type) {
-                SpecializeLowering::CastTo(parse_quote!(u32))
-            } else {
-                SpecializeLowering::Direct
+            let lowering = match gpu_type_kind_for_c_type(enum_paths, &argument.c_type) {
+                Some(GpuTypeKind::Enum) => SpecializeLowering::Enum,
+                Some(GpuTypeKind::OptionSet) => SpecializeLowering::OptionSet,
+                None => SpecializeLowering::Direct,
             };
             Ok(SpecializeArgument {
                 name,
@@ -90,8 +91,11 @@ impl SpecializeEmission {
                     SpecializeLowering::Direct => {
                         quote! { function_constants.set_value(&#name, #index); }
                     },
-                    SpecializeLowering::CastTo(wire_type) => {
-                        quote! { function_constants.set_value(&(#name as #wire_type), #index); }
+                    SpecializeLowering::Enum => {
+                        quote! { function_constants.set_value(&(#name as u32), #index); }
+                    },
+                    SpecializeLowering::OptionSet => {
+                        quote! { function_constants.set_value(&#name.bits(), #index); }
                     },
                 }
             })
@@ -115,7 +119,7 @@ impl SpecializeEmission {
             return quote! { &entry_name };
         }
         let argument_names: Vec<&Ident> = self.arguments.iter().map(|argument| &argument.name).collect();
-        let format_string = format!("{{}}{}", "_{}".repeat(argument_names.len()));
+        let format_string = format!("{{}}{}", "_{:?}".repeat(argument_names.len()));
         quote! { &format!(#format_string, &entry_name #(, #argument_names)*) }
     }
 }

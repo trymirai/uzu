@@ -48,7 +48,7 @@ impl<B: Backend> dyn Linear<B> {
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
         match config {
-            LinearConfig::Quantized(quantization_config) | LinearConfig::MLXQuantized(quantization_config) => {
+            LinearConfig::Quantized(quantization_config) | LinearConfig::ScaleBiasQuantized(quantization_config) => {
                 let block = QuantizedLinear::new(
                     context,
                     quantization_config,
@@ -111,14 +111,9 @@ impl<B: Backend> dyn Linear<B> {
         output_dim: usize,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         match config {
-            LinearConfig::Quantized(config) | LinearConfig::MLXQuantized(config) => Ok(Box::new(QuantizedLinear::new(
-                context,
-                config,
-                input_dim,
-                output_dim,
-                parameter_tree,
-                Some(output_factors),
-            )?)),
+            LinearConfig::Quantized(config) | LinearConfig::ScaleBiasQuantized(config) => Ok(Box::new(
+                QuantizedLinear::new(context, config, input_dim, output_dim, parameter_tree, Some(output_factors))?,
+            )),
             LinearConfig::QLoRA {
                 quantization,
                 lora_rank,
