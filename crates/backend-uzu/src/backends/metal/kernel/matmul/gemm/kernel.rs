@@ -4,7 +4,10 @@ use super::dispatch::{GemmDispatch, GemmSpecialization, GemmWeights};
 use crate::{
     DataType,
     backends::{
-        common::Encoder,
+        common::{
+            Encoder,
+            gpu_types::gemm::{GemmInputPrologueKind, GemmWeightPrologueKind},
+        },
         metal::{Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel},
     },
 };
@@ -66,6 +69,16 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let specialization = dispatch.specialization();
+        assert_eq!(
+            specialization.input_prologue,
+            GemmInputPrologueKind::FullPrecision,
+            "unified GEMM only implements FullPrecision input prologue today",
+        );
+        assert_eq!(
+            specialization.weight_prologue,
+            GemmWeightPrologueKind::FullPrecision,
+            "unified GEMM only implements FullPrecision weight prologue today",
+        );
         specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
         let kernel = self.get_or_create(context, specialization)?;
         let (b, scales, biases, zero_points) = match &dispatch.b {

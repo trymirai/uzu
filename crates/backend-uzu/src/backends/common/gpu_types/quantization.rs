@@ -1,12 +1,11 @@
 use derive_more::Display;
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-use crate::{DataType, utils::strict_serde::DeserializeStrict};
-
-impl<'de> DeserializeStrict<'de> for QuantizationMode {}
+use crate::DataType;
 
 #[repr(C)]
-#[derive(Debug, Display, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Display, Copy, Eq, Hash)]
+#[uzu_config]
 pub enum QuantizationMode {
     #[serde(rename = "uint4")]
     U4,
@@ -18,7 +17,9 @@ pub enum QuantizationMode {
 
 impl QuantizationMode {
     pub fn packing_divisor(&self) -> usize {
-        8 / DataType::from(*self).size_in_bits()
+        let bits = DataType::from(*self).size_in_bits();
+        assert_eq!(8 % bits, 0, "QuantizationMode bit width ({bits}) must divide 8 evenly");
+        8 / bits
     }
 
     pub fn storage_type(&self) -> DataType {

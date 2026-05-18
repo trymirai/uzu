@@ -72,11 +72,8 @@ KERNEL(Gemm)(
   (void)thread_x;
   (void)thread_y;
   (void)thread_z;
-  // Scaffolding: only FullPrecision prologues are implemented today.
-  if (weight_prologue != GemmWeightPrologueKind::FullPrecision ||
-      input_prologue != GemmInputPrologueKind::FullPrecision) {
-    return;
-  }
+  (void)input_prologue;
+  (void)weight_prologue;
   const device T* b = reinterpret_cast<const device T*>(b_packed);
   if constexpr (USE_MXU) {
     MxuMmaCore<
