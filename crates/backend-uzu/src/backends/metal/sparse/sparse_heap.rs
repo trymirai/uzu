@@ -1,8 +1,8 @@
 use std::{collections::HashMap, ops::Range};
 
 use metal::{
-    MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap,
-    MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
+    MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor, MTLHeapType,
+    MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::{RangeMap, RangeSet};
@@ -78,8 +78,8 @@ impl MetalSparseHeap {
     /// It is the responsibility of the caller.
     pub fn execute(
         &mut self,
+        context: &MetalContext,
         buffer: &ProtocolObject<dyn MTLBuffer>,
-        cmd_queue: &ProtocolObject<dyn MTL4CommandQueue>,
         operations: &[MetalSparseHeapMappingParameters],
         map: bool,
     ) {
@@ -99,7 +99,7 @@ impl MetalSparseHeap {
             })
             .collect();
 
-        cmd_queue.update_buffer_mappings(buffer, Some(&self.heap), &mtl_operations);
+        context.sparse_update_mappings(buffer, Some(&self.heap), &mtl_operations);
 
         let buffer_address = buffer.gpu_address();
         let entry = self.buffer_mappings.entry(buffer_address).or_default();
