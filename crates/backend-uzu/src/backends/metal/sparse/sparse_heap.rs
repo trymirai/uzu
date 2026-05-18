@@ -4,14 +4,17 @@ use metal::{
     MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor, MTLHeapType,
     MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
 };
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 use rangemap::{RangeMap, RangeSet};
 
 use crate::{
     backends::metal::{
         error::MetalError,
         metal_extensions::SparsePageSizeExt,
-        sparse::sparse_utils::{MetalSparseHeapBufferMapping, MetalSparseHeapMappingParameters},
+        sparse::{
+            MetalSparseMappingOperations,
+            sparse_utils::{MetalSparseHeapBufferMapping, MetalSparseHeapMappingParameters},
+        },
     },
     prelude::MetalContext,
 };
@@ -74,20 +77,13 @@ impl MetalSparseHeap {
         self.buffer_mappings.is_empty()
     }
 
-    /// Command queue calls doesn't have any synchronization.
-    /// It is the responsibility of the caller.
-    pub fn execute(
+    pub fn create_mapping_operations(
         &mut self,
-        context: &MetalContext,
         buffer: &ProtocolObject<dyn MTLBuffer>,
         operations: &[MetalSparseHeapMappingParameters],
         map: bool,
-    ) {
-        if operations.is_empty() {
-            return;
-        }
-
-        let mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = operations
+    ) -> MetalSparseMappingOperations {
+        let mtl_operations: Box<[MTL4UpdateSparseBufferMappingOperation]> = operations
             .iter()
             .map(|op| {
                 let mode = if map {
@@ -99,13 +95,22 @@ impl MetalSparseHeap {
             })
             .collect();
 
-        context.sparse_update_mappings(buffer, Some(&self.heap), &mtl_operations);
+        MetalSparseMappingOperations {
+            buffer: buffer.retain(),
+            heap: Some(self.heap.clone()),
+            operations: mtl_operations,
+        }
+    }
 
-        let buffer_address = buffer.gpu_address();
+    pub fn apply_mapping_operations(
+        &mut self,
+        ops: &MetalSparseMappingOperations,
+    ) {
+        let buffer_address = ops.buffer.gpu_address();
         let entry = self.buffer_mappings.entry(buffer_address).or_default();
-        mtl_operations.iter().for_each(|mtl_op| {
+        for mtl_op in ops.operations.iter() {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
-            if map {
+            if mtl_op.mode == MTLSparseTextureMappingMode::Map {
                 let buffer_range = mtl_op.buffer_range();
                 let buffer_mapping = MetalSparseHeapBufferMapping::new(mtl_op.heap_offset, buffer_range.start);
                 entry.insert(heap_range.clone(), buffer_mapping);
@@ -114,7 +119,7 @@ impl MetalSparseHeap {
                 entry.remove(heap_range.clone());
                 self.free_pages.insert(heap_range);
             }
-        });
+        }
 
         if entry.is_empty() {
             self.buffer_mappings.remove(&buffer_address);

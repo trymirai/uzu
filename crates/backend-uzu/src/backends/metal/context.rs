@@ -9,9 +9,9 @@ use std::{
 };
 
 use metal::{
-    MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLCaptureDescriptor,
-    MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice,
-    MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLHeap, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
+    MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
+    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -28,7 +28,7 @@ use crate::{
         metal::{
             command_buffer::MetalCommandBufferInitial,
             metal_extensions::SparsePageSizeExt,
-            sparse::{MetalSparseBuffer, MetalSparseHeapPool},
+            sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOperations},
         },
     },
     utils::model_size::ModelSize,
@@ -82,13 +82,13 @@ impl MetalContext {
 
     pub(super) fn sparse_update_mappings(
         &self,
-        buffer: &ProtocolObject<dyn MTLBuffer>,
-        heap: Option<&ProtocolObject<dyn MTLHeap>>,
-        operations: &[MTL4UpdateSparseBufferMappingOperation],
+        mappings: &[MetalSparseMappingOperations],
     ) {
         let wait_value = self.timeline_get_and_increment();
         self.command_queue4.wait_for_event_value(&self.timeline_event, wait_value);
-        self.command_queue4.update_buffer_mappings(buffer, heap, operations);
+        for op in mappings {
+            self.command_queue4.update_buffer_mappings(&op.buffer, op.heap.as_deref(), &op.operations);
+        }
         self.command_queue4.signal_event_value(&self.timeline_event, wait_value + 1);
     }
 

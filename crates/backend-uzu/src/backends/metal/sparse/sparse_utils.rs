@@ -1,5 +1,8 @@
 use std::ops::Range;
 
+use metal::{MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLHeap};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
 #[derive(Clone, PartialEq)]
 pub(super) struct MetalSparseHeapBufferMapping {
     // Anchors for an originally inserted contiguous mapping. They survive
@@ -33,4 +36,10 @@ impl MetalSparseHeapBufferMapping {
 pub(super) struct MetalSparseHeapMappingParameters {
     pub(super) buffer_pages: Range<usize>,
     pub(super) heap_page_offset: usize,
+}
+
+pub(crate) struct MetalSparseMappingOperations {
+    pub buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub heap: Option<Retained<ProtocolObject<dyn MTLHeap>>>,
+    pub operations: Box<[MTL4UpdateSparseBufferMappingOperation]>,
 }
