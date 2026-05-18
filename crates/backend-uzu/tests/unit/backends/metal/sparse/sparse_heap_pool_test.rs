@@ -3,8 +3,6 @@ mod common;
 
 use std::rc::Rc;
 
-use test_tag::tag;
-
 use crate::{
     backends::{
         common::{Backend, Context},
@@ -30,7 +28,6 @@ fn test_map_empty_range_allocates_no_heaps() {
     let sparse = common::helpers::sparse_buffer_create::<Metal>(&ctx, cap);
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..0)).expect("map empty range");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -43,7 +40,6 @@ fn test_map_single_heap_allocates_one_heap() {
     let sparse = common::helpers::sparse_buffer_create::<Metal>(&ctx, cap);
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..pages_per_heap)).expect("map");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -56,7 +52,6 @@ fn test_map_multi_heap_allocates_minimum_heaps() {
     let sparse = common::helpers::sparse_buffer_create::<Metal>(&ctx, cap);
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..4 * pages_per_heap)).expect("map");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 4);
 }
@@ -69,7 +64,6 @@ fn test_map_partial_heap_rounds_up_heap_count() {
     let sparse = common::helpers::sparse_buffer_create::<Metal>(&ctx, cap);
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..pages_per_heap + 1)).expect("map");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -84,7 +78,6 @@ fn test_sequential_mappings_pack_into_one_heap() {
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..half)).expect("map first");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(half..pages_per_heap)).expect("map second");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -99,7 +92,6 @@ fn test_map_overflows_existing_heap_into_new_heap() {
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..half)).expect("map first");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(half..half + pages_per_heap)).expect("map overflow");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -115,7 +107,6 @@ fn test_two_buffers_share_one_heap() {
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_a.mtl_buffer(), &(0..half)).expect("map a");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_b.mtl_buffer(), &(0..half)).expect("map b");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -130,7 +121,6 @@ fn test_full_unmap_removes_heaps() {
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &pages).expect("map");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse.mtl_buffer(), &pages).expect("unmap");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -144,7 +134,6 @@ fn test_partial_unmap_keeps_heap() {
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..pages_per_heap)).expect("map");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse.mtl_buffer(), &(0..pages_per_heap / 2)).expect("partial unmap");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -160,7 +149,6 @@ fn test_unmap_with_other_buffer_keeps_mappings() {
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_a.mtl_buffer(), &pages).expect("map a");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_b.mtl_buffer(), &pages).expect("unmap b");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -177,7 +165,6 @@ fn test_unmap_one_buffer_keeps_heap_for_other() {
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_a.mtl_buffer(), &(0..half)).expect("map a");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_b.mtl_buffer(), &(0..half)).expect("map b");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_a.mtl_buffer(), &(0..half)).expect("unmap a");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -194,7 +181,6 @@ fn test_remap_after_unmap_does_not_grow_pool() {
     let initial = ctx.sparse_heap_pool().heaps_count();
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse.mtl_buffer(), &pages).expect("unmap");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &pages).expect("remap");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), initial);
 }
@@ -210,7 +196,6 @@ fn test_remap_into_freed_gap_reuses_heap() {
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..pages_per_heap)).expect("map full");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse.mtl_buffer(), &(0..half)).expect("unmap half");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..half)).expect("remap into gap");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -229,7 +214,6 @@ fn test_sequential_partial_unmaps_release_full_heap() {
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse.mtl_buffer(), &(0..pages_per_heap)).expect("map");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse.mtl_buffer(), &(0..half)).expect("unmap prefix");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse.mtl_buffer(), &(half..pages_per_heap)).expect("unmap suffix");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -247,7 +231,6 @@ fn test_three_buffers_share_one_heap() {
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_a.mtl_buffer(), &(0..third)).expect("map a");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_b.mtl_buffer(), &(0..third)).expect("map b");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_c.mtl_buffer(), &(0..third)).expect("map c");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -265,7 +248,6 @@ fn test_two_buffers_exactly_fill_one_heap() {
     ctx.sparse_heap_pool_mut()
         .map(&ctx, &sparse_b.mtl_buffer(), &(0..pages_per_heap - half))
         .expect("map b fills heap");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -285,7 +267,6 @@ fn test_third_buffer_spills_when_heap_filled_by_others() {
         .map(&ctx, &sparse_b.mtl_buffer(), &(0..pages_per_heap - half))
         .expect("map b fills heap");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_c.mtl_buffer(), &(0..1)).expect("map c spills");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -306,7 +287,6 @@ fn test_unmap_buffer_frees_pages_for_another_in_same_heap() {
         .expect("map b fills heap");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_a.mtl_buffer(), &(0..half)).expect("unmap a");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_c.mtl_buffer(), &(0..half)).expect("map c into gap");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -325,7 +305,6 @@ fn test_unmap_middle_of_three_buffers_keeps_heap() {
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_b.mtl_buffer(), &(0..third)).expect("map b");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_c.mtl_buffer(), &(0..third)).expect("map c");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_b.mtl_buffer(), &(0..third)).expect("unmap b");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -346,7 +325,6 @@ fn test_unmap_all_shared_buffers_releases_heap() {
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_a.mtl_buffer(), &(0..third)).expect("unmap a");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_b.mtl_buffer(), &(0..third)).expect("unmap b");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_c.mtl_buffer(), &(0..third)).expect("unmap c");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -362,7 +340,6 @@ fn test_second_buffer_spans_existing_and_new_heap() {
 
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_a.mtl_buffer(), &(0..half)).expect("map a");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_b.mtl_buffer(), &(0..pages_per_heap)).expect("map b spans heaps");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -379,7 +356,6 @@ fn test_unmap_spanning_buffer_keeps_heap_with_other_buffer() {
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_a.mtl_buffer(), &(0..half)).expect("map a");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_b.mtl_buffer(), &(0..pages_per_heap)).expect("map b spans heaps");
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_b.mtl_buffer(), &(0..pages_per_heap)).expect("unmap b");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -400,7 +376,6 @@ fn test_remap_two_buffers_after_unmap_does_not_grow_pool() {
     ctx.sparse_heap_pool_mut().unmap(&ctx, &sparse_b.mtl_buffer(), &(0..half)).expect("unmap b");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_a.mtl_buffer(), &(0..half)).expect("remap a");
     ctx.sparse_heap_pool_mut().map(&ctx, &sparse_b.mtl_buffer(), &(0..half)).expect("remap b");
-    ctx.sparse_mappings_wait().expect("Failed to wait for mapping");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), initial);
 }

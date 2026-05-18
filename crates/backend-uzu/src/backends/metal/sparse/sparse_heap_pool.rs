@@ -97,7 +97,6 @@ impl MetalSparseHeapPool {
                     for (heap_pos, mappings) in existing_heaps_mappings {
                         self.heaps[heap_pos].execute(&context, buffer, &mappings, false);
                     }
-                    context.sparse_mappings_signal();
                     return Err(err);
                 },
             };

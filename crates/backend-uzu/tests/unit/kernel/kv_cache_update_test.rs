@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
@@ -11,6 +9,7 @@ use backend_uzu::{
 };
 use half::{bf16, f16};
 use num_traits::Float;
+use test_tag::tag;
 
 use crate::{common::assert::assert_eq_float, uzu_test};
 
@@ -59,10 +58,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        crate::common::helpers::allocation_to_vec(&keys),
-        crate::common::helpers::allocation_to_vec(&values),
-    )
+    (crate::common::helpers::allocation_to_vec(&keys), crate::common::helpers::allocation_to_vec(&values))
 }
 
 /// Single swap between two different positions.
@@ -219,64 +215,76 @@ fn test_large_internal<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // Single swap tests
+#[tag(heavy)]
 #[uzu_test]
 fn test_single_swap_f32() {
     test_single_swap_internal::<f32>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_single_swap_f16() {
     test_single_swap_internal::<f16>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_single_swap_bf16() {
     test_single_swap_internal::<bf16>();
 }
 
 // Multi swap tests
+#[tag(heavy)]
 #[uzu_test]
 fn test_multi_swap_f32() {
     test_multi_swap_internal::<f32>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_multi_swap_f16() {
     test_multi_swap_internal::<f16>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_multi_swap_bf16() {
     test_multi_swap_internal::<bf16>();
 }
 
 // No swap tests
+#[tag(heavy)]
 #[uzu_test]
 fn test_no_swap_f32() {
     test_no_swap_internal::<f32>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_no_swap_f16() {
     test_no_swap_internal::<f16>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_no_swap_bf16() {
     test_no_swap_internal::<bf16>();
 }
 
 // Large dimension tests
+#[tag(heavy)]
 #[uzu_test]
 fn test_large_f32() {
     test_large_internal::<f32>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_large_f16() {
     test_large_internal::<f16>();
 }
 
+#[tag(heavy)]
 #[uzu_test]
 fn test_large_bf16() {
     test_large_internal::<bf16>();

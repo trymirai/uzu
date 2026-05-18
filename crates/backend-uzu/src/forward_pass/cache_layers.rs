@@ -208,6 +208,7 @@ impl<B: Backend> CacheLayers<B> {
             },
             _ => (),
         });
+        context.sparse_mappings_signal();
 
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
         for layer in data.iter_mut() {

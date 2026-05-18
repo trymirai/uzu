@@ -11,7 +11,7 @@ use metal::{
     MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLCaptureDescriptor,
     MTLCaptureDestination, MTLCaptureManager, MTLCommandBuffer, MTLCommandQueue, MTLCommandQueueExt,
     MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues, MTLHeap, MTLLibrary,
-    MTLResourceOptions, MTLSharedEvent, MTLSparsePageSize,
+    MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
@@ -47,7 +47,6 @@ pub struct MetalContext {
 
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
     sparse_mapping_event: Retained<ProtocolObject<dyn MTLEvent>>,
-    sparse_mapping_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
     sparse_mapping_value: Cell<u64>,
 }
 
@@ -91,13 +90,6 @@ impl MetalContext {
         self.command_queue4.update_buffer_mappings(buffer, Some(heap), &operations);
     }
 
-    pub(super) fn sparse_mappings_signal(&self) {
-        let new_value = self.sparse_mapping_value.get() + 1;
-        self.command_queue4.signal_event_value(&self.sparse_mapping_event, new_value);
-        self.command_queue4.signal_event_value(ProtocolObject::from_ref(&*self.sparse_mapping_shared_event), new_value);
-        self.sparse_mapping_value.set(new_value);
-    }
-
     pub(super) fn sparse_mappings_encode_wait(
         &self,
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
@@ -131,7 +123,6 @@ impl Context for MetalContext {
         let heap_capacity = 64 * 4 * page_size.in_bytes();
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity)?;
         let sparse_mapping_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
-        let sparse_mapping_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
         let sparse_mapping_value = Cell::new(0u64);
 
         Ok(Rc::new_cyclic(|weak_self| Self {
@@ -147,7 +138,6 @@ impl Context for MetalContext {
 
             sparse_heap_pool: RefCell::new(sparse_pool),
             sparse_mapping_event,
-            sparse_mapping_shared_event,
             sparse_mapping_value,
         }))
     }
@@ -261,15 +251,9 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn sparse_mappings_wait(&self) -> Result<(), <Self::Backend as Backend>::Error> {
-        let value = self.sparse_mapping_value.get();
-        if value == 0 {
-            return Ok(());
-        }
-        if self.sparse_mapping_shared_event.wait_until_signaled_value_timeout_ms(value, 1000) {
-            return Ok(());
-        }
-        Err(MetalError::CommandBufferExecutionFailed("Timed out waiting for sparse buffer mapping updates".to_string()))
+    fn sparse_mappings_signal(&self) {
+        let new_value = self.sparse_mapping_value.get() + 1;
+        self.command_queue4.signal_event_value(&self.sparse_mapping_event, new_value);
+        self.sparse_mapping_value.set(new_value);
     }
 }

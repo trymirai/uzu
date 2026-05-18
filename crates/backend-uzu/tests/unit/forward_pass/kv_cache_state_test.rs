@@ -1,5 +1,7 @@
 #![cfg(metal_backend)]
 
+use test_tag::tag;
+
 use crate::{
     DataType,
     backends::{
@@ -293,6 +295,7 @@ fn kv_cache_state_scenarios() {
     }
 }
 
+#[tag(heavy)]
 #[test]
 fn kv_cache_slice_apply_contiguous_window() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
@@ -332,6 +335,7 @@ fn kv_cache_slice_apply_contiguous_window() {
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
 
+#[tag(heavy)]
 #[test]
 fn kv_cache_slice_apply_wrap_window() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
@@ -371,6 +375,7 @@ fn kv_cache_slice_apply_wrap_window() {
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }
 
+#[tag(heavy)]
 #[test]
 fn kv_cache_slice_apply_full_restores_metadata() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {

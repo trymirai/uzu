@@ -75,7 +75,7 @@ pub fn sparse_buffer_create_mapped<B: Backend>(
     let mut buffer = sparse_buffer_create::<B>(context, capacity);
     let total_pages = buffer.size() / buffer.page_size_bytes();
     buffer.map(context, &(0..total_pages)).expect("Failed to map sparse buffer");
-    context.sparse_mappings_wait().expect("Failed to wait for sparse mappings");
+    context.sparse_mappings_signal();
     buffer
 }
 

@@ -105,8 +105,5 @@ impl Context for CpuContext {
         Err(CpuError::NotSupported)
     }
 
-    #[cfg(test)]
-    fn sparse_mappings_wait(&self) -> Result<(), <Self::Backend as Backend>::Error> {
-        todo!()
-    }
+    fn sparse_mappings_signal(&self) {}
 }
