@@ -33,8 +33,6 @@ pub struct AsyncBuffers<B: Backend> {
     /// Seeds array: [max_tokens] u64
     /// Pre-populated with deterministic seed sequence
     pub seeds: Array<B>,
-    /// Event for GPU-side synchronization between passes
-    pub event: B::Event,
     /// Current event counter (pass N waits on N, signals N+1)
     pub counter: Cell<u64>,
     /// Number of tokens after prefill (base for position calculation)
@@ -51,12 +49,10 @@ impl<B: Backend> AsyncBuffers<B> {
     ) -> Self {
         let positions = context.create_array_uninitialized(&[max_tokens], DataType::I32);
         let seeds = context.create_array_uninitialized(&[max_tokens], DataType::U64);
-        let event = context.create_event().expect("Failed to create event");
 
         Self {
             positions,
             seeds,
-            event,
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
             batch_size,
