@@ -187,10 +187,12 @@ struct SimdgroupMmaCore {
 
     dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       dispatch_bool(
-          alignment.contains(GemmAlignment::M) || (tile_block_rows == THREADGROUP_BLOCK_M),
+          alignment.contains(GemmAlignment::M) ||
+              (tile_block_rows == THREADGROUP_BLOCK_M),
           [&](auto aligned_m) {
             dispatch_bool(
-                alignment.contains(GemmAlignment::N) || (tile_block_cols == THREADGROUP_BLOCK_N),
+                alignment.contains(GemmAlignment::N) ||
+                    (tile_block_cols == THREADGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   k_loop<aligned_m.value, aligned_n.value, aligned_k.value>(
                       a_shared,

@@ -112,10 +112,12 @@ struct MxuMmaCore {
 
     dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       dispatch_bool(
-          alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
+          alignment.contains(GemmAlignment::M) ||
+              (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
           [&](auto aligned_m) {
             dispatch_bool(
-                alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
+                alignment.contains(GemmAlignment::N) ||
+                    (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   auto accumulator_tile = uzu::matmul::gemm_loop<
                       T,

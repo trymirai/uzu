@@ -66,13 +66,7 @@ struct GemmPipeline {
           SIMDGROUPS_M,
           SIMDGROUPS_N,
           TRANSPOSE_B>::
-          run(a,
-              b,
-              d,
-              params,
-              alignment,
-              output_transform,
-              thread_context);
+          run(a, b, d, params, alignment, output_transform, thread_context);
       break;
     }
   }
