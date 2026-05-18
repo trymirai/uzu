@@ -11,8 +11,6 @@ pub enum Variant {
 }
 
 impl Variant {
-    pub const ALL: &'static [Variant] = &[Variant::Gemm, Variant::GemmMxu];
-
     pub const fn requires_mxu(self) -> bool {
         matches!(self, Variant::GemmMxu)
     }

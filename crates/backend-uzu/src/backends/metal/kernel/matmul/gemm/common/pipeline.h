@@ -37,9 +37,6 @@ struct GemmPipeline {
         input_prologue != GemmInputPrologueKind::FullPrecision) {
       return;
     }
-    const bool m_aligned = alignment.contains(GemmAlignment::M);
-    const bool n_aligned = alignment.contains(GemmAlignment::N);
-    const bool k_aligned = alignment.contains(GemmAlignment::K);
     const device T* b = reinterpret_cast<const device T*>(b_packed);
     switch (compute) {
     case GemmComputeKind::SimdgroupMma:
@@ -55,9 +52,7 @@ struct GemmPipeline {
               b,
               d,
               params,
-              m_aligned,
-              n_aligned,
-              k_aligned,
+              alignment,
               output_transform,
               a_shared,
               b_shared,
@@ -75,9 +70,7 @@ struct GemmPipeline {
               b,
               d,
               params,
-              m_aligned,
-              n_aligned,
-              k_aligned,
+              alignment,
               output_transform,
               thread_context);
       break;

@@ -20,15 +20,11 @@ impl Shape {
             n,
         }
     }
-
-    pub const fn flops(&self) -> usize {
-        2 * self.m * self.k * self.n
-    }
 }
 
-pub const SHAPES_TINY: &[Shape] = &[Shape::new(64, 64, 64), Shape::new(16, 128, 256), Shape::new(128, 256, 128)];
+const SHAPES_TINY: &[Shape] = &[Shape::new(64, 64, 64), Shape::new(16, 128, 256), Shape::new(128, 256, 128)];
 
-pub const SHAPES_UNALIGNED: &[Shape] = &[
+const SHAPES_UNALIGNED: &[Shape] = &[
     Shape::new(7, 33, 11),
     Shape::new(33, 2048, 2048),
     Shape::new(64, 2048, 33),
@@ -36,14 +32,7 @@ pub const SHAPES_UNALIGNED: &[Shape] = &[
     Shape::new(128, 2048, 200),
 ];
 
-pub const SHAPES_MEDIUM: &[Shape] = &[Shape::new(128, 2048, 2048), Shape::new(256, 4096, 4096)];
-
-pub const SHAPES_BENCH: &[Shape] = &[
-    Shape::new(128, 2048, 8192),
-    Shape::new(128, 4096, 14336),
-    Shape::new(256, 4096, 4096),
-    Shape::new(512, 8192, 2048),
-];
+const SHAPES_MEDIUM: &[Shape] = &[Shape::new(128, 2048, 2048), Shape::new(256, 4096, 4096)];
 
 pub fn all_correctness_shapes() -> impl Iterator<Item = Shape> {
     SHAPES_TINY.iter().chain(SHAPES_UNALIGNED.iter()).chain(SHAPES_MEDIUM.iter()).copied()

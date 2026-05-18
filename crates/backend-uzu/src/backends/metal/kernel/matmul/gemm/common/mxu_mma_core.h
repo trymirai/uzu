@@ -47,9 +47,7 @@ struct MxuMmaCore {
       const device T* b,
       device T* d,
       const constant uzu::matmul::GemmParams* params,
-      const bool align_m,
-      const bool align_n,
-      const bool align_k,
+      GemmAlignment alignment,
       GemmOutputTransformKind output_transform,
       const thread ThreadContext& thread_context
   ) {
@@ -80,19 +78,21 @@ struct MxuMmaCore {
         tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
-        align_m ? SIMDGROUP_BLOCK_M
-                : short(
-                      min(int(SIMDGROUP_BLOCK_M),
-                          int(params->M) -
-                              int(geometry.block_row_start + tile_row_offset))
-                  );
+        alignment.contains(GemmAlignment::M)
+            ? SIMDGROUP_BLOCK_M
+            : short(
+                  min(int(SIMDGROUP_BLOCK_M),
+                      int(params->M) -
+                          int(geometry.block_row_start + tile_row_offset))
+              );
     const short simdgroup_limit_n =
-        align_n ? SIMDGROUP_BLOCK_N
-                : short(
-                      min(int(SIMDGROUP_BLOCK_N),
-                          int(params->N) -
-                              int(geometry.block_col_start + tile_col_offset))
-                  );
+        alignment.contains(GemmAlignment::N)
+            ? SIMDGROUP_BLOCK_N
+            : short(
+                  min(int(SIMDGROUP_BLOCK_N),
+                      int(params->N) -
+                          int(geometry.block_col_start + tile_col_offset))
+              );
 
     const device T* a_simdgroup =
         a_block + size_t(tile_row_offset) * params->leading_dimension_a;
@@ -110,12 +110,12 @@ struct MxuMmaCore {
         output_transform == GemmOutputTransformKind::Accumulate ||
         output_transform == GemmOutputTransformKind::ScaleAccumulate;
 
-    dispatch_bool(align_k, [&](auto aligned_k) {
+    dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       dispatch_bool(
-          align_m || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
+          alignment.contains(GemmAlignment::M) || (simdgroup_limit_m == SIMDGROUP_BLOCK_M),
           [&](auto aligned_m) {
             dispatch_bool(
-                align_n || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
+                alignment.contains(GemmAlignment::N) || (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   auto accumulator_tile = uzu::matmul::gemm_loop<
                       T,
@@ -219,9 +219,7 @@ struct MxuMmaCore<
       const device T*,
       device T*,
       const constant uzu::matmul::GemmParams*,
-      bool,
-      bool,
-      bool,
+      GemmAlignment,
       GemmOutputTransformKind,
       const thread ThreadContext&
   ) {}

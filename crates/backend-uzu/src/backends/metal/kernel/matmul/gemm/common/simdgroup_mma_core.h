@@ -119,9 +119,7 @@ struct SimdgroupMmaCore {
       const device T* b,
       device T* d,
       const constant uzu::matmul::GemmParams* params,
-      const bool align_m,
-      const bool align_n,
-      const bool align_k,
+      GemmAlignment alignment,
       GemmOutputTransformKind output_transform,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
@@ -187,12 +185,12 @@ struct SimdgroupMmaCore {
             : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
 
-    dispatch_bool(align_k, [&](auto aligned_k) {
+    dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       dispatch_bool(
-          align_m || (tile_block_rows == THREADGROUP_BLOCK_M),
+          alignment.contains(GemmAlignment::M) || (tile_block_rows == THREADGROUP_BLOCK_M),
           [&](auto aligned_m) {
             dispatch_bool(
-                align_n || (tile_block_cols == THREADGROUP_BLOCK_N),
+                alignment.contains(GemmAlignment::N) || (tile_block_cols == THREADGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   k_loop<aligned_m.value, aligned_n.value, aligned_k.value>(
                       a_shared,

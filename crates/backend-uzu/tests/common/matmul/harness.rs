@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            Allocation, AllocationType, Backend, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
@@ -158,52 +158,4 @@ pub fn run_metal<T: ArrayElement + Float>(
     run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
         kernel.encode_with_path(args, encoder, path);
     })
-}
-
-#[cfg(metal_backend)]
-pub struct BenchBuffers {
-    pub a: Allocation<Metal>,
-    pub b: Allocation<Metal>,
-    pub d: Allocation<Metal>,
-}
-
-#[cfg(metal_backend)]
-pub fn alloc_bench_buffers<T: ArrayElement>(
-    context: &MetalContext,
-    shape: Shape,
-) -> BenchBuffers {
-    let elem = std::mem::size_of::<T>();
-    BenchBuffers {
-        a: context.create_allocation(shape.m * shape.k * elem, AllocationType::Global).expect("a allocation"),
-        b: context.create_allocation(shape.n * shape.k * elem, AllocationType::Global).expect("b allocation"),
-        d: context.create_allocation(shape.m * shape.n * elem, AllocationType::Global).expect("d allocation"),
-    }
-}
-
-#[cfg(metal_backend)]
-pub fn encode_iteration(
-    kernel: &mut MetalMatmulKernel,
-    buffers: &mut BenchBuffers,
-    shape: Shape,
-    variant: Variant,
-    encoder: &mut Encoder<Metal>,
-) {
-    kernel.encode_with_path(
-        MatmulArguments {
-            a: &buffers.a,
-            a_offset: 0,
-            b: &buffers.b,
-            b_offset: 0,
-            b_leading_dimension: None,
-            b_transpose: true,
-            ab_scale: 1.0,
-            c: MatmulArgumentC::None,
-            d: &mut buffers.d,
-            batch_dim: shape.m as u32,
-            input_dim: shape.k as u32,
-            output_dim: shape.n as u32,
-        },
-        encoder,
-        variant.dispatch_path(),
-    );
 }
