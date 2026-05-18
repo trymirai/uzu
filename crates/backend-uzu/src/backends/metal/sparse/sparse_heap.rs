@@ -102,21 +102,21 @@ impl MetalSparseHeap {
         context.sparse_mappings_update(buffer, &self.heap, &mtl_operations);
 
         let buffer_address = buffer.gpu_address();
-        let entry_mappings = self.buffer_mappings.entry(buffer_address).or_default();
+        let entry = self.buffer_mappings.entry(buffer_address).or_default();
         for mtl_op in mtl_operations {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
             if map {
                 let buffer_range = mtl_op.buffer_range();
                 let buffer_mapping = MetalSparseHeapBufferMapping::new(mtl_op.heap_offset, buffer_range.start);
-                entry_mappings.insert(heap_range.clone(), buffer_mapping);
+                entry.insert(heap_range.clone(), buffer_mapping);
                 self.free_pages.remove(heap_range);
             } else {
-                entry_mappings.remove(heap_range.clone());
+                entry.remove(heap_range.clone());
                 self.free_pages.insert(heap_range);
             }
         }
 
-        if entry_mappings.is_empty() {
+        if entry.is_empty() {
             self.buffer_mappings.remove(&buffer_address);
         }
     }

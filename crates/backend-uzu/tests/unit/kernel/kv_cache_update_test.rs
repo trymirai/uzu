@@ -9,7 +9,6 @@ use backend_uzu::{
 };
 use half::{bf16, f16};
 use num_traits::Float;
-use test_tag::tag;
 
 use crate::{common::assert::assert_eq_float, uzu_test};
 
@@ -215,76 +214,64 @@ fn test_large_internal<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // Single swap tests
-#[tag(heavy)]
 #[uzu_test]
 fn test_single_swap_f32() {
     test_single_swap_internal::<f32>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_single_swap_f16() {
     test_single_swap_internal::<f16>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_single_swap_bf16() {
     test_single_swap_internal::<bf16>();
 }
 
 // Multi swap tests
-#[tag(heavy)]
 #[uzu_test]
 fn test_multi_swap_f32() {
     test_multi_swap_internal::<f32>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_multi_swap_f16() {
     test_multi_swap_internal::<f16>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_multi_swap_bf16() {
     test_multi_swap_internal::<bf16>();
 }
 
 // No swap tests
-#[tag(heavy)]
 #[uzu_test]
 fn test_no_swap_f32() {
     test_no_swap_internal::<f32>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_no_swap_f16() {
     test_no_swap_internal::<f16>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_no_swap_bf16() {
     test_no_swap_internal::<bf16>();
 }
 
 // Large dimension tests
-#[tag(heavy)]
 #[uzu_test]
 fn test_large_f32() {
     test_large_internal::<f32>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_large_f16() {
     test_large_internal::<f16>();
 }
 
-#[tag(heavy)]
 #[uzu_test]
 fn test_large_bf16() {
     test_large_internal::<bf16>();
