@@ -190,10 +190,6 @@ impl Context for MetalContext {
         ))
     }
 
-    fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
-        self.device.new_event().ok_or(MetalError::CannotCreateEvent)
-    }
-
     fn create_sparse_buffer(
         &self,
         capacity: usize,

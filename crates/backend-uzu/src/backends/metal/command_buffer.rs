@@ -2,7 +2,7 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 
 use metal::{
     MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-    MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder, MTLEvent,
+    MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
@@ -158,24 +158,6 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
-    }
-
-    fn encode_wait_for_event(
-        &mut self,
-        event: &Retained<ProtocolObject<dyn MTLEvent>>,
-        value: u64,
-    ) {
-        self.ensure_none();
-        self.command_buffer.encode_wait_for_event_value(event, value);
-    }
-
-    fn encode_signal_event(
-        &mut self,
-        event: &Retained<ProtocolObject<dyn MTLEvent>>,
-        value: u64,
-    ) {
-        self.ensure_none();
-        self.command_buffer.encode_signal_event_value(event, value);
     }
 
     fn add_completion_handler(

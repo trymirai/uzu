@@ -499,9 +499,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_inputs = self.build_token_inputs(task, token_ids_array, None);
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-        if is_continuation {
-            encoder.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
-        }
+        // if is_continuation {
+        //     encoder.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
+        // }
         let resources = Self::encode_forward_pass_on(
             &self.context,
             &mut encoder,
@@ -544,9 +544,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.cache_layers.borrow_mut().register_accepted_tokens(1);
 
         // Signal event for next pass
-        let next_counter = current_counter + 1;
-        encoder.encode_signal_event(&self.context.async_buffers.event, next_counter);
-        self.context.async_buffers.counter.set(next_counter);
+        // let next_counter = current_counter + 1;
+        // encoder.encode_signal_event(&self.context.async_buffers.event, next_counter);
+        // self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
         let handler = move |result: Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>| {
