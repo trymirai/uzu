@@ -198,17 +198,17 @@ impl CommandBufferExecutable for MetalCommandBufferExecutable {
         let wait_value = self.context.timeline_get_and_increment();
 
         {
-            let wait_cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
-            wait_cmd_buffer.encode_wait_for_event_value(self.context.timeline_event(), wait_value);
-            wait_cmd_buffer.commit();
+            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
+            cmd_buffer.encode_wait_for_event_value(self.context.timeline_event(), wait_value);
+            cmd_buffer.commit();
         }
 
         self.command_buffer.commit();
 
         {
-            let wait_cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
-            wait_cmd_buffer.encode_signal_event_value(self.context.timeline_event(), wait_value + 1);
-            wait_cmd_buffer.commit();
+            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
+            cmd_buffer.encode_signal_event_value(self.context.timeline_event(), wait_value + 1);
+            cmd_buffer.commit();
         }
 
         MetalCommandBufferPending {
