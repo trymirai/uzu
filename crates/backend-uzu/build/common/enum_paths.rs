@@ -5,35 +5,51 @@ use syn::{Type, TypePath, visit_mut::VisitMut};
 
 use super::gpu_types::{GpuType, GpuTypeName, GpuTypePath, GpuTypes};
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GpuTypeKind {
+    Enum,
+    OptionSet,
+}
+
+#[derive(Clone)]
+struct GpuTypeEntry {
+    path: GpuTypePath,
+    kind: GpuTypeKind,
+}
+
 #[derive(Clone)]
 pub struct EnumPaths {
-    short_name_to_full_path: HashMap<GpuTypeName, GpuTypePath>,
+    short_name_to_entry: HashMap<GpuTypeName, GpuTypeEntry>,
 }
 
 impl EnumPaths {
     pub fn from_gpu_types(gpu_types: &GpuTypes) -> anyhow::Result<Self> {
-        let mut short_name_to_full_path = HashMap::new();
+        let mut short_name_to_entry = HashMap::new();
         for file in gpu_types.files.iter() {
             for ty in file.types.iter() {
-                if let GpuType::Enum(enum_type) = ty {
-                    let name = GpuTypeName::from(enum_type.name.as_ref());
-                    let path = GpuTypePath::from(format!(
-                        "crate::backends::common::gpu_types::{}::{}",
-                        file.name, enum_type.name
-                    ));
-                    match short_name_to_full_path.entry(name) {
-                        Entry::Occupied(occupied) => {
-                            bail!("gpu type `{}` is duplicated", occupied.key())
-                        },
-                        Entry::Vacant(vacant) => {
-                            vacant.insert(path);
-                        },
-                    }
+                let (name_str, kind) = match ty {
+                    GpuType::Enum(enum_type) => (enum_type.name.as_ref(), GpuTypeKind::Enum),
+                    GpuType::OptionSet(option_set) => (option_set.name.as_ref(), GpuTypeKind::OptionSet),
+                    GpuType::Struct(_) => continue,
+                };
+                let name = GpuTypeName::from(name_str);
+                let path =
+                    GpuTypePath::from(format!("crate::backends::common::gpu_types::{}::{}", file.name, name_str));
+                match short_name_to_entry.entry(name) {
+                    Entry::Occupied(occupied) => {
+                        bail!("gpu type `{}` is duplicated", occupied.key())
+                    },
+                    Entry::Vacant(vacant) => {
+                        vacant.insert(GpuTypeEntry {
+                            path,
+                            kind,
+                        });
+                    },
                 }
             }
         }
         Ok(Self {
-            short_name_to_full_path,
+            short_name_to_entry,
         })
     }
 
@@ -41,7 +57,14 @@ impl EnumPaths {
         &self,
         short_name: &str,
     ) -> Option<&str> {
-        self.short_name_to_full_path.get(short_name).map(|path| &**path)
+        self.short_name_to_entry.get(short_name).map(|entry| &*entry.path)
+    }
+
+    pub fn kind_for(
+        &self,
+        short_name: &str,
+    ) -> Option<GpuTypeKind> {
+        self.short_name_to_entry.get(short_name).map(|entry| entry.kind)
     }
 
     pub fn canonicalize_type(

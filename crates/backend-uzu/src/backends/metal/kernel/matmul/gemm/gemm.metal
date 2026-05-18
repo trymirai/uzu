@@ -3,7 +3,8 @@
 #include "../../common/thread_context.h"
 #include "../generated/gemm.h"
 
-#include "common/pipeline.h"
+#include "common/mxu_mma_core.h"
+#include "common/simdgroup_mma_core.h"
 
 using namespace metal;
 using namespace uzu::gemm;
@@ -29,7 +30,7 @@ VARIANTS(TRANSPOSE_B, false, true)
 CONSTRAINT(max(THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
 KERNEL(Gemm)(
     const device T* a,
-    const device uint8_t* b,
+    const device uint8_t* b_packed,
     device T* d,
     const device T* scales
         OPTIONAL(weight_prologue != GemmWeightPrologueKind::FullPrecision),
@@ -44,7 +45,7 @@ KERNEL(Gemm)(
     const GemmWeightPrologueKind weight_prologue SPECIALIZE,
     const GemmComputeKind compute SPECIALIZE,
     const GemmOutputTransformKind output_transform SPECIALIZE,
-    const uint alignment SPECIALIZE,
+    const GemmAlignment alignment SPECIALIZE,
     const uint bits_per_weight SPECIALIZE,
     const uint group_size SPECIALIZE,
     threadgroup T a_shared[GEMM_MAX_THREADGROUP_A],
@@ -66,24 +67,41 @@ KERNEL(Gemm)(
   (void)thread_x;
   (void)thread_y;
   (void)thread_z;
-  GemmPipeline<
-      T,
-      THREADGROUP_BLOCK_M,
-      THREADGROUP_BLOCK_N,
-      THREADGROUP_BLOCK_K,
-      SIMDGROUPS_M,
-      SIMDGROUPS_N,
-      TRANSPOSE_B>::
-      run(a,
-          b,
-          d,
-          params,
-          input_prologue,
-          weight_prologue,
-          compute,
-          output_transform,
-          alignment,
-          a_shared,
-          b_shared,
-          thread_context);
+  // Scaffolding: only FullPrecision prologues are implemented today.
+  if (weight_prologue != GemmWeightPrologueKind::FullPrecision ||
+      input_prologue != GemmInputPrologueKind::FullPrecision) {
+    return;
+  }
+  const device T* b = reinterpret_cast<const device T*>(b_packed);
+  switch (compute) {
+  case GemmComputeKind::SimdgroupMma:
+    SimdgroupMmaCore<
+        T,
+        THREADGROUP_BLOCK_M,
+        THREADGROUP_BLOCK_N,
+        THREADGROUP_BLOCK_K,
+        SIMDGROUPS_M,
+        SIMDGROUPS_N,
+        TRANSPOSE_B>::
+        run(a,
+            b,
+            d,
+            params,
+            alignment,
+            output_transform,
+            a_shared,
+            b_shared,
+            thread_context);
+    break;
+  case GemmComputeKind::MxuMma:
+    MxuMmaCore<
+        T,
+        THREADGROUP_BLOCK_M,
+        THREADGROUP_BLOCK_N,
+        SIMDGROUPS_M,
+        SIMDGROUPS_N,
+        TRANSPOSE_B>::
+        run(a, b, d, params, alignment, output_transform, thread_context);
+    break;
+  }
 }

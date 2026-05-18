@@ -50,7 +50,7 @@ impl GemmKernel {
                     specialization.weight_prologue,
                     specialization.compute,
                     specialization.output_transform,
-                    specialization.alignment.bits(),
+                    specialization.alignment,
                     specialization.bits_per_weight,
                     specialization.group_size,
                 )?;
