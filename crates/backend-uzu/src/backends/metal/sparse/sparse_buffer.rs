@@ -12,7 +12,7 @@ use rangemap::RangeSet;
 use crate::{
     backends::{
         common::{Backend, Buffer, SparseBuffer},
-        metal::{Metal, error::MetalError, metal_extensions::SparsePageSizeExt},
+        metal::{Metal, error::MetalError, metal_extensions::SparsePageSizeExt, sparse::MetalSparseMappingOpsBatch},
     },
     prelude::MetalContext,
 };
@@ -21,6 +21,7 @@ pub struct MetalSparseBuffer {
     buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     mapped_pages: RangeSet<usize>,
     context: Rc<MetalContext>,
+    page_size: MTLSparsePageSize,
 }
 
 impl MetalSparseBuffer {
@@ -43,6 +44,7 @@ impl MetalSparseBuffer {
             buffer,
             mapped_pages: RangeSet::new(),
             context,
+            page_size,
         })
     }
 
@@ -66,9 +68,8 @@ impl Debug for MetalSparseBuffer {
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
         let context = self.context.clone();
-        for range in self.mapped_pages.iter() {
-            context.sparse_heap_pool_mut().unmap(&context, &self.buffer, &range).expect("Failed to unmap");
-        }
+        let pages_count = self.size() / self.page_size.in_bytes();
+        self.unmap(&context, &(0..pages_count)).expect("Failed to unmap");
     }
 }
 
@@ -90,11 +91,35 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        self.mapped_pages.gaps(pages).collect::<Vec<_>>().into_iter().try_for_each(|gap| {
-            context.sparse_heap_pool_mut().map(context, &self.buffer, &gap)?;
-            self.mapped_pages.insert(gap);
-            Ok(())
-        })
+        if pages.len() == 0 {
+            return Ok(());
+        }
+
+        // prepare operations
+        let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
+        let gaps = self.mapped_pages.gaps(pages).collect::<Vec<_>>();
+        let pages_to_map = gaps.iter().map(|gap| gap.len()).sum();
+        context.sparse_heap_pool_mut().ensure_enough_free_pages(context, pages_to_map)?;
+
+        for gap in gaps.iter() {
+            let mut pool = context.sparse_heap_pool_mut();
+            let result = pool.create_map_operations(context, &self.buffer, gap);
+            match result {
+                Ok(batches) => {
+                    pool.apply_map_operations(&batches);
+                    all_batches.extend(batches);
+                },
+                Err(err) => return Err(err),
+            };
+        }
+
+        // execute operations
+        context.sparse_update_mappings(&all_batches);
+        for gap in gaps {
+            self.mapped_pages.insert(gap)
+        }
+
+        Ok(())
     }
 
     fn unmap(
@@ -102,16 +127,34 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        self.mapped_pages
+        if pages.len() == 0 {
+            return Ok(());
+        }
+
+        // prepare operations
+        let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
+        let mapped_ranges = self
+            .mapped_pages
             .overlapping(pages)
             .map(|range| max(range.start, pages.start)..min(range.end, pages.end))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .try_for_each(|range| {
-                context.sparse_heap_pool_mut().unmap(context, &self.buffer, &range)?;
-                self.mapped_pages.remove(range);
-                Ok(())
-            })
+            .collect::<Vec<_>>();
+        for mapped_range in mapped_ranges.iter() {
+            let batches = context.sparse_heap_pool().create_unmap_operations(&self.buffer, mapped_range);
+            context.sparse_heap_pool_mut().apply_map_operations(&batches);
+            all_batches.extend(batches);
+        }
+
+        // execute operations
+        context.sparse_update_mappings(&all_batches);
+        for mapped_range in mapped_ranges {
+            self.mapped_pages.remove(mapped_range)
+        }
+
+        Ok(())
+    }
+
+    fn page_size_bytes(&self) -> usize {
+        self.page_size.in_bytes()
     }
 }
 

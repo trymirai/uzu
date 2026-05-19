@@ -70,20 +70,20 @@ impl AccessFlags {
 pub trait CommandBufferEncoding {
     type CommandBuffer: CommandBuffer<Encoding = Self>;
 
-    fn encode_copy<Src, Dst>(
+    fn encode_copy<
+        Src: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
+        Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
+    >(
         &mut self,
         src: BufferRangeRef<'_, Src>,
         dst: BufferRangeMut<'_, Dst>,
-    ) where
-        Src: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
-        Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>;
+    );
 
-    fn encode_fill<Dst>(
+    fn encode_fill<Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>>(
         &mut self,
         dst: BufferRangeMut<'_, Dst>,
         value: u8,
-    ) where
-        Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>;
+    );
 
     fn encode_barrier(
         &mut self,

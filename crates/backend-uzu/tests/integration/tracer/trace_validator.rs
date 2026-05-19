@@ -33,6 +33,7 @@ use half::{bf16, f16};
 use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
+use crate::common;
 // ============================================================================
 // Validation Types
 // ============================================================================
@@ -313,12 +314,14 @@ impl<B: Backend> TraceValidator<B> {
             };
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
+                let size = kv.shape.iter().product::<usize>() * data_type.size_in_bytes();
+                let keys = common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &kv.keys, size);
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
                     metrics: Self::validate_allocation(
                         data_type,
                         &expected,
-                        &kv.keys,
+                        &keys,
                         &kv.shape,
                         Some(ArrayTransform::KVCacheSlice),
                     ),
@@ -326,12 +329,14 @@ impl<B: Backend> TraceValidator<B> {
             }
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
+                let size = kv.shape.iter().product::<usize>() * data_type.size_in_bytes();
+                let values = common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &kv.values, size);
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.values", index),
                     metrics: Self::validate_allocation(
                         data_type,
                         &expected,
-                        &kv.values,
+                        &values,
                         &kv.shape,
                         Some(ArrayTransform::KVCacheSlice),
                     ),

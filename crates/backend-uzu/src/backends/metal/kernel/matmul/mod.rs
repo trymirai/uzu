@@ -7,7 +7,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Allocation, Encoder,
+            Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::GemmParams,
             kernel::{
                 TensorAddBiasKernel,
@@ -135,10 +135,10 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn encode_gemv(
+    fn encode_gemv<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
     ) -> Result<(), MatmulError<Metal>> {
         let MatmulArguments {
             a,
@@ -182,10 +182,10 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn encode_gemm(
+    fn encode_gemm<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
     ) -> Result<(), MatmulError<Metal>> {
         let MatmulArguments {
             a,
@@ -254,10 +254,10 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn encode_gemm_mpp(
+    fn encode_gemm_mpp<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
     ) -> Result<(), MatmulError<Metal>> {
         let MatmulArguments {
             a,
@@ -340,9 +340,9 @@ pub enum MatmulDispatchPath {
 }
 
 impl MatmulMetalKernel {
-    pub fn encode_with_path(
+    pub fn encode_with_path<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) {
@@ -391,9 +391,9 @@ impl MatmulKernel for MatmulMetalKernel {
         Ok(kernel)
     }
 
-    fn encode(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) {
         if !arguments.b_transpose {

@@ -2,7 +2,9 @@ use std::cell::Cell;
 
 use crate::{
     array::size_for_shape,
-    backends::common::{AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{
+        AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer, kernel::kv_cache_update::KVCacheUpdate,
+    },
     config::MixerConfig,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
@@ -172,19 +174,10 @@ impl<B: Backend> CacheLayers<B> {
                             prefix_len: 0,
                         }
                     };
-                    let kv_bytes = size_for_shape(&shape, model_shape.kv_cache_data_type());
 
-                    CacheLayer::Transformer(KVCacheLayer {
-                        state,
-                        keys: context
-                            .create_allocation(kv_bytes, AllocationType::Global)
-                            .expect("Failed to create kv keys allocation"),
-                        values: context
-                            .create_allocation(kv_bytes, AllocationType::Global)
-                            .expect("Failed to create kv values allocation"),
-                        shape,
-                        data_type: model_shape.kv_cache_data_type(),
-                    })
+                    let kv_layer = KVCacheLayer::new(context, &state, shape, model_shape.kv_cache_data_type())
+                        .expect("Failed to create KVCacheLayer");
+                    CacheLayer::Transformer(kv_layer)
                 },
                 MixerConfig::Mamba(c) => {
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
@@ -258,6 +251,13 @@ impl<B: Backend> CacheLayers<B> {
         }
         let mut entries = entries.into_boxed_slice();
         let bindings = bindings.into_boxed_slice();
+
+        entries.iter_mut().for_each(|layer| match layer {
+            CacheLayer::Transformer(kv) => {
+                Self::map_transformer_cache_layer(context, kv);
+            },
+            _ => (),
+        });
 
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
         for layer in entries.iter_mut() {
@@ -575,21 +575,9 @@ impl<B: Backend> CacheLayers<B> {
                     }
 
                     let new_shape = [new_total_len, num_groups, head_dim];
-                    let new_bytes = size_for_shape(&new_shape, dtype);
-                    let new_keys = context
-                        .create_allocation(new_bytes, AllocationType::Global)
-                        .expect("Failed to create kv keys clone allocation");
-                    let new_values = context
-                        .create_allocation(new_bytes, AllocationType::Global)
-                        .expect("Failed to create kv values clone allocation");
-
-                    CacheLayer::Transformer(KVCacheLayer {
-                        state: layer.state.clone(),
-                        keys: new_keys,
-                        values: new_values,
-                        shape: new_shape,
-                        data_type: dtype,
-                    })
+                    let kv_layer = KVCacheLayer::new(context, &layer.state, new_shape, dtype)
+                        .expect("Failed to create KVCacheLayer");
+                    CacheLayer::Transformer(kv_layer)
                 },
                 CacheLayer::StateSpace(layer) => {
                     let conv_bytes = size_for_shape(&layer.conv_shape, layer.data_type);
@@ -656,6 +644,7 @@ impl<B: Backend> CacheLayers<B> {
         for layer in entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
+                    Self::map_transformer_cache_layer(context, layer);
                     zero_encoder.encode_fill(&mut layer.keys, 0);
                     zero_encoder.encode_fill(&mut layer.values, 0);
                 },
@@ -675,5 +664,16 @@ impl<B: Backend> CacheLayers<B> {
         };
         cloned.copy_from(self, context);
         cloned
+    }
+
+    fn map_transformer_cache_layer(
+        context: &B::Context,
+        layer: &mut KVCacheLayer<B>,
+    ) {
+        let keys_total_pages = layer.keys.size() / layer.keys.page_size_bytes();
+        layer.keys.map(context, &(0..keys_total_pages)).expect("Failed to map transformer keys pages");
+
+        let values_total_pages = layer.values.size() / layer.values.page_size_bytes();
+        layer.values.map(context, &(0..values_total_pages)).expect("Failed to map transformer values pages");
     }
 }

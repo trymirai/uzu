@@ -1,8 +1,8 @@
 use std::{collections::HashMap, ops::Range};
 
 use metal::{
-    MTL4CommandQueue, MTL4CommandQueueExt, MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap,
-    MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
+    MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode,
+    MTLStorageMode,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::{RangeMap, RangeSet};
@@ -11,12 +11,12 @@ use crate::{
     backends::metal::{
         error::MetalError,
         metal_extensions::SparsePageSizeExt,
-        sparse::sparse_utils::{MetalSparseHeapBufferMapping, MetalSparseHeapMappingParameters},
+        sparse::{MetalSparseMappingOpsBatch, sparse_utils::MetalSparseHeapBufferMapping},
     },
     prelude::MetalContext,
 };
 
-pub(super) struct MetalSparseHeap {
+pub(crate) struct MetalSparseHeap {
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
     // Mappings are tracked per buffer (keyed by gpu_address) so multiple
     // buffers can alias overlapping heap page ranges without losing track of
@@ -55,6 +55,10 @@ impl MetalSparseHeap {
         })
     }
 
+    pub fn heap(&self) -> &Retained<ProtocolObject<dyn MTLHeap>> {
+        &self.heap
+    }
+
     pub fn free_pages(&self) -> &RangeSet<usize> {
         &self.free_pages
     }
@@ -74,38 +78,15 @@ impl MetalSparseHeap {
         self.buffer_mappings.is_empty()
     }
 
-    /// Command queue calls doesn't have any synchronization.
-    /// It is the responsibility of the caller.
-    pub fn execute(
+    pub fn apply_mapping_operations(
         &mut self,
-        buffer: &ProtocolObject<dyn MTLBuffer>,
-        cmd_queue: &ProtocolObject<dyn MTL4CommandQueue>,
-        operations: &[MetalSparseHeapMappingParameters],
-        map: bool,
+        ops: &MetalSparseMappingOpsBatch,
     ) {
-        if operations.is_empty() {
-            return;
-        }
-
-        let mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = operations
-            .iter()
-            .map(|op| {
-                let mode = if map {
-                    MTLSparseTextureMappingMode::Map
-                } else {
-                    MTLSparseTextureMappingMode::Unmap
-                };
-                MTL4UpdateSparseBufferMappingOperation::new(mode, op.buffer_pages.clone(), op.heap_page_offset)
-            })
-            .collect();
-
-        cmd_queue.update_buffer_mappings(buffer, Some(&self.heap), &mtl_operations);
-
-        let buffer_address = buffer.gpu_address();
+        let buffer_address = ops.buffer.gpu_address();
         let entry = self.buffer_mappings.entry(buffer_address).or_default();
-        mtl_operations.iter().for_each(|mtl_op| {
+        for mtl_op in ops.mtl_operations.iter() {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
-            if map {
+            if mtl_op.mode == MTLSparseTextureMappingMode::Map {
                 let buffer_range = mtl_op.buffer_range();
                 let buffer_mapping = MetalSparseHeapBufferMapping::new(mtl_op.heap_offset, buffer_range.start);
                 entry.insert(heap_range.clone(), buffer_mapping);
@@ -114,7 +95,7 @@ impl MetalSparseHeap {
                 entry.remove(heap_range.clone());
                 self.free_pages.insert(heap_range);
             }
-        });
+        }
 
         if entry.is_empty() {
             self.buffer_mappings.remove(&buffer_address);

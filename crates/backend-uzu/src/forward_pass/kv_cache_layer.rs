@@ -4,7 +4,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder,
+        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -44,14 +44,30 @@ pub const INVALID_POSITION: usize = i32::MAX as usize;
 pub struct KVCacheLayer<B: Backend> {
     pub state: KVCacheLayerState,
     /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub keys: Allocation<B>,
+    pub keys: B::SparseBuffer,
     /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub values: Allocation<B>,
+    pub values: B::SparseBuffer,
     pub shape: [usize; 3],
     pub data_type: DataType,
 }
 
 impl<B: Backend> KVCacheLayer<B> {
+    pub fn new(
+        context: &B::Context,
+        state: &KVCacheLayerState,
+        shape: [usize; 3],
+        data_type: DataType,
+    ) -> Result<Self, B::Error> {
+        let buffer_size = size_for_shape(&shape, data_type);
+        Ok(Self {
+            state: state.clone(),
+            keys: context.create_sparse_buffer(buffer_size)?,
+            values: context.create_sparse_buffer(buffer_size)?,
+            shape,
+            data_type,
+        })
+    }
+
     pub fn encode_copy_prefix_rows_to(
         &self,
         destination: &mut KVCacheLayer<B>,
@@ -163,9 +179,9 @@ impl<B: Backend> KVCacheLayer<B> {
         }
 
         let mut layer_data = KVLayerData {
-            key_allocation: &mut self.keys,
+            key_buffer: &mut self.keys,
             key_shape: self.shape,
-            value_allocation: &mut self.values,
+            value_buffer: &mut self.values,
             value_shape: self.shape,
         };
 
@@ -354,7 +370,12 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    fn copy_rows<SrcKeys, DstKeys, SrcValues, DstValues>(
+    fn copy_rows<
+        SrcKeys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        DstKeys: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
+        SrcValues: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        DstValues: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
+    >(
         encoder: &mut Encoder<B>,
         src_keys: &SrcKeys,
         dst_keys: &mut DstKeys,
@@ -362,16 +383,7 @@ impl<B: Backend> KVCacheLayer<B> {
         dst_values: &mut DstValues,
         row_size: usize,
         row_pairs: impl IntoIterator<Item = (usize, usize)>,
-    ) where
-        SrcKeys: AsBufferRangeRef,
-        SrcKeys::Buffer: Buffer<Backend = B>,
-        DstKeys: AsBufferRangeMut,
-        DstKeys::Buffer: Buffer<Backend = B>,
-        SrcValues: AsBufferRangeRef,
-        SrcValues::Buffer: Buffer<Backend = B>,
-        DstValues: AsBufferRangeMut,
-        DstValues::Buffer: Buffer<Backend = B>,
-    {
+    ) {
         for (src_row, dst_row) in row_pairs {
             let src_offset = src_row * row_size;
             let dst_offset = dst_row * row_size;

@@ -30,7 +30,7 @@ fn apply_swaps_3d<T: Clone>(
     }
 }
 
-fn test_random_pattern(context: &<Metal as Backend>::Context) {
+fn test_random_pattern<B: Backend>(context: &B::Context) {
     println!("Testing with random pattern...");
 
     let max_sequence_length = 256usize;
@@ -64,15 +64,15 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
     apply_swaps_3d(&mut expected_keys, &swaps);
     apply_swaps_3d(&mut expected_values, &swaps);
 
-    let mut key_allocation = common::helpers::alloc_allocation_with_data(context, key_data.as_slice().unwrap());
-    let mut value_allocation = common::helpers::alloc_allocation_with_data(context, value_data.as_slice().unwrap());
-
-    let mut encoder = Encoder::new(context).unwrap();
+    let mut key_buffer = common::helpers::sparse_buffer_create_with::<B, f32>(context, key_data.as_slice().unwrap());
+    let mut value_buffer =
+        common::helpers::sparse_buffer_create_with::<B, f32>(context, value_data.as_slice().unwrap());
+    let mut encoder = Encoder::<B>::new(context).unwrap();
     {
-        let mut kv_layers = [KVLayerData::<Metal> {
-            key_allocation: &mut key_allocation,
+        let mut kv_layers = [KVLayerData::<B> {
+            key_buffer: &mut key_buffer,
             key_shape: [seq_len, num_heads, head_dim],
-            value_allocation: &mut value_allocation,
+            value_buffer: &mut value_buffer,
             value_shape: [seq_len, num_heads, head_dim],
         }];
         match kv_cache_update.encode(&mut kv_layers, &source_indices, &destination_indices, &mut encoder) {
@@ -86,11 +86,15 @@ fn test_random_pattern(context: &<Metal as Backend>::Context) {
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let key_values: Vec<f32> = common::helpers::allocation_to_vec(&key_allocation);
+    let shape = [seq_len, num_heads, head_dim];
+    let elements_count = shape.iter().product();
+
+    let key_values: Vec<f32> = common::helpers::sparse_buffer_read_vec::<B, f32>(context, &key_buffer, elements_count);
     let key_result = Array::from_shape_vec((seq_len, num_heads, head_dim), key_values)
         .expect("Failed to convert key result to ndarray");
 
-    let value_values: Vec<f32> = common::helpers::allocation_to_vec(&value_allocation);
+    let value_values: Vec<f32> =
+        common::helpers::sparse_buffer_read_vec::<B, f32>(context, &value_buffer, elements_count);
     let value_result = Array::from_shape_vec((seq_len, num_heads, head_dim), value_values)
         .expect("Failed to convert value result to ndarray");
 
@@ -116,7 +120,7 @@ fn test_kv_cache_update_kernel() {
         },
     };
 
-    test_random_pattern(&metal_context);
+    test_random_pattern::<Metal>(&metal_context);
 }
 
 #[test]
