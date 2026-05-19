@@ -1,7 +1,7 @@
 use std::{
     cmp::{max, min},
     fmt::Debug,
-    ops::{DerefMut, Range},
+    ops::Range,
     rc::Rc,
 };
 
@@ -98,18 +98,23 @@ impl SparseBuffer for MetalSparseBuffer {
         // prepare operations
         let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
         let gaps = self.mapped_pages.gaps(pages).collect::<Vec<_>>();
+        let pages_to_map = gaps.iter().map(|gap| gap.len()).sum();
+        context.sparse_heap_pool_mut().ensure_enough_free_pages(context, pages_to_map)?;
+
         for gap in gaps.iter() {
             let mut pool = context.sparse_heap_pool_mut();
-            let result = pool.deref_mut().create_map_operations(context, &self.buffer, &gap);
+            let result = pool.create_map_operations(context, &self.buffer, gap);
             match result {
-                Ok(batch) => all_batches.extend(batch),
+                Ok(batches) => {
+                    pool.apply_map_operations(&batches);
+                    all_batches.extend(batches);
+                },
                 Err(err) => return Err(err),
             };
         }
 
         // execute operations
         context.sparse_update_mappings(&all_batches);
-        context.sparse_heap_pool_mut().apply_map_operations(&all_batches);
         for gap in gaps {
             self.mapped_pages.insert(gap)
         }
@@ -135,12 +140,12 @@ impl SparseBuffer for MetalSparseBuffer {
             .collect::<Vec<_>>();
         for mapped_range in mapped_ranges.iter() {
             let batches = context.sparse_heap_pool().create_unmap_operations(&self.buffer, mapped_range);
+            context.sparse_heap_pool_mut().apply_map_operations(&batches);
             all_batches.extend(batches);
         }
 
         // execute operations
         context.sparse_update_mappings(&all_batches);
-        context.sparse_heap_pool_mut().apply_map_operations(&all_batches);
         for mapped_range in mapped_ranges {
             self.mapped_pages.remove(mapped_range)
         }

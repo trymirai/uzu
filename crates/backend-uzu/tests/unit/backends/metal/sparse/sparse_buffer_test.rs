@@ -143,6 +143,23 @@ fn test_remapping_same_pages_is_noop() {
 }
 
 #[test]
+fn test_mapping_multiple_gaps_reserves_pages_between_gaps() {
+    let ctx = create_context();
+    let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
+    let capacity = buffer_capacity(ctx.as_ref(), 2);
+
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(&ctx, capacity);
+    sparse_buffer.map(ctx.as_ref(), &(1..2)).expect("Failed to map initial page");
+    sparse_buffer.map(ctx.as_ref(), &(0..pages_per_heap + 1)).expect("Failed to map range with multiple gaps");
+
+    assert_eq!(
+        ctx.sparse_heap_pool().heaps_count(),
+        2,
+        "mapping multiple gaps in one call must reserve heap pages between gaps",
+    );
+}
+
+#[test]
 fn test_drop_releases_pool_heaps() {
     // Regression: a mapped buffer dropped without an explicit unmap must
     // still release its heap pages back to the shared pool.
