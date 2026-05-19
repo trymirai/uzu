@@ -8,22 +8,19 @@
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
 #include "block_geometry.h"
+#include "gemm_tiling.h"
 
 using namespace metal;
 
 namespace uzu {
 namespace gemm {
 
-// MPP `matmul2d_descriptor.transpose_right` drives `TRANSPOSE_B` (MSL
-// Spec 6.18).
-template <
-    typename T,
-    ushort THREADGROUP_BLOCK_M,
-    ushort THREADGROUP_BLOCK_N,
-    ushort SIMDGROUPS_PER_ROW,
-    ushort SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_B>
+template <typename T, GemmTiling TILE, bool TRANSPOSE_B>
 struct MxuMmaCore {
+  METAL_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_bm(TILE);
+  METAL_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_bn(TILE);
+  METAL_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_smg_m(TILE);
+  METAL_CONST ushort SIMDGROUPS_PER_COLUMN = gemm_tiling_smg_n(TILE);
   METAL_CONST ushort SIMDGROUP_BLOCK_M =
       THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   METAL_CONST ushort SIMDGROUP_BLOCK_N =

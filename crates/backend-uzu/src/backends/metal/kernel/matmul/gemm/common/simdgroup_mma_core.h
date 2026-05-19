@@ -8,6 +8,7 @@
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
 #include "block_geometry.h"
+#include "gemm_tiling.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
 
@@ -18,16 +19,18 @@ namespace gemm {
 
 template <
     typename T,
-    int THREADGROUP_BLOCK_M,
-    int THREADGROUP_BLOCK_N,
-    int THREADGROUP_BLOCK_K,
-    int SIMDGROUPS_PER_ROW,
-    int SIMDGROUPS_PER_COLUMN,
+    GemmTiling TILE,
     bool TRANSPOSE_B,
-    GemmWeightPrologueKind WEIGHT_PROLOGUE = GemmWeightPrologueKind::FullPrecision,
+    GemmWeightPrologueKind WEIGHT_PROLOGUE =
+        GemmWeightPrologueKind::FullPrecision,
     int BITS = 0,
     int GROUP_SIZE = 0>
 struct SimdgroupMmaCore {
+  METAL_CONST int THREADGROUP_BLOCK_M = gemm_tiling_bm(TILE);
+  METAL_CONST int THREADGROUP_BLOCK_N = gemm_tiling_bn(TILE);
+  METAL_CONST int THREADGROUP_BLOCK_K = gemm_tiling_bk(TILE);
+  METAL_CONST int SIMDGROUPS_PER_ROW = gemm_tiling_smg_m(TILE);
+  METAL_CONST int SIMDGROUPS_PER_COLUMN = gemm_tiling_smg_n(TILE);
   METAL_CONST ushort PADDING_A = 16 / sizeof(T);
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
   METAL_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
@@ -50,8 +53,6 @@ struct SimdgroupMmaCore {
       SHARED_STRIDE_B,
       TRANSPOSE_B,
       THREADGROUP_THREADS>;
-  // The quantized B-loaders only support TRANSPOSE_B == true; the host
-  // validates this before dispatch.
   using BLoaderScaleBias = QuantizedBlockLoaderScaleBias<
       T,
       THREADGROUP_BLOCK_N,
@@ -85,11 +86,7 @@ struct SimdgroupMmaCore {
       float,
       uzu::matmul::TransformNone<T, float>>;
 
-  template <
-      bool M_aligned,
-      bool N_aligned,
-      bool K_aligned,
-      typename BLoader>
+  template <bool M_aligned, bool N_aligned, bool K_aligned, typename BLoader>
   static METAL_FUNC void k_loop(
       threadgroup T* a_shared,
       threadgroup T* b_shared,
@@ -143,8 +140,6 @@ struct SimdgroupMmaCore {
     }
   }
 
-  // Shared post-K-loop epilogue + store. Factored out so each prologue branch
-  // ends with identical code.
   template <bool M_aligned, bool N_aligned>
   static METAL_FUNC void finalize(
       thread TileAccumulator& accumulator,
@@ -157,12 +152,7 @@ struct SimdgroupMmaCore {
   ) {
     if constexpr (M_aligned && N_aligned) {
       if (needs_epilogue) {
-        accumulator.apply_epilogue(
-            d,
-            params->leading_dimension_d,
-            1,
-            epilogue
-        );
+        accumulator.apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
       }
       accumulator.store_result(d, params->leading_dimension_d);
     } else {
