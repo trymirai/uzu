@@ -1,7 +1,5 @@
-#[cfg(test)]
-use std::cell::Ref;
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::Path,
     rc::{Rc, Weak},
@@ -28,7 +26,7 @@ use crate::{
         metal::{
             command_buffer::MetalCommandBufferInitial,
             metal_extensions::SparsePageSizeExt,
-            sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOperations},
+            sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
         },
     },
     utils::model_size::ModelSize,
@@ -71,7 +69,6 @@ impl MetalContext {
         Ok(pipeline)
     }
 
-    #[cfg(test)]
     pub(super) fn sparse_heap_pool(&self) -> Ref<'_, MetalSparseHeapPool> {
         self.sparse_heap_pool.borrow()
     }
@@ -82,12 +79,16 @@ impl MetalContext {
 
     pub(super) fn sparse_update_mappings(
         &self,
-        mappings: &[MetalSparseMappingOperations],
+        mappings: &[MetalSparseMappingOpsBatch],
     ) {
+        if mappings.is_empty() {
+            return;
+        }
+
         let wait_value = self.timeline_get_and_increment();
         self.command_queue4.wait_for_event_value(&self.timeline_event, wait_value);
         for op in mappings {
-            self.command_queue4.update_buffer_mappings(&op.buffer, op.heap.as_deref(), &op.operations);
+            self.command_queue4.update_buffer_mappings(&op.buffer, Some(op.heap.borrow().heap()), &op.mtl_operations);
         }
         self.command_queue4.signal_event_value(&self.timeline_event, wait_value + 1);
     }

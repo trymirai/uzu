@@ -1,25 +1,22 @@
 use std::{collections::HashMap, ops::Range};
 
 use metal::{
-    MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor, MTLHeapType,
-    MTLSparsePageSize, MTLSparseTextureMappingMode, MTLStorageMode,
+    MTLBuffer, MTLDeviceExt, MTLHeap, MTLHeapDescriptor, MTLHeapType, MTLSparsePageSize, MTLSparseTextureMappingMode,
+    MTLStorageMode,
 };
-use objc2::{Message, rc::Retained, runtime::ProtocolObject};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::{RangeMap, RangeSet};
 
 use crate::{
     backends::metal::{
         error::MetalError,
         metal_extensions::SparsePageSizeExt,
-        sparse::{
-            MetalSparseMappingOperations,
-            sparse_utils::{MetalSparseHeapBufferMapping, MetalSparseHeapMappingParameters},
-        },
+        sparse::{MetalSparseMappingOpsBatch, sparse_utils::MetalSparseHeapBufferMapping},
     },
     prelude::MetalContext,
 };
 
-pub(super) struct MetalSparseHeap {
+pub(crate) struct MetalSparseHeap {
     heap: Retained<ProtocolObject<dyn MTLHeap>>,
     // Mappings are tracked per buffer (keyed by gpu_address) so multiple
     // buffers can alias overlapping heap page ranges without losing track of
@@ -58,6 +55,10 @@ impl MetalSparseHeap {
         })
     }
 
+    pub fn heap(&self) -> &Retained<ProtocolObject<dyn MTLHeap>> {
+        &self.heap
+    }
+
     pub fn free_pages(&self) -> &RangeSet<usize> {
         &self.free_pages
     }
@@ -77,38 +78,13 @@ impl MetalSparseHeap {
         self.buffer_mappings.is_empty()
     }
 
-    pub fn create_mapping_operations(
-        &mut self,
-        buffer: &ProtocolObject<dyn MTLBuffer>,
-        operations: &[MetalSparseHeapMappingParameters],
-        map: bool,
-    ) -> MetalSparseMappingOperations {
-        let mtl_operations: Box<[MTL4UpdateSparseBufferMappingOperation]> = operations
-            .iter()
-            .map(|op| {
-                let mode = if map {
-                    MTLSparseTextureMappingMode::Map
-                } else {
-                    MTLSparseTextureMappingMode::Unmap
-                };
-                MTL4UpdateSparseBufferMappingOperation::new(mode, op.buffer_pages.clone(), op.heap_page_offset)
-            })
-            .collect();
-
-        MetalSparseMappingOperations {
-            buffer: buffer.retain(),
-            heap: Some(self.heap.clone()),
-            operations: mtl_operations,
-        }
-    }
-
     pub fn apply_mapping_operations(
         &mut self,
-        ops: &MetalSparseMappingOperations,
+        ops: &MetalSparseMappingOpsBatch,
     ) {
         let buffer_address = ops.buffer.gpu_address();
         let entry = self.buffer_mappings.entry(buffer_address).or_default();
-        for mtl_op in ops.operations.iter() {
+        for mtl_op in ops.mtl_operations.iter() {
             let heap_range = mtl_op.heap_offset..(mtl_op.heap_offset + mtl_op.buffer_range().len());
             if mtl_op.mode == MTLSparseTextureMappingMode::Map {
                 let buffer_range = mtl_op.buffer_range();
