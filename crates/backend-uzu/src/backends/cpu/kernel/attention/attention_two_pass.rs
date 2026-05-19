@@ -31,7 +31,7 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     suffix_length: u32,
     #[optional(is_trie)] trie: Option<*const TrieNode>,
     #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
-    #[optional(has_sinks)] sinks: Option<*const f32>,
+    #[optional(has_sinks)] sinks: Option<*const T>,
     #[specialize] has_sinks: bool,
     #[specialize] is_kv_cache_ring: bool,
     #[specialize] is_causal: bool,
@@ -79,7 +79,7 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
                 let mut sum_exp_score = 0.0f32;
 
                 if has_sinks && block_idx == 0 {
-                    max_score = unsafe { *sinks.unwrap().add(head_idx as usize) };
+                    max_score = unsafe { *sinks.unwrap().add(head_idx as usize) }.to_f32().unwrap();
                     sum_exp_score = 1.0;
                 }
 

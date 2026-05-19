@@ -1,2 +1,2 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const TOOLCHAIN_VERSION: &str = "0.8.0";
+pub const TOOLCHAIN_VERSION: &str = "0.10.0";

@@ -30,7 +30,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
     const constant float& scale,
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
-    const device float* sinks OPTIONAL(has_sinks),
+    const device T* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
     const constant uint& suffix_length,
     threadgroup float shared_max_scores[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],

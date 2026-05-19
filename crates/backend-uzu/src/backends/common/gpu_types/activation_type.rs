@@ -7,7 +7,8 @@ const GELU_K1: f32 = 0.7978845608; // sqrt(2/pi)
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ActivationType {
     SILU,
-    GELU,
+    GELUApprox,
+    GELUExact,
     TANH,
     IDENTITY,
     SOFTPLUS,
@@ -19,10 +20,9 @@ impl ActivationType {
         x: T,
     ) -> T {
         match self {
-            ActivationType::SILU {
-                ..
-            } => silu(x),
-            ActivationType::GELU => gelu(x),
+            ActivationType::SILU => silu(x),
+            ActivationType::GELUApprox => gelu_approx(x),
+            ActivationType::GELUExact => gelu_exact(x),
             ActivationType::TANH => tanh_activation(x),
             ActivationType::IDENTITY => x,
             ActivationType::SOFTPLUS => softplus(x),
@@ -43,10 +43,16 @@ fn silu<T: Float>(x: T) -> T {
     activation_silu_alpha(x, 1.0f32)
 }
 
-fn gelu<T: Float>(x: T) -> T {
+fn gelu_approx<T: Float>(x: T) -> T {
     let x_float = x.to_f32().unwrap();
     let tan_arg = GELU_K1 * (x_float + GELU_K0 * x_float * x_float * x_float);
     let y_float = 0.5f32 * x_float * (1.0f32 + tan_arg.tanh());
+    T::from(y_float).unwrap()
+}
+
+fn gelu_exact<T: Float>(x: T) -> T {
+    let x_float = x.to_f32().unwrap();
+    let y_float = 0.5f32 * x_float * (1.0f32 + libm::erff(x_float * std::f32::consts::FRAC_1_SQRT_2));
     T::from(y_float).unwrap()
 }
 

@@ -33,7 +33,7 @@ pub struct Instance {
 impl Instance {
     pub fn new(reference: String) -> Result<Self, Error> {
         let model_path = PathBuf::from(reference);
-        let session = ClassificationSession::new(model_path).map_err(Error::from)?;
+        let session = ClassificationSession::new(model_path)?;
         let container = Container::new(session);
         Ok(Self {
             session_container: container,

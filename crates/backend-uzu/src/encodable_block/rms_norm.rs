@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, RMSNormKernel},
     },
-    config::{NormalizationConfig, UpcastMode},
+    config::normalization::{NormalizationConfig, UpcastMode},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -25,7 +25,7 @@ pub enum RMSNormError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError<B>),
+    ParameterError(#[from] ParameterLoaderError<B>),
 }
 
 pub struct RMSNorm<B: Backend> {
@@ -43,19 +43,19 @@ impl<B: Backend> RMSNorm<B> {
     pub fn new(
         context: &B::Context,
         intermediate_data_type: DataType,
+        element_count: usize,
         config: NormalizationConfig,
-        parameter_tree: &ParameterTree<B::Context>,
+        parameter_tree: &ParameterTree<B>,
         hadamard_factors: Option<Allocation<B>>,
         use_shortcut: bool,
         residual_add: bool,
         post_layer_scalar: PostLayerScalar,
     ) -> Result<Self, RMSNormError<B>> {
-        let scales_leaf = parameter_tree.leaf("scales").map_err(RMSNormError::ParameterError)?;
-        let element_count = scales_leaf.shape()[0];
-        let scales = scales_leaf.read_allocation().map_err(RMSNormError::ParameterError)?;
+        let scale_data_type = super::normalization::NORMALIZATION_SCALE_DATA_TYPE;
+        let scales = parameter_tree.leaf("scales")?.validate(&[element_count], scale_data_type)?.read_allocation()?;
 
-        let accumulation_data_type: DataType = config.accumulation_precision.into();
-        let scale_data_type: DataType = config.scale_precision.into();
+        let accumulation_data_type = super::normalization::NORMALIZATION_ACCUMULATION_DATA_TYPE;
+        let output_data_type = intermediate_data_type;
 
         let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
             PostLayerScalar::None => (false, false, 1.0),
@@ -67,7 +67,7 @@ impl<B: Backend> RMSNorm<B> {
             context,
             intermediate_data_type,
             scale_data_type,
-            scale_data_type,
+            output_data_type,
             accumulation_data_type,
             false,
             config.upcast_mode == UpcastMode::FullLayer,
@@ -85,7 +85,7 @@ impl<B: Backend> RMSNorm<B> {
             scales,
             element_count,
             input_data_type: intermediate_data_type,
-            output_data_type: scale_data_type,
+            output_data_type,
             hadamard_factors,
             post_layer_scalar_value,
         })

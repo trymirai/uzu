@@ -70,8 +70,8 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn encode_copy<Src: Buffer<Backend = Cpu>, Dst: Buffer<Backend = Cpu>>(
         &mut self,
-        src: BufferRangeRef<'_, Src>,
-        dst: BufferRangeMut<'_, Dst>,
+        src: BufferRangeRef<Src>,
+        dst: BufferRangeMut<Dst>,
     ) {
         let src_range = src.range();
         let dst_range = dst.range();
@@ -90,7 +90,7 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
 
     fn encode_fill<Dst: Buffer<Backend = Cpu>>(
         &mut self,
-        dst: BufferRangeMut<'_, Dst>,
+        dst: BufferRangeMut<Dst>,
         value: u8,
     ) {
         let range = dst.range();
@@ -172,7 +172,7 @@ impl CommandBufferPending for CpuCommandBufferPending {
     type CommandBuffer = CpuCommandBuffer;
 
     fn wait_until_completed(self) -> Result<CpuCommandBufferCompleted, CpuError> {
-        self.return_receiver.recv().map_err(CpuError::CommandBufferExecutionFailed)
+        Ok(self.return_receiver.recv()?)
     }
 }
 

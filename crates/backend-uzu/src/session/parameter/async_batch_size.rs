@@ -19,10 +19,10 @@ impl AsyncBatchSize {
         &self,
         model_path: &Path,
         context: &B::Context,
-    ) -> usize {
+    ) -> Result<usize, B::Error> {
         match self {
             AsyncBatchSize::Default => context.recommended_async_batch_size(model_path),
-            AsyncBatchSize::Custom(value) => *value,
+            AsyncBatchSize::Custom(value) => Ok(*value),
         }
     }
 }

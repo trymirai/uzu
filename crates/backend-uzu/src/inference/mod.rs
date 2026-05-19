@@ -11,7 +11,7 @@ pub use chat::Instance as ChatInstance;
 pub use classification::Instance as ClassificationInstance;
 pub use container::Container;
 pub use error::Error;
-pub use model_metadata::{ModelMetadata, resolve_model_metadata};
+pub use model_metadata::{ModelMetadataError, resolve_model_specialization};
 use shoji::{
     traits::{
         Backend as BackendTrait,
@@ -63,7 +63,7 @@ impl chat_message_trait::Backend for Backend {
         config: ShojiChatConfig,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn chat_message_trait::Instance>, BackendError>> + Send + '_>> {
         Box::pin(async move {
-            let instance = ChatInstance::new(reference, config).map_err(|error| Box::new(error) as BackendError)?;
+            let instance = ChatInstance::new(reference, config)?;
             Ok(Box::new(instance) as Box<dyn chat_message_trait::Instance>)
         })
     }
@@ -76,7 +76,7 @@ impl classification_trait::Backend for Backend {
         _config: classification_trait::Config,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn classification_trait::Instance>, BackendError>> + Send + '_>> {
         Box::pin(async move {
-            let instance = ClassificationInstance::new(reference).map_err(|error| Box::new(error) as BackendError)?;
+            let instance = ClassificationInstance::new(reference)?;
             Ok(Box::new(instance) as Box<dyn classification_trait::Instance>)
         })
     }
@@ -89,7 +89,7 @@ impl text_to_speech_trait::Backend for Backend {
         _config: text_to_speech_trait::Config,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn text_to_speech_trait::Instance>, BackendError>> + Send + '_>> {
         Box::pin(async move {
-            let instance = TextToSpeechInstance::new(reference).map_err(|error| Box::new(error) as BackendError)?;
+            let instance = TextToSpeechInstance::new(reference)?;
             Ok(Box::new(instance) as Box<dyn text_to_speech_trait::Instance>)
         })
     }

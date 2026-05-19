@@ -3,7 +3,7 @@ use std::cell::Cell;
 use crate::{
     array::size_for_shape,
     backends::common::{AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
-    config::MixerConfig,
+    config::token_mixer::AnyTokenMixerConfig,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,
         kv_cache_layer::{KVCacheLayerState, KVCacheLayerTrait, KVSlice},
@@ -139,10 +139,11 @@ impl<B: Backend> CacheLayers<B> {
                     entry: source,
                 } = bindings[source_layer_index]
                 else {
-                    panic!("kv_source_layer {source_layer_index} (layer {layer_index}) must be a prior owner");
+                    panic!("kv_source_layer_index {source_layer_index} (layer {layer_index}) must be a prior owner");
                 };
-                let geometry =
-                    |m: &MixerConfig| m.as_attention().map(|a| (a.num_groups, a.head_dim, a.sliding_window_size));
+                let geometry = |m: &AnyTokenMixerConfig| {
+                    m.as_attention().map(|a| (a.num_groups, a.head_dim, a.sliding_window_size))
+                };
                 assert_eq!(
                     geometry(&model_shape.layer_mixers()[source_layer_index]),
                     geometry(mixer),
@@ -155,7 +156,7 @@ impl<B: Backend> CacheLayers<B> {
             }
 
             let layer = match mixer {
-                MixerConfig::Attention(attn) => {
+                AnyTokenMixerConfig::AttentionConfig(attn) => {
                     let sliding_window = attn.sliding_window_size;
                     let length = sliding_window.unwrap_or(max_prefix_length);
                     let shape = [length + max_suffix_length, attn.num_groups, attn.head_dim];
@@ -172,18 +173,15 @@ impl<B: Backend> CacheLayers<B> {
                             prefix_len: 0,
                         }
                     };
-
-                    let kv_layer =
-                        <dyn KVCacheLayerTrait<B>>::new(context, &state, shape, model_shape.kv_cache_data_type())
-                            .expect("Failed to create KVCacheLayer");
+                    let kv_layer = <dyn KVCacheLayerTrait<B>>::new(context, &state, shape, model_shape.data_type)
+                        .expect("Failed to create KVCacheLayer");
                     CacheLayer::Transformer(kv_layer)
                 },
-                MixerConfig::Mamba(c) => {
+                AnyTokenMixerConfig::Mamba2Config(c) => {
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
                     let ssm_shape = [c.num_heads, c.head_dim, c.state_dim];
-                    let dtype = model_shape.activation_data_type();
-                    let conv_bytes = size_for_shape(&conv_shape, dtype);
-                    let ssm_bytes = size_for_shape(&ssm_shape, dtype);
+                    let conv_bytes = size_for_shape(&conv_shape, model_shape.data_type);
+                    let ssm_bytes = size_for_shape(&ssm_shape, model_shape.data_type);
 
                     CacheLayer::StateSpace(SSMLayer {
                         conv_state: (conv_bytes > 0).then(|| {
@@ -196,16 +194,15 @@ impl<B: Backend> CacheLayers<B> {
                             .create_allocation(ssm_bytes, AllocationType::Global)
                             .expect("Failed to create ssm state allocation"),
                         ssm_shape,
-                        data_type: dtype,
+                        data_type: model_shape.data_type,
                     })
                 },
-                MixerConfig::ShortConv(c) => {
+                AnyTokenMixerConfig::ShortConvConfig(c) => {
                     assert!(c.kernel_size >= 2, "ShortConv kernel_size must be >= 2, got {}", c.kernel_size);
                     let conv_shape = [model_shape.model_dim(), c.kernel_size - 1];
                     let suffix_state_shape = [max_suffix_length, model_shape.model_dim(), c.kernel_size - 1];
-                    let dtype = model_shape.activation_data_type();
-                    let conv_bytes = size_for_shape(&conv_shape, dtype);
-                    let suffix_bytes = size_for_shape(&suffix_state_shape, dtype);
+                    let conv_bytes = size_for_shape(&conv_shape, model_shape.data_type);
+                    let suffix_bytes = size_for_shape(&suffix_state_shape, model_shape.data_type);
 
                     CacheLayer::ShortConv(ShortConvLayer {
                         conv_state: context
@@ -216,17 +213,16 @@ impl<B: Backend> CacheLayers<B> {
                             .create_allocation(suffix_bytes, AllocationType::Global)
                             .expect("Failed to create short conv suffix allocation"),
                         suffix_shape: suffix_state_shape,
-                        data_type: dtype,
+                        data_type: model_shape.data_type,
                         suffix_state_valid_start: Cell::new(0),
                         suffix_state_valid_len: Cell::new(0),
                     })
                 },
-                MixerConfig::DeltaNet(c) => {
+                AnyTokenMixerConfig::DeltaNetConfig(c) => {
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
                     let ssm_shape = [c.num_heads, c.value_head_dim, c.head_dim];
-                    let dtype = model_shape.activation_data_type();
-                    let conv_bytes = size_for_shape(&conv_shape, dtype);
-                    let ssm_bytes = size_for_shape(&ssm_shape, dtype);
+                    let conv_bytes = size_for_shape(&conv_shape, model_shape.data_type);
+                    let ssm_bytes = size_for_shape(&ssm_shape, model_shape.data_type);
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
                         conv_state: context
@@ -237,7 +233,7 @@ impl<B: Backend> CacheLayers<B> {
                             .create_allocation(ssm_bytes, AllocationType::Global)
                             .expect("Failed to create delta net ssm allocation"),
                         ssm_shape,
-                        data_type: dtype,
+                        data_type: model_shape.data_type,
                     })
                 },
             };

@@ -9,7 +9,7 @@ use super::linear::{Linear, LinearBlockError};
 use crate::{
     DataType,
     backends::common::{Allocation, Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
-    config::MLPConfig,
+    config::mlp::AnyMLPConfig,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -36,36 +36,37 @@ pub enum MlpBlockError<B: Backend> {
 
 impl<B: Backend> dyn Mlp<B> {
     pub fn new(
-        config: &MLPConfig,
+        config: &AnyMLPConfig,
         model_dimension: usize,
         hidden_dimension: usize,
         context: &B::Context,
-        parameter_tree: &ParameterTree<B::Context>,
+        parameter_tree: &ParameterTree<B>,
+        data_type: DataType,
     ) -> Result<(Box<dyn Mlp<B>>, Option<Allocation<B>>), MlpBlockError<B>> {
         match config {
-            MLPConfig::Dense(dense_config) => {
-                let data_type: DataType = dense_config.linear_config.activation_precision().into();
-
+            AnyMLPConfig::DenseMLPConfig(dense_config) => {
                 let (up_projection, up_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-                    &dense_config.linear_config,
                     model_dimension,
                     [2 * hidden_dimension],
+                    dense_config.has_up_biases,
                     context,
+                    data_type,
                     &parameter_tree.subtree("up_projection")?,
                 )?;
 
                 let (down_projection, down_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-                    &dense_config.linear_config,
                     hidden_dimension,
                     [model_dimension],
+                    dense_config.has_down_biases,
                     context,
+                    data_type,
                     &parameter_tree.subtree("down_projection")?,
                 )?;
 
                 let gate = MlpGateActMulEncodable::new(
                     context,
                     data_type,
-                    dense_config.activation.clone(),
+                    dense_config.activation.clone().into(),
                     hidden_dimension,
                     down_input_hadamard_factors,
                 )
@@ -73,8 +74,14 @@ impl<B: Backend> dyn Mlp<B> {
 
                 Ok((Box::new(DenseMlp::new(up_projection, gate, down_projection)), up_input_hadamard_factors))
             },
-            MLPConfig::MixtureOfExperts(mixture_of_experts_config) => Ok((
-                Box::new(MoeBlock::new(context, mixture_of_experts_config, model_dimension, parameter_tree)?),
+            AnyMLPConfig::MixtureOfExpertsConfig(mixture_of_experts_config) => Ok((
+                Box::new(MoeBlock::new(
+                    context,
+                    mixture_of_experts_config,
+                    model_dimension,
+                    data_type,
+                    parameter_tree,
+                )?),
                 None,
             )),
         }

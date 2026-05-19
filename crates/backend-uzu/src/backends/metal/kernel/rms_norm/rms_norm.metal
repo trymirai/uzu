@@ -109,7 +109,7 @@ PUBLIC KERNEL(RMSNorm)(
     }
 
     if (use_hadamard) {
-      val = static_cast<OutputT>(simdgroup_random_hadamard_transform(
+      val = static_cast<OutputT>(simdgroup_input_random_hadamard_transform(
           static_cast<ushort>(thread_in_row % METAL_SIMD_SIZE),
           val,
           hadamard_factors[i]

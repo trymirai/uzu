@@ -29,6 +29,7 @@ memmap2.workspace = true
 num-traits.workspace = true
 regex.workspace = true
 libc.workspace = true
+libm.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 rand.workspace = true

@@ -52,7 +52,7 @@ pub trait KVCacheLayerTrait<B: Backend> {
 
     fn encode_zero(
         &mut self,
-        encoder: &mut Encoder<'_, B>,
+        encoder: &mut Encoder<B>,
     );
 
     fn state(&self) -> KVCacheLayerState;
@@ -267,7 +267,7 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
 
     fn encode_zero(
         &mut self,
-        encoder: &mut Encoder<'_, B>,
+        encoder: &mut Encoder<B>,
     ) {
         if self.as_any().is::<KVCacheLayer<B, B::SparseBuffer>>() {
             return;

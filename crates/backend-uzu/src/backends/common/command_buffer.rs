@@ -75,13 +75,13 @@ pub trait CommandBufferEncoding {
         Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
     >(
         &mut self,
-        src: BufferRangeRef<'_, Src>,
-        dst: BufferRangeMut<'_, Dst>,
+        src: BufferRangeRef<Src>,
+        dst: BufferRangeMut<Dst>,
     );
 
     fn encode_fill<Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>>(
         &mut self,
-        dst: BufferRangeMut<'_, Dst>,
+        dst: BufferRangeMut<Dst>,
         value: u8,
     );
 

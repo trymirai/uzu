@@ -147,7 +147,7 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let gemm = GemmKernel::new(context, data_type)?;
-        let gemv = GemvKernel::new(context, data_type).map_err(MetalError::from)?;
+        let gemv = GemvKernel::new(context, data_type)?;
         let quant_gemv = QuantGemvKernel::new(context, data_type);
 
         Ok(Self {
@@ -174,10 +174,11 @@ impl MatmulKernel for MatmulMetalKernel {
 
         if gemv_eligible {
             if is_quant {
-                self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
+                self.dispatch_quant_gemv(arguments, encoder)?;
             } else {
-                self.dispatch_gemv(arguments, encoder).map_err(MetalError::from)
+                self.dispatch_gemv(arguments, encoder)?;
             }
+            Ok(())
         } else {
             self.gemm.encode(arguments, encoder)
         }

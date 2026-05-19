@@ -2,7 +2,10 @@ use super::*;
 use crate::{
     array::ArrayContextExt,
     backends::common::{Allocation, AsBufferRangeRef, DenseBuffer},
-    config::DecoderConfig,
+    config::{
+        decoder::DecoderConfig, embedding::AnyEmbeddingConfig,
+        tts::text_decoder::fish_audio_text_decoder::FishAudioTextDecoderConfig,
+    },
     encodable_block::SamplingInputs,
     forward_pass::token_inputs::TokenInputs,
     session::types::TtsModelConfigError,
@@ -13,10 +16,10 @@ pub(super) struct FishAudioTextDecoderRuntime<B: Backend> {
     fast_runner: TokenDecoderRunner<B>,
     semantic_bridge: FishAudioSemanticBridge<B>,
     runtime_config: TextDecoderRuntimeConfig,
-    semantic_token_begin_id: i64,
-    semantic_token_end_id: i64,
+    semantic_token_begin_id: u64,
+    semantic_token_end_id: u64,
     semantic_cardinality: usize,
-    im_end_token_id: i64,
+    im_end_token_id: u64,
     codebook_size: usize,
     num_codebooks: usize,
     slow_model_dim: usize,
@@ -46,26 +49,29 @@ struct FishAudioSemanticBridge<B: Backend> {
 impl<B: Backend> FishAudioSemanticBridge<B> {
     fn load(
         context: &B::Context,
-        parameter_tree: &crate::parameters::ParameterTree<B::Context>,
-        config: &crate::config::FishAudioTextDecoderConfig,
+        parameter_tree: &crate::parameters::ParameterTree<B>,
+        config: &FishAudioTextDecoderConfig,
         data_type: DataType,
     ) -> Result<Self, Error> {
-        let codebook_embeddings = load_float_tensor_allocation(
-            parameter_tree,
-            "text_decoder.codebook_embeddings.weights",
-            [
-                config.codebook_size.checked_mul(config.num_codebooks).ok_or(Error::UnableToLoadConfig)?,
-                config.slow_model_dim,
-            ],
-            data_type,
-        )?;
+        let codebook_embedding_rows = config.codebook_size.checked_mul(config.num_codebooks).ok_or_else(|| {
+            Error::InvalidModelConfig(format!(
+                "FishAudio codebook embedding rows overflow: codebook_size={}, num_codebooks={}",
+                config.codebook_size, config.num_codebooks,
+            ))
+        })?;
+        let codebook_embeddings = parameter_tree
+            .leaf("text_decoder.codebook_embeddings.embedding.weights")
+            .and_then(|leaf| leaf.validate(&[codebook_embedding_rows, config.slow_model_dim], data_type))
+            .and_then(|leaf| leaf.read_allocation())
+            .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let fast_model_projection = if config.fast_model_projection_config.is_some() {
-            Some(load_float_tensor_allocation(
-                parameter_tree,
-                "text_decoder.fast_model_projection.weights",
-                [config.fast_model_dim, config.slow_model_dim],
-                data_type,
-            )?)
+            Some(
+                parameter_tree
+                    .leaf("text_decoder.fast_model_projection.weights.weights")
+                    .and_then(|leaf| leaf.validate(&[config.fast_model_dim, config.slow_model_dim], data_type))
+                    .and_then(|leaf| leaf.read_allocation())
+                    .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?,
+            )
         } else {
             None
         };
@@ -112,33 +118,12 @@ impl<B: Backend> FishAudioSemanticBridge<B> {
     }
 }
 
-fn load_float_tensor_allocation<B: Backend>(
-    parameter_tree: &crate::parameters::ParameterTree<B::Context>,
-    key: &str,
-    expected_shape: [usize; 2],
-    target_data_type: DataType,
-) -> Result<Allocation<B>, Error> {
-    let leaf = parameter_tree.leaf(key).map_err(|_| Error::UnableToLoadWeights)?;
-    if leaf.shape() != expected_shape {
-        return Err(Error::UnableToLoadConfig);
-    }
-    if leaf.data_type() != target_data_type {
-        return Err(TtsModelConfigError::FishAudioTensorDataTypeMismatch {
-            key: key.into(),
-            expected: target_data_type,
-            actual: leaf.data_type(),
-        }
-        .into());
-    }
-    leaf.read_allocation().map_err(|_| Error::UnableToLoadWeights)
-}
-
 fn validate_fishaudio_decoder_contract(
     num_codebooks: usize,
     codebook_size: usize,
     max_seq_len: usize,
-    semantic_token_begin_id: i64,
-    semantic_token_end_id: i64,
+    semantic_token_begin_id: u64,
+    semantic_token_end_id: u64,
     audio_num_codebooks: usize,
     audio_codec_cardinality: usize,
     audio_semantic_cardinality: usize,
@@ -173,12 +158,14 @@ fn validate_fishaudio_decoder_contract(
         .into());
     }
 
-    let semantic_cardinality = usize::try_from(semantic_token_end_id - semantic_token_begin_id + 1).map_err(|_| {
-        TtsModelConfigError::FishAudioSemanticTokenRangeOverflow {
+    let semantic_cardinality = semantic_token_end_id
+        .checked_sub(semantic_token_begin_id)
+        .and_then(|value| value.checked_add(1))
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or(TtsModelConfigError::FishAudioSemanticTokenRangeOverflow {
             begin: semantic_token_begin_id,
             end: semantic_token_end_id,
-        }
-    })?;
+        })?;
     if semantic_cardinality == 0 || semantic_cardinality != audio_semantic_cardinality {
         return Err(TtsModelConfigError::FishAudioSemanticCodecCardinalityMismatch {
             semantic_cardinality,
@@ -191,13 +178,14 @@ fn validate_fishaudio_decoder_contract(
 }
 
 pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
-    config: &crate::config::FishAudioTextDecoderConfig,
+    config: &FishAudioTextDecoderConfig,
     audio: &AudioGenerationContext<B>,
     model_path: &Path,
     runtime_config: &TextDecoderRuntimeConfig,
 ) -> Result<Box<dyn SemanticDecoderBackend>, Error> {
-    let audio_semantic_cardinality =
-        audio.runtime().config().semantic_codec_cardinality().ok_or(Error::UnableToLoadConfig)?;
+    let audio_semantic_cardinality = audio.runtime().config().semantic_codec_cardinality().ok_or_else(|| {
+        Error::InvalidModelConfig("audio decoder does not expose semantic codec cardinality".to_string())
+    })?;
     let semantic_cardinality = validate_fishaudio_decoder_contract(
         config.num_codebooks,
         config.codebook_size,
@@ -209,13 +197,19 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
         audio_semantic_cardinality,
     )?;
     if config.slow_model_config.model_dim != config.slow_model_dim {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidModelConfig(format!(
+            "FishAudio slow model_dim mismatch: transformer={}, configured={}",
+            config.slow_model_config.model_dim, config.slow_model_dim,
+        )));
     }
     if config.fast_model_config.model_dim != config.fast_model_dim {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidModelConfig(format!(
+            "FishAudio fast model_dim mismatch: transformer={}, configured={}",
+            config.fast_model_config.model_dim, config.fast_model_dim,
+        )));
     }
     if config.short_logits_size == 0 {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidModelConfig("FishAudio short_logits_size must be greater than 0".to_string()));
     }
     let semantic_sampling_mask_row = build_semantic_sampling_mask_row(
         config.vocab_size,
@@ -230,14 +224,14 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
     let fast_transformer_config = config.fast_model_config.clone();
 
     let slow_decoder_config = Rc::new(DecoderConfig {
-        embedding_config: config.slow_embeddings_config.to_text_decoder_embedding_config(),
+        embedding_config: AnyEmbeddingConfig::TiedEmbeddingConfig(config.slow_embeddings_config.clone()),
         transformer_config: slow_transformer_config,
         vocab_size: config.vocab_size,
         pard_token: None,
         ple_model_config: None,
     });
     let fast_decoder_config = Rc::new(DecoderConfig {
-        embedding_config: config.fast_embeddings_config.to_text_decoder_embedding_config(),
+        embedding_config: AnyEmbeddingConfig::TiedEmbeddingConfig(config.fast_embeddings_config.clone()),
         transformer_config: fast_transformer_config,
         vocab_size: config.codebook_size,
         pard_token: None,
@@ -268,13 +262,15 @@ pub(super) fn build_fishaudio_text_decoder_runtime<B: Backend>(
     let activation_data_type = slow_runner.activation_data_type();
     let fast_data_type = fast_runner.activation_data_type();
     if fast_data_type != activation_data_type {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidModelConfig(format!(
+            "FishAudio slow/fast activation data type mismatch: slow={activation_data_type:?}, fast={fast_data_type:?}",
+        )));
     }
 
     let weights_path = model_path.join("model.safetensors");
-    let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
-    let loader =
-        ParameterLoader::new(&weights_file, text_decoder_context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
+    let weights_file = File::open(&weights_path).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+    let loader = ParameterLoader::new(&weights_file, text_decoder_context.as_ref())
+        .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
     let root_weights = loader.tree();
 
     let apply_semantic_sampling_mask =
@@ -317,26 +313,30 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         mut on_frame: Option<&mut dyn FnMut(&[u32]) -> Result<(), Error>>,
     ) -> Result<AudioTokenGrid, Error> {
         if text_tokens.is_empty() {
-            return AudioTokenGrid::new(
+            return Ok(AudioTokenGrid::new(
                 Vec::new().into_boxed_slice(),
                 1,
                 self.num_codebooks,
                 0,
                 vec![0].into_boxed_slice(),
-            )
-            .map_err(Error::from);
+            )?);
         }
         if text_tokens.len() >= self.max_seq_len {
             return Err(Error::GenerateFailed);
         }
 
         if codec_cardinality == 0 || codec_cardinality > self.codebook_size {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidModelConfig(format!(
+                "FishAudio codec cardinality {codec_cardinality} must be in 1..={}",
+                self.codebook_size,
+            )));
         }
         let semantic_token_upper_bound = self.semantic_cardinality;
         let residual_token_upper_bound = codec_cardinality;
         if semantic_token_upper_bound == 0 || residual_token_upper_bound == 0 {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidModelConfig(format!(
+                "FishAudio token upper bounds must be positive: semantic={semantic_token_upper_bound}, residual={residual_token_upper_bound}",
+            )));
         }
 
         self.reset_generation_state();
@@ -365,7 +365,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         self.prepare_fast_runner_masks(residual_token_upper_bound)?;
 
         for _step in 0..max_new_tokens {
-            if current_semantic_token as i64 == self.im_end_token_id {
+            if current_semantic_token == self.im_end_token_id {
                 break;
             }
             let first_code = semantic_token_to_code(
@@ -448,7 +448,10 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
     ) -> Result<(), Error> {
         let fast_vocab_limit = self.fast_vocab_limit.min(residual_token_upper_bound);
         if fast_vocab_limit == 0 {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidModelConfig(format!(
+                "FishAudio fast vocab limit is zero: configured={}, residual={residual_token_upper_bound}",
+                self.fast_vocab_limit,
+            )));
         }
         self.fast_runner.prepare_single_token_vocab_mask(fast_vocab_limit)?;
         self.fast_runner.prepare_two_token_vocab_mask(fast_vocab_limit)?;
@@ -467,8 +470,13 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             }
             tokens.extend_from_slice(codebook_tokens);
         }
-        AudioTokenGrid::new(tokens.into_boxed_slice(), 1, self.num_codebooks, frames, vec![frames].into_boxed_slice())
-            .map_err(Error::from)
+        Ok(AudioTokenGrid::new(
+            tokens.into_boxed_slice(),
+            1,
+            self.num_codebooks,
+            frames,
+            vec![frames].into_boxed_slice(),
+        )?)
     }
 
     fn encode_project_slow_hidden_to_fast_on(
@@ -508,7 +516,9 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         }
 
         if slow_model_dim != fast_model_dim {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidModelConfig(format!(
+                "FishAudio slow_model_dim={slow_model_dim} must equal fast_model_dim={fast_model_dim} without projection weights",
+            )));
         }
 
         debug_assert_eq!(
@@ -537,7 +547,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<(), Error> {
         if num_codebooks == 0 {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidModelConfig("FishAudio num_codebooks must be greater than 0".to_string()));
         }
 
         // Write first_code at position 0 from CPU.
@@ -566,11 +576,10 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             )?;
         }
 
-        let total_vocab = num_codebooks.checked_mul(codebook_size).ok_or(Error::GenerateFailed)?;
-        let total_vocab_u32 = u32::try_from(total_vocab).map_err(|_| Error::GenerateFailed)?;
-        let num_codebooks_u32 = u32::try_from(num_codebooks).map_err(|_| Error::GenerateFailed)?;
-        let slow_model_dim_u32 = u32::try_from(slow_model_dim).map_err(|_| Error::GenerateFailed)?;
-        let codebook_size_u32 = u32::try_from(codebook_size).map_err(|_| Error::GenerateFailed)?;
+        let total_vocab_u32 = (num_codebooks * codebook_size) as u32;
+        let num_codebooks_u32 = num_codebooks as u32;
+        let slow_model_dim_u32 = slow_model_dim as u32;
+        let codebook_size_u32 = codebook_size as u32;
 
         let codebook_token_indices = &semantic_bridge.codebook_token_indices;
         let codebook_embeddings = &semantic_bridge.codebook_embeddings;
@@ -646,7 +655,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             let sampled = self.fast_runner.read_async_chain_result(pass)?;
             let codebook_index = pass + 1;
             let clamped = (sampled as usize).min(residual_token_upper_bound.saturating_sub(1));
-            let clamped = u32::try_from(clamped).map_err(|_| Error::GenerateFailed)?;
+            let clamped = clamped as u32;
             by_codebook[codebook_index].push(clamped);
             self.current_codes_scratch[codebook_index] = clamped;
         }

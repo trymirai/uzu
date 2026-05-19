@@ -22,8 +22,13 @@ use crate::{
         },
     },
     config::{
-        DecoderConfig, DescriptAudioCodecConfig, EmbeddingConfig, EmbeddingConfigCommon, NormalizationConfig,
-        TtsAudioDecoderConfig, TtsConfig,
+        decoder::DecoderConfig,
+        embedding::{AnyEmbeddingConfig, untied_embedding::UntiedEmbeddingConfig},
+        normalization::NormalizationConfig,
+        tts::{
+            TTSConfig,
+            audio_decoder::{AnyTTSAudioDecoderConfig, descript_audio_codec::DescriptAudioCodecConfig},
+        },
     },
     encodable_block::{Decoder, LayerExecutables, RMSNorm},
     forward_pass::{model_shape::ModelShape, state::SharedBuffers},
@@ -91,7 +96,7 @@ pub struct NanoCodecFsqRuntimeConfig {
 
 impl NanoCodecFsqRuntimeConfig {
     pub fn from_tts_config_and_model_path(
-        tts_config: &TtsConfig,
+        tts_config: &TTSConfig,
         model_path: &Path,
     ) -> AudioResult<Self> {
         let (runtime_config, decoder) = load_audio_runtime_from_tts_config(tts_config, model_path)?;
@@ -233,7 +238,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
     }
 
     pub fn from_tts_config_and_model_path(
-        tts_config: &TtsConfig,
+        tts_config: &TTSConfig,
         model_path: &Path,
     ) -> AudioResult<Self> {
         Ok(Self::new(NanoCodecFsqRuntimeConfig::from_tts_config_and_model_path(tts_config, model_path)?))

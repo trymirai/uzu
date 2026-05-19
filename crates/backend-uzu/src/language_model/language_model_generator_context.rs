@@ -13,7 +13,7 @@ use crate::{
         Backend, Context, Kernels,
         kernel::{TokenCopySampledKernel, kv_cache_update::KVCacheUpdate},
     },
-    config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
+    config::{decoder::DecoderConfig, model::language_model::LanguageModelConfig},
     encodable_block::{Decoder, Sampling},
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     language_model::rng::PRng,
@@ -118,31 +118,30 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: &DecodingConfig,
-        model_metadata: &ModelMetadata<LanguageModelConfig>,
+        model_config: &LanguageModelConfig,
     ) -> Result<Self, Error> {
         let context = B::Context::new().map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
-        let model_shape = ModelShape::from_decoder_config(&model_metadata.model_config.model_config);
-
-        let prefill_step_size = decoding_config.prefill_step_size.resolve(&model_metadata.model_config);
+        let prefill_step_size = decoding_config.prefill_step_size.resolve(model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
         let max_prefix_length: usize =
-            Self::get_context_length_internal(&context, &model_metadata.model_config.model_config, decoding_config);
+            Self::get_context_length_internal(&context, &model_config.decoder_config, decoding_config);
         let max_suffix_length: usize = std::cmp::max(prefill_step_size, generate_suffix_length);
 
         let weights_path = model_path.join("model.safetensors");
-        if !weights_path.exists() {
-            return Err(Error::UnableToLoadWeights);
-        }
-        let weights_file = File::open(&weights_path).map_err(|_| Error::UnableToLoadWeights)?;
-        let loader = ParameterLoader::new(&weights_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
-        let root_loader_view = loader.tree();
+        let weights_file = File::open(&weights_path).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+        let loader = ParameterLoader::new(&weights_file, context.as_ref())
+            .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+        let root_loader_view =
+            loader.tree().subtree("decoder").map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+        let model_shape = ModelShape::from_decoder_config(&model_config.decoder_config, DataType::BF16);
 
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &model_metadata.model_config.model_config);
+        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &model_config.decoder_config, &model_shape);
         shared_buffers.update_data(&root_loader_view)?;
         let shared_buffers = Rc::new(shared_buffers);
 
-        let executables = Decoder::new(context.as_ref(), &model_metadata.model_config.model_config, &root_loader_view);
+        let executables = Decoder::new(context.as_ref(), &model_config.decoder_config, &root_loader_view, &model_shape)
+            .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
 
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
@@ -151,21 +150,24 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             max_suffix_length,
         )));
 
-        let intermediate_data_type: DataType =
-            model_metadata.model_config.model_config.transformer_config.output_norm_config.scale_precision.into();
         let kv_cache_update = Box::new(
-            KVCacheUpdate::new(context.as_ref(), intermediate_data_type, max_prefix_length)
+            KVCacheUpdate::new(context.as_ref(), model_shape.data_type, max_prefix_length)
                 .map_err(|e| Error::UnableToCreateContext(e.into()))?,
         );
 
         let gpu_sampler =
-            Sampling::<B>::new(&context, intermediate_data_type).map_err(|e| Error::UnableToCreateContext(e.into()))?;
+            Sampling::<B>::new(&context, model_shape.data_type).map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
             .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
-        let async_batch_size = decoding_config.async_batch_size.resolve::<B>(model_path, context.as_ref());
+        let async_batch_size = decoding_config
+            .async_batch_size
+            .resolve::<B>(model_path, context.as_ref())
+            .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let async_buffers = AsyncBuffers::new(context.as_ref(), max_prefix_length, async_batch_size);
+
+        loader.tree().assert_all_tensors_validated().map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
 
         let seed = PRng::new(decoding_config.sampling_seed.resolve());
 
@@ -173,7 +175,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             context,
             cache_layers,
             shared_buffers,
-            model_config: model_metadata.model_config.clone(),
+            model_config: model_config.clone(),
             model_shape,
             executables,
             kv_cache_update,
@@ -188,7 +190,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         &self,
         decoding_config: &DecodingConfig,
     ) -> usize {
-        Self::get_context_length_internal(&self.context, &self.model_config.model_config, decoding_config)
+        Self::get_context_length_internal(&self.context, &self.model_config.decoder_config, decoding_config)
     }
 
     fn get_context_length_internal(

@@ -1,25 +1,14 @@
 //! Mixer component - either attention or state space.
 
-use std::rc::Rc;
-
 use crate::{
     backends::common::Backend,
-    encodable_block::{Attention, DeltaNetMixer, MambaMixer, QKVNorm, QkUnpack, Rope, ShortConvMixer, linear::Linear},
+    encodable_block::{Attention, DeltaNetMixer, MambaMixer, ShortConvMixer},
 };
 
 /// Mixer component - either attention, state space, short conv, or delta net.
 pub(crate) enum MixerExecutables<B: Backend> {
     Attention {
-        qkv_projection: Box<dyn Linear<B>>,
-        gate_projection: Option<Box<dyn Linear<B>>>,
-        qkv_norm: Option<QKVNorm<B>>,
-        rope: Rc<Rope<B>>,
-        qk_unpack: Rc<QkUnpack<B>>,
         attention: Attention<B>,
-        out_projection: Box<dyn Linear<B>>,
-        num_heads: usize,
-        num_groups: usize,
-        head_dim: usize,
     },
     StateSpace {
         mixer: MambaMixer<B>,

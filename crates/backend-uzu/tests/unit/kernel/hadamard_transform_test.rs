@@ -4,7 +4,11 @@ use std::{
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::HadamardTransformKernel},
+    backends::common::{
+        Backend, Context, Encoder, Kernels,
+        gpu_types::HadamardTransformOrder,
+        kernel::HadamardTransformKernel,
+    },
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -100,8 +104,12 @@ fn generate_test_input<T: ArrayElement + Float>(
 fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(&context, T::data_type())
-        .expect("Failed to create HadamardTransformKernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
+        &context,
+        T::data_type(),
+        HadamardTransformOrder::Input,
+    )
+    .expect("Failed to create HadamardTransformKernel");
 
     let total_elements = input.batch_count * input.channel_count;
     let mut data = context

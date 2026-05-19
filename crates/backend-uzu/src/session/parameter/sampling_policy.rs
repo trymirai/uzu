@@ -1,4 +1,4 @@
-use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
+use crate::{config::model::language_model::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SamplingProcessingOrder {

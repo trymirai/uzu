@@ -1,4 +1,4 @@
-use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
+use crate::{config::model::language_model::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
 fn env_prefill_step_size_default_override() -> Option<usize> {
     static OVERRIDE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
@@ -31,10 +31,10 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
         config: &LanguageModelConfig,
     ) -> usize {
         let default_limit: usize = 4096;
-        let model_context_length = config.model_config.transformer_config.context_length;
+        let model_context_length = config.decoder_config.transformer_config.context_length;
 
         let minimal_sliding_window_size = config
-            .model_config
+            .decoder_config
             .transformer_config
             .layer_configs
             .iter()

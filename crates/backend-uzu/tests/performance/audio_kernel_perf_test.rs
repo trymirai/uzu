@@ -707,7 +707,7 @@ fn audio_kernel_perf() {
                     {
                         let i = input.allocation();
                         let o = &mut output;
-                        k_act.encode(Some(i), o, n as u32, ActivationType::GELU, &mut encoder);
+                        k_act.encode(Some(i), o, n as u32, ActivationType::GELUApprox, &mut encoder);
                     }
                     encoder.end_encoding().submit().wait_until_completed().unwrap();
                 });
@@ -973,7 +973,13 @@ fn audio_kernel_perf() {
             );
         }
         {
-            k_act.encode(Some(&scratch_a), &mut scratch_b, (c0_ch * f_up0) as u32, ActivationType::GELU, &mut encoder);
+            k_act.encode(
+                Some(&scratch_a),
+                &mut scratch_b,
+                (c0_ch * f_up0) as u32,
+                ActivationType::GELUApprox,
+                &mut encoder,
+            );
         }
         {
             let w = c0_p2_w.allocation();
@@ -1089,7 +1095,13 @@ fn audio_kernel_perf() {
             );
         }
         {
-            k_act.encode(Some(&scratch_b), &mut scratch_a, (c1_ch * f_up1) as u32, ActivationType::GELU, &mut encoder);
+            k_act.encode(
+                Some(&scratch_b),
+                &mut scratch_a,
+                (c1_ch * f_up1) as u32,
+                ActivationType::GELUApprox,
+                &mut encoder,
+            );
         }
         {
             let w = c1_p2_w.allocation();
