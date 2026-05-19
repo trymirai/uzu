@@ -30,13 +30,84 @@ pub enum GemmWeightPrologueKind {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GemmTilingConfig {
-    pub threadgroup_m: u32,
-    pub threadgroup_n: u32,
-    pub threadgroup_k: u32,
-    pub simdgroups_m: u32,
-    pub simdgroups_n: u32,
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GemmTiling {
+    T64x32x32_2x2,
+    T64x64x16_2x2,
+    T64x64x32_2x2,
+    T32x32x32_2x2,
+    T32x64x32_2x2,
+    T64x32x32_4x1,
+    T128x128x32_4x4,
+}
+
+impl GemmTiling {
+    pub const fn block_m(self) -> u32 {
+        match self {
+            Self::T64x32x32_2x2 => 64,
+            Self::T64x64x16_2x2 => 64,
+            Self::T64x64x32_2x2 => 64,
+            Self::T32x32x32_2x2 => 32,
+            Self::T32x64x32_2x2 => 32,
+            Self::T64x32x32_4x1 => 64,
+            Self::T128x128x32_4x4 => 128,
+        }
+    }
+
+    pub const fn block_n(self) -> u32 {
+        match self {
+            Self::T64x32x32_2x2 => 32,
+            Self::T64x64x16_2x2 => 64,
+            Self::T64x64x32_2x2 => 64,
+            Self::T32x32x32_2x2 => 32,
+            Self::T32x64x32_2x2 => 64,
+            Self::T64x32x32_4x1 => 32,
+            Self::T128x128x32_4x4 => 128,
+        }
+    }
+
+    pub const fn block_k(self) -> u32 {
+        match self {
+            Self::T64x32x32_2x2 => 32,
+            Self::T64x64x16_2x2 => 16,
+            Self::T64x64x32_2x2 => 32,
+            Self::T32x32x32_2x2 => 32,
+            Self::T32x64x32_2x2 => 32,
+            Self::T64x32x32_4x1 => 32,
+            Self::T128x128x32_4x4 => 32,
+        }
+    }
+
+    pub const fn simdgroups_m(self) -> u32 {
+        match self {
+            Self::T64x32x32_2x2 => 2,
+            Self::T64x64x16_2x2 => 2,
+            Self::T64x64x32_2x2 => 2,
+            Self::T32x32x32_2x2 => 2,
+            Self::T32x64x32_2x2 => 2,
+            Self::T64x32x32_4x1 => 4,
+            Self::T128x128x32_4x4 => 4,
+        }
+    }
+
+    pub const fn simdgroups_n(self) -> u32 {
+        match self {
+            Self::T64x32x32_2x2 => 2,
+            Self::T64x64x16_2x2 => 2,
+            Self::T64x64x32_2x2 => 2,
+            Self::T32x32x32_2x2 => 2,
+            Self::T32x64x32_2x2 => 2,
+            Self::T64x32x32_4x1 => 1,
+            Self::T128x128x32_4x4 => 4,
+        }
+    }
+}
+
+pub const fn gemm_tiling_smg_m(t: GemmTiling) -> u32 {
+    t.simdgroups_m()
+}
+pub const fn gemm_tiling_smg_n(t: GemmTiling) -> u32 {
+    t.simdgroups_n()
 }
 
 bitflags! {
