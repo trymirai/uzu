@@ -254,10 +254,7 @@ impl<B: Backend> CacheLayers<B> {
 
         entries.iter_mut().for_each(|layer| match layer {
             CacheLayer::Transformer(kv) => {
-                let keys_total_pages = kv.keys.size() / kv.keys.page_size_bytes();
-                kv.keys.map(context, &(0..keys_total_pages)).expect("Failed to map transformer keys pages");
-                let values_total_pages = kv.values.size() / kv.values.page_size_bytes();
-                kv.values.map(context, &(0..values_total_pages)).expect("Failed to map transformer values pages");
+                Self::map_transformer_cache_layer(context, kv);
             },
             _ => (),
         });
@@ -647,6 +644,7 @@ impl<B: Backend> CacheLayers<B> {
         for layer in entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
+                    Self::map_transformer_cache_layer(context, layer);
                     zero_encoder.encode_fill(&mut layer.keys, 0);
                     zero_encoder.encode_fill(&mut layer.values, 0);
                 },
@@ -666,5 +664,16 @@ impl<B: Backend> CacheLayers<B> {
         };
         cloned.copy_from(self, context);
         cloned
+    }
+
+    fn map_transformer_cache_layer(
+        context: &B::Context,
+        layer: &mut KVCacheLayer<B>,
+    ) {
+        let keys_total_pages = layer.keys.size() / layer.keys.page_size_bytes();
+        layer.keys.map(context, &(0..keys_total_pages)).expect("Failed to map transformer keys pages");
+
+        let values_total_pages = layer.values.size() / layer.values.page_size_bytes();
+        layer.values.map(context, &(0..values_total_pages)).expect("Failed to map transformer values pages");
     }
 }
