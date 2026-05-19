@@ -50,12 +50,12 @@ impl GemmKernel {
                     specialization.tiling_config.simdgroups_n,
                     specialization.transpose_b,
                     specialization.use_mxu,
-                    specialization.input_prologue,
                     specialization.weight_prologue,
-                    specialization.output_transform,
-                    specialization.alignment,
                     specialization.bits_per_weight,
                     specialization.group_size,
+                    specialization.input_prologue,
+                    specialization.output_transform,
+                    specialization.alignment,
                 )?;
                 Ok(entry.insert(kernel))
             },
@@ -74,11 +74,6 @@ impl GemmKernel {
             GemmInputPrologueKind::FullPrecision,
             "unified GEMM only implements FullPrecision input prologue today",
         );
-        assert_eq!(
-            specialization.weight_prologue,
-            GemmWeightPrologueKind::FullPrecision,
-            "unified GEMM only implements FullPrecision weight prologue today",
-        );
         specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
         let kernel = self.get_or_create(context, specialization)?;
         let (b, scales, biases, zero_points) = match &dispatch.b {
@@ -90,13 +85,25 @@ impl GemmKernel {
                 scales,
                 biases,
                 ..
-            } => (*weights, Some(*scales), Some(*biases), None),
+            } => {
+                debug_assert_eq!(
+                    specialization.weight_prologue,
+                    GemmWeightPrologueKind::ScaleBiasDequant
+                );
+                (*weights, Some(*scales), Some(*biases), None)
+            },
             GemmWeights::ScaleZeroPoint {
                 weights,
                 scales,
                 zero_points,
                 ..
-            } => (*weights, Some(*scales), None, Some(*zero_points)),
+            } => {
+                debug_assert_eq!(
+                    specialization.weight_prologue,
+                    GemmWeightPrologueKind::ScaleZeroPointDequant
+                );
+                (*weights, Some(*scales), None, Some(*zero_points))
+            },
         };
         kernel.encode(
             (dispatch.a, dispatch.a_offset),

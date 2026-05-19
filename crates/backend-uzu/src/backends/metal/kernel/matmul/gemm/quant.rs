@@ -1,14 +1,17 @@
 use super::{GemmAlignmentAxes, GemmDispatch, GemmInputPrologueKind, GemmKernel, GemmWeights};
-use crate::backends::{
-    common::{
-        Encoder,
-        gpu_types::{
-            GemmParams, QuantizationMethod,
-            gemm::{GemmAlignment, GemmOutputTransformKind, GemmTilingConfig},
+use crate::{
+    DataType,
+    backends::{
+        common::{
+            Encoder,
+            gpu_types::{
+                GemmParams, QuantizationMethod,
+                gemm::{GemmAlignment, GemmOutputTransformKind, GemmTilingConfig},
+            },
+            kernel::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
         },
-        kernel::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
+        metal::{Metal, context::MetalContext},
     },
-    metal::{Metal, context::MetalContext},
 };
 
 pub(crate) fn encode(
@@ -75,22 +78,36 @@ pub(crate) fn encode(
     gemm.encode(context, dispatch, encoder).map_err(QuantizedMatmulError::BackendError)
 }
 
+// Tile picks supported by the unified `Gemm` kernel template:
+// - bf16 with `output_dim % 64 == 0`: (BM=64, BN=64, BK=32)
+// - else: (BM=32, BN=32, BK=min(group_size, 32))
+//
+// The standalone QMM's wider (BM=64, BK=32, BN=64) and big (BM=BK=BN=64) tiles
+// are not enumerated here; supporting them would require extending the kernel
+// template VARIANTS (which expands the FP variant grid too).
 fn select_tile(
     configuration: &QuantizedMatmulConfiguration,
-    batch_dim: u32,
+    _batch_dim: u32,
 ) -> GemmTilingConfig {
     let group_size = configuration.group_size as u32;
-    let threadgroup_k = group_size.min(32);
-    let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) = if batch_dim < 32 {
-        (32u32, 32u32, 1u32, 1u32)
+    let aligned_n_64 = configuration.output_dim % 64 == 0;
+    let can_use_64_tile = aligned_n_64 && configuration.data_type == DataType::BF16;
+
+    if can_use_64_tile {
+        GemmTilingConfig {
+            threadgroup_m: 64,
+            threadgroup_n: 64,
+            threadgroup_k: 32,
+            simdgroups_m: 2,
+            simdgroups_n: 2,
+        }
     } else {
-        (64u32, 64u32, 2u32, 2u32)
-    };
-    GemmTilingConfig {
-        threadgroup_m,
-        threadgroup_n,
-        threadgroup_k,
-        simdgroups_m,
-        simdgroups_n,
+        GemmTilingConfig {
+            threadgroup_m: 32,
+            threadgroup_n: 32,
+            threadgroup_k: group_size.min(32),
+            simdgroups_m: 2,
+            simdgroups_n: 2,
+        }
     }
 }

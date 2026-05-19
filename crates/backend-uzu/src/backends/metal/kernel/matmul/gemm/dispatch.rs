@@ -27,6 +27,7 @@ impl GemmAlignment {
     }
 }
 
+#[allow(dead_code)]
 pub enum GemmWeights<'a, B: Backend> {
     FullPrecision {
         weights: &'a Allocation<B>,
@@ -149,6 +150,14 @@ impl GemmSpecialization {
                 group_size: self.group_size,
             });
         }
+        if self.weight_prologue != GemmWeightPrologueKind::FullPrecision {
+            if self.use_mxu {
+                return Err(GemmSpecializationError::QuantizedRequiresSimdgroup);
+            }
+            if !self.transpose_b {
+                return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
+            }
+        }
         Ok(())
     }
 
@@ -218,6 +227,46 @@ impl GemmSpecialization {
                 }
             }
         }
+        for &(threadgroup_m, threadgroup_n, threadgroup_k, simdgroups_m, simdgroups_n) in
+            quant_tile_set(data_type)
+        {
+            for &group_size in &[32u32, 64, 128] {
+                if threadgroup_k > group_size {
+                    continue;
+                }
+                for &bits in &[4u32, 8] {
+                    for weight_prologue in [
+                        GemmWeightPrologueKind::ScaleBiasDequant,
+                        GemmWeightPrologueKind::ScaleZeroPointDequant,
+                    ] {
+                        for align_n in [true, false] {
+                            let alignment = GemmAlignment::from_axes(GemmAlignmentAxes {
+                                m: true,
+                                n: align_n,
+                                k: true,
+                            });
+                            out.push(Self {
+                                tiling_config: GemmTilingConfig {
+                                    threadgroup_m,
+                                    threadgroup_n,
+                                    threadgroup_k,
+                                    simdgroups_m,
+                                    simdgroups_n,
+                                },
+                                input_prologue: GemmInputPrologueKind::FullPrecision,
+                                use_mxu: false,
+                                output_transform: GemmOutputTransformKind::Store,
+                                alignment,
+                                transpose_b: true,
+                                weight_prologue,
+                                bits_per_weight: bits,
+                                group_size,
+                            });
+                        }
+                    }
+                }
+            }
+        }
         out
     }
 }
@@ -238,10 +287,27 @@ fn mxu_tile_set(data_type: DataType) -> &'static [(u32, u32, u32, u32)] {
     &[(64, 64, 2, 2), (32, 64, 2, 2), (64, 32, 4, 1), (128, 128, 4, 4)]
 }
 
+// Quant tiles supported by the unified `Gemm` kernel template. Constrained to
+// (BM, BN, BK) shapes that already appear in the FP VARIANTS list — adding
+// BM=8 or BK=64 would expand the FP variant grid too.
+fn quant_tile_set(data_type: DataType) -> &'static [(u32, u32, u32, u32, u32)] {
+    match data_type {
+        // (threadgroup_m, threadgroup_n, threadgroup_k, simdgroups_m, simdgroups_n)
+        DataType::BF16 => &[(32, 32, 32, 2, 2), (64, 64, 32, 2, 2)],
+        DataType::F16 | DataType::F32 => &[(32, 32, 32, 2, 2)],
+        _ => &[],
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GemmSpecializationError {
     ThreadgroupKExceedsGroupSize {
         threadgroup_k: u32,
         group_size: u32,
     },
+    QuantizedRequiresSimdgroup,
+    QuantizedRequiresTransposedB,
+    /// A quantized specialization was routed through the FP `GemmKernel`; should
+    /// go through `GemmQuantKernel` instead.
+    QuantizedRoutedThroughFpKernel,
 }

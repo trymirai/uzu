@@ -8,6 +8,8 @@
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
 #include "block_geometry.h"
+#include "quant_scale_bias.h"
+#include "quant_scale_zero_point.h"
 
 using namespace metal;
 
@@ -21,7 +23,10 @@ template <
     int THREADGROUP_BLOCK_K,
     int SIMDGROUPS_PER_ROW,
     int SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_B>
+    bool TRANSPOSE_B,
+    GemmWeightPrologueKind WEIGHT_PROLOGUE = GemmWeightPrologueKind::FullPrecision,
+    int BITS = 0,
+    int GROUP_SIZE = 0>
 struct SimdgroupMmaCore {
   METAL_CONST ushort PADDING_A = 16 / sizeof(T);
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
@@ -38,13 +43,33 @@ struct SimdgroupMmaCore {
       SHARED_STRIDE_A,
       true,
       THREADGROUP_THREADS>;
-  using BLoader = uzu::matmul::ThreadgroupLoader<
+  using BLoaderFp = uzu::matmul::ThreadgroupLoader<
       T,
       TRANSPOSE_B ? THREADGROUP_BLOCK_N : THREADGROUP_BLOCK_K,
       TRANSPOSE_B ? THREADGROUP_BLOCK_K : THREADGROUP_BLOCK_N,
       SHARED_STRIDE_B,
       TRANSPOSE_B,
       THREADGROUP_THREADS>;
+  // The quantized B-loaders only support TRANSPOSE_B == true; the host
+  // validates this before dispatch.
+  using BLoaderScaleBias = QuantizedBlockLoaderScaleBias<
+      T,
+      THREADGROUP_BLOCK_N,
+      THREADGROUP_BLOCK_K,
+      SHARED_STRIDE_B,
+      1,
+      THREADGROUP_THREADS,
+      GROUP_SIZE,
+      BITS>;
+  using BLoaderScaleZeroPoint = QuantizedBlockLoaderScaleZeroPoint<
+      T,
+      THREADGROUP_BLOCK_N,
+      THREADGROUP_BLOCK_K,
+      SHARED_STRIDE_B,
+      1,
+      THREADGROUP_THREADS,
+      GROUP_SIZE,
+      BITS>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
       T,
       T,
@@ -60,7 +85,11 @@ struct SimdgroupMmaCore {
       float,
       uzu::matmul::TransformNone<T, float>>;
 
-  template <bool M_aligned, bool N_aligned, bool K_aligned>
+  template <
+      bool M_aligned,
+      bool N_aligned,
+      bool K_aligned,
+      typename BLoader>
   static METAL_FUNC void k_loop(
       threadgroup T* a_shared,
       threadgroup T* b_shared,
@@ -114,13 +143,56 @@ struct SimdgroupMmaCore {
     }
   }
 
+  // Shared post-K-loop epilogue + store. Factored out so each prologue branch
+  // ends with identical code.
+  template <bool M_aligned, bool N_aligned>
+  static METAL_FUNC void finalize(
+      thread TileAccumulator& accumulator,
+      device T* d,
+      const constant uzu::matmul::GemmParams* params,
+      const thread ushort& tile_block_rows,
+      const thread ushort& tile_block_cols,
+      const bool needs_epilogue,
+      const thread uzu::matmul::TransformScaleAccumulate<float, float>& epilogue
+  ) {
+    if constexpr (M_aligned && N_aligned) {
+      if (needs_epilogue) {
+        accumulator.apply_epilogue(
+            d,
+            params->leading_dimension_d,
+            1,
+            epilogue
+        );
+      }
+      accumulator.store_result(d, params->leading_dimension_d);
+    } else {
+      if (needs_epilogue) {
+        accumulator.apply_epilogue_safe(
+            d,
+            params->leading_dimension_d,
+            1,
+            short2(tile_block_cols, tile_block_rows),
+            epilogue
+        );
+      }
+      accumulator.store_result_safe(
+          d,
+          params->leading_dimension_d,
+          short2(tile_block_cols, tile_block_rows)
+      );
+    }
+  }
+
   static METAL_FUNC void run(
       const device T* a,
-      const device T* b,
+      const device uint8_t* b_packed,
       device T* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmOutputTransformKind output_transform,
+      const device T* scales,
+      const device T* biases,
+      const device uint8_t* zero_points,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       const thread ThreadContext& thread_context
@@ -139,13 +211,10 @@ struct SimdgroupMmaCore {
     const size_t block_col = size_t(geometry.block_col_start);
 
     a += block_row * params->leading_dimension_a;
-    b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
     d += block_row * params->leading_dimension_d + block_col;
 
     thread ALoader
         loader_a(a, params->leading_dimension_a, a_shared, thread_context);
-    thread BLoader
-        loader_b(b, params->leading_dimension_b, b_shared, thread_context);
     thread TileAccumulator accumulator(thread_context);
 
     const ushort tile_block_rows =
@@ -180,43 +249,120 @@ struct SimdgroupMmaCore {
                 alignment.contains(GemmAlignment::N) ||
                     (tile_block_cols == THREADGROUP_BLOCK_N),
                 [&](auto aligned_n) {
-                  k_loop<aligned_m.value, aligned_n.value, aligned_k.value>(
-                      a_shared,
-                      b_shared,
-                      params->aligned_inner_iterations,
-                      loader_a,
-                      loader_b,
+                  if constexpr (
+                      WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision
+                  ) {
+                    const device T* b =
+                        reinterpret_cast<const device T*>(b_packed);
+                    b += TRANSPOSE_B ? block_col * params->leading_dimension_b
+                                     : block_col;
+                    thread BLoaderFp loader_b(
+                        b,
+                        params->leading_dimension_b,
+                        b_shared,
+                        thread_context
+                    );
+                    k_loop<
+                        aligned_m.value,
+                        aligned_n.value,
+                        aligned_k.value,
+                        BLoaderFp>(
+                        a_shared,
+                        b_shared,
+                        params->aligned_inner_iterations,
+                        loader_a,
+                        loader_b,
+                        accumulator,
+                        tile_block_rows,
+                        tile_block_cols,
+                        leftover_block_depth
+                    );
+                  } else {
+                    constexpr int pack_factor = get_pack_factor<BITS, 8>();
+                    constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
+                    const int K_elements = int(params->K);
+                    const int in_vec_size_w =
+                        K_elements * bytes_per_pack / pack_factor;
+                    const int in_vec_size_g =
+                        (K_elements + GROUP_SIZE - 1) / GROUP_SIZE;
+                    const device uint8_t* w_block =
+                        b_packed + block_col * in_vec_size_w;
+                    const device T* scales_off =
+                        scales + block_col * in_vec_size_g;
+
+                    if constexpr (
+                        WEIGHT_PROLOGUE ==
+                        GemmWeightPrologueKind::ScaleBiasDequant
+                    ) {
+                      const device T* biases_off =
+                          biases + block_col * in_vec_size_g;
+                      thread BLoaderScaleBias loader_b(
+                          w_block,
+                          scales_off,
+                          biases_off,
+                          K_elements,
+                          b_shared,
+                          thread_context.simdgroup_index,
+                          thread_context.simd_lane_id
+                      );
+                      k_loop<
+                          aligned_m.value,
+                          aligned_n.value,
+                          aligned_k.value,
+                          BLoaderScaleBias>(
+                          a_shared,
+                          b_shared,
+                          params->aligned_inner_iterations,
+                          loader_a,
+                          loader_b,
+                          accumulator,
+                          tile_block_rows,
+                          tile_block_cols,
+                          leftover_block_depth
+                      );
+                    } else {
+                      const int zp_stride_per_row =
+                          (BITS == 4) ? ((in_vec_size_g + 1) / 2)
+                                      : in_vec_size_g;
+                      const device uint8_t* zps_row_start =
+                          zero_points + block_col * zp_stride_per_row;
+                      thread BLoaderScaleZeroPoint loader_b(
+                          w_block,
+                          scales_off,
+                          zps_row_start,
+                          K_elements,
+                          in_vec_size_g,
+                          b_shared,
+                          thread_context.simdgroup_index,
+                          thread_context.simd_lane_id
+                      );
+                      k_loop<
+                          aligned_m.value,
+                          aligned_n.value,
+                          aligned_k.value,
+                          BLoaderScaleZeroPoint>(
+                          a_shared,
+                          b_shared,
+                          params->aligned_inner_iterations,
+                          loader_a,
+                          loader_b,
+                          accumulator,
+                          tile_block_rows,
+                          tile_block_cols,
+                          leftover_block_depth
+                      );
+                    }
+                  }
+
+                  finalize<aligned_m.value, aligned_n.value>(
                       accumulator,
+                      d,
+                      params,
                       tile_block_rows,
                       tile_block_cols,
-                      leftover_block_depth
+                      needs_epilogue,
+                      epilogue
                   );
-                  if constexpr (aligned_m.value && aligned_n.value) {
-                    if (needs_epilogue) {
-                      accumulator.apply_epilogue(
-                          d,
-                          params->leading_dimension_d,
-                          1,
-                          epilogue
-                      );
-                    }
-                    accumulator.store_result(d, params->leading_dimension_d);
-                  } else {
-                    if (needs_epilogue) {
-                      accumulator.apply_epilogue_safe(
-                          d,
-                          params->leading_dimension_d,
-                          1,
-                          short2(tile_block_cols, tile_block_rows),
-                          epilogue
-                      );
-                    }
-                    accumulator.store_result_safe(
-                        d,
-                        params->leading_dimension_d,
-                        short2(tile_block_cols, tile_block_rows)
-                    );
-                  }
                 }
             );
           }
