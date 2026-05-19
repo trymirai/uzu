@@ -91,9 +91,14 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
+        if pages.len() == 0 {
+            return Ok(());
+        }
 
-        for gap in self.mapped_pages.gaps(pages) {
+        // prepare operations
+        let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
+        let gaps = self.mapped_pages.gaps(pages).collect::<Vec<_>>();
+        for gap in gaps.iter() {
             let mut pool = context.sparse_heap_pool_mut();
             let result = pool.deref_mut().create_map_operations(context, &self.buffer, &gap);
             match result {
@@ -102,8 +107,12 @@ impl SparseBuffer for MetalSparseBuffer {
             };
         }
 
+        // execute operations
         context.sparse_update_mappings(&all_batches);
-        context.sparse_heap_pool_mut().apply_mapping_operations(&all_batches);
+        context.sparse_heap_pool_mut().apply_map_operations(&all_batches);
+        for gap in gaps {
+            self.mapped_pages.insert(gap)
+        }
 
         Ok(())
     }
@@ -113,21 +122,28 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
+        if pages.len() == 0 {
+            return Ok(());
+        }
 
+        // prepare operations
+        let mut all_batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
         let mapped_ranges = self
             .mapped_pages
             .overlapping(pages)
             .map(|range| max(range.start, pages.start)..min(range.end, pages.end))
             .collect::<Vec<_>>();
-
-        for mapped_range in mapped_ranges {
-            let batches = context.sparse_heap_pool().create_unmap_operations(&self.buffer, &mapped_range);
+        for mapped_range in mapped_ranges.iter() {
+            let batches = context.sparse_heap_pool().create_unmap_operations(&self.buffer, mapped_range);
             all_batches.extend(batches);
         }
 
+        // execute operations
         context.sparse_update_mappings(&all_batches);
-        context.sparse_heap_pool_mut().apply_mapping_operations(&all_batches);
+        context.sparse_heap_pool_mut().apply_map_operations(&all_batches);
+        for mapped_range in mapped_ranges {
+            self.mapped_pages.remove(mapped_range)
+        }
 
         Ok(())
     }

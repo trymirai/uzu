@@ -50,7 +50,7 @@ impl MetalSparseHeapPool {
             return Ok(());
         }
 
-        let new_heaps_count = pages_to_alloc * self.page_size.in_bytes().div_ceil(self.heap_capacity);
+        let new_heaps_count = (pages_to_alloc * self.page_size.in_bytes()).div_ceil(self.heap_capacity);
         for _ in 0..new_heaps_count {
             let heap = MetalSparseHeap::new(context, self.heap_capacity, self.page_size)?;
             self.heaps.push(Rc::new(RefCell::new(heap)));
@@ -87,12 +87,14 @@ impl MetalSparseHeapPool {
                 pages_to_map.start += map_pages_count;
             }
 
-            let batch = MetalSparseMappingOpsBatch {
-                buffer: buffer.clone(),
-                heap: heap.clone(),
-                mtl_operations: heap_mtl_operations.into_boxed_slice(),
-            };
-            batches.push(batch);
+            if !heap_mtl_operations.is_empty() {
+                let batch = MetalSparseMappingOpsBatch {
+                    buffer: buffer.clone(),
+                    heap: heap.clone(),
+                    mtl_operations: heap_mtl_operations.into_boxed_slice(),
+                };
+                batches.push(batch);
+            }
         }
 
         Ok(batches)
@@ -124,18 +126,20 @@ impl MetalSparseHeapPool {
                 };
             }
 
-            let batch = MetalSparseMappingOpsBatch {
-                buffer: buffer.clone(),
-                heap: heap.clone(),
-                mtl_operations: heap_mtl_operations.into_boxed_slice(),
-            };
-            batches.push(batch);
+            if !heap_mtl_operations.is_empty() {
+                let batch = MetalSparseMappingOpsBatch {
+                    buffer: buffer.clone(),
+                    heap: heap.clone(),
+                    mtl_operations: heap_mtl_operations.into_boxed_slice(),
+                };
+                batches.push(batch);
+            }
         }
 
         batches
     }
 
-    pub fn apply_mapping_operations(
+    pub fn apply_map_operations(
         &mut self,
         batches: &[MetalSparseMappingOpsBatch],
     ) {
