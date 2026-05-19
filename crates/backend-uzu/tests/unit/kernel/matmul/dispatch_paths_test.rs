@@ -76,11 +76,6 @@ fn matches_cpu_reference_f16_gemm_mxu() {
 }
 
 #[uzu_test]
-fn matches_cpu_reference_f32_gemm() {
-    check_all_shapes::<f32>(Variant::Gemm, 1.0, false, 0.05);
-}
-
-#[uzu_test]
 fn ab_scale_bf16_gemm() {
     check_all_shapes::<bf16>(Variant::Gemm, 0.5, false, 1.0);
 }

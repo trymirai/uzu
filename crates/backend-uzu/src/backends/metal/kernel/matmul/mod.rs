@@ -85,7 +85,7 @@ impl MatmulKernel for MatmulMetalKernel {
         context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MatmulError<Metal>> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+        if !matches!(data_type, DataType::F16 | DataType::BF16) {
             return Err(MatmulError::UnsupportedDataType(data_type));
         }
 

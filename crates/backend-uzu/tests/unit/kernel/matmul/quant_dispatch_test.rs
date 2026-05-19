@@ -351,7 +351,7 @@ fn parity_bf16_gs32_unaligned_n() {
     run_parity::<bf16>(64, 256, 96, 32, 4, QuantizationMethod::ScaleBias, 0.05, 0.5);
 }
 
-// --- f16/f32 — exercises (32,32,32) tile only ---
+// --- f16 — exercises (32,32,32) tile only ---
 
 #[uzu_test]
 fn parity_f16_gs64_4bit_mlx() {
@@ -363,12 +363,3 @@ fn parity_f16_gs128_8bit_zp() {
     run_parity::<half::f16>(32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint, 0.02, 0.5);
 }
 
-#[uzu_test]
-fn parity_f32_gs64_4bit_mlx() {
-    run_parity::<f32>(32, 256, 64, 64, 4, QuantizationMethod::ScaleBias, 0.01, 0.1);
-}
-
-#[uzu_test]
-fn parity_f32_gs128_8bit_zp() {
-    run_parity::<f32>(32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint, 0.01, 0.1);
-}

@@ -103,11 +103,6 @@ fn test<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[uzu_test]
-fn test_f32_m1() {
-    test::<f32>(1, 128, 64, 0.01);
-}
-
-#[uzu_test]
 fn test_f16_m1() {
     test::<f16>(1, 128, 64, 0.01);
 }
@@ -115,11 +110,6 @@ fn test_f16_m1() {
 #[uzu_test]
 fn test_bf16_m1() {
     test::<bf16>(1, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_batched() {
-    test::<f32>(4, 128, 64, 0.01);
 }
 
 #[uzu_test]
@@ -133,11 +123,6 @@ fn test_bf16_batched() {
 }
 
 #[uzu_test]
-fn test_f32_max_batch() {
-    test::<f32>(8, 128, 64, 0.01);
-}
-
-#[uzu_test]
 fn test_f16_max_batch() {
     test::<f16>(8, 128, 64, 0.01);
 }
@@ -145,11 +130,6 @@ fn test_f16_max_batch() {
 #[uzu_test]
 fn test_bf16_max_batch() {
     test::<bf16>(8, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_unaligned_k() {
-    test::<f32>(1, 33, 64, 0.01);
 }
 
 #[uzu_test]
@@ -163,11 +143,6 @@ fn test_bf16_unaligned_k() {
 }
 
 #[uzu_test]
-fn test_f32_unaligned_n() {
-    test::<f32>(1, 128, 11, 0.01);
-}
-
-#[uzu_test]
 fn test_f16_unaligned_n() {
     test::<f16>(1, 128, 11, 0.01);
 }
@@ -178,11 +153,6 @@ fn test_bf16_unaligned_n() {
 }
 
 #[uzu_test]
-fn test_f32_large() {
-    test::<f32>(1, 4096, 2048, 0.05);
-}
-
-#[uzu_test]
 fn test_f16_large() {
     test::<f16>(1, 4096, 2048, 0.5);
 }
@@ -190,11 +160,6 @@ fn test_f16_large() {
 #[uzu_test]
 fn test_bf16_large() {
     test::<bf16>(1, 4096, 2048, 1.0);
-}
-
-#[uzu_test]
-fn test_f32_small_n() {
-    test::<f32>(1, 128, 3, 0.01);
 }
 
 #[uzu_test]
