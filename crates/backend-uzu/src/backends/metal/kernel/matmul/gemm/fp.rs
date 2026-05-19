@@ -6,7 +6,7 @@ use crate::{
             Encoder,
             gpu_types::{
                 GemmParams,
-                gemm::{GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig},
+                gemm::{GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling},
             },
             kernel::{
                 TensorAddBiasKernel,
@@ -30,19 +30,19 @@ pub(crate) fn encode(
         return Err(MatmulError::UnsupportedDataType(data_type));
     }
 
-    let tile = if use_mxu {
-        select_mxu_tile(&arguments)
+    let tiling = if use_mxu {
+        select_mxu_tiling(&arguments)
     } else {
-        select_simdgroup_tile(data_type, &arguments)
+        select_simdgroup_tiling(&arguments)
     };
     let k_block = if use_mxu {
         MXU_THREADGROUP_BLOCK_K
     } else {
-        tile.threadgroup_k
+        tiling.block_k()
     };
 
-    let threadgroups_per_row = arguments.output_dim.div_ceil(tile.threadgroup_n);
-    let threadgroups_per_column = arguments.batch_dim.div_ceil(tile.threadgroup_m);
+    let threadgroups_per_row = arguments.output_dim.div_ceil(tiling.block_n());
+    let threadgroups_per_column = arguments.batch_dim.div_ceil(tiling.block_m());
 
     let (use_morton, group_count_x, group_count_y) = if use_mxu {
         let max_dim = threadgroups_per_row.max(threadgroups_per_column);
@@ -61,8 +61,8 @@ pub(crate) fn encode(
     };
 
     let alignment = GemmAlignment::from_axes(GemmAlignmentAxes {
-        m: arguments.batch_dim % tile.threadgroup_m == 0,
-        n: arguments.output_dim % tile.threadgroup_n == 0,
+        m: arguments.batch_dim % tiling.block_m() == 0,
+        n: arguments.output_dim % tiling.block_n() == 0,
         k: arguments.input_dim % k_block == 0,
     });
     let output_transform = output_transform_from(&arguments);
@@ -87,7 +87,7 @@ pub(crate) fn encode(
     };
 
     let dispatch = GemmDispatch {
-        tiling_config: tile,
+        tiling,
         input_prologue: GemmInputPrologueKind::FullPrecision,
         use_mxu,
         output_transform,
@@ -121,46 +121,23 @@ pub(crate) fn encode(
     Ok(())
 }
 
-fn select_simdgroup_tile(
-    data_type: DataType,
-    arguments: &MatmulArguments<Metal>,
-) -> GemmTilingConfig {
-    let (threadgroup_m, threadgroup_n, threadgroup_k) = match data_type {
-        DataType::F32 => (32u32, 64u32, 16u32),
-        _ => {
-            if 2 * arguments.batch_dim.max(arguments.output_dim) > arguments.input_dim {
-                (64, 64, 16)
-            } else {
-                (64, 32, 32)
-            }
-        },
-    };
-    GemmTilingConfig {
-        threadgroup_m,
-        threadgroup_n,
-        threadgroup_k,
-        simdgroups_m: 2,
-        simdgroups_n: 2,
+fn select_simdgroup_tiling(arguments: &MatmulArguments<Metal>) -> GemmTiling {
+    if 2 * arguments.batch_dim.max(arguments.output_dim) > arguments.input_dim {
+        GemmTiling::T64x64x16_2x2
+    } else {
+        GemmTiling::T64x32x32_2x2
     }
 }
 
-fn select_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
-    let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) =
-        if arguments.batch_dim >= 256 && arguments.output_dim >= 128 {
-            (128u32, 128u32, 4u32, 4u32)
-        } else if arguments.output_dim < 64 {
-            (64u32, 32u32, 4u32, 1u32)
-        } else if arguments.batch_dim < 64 {
-            (32u32, 64u32, 2u32, 2u32)
-        } else {
-            (64u32, 64u32, 2u32, 2u32)
-        };
-    GemmTilingConfig {
-        threadgroup_m,
-        threadgroup_n,
-        threadgroup_k: 32,
-        simdgroups_m,
-        simdgroups_n,
+fn select_mxu_tiling(arguments: &MatmulArguments<Metal>) -> GemmTiling {
+    if arguments.batch_dim >= 256 && arguments.output_dim >= 128 {
+        GemmTiling::T128x128x32_4x4
+    } else if arguments.output_dim < 64 {
+        GemmTiling::T64x32x32_4x1
+    } else if arguments.batch_dim < 64 {
+        GemmTiling::T32x64x32_2x2
+    } else {
+        GemmTiling::T64x64x32_2x2
     }
 }
 

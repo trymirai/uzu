@@ -43,11 +43,7 @@ impl GemmKernel {
                 let kernel = GemmMetalKernel::new(
                     context,
                     self.data_type,
-                    specialization.tiling_config.threadgroup_m,
-                    specialization.tiling_config.threadgroup_n,
-                    specialization.tiling_config.threadgroup_k,
-                    specialization.tiling_config.simdgroups_m,
-                    specialization.tiling_config.simdgroups_n,
+                    specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
                     specialization.weight_prologue,
@@ -86,10 +82,7 @@ impl GemmKernel {
                 biases,
                 ..
             } => {
-                debug_assert_eq!(
-                    specialization.weight_prologue,
-                    GemmWeightPrologueKind::ScaleBiasDequant
-                );
+                debug_assert_eq!(specialization.weight_prologue, GemmWeightPrologueKind::ScaleBiasDequant);
                 (*weights, Some(*scales), Some(*biases), None)
             },
             GemmWeights::ScaleZeroPoint {
@@ -98,10 +91,7 @@ impl GemmKernel {
                 zero_points,
                 ..
             } => {
-                debug_assert_eq!(
-                    specialization.weight_prologue,
-                    GemmWeightPrologueKind::ScaleZeroPointDequant
-                );
+                debug_assert_eq!(specialization.weight_prologue, GemmWeightPrologueKind::ScaleZeroPointDequant);
                 (*weights, Some(*scales), None, Some(*zero_points))
             },
         };

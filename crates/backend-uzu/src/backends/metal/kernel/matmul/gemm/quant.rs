@@ -6,7 +6,7 @@ use crate::{
             Encoder,
             gpu_types::{
                 GemmParams, QuantizationMethod,
-                gemm::{GemmAlignment, GemmOutputTransformKind, GemmTilingConfig},
+                gemm::{GemmAlignment, GemmOutputTransformKind, GemmTiling},
             },
             kernel::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
         },
@@ -21,22 +21,22 @@ pub(crate) fn encode(
     arguments: QuantizedMatmulArguments<Metal>,
     encoder: &mut Encoder<Metal>,
 ) -> Result<(), QuantizedMatmulError<Metal>> {
-    let tile = select_tile(configuration, arguments.batch_dim as u32);
+    let tiling = select_tiling(configuration, arguments.batch_dim as u32);
     let group_size = configuration.group_size as u32;
     let batch_dim = arguments.batch_dim as u32;
     let input_dim = configuration.input_dim as u32;
     let output_dim = configuration.output_dim as u32;
-    let threadgroups_per_row = output_dim.div_ceil(tile.threadgroup_n);
-    let threadgroups_per_column = batch_dim.div_ceil(tile.threadgroup_m);
+    let threadgroups_per_row = output_dim.div_ceil(tiling.block_n());
+    let threadgroups_per_column = batch_dim.div_ceil(tiling.block_m());
     let dispatch = GemmDispatch {
-        tiling_config: tile,
+        tiling,
         input_prologue: GemmInputPrologueKind::FullPrecision,
         use_mxu: false,
         output_transform: GemmOutputTransformKind::Store,
         alignment: GemmAlignment::from_axes(GemmAlignmentAxes {
-            m: batch_dim % tile.threadgroup_m == 0,
-            n: output_dim % tile.threadgroup_n == 0,
-            k: input_dim % tile.threadgroup_k == 0,
+            m: batch_dim % tiling.block_m() == 0,
+            n: output_dim % tiling.block_n() == 0,
+            k: input_dim % tiling.block_k() == 0,
         }),
         transpose_b: true,
         a: arguments.a,
@@ -68,7 +68,7 @@ pub(crate) fn encode(
             leading_dimension_d: output_dim,
             threadgroups_per_row,
             threadgroups_per_column,
-            aligned_inner_iterations: input_dim / tile.threadgroup_k,
+            aligned_inner_iterations: input_dim / tiling.block_k(),
             use_morton: false,
             ab_scale: 1.0,
         },
@@ -78,36 +78,16 @@ pub(crate) fn encode(
     gemm.encode(context, dispatch, encoder).map_err(QuantizedMatmulError::BackendError)
 }
 
-// Tile picks supported by the unified `Gemm` kernel template:
-// - bf16 with `output_dim % 64 == 0`: (BM=64, BN=64, BK=32)
-// - else: (BM=32, BN=32, BK=min(group_size, 32))
-//
-// The standalone QMM's wider (BM=64, BK=32, BN=64) and big (BM=BK=BN=64) tiles
-// are not enumerated here; supporting them would require extending the kernel
-// template VARIANTS (which expands the FP variant grid too).
-fn select_tile(
+fn select_tiling(
     configuration: &QuantizedMatmulConfiguration,
     _batch_dim: u32,
-) -> GemmTilingConfig {
-    let group_size = configuration.group_size as u32;
+) -> GemmTiling {
     let aligned_n_64 = configuration.output_dim % 64 == 0;
-    let can_use_64_tile = aligned_n_64 && configuration.data_type == DataType::BF16;
+    let can_use_64_tiling = aligned_n_64 && configuration.data_type == DataType::BF16;
 
-    if can_use_64_tile {
-        GemmTilingConfig {
-            threadgroup_m: 64,
-            threadgroup_n: 64,
-            threadgroup_k: 32,
-            simdgroups_m: 2,
-            simdgroups_n: 2,
-        }
+    if can_use_64_tiling {
+        GemmTiling::T64x64x32_2x2
     } else {
-        GemmTilingConfig {
-            threadgroup_m: 32,
-            threadgroup_n: 32,
-            threadgroup_k: group_size.min(32),
-            simdgroups_m: 2,
-            simdgroups_n: 2,
-        }
+        GemmTiling::T32x32x32_2x2
     }
 }

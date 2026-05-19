@@ -3,84 +3,65 @@
 #include "../../common/thread_context.h"
 #include "../generated/gemm.h"
 
+#include "common/gemm_tiling.h"
 #include "common/mxu_mma_core.h"
 #include "common/simdgroup_mma_core.h"
 
 using namespace metal;
 using namespace uzu::gemm;
 
-// Unqualified aliases for the `GemmWeightPrologueKind` enum so VARIANTS values
-// stay valid C identifiers (no `::` in the mangled kernel name) and so the
-// `to_string()` of `GemmWeightPrologueKind` (host side) matches the literal
-// VARIANT text exactly.
-namespace {
-constant constexpr GemmWeightPrologueKind FullPrecision =
-    GemmWeightPrologueKind::FullPrecision;
-constant constexpr GemmWeightPrologueKind ScaleBiasDequant =
-    GemmWeightPrologueKind::ScaleBiasDequant;
-constant constexpr GemmWeightPrologueKind ScaleZeroPointDequant =
-    GemmWeightPrologueKind::ScaleZeroPointDequant;
-} // namespace
-
-// Shared array size for the SIMDGROUP path: `BLOCK_M * (BLOCK_K + padding_T)`
-// (and similar for B). Padding matches `SimdgroupMmaCore::PADDING_*` =
-// 16/sizeof(T). The MXU path doesn't use these arrays, so we collapse them to
-// one element to avoid wasting threadgroup memory on big MXU tiles.
 #define GEMM_TGA_ELEMENTS                                                      \
-  (USE_MXU                                                                     \
-       ? 1                                                                     \
-       : (THREADGROUP_BLOCK_M * (THREADGROUP_BLOCK_K + 16 / int(sizeof(T)))))
+  (USE_MXU ? 1                                                                 \
+           : (gemm_tiling_bm(TILE) *                                             \
+              (gemm_tiling_bk(TILE) + 16 / int(sizeof(T)))))
 #define GEMM_TGB_ELEMENTS                                                      \
-  (USE_MXU                                                                     \
-       ? 1                                                                     \
-       : (THREADGROUP_BLOCK_N * (THREADGROUP_BLOCK_K + 16 / int(sizeof(T)))))
+  (USE_MXU ? 1                                                                 \
+           : (gemm_tiling_bn(TILE) *                                             \
+              (gemm_tiling_bk(TILE) + 16 / int(sizeof(T)))))
 
 template <
     typename T,
-    uint THREADGROUP_BLOCK_M,
-    uint THREADGROUP_BLOCK_N,
-    uint THREADGROUP_BLOCK_K,
-    uint SIMDGROUPS_M,
-    uint SIMDGROUPS_N,
+    GemmTiling TILE,
     bool TRANSPOSE_B,
     bool USE_MXU,
     GemmWeightPrologueKind WEIGHT_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
-VARIANTS(T, float, half, bfloat)
-VARIANTS(THREADGROUP_BLOCK_M, 32, 64, 128)
-VARIANTS(THREADGROUP_BLOCK_N, 32, 64, 128)
-VARIANTS(THREADGROUP_BLOCK_K, 16, 32)
-VARIANTS(SIMDGROUPS_M, 1, 2, 4)
-VARIANTS(SIMDGROUPS_N, 1, 2, 4)
+VARIANTS(T, half, bfloat)
+VARIANTS(
+    TILE,
+    GemmTiling::T64x32x32_2x2,
+    GemmTiling::T64x64x16_2x2,
+    GemmTiling::T64x64x32_2x2,
+    GemmTiling::T32x32x32_2x2,
+    GemmTiling::T32x64x32_2x2,
+    GemmTiling::T64x32x32_4x1,
+    GemmTiling::T128x128x32_4x4)
 VARIANTS(TRANSPOSE_B, false, true)
 VARIANTS(USE_MXU, false, true)
 VARIANTS(
     WEIGHT_PROLOGUE,
-    FullPrecision,
-    ScaleBiasDequant,
-    ScaleZeroPointDequant)
+    GemmWeightPrologueKind::FullPrecision,
+    GemmWeightPrologueKind::ScaleBiasDequant,
+    GemmWeightPrologueKind::ScaleZeroPointDequant)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
-CONSTRAINT(!USE_MXU || THREADGROUP_BLOCK_M % SIMDGROUPS_M == 0)
-CONSTRAINT(!USE_MXU || THREADGROUP_BLOCK_N % SIMDGROUPS_N == 0)
-CONSTRAINT(!USE_MXU || (THREADGROUP_BLOCK_M / SIMDGROUPS_M) % 16 == 0)
-CONSTRAINT(!USE_MXU || (THREADGROUP_BLOCK_N / SIMDGROUPS_N) % 16 == 0)
-CONSTRAINT(USE_MXU || max(THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N) <= 32 * SIMDGROUPS_M * SIMDGROUPS_N)
-// Constraint RHS strings match the variant value literals (the build script
-// evaluates these in Rhai, where `WEIGHT_PROLOGUE` is bound to the raw text).
-//
-// FP variants have BITS=0 and GROUP_SIZE=0; quant variants must set both.
 CONSTRAINT(
-    WEIGHT_PROLOGUE != "FullPrecision" || (BITS == 0 && GROUP_SIZE == 0))
+    !USE_MXU || TILE == GemmTiling::T64x64x32_2x2 ||
+        TILE == GemmTiling::T32x64x32_2x2 ||
+        TILE == GemmTiling::T64x32x32_4x1 ||
+        TILE == GemmTiling::T128x128x32_4x4)
 CONSTRAINT(
-    WEIGHT_PROLOGUE == "FullPrecision" || (BITS != 0 && GROUP_SIZE != 0))
-// Quant only flows through the SIMDGROUP+transposed path.
+    WEIGHT_PROLOGUE != GemmWeightPrologueKind::FullPrecision ||
+        (BITS == 0 && GROUP_SIZE == 0))
 CONSTRAINT(
-    WEIGHT_PROLOGUE == "FullPrecision" || (!USE_MXU && TRANSPOSE_B))
-// Loader static_asserts require BCOLS=BK <= group_size.
+    WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
+        (BITS != 0 && GROUP_SIZE != 0))
 CONSTRAINT(
-    WEIGHT_PROLOGUE == "FullPrecision" || THREADGROUP_BLOCK_K <= GROUP_SIZE)
+    WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
+        (!USE_MXU && TRANSPOSE_B &&
+         (TILE == GemmTiling::T32x32x32_2x2 ||
+          TILE == GemmTiling::T64x64x32_2x2)))
 KERNEL(Gemm)(
     const device T* a,
     const device uint8_t* b_packed,
@@ -102,8 +83,8 @@ KERNEL(Gemm)(
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
-    const uint thread_y THREADS(SIMDGROUPS_N),
-    const uint thread_z THREADS(SIMDGROUPS_M),
+    const uint thread_y THREADS(gemm_tiling_smg_n(TILE)),
+    const uint thread_z THREADS(gemm_tiling_smg_m(TILE)),
     const ThreadContext thread_context
 ) {
   (void)group_x;
@@ -121,33 +102,16 @@ KERNEL(Gemm)(
     (void)biases;
     (void)zero_points;
     const device T* b = reinterpret_cast<const device T*>(b_packed);
-    MxuMmaCore<
-        T,
-        THREADGROUP_BLOCK_M,
-        THREADGROUP_BLOCK_N,
-        SIMDGROUPS_M,
-        SIMDGROUPS_N,
-        TRANSPOSE_B>::
-        run(a, b, d, params, alignment, output_transform, thread_context);
+    MxuMmaCore<T, TILE, TRANSPOSE_B>::run(
+        a, b, d, params, alignment, output_transform, thread_context
+    );
   } else {
-    if constexpr (WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision) {
-      (void)scales;
-      (void)biases;
-      (void)zero_points;
-    } else if constexpr (
-        WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant
-    ) {
-      (void)zero_points;
-    } else {
-      (void)biases;
-    }
+    (void)scales;
+    (void)biases;
+    (void)zero_points;
     SimdgroupMmaCore<
         T,
-        THREADGROUP_BLOCK_M,
-        THREADGROUP_BLOCK_N,
-        THREADGROUP_BLOCK_K,
-        SIMDGROUPS_M,
-        SIMDGROUPS_N,
+        TILE,
         TRANSPOSE_B,
         WEIGHT_PROLOGUE,
         BITS,

@@ -4,9 +4,7 @@ use crate::{
         Allocation, Backend,
         gpu_types::{
             GemmParams, QuantizationMode,
-            gemm::{
-                GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig, GemmWeightPrologueKind,
-            },
+            gemm::{GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling, GemmWeightPrologueKind},
         },
     },
 };
@@ -97,7 +95,7 @@ impl<B: Backend> GemmWeights<'_, B> {
 }
 
 pub struct GemmDispatch<'a, B: Backend> {
-    pub tiling_config: GemmTilingConfig,
+    pub tiling: GemmTiling,
     pub input_prologue: GemmInputPrologueKind,
     pub use_mxu: bool,
     pub output_transform: GemmOutputTransformKind,
@@ -116,7 +114,7 @@ pub struct GemmDispatch<'a, B: Backend> {
 impl<B: Backend> GemmDispatch<'_, B> {
     pub(crate) fn specialization(&self) -> GemmSpecialization {
         GemmSpecialization {
-            tiling_config: self.tiling_config,
+            tiling: self.tiling,
             input_prologue: self.input_prologue,
             use_mxu: self.use_mxu,
             output_transform: self.output_transform,
@@ -131,7 +129,7 @@ impl<B: Backend> GemmDispatch<'_, B> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemmSpecialization {
-    pub(crate) tiling_config: GemmTilingConfig,
+    pub(crate) tiling: GemmTiling,
     pub(crate) input_prologue: GemmInputPrologueKind,
     pub(crate) use_mxu: bool,
     pub(crate) output_transform: GemmOutputTransformKind,
@@ -144,9 +142,9 @@ pub(crate) struct GemmSpecialization {
 
 impl GemmSpecialization {
     pub(crate) fn validate(&self) -> Result<(), GemmSpecializationError> {
-        if self.group_size != 0 && self.tiling_config.threadgroup_k > self.group_size {
+        if self.group_size != 0 && self.tiling.block_k() > self.group_size {
             return Err(GemmSpecializationError::ThreadgroupKExceedsGroupSize {
-                threadgroup_k: self.tiling_config.threadgroup_k,
+                threadgroup_k: self.tiling.block_k(),
                 group_size: self.group_size,
             });
         }
@@ -163,7 +161,7 @@ impl GemmSpecialization {
 
     pub(crate) fn precompile_configs(data_type: DataType) -> Vec<Self> {
         let mut out = Vec::new();
-        for &(threadgroup_m, threadgroup_n, threadgroup_k) in simdgroup_tile_set(data_type) {
+        for &tiling in simdgroup_tiling_set(data_type) {
             for align_mn in [true, false] {
                 let alignment = GemmAlignment::from_axes(GemmAlignmentAxes {
                     m: align_mn,
@@ -171,13 +169,7 @@ impl GemmSpecialization {
                     k: true,
                 });
                 out.push(Self {
-                    tiling_config: GemmTilingConfig {
-                        threadgroup_m,
-                        threadgroup_n,
-                        threadgroup_k,
-                        simdgroups_m: 2,
-                        simdgroups_n: 2,
-                    },
+                    tiling,
                     input_prologue: GemmInputPrologueKind::FullPrecision,
                     use_mxu: false,
                     output_transform: GemmOutputTransformKind::Store,
@@ -190,7 +182,7 @@ impl GemmSpecialization {
             }
         }
 
-        for &(threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) in mxu_tile_set(data_type) {
+        for &tiling in mxu_tiling_set(data_type) {
             for align_m in [true, false] {
                 for align_n in [true, false] {
                     for align_k in [true, false] {
@@ -206,13 +198,7 @@ impl GemmSpecialization {
                             GemmOutputTransformKind::ScaleAccumulate,
                         ] {
                             out.push(Self {
-                                tiling_config: GemmTilingConfig {
-                                    threadgroup_m,
-                                    threadgroup_n,
-                                    threadgroup_k: 32,
-                                    simdgroups_m,
-                                    simdgroups_n,
-                                },
+                                tiling,
                                 input_prologue: GemmInputPrologueKind::FullPrecision,
                                 use_mxu: true,
                                 output_transform,
@@ -227,18 +213,15 @@ impl GemmSpecialization {
                 }
             }
         }
-        for &(threadgroup_m, threadgroup_n, threadgroup_k, simdgroups_m, simdgroups_n) in
-            quant_tile_set(data_type)
-        {
+        for &tiling in quant_tiling_set(data_type) {
             for &group_size in &[32u32, 64, 128] {
-                if threadgroup_k > group_size {
+                if tiling.block_k() > group_size {
                     continue;
                 }
                 for &bits in &[4u32, 8] {
-                    for weight_prologue in [
-                        GemmWeightPrologueKind::ScaleBiasDequant,
-                        GemmWeightPrologueKind::ScaleZeroPointDequant,
-                    ] {
+                    for weight_prologue in
+                        [GemmWeightPrologueKind::ScaleBiasDequant, GemmWeightPrologueKind::ScaleZeroPointDequant]
+                    {
                         for align_n in [true, false] {
                             let alignment = GemmAlignment::from_axes(GemmAlignmentAxes {
                                 m: true,
@@ -246,13 +229,7 @@ impl GemmSpecialization {
                                 k: true,
                             });
                             out.push(Self {
-                                tiling_config: GemmTilingConfig {
-                                    threadgroup_m,
-                                    threadgroup_n,
-                                    threadgroup_k,
-                                    simdgroups_m,
-                                    simdgroups_n,
-                                },
+                                tiling,
                                 input_prologue: GemmInputPrologueKind::FullPrecision,
                                 use_mxu: false,
                                 output_transform: GemmOutputTransformKind::Store,
@@ -271,30 +248,25 @@ impl GemmSpecialization {
     }
 }
 
-fn simdgroup_tile_set(data_type: DataType) -> &'static [(u32, u32, u32)] {
+fn simdgroup_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
-        DataType::BF16 => &[(64, 32, 32), (64, 64, 16)],
-        DataType::F16 => &[(64, 64, 16), (64, 32, 32)],
-        DataType::F32 => &[(32, 64, 16)],
+        DataType::BF16 => &[GemmTiling::T64x32x32_2x2, GemmTiling::T64x64x16_2x2],
+        DataType::F16 => &[GemmTiling::T64x64x16_2x2, GemmTiling::T64x32x32_2x2],
         _ => &[],
     }
 }
 
-fn mxu_tile_set(data_type: DataType) -> &'static [(u32, u32, u32, u32)] {
+fn mxu_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     if !matches!(data_type, DataType::F16 | DataType::BF16) {
         return &[];
     }
-    &[(64, 64, 2, 2), (32, 64, 2, 2), (64, 32, 4, 1), (128, 128, 4, 4)]
+    &[GemmTiling::T64x64x32_2x2, GemmTiling::T32x64x32_2x2, GemmTiling::T64x32x32_4x1, GemmTiling::T128x128x32_4x4]
 }
 
-// Quant tiles supported by the unified `Gemm` kernel template. Constrained to
-// (BM, BN, BK) shapes that already appear in the FP VARIANTS list — adding
-// BM=8 or BK=64 would expand the FP variant grid too.
-fn quant_tile_set(data_type: DataType) -> &'static [(u32, u32, u32, u32, u32)] {
+fn quant_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
-        // (threadgroup_m, threadgroup_n, threadgroup_k, simdgroups_m, simdgroups_n)
-        DataType::BF16 => &[(32, 32, 32, 2, 2), (64, 64, 32, 2, 2)],
-        DataType::F16 | DataType::F32 => &[(32, 32, 32, 2, 2)],
+        DataType::BF16 => &[GemmTiling::T32x32x32_2x2, GemmTiling::T64x64x32_2x2],
+        DataType::F16 => &[GemmTiling::T32x32x32_2x2],
         _ => &[],
     }
 }
@@ -307,7 +279,5 @@ pub enum GemmSpecializationError {
     },
     QuantizedRequiresSimdgroup,
     QuantizedRequiresTransposedB,
-    /// A quantized specialization was routed through the FP `GemmKernel`; should
-    /// go through `GemmQuantKernel` instead.
     QuantizedRoutedThroughFpKernel,
 }
