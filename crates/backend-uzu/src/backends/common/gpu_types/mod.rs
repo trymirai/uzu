@@ -6,6 +6,7 @@
 pub mod activation_type;
 pub mod argmax;
 pub mod attention;
+pub mod gemm;
 pub mod kv_cache_update;
 pub mod matmul;
 pub mod quantization;

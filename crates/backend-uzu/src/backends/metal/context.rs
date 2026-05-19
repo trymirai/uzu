@@ -72,8 +72,8 @@ impl MetalContext {
         let device_capabilities = MetalDeviceCapabilities::from_device(&device);
 
         let sparse_pool = MetalSparseHeapPool::new(sparse_heap_page_size, sparse_heap_capacity_bytes);
-        let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
 
+        let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
         #[cfg(test)]
         let timeline_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
 

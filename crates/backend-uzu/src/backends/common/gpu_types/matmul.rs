@@ -11,7 +11,7 @@ pub struct GemmParams {
     pub leading_dimension_d: u32,
     pub threadgroups_per_column: u32,
     pub threadgroups_per_row: u32,
-    pub swizzle_log: u32,
     pub aligned_inner_iterations: u32,
     pub use_morton: bool,
+    pub ab_scale: f32,
 }

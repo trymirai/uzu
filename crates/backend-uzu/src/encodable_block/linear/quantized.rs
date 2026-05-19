@@ -40,9 +40,9 @@ pub enum QuantizedLinearError<B: Backend> {
         got: DataType,
     },
     #[error(
-        "Unexpected MLX shapes. weights={weights:?}, scales={scales:?}, deq_biases={deq_biases:?}; expected [N,K/{packing_divisor}],[N,K_g],[N,K_g]"
+        "Unexpected scale-bias shapes. weights={weights:?}, scales={scales:?}, deq_biases={deq_biases:?}; expected [N,K/{packing_divisor}],[N,K_g],[N,K_g]"
     )]
-    InvalidMlxShapes {
+    InvalidScaleBiasShapes {
         weights: Box<[usize]>,
         scales: Box<[usize]>,
         deq_biases: Box<[usize]>,
@@ -54,9 +54,9 @@ pub enum QuantizedLinearError<B: Backend> {
         got: DataType,
     },
     #[error(
-        "Unexpected AWQ shapes. weights={weights:?}, scales={scales:?}, zero_points={zero_points:?}; expected [N,K/{packing_divisor}],[N,K_g],[N,(K_g+{packing_minus_one})/{packing_divisor}]"
+        "Unexpected scale-zero-point shapes. weights={weights:?}, scales={scales:?}, zero_points={zero_points:?}; expected [N,K/{packing_divisor}],[N,K_g],[N,(K_g+{packing_minus_one})/{packing_divisor}]"
     )]
-    InvalidAwqShapes {
+    InvalidScaleZeroPointShapes {
         weights: Box<[usize]>,
         scales: Box<[usize]>,
         zero_points: Box<[usize]>,
@@ -134,7 +134,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     && scales_shape == [output_dim, k_g]
                     && deq_biases_shape == [output_dim, k_g])
                 {
-                    return Err(QuantizedLinearError::InvalidMlxShapes {
+                    return Err(QuantizedLinearError::InvalidScaleBiasShapes {
                         weights: weights_shape.into_boxed_slice(),
                         scales: scales_shape.into_boxed_slice(),
                         deq_biases: deq_biases_shape.into_boxed_slice(),
@@ -163,7 +163,7 @@ impl<B: Backend> QuantizedLinear<B> {
                     && scales_shape == [output_dim, k_g]
                     && zero_points_shape == [output_dim, expected_zero_points_entries])
                 {
-                    return Err(QuantizedLinearError::InvalidAwqShapes {
+                    return Err(QuantizedLinearError::InvalidScaleZeroPointShapes {
                         weights: weights_shape.into_boxed_slice(),
                         scales: scales_shape.into_boxed_slice(),
                         zero_points: zero_points_shape.into_boxed_slice(),

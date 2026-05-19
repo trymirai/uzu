@@ -1,13 +1,13 @@
 use proc_macros::uzu_config;
 
-use crate::{ConfigDataType, backends::common::gpu_types::QuantizationMode};
+use crate::{DataType, backends::common::gpu_types::QuantizationMode};
 
 #[uzu_config]
 pub struct QuantizationConfig {
     pub group_size: usize,
     pub weight_quantization_mode: QuantizationMode,
     pub activation_quantization_mode: Option<QuantizationMode>,
-    pub activation_precision: ConfigDataType,
+    pub activation_precision: DataType,
 }
 
 #[uzu_config]
@@ -15,12 +15,12 @@ pub struct QuantizationConfig {
 pub enum LinearConfig {
     #[serde(rename = "FullPrecisionLinearConfig")]
     FullPrecision {
-        precision: ConfigDataType,
+        precision: DataType,
     },
     #[serde(rename = "GroupQuantizedLinearConfig")]
     Quantized(QuantizationConfig),
     #[serde(rename = "MLXQuantizedLinearConfig")]
-    MLXQuantized(QuantizationConfig),
+    ScaleBiasQuantized(QuantizationConfig),
     #[serde(rename = "QLoRALinearConfig")]
     QLoRA {
         #[serde(flatten)]
@@ -36,13 +36,13 @@ pub enum LinearConfig {
 }
 
 impl LinearConfig {
-    pub fn activation_precision(&self) -> ConfigDataType {
+    pub fn activation_precision(&self) -> DataType {
         match self {
             LinearConfig::FullPrecision {
                 precision,
             } => *precision,
             LinearConfig::Quantized(quantization) => quantization.activation_precision,
-            LinearConfig::MLXQuantized(quantization) => quantization.activation_precision,
+            LinearConfig::ScaleBiasQuantized(quantization) => quantization.activation_precision,
             LinearConfig::QLoRA {
                 quantization,
                 ..

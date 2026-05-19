@@ -4,7 +4,7 @@ use std::path::Path;
 use proc_macros::uzu_config;
 
 use super::{EmbeddingConfig, EmbeddingConfigCommon, NormalizationConfig, TransformerConfig};
-use crate::{ConfigDataType, backends::common::ActivationConfig};
+use crate::{DataType, backends::common::ActivationConfig};
 
 #[uzu_config]
 pub struct TtsMessageProcessorConfig {
@@ -17,7 +17,7 @@ pub struct TtsConfig {
     pub text_decoder_config: TtsTextDecoderConfig,
     pub audio_decoder_config: TtsAudioDecoderConfig,
     pub vocoder_config: NoopVocoderConfig,
-    pub activation_precision: ConfigDataType,
+    pub activation_precision: DataType,
 }
 
 #[uzu_config]
@@ -50,21 +50,21 @@ pub struct FishAudioTextDecoderConfig {
     pub num_codebooks: usize,
     pub max_seq_len: usize,
     pub scale_codebook_embeddings: bool,
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub short_logits_size: usize,
     pub repeat_window_size: usize,
 }
 
 #[uzu_config]
 pub struct FullPrecisionLinearConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
 }
 
 #[uzu_config]
 pub struct TiedEmbeddingConfig {
     #[serde(flatten)]
     pub common: EmbeddingConfigCommon,
-    pub precision: ConfigDataType,
+    pub precision: DataType,
 }
 
 impl TiedEmbeddingConfig {
@@ -86,7 +86,7 @@ pub enum TtsAudioDecoderConfig {
 
 #[uzu_config]
 pub struct DescriptAudioCodecConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub quantizer_config: DescriptAudioQuantizerConfig,
     pub decoder_config: DescriptAudioDacDecoderConfig,
     pub samplerate: u32,
@@ -104,7 +104,7 @@ pub struct DescriptAudioCodecConfig {
 
 #[uzu_config]
 pub struct DescriptAudioDacDecoderConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub conv_config: DescriptAudioCausalConv1dConfig,
     pub snake_config: DescriptAudioSnake1dConfig,
     pub decoder_block_config: DescriptAudioDacDecoderBlockConfig,
@@ -113,7 +113,7 @@ pub struct DescriptAudioDacDecoderConfig {
 
 #[uzu_config]
 pub struct DescriptAudioDacDecoderBlockConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub snake_config: DescriptAudioSnake1dConfig,
     pub trans_conv_config: DescriptAudioCausalTransposeConv1dConfig,
     pub res_unit_config: DescriptAudioResidualUnitConfig,
@@ -122,7 +122,7 @@ pub struct DescriptAudioDacDecoderBlockConfig {
 
 #[uzu_config]
 pub struct DescriptAudioResidualUnitConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub snake_config: DescriptAudioSnake1dConfig,
     pub conv_config: DescriptAudioCausalConv1dConfig,
     pub causal: bool,
@@ -130,24 +130,24 @@ pub struct DescriptAudioResidualUnitConfig {
 
 #[uzu_config]
 pub struct DescriptAudioCausalConv1dConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub has_biases: bool,
 }
 
 #[uzu_config]
 pub struct DescriptAudioCausalTransposeConv1dConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub has_biases: bool,
 }
 
 #[uzu_config]
 pub struct DescriptAudioSnake1dConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
 }
 
 #[uzu_config]
 pub struct DescriptAudioQuantizerConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub semantic_quantizer_config: DescriptAudioResidualVectorQuantizeConfig,
     pub quantizer_config: DescriptAudioResidualVectorQuantizeConfig,
     pub post_module_config: TransformerConfig,
@@ -156,13 +156,13 @@ pub struct DescriptAudioQuantizerConfig {
 
 #[uzu_config]
 pub struct DescriptAudioResidualVectorQuantizeConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub vq_config: DescriptAudioVectorQuantizeConfig,
 }
 
 #[uzu_config]
 pub struct DescriptAudioVectorQuantizeConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub codebook_config: TiedEmbeddingConfig,
     pub out_proj_config: FullPrecisionLinearConfig,
 }
@@ -174,14 +174,14 @@ pub struct DescriptAudioUpsamplerConfig {
 
 #[uzu_config]
 pub struct DescriptAudioUpsamplingBlockConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub trans_conv_config: DescriptAudioCausalTransposeConv1dConfig,
     pub convnext_config: DescriptAudioConvNeXtConfig,
 }
 
 #[uzu_config]
 pub struct DescriptAudioConvNeXtConfig {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub activation: ActivationConfig,
     pub dwconv_config: DescriptAudioCausalConv1dConfig,
     pub norm_config: NormalizationConfig,

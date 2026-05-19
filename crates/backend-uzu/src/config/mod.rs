@@ -1,7 +1,6 @@
 mod attention;
 mod classifier;
 mod classifier_model;
-mod common;
 mod decoder;
 mod delta_net;
 mod embedding;
@@ -25,7 +24,6 @@ mod tts_model;
 pub use attention::*;
 pub use classifier::*;
 pub use classifier_model::*;
-pub use common::*;
 pub use decoder::*;
 pub use delta_net::*;
 pub use embedding::*;

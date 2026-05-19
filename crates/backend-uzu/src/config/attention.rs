@@ -1,6 +1,7 @@
 use proc_macros::uzu_config;
 
-use super::{ConfigDataType, LinearConfig, NormalizationConfig, UpcastMode};
+use super::{LinearConfig, NormalizationConfig, UpcastMode};
+use crate::DataType;
 
 pub const VALUE_NORM_EPSILON: f32 = 1e-6;
 
@@ -34,7 +35,7 @@ impl AttentionConfig {
         }
         Some(NormalizationConfig {
             scale_precision: self.qkv_projection_config.activation_precision(),
-            accumulation_precision: ConfigDataType::Float32,
+            accumulation_precision: DataType::F32,
             epsilon: VALUE_NORM_EPSILON,
             scale_offset: None,
             upcast_mode: UpcastMode::FullLayer,

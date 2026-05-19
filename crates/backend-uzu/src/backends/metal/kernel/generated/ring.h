@@ -1,4 +1,4 @@
-// Auto-generated from gpu_types/ring.rs - do not edit manually
+// Auto-generated from gpu_types/ring - do not edit manually
 #pragma once
 
 #include <metal_stdlib>

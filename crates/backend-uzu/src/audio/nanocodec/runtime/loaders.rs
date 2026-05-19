@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn resolve_descript_audio_codec_vocoder_data_type(
-    top_level_precision: ConfigDataType,
+    top_level_precision: DataType,
     config: &DescriptAudioCodecConfig,
 ) -> AudioResult<DataType> {
     let resolved_precision = top_level_precision;
