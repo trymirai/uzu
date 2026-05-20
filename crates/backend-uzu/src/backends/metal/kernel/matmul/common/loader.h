@@ -80,9 +80,12 @@ struct ThreadgroupLoader {
   METAL_FUNC void load_unsafe() const {
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < THREADGROUP_TILE_ROWS; i += THREAD_ROWS) {
-      *((threadgroup ReadVector*)(&destination
-                                      [i * DESTINATION_LEADING_DIMENSION])) =
-          *((const device ReadVector*)(&source[i * source_leading_dimension]));
+      *reinterpret_cast<threadgroup ReadVector*>(
+          &destination[i * DESTINATION_LEADING_DIMENSION]
+      ) =
+          *reinterpret_cast<const device ReadVector*>(
+              &source[i * source_leading_dimension]
+          );
     }
   }
 

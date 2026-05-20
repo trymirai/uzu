@@ -16,7 +16,7 @@ inline U load_vector(const device T* x, thread U* x_thread) {
 
   using U4 = vec<U, 4>;
   U sum = 0;
-  thread U4* x_vec4 = (thread U4*)x_thread;
+  thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
   for (int i = 0; i < VALUES_PER_THREAD / 4; i++) {
     U4 v = U4(x[4 * i], x[4 * i + 1], x[4 * i + 2], x[4 * i + 3]);
     sum += v[0] + v[1] + v[2] + v[3];
@@ -77,8 +77,8 @@ inline U qdot(
   U accumulator = 0;
   if (BITS == 4) {
     using U4 = vec<U, 4>;
-    const device ushort* weight_words = (const device ushort*)w;
-    const thread U4* x_vec4 = (const thread U4*)x_thread;
+    const device ushort* weight_words = reinterpret_cast<const device ushort*>(w);
+    const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
     for (int i = 0; i < (VALUES_PER_THREAD / 4); i++) {
       uint weight_word = weight_words[i];
       U4 weight_vec4 = uint4_to_fp4<U, 4>(uint4(
@@ -91,8 +91,8 @@ inline U qdot(
     }
   } else if (BITS == 8) {
     using U4 = vec<U, 4>;
-    const device uint* weight_words = (const device uint*)w;
-    const thread U4* x_vec4 = (const thread U4*)x_thread;
+    const device uint* weight_words = reinterpret_cast<const device uint*>(w);
+    const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
     for (int i = 0; i < (VALUES_PER_THREAD / 4); i++) {
       uint weight_word = weight_words[i];
       U4 weight_vec4 = uint4_to_fp4<U, 8>(uint4(
@@ -121,8 +121,8 @@ inline U qdot_safe(
   U accumulator = 0;
   if (BITS == 4) {
     using U4 = vec<U, 4>;
-    const device uint16_t* weight_words = (const device uint16_t*)w;
-    const thread U4* x_vec4 = (const thread U4*)x_thread;
+    const device uint16_t* weight_words = reinterpret_cast<const device uint16_t*>(w);
+    const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
 
     int full_chunks = N / 4;
     for (int i = 0; i < full_chunks; i++) {

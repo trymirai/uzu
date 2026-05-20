@@ -138,7 +138,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     } else {
       int group_index = REDUCTION_DIMENSION == 0
           ? (k_base / GROUP_SIZE)
-          : (int)(scales - scales_row_start);
+          : static_cast<int>(scales - scales_row_start);
       scale_value = REDUCTION_DIMENSION == 0 ? scales_row_start[group_index]
                                        : *scales;
       if (BITS == 4) {

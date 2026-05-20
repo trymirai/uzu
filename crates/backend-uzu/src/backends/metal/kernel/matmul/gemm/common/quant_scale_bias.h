@@ -125,7 +125,7 @@ struct QuantizedBlockLoaderScaleBias {
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
       dequantize<T, pack_factor, BITS>(
-          (device uint8_t*)(src + i * bytes_per_pack),
+          src + i * bytes_per_pack,
           scale,
           bias,
           dst + i * pack_factor

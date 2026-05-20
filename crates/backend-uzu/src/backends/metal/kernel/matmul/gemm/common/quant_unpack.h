@@ -97,7 +97,7 @@ inline void dequantize<bfloat, 8, 4>(
     bfloat bias,
     threadgroup bfloat* w_local
 ) {
-  const device uint32_t* w_ptr = (const device uint32_t*)w;
+  const device uint32_t* w_ptr = reinterpret_cast<const device uint32_t*>(w);
   uint32_t packed = *w_ptr;
 
   bfloat4 v0, v1;
@@ -117,7 +117,7 @@ inline void dequantize<bfloat, 8, 4>(
   v0 = v0 * scale + bias;
   v1 = v1 * scale + bias;
 
-  threadgroup bfloat4* out_ptr = (threadgroup bfloat4*)w_local;
+  threadgroup bfloat4* out_ptr = reinterpret_cast<threadgroup bfloat4*>(w_local);
   out_ptr[0] = v0;
   out_ptr[1] = v1;
 }
