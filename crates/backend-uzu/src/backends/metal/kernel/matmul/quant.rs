@@ -35,33 +35,31 @@ pub fn encode_quantized_matmul_with_path(
                 arguments.batch_dim >= 5 && configuration.output_dim > 1 && !configuration.use_hadamard;
             if unified_eligible {
                 matmul
-                .gemm
-                .encode(
-                    context,
-                    encoder,
-                    gemm::GemmRequest::Quant {
-                        configuration,
-                        arguments,
-                    },
-                )
-                .map_err(QuantizedMatmulError::BackendError)
+                    .gemm
+                    .encode(
+                        context,
+                        encoder,
+                        gemm::GemmRequest::Quant {
+                            configuration,
+                            arguments,
+                        },
+                    )
+                    .map_err(QuantizedMatmulError::BackendError)
             } else {
                 encodable.encode(encoder, arguments);
                 Ok(())
             }
         },
-        QuantizedMatmulDispatchPath::Gemm => {
-            matmul
-                .gemm
-                .encode(
-                    context,
-                    encoder,
-                    gemm::GemmRequest::Quant {
-                        configuration,
-                        arguments,
-                    },
-                )
-                .map_err(QuantizedMatmulError::BackendError)
-        },
+        QuantizedMatmulDispatchPath::Gemm => matmul
+            .gemm
+            .encode(
+                context,
+                encoder,
+                gemm::GemmRequest::Quant {
+                    configuration,
+                    arguments,
+                },
+            )
+            .map_err(QuantizedMatmulError::BackendError),
     }
 }

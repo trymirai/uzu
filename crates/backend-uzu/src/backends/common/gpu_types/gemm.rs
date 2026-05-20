@@ -133,7 +133,11 @@ bitflags! {
 }
 
 impl GemmAlignment {
-    pub fn new(m: bool, n: bool, k: bool) -> Self {
+    pub fn new(
+        m: bool,
+        n: bool,
+        k: bool,
+    ) -> Self {
         let mut bits = Self::empty();
         bits.set(Self::M, m);
         bits.set(Self::N, n);

@@ -1,3 +1,4 @@
+use super::{specialization::GemmSpecialization, weights::GemmWeights};
 use crate::backends::common::{
     Allocation, Backend,
     gpu_types::{
@@ -5,8 +6,6 @@ use crate::backends::common::{
         gemm::{GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling},
     },
 };
-
-use super::{specialization::GemmSpecialization, weights::GemmWeights};
 
 pub struct GemmDispatch<'a, B: Backend> {
     pub tiling: GemmTiling,

@@ -1,10 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use super::{
-    MXU_THREADGROUP_BLOCK_K,
-    dispatch::GemmDispatch,
-    request::GemmRequest,
-    specialization::GemmSpecialization,
+    MXU_THREADGROUP_BLOCK_K, dispatch::GemmDispatch, request::GemmRequest, specialization::GemmSpecialization,
     weights::GemmWeights,
 };
 use crate::{
@@ -15,8 +12,7 @@ use crate::{
             gpu_types::{
                 GemmParams, QuantizationMethod,
                 gemm::{
-                    GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling,
-                    GemmWeightPrologueKind,
+                    GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling, GemmWeightPrologueKind,
                 },
             },
             kernel::{

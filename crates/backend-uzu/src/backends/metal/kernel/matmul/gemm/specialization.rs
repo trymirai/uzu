@@ -1,11 +1,10 @@
+use super::error::GemmSpecializationError;
 use crate::{
     DataType,
     backends::common::gpu_types::gemm::{
         GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling, GemmWeightPrologueKind,
     },
 };
-
-use super::{error::GemmSpecializationError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemmSpecialization {
@@ -130,12 +129,9 @@ fn mxu_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
 
 pub(crate) fn quant_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
-        DataType::BF16 => &[
-            GemmTiling::T8x32x32_1x1,
-            GemmTiling::T32x32x32_2x2,
-            GemmTiling::T64x64x32_2x2,
-            GemmTiling::T64x64x64_2x2,
-        ],
+        DataType::BF16 => {
+            &[GemmTiling::T8x32x32_1x1, GemmTiling::T32x32x32_2x2, GemmTiling::T64x64x32_2x2, GemmTiling::T64x64x64_2x2]
+        },
         DataType::F16 => &[GemmTiling::T8x32x32_1x1, GemmTiling::T32x32x32_2x2],
         _ => &[],
     }
