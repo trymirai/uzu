@@ -240,14 +240,22 @@ struct SimdgroupMmaCore {
             : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
 
-    const uint dynamic_alignment_mask =
-        alignment.raw_value |
-        ((tile_block_rows == THREADGROUP_BLOCK_M) ? GemmAlignment::M : 0u) |
-        ((tile_block_cols == THREADGROUP_BLOCK_N) ? GemmAlignment::N : 0u);
+    const bool all_aligned =
+        ((alignment.contains(GemmAlignment::M)) ||
+         (tile_block_rows == THREADGROUP_BLOCK_M)) &&
+        ((alignment.contains(GemmAlignment::N)) ||
+         (tile_block_cols == THREADGROUP_BLOCK_N)) &&
+        alignment.contains(GemmAlignment::K);
 
-    dispatch_gemm_alignment(
-        dynamic_alignment_mask,
-        [&](auto gemm_alignment_mask) {
+    constexpr uint MASK_ALL = static_cast<uint>(GemmAlignment::M) |
+                              static_cast<uint>(GemmAlignment::N) |
+                              static_cast<uint>(GemmAlignment::K);
+
+    dispatch_bool(
+        all_aligned,
+        [&](auto gemm_alignment_aligned) {
+          constexpr uint gemm_alignment_value =
+              gemm_alignment_aligned.value ? MASK_ALL : 0u;
           if constexpr (
               WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision
           ) {
@@ -260,7 +268,7 @@ struct SimdgroupMmaCore {
                 b_shared,
                 thread_context
             );
-            k_loop<gemm_alignment_mask.value, BLoaderFp>(
+            k_loop<gemm_alignment_value, BLoaderFp>(
                 a_shared,
                 b_shared,
                 params->aligned_inner_iterations,
@@ -296,7 +304,7 @@ struct SimdgroupMmaCore {
                 thread_context.simdgroup_index,
                 thread_context.simd_lane_id
             );
-            k_loop<gemm_alignment_mask.value, BLoaderScaleBias>(
+            k_loop<gemm_alignment_value, BLoaderScaleBias>(
                 a_shared,
                 b_shared,
                 params->aligned_inner_iterations,
@@ -336,7 +344,7 @@ struct SimdgroupMmaCore {
                 thread_context.simdgroup_index,
                 thread_context.simd_lane_id
             );
-            k_loop<gemm_alignment_mask.value, BLoaderScaleZeroPoint>(
+            k_loop<gemm_alignment_value, BLoaderScaleZeroPoint>(
                 a_shared,
                 b_shared,
                 params->aligned_inner_iterations,
@@ -349,7 +357,7 @@ struct SimdgroupMmaCore {
             );
           }
 
-          finalize<gemm_alignment_mask.value>(
+          finalize<gemm_alignment_value>(
               accumulator,
               d,
               params,
