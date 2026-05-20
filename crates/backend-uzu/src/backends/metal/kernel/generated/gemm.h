@@ -28,13 +28,14 @@ enum class GemmWeightPrologueKind : uint32_t {
 };
 
 enum class GemmTiling : uint32_t {
-  T64x32x32_2x2 = 0,
-  T64x64x16_2x2 = 1,
-  T64x64x32_2x2 = 2,
-  T32x32x32_2x2 = 3,
-  T32x64x32_2x2 = 4,
-  T64x32x32_4x1 = 5,
-  T128x128x32_4x4 = 6,
+  T8x32x32_1x1 = 0,
+  T64x32x32_2x2 = 1,
+  T64x64x16_2x2 = 2,
+  T64x64x32_2x2 = 3,
+  T32x32x32_2x2 = 4,
+  T32x64x32_2x2 = 5,
+  T64x32x32_4x1 = 6,
+  T128x128x32_4x4 = 7,
 };
 
 struct GemmAlignment {

@@ -32,6 +32,7 @@ pub enum GemmWeightPrologueKind {
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GemmTiling {
+    T8x32x32_1x1,
     T64x32x32_2x2,
     T64x64x16_2x2,
     T64x64x32_2x2,
@@ -44,6 +45,7 @@ pub enum GemmTiling {
 impl GemmTiling {
     pub const fn block_m(self) -> u32 {
         match self {
+            Self::T8x32x32_1x1 => 8,
             Self::T64x32x32_2x2 => 64,
             Self::T64x64x16_2x2 => 64,
             Self::T64x64x32_2x2 => 64,
@@ -56,6 +58,7 @@ impl GemmTiling {
 
     pub const fn block_n(self) -> u32 {
         match self {
+            Self::T8x32x32_1x1 => 32,
             Self::T64x32x32_2x2 => 32,
             Self::T64x64x16_2x2 => 64,
             Self::T64x64x32_2x2 => 64,
@@ -68,6 +71,7 @@ impl GemmTiling {
 
     pub const fn block_k(self) -> u32 {
         match self {
+            Self::T8x32x32_1x1 => 32,
             Self::T64x32x32_2x2 => 32,
             Self::T64x64x16_2x2 => 16,
             Self::T64x64x32_2x2 => 32,
@@ -80,6 +84,7 @@ impl GemmTiling {
 
     pub const fn simdgroups_m(self) -> u32 {
         match self {
+            Self::T8x32x32_1x1 => 1,
             Self::T64x32x32_2x2 => 2,
             Self::T64x64x16_2x2 => 2,
             Self::T64x64x32_2x2 => 2,
@@ -92,6 +97,7 @@ impl GemmTiling {
 
     pub const fn simdgroups_n(self) -> u32 {
         match self {
+            Self::T8x32x32_1x1 => 1,
             Self::T64x32x32_2x2 => 2,
             Self::T64x64x16_2x2 => 2,
             Self::T64x64x32_2x2 => 2,

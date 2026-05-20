@@ -30,6 +30,7 @@ template <
 VARIANTS(T, half, bfloat)
 VARIANTS(
     TILE,
+    GemmTiling::T8x32x32_1x1,
     GemmTiling::T64x32x32_2x2,
     GemmTiling::T64x64x16_2x2,
     GemmTiling::T64x64x32_2x2,
@@ -60,7 +61,8 @@ CONSTRAINT(
 CONSTRAINT(
     WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
         (!USE_MXU && TRANSPOSE_B &&
-         (TILE == GemmTiling::T32x32x32_2x2 ||
+         (TILE == GemmTiling::T8x32x32_1x1 ||
+          TILE == GemmTiling::T32x32x32_2x2 ||
           TILE == GemmTiling::T64x64x32_2x2)))
 KERNEL(Gemm)(
     const device T* a,
