@@ -96,7 +96,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let segment_prefix_length = input.sequence_length - input.suffix_length;
 
-    let args = AttentionGemmArguments::<B, Allocation<B>, Allocation<B>> {
+    let args = AttentionGemmArguments::<B, Allocation<B>> {
         queries: &queries_allocation,
         keys: &keys_allocation,
         values: &values_allocation,

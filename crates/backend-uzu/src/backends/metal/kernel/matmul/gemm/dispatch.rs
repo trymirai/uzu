@@ -31,7 +31,7 @@ impl GemmAlignment {
     }
 }
 
-pub enum GemmWeights<'a, B: Backend, T: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>> {
+pub enum GemmWeights<'a, B: Backend, T: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>> = Allocation<B>> {
     FullPrecision {
         weights: &'a T,
     },

@@ -11,7 +11,7 @@ use rangemap::RangeSet;
 
 use crate::{
     backends::{
-        common::{Backend, Buffer, SparseBuffer},
+        common::{Backend, Buffer, SparseBuffer, SparseBufferExt},
         metal::{Metal, error::MetalError, metal_extensions::SparsePageSizeExt, sparse::MetalSparseMappingOpsBatch},
     },
     prelude::MetalContext,
@@ -68,8 +68,7 @@ impl Debug for MetalSparseBuffer {
 impl Drop for MetalSparseBuffer {
     fn drop(&mut self) {
         let context = self.context.clone();
-        let pages_count = self.size() / self.page_size.in_bytes();
-        self.unmap(&context, &(0..pages_count)).expect("Failed to unmap");
+        self.unmap(&context, &(0..self.total_pages())).expect("Failed to unmap");
     }
 }
 

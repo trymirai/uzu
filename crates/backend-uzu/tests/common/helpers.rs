@@ -3,9 +3,7 @@ use std::{mem::size_of, rc::Rc};
 use backend_uzu::{
     ArrayElement, allocation_copy_from_slice,
     backends::common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer, SparseBufferExt},
-    prelude::MetalContext,
 };
-use metal::MTLSparsePageSize;
 
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
     elements_count * size_of::<T>()

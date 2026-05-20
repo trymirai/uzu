@@ -54,9 +54,9 @@ pub enum MatmulDispatchPath {
 }
 
 impl MatmulMetalKernel {
-    pub fn encode_with_path<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub fn encode_with_path(
         &mut self,
-        arguments: MatmulArguments<Metal, TB>,
+        arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) {

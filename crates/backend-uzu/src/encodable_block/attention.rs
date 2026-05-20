@@ -395,30 +395,7 @@ impl<B: Backend> Attention<B> {
             }
         } else {
             let values = extracted_values.as_ref().expect("Missing extracted values for classifier attention");
-            self.encode_attention_variant(
-                variant,
-                &kernel_key,
-                queries,
-                &rotated_keys,
-                values,
-                trie_allocation,
-                sinks_allocation,
-                gqa_factor,
-                sequence_length,
-                k_head_stride,
-                k_seq_stride,
-                v_head_stride,
-                v_seq_stride,
-                ring_params,
-                scale,
-                num_heads,
-                num_groups,
-                suffix_length,
-                segment_prefix_length,
-                max_sequence_length,
-                head_dim,
-                encoder,
-            )?
+            encode_cached_attention!(&rotated_keys, values)
         };
 
         if let Some(gate_kernel) = &self.gate_kernel {
@@ -431,16 +408,13 @@ impl<B: Backend> Attention<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_attention_variant<
-        Keys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
-        Values: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
-    >(
+    fn encode_attention_variant<KVBuf: AsBufferRangeRef<Buffer: Buffer<Backend = B>>>(
         &self,
         variant: KernelVariant,
         kernel_key: &KernelKey,
         queries: &Allocation<B>,
-        keys: &Keys,
-        values: &Values,
+        keys: &KVBuf,
+        values: &KVBuf,
         trie_allocation: Option<&Allocation<B>>,
         sinks_allocation: Option<&Allocation<B>>,
         gqa_factor: usize,

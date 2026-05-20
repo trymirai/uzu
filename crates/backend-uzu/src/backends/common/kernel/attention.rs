@@ -14,10 +14,10 @@ use crate::{
 
 const BQ: usize = 32;
 
-pub struct AttentionGemmArguments<'a, B: Backend, Keys: AsBufferRangeRef, Values: AsBufferRangeRef> {
+pub struct AttentionGemmArguments<'a, B: Backend, KVBuf: AsBufferRangeRef> {
     pub queries: &'a Allocation<B>,
-    pub keys: &'a Keys,
-    pub values: &'a Values,
+    pub keys: &'a KVBuf,
+    pub values: &'a KVBuf,
     pub output: &'a mut Allocation<B>,
     pub trie: Option<&'a Allocation<B>>,
     pub sinks: Option<&'a Allocation<B>>,
@@ -56,13 +56,10 @@ impl<B: Backend> AttentionGemmBlock<B> {
         }
     }
 
-    pub fn encode<
-        Keys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
-        Values: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
-    >(
+    pub fn encode<KVBuf: AsBufferRangeRef<Buffer: Buffer<Backend = B>>>(
         &self,
         encoder: &mut Encoder<B>,
-        args: AttentionGemmArguments<B, Keys, Values>,
+        args: AttentionGemmArguments<B, KVBuf>,
     ) -> Result<(), B::Error> {
         let bk: usize = if args.head_dim < 128 {
             32
