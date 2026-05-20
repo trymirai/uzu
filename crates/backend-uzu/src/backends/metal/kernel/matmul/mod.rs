@@ -4,7 +4,10 @@ pub mod quant;
 
 use std::sync::OnceLock;
 
-use self::{gemm::GemmKernel, gemv::GemvKernel};
+use self::{
+    gemm::{GemmKernel, GemmRequest},
+    gemv::GemvKernel,
+};
 use crate::{
     DataType,
     backends::{
@@ -66,14 +69,30 @@ impl MatmulMetalKernel {
             MatmulDispatchPath::Gemv => {
                 gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV")
             },
-            MatmulDispatchPath::Gemm => {
-                gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, false)
-                    .expect("Failed to encode Gemm")
-            },
-            MatmulDispatchPath::GemmMxu => {
-                gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, true)
-                    .expect("Failed to encode GemmMxu")
-            },
+            MatmulDispatchPath::Gemm => self
+                .gemm
+                .encode(
+                    context,
+                    encoder,
+                    GemmRequest::Fp {
+                        bias_add: &mut self.bias_add,
+                        arguments,
+                        use_mxu: false,
+                    },
+                )
+                .expect("Failed to encode Gemm"),
+            MatmulDispatchPath::GemmMxu => self
+                .gemm
+                .encode(
+                    context,
+                    encoder,
+                    GemmRequest::Fp {
+                        bias_add: &mut self.bias_add,
+                        arguments,
+                        use_mxu: true,
+                    },
+                )
+                .expect("Failed to encode GemmMxu"),
         }
     }
 }
@@ -119,7 +138,16 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let use_mxu = self.is_mxu_eligible(context);
-        gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, use_mxu)
+        self.gemm
+            .encode(
+                context,
+                encoder,
+                GemmRequest::Fp {
+                    bias_add: &mut self.bias_add,
+                    arguments,
+                    use_mxu,
+                },
+            )
             .expect("Failed to encode GEMM");
     }
 }
