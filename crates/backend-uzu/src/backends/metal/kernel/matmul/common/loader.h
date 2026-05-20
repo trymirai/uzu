@@ -14,25 +14,25 @@ namespace matmul {
 
 template <
     typename T,
-    ushort BLOCK_ROWS,
-    ushort BLOCK_COLS,
+    ushort THREADGROUP_TILE_ROWS,
+    ushort THREADGROUP_TILE_COLS,
     ushort DESTINATION_LEADING_DIMENSION,
     ushort REDUCTION_DIMENSION,
     ushort THREADGROUP_SIZE,
     ushort ALIGNMENT = 1,
-    ushort READS_PER_THREAD = (BLOCK_COLS * BLOCK_ROWS) / (THREADGROUP_SIZE),
-    ushort THREAD_COLS = BLOCK_COLS / READS_PER_THREAD,
+    ushort READS_PER_THREAD = (THREADGROUP_TILE_COLS * THREADGROUP_TILE_ROWS) / (THREADGROUP_SIZE),
+    ushort THREAD_COLS = THREADGROUP_TILE_COLS / READS_PER_THREAD,
     ushort THREAD_ROWS = THREADGROUP_SIZE / THREAD_COLS>
 struct ThreadgroupLoader {
   METAL_CONST ushort ROW_ITERATIONS =
-      (BLOCK_ROWS + THREAD_ROWS - 1) / THREAD_ROWS;
+      (THREADGROUP_TILE_ROWS + THREAD_ROWS - 1) / THREAD_ROWS;
 
   const int source_leading_dimension;
   const int tile_stride;
 
   const ushort thread_index;
-  const ushort block_row_index;
-  const ushort block_col_index;
+  const ushort tile_row_index;
+  const ushort tile_col_index;
 
   threadgroup T* destination;
   const device T* source;
@@ -49,26 +49,26 @@ struct ThreadgroupLoader {
   )
       : source_leading_dimension(source_leading_dim),
         tile_stride(
-            REDUCTION_DIMENSION ? BLOCK_COLS : BLOCK_ROWS * source_leading_dim
+            REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS : THREADGROUP_TILE_ROWS * source_leading_dim
         ),
         thread_index(
             thread_context.simdgroup_index * METAL_SIMD_SIZE +
             thread_context.simd_lane_id
         ),
-        block_row_index(thread_index / THREAD_COLS),
-        block_col_index(READS_PER_THREAD * (thread_index % THREAD_COLS)),
+        tile_row_index(thread_index / THREAD_COLS),
+        tile_col_index(READS_PER_THREAD * (thread_index % THREAD_COLS)),
         destination(
-            destination_ptr + block_row_index * DESTINATION_LEADING_DIMENSION +
-            block_col_index
+            destination_ptr + tile_row_index * DESTINATION_LEADING_DIMENSION +
+            tile_col_index
         ),
         source(
-            source_ptr + block_row_index * source_leading_dim + block_col_index
+            source_ptr + tile_row_index * source_leading_dim + tile_col_index
         ) {}
 
   template <typename UnaryOp>
   METAL_FUNC void apply_inplace_op(thread const UnaryOp& operation) const {
     METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+    for (ushort i = 0; i < THREADGROUP_TILE_ROWS; i += THREAD_ROWS) {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < READS_PER_THREAD; j++) {
         destination[i * DESTINATION_LEADING_DIMENSION + j] =
@@ -79,7 +79,7 @@ struct ThreadgroupLoader {
 
   METAL_FUNC void load_unsafe() const {
     METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+    for (ushort i = 0; i < THREADGROUP_TILE_ROWS; i += THREAD_ROWS) {
       *((threadgroup ReadVector*)(&destination
                                       [i * DESTINATION_LEADING_DIMENSION])) =
           *((const device ReadVector*)(&source[i * source_leading_dimension]));
@@ -88,11 +88,11 @@ struct ThreadgroupLoader {
 
   METAL_FUNC void load_safe(short2 source_tile_dimensions) const {
     source_tile_dimensions =
-        source_tile_dimensions - short2(block_col_index, block_row_index);
+        source_tile_dimensions - short2(tile_col_index, tile_row_index);
 
     if (source_tile_dimensions.x <= 0 || source_tile_dimensions.y <= 0) {
       METAL_PRAGMA_UNROLL
-      for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+      for (ushort i = 0; i < THREADGROUP_TILE_ROWS; i += THREAD_ROWS) {
         METAL_PRAGMA_UNROLL
         for (ushort j = 0; j < READS_PER_THREAD; j++) {
           destination[i * DESTINATION_LEADING_DIMENSION + j] = T(0);
@@ -105,7 +105,7 @@ struct ThreadgroupLoader {
     T loaded_values[READS_PER_THREAD];
 
     METAL_PRAGMA_UNROLL
-    for (ushort i = 0; i < BLOCK_ROWS; i += THREAD_ROWS) {
+    for (ushort i = 0; i < THREADGROUP_TILE_ROWS; i += THREAD_ROWS) {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < READS_PER_THREAD; j++) {
         valid_mask[j] =

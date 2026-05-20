@@ -5,19 +5,16 @@
 namespace uzu {
 namespace gemm {
 
-// Layout constants for bit-packed weights. `pack_factor` is values per pack;
-// `bytes_per_pack` is the byte stride of one pack. Together they encode the
-// minimal-overhead packing for both power-of-two and non-power-of-two bit
-// widths (e.g. bits=5 → 8 values in 5 bytes = 40 bits, perfect packing).
-template <int bits, int wsize = 8>
+template <int bits, int word_size_bits = 8>
 inline constexpr short get_pack_factor() {
-  return (bits == 3 || bits == 5) ? 8 : (bits == 6 ? 4 : wsize / bits);
+  return (bits == 3 || bits == 5) ? 8
+                                  : (bits == 6 ? 4 : word_size_bits / bits);
 }
 
-template <int bits, int wsize = 8>
+template <int bits, int word_size_bits = 8>
 inline constexpr short get_bytes_per_pack() {
-  constexpr int power_of_2_bits = (bits & (bits - 1)) == 0;
-  return power_of_2_bits ? (wsize / 8) : (bits == 5 ? 5 : 3);
+  constexpr int is_power_of_two_bits = (bits & (bits - 1)) == 0;
+  return is_power_of_two_bits ? (word_size_bits / 8) : (bits == 5 ? 5 : 3);
 }
 
 } // namespace gemm
