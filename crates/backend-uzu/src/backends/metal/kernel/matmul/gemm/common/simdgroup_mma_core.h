@@ -8,6 +8,7 @@
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
 #include "block_geometry.h"
+#include "gemm_alignment.h"
 #include "gemm_tiling.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
@@ -17,34 +18,20 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-template <typename F>
-METAL_FUNC void dispatch_gemm_alignment(uint mask, F f) {
-  switch (mask & 0b111u) {
-    case 0u: f(integral_constant<uint, 0u>{}); break;
-    case 1u: f(integral_constant<uint, 1u>{}); break;
-    case 2u: f(integral_constant<uint, 2u>{}); break;
-    case 3u: f(integral_constant<uint, 3u>{}); break;
-    case 4u: f(integral_constant<uint, 4u>{}); break;
-    case 5u: f(integral_constant<uint, 5u>{}); break;
-    case 6u: f(integral_constant<uint, 6u>{}); break;
-    case 7u: f(integral_constant<uint, 7u>{}); break;
-  }
-}
-
 template <
     typename T,
-    GemmTiling TILE,
+    GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     GemmWeightPrologueKind WEIGHT_PROLOGUE =
         GemmWeightPrologueKind::FullPrecision,
     int BITS = 0,
     int GROUP_SIZE = 0>
 struct SimdgroupMmaCore {
-  METAL_CONST int THREADGROUP_BLOCK_M = gemm_tiling_bm(TILE);
-  METAL_CONST int THREADGROUP_BLOCK_N = gemm_tiling_bn(TILE);
-  METAL_CONST int THREADGROUP_BLOCK_K = gemm_tiling_bk(TILE);
-  METAL_CONST int SIMDGROUPS_PER_ROW = gemm_tiling_smg_m(TILE);
-  METAL_CONST int SIMDGROUPS_PER_COLUMN = gemm_tiling_smg_n(TILE);
+  METAL_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
+  METAL_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
+  METAL_CONST int THREADGROUP_BLOCK_K = gemm_tiling_block_k(GEMM_TILING);
+  METAL_CONST int SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
+  METAL_CONST int SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
   METAL_CONST ushort PADDING_A = 16 / sizeof(T);
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
   METAL_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
@@ -228,10 +215,12 @@ struct SimdgroupMmaCore {
 
     const ushort tile_block_rows =
         min(THREADGROUP_BLOCK_M,
-            ((int)params->M) - int(geometry.block_row_start));
+            static_cast<int>(params->M) -
+                static_cast<int>(geometry.block_row_start));
     const ushort tile_block_cols =
         min(THREADGROUP_BLOCK_N,
-            ((int)params->N) - int(geometry.block_col_start));
+            static_cast<int>(params->N) -
+                static_cast<int>(geometry.block_col_start));
     const ushort leftover_block_depth =
         params->K - params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
 

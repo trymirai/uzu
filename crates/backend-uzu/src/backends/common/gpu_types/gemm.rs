@@ -109,10 +109,10 @@ impl GemmTiling {
     }
 }
 
-pub const fn gemm_tiling_smg_m(t: GemmTiling) -> u32 {
+pub const fn gemm_tiling_simdgroups_per_row(t: GemmTiling) -> u32 {
     t.simdgroups_m()
 }
-pub const fn gemm_tiling_smg_n(t: GemmTiling) -> u32 {
+pub const fn gemm_tiling_simdgroups_per_column(t: GemmTiling) -> u32 {
     t.simdgroups_n()
 }
 

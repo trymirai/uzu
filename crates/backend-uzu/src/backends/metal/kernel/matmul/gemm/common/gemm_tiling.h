@@ -5,7 +5,7 @@
 namespace uzu {
 namespace gemm {
 
-constexpr uint gemm_tiling_bm(GemmTiling t) {
+constexpr uint gemm_tiling_block_m(GemmTiling t) {
   return t == GemmTiling::T8x32x32_1x1      ? 8
        : t == GemmTiling::T64x32x32_2x2     ? 64
        : t == GemmTiling::T64x64x16_2x2     ? 64
@@ -17,7 +17,7 @@ constexpr uint gemm_tiling_bm(GemmTiling t) {
                                             : 0;
 }
 
-constexpr uint gemm_tiling_bn(GemmTiling t) {
+constexpr uint gemm_tiling_block_n(GemmTiling t) {
   return t == GemmTiling::T8x32x32_1x1      ? 32
        : t == GemmTiling::T64x32x32_2x2     ? 32
        : t == GemmTiling::T64x64x16_2x2     ? 64
@@ -29,7 +29,7 @@ constexpr uint gemm_tiling_bn(GemmTiling t) {
                                             : 0;
 }
 
-constexpr uint gemm_tiling_bk(GemmTiling t) {
+constexpr uint gemm_tiling_block_k(GemmTiling t) {
   return t == GemmTiling::T8x32x32_1x1      ? 32
        : t == GemmTiling::T64x32x32_2x2     ? 32
        : t == GemmTiling::T64x64x16_2x2     ? 16
@@ -41,7 +41,7 @@ constexpr uint gemm_tiling_bk(GemmTiling t) {
                                             : 0;
 }
 
-constexpr uint gemm_tiling_smg_m(GemmTiling t) {
+constexpr uint gemm_tiling_simdgroups_per_row(GemmTiling t) {
   return t == GemmTiling::T8x32x32_1x1      ? 1
        : t == GemmTiling::T64x32x32_2x2     ? 2
        : t == GemmTiling::T64x64x16_2x2     ? 2
@@ -53,7 +53,7 @@ constexpr uint gemm_tiling_smg_m(GemmTiling t) {
                                             : 0;
 }
 
-constexpr uint gemm_tiling_smg_n(GemmTiling t) {
+constexpr uint gemm_tiling_simdgroups_per_column(GemmTiling t) {
   return t == GemmTiling::T8x32x32_1x1      ? 1
        : t == GemmTiling::T64x32x32_2x2     ? 2
        : t == GemmTiling::T64x64x16_2x2     ? 2

@@ -1,7 +1,7 @@
 pub mod matmul;
 
 use crate::backends::common::{
-    gpu_types::gemm::{gemm_tiling_smg_m, gemm_tiling_smg_n},
+    gpu_types::gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
     kernel::ManualKernels,
 };
 

@@ -12,16 +12,16 @@ using namespace uzu::gemm;
 
 #define GEMM_TGA_ELEMENTS                                                      \
   (USE_MXU ? 1                                                                 \
-           : (gemm_tiling_bm(TILE) *                                             \
-              (gemm_tiling_bk(TILE) + 16 / int(sizeof(T)))))
+           : (gemm_tiling_block_m(GEMM_TILING) *                                             \
+              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
 #define GEMM_TGB_ELEMENTS                                                      \
   (USE_MXU ? 1                                                                 \
-           : (gemm_tiling_bn(TILE) *                                             \
-              (gemm_tiling_bk(TILE) + 16 / int(sizeof(T)))))
+           : (gemm_tiling_block_n(GEMM_TILING) *                                             \
+              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
 
 template <
     typename T,
-    GemmTiling TILE,
+    GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     bool USE_MXU,
     GemmWeightPrologueKind WEIGHT_PROLOGUE,
@@ -29,7 +29,7 @@ template <
     uint GROUP_SIZE>
 VARIANTS(T, half, bfloat)
 VARIANTS(
-    TILE,
+    GEMM_TILING,
     GemmTiling::T8x32x32_1x1,
     GemmTiling::T64x32x32_2x2,
     GemmTiling::T64x64x16_2x2,
@@ -48,10 +48,10 @@ VARIANTS(
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
 CONSTRAINT(
-    !USE_MXU || TILE == GemmTiling::T64x64x32_2x2 ||
-        TILE == GemmTiling::T32x64x32_2x2 ||
-        TILE == GemmTiling::T64x32x32_4x1 ||
-        TILE == GemmTiling::T128x128x32_4x4)
+    !USE_MXU || GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
+        GEMM_TILING == GemmTiling::T32x64x32_2x2 ||
+        GEMM_TILING == GemmTiling::T64x32x32_4x1 ||
+        GEMM_TILING == GemmTiling::T128x128x32_4x4)
 CONSTRAINT(
     WEIGHT_PROLOGUE != GemmWeightPrologueKind::FullPrecision ||
         (BITS == 0 && GROUP_SIZE == 0))
@@ -61,9 +61,9 @@ CONSTRAINT(
 CONSTRAINT(
     WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
         (!USE_MXU && TRANSPOSE_B &&
-         (TILE == GemmTiling::T8x32x32_1x1 ||
-          TILE == GemmTiling::T32x32x32_2x2 ||
-          TILE == GemmTiling::T64x64x32_2x2)))
+         (GEMM_TILING == GemmTiling::T8x32x32_1x1 ||
+          GEMM_TILING == GemmTiling::T32x32x32_2x2 ||
+          GEMM_TILING == GemmTiling::T64x64x32_2x2)))
 KERNEL(Gemm)(
     const device T* a,
     const device uint8_t* b_packed,
@@ -85,8 +85,8 @@ KERNEL(Gemm)(
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
-    const uint thread_y THREADS(gemm_tiling_smg_n(TILE)),
-    const uint thread_z THREADS(gemm_tiling_smg_m(TILE)),
+    const uint thread_y THREADS(gemm_tiling_simdgroups_per_column(GEMM_TILING)),
+    const uint thread_z THREADS(gemm_tiling_simdgroups_per_row(GEMM_TILING)),
     const ThreadContext thread_context
 ) {
   (void)group_x;
@@ -104,7 +104,7 @@ KERNEL(Gemm)(
     (void)biases;
     (void)zero_points;
     const device T* b = reinterpret_cast<const device T*>(b_packed);
-    MxuMmaCore<T, TILE, TRANSPOSE_B>::run(
+    MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B>::run(
         a, b, d, params, alignment, output_transform, thread_context
     );
   } else {
@@ -113,7 +113,7 @@ KERNEL(Gemm)(
     (void)zero_points;
     SimdgroupMmaCore<
         T,
-        TILE,
+        GEMM_TILING,
         TRANSPOSE_B,
         WEIGHT_PROLOGUE,
         BITS,
