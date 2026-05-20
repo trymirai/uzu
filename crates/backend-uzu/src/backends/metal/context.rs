@@ -47,55 +47,11 @@ pub struct MetalContext {
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
     weak_self: Weak<MetalContext>,
-
     #[cfg(test)]
     timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
 }
 
 impl MetalContext {
-    pub fn new_with(
-        sparse_heap_page_size: MTLSparsePageSize,
-        sparse_heap_capacity_bytes: usize,
-    ) -> Result<Rc<Self>, MetalError> {
-        let device: Retained<ProtocolObject<dyn MTLDevice>> =
-            <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
-
-        let command_queue =
-            device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
-
-        let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
-
-        let library = device
-            .new_library_with_data(kernel::MTLB)
-            .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
-
-        let device_capabilities = MetalDeviceCapabilities::from_device(&device);
-
-        let sparse_pool = MetalSparseHeapPool::new(sparse_heap_page_size, sparse_heap_capacity_bytes);
-
-        let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
-        #[cfg(test)]
-        let timeline_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
-
-        Ok(Rc::new_cyclic(|weak_self| Self {
-            device,
-            command_queue,
-            command_queue4,
-            timeline_event,
-            timeline_value: AtomicU64::new(0),
-            allocator: Allocator::new(weak_self.clone()),
-            peak_memory_usage: RefCell::new(0),
-            device_capabilities,
-            library,
-            pipeline_cache: RefCell::new(HashMap::new()),
-            sparse_heap_pool: RefCell::new(sparse_pool),
-            weak_self: weak_self.clone(),
-
-            #[cfg(test)]
-            timeline_shared_event,
-        }))
-    }
-
     pub fn device_generation(&self) -> DeviceGeneration {
         self.device_capabilities.generation
     }
@@ -140,7 +96,7 @@ impl MetalContext {
         }
         self.command_queue4.signal_event_value(&self.timeline_event, wait_value + 1);
 
-        // This line prevent tests from freezing and shutting down computer
+        // This line prevent tests from freezing, showing pink screen and shutting down computer
         #[cfg(test)]
         self.timeline_shared_event.wait_until_signaled_value_timeout_ms(wait_value, 10);
     }
@@ -158,9 +114,43 @@ impl Context for MetalContext {
     type Backend = Metal;
 
     fn new() -> Result<Rc<Self>, MetalError> {
+        let device: Retained<ProtocolObject<dyn MTLDevice>> =
+            <dyn MTLDevice>::system_default().ok_or(MetalError::CannotOpenDevice)?;
+
+        let command_queue =
+            device.new_command_queue_with_max_command_buffer_count(1024).ok_or(MetalError::CannotCreateCommandQueue)?;
+
+        let command_queue4 = device.new_mtl4_command_queue().ok_or(MetalError::CannotCreateCommandQueueMtl4)?;
+
+        let library = device
+            .new_library_with_data(kernel::MTLB)
+            .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
+
+        let device_capabilities = MetalDeviceCapabilities::from_device(&device);
+
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = 64 * 4 * page_size.in_bytes();
-        Self::new_with(page_size, heap_capacity)
+        let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
+        let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
+        #[cfg(test)]
+        let timeline_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
+
+        Ok(Rc::new_cyclic(|weak_self| Self {
+            device,
+            command_queue,
+            command_queue4,
+            timeline_event,
+            timeline_value: AtomicU64::new(0),
+            allocator: Allocator::new(weak_self.clone()),
+            peak_memory_usage: RefCell::new(0),
+            device_capabilities,
+            library,
+            pipeline_cache: RefCell::new(HashMap::new()),
+            sparse_heap_pool: RefCell::new(sparse_pool),
+            weak_self: weak_self.clone(),
+            #[cfg(test)]
+            timeline_shared_event,
+        }))
     }
 
     fn is_high_performance(&self) -> bool {

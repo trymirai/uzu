@@ -22,7 +22,7 @@ pub enum MatmulArgumentC<'a, B: Backend> {
 }
 
 // D = ab_scale * (A @ op(B)) + C, where op(B) = B^T when b_transpose else B.
-pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef> {
+pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     /// A: [M, K]
     pub a: &'a Allocation<B>,
     pub a_offset: usize,

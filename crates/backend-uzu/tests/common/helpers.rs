@@ -2,7 +2,7 @@ use std::{mem::size_of, rc::Rc};
 
 use backend_uzu::{
     ArrayElement, allocation_copy_from_slice,
-    backends::common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer},
+    backends::common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer, SparseBufferExt},
     prelude::MetalContext,
 };
 use metal::MTLSparsePageSize;
@@ -71,9 +71,7 @@ pub fn sparse_buffer_create_and_map<B: Backend>(
     capacity: usize,
 ) -> B::SparseBuffer {
     let mut buffer = sparse_buffer_create::<B>(context, capacity);
-    let total_pages = buffer.size() / buffer.page_size_bytes();
-    buffer.map(context, &(0..total_pages)).expect("Failed to map sparse buffer");
-    // context.wait_for_pending_sparse_mappings().expect("Failed to wait for sparse mappings");
+    buffer.map(context, &(0..buffer.total_pages())).expect("Failed to map sparse buffer");
     buffer
 }
 
