@@ -36,6 +36,7 @@ pub enum GemmTiling {
     T64x32x32_2x2,
     T64x64x16_2x2,
     T64x64x32_2x2,
+    T64x64x64_2x2,
     T32x32x32_2x2,
     T32x64x32_2x2,
     T64x32x32_4x1,
@@ -49,6 +50,7 @@ impl GemmTiling {
             Self::T64x32x32_2x2 => 64,
             Self::T64x64x16_2x2 => 64,
             Self::T64x64x32_2x2 => 64,
+            Self::T64x64x64_2x2 => 64,
             Self::T32x32x32_2x2 => 32,
             Self::T32x64x32_2x2 => 32,
             Self::T64x32x32_4x1 => 64,
@@ -62,6 +64,7 @@ impl GemmTiling {
             Self::T64x32x32_2x2 => 32,
             Self::T64x64x16_2x2 => 64,
             Self::T64x64x32_2x2 => 64,
+            Self::T64x64x64_2x2 => 64,
             Self::T32x32x32_2x2 => 32,
             Self::T32x64x32_2x2 => 64,
             Self::T64x32x32_4x1 => 32,
@@ -75,6 +78,7 @@ impl GemmTiling {
             Self::T64x32x32_2x2 => 32,
             Self::T64x64x16_2x2 => 16,
             Self::T64x64x32_2x2 => 32,
+            Self::T64x64x64_2x2 => 64,
             Self::T32x32x32_2x2 => 32,
             Self::T32x64x32_2x2 => 32,
             Self::T64x32x32_4x1 => 32,
@@ -88,6 +92,7 @@ impl GemmTiling {
             Self::T64x32x32_2x2 => 2,
             Self::T64x64x16_2x2 => 2,
             Self::T64x64x32_2x2 => 2,
+            Self::T64x64x64_2x2 => 2,
             Self::T32x32x32_2x2 => 2,
             Self::T32x64x32_2x2 => 2,
             Self::T64x32x32_4x1 => 4,
@@ -101,6 +106,7 @@ impl GemmTiling {
             Self::T64x32x32_2x2 => 2,
             Self::T64x64x16_2x2 => 2,
             Self::T64x64x32_2x2 => 2,
+            Self::T64x64x64_2x2 => 2,
             Self::T32x32x32_2x2 => 2,
             Self::T32x64x32_2x2 => 2,
             Self::T64x32x32_4x1 => 1,
@@ -123,5 +129,15 @@ bitflags! {
         const M = 1 << 0;
         const N = 1 << 1;
         const K = 1 << 2;
+    }
+}
+
+impl GemmAlignment {
+    pub fn new(m: bool, n: bool, k: bool) -> Self {
+        let mut bits = Self::empty();
+        bits.set(Self::M, m);
+        bits.set(Self::N, n);
+        bits.set(Self::K, k);
+        bits
     }
 }
