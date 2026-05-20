@@ -387,18 +387,16 @@ impl<B: Backend> CacheLayers<B> {
             let Some(layer) = layer.as_transformer_mut() else {
                 continue;
             };
-            let row_start = match layer.state() {
+            let row_range = match layer.state() {
                 KVCacheLayerState::Full {
                     prefix_len,
-                } => prefix_len,
+                } => prefix_len..prefix_len + active_row_count,
                 KVCacheLayerState::Windowed {
                     window_length,
                     ..
-                } => window_length,
+                } => 0..window_length + active_row_count,
             };
-            layer
-                .map_row_range(context, row_start..row_start + active_row_count)
-                .expect("Failed to map KV cache rows for forward pass");
+            layer.map_row_range(context, row_range).expect("Failed to map KV cache rows for forward pass");
         }
     }
 
@@ -676,3 +674,7 @@ impl<B: Backend> CacheLayers<B> {
         cloned
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/forward_pass/cache_layers_test.rs"]
+mod tests;
