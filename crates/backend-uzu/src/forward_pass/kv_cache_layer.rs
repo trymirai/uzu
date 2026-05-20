@@ -4,7 +4,7 @@ use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder, SparseBuffer, SparseBufferExt,
+        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder, SparseBuffer,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -68,6 +68,7 @@ pub trait KVCacheLayerTrait<B: Backend> {
         &self,
         destination: &mut dyn KVCacheLayerTrait<B>,
         row_count: usize,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
     );
 
@@ -77,6 +78,7 @@ pub trait KVCacheLayerTrait<B: Backend> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     );
@@ -95,14 +97,16 @@ pub trait KVCacheLayerTrait<B: Backend> {
 
     fn apply_slice(
         &mut self,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
         slice: &KVSlice<B>,
         range: Option<Range<usize>>,
     );
 
-    fn map_pages(
+    fn map_row_range(
         &mut self,
         context: &B::Context,
+        range: Range<usize>,
     ) -> Result<(), B::Error>;
 }
 
@@ -200,6 +204,48 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayer<B, Buf> {
             );
         }
     }
+
+    fn page_range_for_row_range(
+        shape: [usize; 3],
+        data_type: DataType,
+        page_size_bytes: usize,
+        row_range: Range<usize>,
+    ) -> Range<usize> {
+        if row_range.is_empty() {
+            return 0..0;
+        }
+
+        let [_, num_groups, head_dim] = shape;
+        let row_size = size_for_shape(&[1, num_groups, head_dim], data_type);
+        let byte_start = row_range.start * row_size;
+        let byte_end = row_range.end * row_size;
+        byte_start / page_size_bytes..byte_end.div_ceil(page_size_bytes)
+    }
+
+    fn map_sparse_row_range(
+        &mut self,
+        context: &B::Context,
+        row_range: Range<usize>,
+    ) -> Result<(), B::Error> {
+        if row_range.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(layer) = self.as_any_mut().downcast_mut::<KVCacheLayer<B, B::SparseBuffer>>() {
+            let key_pages = Self::page_range_for_row_range(
+                layer.shape,
+                layer.data_type,
+                layer.keys.page_size_bytes(),
+                row_range.clone(),
+            );
+            layer.keys.map(context, &key_pages)?;
+
+            let value_pages =
+                Self::page_range_for_row_range(layer.shape, layer.data_type, layer.values.page_size_bytes(), row_range);
+            layer.values.map(context, &value_pages)?;
+        }
+        Ok(())
+    }
 }
 
 impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer<B, Buf> {
@@ -219,16 +265,19 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
         self.data_type
     }
 
-    fn state(&self) -> KVCacheLayerState {
-        self.state.clone()
-    }
-
     fn encode_zero(
         &mut self,
         encoder: &mut Encoder<'_, B>,
     ) {
+        if self.as_any().is::<KVCacheLayer<B, B::SparseBuffer>>() {
+            return;
+        }
         encoder.encode_fill(&mut self.keys, 0);
         encoder.encode_fill(&mut self.values, 0);
+    }
+
+    fn state(&self) -> KVCacheLayerState {
+        self.state.clone()
     }
 
     fn set_state(
@@ -260,6 +309,7 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
         &self,
         destination: &mut dyn KVCacheLayerTrait<B>,
         row_count: usize,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
     ) {
         if row_count == 0 {
@@ -273,6 +323,7 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
         assert_eq!(self.data_type, destination.data_type(), "KV cache dtype mismatch");
         assert!(row_count <= source_seq, "source KV cache copy exceeds source sequence");
         assert!(row_count <= destination_seq, "source KV cache copy exceeds destination sequence");
+        destination.map_row_range(context, 0..row_count).expect("Failed to map destination KV cache rows");
 
         let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
         let copy_size = row_count * row_size;
@@ -303,6 +354,7 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
@@ -314,14 +366,18 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
                     return;
                 }
 
+                let prefix_len_value = *prefix_len;
+
                 // Absolute positions of the *source* rows.
                 let source_indices: Vec<usize> =
-                    accepted_suffix_indices.iter().map(|i| i + suffix_start.unwrap_or(*prefix_len)).collect();
+                    accepted_suffix_indices.iter().map(|i| i + suffix_start.unwrap_or(prefix_len_value)).collect();
 
                 // Absolute positions of the *destination* rows.
                 let destination_indices: Vec<usize> =
-                    (*prefix_len..*prefix_len + accepted_suffix_indices.len()).collect();
+                    (prefix_len_value..prefix_len_value + accepted_suffix_indices.len()).collect();
 
+                self.map_sparse_row_range(context, prefix_len_value..prefix_len_value + accepted_suffix_indices.len())
+                    .expect("Failed to map accepted KV cache rows");
                 self.scatter_if_required(&source_indices, &destination_indices, encoder, kv_cache_update);
             },
 
@@ -344,6 +400,10 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
                     destination_indices.push((*ring_length + *ring_offset + i) % *window_length);
                 }
 
+                for destination_index in destination_indices.iter().copied() {
+                    self.map_sparse_row_range(context, destination_index..destination_index + 1)
+                        .expect("Failed to map accepted KV cache row");
+                }
                 self.scatter_if_required(&source_indices, &destination_indices, encoder, kv_cache_update);
             },
         }
@@ -436,6 +496,7 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
 
     fn apply_slice(
         &mut self,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
         slice: &KVSlice<B>,
         range: Option<Range<usize>>,
@@ -475,12 +536,12 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
                 let [_, num_groups, head_dim] = self.shape;
                 let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
 
-                let row_pairs: Option<Box<dyn Iterator<Item = (usize, usize)>>> = match range {
+                let row_pairs: Option<Vec<(usize, usize)>> = match &range {
                     None => {
                         *ring_offset = *base_ring_offset;
                         *ring_length = *base_ring_length;
-                        let pairs = slots.iter().enumerate().map(|(src_row, &dst_row)| (src_row, dst_row));
-                        Some(Box::new(pairs))
+                        let pairs = slots.iter().enumerate().map(|(src_row, &dst_row)| (src_row, dst_row)).collect();
+                        Some(pairs)
                     },
                     Some(r) => {
                         let len = r.end.saturating_sub(r.start);
@@ -508,13 +569,17 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
 
                             let pairs =
                                 slots[r.clone()].iter().enumerate().map(move |(i, &dst_row)| (r.start + i, dst_row));
-                            Some(Box::new(pairs))
+                            Some(pairs.collect())
                         }
                     },
                 };
                 let Some(row_pairs) = row_pairs else {
                     return;
                 };
+                for (_, destination_row) in row_pairs.iter().copied() {
+                    self.map_sparse_row_range(context, destination_row..destination_row + 1)
+                        .expect("Failed to map sliced KV cache row");
+                }
 
                 Self::copy_rows(
                     encoder,
@@ -530,15 +595,12 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
         }
     }
 
-    fn map_pages(
+    fn map_row_range(
         &mut self,
         context: &B::Context,
+        range: Range<usize>,
     ) -> Result<(), B::Error> {
-        if let Some(layer) = self.as_any_mut().downcast_mut::<KVCacheLayer<B, B::SparseBuffer>>() {
-            layer.keys.map(context, &(0..layer.keys.total_pages()))?;
-            layer.values.map(context, &(0..layer.values.total_pages()))?;
-        }
-        Ok(())
+        self.map_sparse_row_range(context, range)
     }
 }
 

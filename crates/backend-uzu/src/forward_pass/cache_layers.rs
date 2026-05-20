@@ -251,13 +251,6 @@ impl<B: Backend> CacheLayers<B> {
         let mut entries = entries.into_boxed_slice();
         let bindings = bindings.into_boxed_slice();
 
-        entries.iter_mut().for_each(|layer| match layer {
-            CacheLayer::Transformer(kv) => {
-                kv.map_pages(context).expect("Failed to map pages");
-            },
-            _ => (),
-        });
-
         let mut encoder: Encoder<B> = Encoder::new(context).expect("Failed to create cache initialization encoder");
         for layer in entries.iter_mut() {
             match layer {
@@ -367,16 +360,45 @@ impl<B: Backend> CacheLayers<B> {
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
         kv_cache_update: &KVCacheUpdate<B>,
     ) {
         let short_conv_commit_index = accepted_suffix_indices.last().copied().unwrap_or(0);
         for layer in self.entries.iter_mut() {
             if let Some(layer) = layer.as_transformer_mut() {
-                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, encoder, kv_cache_update);
+                layer.update_after_acceptance(accepted_suffix_indices, suffix_start, context, encoder, kv_cache_update);
             } else if let Some(layer) = layer.as_short_conv_mut() {
                 layer.commit_from_suffix_state_if_valid(short_conv_commit_index, encoder);
             }
+        }
+    }
+
+    pub fn prepare_for_forward_pass(
+        &mut self,
+        context: &B::Context,
+        active_row_count: usize,
+    ) {
+        if active_row_count == 0 {
+            return;
+        }
+
+        for layer in self.entries.iter_mut() {
+            let Some(layer) = layer.as_transformer_mut() else {
+                continue;
+            };
+            let row_start = match layer.state() {
+                KVCacheLayerState::Full {
+                    prefix_len,
+                } => prefix_len,
+                KVCacheLayerState::Windowed {
+                    window_length,
+                    ..
+                } => window_length,
+            };
+            layer
+                .map_row_range(context, row_start..row_start + active_row_count)
+                .expect("Failed to map KV cache rows for forward pass");
         }
     }
 
@@ -436,7 +458,7 @@ impl<B: Backend> CacheLayers<B> {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
                     let mut encoder =
                         encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
-                    kv.apply_slice(&mut encoder, &s, range.clone());
+                    kv.apply_slice(context, &mut encoder, &s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},
@@ -457,7 +479,7 @@ impl<B: Backend> CacheLayers<B> {
         self.copy_metadata_and_windowed_data_from(source, context);
 
         let mut encoder = Encoder::new(context).expect("Failed to create cache layer copy encoder");
-        self.encode_copy_data_from(source, &mut encoder);
+        self.encode_copy_data_from(source, context, &mut encoder);
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to copy cache layers");
     }
 
@@ -482,7 +504,7 @@ impl<B: Backend> CacheLayers<B> {
                             encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
                         let slice =
                             source.slice(context, encoder, 0..copy_rows).expect("Failed to slice KV cache layer");
-                        destination.apply_slice(encoder, &slice, None);
+                        destination.apply_slice(context, encoder, &slice, None);
                         pending_slices.push(slice);
                     }
                     destination.set_state(&source.state());
@@ -505,6 +527,7 @@ impl<B: Backend> CacheLayers<B> {
     fn encode_copy_data_from(
         &mut self,
         source: &Self,
+        context: &B::Context,
         encoder: &mut Encoder<B>,
     ) {
         assert_eq!(source.entries.len(), self.entries.len(), "cache layer count mismatch");
@@ -516,6 +539,7 @@ impl<B: Backend> CacheLayers<B> {
                         source.encode_copy_prefix_rows_to(
                             destination.as_mut(),
                             source.prefix_segment_length(),
+                            context,
                             encoder,
                         );
                     }
@@ -632,7 +656,6 @@ impl<B: Backend> CacheLayers<B> {
         for layer in entries.iter_mut() {
             match layer {
                 CacheLayer::Transformer(layer) => {
-                    layer.map_pages(context).expect("Failed to map pages");
                     layer.encode_zero(&mut zero_encoder);
                 },
                 CacheLayer::ShortConv(layer) => {

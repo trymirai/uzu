@@ -169,6 +169,7 @@ fn run_scenario<B: Backend>(
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
+        context,
         &mut encoder,
         &kv_cache_update,
     );
@@ -323,7 +324,7 @@ fn kv_cache_slice_apply_contiguous_window() {
     overwrite_sparse_buffer::<Metal>(&context, &mut layer.values, elements_count, &[(0, -3.0), (1, -4.0)]);
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
-    layer.apply_slice(&mut encoder, &slice, None);
+    layer.apply_slice(&context, &mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     let keys_after: Vec<f32> =
@@ -362,7 +363,7 @@ fn kv_cache_slice_apply_wrap_window() {
     overwrite_sparse_buffer::<Metal>(&context, &mut layer.values, elements_count, &[(2, -13.0), (3, -14.0)]);
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
-    layer.apply_slice(&mut encoder, &slice, None);
+    layer.apply_slice(&context, &mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     let keys_after: Vec<f32> =
@@ -401,7 +402,7 @@ fn kv_cache_slice_apply_full_restores_metadata() {
     }
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
-    layer.apply_slice(&mut encoder, &slice, None);
+    layer.apply_slice(&context, &mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     if let KVCacheLayerState::Full {
