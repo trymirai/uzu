@@ -12,11 +12,11 @@ using namespace uzu::gemm;
 
 #define GEMM_TGA_ELEMENTS                                                      \
   (USE_MXU ? 1                                                                 \
-           : (gemm_tiling_block_m(GEMM_TILING) *                                             \
+           : (gemm_tiling_block_m(GEMM_TILING) *                               \
               (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
 #define GEMM_TGB_ELEMENTS                                                      \
   (USE_MXU ? 1                                                                 \
-           : (gemm_tiling_block_n(GEMM_TILING) *                                             \
+           : (gemm_tiling_block_n(GEMM_TILING) *                               \
               (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
 
 template <
@@ -105,7 +105,13 @@ KERNEL(Gemm)(
     (void)zero_points;
     const device T* b = reinterpret_cast<const device T*>(b_packed);
     MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B>::run(
-        a, b, d, params, alignment, output_transform, thread_context
+        a,
+        b,
+        d,
+        params,
+        alignment,
+        output_transform,
+        thread_context
     );
   } else {
     (void)scales;

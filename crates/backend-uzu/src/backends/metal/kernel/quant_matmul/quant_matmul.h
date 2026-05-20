@@ -20,17 +20,17 @@ using QuantizationMethod = uzu::quantization_method::QuantizationMethod;
 // `qmm_transposed.metal`) and the `qmm_transposed_impl/_core` templates below
 // compile unchanged. Step 6 removes these aliases together with the standalone
 // QMM kernel.
-using uzu::gemm::uint_to_fp;
 using uzu::gemm::_uint4_to_fp4_float;
-using uzu::gemm::uint4_to_fp4;
-using uzu::gemm::get_pack_factor;
+using uzu::gemm::dequantize;
 using uzu::gemm::get_bytes_per_pack;
+using uzu::gemm::get_pack_factor;
 using uzu::gemm::load_vector;
 using uzu::gemm::load_vector_safe;
-using uzu::gemm::qouter;
 using uzu::gemm::qdot;
 using uzu::gemm::qdot_safe;
-using uzu::gemm::dequantize;
+using uzu::gemm::qouter;
+using uzu::gemm::uint4_to_fp4;
+using uzu::gemm::uint_to_fp;
 template <
     typename T,
     short BROWS,
@@ -59,16 +59,17 @@ template <
     short group_size,
     short bits,
     bool per_output_layout = false>
-using QuantizedBlockLoaderScaleZeroPoint = uzu::gemm::QuantizedBlockLoaderScaleZeroPoint<
-    T,
-    BROWS,
-    BCOLS,
-    dst_ld,
-    reduction_dim,
-    tgp_size,
-    group_size,
-    bits,
-    per_output_layout>;
+using QuantizedBlockLoaderScaleZeroPoint =
+    uzu::gemm::QuantizedBlockLoaderScaleZeroPoint<
+        T,
+        BROWS,
+        BCOLS,
+        dst_ld,
+        reduction_dim,
+        tgp_size,
+        group_size,
+        bits,
+        per_output_layout>;
 
 template <
     typename LoaderW,

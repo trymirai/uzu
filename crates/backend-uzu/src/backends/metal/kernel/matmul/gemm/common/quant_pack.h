@@ -7,8 +7,7 @@ namespace gemm {
 
 template <int bits, int word_size_bits = 8>
 inline constexpr short get_pack_factor() {
-  return (bits == 3 || bits == 5) ? 8
-                                  : (bits == 6 ? 4 : word_size_bits / bits);
+  return (bits == 3 || bits == 5) ? 8 : (bits == 6 ? 4 : word_size_bits / bits);
 }
 
 template <int bits, int word_size_bits = 8>

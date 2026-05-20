@@ -30,8 +30,10 @@ struct SimdgroupMmaCore {
   METAL_CONST int THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   METAL_CONST int THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
   METAL_CONST int THREADGROUP_BLOCK_K = gemm_tiling_block_k(GEMM_TILING);
-  METAL_CONST int SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
-  METAL_CONST int SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
+  METAL_CONST int SIMDGROUPS_PER_ROW =
+      gemm_tiling_simdgroups_per_row(GEMM_TILING);
+  METAL_CONST int SIMDGROUPS_PER_COLUMN =
+      gemm_tiling_simdgroups_per_column(GEMM_TILING);
   METAL_CONST ushort PADDING_A = 16 / sizeof(T);
   METAL_CONST ushort PADDING_B = 16 / sizeof(T);
   METAL_CONST ushort SHARED_STRIDE_A = THREADGROUP_BLOCK_K + PADDING_A;
@@ -243,114 +245,121 @@ struct SimdgroupMmaCore {
         ((tile_block_rows == THREADGROUP_BLOCK_M) ? GemmAlignment::M : 0u) |
         ((tile_block_cols == THREADGROUP_BLOCK_N) ? GemmAlignment::N : 0u);
 
-    dispatch_gemm_alignment(dynamic_alignment_mask, [&](auto gemm_alignment_mask) {
-      if constexpr (
-          WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision
-      ) {
-        const device T* b = reinterpret_cast<const device T*>(b_packed);
-        b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
-        thread BLoaderFp loader_b(
-            b, params->leading_dimension_b, b_shared, thread_context
-        );
-        k_loop<gemm_alignment_mask.value, BLoaderFp>(
-            a_shared,
-            b_shared,
-            params->aligned_inner_iterations,
-            loader_a,
-            loader_b,
-            accumulator,
-            tile_block_rows,
-            tile_block_cols,
-            leftover_block_depth
-        );
-      }
+    dispatch_gemm_alignment(
+        dynamic_alignment_mask,
+        [&](auto gemm_alignment_mask) {
+          if constexpr (
+              WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision
+          ) {
+            const device T* b = reinterpret_cast<const device T*>(b_packed);
+            b += TRANSPOSE_B ? block_col * params->leading_dimension_b
+                             : block_col;
+            thread BLoaderFp loader_b(
+                b,
+                params->leading_dimension_b,
+                b_shared,
+                thread_context
+            );
+            k_loop<gemm_alignment_mask.value, BLoaderFp>(
+                a_shared,
+                b_shared,
+                params->aligned_inner_iterations,
+                loader_a,
+                loader_b,
+                accumulator,
+                tile_block_rows,
+                tile_block_cols,
+                leftover_block_depth
+            );
+          }
 
-      if constexpr (
-          WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant
-      ) {
-        constexpr int pack_factor = get_pack_factor<BITS, 8>();
-        constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
-        const int k_elements = int(params->K);
-        const int weights_row_stride_bytes =
-            k_elements * bytes_per_pack / pack_factor;
-        const int groups_per_row =
-            (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
-        const device uint8_t* weights_block =
-            b_packed + block_col * weights_row_stride_bytes;
-        const device T* scales_offset = scales + block_col * groups_per_row;
-        const device T* biases_offset = biases + block_col * groups_per_row;
-        thread BLoaderScaleBias loader_b(
-            weights_block,
-            scales_offset,
-            biases_offset,
-            k_elements,
-            b_shared,
-            thread_context.simdgroup_index,
-            thread_context.simd_lane_id
-        );
-        k_loop<gemm_alignment_mask.value, BLoaderScaleBias>(
-            a_shared,
-            b_shared,
-            params->aligned_inner_iterations,
-            loader_a,
-            loader_b,
-            accumulator,
-            tile_block_rows,
-            tile_block_cols,
-            leftover_block_depth
-        );
-      }
+          if constexpr (
+              WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant
+          ) {
+            constexpr int pack_factor = get_pack_factor<BITS, 8>();
+            constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
+            const int k_elements = int(params->K);
+            const int weights_row_stride_bytes =
+                k_elements * bytes_per_pack / pack_factor;
+            const int groups_per_row =
+                (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
+            const device uint8_t* weights_block =
+                b_packed + block_col * weights_row_stride_bytes;
+            const device T* scales_offset = scales + block_col * groups_per_row;
+            const device T* biases_offset = biases + block_col * groups_per_row;
+            thread BLoaderScaleBias loader_b(
+                weights_block,
+                scales_offset,
+                biases_offset,
+                k_elements,
+                b_shared,
+                thread_context.simdgroup_index,
+                thread_context.simd_lane_id
+            );
+            k_loop<gemm_alignment_mask.value, BLoaderScaleBias>(
+                a_shared,
+                b_shared,
+                params->aligned_inner_iterations,
+                loader_a,
+                loader_b,
+                accumulator,
+                tile_block_rows,
+                tile_block_cols,
+                leftover_block_depth
+            );
+          }
 
-      if constexpr (
-          WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant
-      ) {
-        constexpr int pack_factor = get_pack_factor<BITS, 8>();
-        constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
-        const int k_elements = int(params->K);
-        const int weights_row_stride_bytes =
-            k_elements * bytes_per_pack / pack_factor;
-        const int groups_per_row =
-            (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
-        const device uint8_t* weights_block =
-            b_packed + block_col * weights_row_stride_bytes;
-        const device T* scales_offset = scales + block_col * groups_per_row;
-        const int zero_point_stride_per_row =
-            (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
-        const device uint8_t* zero_points_row_start =
-            zero_points + block_col * zero_point_stride_per_row;
-        thread BLoaderScaleZeroPoint loader_b(
-            weights_block,
-            scales_offset,
-            zero_points_row_start,
-            k_elements,
-            groups_per_row,
-            b_shared,
-            thread_context.simdgroup_index,
-            thread_context.simd_lane_id
-        );
-        k_loop<gemm_alignment_mask.value, BLoaderScaleZeroPoint>(
-            a_shared,
-            b_shared,
-            params->aligned_inner_iterations,
-            loader_a,
-            loader_b,
-            accumulator,
-            tile_block_rows,
-            tile_block_cols,
-            leftover_block_depth
-        );
-      }
+          if constexpr (
+              WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant
+          ) {
+            constexpr int pack_factor = get_pack_factor<BITS, 8>();
+            constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
+            const int k_elements = int(params->K);
+            const int weights_row_stride_bytes =
+                k_elements * bytes_per_pack / pack_factor;
+            const int groups_per_row =
+                (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
+            const device uint8_t* weights_block =
+                b_packed + block_col * weights_row_stride_bytes;
+            const device T* scales_offset = scales + block_col * groups_per_row;
+            const int zero_point_stride_per_row =
+                (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
+            const device uint8_t* zero_points_row_start =
+                zero_points + block_col * zero_point_stride_per_row;
+            thread BLoaderScaleZeroPoint loader_b(
+                weights_block,
+                scales_offset,
+                zero_points_row_start,
+                k_elements,
+                groups_per_row,
+                b_shared,
+                thread_context.simdgroup_index,
+                thread_context.simd_lane_id
+            );
+            k_loop<gemm_alignment_mask.value, BLoaderScaleZeroPoint>(
+                a_shared,
+                b_shared,
+                params->aligned_inner_iterations,
+                loader_a,
+                loader_b,
+                accumulator,
+                tile_block_rows,
+                tile_block_cols,
+                leftover_block_depth
+            );
+          }
 
-      finalize<gemm_alignment_mask.value>(
-          accumulator,
-          d,
-          params,
-          tile_block_rows,
-          tile_block_cols,
-          needs_epilogue,
-          epilogue
-      );
-    });
+          finalize<gemm_alignment_mask.value>(
+              accumulator,
+              d,
+              params,
+              tile_block_rows,
+              tile_block_cols,
+              needs_epilogue,
+              epilogue
+          );
+        }
+    );
   }
 };
 

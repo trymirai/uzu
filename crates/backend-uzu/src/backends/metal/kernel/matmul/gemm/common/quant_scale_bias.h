@@ -34,11 +34,13 @@ struct QuantizedBlockLoaderScaleBias {
 
   METAL_CONST short pack_factor = get_pack_factor<BITS, 8>();
   METAL_CONST short bytes_per_pack = get_bytes_per_pack<BITS>();
-  METAL_CONST short THREADGROUP_TILE_COLS_PACKED = THREADGROUP_TILE_COLS / pack_factor;
+  METAL_CONST short THREADGROUP_TILE_COLS_PACKED =
+      THREADGROUP_TILE_COLS / pack_factor;
   METAL_CONST short READS_PER_THREAD =
       (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
           ? 1
-          : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
+          : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) /
+                THREADGROUP_SIZE;
   METAL_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
 
   const int src_leading_dim;
@@ -66,15 +68,19 @@ struct QuantizedBlockLoaderScaleBias {
   )
       : src_leading_dim(src_leading_dim_),
         tile_stride(
-            REDUCTION_DIMENSION
-                ? THREADGROUP_TILE_COLS_PACKED * bytes_per_pack
-                : THREADGROUP_TILE_ROWS * src_leading_dim_ * bytes_per_pack / pack_factor
+            REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS_PACKED * bytes_per_pack
+                                : THREADGROUP_TILE_ROWS * src_leading_dim_ *
+                                      bytes_per_pack / pack_factor
         ),
         group_step_counter(0),
         group_stride(THREADGROUP_TILE_ROWS * src_leading_dim_ / GROUP_SIZE),
         thread_index(simd_group_id * 32 + simd_lane_id),
-        tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
-        tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
+        tile_row_index(
+            READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED
+        ),
+        tile_col_index(
+            (READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED
+        ),
         dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION +
             tile_col_index * pack_factor),
         src(src_ +
@@ -84,7 +90,8 @@ struct QuantizedBlockLoaderScaleBias {
         biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE) {}
 
   void load_unsafe() const {
-    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE &&
+    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS <
+            THREADGROUP_SIZE &&
         tile_row_index >= THREADGROUP_TILE_ROWS) {
       return;
     }
@@ -102,7 +109,8 @@ struct QuantizedBlockLoaderScaleBias {
   }
 
   void load_safe(short2 src_tile_dim) const {
-    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE &&
+    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS <
+            THREADGROUP_SIZE &&
         tile_row_index >= THREADGROUP_TILE_ROWS) {
       return;
     }

@@ -19,8 +19,10 @@ template <typename T, GemmTiling GEMM_TILING, bool TRANSPOSE_B>
 struct MxuMmaCore {
   METAL_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   METAL_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
-  METAL_CONST ushort SIMDGROUPS_PER_ROW = gemm_tiling_simdgroups_per_row(GEMM_TILING);
-  METAL_CONST ushort SIMDGROUPS_PER_COLUMN = gemm_tiling_simdgroups_per_column(GEMM_TILING);
+  METAL_CONST ushort SIMDGROUPS_PER_ROW =
+      gemm_tiling_simdgroups_per_row(GEMM_TILING);
+  METAL_CONST ushort SIMDGROUPS_PER_COLUMN =
+      gemm_tiling_simdgroups_per_column(GEMM_TILING);
   METAL_CONST ushort SIMDGROUP_BLOCK_M =
       THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   METAL_CONST ushort SIMDGROUP_BLOCK_N =

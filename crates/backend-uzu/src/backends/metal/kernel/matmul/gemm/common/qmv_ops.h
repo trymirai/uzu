@@ -77,7 +77,8 @@ inline U qdot(
   U accumulator = 0;
   if (BITS == 4) {
     using U4 = vec<U, 4>;
-    const device ushort* weight_words = reinterpret_cast<const device ushort*>(w);
+    const device ushort* weight_words =
+        reinterpret_cast<const device ushort*>(w);
     const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
     for (int i = 0; i < (VALUES_PER_THREAD / 4); i++) {
       uint weight_word = weight_words[i];
@@ -121,7 +122,8 @@ inline U qdot_safe(
   U accumulator = 0;
   if (BITS == 4) {
     using U4 = vec<U, 4>;
-    const device uint16_t* weight_words = reinterpret_cast<const device uint16_t*>(w);
+    const device uint16_t* weight_words =
+        reinterpret_cast<const device uint16_t*>(w);
     const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
 
     int full_chunks = N / 4;

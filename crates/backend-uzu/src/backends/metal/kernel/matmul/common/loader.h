@@ -20,7 +20,8 @@ template <
     ushort REDUCTION_DIMENSION,
     ushort THREADGROUP_SIZE,
     ushort ALIGNMENT = 1,
-    ushort READS_PER_THREAD = (THREADGROUP_TILE_COLS * THREADGROUP_TILE_ROWS) / (THREADGROUP_SIZE),
+    ushort READS_PER_THREAD =
+        (THREADGROUP_TILE_COLS * THREADGROUP_TILE_ROWS) / (THREADGROUP_SIZE),
     ushort THREAD_COLS = THREADGROUP_TILE_COLS / READS_PER_THREAD,
     ushort THREAD_ROWS = THREADGROUP_SIZE / THREAD_COLS>
 struct ThreadgroupLoader {
@@ -49,7 +50,8 @@ struct ThreadgroupLoader {
   )
       : source_leading_dimension(source_leading_dim),
         tile_stride(
-            REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS : THREADGROUP_TILE_ROWS * source_leading_dim
+            REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS
+                                : THREADGROUP_TILE_ROWS * source_leading_dim
         ),
         thread_index(
             thread_context.simdgroup_index * METAL_SIMD_SIZE +

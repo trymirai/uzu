@@ -117,7 +117,8 @@ inline void dequantize<bfloat, 8, 4>(
   v0 = v0 * scale + bias;
   v1 = v1 * scale + bias;
 
-  threadgroup bfloat4* out_ptr = reinterpret_cast<threadgroup bfloat4*>(w_local);
+  threadgroup bfloat4* out_ptr =
+      reinterpret_cast<threadgroup bfloat4*>(w_local);
   out_ptr[0] = v0;
   out_ptr[1] = v1;
 }
