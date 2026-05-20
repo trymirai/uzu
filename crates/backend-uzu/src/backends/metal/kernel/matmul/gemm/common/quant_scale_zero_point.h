@@ -43,6 +43,8 @@ struct QuantizedBlockLoaderScaleZeroPoint {
           : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) /
                 THREADGROUP_SIZE;
   METAL_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
+  METAL_CONST bool TILE_HAS_IDLE_THREADS =
+      THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
 
   const int src_leading_dim;
   const int groups_per_row;
@@ -126,11 +128,11 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   ) const {
     uint zero_point_value;
     T scale_value;
-    if (PER_OUTPUT_LAYOUT) {
+    if constexpr (PER_OUTPUT_LAYOUT) {
       const int row_index = k_base + tile_row_index;
       const int scale_index = row_index * groups_per_row + output_group_base;
       scale_value = scales_row_start[scale_index];
-      if (BITS == 4) {
+      if constexpr (BITS == 4) {
         const int byte_index =
             row_index * zero_point_stride_total + (output_group_base >> 1);
         uint8_t zero_point_byte = zero_points_row_start[byte_index];
@@ -143,12 +145,15 @@ struct QuantizedBlockLoaderScaleZeroPoint {
         zero_point_value = zero_points_row_start[zero_point_index];
       }
     } else {
-      int group_index = REDUCTION_DIMENSION == 0
-                            ? (k_base / GROUP_SIZE)
-                            : static_cast<int>(scales - scales_row_start);
-      scale_value =
-          REDUCTION_DIMENSION == 0 ? scales_row_start[group_index] : *scales;
-      if (BITS == 4) {
+      int group_index;
+      if constexpr (REDUCTION_DIMENSION == 0) {
+        group_index = k_base / GROUP_SIZE;
+        scale_value = scales_row_start[group_index];
+      } else {
+        group_index = static_cast<int>(scales - scales_row_start);
+        scale_value = *scales;
+      }
+      if constexpr (BITS == 4) {
         const device uint8_t* zero_point_ptr =
             zero_points_row_start + (group_index >> 1);
         uint8_t zero_point_byte = *zero_point_ptr;
@@ -163,10 +168,10 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   }
 
   void load_unsafe() const {
-    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS <
-            THREADGROUP_SIZE &&
-        tile_row_index >= THREADGROUP_TILE_ROWS) {
-      return;
+    if constexpr (TILE_HAS_IDLE_THREADS) {
+      if (tile_row_index >= THREADGROUP_TILE_ROWS) {
+        return;
+      }
     }
 
     T scale;
@@ -183,13 +188,13 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   }
 
   void load_safe(short2 src_tile_dim) const {
-    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS <
-            THREADGROUP_SIZE &&
-        tile_row_index >= THREADGROUP_TILE_ROWS) {
-      return;
+    if constexpr (TILE_HAS_IDLE_THREADS) {
+      if (tile_row_index >= THREADGROUP_TILE_ROWS) {
+        return;
+      }
     }
 
-    if (REDUCTION_DIMENSION == 1) {
+    if constexpr (REDUCTION_DIMENSION == 1) {
       if (tile_row_index >= src_tile_dim.x) {
         for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
           dst[i] = T(0);
@@ -228,32 +233,32 @@ struct QuantizedBlockLoaderScaleZeroPoint {
         }
       }
       return;
-    }
-
-    if (REDUCTION_DIMENSION == 0 && tile_row_index >= src_tile_dim.y) {
-      for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-        dst[i] = T(0);
+    } else {
+      if (tile_row_index >= src_tile_dim.y) {
+        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
+          dst[i] = T(0);
+        }
+        return;
       }
-      return;
-    }
 
-    T scale;
-    T bias;
-    current_scale_bias(scale, bias);
-    for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(
-          src + i * bytes_per_pack,
-          scale,
-          bias,
-          dst + i * pack_factor
-      );
+      T scale;
+      T bias;
+      current_scale_bias(scale, bias);
+      for (int i = 0; i < READS_PER_THREAD; i++) {
+        dequantize<T, pack_factor, BITS>(
+            src + i * bytes_per_pack,
+            scale,
+            bias,
+            dst + i * pack_factor
+        );
+      }
     }
   }
 
   void next() {
     src += tile_stride;
-    if (REDUCTION_DIMENSION == 1) {
-      if (GROUP_STEPS_PER_BLOCK > 1) {
+    if constexpr (REDUCTION_DIMENSION == 1) {
+      if constexpr (GROUP_STEPS_PER_BLOCK > 1) {
         group_step_counter++;
         if (group_step_counter == GROUP_STEPS_PER_BLOCK) {
           group_step_counter = 0;

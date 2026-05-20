@@ -42,6 +42,8 @@ struct QuantizedBlockLoaderScaleBias {
           : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) /
                 THREADGROUP_SIZE;
   METAL_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
+  METAL_CONST bool TILE_HAS_IDLE_THREADS =
+      THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
 
   const int src_leading_dim;
   const int tile_stride;
@@ -90,10 +92,10 @@ struct QuantizedBlockLoaderScaleBias {
         biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE) {}
 
   void load_unsafe() const {
-    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS <
-            THREADGROUP_SIZE &&
-        tile_row_index >= THREADGROUP_TILE_ROWS) {
-      return;
+    if constexpr (TILE_HAS_IDLE_THREADS) {
+      if (tile_row_index >= THREADGROUP_TILE_ROWS) {
+        return;
+      }
     }
 
     T scale = *scales;
@@ -109,24 +111,26 @@ struct QuantizedBlockLoaderScaleBias {
   }
 
   void load_safe(short2 src_tile_dim) const {
-    if (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS <
-            THREADGROUP_SIZE &&
-        tile_row_index >= THREADGROUP_TILE_ROWS) {
-      return;
+    if constexpr (TILE_HAS_IDLE_THREADS) {
+      if (tile_row_index >= THREADGROUP_TILE_ROWS) {
+        return;
+      }
     }
 
-    if (REDUCTION_DIMENSION == 1 && tile_row_index >= src_tile_dim.x) {
-      for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-        dst[i] = T(0);
+    if constexpr (REDUCTION_DIMENSION == 1) {
+      if (tile_row_index >= src_tile_dim.x) {
+        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
+          dst[i] = T(0);
+        }
+        return;
       }
-      return;
-    }
-
-    if (REDUCTION_DIMENSION == 0 && tile_row_index >= src_tile_dim.y) {
-      for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
-        dst[i] = T(0);
+    } else {
+      if (tile_row_index >= src_tile_dim.y) {
+        for (int i = 0; i < READS_PER_THREAD * pack_factor; i++) {
+          dst[i] = T(0);
+        }
+        return;
       }
-      return;
     }
 
     T scale = *scales;
@@ -143,8 +147,8 @@ struct QuantizedBlockLoaderScaleBias {
 
   void next() {
     src += tile_stride;
-    if (REDUCTION_DIMENSION == 1) {
-      if (GROUP_STEPS_PER_BLOCK > 1) {
+    if constexpr (REDUCTION_DIMENSION == 1) {
+      if constexpr (GROUP_STEPS_PER_BLOCK > 1) {
         group_step_counter++;
         if (group_step_counter == GROUP_STEPS_PER_BLOCK) {
           group_step_counter = 0;
