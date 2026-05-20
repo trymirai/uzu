@@ -4,13 +4,13 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{Backend, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
+    backends::common::{Backend, Buffer, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
 };
 
-pub struct KVLayerData<'a, B: Backend> {
-    pub key_buffer: &'a mut B::SparseBuffer,
+pub struct KVLayerData<'a, B: Backend, Buf: Buffer<Backend = B>> {
+    pub key_buffer: &'a mut Buf,
     pub key_shape: [usize; 3],
-    pub value_buffer: &'a mut B::SparseBuffer,
+    pub value_buffer: &'a mut Buf,
     pub value_shape: [usize; 3],
 }
 
@@ -53,9 +53,9 @@ impl<B: Backend> KVCacheUpdate<B> {
     }
 
     /// Encode the KV cache update operation using a provided command buffer
-    pub fn encode(
+    pub fn encode<Buf: Buffer<Backend = B>>(
         &self,
-        in_place_data: &mut [KVLayerData<B>],
+        in_place_data: &mut [KVLayerData<B, Buf>],
         source_indices: &[usize],
         destination_indices: &[usize],
         encoder: &mut Encoder<B>,

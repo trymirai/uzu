@@ -69,7 +69,7 @@ fn test_random_pattern<B: Backend>(context: &B::Context) {
         common::helpers::sparse_buffer_create_with::<B, f32>(context, value_data.as_slice().unwrap());
     let mut encoder = Encoder::<B>::new(context).unwrap();
     {
-        let mut kv_layers = [KVLayerData::<B> {
+        let mut kv_layers = [KVLayerData::<B, B::SparseBuffer> {
             key_buffer: &mut key_buffer,
             key_shape: [seq_len, num_heads, head_dim],
             value_buffer: &mut value_buffer,

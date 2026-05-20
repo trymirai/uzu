@@ -52,6 +52,8 @@ pub trait Context: Sized {
 
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
+    fn is_sparse_supported(&self) -> bool;
+
     fn tf32_enabled() -> bool {
         env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
     }

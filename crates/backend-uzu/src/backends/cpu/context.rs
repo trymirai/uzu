@@ -93,4 +93,8 @@ impl Context for CpuContext {
     fn stop_capture(&self) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
     }
+
+    fn is_sparse_supported(&self) -> bool {
+        false
+    }
 }

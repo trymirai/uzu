@@ -1,10 +1,10 @@
-use std::ops::Range;
+use std::{any::Any, ops::Range};
 
 use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{
-        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
+        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder, SparseBuffer, SparseBufferExt,
         kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
     },
 };
@@ -41,36 +41,224 @@ pub enum KVCacheLayerState {
 
 pub const INVALID_POSITION: usize = i32::MAX as usize;
 
-pub struct KVCacheLayer<B: Backend> {
-    pub state: KVCacheLayerState,
-    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub keys: B::SparseBuffer,
-    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
-    pub values: B::SparseBuffer,
-    pub shape: [usize; 3],
-    pub data_type: DataType,
+pub trait KVCacheLayerTrait<B: Backend> {
+    fn as_any(&self) -> &dyn Any;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    fn shape(&self) -> [usize; 3];
+
+    fn data_type(&self) -> DataType;
+
+    fn encode_zero(
+        &mut self,
+        encoder: &mut Encoder<'_, B>,
+    );
+
+    fn state(&self) -> KVCacheLayerState;
+
+    fn set_state(
+        &mut self,
+        state: &KVCacheLayerState,
+    );
+
+    fn clear_state(&mut self);
+
+    fn encode_copy_prefix_rows_to(
+        &self,
+        destination: &mut dyn KVCacheLayerTrait<B>,
+        row_count: usize,
+        encoder: &mut Encoder<B>,
+    );
+
+    fn prefix_segment_length(&self) -> usize;
+
+    fn update_after_acceptance(
+        &mut self,
+        accepted_suffix_indices: &[usize],
+        suffix_start: Option<usize>,
+        encoder: &mut Encoder<B>,
+        kv_cache_update: &KVCacheUpdate<B>,
+    );
+
+    fn register_accepted_tokens(
+        &mut self,
+        number_of_accepted_tokens: usize,
+    );
+
+    fn slice(
+        &self,
+        context: &B::Context,
+        encoder: &mut Encoder<B>,
+        range: Range<usize>,
+    ) -> Option<KVSlice<B>>;
+
+    fn apply_slice(
+        &mut self,
+        encoder: &mut Encoder<B>,
+        slice: &KVSlice<B>,
+        range: Option<Range<usize>>,
+    );
+
+    fn map_pages(
+        &mut self,
+        context: &B::Context,
+    ) -> Result<(), B::Error>;
 }
 
-impl<B: Backend> KVCacheLayer<B> {
+impl<B: Backend> dyn KVCacheLayerTrait<B> {
     pub fn new(
         context: &B::Context,
         state: &KVCacheLayerState,
         shape: [usize; 3],
         data_type: DataType,
-    ) -> Result<Self, B::Error> {
+    ) -> Result<Box<dyn KVCacheLayerTrait<B>>, B::Error> {
         let buffer_size = size_for_shape(&shape, data_type);
-        Ok(Self {
-            state: state.clone(),
-            keys: context.create_sparse_buffer(buffer_size)?,
-            values: context.create_sparse_buffer(buffer_size)?,
-            shape,
-            data_type,
-        })
+        if context.is_sparse_supported() {
+            let layer = KVCacheLayer {
+                state: state.clone(),
+                keys: context.create_sparse_buffer(buffer_size)?,
+                values: context.create_sparse_buffer(buffer_size)?,
+                shape,
+                data_type,
+            };
+            Ok(Box::new(layer))
+        } else {
+            let layer = KVCacheLayer {
+                state: state.clone(),
+                keys: context.create_buffer(buffer_size)?,
+                values: context.create_buffer(buffer_size)?,
+                shape,
+                data_type,
+            };
+            Ok(Box::new(layer))
+        }
+    }
+}
+
+pub struct KVCacheLayer<B: Backend, Buf: Buffer<Backend = B>> {
+    pub state: KVCacheLayerState,
+    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
+    pub keys: Buf,
+    /// [max_prefix_length + max_suffix_length, num_groups, head_dim]
+    pub values: Buf,
+    pub shape: [usize; 3],
+    pub data_type: DataType,
+}
+
+impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayer<B, Buf> {
+    fn scatter_if_required(
+        &mut self,
+        source_indices: &[usize],
+        destination_indices: &[usize],
+        encoder: &mut Encoder<B>,
+        kv_cache_update: &KVCacheUpdate<B>,
+    ) {
+        if source_indices == destination_indices {
+            return;
+        }
+
+        let mut layer_data = KVLayerData {
+            key_buffer: &mut self.keys,
+            key_shape: self.shape,
+            value_buffer: &mut self.values,
+            value_shape: self.shape,
+        };
+
+        let data = std::slice::from_mut(&mut layer_data);
+        let _ = kv_cache_update.encode(data, source_indices, destination_indices, encoder);
     }
 
-    pub fn encode_copy_prefix_rows_to(
+    fn copy_rows<
+        SrcKeys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        DstKeys: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
+        SrcValues: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        DstValues: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
+    >(
+        encoder: &mut Encoder<B>,
+        src_keys: &SrcKeys,
+        dst_keys: &mut DstKeys,
+        src_values: &SrcValues,
+        dst_values: &mut DstValues,
+        row_size: usize,
+        row_pairs: impl IntoIterator<Item = (usize, usize)>,
+    ) {
+        for (src_row, dst_row) in row_pairs {
+            let src_offset = src_row * row_size;
+            let dst_offset = dst_row * row_size;
+            encoder.encode_copy(
+                src_keys,
+                src_offset..src_offset + row_size,
+                dst_keys,
+                dst_offset..dst_offset + row_size,
+            );
+            encoder.encode_copy(
+                src_values,
+                src_offset..src_offset + row_size,
+                dst_values,
+                dst_offset..dst_offset + row_size,
+            );
+        }
+    }
+}
+
+impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer<B, Buf> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn shape(&self) -> [usize; 3] {
+        self.shape
+    }
+
+    fn data_type(&self) -> DataType {
+        self.data_type
+    }
+
+    fn state(&self) -> KVCacheLayerState {
+        self.state.clone()
+    }
+
+    fn encode_zero(
+        &mut self,
+        encoder: &mut Encoder<'_, B>,
+    ) {
+        encoder.encode_fill(&mut self.keys, 0);
+        encoder.encode_fill(&mut self.values, 0);
+    }
+
+    fn set_state(
+        &mut self,
+        state: &KVCacheLayerState,
+    ) {
+        self.state = state.clone();
+    }
+
+    fn clear_state(&mut self) {
+        match &mut self.state {
+            KVCacheLayerState::Full {
+                prefix_len,
+            } => {
+                *prefix_len = 0;
+            },
+            KVCacheLayerState::Windowed {
+                ring_offset,
+                ring_length,
+                ..
+            } => {
+                *ring_offset = 0;
+                *ring_length = 0;
+            },
+        }
+    }
+
+    fn encode_copy_prefix_rows_to(
         &self,
-        destination: &mut KVCacheLayer<B>,
+        destination: &mut dyn KVCacheLayerTrait<B>,
         row_count: usize,
         encoder: &mut Encoder<B>,
     ) {
@@ -79,21 +267,27 @@ impl<B: Backend> KVCacheLayer<B> {
         }
 
         let [source_seq, num_groups, head_dim] = self.shape;
-        let [destination_seq, destination_groups, destination_head_dim] = destination.shape;
+        let [destination_seq, destination_groups, destination_head_dim] = destination.shape();
         assert_eq!(num_groups, destination_groups, "KV cache group count mismatch");
         assert_eq!(head_dim, destination_head_dim, "KV cache head dim mismatch");
-        assert_eq!(self.data_type, destination.data_type, "KV cache dtype mismatch");
+        assert_eq!(self.data_type, destination.data_type(), "KV cache dtype mismatch");
         assert!(row_count <= source_seq, "source KV cache copy exceeds source sequence");
         assert!(row_count <= destination_seq, "source KV cache copy exceeds destination sequence");
 
         let row_size = size_for_shape(&[1, num_groups, head_dim], self.data_type);
         let copy_size = row_count * row_size;
-
-        encoder.encode_copy(&self.keys, 0..copy_size, &mut destination.keys, 0..copy_size);
-        encoder.encode_copy(&self.values, 0..copy_size, &mut destination.values, 0..copy_size);
+        if let Some(dest) = destination.as_any_mut().downcast_mut::<KVCacheLayer<B, B::SparseBuffer>>() {
+            encoder.encode_copy(&self.keys, 0..copy_size, &mut dest.keys, 0..copy_size);
+            encoder.encode_copy(&self.values, 0..copy_size, &mut dest.values, 0..copy_size);
+        } else if let Some(dest) = destination.as_any_mut().downcast_mut::<KVCacheLayer<B, B::DenseBuffer>>() {
+            encoder.encode_copy(&self.keys, 0..copy_size, &mut dest.keys, 0..copy_size);
+            encoder.encode_copy(&self.values, 0..copy_size, &mut dest.values, 0..copy_size);
+        } else {
+            panic!("Wrong destination type!")
+        }
     }
 
-    pub fn prefix_segment_length(&self) -> usize {
+    fn prefix_segment_length(&self) -> usize {
         match &self.state {
             KVCacheLayerState::Full {
                 prefix_len,
@@ -105,19 +299,7 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    pub fn window_length(&self) -> Option<usize> {
-        match &self.state {
-            KVCacheLayerState::Full {
-                ..
-            } => None,
-            KVCacheLayerState::Windowed {
-                window_length,
-                ..
-            } => Some(*window_length),
-        }
-    }
-
-    pub fn update_after_acceptance(
+    fn update_after_acceptance(
         &mut self,
         accepted_suffix_indices: &[usize],
         suffix_start: Option<usize>,
@@ -167,29 +349,7 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    fn scatter_if_required(
-        &mut self,
-        source_indices: &[usize],
-        destination_indices: &[usize],
-        encoder: &mut Encoder<B>,
-        kv_cache_update: &KVCacheUpdate<B>,
-    ) {
-        if source_indices == destination_indices {
-            return;
-        }
-
-        let mut layer_data = KVLayerData {
-            key_buffer: &mut self.keys,
-            key_shape: self.shape,
-            value_buffer: &mut self.values,
-            value_shape: self.shape,
-        };
-
-        let _ =
-            kv_cache_update.encode(std::slice::from_mut(&mut layer_data), source_indices, destination_indices, encoder);
-    }
-
-    pub fn register_accepted_tokens(
+    fn register_accepted_tokens(
         &mut self,
         number_of_accepted_tokens: usize,
     ) {
@@ -211,7 +371,7 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    pub fn slice(
+    fn slice(
         &self,
         context: &B::Context,
         encoder: &mut Encoder<B>,
@@ -274,7 +434,7 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    pub fn apply_slice(
+    fn apply_slice(
         &mut self,
         encoder: &mut Encoder<B>,
         slice: &KVSlice<B>,
@@ -370,36 +530,15 @@ impl<B: Backend> KVCacheLayer<B> {
         }
     }
 
-    fn copy_rows<
-        SrcKeys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
-        DstKeys: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
-        SrcValues: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
-        DstValues: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
-    >(
-        encoder: &mut Encoder<B>,
-        src_keys: &SrcKeys,
-        dst_keys: &mut DstKeys,
-        src_values: &SrcValues,
-        dst_values: &mut DstValues,
-        row_size: usize,
-        row_pairs: impl IntoIterator<Item = (usize, usize)>,
-    ) {
-        for (src_row, dst_row) in row_pairs {
-            let src_offset = src_row * row_size;
-            let dst_offset = dst_row * row_size;
-            encoder.encode_copy(
-                src_keys,
-                src_offset..src_offset + row_size,
-                dst_keys,
-                dst_offset..dst_offset + row_size,
-            );
-            encoder.encode_copy(
-                src_values,
-                src_offset..src_offset + row_size,
-                dst_values,
-                dst_offset..dst_offset + row_size,
-            );
+    fn map_pages(
+        &mut self,
+        context: &B::Context,
+    ) -> Result<(), B::Error> {
+        if let Some(layer) = self.as_any_mut().downcast_mut::<KVCacheLayer<B, B::SparseBuffer>>() {
+            layer.keys.map(context, &(0..layer.keys.total_pages()))?;
+            layer.values.map(context, &(0..layer.values.total_pages()))?;
         }
+        Ok(())
     }
 }
 

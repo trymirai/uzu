@@ -258,4 +258,8 @@ impl Context for MetalContext {
 
         Ok(())
     }
+
+    fn is_sparse_supported(&self) -> bool {
+        true
+    }
 }

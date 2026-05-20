@@ -1,5 +1,7 @@
 #![cfg(metal_backend)]
 
+use backend_uzu::forward_pass::kv_cache_layer::KVCacheLayerTrait;
+
 use crate::{
     DataType,
     backends::{
@@ -32,7 +34,7 @@ fn make_test_layer<B: Backend>(
     state: KVCacheLayerState,
     prefix_capacity: usize,
     suffix_capacity: usize,
-) -> (KVCacheLayer<B>, [usize; 3]) {
+) -> (KVCacheLayer<B, B::SparseBuffer>, [usize; 3]) {
     let total_len = match &state {
         KVCacheLayerState::Full {
             ..
@@ -72,7 +74,7 @@ fn overwrite_sparse_buffer<B: Backend>(
 
 fn fill_arrays<B: Backend>(
     context: &B::Context,
-    layer: &mut KVCacheLayer<B>,
+    layer: &mut KVCacheLayer<B, B::SparseBuffer>,
 ) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
         let len = layer.shape.iter().product();
