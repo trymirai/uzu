@@ -259,7 +259,7 @@ impl Context for MetalContext {
         Ok(())
     }
 
-    fn is_sparse_supported(&self) -> bool {
-        true
+    fn sparse_buffers_supported(&self) -> bool {
+        self.device.supports_placement_sparse()
     }
 }
