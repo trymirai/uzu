@@ -1,8 +1,6 @@
-mod dispatch;
 mod error;
 mod kernel;
 mod specialization;
-mod weights;
 
 pub use error::GemmSpecializationError;
 pub(crate) use kernel::GemmKernel;

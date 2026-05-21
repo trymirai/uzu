@@ -6,6 +6,7 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemmSpecialization {
+    pub(crate) data_type: DataType,
     pub(crate) tiling: GemmTiling,
     pub(crate) use_mxu: bool,
     pub(crate) output_transform: GemmDTransform,
@@ -41,6 +42,7 @@ impl GemmSpecialization {
             for align_mn in [true, false] {
                 for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                     out.push(Self {
+                        data_type,
                         tiling,
                         use_mxu: false,
                         output_transform,
@@ -65,6 +67,7 @@ impl GemmSpecialization {
                             GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
                         ] {
                             out.push(Self {
+                                data_type,
                                 tiling,
                                 use_mxu: true,
                                 output_transform,
@@ -91,6 +94,7 @@ impl GemmSpecialization {
                         for align_n in [true, false] {
                             for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                                 out.push(Self {
+                                    data_type,
                                     tiling,
                                     use_mxu: false,
                                     output_transform,
