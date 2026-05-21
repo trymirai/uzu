@@ -94,7 +94,7 @@ impl Context for CpuContext {
         Err(CpuError::NotSupported)
     }
 
-    fn is_sparse_supported(&self) -> bool {
+    fn sparse_buffers_supported(&self) -> bool {
         false
     }
 }

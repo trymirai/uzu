@@ -118,7 +118,7 @@ impl<B: Backend> dyn KVCacheLayerTrait<B> {
         data_type: DataType,
     ) -> Result<Box<dyn KVCacheLayerTrait<B>>, B::Error> {
         let buffer_size = size_for_shape(&shape, data_type);
-        if context.is_sparse_supported() {
+        if context.sparse_buffers_supported() {
             let layer = KVCacheLayer {
                 state: state.clone(),
                 keys: context.create_sparse_buffer(buffer_size)?,
