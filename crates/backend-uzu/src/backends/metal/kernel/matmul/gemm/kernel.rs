@@ -12,7 +12,7 @@ use crate::{
                 GemmParams, QuantizationMethod,
                 gemm::{GemmAlignment, GemmInputPrologueKind, GemmTiling, GemmWeightPrologueKind},
             },
-            kernel::matmul::{MatmulArguments, MatmulB, ResolvedDTransform},
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulDOp},
         },
         metal::{Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel},
     },
@@ -71,9 +71,12 @@ impl GemmKernel {
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<'a, Metal>,
-        resolved_d: ResolvedDTransform<'a, Metal>,
         use_mxu: bool,
     ) -> Result<(), MetalError> {
+        // DSL: read scale + accumulate state directly from d_transform.
+        let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
+        let core_kind = MatmulDOp::mask(&arguments.d_transform).core_kind();
+
         let MatmulArguments {
             a,
             a_offset,
@@ -124,7 +127,7 @@ impl GemmKernel {
 
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % k_block == 0);
-                let output_transform = resolved_d.mask.core_kind();
+                let output_transform = core_kind;
 
                 let default_ldb = if b_transpose {
                     k
@@ -142,7 +145,7 @@ impl GemmKernel {
                     threadgroups_per_column,
                     aligned_inner_iterations: k / k_block,
                     use_morton,
-                    ab_scale: resolved_d.ab_scale,
+                    ab_scale: ab_scale,
                 };
 
                 self.encode_dispatch(
@@ -187,7 +190,7 @@ impl GemmKernel {
                 a_offset,
                 b_offset,
                 d,
-                resolved_d.ab_scale,
+                ab_scale,
                 m,
                 n,
                 k,
@@ -211,7 +214,7 @@ impl GemmKernel {
                 a_offset,
                 b_offset,
                 d,
-                resolved_d.ab_scale,
+                ab_scale,
                 m,
                 n,
                 k,

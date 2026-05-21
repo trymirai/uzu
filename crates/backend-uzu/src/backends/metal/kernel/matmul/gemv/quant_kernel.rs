@@ -11,7 +11,7 @@ use crate::{
             },
             kernel::{
                 Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, ResolvedDTransform},
+                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError},
             },
         },
         metal::{Metal, context::MetalContext},
@@ -60,18 +60,18 @@ impl QuantGemvKernel {
         &mut self,
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<'a, Metal>,
-        resolved_d: ResolvedDTransform<'a, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         // Quant gemv: SCALE/ACCUMULATE not supported (deferred). BIAS handled
         // as outer post-pass by the dispatcher; we only need to reject those
         // bits. RHT is fused via qmv_fast when the fast path is eligible.
-        if resolved_d.mask.contains(GemmDTransform::SCALE) {
+        let mask = MatmulDOp::mask(&arguments.d_transform);
+        if mask.contains(GemmDTransform::SCALE) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::SCALE,
                 path: PATH,
             });
         }
-        if resolved_d.mask.contains(GemmDTransform::ACCUMULATE) {
+        if mask.contains(GemmDTransform::ACCUMULATE) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::ACCUMULATE,
                 path: PATH,
@@ -82,6 +82,8 @@ impl QuantGemvKernel {
                 path: PATH,
             });
         }
+
+        let hadamard_factors = arguments.d_transform.iter().find_map(|op| op.as_rht());
 
         let MatmulArguments {
             a,
@@ -116,7 +118,6 @@ impl QuantGemvKernel {
             QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
         };
         let use_fast = n % 8 == 0 && k % 512 == 0;
-        let hadamard_factors = resolved_d.rht;
 
         let (zero_points, biases) = match method {
             QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),

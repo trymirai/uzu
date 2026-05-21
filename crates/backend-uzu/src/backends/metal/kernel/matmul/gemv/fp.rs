@@ -2,22 +2,24 @@ use super::{kernel::GemvKernel, spec::GemvSpecialization};
 use crate::backends::{
     common::{
         Encoder,
-        gpu_types::gemm::GemmDTransform,
-        kernel::matmul::{MatmulArguments, MatmulB, MatmulError, ResolvedDTransform},
+        kernel::matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError},
     },
     metal::Metal,
 };
 
-/// Encodes the FP gemv. Honors SCALE and ACCUMULATE bits via the existing
-/// `is_accumulate` + `ab_scale` plumbing, and honors BIAS via the existing
-/// `output_bias` plumbing. The RHT bit on the D-transform is left to the
-/// caller as a post-pass (this function does not run hadamard).
+/// Encodes the FP gemv. Honors `Scale`/`Accumulate`/`Bias` ops in `d_transform`
+/// natively. The `Rht` op (if present) is the caller's responsibility as a
+/// post-pass (this function does not run hadamard).
 pub(crate) fn encode<'a>(
     kernel: &mut GemvKernel,
     encoder: &mut Encoder<Metal>,
     arguments: MatmulArguments<'a, Metal>,
-    resolved_d: ResolvedDTransform<'a, Metal>,
 ) -> Result<(), MatmulError<Metal>> {
+    // DSL: extract ops from d_transform before destructuring.
+    let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
+    let output_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
+    let is_accumulate = arguments.d_transform.contains(&MatmulDOp::Accumulate);
+
     let MatmulArguments {
         a,
         a_offset,
@@ -43,10 +45,6 @@ pub(crate) fn encode<'a>(
         b_leading_dimension.is_none_or(|ld| ld == k),
         "encode_gemv does not support custom b_leading_dimension"
     );
-
-    let is_accumulate = resolved_d.mask.contains(GemmDTransform::ACCUMULATE);
-    let output_bias = resolved_d.bias;
-    let ab_scale = resolved_d.ab_scale;
 
     let specialization = GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some());
 

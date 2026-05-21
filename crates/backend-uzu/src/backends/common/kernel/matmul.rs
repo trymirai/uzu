@@ -10,10 +10,7 @@ use crate::{
     DataType,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::{
-            QuantizationMode,
-            gemm::{GemmAPrologue, GemmDTransform},
-        },
+        gpu_types::{QuantizationMode, gemm::GemmDTransform},
         kernel::ManualKernels,
     },
 };
@@ -26,11 +23,6 @@ pub enum MatmulError<B: Backend> {
     UnsupportedGroupSize(usize),
     #[error("Hadamard not supported for this kernel configuration")]
     UnsupportedHadamard,
-    #[error("Unsupported A-prologue op {bit:?} on path {path}")]
-    UnsupportedAOp {
-        bit: GemmAPrologue,
-        path: &'static str,
-    },
     #[error("Unsupported D-transform op {bit:?} on path {path}")]
     UnsupportedDOp {
         bit: GemmDTransform,
@@ -43,36 +35,6 @@ pub enum MatmulError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }
-
-/// Op applied to A before the matmul core. `Hash`/`Eq` are implemented on the
-/// variant discriminant so that a `HashSet<MatmulAOp>` enforces at most one of
-/// each variant — duplicate inserts simply return `false` from `insert` and
-/// are discarded.
-pub enum MatmulAOp<'a, B: Backend> {
-    Rht {
-        factors: &'a Allocation<B>,
-    },
-}
-
-impl<B: Backend> Hash for MatmulAOp<'_, B> {
-    fn hash<H: Hasher>(
-        &self,
-        state: &mut H,
-    ) {
-        discriminant(self).hash(state);
-    }
-}
-
-impl<B: Backend> PartialEq for MatmulAOp<'_, B> {
-    fn eq(
-        &self,
-        other: &Self,
-    ) -> bool {
-        discriminant(self) == discriminant(other)
-    }
-}
-
-impl<B: Backend> Eq for MatmulAOp<'_, B> {}
 
 /// Describes the B operand encoding. Memory layout fields
 /// (`b_leading_dimension`, `b_transpose`) are common to all encodings and live
@@ -99,7 +61,8 @@ pub enum MatmulB<'a, B: Backend> {
 
 /// Op applied to D after the matmul core. `Hash`/`Eq` are implemented on the
 /// variant discriminant so that a `HashSet<MatmulDOp>` enforces at most one of
-/// each variant. The kernel applies set members in canonical order
+/// each variant. Each variant exposes its corresponding [`GemmDTransform`] bit
+/// via [`MatmulDOp::bit`]. The kernel applies set members in canonical order
 /// scale → accumulate → bias → rht regardless of insertion order.
 pub enum MatmulDOp<'a, B: Backend> {
     Scale {
@@ -112,6 +75,50 @@ pub enum MatmulDOp<'a, B: Backend> {
     Rht {
         factors: &'a Allocation<B>,
     },
+}
+
+impl<'a, B: Backend> MatmulDOp<'a, B> {
+    /// The bit-flag corresponding to this op's variant.
+    pub fn bit(&self) -> GemmDTransform {
+        match self {
+            MatmulDOp::Scale { .. } => GemmDTransform::SCALE,
+            MatmulDOp::Accumulate => GemmDTransform::ACCUMULATE,
+            MatmulDOp::Bias { .. } => GemmDTransform::BIAS,
+            MatmulDOp::Rht { .. } => GemmDTransform::RHT,
+        }
+    }
+
+    /// OR-fold the bits of every op in a set.
+    pub fn mask(set: &HashSet<Self>) -> GemmDTransform {
+        set.iter().fold(GemmDTransform::empty(), |m, op| m | op.bit())
+    }
+
+    pub fn as_scale(&self) -> Option<f32> {
+        match self {
+            MatmulDOp::Scale {
+                ab_scale,
+            } => Some(*ab_scale),
+            _ => None,
+        }
+    }
+
+    pub fn as_bias(&self) -> Option<&'a Allocation<B>> {
+        match self {
+            MatmulDOp::Bias {
+                bias,
+            } => Some(*bias),
+            _ => None,
+        }
+    }
+
+    pub fn as_rht(&self) -> Option<&'a Allocation<B>> {
+        match self {
+            MatmulDOp::Rht {
+                factors,
+            } => Some(*factors),
+            _ => None,
+        }
+    }
 }
 
 impl<B: Backend> Hash for MatmulDOp<'_, B> {
@@ -134,14 +141,13 @@ impl<B: Backend> PartialEq for MatmulDOp<'_, B> {
 
 impl<B: Backend> Eq for MatmulDOp<'_, B> {}
 
-/// D = transform( (prologue(A) @ op(B)) ) where op(B) = B^T when b_transpose
-/// else B. For quantized B variants, B is packed and dequantized internally.
+/// D = transform( A @ op(B) ) where op(B) = B^T when b_transpose else B.
+/// For quantized B variants, B is packed and dequantized internally. Input-side
+/// transforms (e.g. hadamard on A) are the caller's responsibility before invocation.
 pub struct MatmulArguments<'a, B: Backend> {
     /// A: [M, K]
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
-    /// A-side prologue ops. Empty = no prologue.
-    pub a_prologue: HashSet<MatmulAOp<'a, B>>,
     /// B operand: encoding + variant-specific aux buffers.
     pub b: MatmulB<'a, B>,
     pub b_offset: usize,
@@ -159,79 +165,6 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub n: u32,
     /// K dimension (inner contraction).
     pub k: u32,
-}
-
-/// Bitmask + associated data resolved from a [`HashSet<MatmulAOp>`].
-#[derive(Clone, Copy)]
-pub struct ResolvedAPrologue<'a, B: Backend> {
-    pub mask: GemmAPrologue,
-    pub rht: Option<&'a Allocation<B>>,
-}
-
-/// Bitmask + associated data resolved from a [`HashSet<MatmulDOp>`].
-#[derive(Clone, Copy)]
-pub struct ResolvedDTransform<'a, B: Backend> {
-    pub mask: GemmDTransform,
-    pub ab_scale: f32,
-    pub bias: Option<&'a Allocation<B>>,
-    pub rht: Option<&'a Allocation<B>>,
-}
-
-pub fn resolve_a<'a, B: Backend>(ops: &HashSet<MatmulAOp<'a, B>>) -> ResolvedAPrologue<'a, B> {
-    let mut mask = GemmAPrologue::empty();
-    let mut rht = None;
-    for op in ops {
-        match op {
-            MatmulAOp::Rht {
-                factors,
-            } => {
-                mask.insert(GemmAPrologue::RHT);
-                rht = Some(*factors);
-            },
-        }
-    }
-    ResolvedAPrologue {
-        mask,
-        rht,
-    }
-}
-
-pub fn resolve_d<'a, B: Backend>(ops: &HashSet<MatmulDOp<'a, B>>) -> ResolvedDTransform<'a, B> {
-    let mut mask = GemmDTransform::empty();
-    let mut ab_scale = 1.0;
-    let mut bias = None;
-    let mut rht = None;
-    for op in ops {
-        match op {
-            MatmulDOp::Scale {
-                ab_scale: s,
-            } => {
-                mask.insert(GemmDTransform::SCALE);
-                ab_scale = *s;
-            },
-            MatmulDOp::Accumulate => {
-                mask.insert(GemmDTransform::ACCUMULATE);
-            },
-            MatmulDOp::Bias {
-                bias: b,
-            } => {
-                mask.insert(GemmDTransform::BIAS);
-                bias = Some(*b);
-            },
-            MatmulDOp::Rht {
-                factors,
-            } => {
-                mask.insert(GemmDTransform::RHT);
-                rht = Some(*factors);
-            },
-        }
-    }
-    ResolvedDTransform {
-        mask,
-        ab_scale,
-        bias,
-        rht,
-    }
 }
 
 pub trait MatmulKernel: Sized {

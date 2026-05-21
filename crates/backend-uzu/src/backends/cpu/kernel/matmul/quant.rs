@@ -7,7 +7,7 @@ use crate::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::matmul::{MatmulArguments, MatmulB, ResolvedDTransform},
+            kernel::matmul::{MatmulArguments, MatmulB},
         },
         cpu::{Cpu, kernel::matmul::gemm::qmm_transposed::qmm_transposed},
     },
@@ -17,7 +17,6 @@ use crate::{
 pub(crate) fn encode_quantized_gemm(
     encoder: &mut Encoder<Cpu>,
     arguments: MatmulArguments<Cpu>,
-    _resolved_d: ResolvedDTransform<'_, Cpu>,
     data_type: DataType,
 ) {
     let MatmulArguments {

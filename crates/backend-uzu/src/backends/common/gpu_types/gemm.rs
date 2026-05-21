@@ -32,14 +32,6 @@ pub enum GemmWeightPrologueKind {
 bitflags! {
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct GemmAPrologue: u32 {
-        const RHT = 1 << 0;
-    }
-}
-
-bitflags! {
-    #[repr(transparent)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct GemmDTransform: u32 {
         const SCALE      = 1 << 0;
         const ACCUMULATE = 1 << 1;

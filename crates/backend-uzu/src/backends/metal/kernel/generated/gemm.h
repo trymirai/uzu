@@ -27,16 +27,6 @@ enum class GemmWeightPrologueKind : uint32_t {
   ScaleZeroPointDequant = 2,
 };
 
-struct GemmAPrologue {
-  uint raw_value;
-  constexpr GemmAPrologue() thread : raw_value(0) {}
-  constexpr GemmAPrologue(uint __dsl_v) thread : raw_value(__dsl_v) {}
-  static constant constexpr uint RHT = 1 << 0;
-  constexpr bool contains(uint flag) const thread {
-    return (raw_value & flag) != 0;
-  }
-};
-
 struct GemmDTransform {
   uint raw_value;
   constexpr GemmDTransform() thread : raw_value(0) {}
