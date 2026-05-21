@@ -2,7 +2,7 @@ use super::error::GemmSpecializationError;
 use crate::{
     DataType,
     backends::common::gpu_types::gemm::{
-        GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling, GemmWeightPrologueKind,
+        GemmAlignment, GemmDTransform, GemmInputPrologueKind, GemmTiling, GemmWeightPrologueKind,
     },
 };
 
@@ -11,7 +11,7 @@ pub(crate) struct GemmSpecialization {
     pub(crate) tiling: GemmTiling,
     pub(crate) input_prologue: GemmInputPrologueKind,
     pub(crate) use_mxu: bool,
-    pub(crate) output_transform: GemmOutputTransformKind,
+    pub(crate) output_transform: GemmDTransform,
     pub(crate) alignment: GemmAlignment,
     pub(crate) transpose_b: bool,
     pub(crate) weight_prologue: GemmWeightPrologueKind,
@@ -42,9 +42,7 @@ impl GemmSpecialization {
         let mut out = Vec::new();
         for &tiling in simdgroup_tiling_set(data_type) {
             for align_mn in [true, false] {
-                for output_transform in
-                    [GemmOutputTransformKind::Store, GemmOutputTransformKind::Bias]
-                {
+                for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                     out.push(Self {
                         tiling,
                         input_prologue: GemmInputPrologueKind::FullPrecision,
@@ -65,10 +63,10 @@ impl GemmSpecialization {
                 for align_n in [true, false] {
                     for align_k in [true, false] {
                         for output_transform in [
-                            GemmOutputTransformKind::Store,
-                            GemmOutputTransformKind::Scale,
-                            GemmOutputTransformKind::Accumulate,
-                            GemmOutputTransformKind::ScaleAccumulate,
+                            GemmDTransform::empty(),
+                            GemmDTransform::SCALE,
+                            GemmDTransform::ACCUMULATE,
+                            GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
                         ] {
                             out.push(Self {
                                 tiling,
@@ -96,9 +94,7 @@ impl GemmSpecialization {
                         [GemmWeightPrologueKind::ScaleBiasDequant, GemmWeightPrologueKind::ScaleZeroPointDequant]
                     {
                         for align_n in [true, false] {
-                            for output_transform in
-                                [GemmOutputTransformKind::Store, GemmOutputTransformKind::Bias]
-                            {
+                            for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                                 out.push(Self {
                                     tiling,
                                     input_prologue: GemmInputPrologueKind::FullPrecision,

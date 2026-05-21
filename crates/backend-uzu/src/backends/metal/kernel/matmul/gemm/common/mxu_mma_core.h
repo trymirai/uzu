@@ -42,7 +42,7 @@ struct MxuMmaCore {
       device T* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
-      GemmOutputTransformKind output_transform,
+      GemmDTransform output_transform,
       const device T* output_bias,
       const thread ThreadContext& thread_context
   ) {
@@ -103,12 +103,8 @@ struct MxuMmaCore {
 
     const int aligned_k_iterations = int(params->K) / int(THREADGROUP_BLOCK_K);
 
-    const bool apply_scale =
-        output_transform == GemmOutputTransformKind::Scale ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulate;
-    const bool apply_accumulate =
-        output_transform == GemmOutputTransformKind::Accumulate ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulate;
+    const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
+    const bool apply_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
 
     dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       dispatch_bool(

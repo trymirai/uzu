@@ -80,16 +80,12 @@ KERNEL(Gemm)(
     const device uint8_t* zero_points
         OPTIONAL(WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant),
     const device T* output_bias
-        OPTIONAL(
-            output_transform == GemmOutputTransformKind::Bias ||
-            output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
-            output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht
-        ),
+        OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const GemmInputPrologueKind input_prologue SPECIALIZE,
-    const GemmOutputTransformKind output_transform SPECIALIZE,
+    const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     threadgroup T a_shared[GEMM_TGA_ELEMENTS],
     threadgroup T b_shared[GEMM_TGB_ELEMENTS],

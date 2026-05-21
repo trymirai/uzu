@@ -10,7 +10,7 @@ use crate::{
             Encoder,
             gpu_types::{
                 GemmParams, QuantizationMethod,
-                gemm::{GemmAlignment, GemmInputPrologueKind, GemmTiling, GemmWeightPrologueKind},
+                gemm::{GemmAlignment, GemmDTransform, GemmInputPrologueKind, GemmTiling, GemmWeightPrologueKind},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulDOp},
         },
@@ -76,9 +76,9 @@ impl GemmKernel {
         // DSL: read scale/bias state directly from d_transform.
         let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
         let output_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
-        let core_kind = MatmulDOp::mask(&arguments.d_transform)
-            .core_kind()
-            .expect("unsupported D-transform combination for unified GEMM");
+        // The bitmask IS the wire format; strip post-pass-only bits (RHT) since
+        // the kernel doesn't see those.
+        let output_transform = MatmulDOp::mask(&arguments.d_transform) - GemmDTransform::RHT;
 
         let MatmulArguments {
             a,
@@ -130,7 +130,6 @@ impl GemmKernel {
 
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % k_block == 0);
-                let output_transform = core_kind;
 
                 let default_ldb = if b_transpose {
                     k
@@ -195,7 +194,7 @@ impl GemmKernel {
                 b_offset,
                 d,
                 output_bias,
-                core_kind,
+                output_transform,
                 ab_scale,
                 m,
                 n,
@@ -221,7 +220,7 @@ impl GemmKernel {
                 b_offset,
                 d,
                 output_bias,
-                core_kind,
+                output_transform,
                 ab_scale,
                 m,
                 n,
@@ -246,7 +245,7 @@ impl GemmKernel {
         b_offset: usize,
         d: &'a mut crate::backends::common::Allocation<Metal>,
         output_bias: Option<&'a crate::backends::common::Allocation<Metal>>,
-        output_transform: crate::backends::common::gpu_types::gemm::GemmOutputTransformKind,
+        output_transform: GemmDTransform,
         ab_scale: f32,
         m: u32,
         n: u32,

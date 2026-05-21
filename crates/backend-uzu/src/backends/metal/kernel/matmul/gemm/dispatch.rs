@@ -3,7 +3,7 @@ use crate::backends::common::{
     Allocation, Backend,
     gpu_types::{
         GemmParams,
-        gemm::{GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling},
+        gemm::{GemmAlignment, GemmDTransform, GemmInputPrologueKind, GemmTiling},
     },
 };
 
@@ -11,7 +11,7 @@ pub struct GemmDispatch<'a, B: Backend> {
     pub tiling: GemmTiling,
     pub input_prologue: GemmInputPrologueKind,
     pub use_mxu: bool,
-    pub output_transform: GemmOutputTransformKind,
+    pub output_transform: GemmDTransform,
     pub alignment: GemmAlignment,
     pub transpose_b: bool,
     pub a: &'a Allocation<B>,

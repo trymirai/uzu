@@ -198,7 +198,7 @@ struct SimdgroupMmaCore {
       device T* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
-      GemmOutputTransformKind output_transform,
+      GemmDTransform output_transform,
       const device T* scales,
       const device T* biases,
       const device uint8_t* zero_points,
@@ -238,30 +238,12 @@ struct SimdgroupMmaCore {
     const ushort leftover_block_depth =
         params->K - params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
 
-    const bool needs_bias =
-        output_transform == GemmOutputTransformKind::Bias ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht;
-    const bool needs_epilogue =
-        output_transform == GemmOutputTransformKind::Scale ||
-        output_transform == GemmOutputTransformKind::Accumulate ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulate ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht;
-    const float alpha =
-        (output_transform == GemmOutputTransformKind::Scale ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulate ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht)
-            ? params->ab_scale
-            : 1.0f;
-    const float beta =
-        (output_transform == GemmOutputTransformKind::Accumulate ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulate ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht)
-            ? 1.0f
-            : 0.0f;
+    const bool needs_scale = output_transform.contains(GemmDTransform::SCALE);
+    const bool needs_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
+    const bool needs_bias = output_transform.contains(GemmDTransform::BIAS);
+    const bool needs_epilogue = needs_scale || needs_accumulate;
+    const float alpha = needs_scale ? params->ab_scale : 1.0f;
+    const float beta = needs_accumulate ? 1.0f : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
     const device T* bias_block = output_bias + block_col;
 

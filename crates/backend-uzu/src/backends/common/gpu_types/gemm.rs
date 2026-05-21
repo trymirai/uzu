@@ -10,19 +10,6 @@ pub enum GemmInputPrologueKind {
 
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GemmOutputTransformKind {
-    Store,
-    Scale,
-    Accumulate,
-    Bias,
-    Rht,
-    ScaleAccumulate,
-    ScaleAccumulateBias,
-    ScaleAccumulateBiasRht,
-}
-
-#[repr(C)]
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GemmWeightPrologueKind {
     FullPrecision,
     ScaleBiasDequant,
@@ -30,6 +17,10 @@ pub enum GemmWeightPrologueKind {
 }
 
 bitflags! {
+    /// D-side transform option set. Mirrors the `MatmulDOp` enum variants
+    /// (SCALE, ACCUMULATE, BIAS) the unified GEMM kernel honors natively, plus
+    /// the post-pass-only RHT op. The kernel-binary `output_transform`
+    /// SPECIALIZE constant uses these bits directly — no enum mapping needed.
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct GemmDTransform: u32 {
@@ -37,33 +28,6 @@ bitflags! {
         const ACCUMULATE = 1 << 1;
         const BIAS       = 1 << 2;
         const RHT        = 1 << 3;
-    }
-}
-
-impl GemmDTransform {
-    /// Maps the SCALE/ACCUMULATE/BIAS bits to the kernel-binary wire-format
-    /// `GemmOutputTransformKind` discriminant. The unified GEMM kernel honors
-    /// these natively; RHT is still a post-pass and doesn't affect the core.
-    ///
-    /// Returns `None` for bit combinations that have no corresponding
-    /// discriminant in the wire format (e.g. SCALE+BIAS without ACCUMULATE).
-    /// Production paths today never request such combinations.
-    pub fn core_kind(self) -> Option<GemmOutputTransformKind> {
-        let scale = self.contains(Self::SCALE);
-        let accumulate = self.contains(Self::ACCUMULATE);
-        let bias = self.contains(Self::BIAS);
-        match (scale, accumulate, bias) {
-            (false, false, false) => Some(GemmOutputTransformKind::Store),
-            (true, false, false) => Some(GemmOutputTransformKind::Scale),
-            (false, true, false) => Some(GemmOutputTransformKind::Accumulate),
-            (true, true, false) => Some(GemmOutputTransformKind::ScaleAccumulate),
-            (false, false, true) => Some(GemmOutputTransformKind::Bias),
-            (true, true, true) => Some(GemmOutputTransformKind::ScaleAccumulateBias),
-            // Scale+Bias or Accumulate+Bias without all three set is undefined
-            // in the wire format. Callers should reject these via
-            // MatmulError::UnsupportedDOp.
-            _ => None,
-        }
     }
 }
 

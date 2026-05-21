@@ -10,17 +10,6 @@ enum class GemmInputPrologueKind : uint32_t {
   ExternalRht = 1,
 };
 
-enum class GemmOutputTransformKind : uint32_t {
-  Store = 0,
-  Scale = 1,
-  Accumulate = 2,
-  Bias = 3,
-  Rht = 4,
-  ScaleAccumulate = 5,
-  ScaleAccumulateBias = 6,
-  ScaleAccumulateBiasRht = 7,
-};
-
 enum class GemmWeightPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,
@@ -38,6 +27,11 @@ struct GemmDTransform {
   constexpr bool contains(uint flag) const thread {
     return (raw_value & flag) != 0;
   }
+  constexpr bool contains(uint flag) const constant {
+    return (raw_value & flag) != 0;
+  }
+  constexpr uint bits() const thread { return raw_value; }
+  constexpr uint bits() const constant { return raw_value; }
 };
 
 enum class GemmTiling : uint32_t {
@@ -62,5 +56,10 @@ struct GemmAlignment {
   constexpr bool contains(uint flag) const thread {
     return (raw_value & flag) != 0;
   }
+  constexpr bool contains(uint flag) const constant {
+    return (raw_value & flag) != 0;
+  }
+  constexpr uint bits() const thread { return raw_value; }
+  constexpr uint bits() const constant { return raw_value; }
 };
 } // namespace uzu::gemm
