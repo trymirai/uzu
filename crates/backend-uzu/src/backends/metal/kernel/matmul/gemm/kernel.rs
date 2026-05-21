@@ -10,7 +10,7 @@ use crate::{
             Encoder,
             gpu_types::{
                 GemmParams, QuantizationMethod,
-                gemm::{GemmAlignment, GemmDTransform, GemmInputPrologueKind, GemmTiling, GemmWeightPrologueKind},
+                gemm::{GemmAlignment, GemmDTransform, GemmTiling, GemmWeightPrologueKind},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulDOp},
         },
@@ -55,7 +55,6 @@ impl GemmKernel {
                     specialization.weight_prologue,
                     specialization.bits_per_weight,
                     specialization.group_size,
-                    specialization.input_prologue,
                     specialization.output_transform,
                     specialization.alignment,
                 )?;
@@ -154,7 +153,6 @@ impl GemmKernel {
                     context,
                     GemmDispatch {
                         tiling,
-                        input_prologue: GemmInputPrologueKind::FullPrecision,
                         use_mxu,
                         output_transform,
                         alignment,
@@ -258,7 +256,6 @@ impl GemmKernel {
             context,
             GemmDispatch {
                 tiling,
-                input_prologue: GemmInputPrologueKind::FullPrecision,
                 use_mxu: false,
                 output_transform,
                 alignment: GemmAlignment::new(
@@ -315,11 +312,6 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let specialization = dispatch.specialization();
-        assert_eq!(
-            specialization.input_prologue,
-            GemmInputPrologueKind::FullPrecision,
-            "unified GEMM only implements FullPrecision input prologue today",
-        );
         specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
         let kernel = self.get_or_create(context, specialization)?;
         let (b, scales, biases, zero_points) = match &dispatch.b {

@@ -3,13 +3,12 @@ use crate::backends::common::{
     Allocation, Backend,
     gpu_types::{
         GemmParams,
-        gemm::{GemmAlignment, GemmDTransform, GemmInputPrologueKind, GemmTiling},
+        gemm::{GemmAlignment, GemmDTransform, GemmTiling},
     },
 };
 
 pub struct GemmDispatch<'a, B: Backend> {
     pub tiling: GemmTiling,
-    pub input_prologue: GemmInputPrologueKind,
     pub use_mxu: bool,
     pub output_transform: GemmDTransform,
     pub alignment: GemmAlignment,
@@ -29,7 +28,6 @@ impl<B: Backend> GemmDispatch<'_, B> {
     pub(crate) fn specialization(&self) -> GemmSpecialization {
         GemmSpecialization {
             tiling: self.tiling,
-            input_prologue: self.input_prologue,
             use_mxu: self.use_mxu,
             output_transform: self.output_transform,
             alignment: self.alignment,

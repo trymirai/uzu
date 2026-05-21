@@ -2,14 +2,13 @@ use super::error::GemmSpecializationError;
 use crate::{
     DataType,
     backends::common::gpu_types::gemm::{
-        GemmAlignment, GemmDTransform, GemmInputPrologueKind, GemmTiling, GemmWeightPrologueKind,
+        GemmAlignment, GemmDTransform, GemmTiling, GemmWeightPrologueKind,
     },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemmSpecialization {
     pub(crate) tiling: GemmTiling,
-    pub(crate) input_prologue: GemmInputPrologueKind,
     pub(crate) use_mxu: bool,
     pub(crate) output_transform: GemmDTransform,
     pub(crate) alignment: GemmAlignment,
@@ -45,7 +44,6 @@ impl GemmSpecialization {
                 for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                     out.push(Self {
                         tiling,
-                        input_prologue: GemmInputPrologueKind::FullPrecision,
                         use_mxu: false,
                         output_transform,
                         alignment: GemmAlignment::new(align_mn, align_mn, true),
@@ -70,7 +68,6 @@ impl GemmSpecialization {
                         ] {
                             out.push(Self {
                                 tiling,
-                                input_prologue: GemmInputPrologueKind::FullPrecision,
                                 use_mxu: true,
                                 output_transform,
                                 alignment: GemmAlignment::new(align_m, align_n, align_k),
@@ -97,7 +94,6 @@ impl GemmSpecialization {
                             for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                                 out.push(Self {
                                     tiling,
-                                    input_prologue: GemmInputPrologueKind::FullPrecision,
                                     use_mxu: false,
                                     output_transform,
                                     alignment: GemmAlignment::new(true, align_n, true),

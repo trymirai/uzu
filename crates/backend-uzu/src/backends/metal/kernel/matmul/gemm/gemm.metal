@@ -84,7 +84,6 @@ KERNEL(Gemm)(
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
-    const GemmInputPrologueKind input_prologue SPECIALIZE,
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     threadgroup T a_shared[GEMM_TGA_ELEMENTS],
@@ -101,10 +100,6 @@ KERNEL(Gemm)(
   (void)thread_x;
   (void)thread_y;
   (void)thread_z;
-  (void)input_prologue;
-  if (input_prologue != GemmInputPrologueKind::FullPrecision) {
-    return;
-  }
 
   if constexpr (USE_MXU) {
     (void)scales;
