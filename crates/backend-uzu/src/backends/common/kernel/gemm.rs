@@ -6,6 +6,9 @@ use crate::{
     },
 };
 
+/// Backend-agnostic description of how B is laid out for the unified GEMM
+/// kernel. Mirrors `MatmulB` after destructuring + tagging with the kernel-
+/// binary's [`GemmWeightPrologueKind`].
 #[allow(dead_code)]
 pub enum GemmWeights<'a, B: Backend> {
     FullPrecision {
