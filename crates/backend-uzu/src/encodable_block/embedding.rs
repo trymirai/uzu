@@ -12,7 +12,6 @@ use crate::{
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                QuantizedMatmulKernelEncodable,
             },
         },
     },
@@ -45,7 +44,8 @@ enum TiedEmbeddingType<B: Backend> {
         scales: Allocation<B>,
         biases: Allocation<B>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-        readout: QuantizedMatmulKernelEncodable<B>,
+        readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+        readout_config: QuantizedMatmulConfiguration,
     },
 }
 
@@ -71,7 +71,8 @@ enum UntiedEmbeddingReadoutType<B: Backend> {
         weights: Allocation<B>,
         scales: Allocation<B>,
         biases: Allocation<B>,
-        readout: QuantizedMatmulKernelEncodable<B>,
+        readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+        readout_config: QuantizedMatmulConfiguration,
     },
 }
 
@@ -256,18 +257,18 @@ impl<B: Backend> Embedding<B> {
                     (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
-                    context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_method: QuantizationMethod::ScaleBias,
-                        use_hadamard: false,
-                    },
-                )?;
+                let readout_config = QuantizedMatmulConfiguration {
+                    data_type,
+                    group_size: *group_size,
+                    input_dim: model_dim as usize,
+                    output_dim: vocab_size as usize,
+                    mode: *embedding_quantization_mode,
+                    quantization_method: QuantizationMethod::ScaleBias,
+                    use_hadamard: false,
+                };
+                let readout = RefCell::new(
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
+                );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
                     return Err(EmbeddingError::UnsupportedConfiguration(format!(
@@ -282,6 +283,7 @@ impl<B: Backend> Embedding<B> {
                         biases,
                         lookup,
                         readout,
+                        readout_config,
                     },
                 }
             },
@@ -330,18 +332,18 @@ impl<B: Backend> Embedding<B> {
                     (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
-                    context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_method: QuantizationMethod::ScaleBias,
-                        use_hadamard: false,
-                    },
-                )?;
+                let readout_config = QuantizedMatmulConfiguration {
+                    data_type,
+                    group_size: *group_size,
+                    input_dim: model_dim as usize,
+                    output_dim: vocab_size as usize,
+                    mode: *embedding_quantization_mode,
+                    quantization_method: QuantizationMethod::ScaleBias,
+                    use_hadamard: false,
+                };
+                let readout = RefCell::new(
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
+                );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
                     return Err(EmbeddingError::UnsupportedConfiguration(format!(
@@ -361,6 +363,7 @@ impl<B: Backend> Embedding<B> {
                         scales: output_scales,
                         biases: output_biases,
                         readout,
+                        readout_config,
                     },
                 }
             },
@@ -397,18 +400,18 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
-                    context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_method: QuantizationMethod::ScaleBias,
-                        use_hadamard: false,
-                    },
-                )?;
+                let readout_config = QuantizedMatmulConfiguration {
+                    data_type,
+                    group_size: *group_size,
+                    input_dim: model_dim as usize,
+                    output_dim: vocab_size as usize,
+                    mode: *embedding_quantization_mode,
+                    quantization_method: QuantizationMethod::ScaleBias,
+                    use_hadamard: false,
+                };
+                let readout = RefCell::new(
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
+                );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
                     return Err(EmbeddingError::UnsupportedConfiguration(format!(
@@ -426,6 +429,7 @@ impl<B: Backend> Embedding<B> {
                         scales: output_scales,
                         biases: output_biases,
                         readout,
+                        readout_config,
                     },
                 }
             },
@@ -495,6 +499,7 @@ impl<B: Backend> Embedding<B> {
                         biases,
                         lookup,
                         readout: _,
+                        readout_config: _,
                     },
             }
             | EmbeddingTying::Untied {
@@ -584,6 +589,7 @@ impl<B: Backend> Embedding<B> {
                         biases,
                         lookup: _,
                         readout,
+                        readout_config,
                     },
             }
             | EmbeddingTying::Untied {
@@ -594,21 +600,26 @@ impl<B: Backend> Embedding<B> {
                         scales,
                         biases,
                         readout,
+                        readout_config,
                     },
             } => {
-                readout.encode(
-                    encoder,
-                    QuantizedMatmulArguments {
-                        a: input_allocation,
-                        a_offset: 0,
-                        b: weights,
-                        scales,
-                        zero_points_or_biases: biases,
-                        output: &mut output_allocation,
-                        hadamard_factors: None,
-                        batch_dim,
-                    },
-                );
+                readout
+                    .borrow_mut()
+                    .encode_quantized(
+                        QuantizedMatmulArguments {
+                            a: input_allocation,
+                            a_offset: 0,
+                            b: weights,
+                            scales,
+                            zero_points_or_biases: biases,
+                            output: &mut output_allocation,
+                            hadamard_factors: None,
+                            batch_dim,
+                        },
+                        readout_config,
+                        encoder,
+                    )
+                    .expect("encode_quantized failed");
             },
         };
 

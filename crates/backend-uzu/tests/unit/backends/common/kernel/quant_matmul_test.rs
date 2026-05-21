@@ -11,9 +11,13 @@ use crate::{
     backends::common::{
         Allocation, AllocationType, Backend, Context, Encoder, allocation_as_bytes,
         gpu_types::{QuantizationMethod, QuantizationMode},
-        kernel::quant_matmul::{
-            QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-            tests::common::helpers::alloc_allocation_with_data,
+        kernel::{
+            ManualKernels,
+            matmul::MatmulKernel,
+            quant_matmul::{
+                QuantizedMatmulArguments, QuantizedMatmulConfiguration,
+                tests::common::helpers::alloc_allocation_with_data,
+            },
         },
     },
 };
@@ -338,23 +342,20 @@ fn execute_quantized_matmul<B: Backend>(
         .create_allocation(batch * output_dim * data_type.size_in_bytes(), AllocationType::Global)
         .expect("Failed to create allocation");
 
-    let kernel = QuantizedMatmulKernelEncodable::<B>::new(
-        &ctx,
-        QuantizedMatmulConfiguration {
-            data_type,
-            group_size,
-            input_dim,
-            output_dim,
-            mode: match bits {
-                4 => QuantizationMode::U4,
-                8 => QuantizationMode::I8,
-                _ => panic!("Unsupported bits: {}", bits),
-            },
-            quantization_method,
-            use_hadamard: false,
+    let configuration = QuantizedMatmulConfiguration {
+        data_type,
+        group_size,
+        input_dim,
+        output_dim,
+        mode: match bits {
+            4 => QuantizationMode::U4,
+            8 => QuantizationMode::I8,
+            _ => panic!("Unsupported bits: {}", bits),
         },
-    )
-    .unwrap();
+        quantization_method,
+        use_hadamard: false,
+    };
+    let mut kernel = <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&ctx, data_type).unwrap();
 
     if iterations > 1 {
         for _ in 0..3 {
@@ -369,7 +370,7 @@ fn execute_quantized_matmul<B: Backend>(
                 batch_dim: batch,
             };
             let mut encoder = Encoder::new(ctx).unwrap();
-            kernel.encode(&mut encoder, args);
+            kernel.encode_quantized(args, &configuration, &mut encoder).unwrap();
             encoder.end_encoding().submit().wait_until_completed().unwrap();
         }
     }
@@ -387,7 +388,7 @@ fn execute_quantized_matmul<B: Backend>(
             batch_dim: batch,
         };
         let mut encoder = Encoder::new(ctx).unwrap();
-        kernel.encode(&mut encoder, args);
+        kernel.encode_quantized(args, &configuration, &mut encoder).unwrap();
         encoder.end_encoding().submit().wait_until_completed().unwrap();
     }
     let elapsed = start.elapsed();

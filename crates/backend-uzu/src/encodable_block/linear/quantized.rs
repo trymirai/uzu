@@ -1,6 +1,8 @@
 use thiserror::Error;
 
 use super::Linear;
+use std::cell::RefCell;
+
 use crate::{
     DataType,
     array::size_for_shape,
@@ -8,10 +10,10 @@ use crate::{
         Allocation, Backend, Encoder,
         gpu_types::QuantizationMethod,
         kernel::{
-            Kernels, TensorAddBiasKernel,
+            Kernels, ManualKernels, TensorAddBiasKernel,
+            matmul::MatmulKernel,
             quant_matmul::{
                 QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                QuantizedMatmulKernelEncodable,
             },
         },
     },
@@ -81,7 +83,8 @@ pub enum QuantizedLinearError<B: Backend> {
 }
 
 pub struct QuantizedLinear<B: Backend> {
-    kernel: QuantizedMatmulKernelEncodable<B>,
+    matmul: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+    configuration: QuantizedMatmulConfiguration,
     bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
     biases: Option<Allocation<B>>,
     weights: Allocation<B>,
@@ -214,22 +217,28 @@ impl<B: Backend> QuantizedLinear<B> {
             Err(_) => (None, None),
         };
 
-        let kernel = QuantizedMatmulKernelEncodable::new(
-            context,
-            QuantizedMatmulConfiguration {
-                data_type: kernel_data_type,
-                group_size: config.group_size,
-                input_dim,
-                output_dim,
-                mode: config.weight_quantization_mode,
-                quantization_method,
-                use_hadamard: output_hadamard_factors.is_some(),
-            },
-        )
-        .map_err(QuantizedLinearError::QuantizedMatmulError)?;
+        let configuration = QuantizedMatmulConfiguration {
+            data_type: kernel_data_type,
+            group_size: config.group_size,
+            input_dim,
+            output_dim,
+            mode: config.weight_quantization_mode,
+            quantization_method,
+            use_hadamard: output_hadamard_factors.is_some(),
+        };
+        let matmul = <B::Kernels as ManualKernels>::MatmulKernel::new(context, kernel_data_type)
+            .map_err(|e| QuantizedLinearError::QuantizedMatmulError(match e {
+                crate::backends::common::kernel::matmul::MatmulError::BackendError(err) => {
+                    QuantizedMatmulError::BackendError(err)
+                },
+                crate::backends::common::kernel::matmul::MatmulError::UnsupportedDataType(dt) => {
+                    QuantizedMatmulError::UnsupportedDataType(dt)
+                },
+            }))?;
 
         Ok(Self {
-            kernel,
+            matmul: RefCell::new(matmul),
+            configuration,
             bias_add_kernel,
             biases,
             weights: weights_leaf.read_allocation().map_err(QuantizedLinearError::ParameterError)?,
@@ -252,19 +261,23 @@ impl<B: Backend> Linear<B> for QuantizedLinear<B> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
-        self.kernel.encode(
-            encoder,
-            QuantizedMatmulArguments {
-                a: &input,
-                a_offset: 0,
-                b: &self.weights,
-                scales: &self.scales,
-                zero_points_or_biases: &self.zero_points_or_biases,
-                output: &mut output,
-                hadamard_factors: self.output_hadamard_factors.as_ref(),
-                batch_dim,
-            },
-        );
+        self.matmul
+            .borrow_mut()
+            .encode_quantized(
+                QuantizedMatmulArguments {
+                    a: &input,
+                    a_offset: 0,
+                    b: &self.weights,
+                    scales: &self.scales,
+                    zero_points_or_biases: &self.zero_points_or_biases,
+                    output: &mut output,
+                    hadamard_factors: self.output_hadamard_factors.as_ref(),
+                    batch_dim,
+                },
+                &self.configuration,
+                encoder,
+            )
+            .expect("encode_quantized failed");
 
         if let (Some(bias_add_kernel), Some(biases)) = (&self.bias_add_kernel, &self.biases) {
             let total_length = batch_dim * self.output_dim;

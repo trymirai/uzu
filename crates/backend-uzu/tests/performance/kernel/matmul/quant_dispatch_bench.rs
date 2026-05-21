@@ -10,13 +10,15 @@ use backend_uzu::{
     ArrayElement,
     backends::{
         common::{
-            Context, Encoder,
+            Backend, Context, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
+            kernel::{
+                ManualKernels,
+                matmul::MatmulKernel,
+                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration},
             },
         },
-        metal::{Metal, MetalContext, QuantizedMatmulDispatchPath, encode_quantized_matmul_with_path},
+        metal::{Metal, MetalContext, QuantizedMatmulDispatchPath},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -69,7 +71,8 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             use_hadamard: false,
         };
 
-        let encodable = QuantizedMatmulKernelEncodable::<Metal>::new(context, configuration).unwrap();
+        let mut matmul =
+            <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type()).unwrap();
 
         let w_buf = alloc_allocation_with_data::<Metal, u32>(
             context,
@@ -107,23 +110,23 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             b.iter_custom(|n_iters| {
                 let mut encoder = Encoder::<Metal>::new(context).unwrap();
                 for _ in 0..n_iters {
-                    encode_quantized_matmul_with_path(
-                        context,
-                        &encodable,
-                        QuantizedMatmulArguments {
-                            a: &x_buf,
-                            a_offset: 0,
-                            b: &w_buf,
-                            scales: &scales_buf,
-                            zero_points_or_biases: &zp_or_bias,
-                            output: &mut y_buf,
-                            hadamard_factors: None,
-                            batch_dim: m,
-                        },
-                        &mut encoder,
-                        QuantizedMatmulDispatchPath::Gemm,
-                    )
-                    .expect("encode unified quant matmul");
+                    matmul
+                        .encode_quantized_with_path(
+                            QuantizedMatmulArguments {
+                                a: &x_buf,
+                                a_offset: 0,
+                                b: &w_buf,
+                                scales: &scales_buf,
+                                zero_points_or_biases: &zp_or_bias,
+                                output: &mut y_buf,
+                                hadamard_factors: None,
+                                batch_dim: m,
+                            },
+                            &configuration,
+                            &mut encoder,
+                            QuantizedMatmulDispatchPath::Gemm,
+                        )
+                        .expect("encode unified quant matmul");
                 }
                 encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
             })

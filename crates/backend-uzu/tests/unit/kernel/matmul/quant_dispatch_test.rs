@@ -1,29 +1,20 @@
 #![cfg(metal_backend)]
 
-//! Parity tests for the unified quantized GEMM path. Drives
-//! `QuantizedMatmulDispatchPath::Gemm` (i.e. `GemmQuantKernel`) and compares
-//! against the existing standalone QMM path (`QuantizedMatmulDispatchPath::Auto`
-//! → `QuantizedMatmulKernelEncodable`). Standalone is treated as the reference
-//! while it still exists; once it is deleted in step 6, this module switches to
-//! the CPU reference.
-//!
-//! Mirrors the shape coverage of `quant_matmul::qmm_transposed_test`.
-
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayElement,
     backends::{
         common::{
-            Context, Encoder,
+            Backend, Context, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
+            kernel::{
+                ManualKernels,
+                matmul::MatmulKernel,
+                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration},
             },
         },
-        metal::{
-            Metal, MetalContext, QuantizedMatmulDispatchPath, encode_quantized_matmul_with_path,
-        },
+        metal::{Metal, MetalContext, QuantizedMatmulDispatchPath},
     },
 };
 use half::bf16;
@@ -204,7 +195,8 @@ fn run_with_path<T: ArrayElement + Float>(
         use_hadamard: false,
     };
 
-    let encodable = QuantizedMatmulKernelEncodable::<Metal>::new(context, configuration).expect("encodable");
+    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
+        .expect("MatmulMetalKernel");
 
     let w_buf = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
     let s_buf = alloc_allocation_with_data::<Metal, T>(context, &input.scales);
@@ -219,23 +211,23 @@ fn run_with_path<T: ArrayElement + Float>(
     };
 
     let mut encoder = Encoder::new(context).expect("encoder");
-    encode_quantized_matmul_with_path(
-        context,
-        &encodable,
-        QuantizedMatmulArguments {
-            a: &x_buf,
-            a_offset: 0,
-            b: &w_buf,
-            scales: &s_buf,
-            zero_points_or_biases: zp_or_bias,
-            output: &mut y_buf,
-            hadamard_factors: None,
-            batch_dim: input.m as usize,
-        },
-        &mut encoder,
-        path,
-    )
-    .expect("encode quantized matmul");
+    matmul
+        .encode_quantized_with_path(
+            QuantizedMatmulArguments {
+                a: &x_buf,
+                a_offset: 0,
+                b: &w_buf,
+                scales: &s_buf,
+                zero_points_or_biases: zp_or_bias,
+                output: &mut y_buf,
+                hadamard_factors: None,
+                batch_dim: input.m as usize,
+            },
+            &configuration,
+            &mut encoder,
+            path,
+        )
+        .expect("encode quantized matmul");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&y_buf)
 }
