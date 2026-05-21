@@ -18,11 +18,15 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel},
+        metal::{
+            Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel,
+            metal_extensions::DeviceExt,
+        },
     },
 };
 
 pub struct MatmulMetalKernel {
+    mxu_eligible: bool,
     gemv: GemvKernel,
     quant_gemv: QuantGemvKernel,
     pub(crate) gemm: GemmKernel,
@@ -148,7 +152,7 @@ impl MatmulMetalKernel {
         // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE.
         // Simdgroup path fuses BIAS too; MXU path still needs post-pass bias.
         // RHT always post-pass.
-        let uses_mxu = self.gemm.uses_mxu();
+        let uses_mxu = self.mxu_eligible;
         let post_bias = if uses_mxu {
             arguments.d_transform.iter().find_map(|op| op.as_bias())
         } else {
@@ -341,6 +345,8 @@ impl MatmulKernel for MatmulMetalKernel {
             return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
+        let mxu_eligible =
+            context.device.supports_mxu() && matches!(data_type, DataType::F16 | DataType::BF16);
         let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
         let gemm = GemmKernel::new(context, data_type).map_err(MatmulError::BackendError)?;
         let gemv = GemvKernel::new(context, data_type)?;
@@ -349,6 +355,7 @@ impl MatmulKernel for MatmulMetalKernel {
             .map_err(MatmulError::BackendError)?;
 
         Ok(Self {
+            mxu_eligible,
             gemv,
             quant_gemv,
             gemm,
