@@ -9,7 +9,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            AsBufferRangeRef, Buffer, Encoder,
             kernel::{
                 TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
@@ -101,9 +101,9 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
-    fn encode(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) {
         // gemv only handles the canonical B layout; non-canonical inputs go to GEMM.

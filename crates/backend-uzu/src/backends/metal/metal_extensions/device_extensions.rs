@@ -157,6 +157,15 @@ pub trait DeviceExt: MTLDevice + Message + NSObjectProtocol + Sized {
             false
         }
     }
+
+    /// Whether the GPU supports placement sparse resources.
+    fn supports_placement_sparse_resources(&self) -> bool {
+        if self.respondsToSelector(sel!(supportsPlacementSparse)) {
+            unsafe { raw_msg_send(self, sel!(supportsPlacementSparse)) }
+        } else {
+            false
+        }
+    }
 }
 
 impl DeviceExt for ProtocolObject<dyn MTLDevice> {}

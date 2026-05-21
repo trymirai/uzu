@@ -1,13 +1,17 @@
 use crate::{
     DataType,
-    backends::common::{
-        Allocation, Backend,
-        gpu_types::{
-            GemmParams, QuantizationMode,
-            gemm::{
-                GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig, GemmWeightPrologueKind,
+    backends::{
+        common::{
+            Allocation, AsBufferRangeRef, Backend, Buffer,
+            gpu_types::{
+                GemmParams, QuantizationMode,
+                gemm::{
+                    GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig,
+                    GemmWeightPrologueKind,
+                },
             },
         },
+        metal::Metal,
     },
 };
 
@@ -27,19 +31,19 @@ impl GemmAlignment {
     }
 }
 
-pub enum GemmWeights<'a, B: Backend> {
+pub enum GemmWeights<'a, B: Backend, T: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>> = Allocation<B>> {
     FullPrecision {
-        weights: &'a Allocation<B>,
+        weights: &'a T,
     },
     ScaleBias {
-        weights: &'a Allocation<B>,
+        weights: &'a T,
         scales: &'a Allocation<B>,
         biases: &'a Allocation<B>,
         mode: QuantizationMode,
         group_size: u32,
     },
     ScaleZeroPoint {
-        weights: &'a Allocation<B>,
+        weights: &'a T,
         scales: &'a Allocation<B>,
         zero_points: &'a Allocation<B>,
         mode: QuantizationMode,
@@ -47,7 +51,7 @@ pub enum GemmWeights<'a, B: Backend> {
     },
 }
 
-impl<B: Backend> GemmWeights<'_, B> {
+impl<B: Backend, T: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>> GemmWeights<'_, B, T> {
     pub fn weight_prologue(&self) -> GemmWeightPrologueKind {
         match self {
             Self::FullPrecision {
@@ -95,7 +99,7 @@ impl<B: Backend> GemmWeights<'_, B> {
     }
 }
 
-pub struct GemmDispatch<'a, B: Backend> {
+pub struct GemmDispatch<'a, B: Backend, T: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>> {
     pub tiling_config: GemmTilingConfig,
     pub input_prologue: GemmInputPrologueKind,
     pub use_mxu: bool,
@@ -104,7 +108,7 @@ pub struct GemmDispatch<'a, B: Backend> {
     pub transpose_b: bool,
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
-    pub b: GemmWeights<'a, B>,
+    pub b: GemmWeights<'a, B, T>,
     pub b_offset: usize,
     pub d: &'a mut Allocation<B>,
     pub params: GemmParams,
@@ -112,7 +116,7 @@ pub struct GemmDispatch<'a, B: Backend> {
     pub group_count_y: u32,
 }
 
-impl<B: Backend> GemmDispatch<'_, B> {
+impl<B: Backend, T: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>> GemmDispatch<'_, B, T> {
     pub(crate) fn specialization(&self) -> GemmSpecialization {
         GemmSpecialization {
             tiling_config: self.tiling_config,

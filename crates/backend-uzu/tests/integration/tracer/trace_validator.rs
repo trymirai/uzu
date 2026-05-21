@@ -17,7 +17,9 @@ use backend_uzu::{
     classifier::Classifier,
     config::{ModelConfig, ModelMetadata, ModelType},
     encodable_block::{DecoderDecodeInput, Sampling},
-    forward_pass::{cache_layers::CacheLayers, token_inputs::TokenInputs, traces::ActivationTrace},
+    forward_pass::{
+        cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
+    },
     language_model::{
         language_model_generator_context::LanguageModelGeneratorContext,
         sampler::{ArgmaxSampler, LogitsSampler},
@@ -33,6 +35,7 @@ use half::{bf16, f16};
 use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
+use crate::common;
 // ============================================================================
 // Validation Types
 // ============================================================================
@@ -313,26 +316,38 @@ impl<B: Backend> TraceValidator<B> {
             };
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
+                let size = kv.shape().iter().product::<usize>() * data_type.size_in_bytes();
+                let keys = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
+                    common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.keys, size)
+                } else {
+                    panic!("Wrong keys type")
+                };
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.keys", index),
                     metrics: Self::validate_allocation(
                         data_type,
                         &expected,
-                        &kv.keys,
-                        &kv.shape,
+                        &keys,
+                        &kv.shape(),
                         Some(ArrayTransform::KVCacheSlice),
                     ),
                 });
             }
 
             if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
+                let size = kv.shape().iter().product::<usize>() * data_type.size_in_bytes();
+                let values = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
+                    common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.values, size)
+                } else {
+                    panic!("Wrong values type")
+                };
                 results.push(TracerValidationResult {
                     name: format!("updated_kv_cache.{}.values", index),
                     metrics: Self::validate_allocation(
                         data_type,
                         &expected,
-                        &kv.values,
-                        &kv.shape,
+                        &values,
+                        &kv.shape(),
                         Some(ArrayTransform::KVCacheSlice),
                     ),
                 });

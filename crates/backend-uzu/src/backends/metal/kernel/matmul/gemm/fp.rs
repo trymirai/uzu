@@ -3,7 +3,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
                 GemmParams,
                 gemm::{GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTilingConfig},
@@ -17,13 +17,13 @@ use crate::{
     },
 };
 
-pub(crate) fn encode(
+pub(crate) fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
     gemm: &mut GemmKernel,
     bias_add: &mut TensorAddBiasMetalKernel,
     data_type: DataType,
     context: &MetalContext,
     encoder: &mut Encoder<Metal>,
-    arguments: MatmulArguments<Metal>,
+    arguments: MatmulArguments<Metal, TB>,
     use_mxu: bool,
 ) -> Result<(), MatmulError<Metal>> {
     if use_mxu && !context.device.supports_mxu() {
@@ -121,9 +121,9 @@ pub(crate) fn encode(
     Ok(())
 }
 
-fn select_simdgroup_tile(
+fn select_simdgroup_tile<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
     data_type: DataType,
-    arguments: &MatmulArguments<Metal>,
+    arguments: &MatmulArguments<Metal, TB>,
 ) -> GemmTilingConfig {
     let (threadgroup_m, threadgroup_n, threadgroup_k) = match data_type {
         DataType::F32 => (32u32, 64u32, 16u32),
@@ -144,7 +144,9 @@ fn select_simdgroup_tile(
     }
 }
 
-fn select_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
+fn select_mxu_tile<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    arguments: &MatmulArguments<Metal, TB>
+) -> GemmTilingConfig {
     let (threadgroup_m, threadgroup_n, simdgroups_m, simdgroups_n) =
         if arguments.batch_dim >= 256 && arguments.output_dim >= 128 {
             (128u32, 128u32, 4u32, 4u32)
@@ -164,7 +166,9 @@ fn select_mxu_tile(arguments: &MatmulArguments<Metal>) -> GemmTilingConfig {
     }
 }
 
-fn output_transform_from(arguments: &MatmulArguments<Metal>) -> GemmOutputTransformKind {
+fn output_transform_from<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    arguments: &MatmulArguments<Metal, TB>
+) -> GemmOutputTransformKind {
     let scale = arguments.ab_scale != 1.0;
     let accumulate = matches!(arguments.c, MatmulArgumentC::Accumulate);
     match (scale, accumulate) {

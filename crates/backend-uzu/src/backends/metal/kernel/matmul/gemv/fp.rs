@@ -1,16 +1,16 @@
 use super::{kernel::GemvKernel, spec::GemvSpecialization};
 use crate::backends::{
     common::{
-        Encoder,
+        AsBufferRangeRef, Buffer, Encoder,
         kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError},
     },
     metal::Metal,
 };
 
-pub(crate) fn encode(
+pub(crate) fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
     kernel: &mut GemvKernel,
     encoder: &mut Encoder<Metal>,
-    arguments: MatmulArguments<Metal>,
+    arguments: MatmulArguments<Metal, TB>,
 ) -> Result<(), MatmulError<Metal>> {
     let MatmulArguments {
         a,

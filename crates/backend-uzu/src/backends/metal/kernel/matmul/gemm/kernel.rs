@@ -5,7 +5,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            AsBufferRangeRef, Buffer, Encoder,
             gpu_types::gemm::{GemmInputPrologueKind, GemmWeightPrologueKind},
         },
         metal::{Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel},
@@ -62,10 +62,10 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn encode(
+    pub(crate) fn encode<T: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         context: &MetalContext,
-        dispatch: GemmDispatch<'_, Metal>,
+        dispatch: GemmDispatch<'_, Metal, T>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let specialization = dispatch.specialization();

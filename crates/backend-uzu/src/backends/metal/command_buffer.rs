@@ -6,11 +6,11 @@ use metal::{
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
-use super::Metal;
+use super::{BufferDowncastExt, Metal};
 use crate::{
     backends::{
         common::{
-            AccessFlags, Backend, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
             CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
         metal::error::MetalError,
@@ -128,29 +128,34 @@ impl Drop for MetalCommandBufferEncoding {
 impl CommandBufferEncoding for MetalCommandBufferEncoding {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn encode_copy(
+    fn encode_copy<Src: Buffer<Backend = Metal>, Dst: Buffer<Backend = Metal>>(
         &mut self,
-        src: BufferRangeRef<'_, <Metal as Backend>::DenseBuffer>,
-        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
+        src: BufferRangeRef<'_, Src>,
+        dst: BufferRangeMut<'_, Dst>,
     ) {
         let src_range = src.range();
         let dst_range = dst.range();
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
+        assert_eq!(src_range.len(), dst_range.len());
 
-        self.ensure_blit().copy_buffer_to_buffer(src.buffer(), src_range.start, dst.buffer(), dst_range.start, size);
+        self.ensure_blit().copy_buffer_to_buffer(
+            src.buffer().downcast(),
+            src_range.start,
+            dst.buffer().downcast(),
+            dst_range.start,
+            src_range.len(),
+        );
     }
 
-    fn encode_fill(
+    fn encode_fill<Dst: Buffer<Backend = Metal>>(
         &mut self,
-        dst: BufferRangeMut<'_, <Metal as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, Dst>,
         value: u8,
     ) {
         let range = dst.range();
         assert!(range.end > range.start);
         assert!(range.start % 4 == 0 && range.end % 4 == 0);
 
-        self.ensure_blit().fill_buffer_range_value(dst.buffer(), range, value);
+        self.ensure_blit().fill_buffer_range_value(dst.buffer().downcast(), range, value);
     }
 
     fn encode_barrier(

@@ -6,10 +6,10 @@ use std::{
 use crate::{
     backends::{
         common::{
-            AccessFlags, Backend, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
             CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
-        cpu::{Cpu, error::CpuError},
+        cpu::{BufferDowncastExt, Cpu, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -68,31 +68,34 @@ impl CpuCommandBufferEncoding {
 impl CommandBufferEncoding for CpuCommandBufferEncoding {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn encode_copy(
+    fn encode_copy<Src: Buffer<Backend = Cpu>, Dst: Buffer<Backend = Cpu>>(
         &mut self,
-        src: BufferRangeRef<'_, <Cpu as Backend>::DenseBuffer>,
-        dst: BufferRangeMut<'_, <Cpu as Backend>::DenseBuffer>,
+        src: BufferRangeRef<'_, Src>,
+        dst: BufferRangeMut<'_, Dst>,
     ) {
         let src_range = src.range();
         let dst_range = dst.range();
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
+        assert_eq!(src_range.len(), dst_range.len());
 
-        let src_ptr = SendPtr(unsafe { (&*src.buffer().get()).as_ptr().add(src_range.start) });
-        let dst_ptr = SendPtrMut(unsafe { (&mut *dst.buffer().get()).as_mut_ptr().add(dst_range.start) });
+        let src_buffer = src.buffer().downcast();
+        let src_ptr = SendPtr(unsafe { (&*src_buffer.get()).as_ptr().add(src_range.start) });
+
+        let dst_buffer = dst.buffer().downcast();
+        let dst_ptr = SendPtrMut(unsafe { (&mut *dst_buffer.get()).as_mut_ptr().add(dst_range.start) });
+
         self.push_command(move || unsafe {
-            std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), size);
+            std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), src_range.len());
         });
     }
 
-    fn encode_fill(
+    fn encode_fill<Dst: Buffer<Backend = Cpu>>(
         &mut self,
-        dst: BufferRangeMut<'_, <Cpu as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, Dst>,
         value: u8,
     ) {
         let range = dst.range();
         let size = range.end - range.start;
-        let dst = SendPtrMut(unsafe { (&mut *dst.buffer().get()).as_mut_ptr().add(range.start) });
+        let dst = SendPtrMut(unsafe { (&mut *dst.buffer().downcast().get()).as_mut_ptr().add(range.start) });
         self.push_command(move || unsafe {
             dst.as_ptr().write_bytes(value, size);
         });
