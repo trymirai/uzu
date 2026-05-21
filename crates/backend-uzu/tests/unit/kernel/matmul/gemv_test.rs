@@ -11,7 +11,7 @@ use backend_uzu::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel, MatmulWeights},
             },
         },
         cpu::Cpu,
@@ -68,23 +68,27 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        MatmulArguments {
-            a: &a_allocation,
-            a_offset: 0,
-            b: b_array.allocation(),
-            b_offset: 0,
-            b_leading_dimension: None,
-            b_transpose: true,
-            ab_scale: 1.0,
-            c: MatmulArgumentC::None,
-            d: &mut d_allocation,
-            batch_dim: m,
-            input_dim: k,
-            output_dim: n,
-        },
-        &mut encoder,
-    );
+    kernel
+        .encode(
+            MatmulArguments {
+                a: &a_allocation,
+                a_offset: 0,
+                b: MatmulWeights::FullPrecision {
+                    b: b_array.allocation(),
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    ab_scale: 1.0,
+                    c: MatmulArgumentC::None,
+                },
+                d: &mut d_allocation,
+                batch_dim: m,
+                input_dim: k,
+                output_dim: n,
+            },
+            &mut encoder,
+        )
+        .expect("encode failed");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<B, T>(&d_allocation)
 }

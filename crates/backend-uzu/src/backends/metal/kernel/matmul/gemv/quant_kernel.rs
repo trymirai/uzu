@@ -8,7 +8,7 @@ use crate::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
+                matmul::{MatmulArguments, MatmulError, MatmulWeights},
             },
         },
         metal::{Metal, context::MetalContext},
@@ -54,28 +54,37 @@ impl QuantGemvKernel {
     pub(crate) fn encode(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: QuantizedMatmulArguments<Metal>,
-        configuration: &QuantizedMatmulConfiguration,
-    ) -> Result<(), QuantizedMatmulError<Metal>> {
-        let bits = match configuration.mode {
-            QuantizationMode::U4 => 4u32,
-            QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
-        };
-        let group_size = configuration.group_size as u32;
-        let use_fast = configuration.output_dim % 8 == 0 && configuration.input_dim % 512 == 0;
-
-        let QuantizedMatmulArguments {
+        arguments: MatmulArguments<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        let MatmulArguments {
             a,
             a_offset,
             b,
+            d,
+            batch_dim,
+            input_dim,
+            output_dim,
+        } = arguments;
+        let MatmulWeights::Quantized {
+            b: weights,
             scales,
             zero_points_or_biases,
-            output,
+            method,
+            mode,
+            group_size,
             hadamard_factors,
-            batch_dim,
-        } = arguments;
+        } = b
+        else {
+            panic!("QuantGemvKernel requires Quantized weights");
+        };
 
-        let (zero_points, biases) = match configuration.quantization_method {
+        let bits = match mode {
+            QuantizationMode::U4 => 4u32,
+            QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
+        };
+        let use_fast = output_dim % 8 == 0 && input_dim % 512 == 0;
+
+        let (zero_points, biases) = match method {
             QuantizationMethod::ScaleZeroPoint => (Some(zero_points_or_biases), None),
             QuantizationMethod::ScaleBias => (None, Some(zero_points_or_biases)),
         };
@@ -84,8 +93,8 @@ impl QuantGemvKernel {
             let key = QmvFastKey {
                 group_size,
                 bits,
-                quant_method: configuration.quantization_method,
-                use_hadamard: configuration.use_hadamard,
+                quant_method: method,
+                use_hadamard: hadamard_factors.is_some(),
             };
             let context = encoder.context();
             let kernel = match self.qmv_fast.entry(key) {
@@ -96,34 +105,34 @@ impl QuantGemvKernel {
                         self.data_type,
                         group_size,
                         bits,
-                        configuration.quantization_method,
-                        configuration.use_hadamard,
+                        method,
+                        hadamard_factors.is_some(),
                     )
-                    .map_err(QuantizedMatmulError::BackendError)?;
+                    .map_err(MatmulError::BackendError)?;
                     entry.insert(kernel)
                 },
             };
             kernel.encode(
-                b,
+                weights,
                 scales,
                 zero_points,
                 biases,
                 (a, a_offset),
-                output,
+                d,
                 hadamard_factors,
-                configuration.input_dim as u32,
-                configuration.output_dim as u32,
-                batch_dim as u32,
+                input_dim,
+                output_dim,
+                batch_dim,
                 encoder,
             );
         } else {
-            if configuration.use_hadamard {
-                return Err(QuantizedMatmulError::UnsupportedHadamard);
+            if hadamard_factors.is_some() {
+                return Err(MatmulError::UnsupportedHadamard);
             }
             let key = QmvKey {
                 group_size,
                 bits,
-                quant_method: configuration.quantization_method,
+                quant_method: method,
             };
             let context = encoder.context();
             let kernel = match self.qmv.entry(key) {
@@ -134,22 +143,22 @@ impl QuantGemvKernel {
                         self.data_type,
                         group_size,
                         bits,
-                        configuration.quantization_method,
+                        method,
                     )
-                    .map_err(QuantizedMatmulError::BackendError)?;
+                    .map_err(MatmulError::BackendError)?;
                     entry.insert(kernel)
                 },
             };
             kernel.encode(
-                b,
+                weights,
                 scales,
                 zero_points,
                 biases,
                 (a, a_offset),
-                output,
-                configuration.input_dim as u32,
-                configuration.output_dim as u32,
-                batch_dim as u32,
+                d,
+                input_dim,
+                output_dim,
+                batch_dim,
                 encoder,
             );
         }

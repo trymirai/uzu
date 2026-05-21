@@ -10,11 +10,10 @@ use backend_uzu::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ManualKernels,
-                matmul::MatmulKernel,
-                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration},
+                matmul::{MatmulArguments, MatmulKernel, MatmulWeights},
             },
         },
-        metal::{Metal, MetalContext, QuantizedMatmulDispatchPath},
+        metal::{MatmulDispatchPath, Metal, MetalContext},
     },
 };
 use half::bf16;
@@ -183,18 +182,8 @@ fn make_input<T: ArrayElement + Float>(
 fn run_with_path<T: ArrayElement + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
-    path: QuantizedMatmulDispatchPath,
+    path: MatmulDispatchPath,
 ) -> Vec<T> {
-    let configuration = QuantizedMatmulConfiguration {
-        data_type: T::data_type(),
-        group_size: input.group_size as usize,
-        input_dim: input.k as usize,
-        output_dim: input.n as usize,
-        mode: input.mode,
-        quantization_method: input.quant_method,
-        use_hadamard: false,
-    };
-
     let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
         .expect("MatmulMetalKernel");
 
@@ -212,18 +201,24 @@ fn run_with_path<T: ArrayElement + Float>(
 
     let mut encoder = Encoder::new(context).expect("encoder");
     matmul
-        .encode_quantized_with_path(
-            QuantizedMatmulArguments {
+        .encode_with_path(
+            MatmulArguments {
                 a: &x_buf,
                 a_offset: 0,
-                b: &w_buf,
-                scales: &s_buf,
-                zero_points_or_biases: zp_or_bias,
-                output: &mut y_buf,
-                hadamard_factors: None,
-                batch_dim: input.m as usize,
+                b: MatmulWeights::Quantized {
+                    b: &w_buf,
+                    scales: &s_buf,
+                    zero_points_or_biases: zp_or_bias,
+                    method: input.quant_method,
+                    mode: input.mode,
+                    group_size: input.group_size,
+                    hadamard_factors: None,
+                },
+                d: &mut y_buf,
+                batch_dim: input.m,
+                input_dim: input.k,
+                output_dim: input.n,
             },
-            &configuration,
             &mut encoder,
             path,
         )
@@ -272,8 +267,8 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 ) {
     let context = MetalContext::new().expect("Metal context");
     let input = make_input::<T>(m, k, n, group_size, bits, quant_method);
-    let reference = run_with_path::<T>(&context, &input, QuantizedMatmulDispatchPath::Auto);
-    let unified = run_with_path::<T>(&context, &input, QuantizedMatmulDispatchPath::Gemm);
+    let reference = run_with_path::<T>(&context, &input, MatmulDispatchPath::Auto);
+    let unified = run_with_path::<T>(&context, &input, MatmulDispatchPath::QuantGemm);
     assert_parity::<T>(
         &format!(
             "m={m} k={k} n={n} gs={group_size} bits={bits} method={quant_method:?} dtype={}",

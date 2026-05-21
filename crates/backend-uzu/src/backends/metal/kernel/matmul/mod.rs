@@ -14,8 +14,9 @@ use crate::{
             Backend, Encoder,
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulError, MatmulKernel},
-                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
+                matmul::{
+                    MatmulArguments, MatmulError, MatmulKernel, MatmulWeights,
+                },
             },
         },
         metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
@@ -55,6 +56,8 @@ pub enum MatmulDispatchPath {
     Gemv,
     Gemm,
     GemmMxu,
+    QuantGemv,
+    QuantGemm,
 }
 
 impl MatmulMetalKernel {
@@ -63,77 +66,85 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
+    ) -> Result<(), MatmulError<Metal>> {
+        match (path, &arguments.b) {
+            (MatmulDispatchPath::Auto, _) => self.encode(arguments, encoder),
+            (MatmulDispatchPath::Gemv, MatmulWeights::FullPrecision { .. }) => {
+                self.encode_fp_gemv(arguments, encoder);
+                Ok(())
+            },
+            (MatmulDispatchPath::Gemm, MatmulWeights::FullPrecision { .. }) => {
+                self.encode_fp_gemm(arguments, encoder, false);
+                Ok(())
+            },
+            (MatmulDispatchPath::GemmMxu, MatmulWeights::FullPrecision { .. }) => {
+                self.encode_fp_gemm(arguments, encoder, true);
+                Ok(())
+            },
+            (MatmulDispatchPath::QuantGemv, MatmulWeights::Quantized { .. }) => {
+                self.encode_quant_gemv(arguments, encoder)
+            },
+            (MatmulDispatchPath::QuantGemm, MatmulWeights::Quantized { .. }) => {
+                self.encode_quant_gemm(arguments, encoder)
+            },
+            _ => panic!("MatmulDispatchPath does not match MatmulWeights variant"),
+        }
+    }
+
+    fn encode_fp_gemv(
+        &mut self,
+        arguments: MatmulArguments<Metal>,
+        encoder: &mut Encoder<Metal>,
+    ) {
+        gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV");
+    }
+
+    fn encode_fp_gemm(
+        &mut self,
+        arguments: MatmulArguments<Metal>,
+        encoder: &mut Encoder<Metal>,
+        use_mxu: bool,
     ) {
         let context = encoder.context();
-        match path {
-            MatmulDispatchPath::Auto => self.encode(arguments, encoder),
-            MatmulDispatchPath::Gemv => {
-                gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV")
-            },
-            MatmulDispatchPath::Gemm => self
-                .gemm
-                .encode(
-                    context,
-                    encoder,
-                    GemmRequest::Fp {
-                        bias_add: &mut self.bias_add,
-                        arguments,
-                        use_mxu: false,
-                    },
-                )
-                .expect("Failed to encode Gemm"),
-            MatmulDispatchPath::GemmMxu => self
-                .gemm
-                .encode(
-                    context,
-                    encoder,
-                    GemmRequest::Fp {
-                        bias_add: &mut self.bias_add,
-                        arguments,
-                        use_mxu: true,
-                    },
-                )
-                .expect("Failed to encode GemmMxu"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum QuantizedMatmulDispatchPath {
-    Auto,
-    Gemm,
-}
-
-impl MatmulMetalKernel {
-    pub fn encode_quantized_with_path(
-        &mut self,
-        arguments: QuantizedMatmulArguments<Metal>,
-        configuration: &QuantizedMatmulConfiguration,
-        encoder: &mut Encoder<Metal>,
-        path: QuantizedMatmulDispatchPath,
-    ) -> Result<(), QuantizedMatmulError<Metal>> {
-        match path {
-            QuantizedMatmulDispatchPath::Auto => self.encode_quantized(arguments, configuration, encoder),
-            QuantizedMatmulDispatchPath::Gemm => self.encode_quantized_gemm(arguments, configuration, encoder),
-        }
+        self.gemm
+            .encode(
+                context,
+                encoder,
+                GemmRequest::Fp {
+                    bias_add: &mut self.bias_add,
+                    arguments,
+                    use_mxu,
+                },
+            )
+            .expect("Failed to encode GEMM");
     }
 
-    fn encode_quantized_gemm(
+    fn encode_quant_gemm(
         &mut self,
-        arguments: QuantizedMatmulArguments<Metal>,
-        configuration: &QuantizedMatmulConfiguration,
+        arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
-    ) -> Result<(), QuantizedMatmulError<Metal>> {
-        let QuantizedMatmulArguments {
+    ) -> Result<(), MatmulError<Metal>> {
+        let MatmulArguments {
             a,
             a_offset,
             b,
+            d,
+            batch_dim,
+            input_dim,
+            output_dim,
+        } = arguments;
+        let MatmulWeights::Quantized {
+            b: weights,
             scales,
             zero_points_or_biases,
-            output,
+            method,
+            mode,
+            group_size,
             hadamard_factors,
-            batch_dim,
-        } = arguments;
+        } = b
+        else {
+            unreachable!("encode_quant_gemm requires Quantized weights");
+        };
 
         let context = encoder.context();
         self.gemm
@@ -141,27 +152,34 @@ impl MatmulMetalKernel {
                 context,
                 encoder,
                 GemmRequest::Quant {
-                    configuration,
-                    arguments: QuantizedMatmulArguments {
-                        a,
-                        a_offset,
-                        b,
-                        scales,
-                        zero_points_or_biases,
-                        output: &mut *output,
-                        hadamard_factors: None,
-                        batch_dim,
-                    },
+                    method,
+                    mode,
+                    group_size,
+                    a,
+                    a_offset,
+                    b: weights,
+                    scales,
+                    zero_points_or_biases,
+                    d: &mut *d,
+                    batch_dim,
+                    input_dim,
+                    output_dim,
                 },
             )
-            .map_err(QuantizedMatmulError::BackendError)?;
+            .map_err(MatmulError::BackendError)?;
 
-        if configuration.use_hadamard
-            && let Some(factors) = hadamard_factors
-        {
-            self.hadamard.encode(output, factors, configuration.output_dim as u32, batch_dim as u32, encoder);
+        if let Some(factors) = hadamard_factors {
+            self.hadamard.encode(d, factors, output_dim, batch_dim, encoder);
         }
         Ok(())
+    }
+
+    fn encode_quant_gemv(
+        &mut self,
+        arguments: MatmulArguments<Metal>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        self.quant_gemv.encode(encoder, arguments)
     }
 }
 
@@ -197,42 +215,35 @@ impl MatmulKernel for MatmulMetalKernel {
         &mut self,
         arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
-    ) {
-        let context = encoder.context();
-        let gemv_eligible = arguments.b_transpose
-            && arguments.b_offset == 0
-            && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.input_dim)
-            && arguments.batch_dim <= max_gemv_batch_threshold();
+    ) -> Result<(), MatmulError<Metal>> {
+        match &arguments.b {
+            MatmulWeights::FullPrecision {
+                b_transpose,
+                b_offset,
+                b_leading_dimension,
+                ..
+            } => {
+                let context = encoder.context();
+                let gemv_eligible = *b_transpose
+                    && *b_offset == 0
+                    && b_leading_dimension.is_none_or(|ld| ld == arguments.input_dim)
+                    && arguments.batch_dim <= max_gemv_batch_threshold();
 
-        if gemv_eligible {
-            gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV kernel");
-            return;
-        }
-
-        let use_mxu = self.is_mxu_eligible(context);
-        self.gemm
-            .encode(
-                context,
-                encoder,
-                GemmRequest::Fp {
-                    bias_add: &mut self.bias_add,
-                    arguments,
-                    use_mxu,
-                },
-            )
-            .expect("Failed to encode GEMM");
-    }
-
-    fn encode_quantized(
-        &mut self,
-        arguments: QuantizedMatmulArguments<Metal>,
-        configuration: &QuantizedMatmulConfiguration,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<(), QuantizedMatmulError<Metal>> {
-        if arguments.batch_dim >= 5 && configuration.output_dim > 1 {
-            self.encode_quantized_gemm(arguments, configuration, encoder)
-        } else {
-            self.quant_gemv.encode(encoder, arguments, configuration)
+                if gemv_eligible {
+                    self.encode_fp_gemv(arguments, encoder);
+                } else {
+                    let use_mxu = self.is_mxu_eligible(context);
+                    self.encode_fp_gemm(arguments, encoder, use_mxu);
+                }
+                Ok(())
+            },
+            MatmulWeights::Quantized { .. } => {
+                if arguments.batch_dim >= 5 && arguments.output_dim > 1 {
+                    self.encode_quant_gemm(arguments, encoder)
+                } else {
+                    self.encode_quant_gemv(arguments, encoder)
+                }
+            },
         }
     }
 }

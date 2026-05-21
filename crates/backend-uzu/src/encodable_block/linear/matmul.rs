@@ -8,11 +8,12 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::QuantizationMethod,
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels, ManualKernels, TensorAddBiasKernel,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
-            quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration},
+            matmul::{
+                MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel, MatmulWeights,
+            },
         },
     },
     config::QuantizationConfig,
@@ -89,7 +90,9 @@ pub enum LinearMatmulError<B: Backend> {
 enum Mode<B: Backend> {
     FullPrecision,
     Quantized {
-        config: QuantizedMatmulConfiguration,
+        method: QuantizationMethod,
+        mode: QuantizationMode,
+        group_size: u32,
         scales: Allocation<B>,
         zero_points_or_biases: Allocation<B>,
         output_hadamard_factors: Option<Allocation<B>>,
@@ -238,15 +241,6 @@ impl<B: Backend> LinearMatmul<B> {
 
         let (bias_add_kernel, biases) = load_biases(context, data_type, output_dim, parameter_tree)?;
 
-        let configuration = QuantizedMatmulConfiguration {
-            data_type,
-            group_size: config.group_size,
-            input_dim,
-            output_dim,
-            mode: config.weight_quantization_mode,
-            quantization_method,
-            use_hadamard: output_hadamard_factors.is_some(),
-        };
         let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?;
 
         Ok(Self {
@@ -258,7 +252,9 @@ impl<B: Backend> LinearMatmul<B> {
             output_dim,
             data_type,
             mode: Mode::Quantized {
-                config: configuration,
+                method: quantization_method,
+                mode: config.weight_quantization_mode,
+                group_size: config.group_size as u32,
                 scales: scales_leaf.read_allocation()?,
                 zero_points_or_biases,
                 output_hadamard_factors,
@@ -313,52 +309,48 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.data_type))?;
 
-        let mut kernel = self.kernel.borrow_mut();
-        match &self.mode {
-            Mode::FullPrecision => {
-                kernel.encode(
-                    MatmulArguments {
-                        a: &input,
-                        a_offset: 0,
-                        b: &self.weights,
-                        b_offset: 0,
-                        b_leading_dimension: None,
-                        b_transpose: true,
-                        ab_scale: 1.0,
-                        c: MatmulArgumentC::None,
-                        d: &mut output,
-                        batch_dim: batch_dim as u32,
-                        input_dim: self.input_dim as u32,
-                        output_dim: self.output_dim as u32,
-                    },
-                    encoder,
-                );
+        let weights = match &self.mode {
+            Mode::FullPrecision => MatmulWeights::FullPrecision {
+                b: &self.weights,
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                ab_scale: 1.0,
+                c: MatmulArgumentC::None,
             },
             Mode::Quantized {
-                config,
+                method,
+                mode,
+                group_size,
                 scales,
                 zero_points_or_biases,
                 output_hadamard_factors,
-            } => {
-                kernel
-                    .encode_quantized(
-                        QuantizedMatmulArguments {
-                            a: &input,
-                            a_offset: 0,
-                            b: &self.weights,
-                            scales,
-                            zero_points_or_biases,
-                            output: &mut output,
-                            hadamard_factors: output_hadamard_factors.as_ref(),
-                            batch_dim,
-                        },
-                        config,
-                        encoder,
-                    )
-                    .expect("encode_quantized failed");
+            } => MatmulWeights::Quantized {
+                b: &self.weights,
+                scales,
+                zero_points_or_biases,
+                method: *method,
+                mode: *mode,
+                group_size: *group_size,
+                hadamard_factors: output_hadamard_factors.as_ref(),
             },
-        }
-        drop(kernel);
+        };
+
+        self.kernel
+            .borrow_mut()
+            .encode(
+                MatmulArguments {
+                    a: &input,
+                    a_offset: 0,
+                    b: weights,
+                    d: &mut output,
+                    batch_dim: batch_dim as u32,
+                    input_dim: self.input_dim as u32,
+                    output_dim: self.output_dim as u32,
+                },
+                encoder,
+            )
+            .expect("encode failed");
 
         if let (Some(bias_add_kernel), Some(biases)) = (&self.bias_add_kernel, &self.biases) {
             let total_length = batch_dim * self.output_dim;

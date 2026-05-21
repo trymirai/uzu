@@ -6,13 +6,10 @@ use crate::{
     DataType,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::QuantizationMethod,
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
-            quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-            },
+            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel, MatmulWeights},
         },
     },
     config::EmbeddingConfig,
@@ -25,12 +22,16 @@ pub enum EmbeddingError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Matmul error: {0}")]
     MatmulError(#[from] MatmulError<B>),
-    #[error("QuantizedMatmul error: {0}")]
-    QuantizedMatmulError(#[from] QuantizedMatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported configuration: {0}")]
     UnsupportedConfiguration(String),
+}
+
+struct ReadoutQuantConfig {
+    method: QuantizationMethod,
+    mode: QuantizationMode,
+    group_size: u32,
 }
 
 enum TiedEmbeddingType<B: Backend> {
@@ -45,7 +46,7 @@ enum TiedEmbeddingType<B: Backend> {
         biases: Allocation<B>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-        readout_config: QuantizedMatmulConfiguration,
+        readout_config: ReadoutQuantConfig,
     },
 }
 
@@ -72,7 +73,7 @@ enum UntiedEmbeddingReadoutType<B: Backend> {
         scales: Allocation<B>,
         biases: Allocation<B>,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-        readout_config: QuantizedMatmulConfiguration,
+        readout_config: ReadoutQuantConfig,
     },
 }
 
@@ -257,14 +258,10 @@ impl<B: Backend> Embedding<B> {
                     (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                let readout_config = QuantizedMatmulConfiguration {
-                    data_type,
-                    group_size: *group_size,
-                    input_dim: model_dim as usize,
-                    output_dim: vocab_size as usize,
+                let readout_config = ReadoutQuantConfig {
+                    method: QuantizationMethod::ScaleBias,
                     mode: *embedding_quantization_mode,
-                    quantization_method: QuantizationMethod::ScaleBias,
-                    use_hadamard: false,
+                    group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
                     <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
@@ -332,14 +329,10 @@ impl<B: Backend> Embedding<B> {
                     (*embedding_quantization_mode).into(),
                 )
                 .map_err(EmbeddingError::BackendError)?;
-                let readout_config = QuantizedMatmulConfiguration {
-                    data_type,
-                    group_size: *group_size,
-                    input_dim: model_dim as usize,
-                    output_dim: vocab_size as usize,
+                let readout_config = ReadoutQuantConfig {
+                    method: QuantizationMethod::ScaleBias,
                     mode: *embedding_quantization_mode,
-                    quantization_method: QuantizationMethod::ScaleBias,
-                    use_hadamard: false,
+                    group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
                     <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
@@ -400,14 +393,10 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout_config = QuantizedMatmulConfiguration {
-                    data_type,
-                    group_size: *group_size,
-                    input_dim: model_dim as usize,
-                    output_dim: vocab_size as usize,
+                let readout_config = ReadoutQuantConfig {
+                    method: QuantizationMethod::ScaleBias,
                     mode: *embedding_quantization_mode,
-                    quantization_method: QuantizationMethod::ScaleBias,
-                    use_hadamard: false,
+                    group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
                     <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
@@ -563,23 +552,28 @@ impl<B: Backend> Embedding<B> {
             } => {
                 let input_dim = self.model_dim as usize;
                 let output_dim = self.vocab_size as usize;
-                readout.borrow_mut().encode(
-                    MatmulArguments {
-                        a: input_allocation,
-                        a_offset: 0,
-                        b: weights,
-                        b_offset: 0,
-                        b_leading_dimension: None,
-                        b_transpose: true,
-                        ab_scale: 1.0,
-                        c: MatmulArgumentC::None,
-                        d: &mut output_allocation,
-                        batch_dim: batch_dim as u32,
-                        input_dim: input_dim as u32,
-                        output_dim: output_dim as u32,
-                    },
-                    encoder,
-                );
+                readout
+                    .borrow_mut()
+                    .encode(
+                        MatmulArguments {
+                            a: input_allocation,
+                            a_offset: 0,
+                            b: MatmulWeights::FullPrecision {
+                                b: weights,
+                                b_offset: 0,
+                                b_leading_dimension: None,
+                                b_transpose: true,
+                                ab_scale: 1.0,
+                                c: MatmulArgumentC::None,
+                            },
+                            d: &mut output_allocation,
+                            batch_dim: batch_dim as u32,
+                            input_dim: input_dim as u32,
+                            output_dim: output_dim as u32,
+                        },
+                        encoder,
+                    )
+                    .expect("encode failed");
             },
             EmbeddingTying::Tied {
                 ty:
@@ -605,21 +599,27 @@ impl<B: Backend> Embedding<B> {
             } => {
                 readout
                     .borrow_mut()
-                    .encode_quantized(
-                        QuantizedMatmulArguments {
+                    .encode(
+                        MatmulArguments {
                             a: input_allocation,
                             a_offset: 0,
-                            b: weights,
-                            scales,
-                            zero_points_or_biases: biases,
-                            output: &mut output_allocation,
-                            hadamard_factors: None,
-                            batch_dim,
+                            b: MatmulWeights::Quantized {
+                                b: weights,
+                                scales,
+                                zero_points_or_biases: biases,
+                                method: readout_config.method,
+                                mode: readout_config.mode,
+                                group_size: readout_config.group_size,
+                                hadamard_factors: None,
+                            },
+                            d: &mut output_allocation,
+                            batch_dim: batch_dim as u32,
+                            input_dim: self.model_dim,
+                            output_dim: self.vocab_size,
                         },
-                        readout_config,
                         encoder,
                     )
-                    .expect("encode_quantized failed");
+                    .expect("encode failed");
             },
         };
 

@@ -1,9 +1,3 @@
-//! Bench driving the unified quantized GEMM path
-//! (`QuantizedMatmulDispatchPath::Gemm` → `GemmQuantKernel`). Compares
-//! directly against `qmm_transposed_bench.rs` so a criterion `--baseline`
-//! delta against `standalone-qmm-pre-port` is the parity gate for step 4 of
-//! the unified-quant port.
-
 #![cfg(metal_backend)]
 
 use backend_uzu::{
@@ -14,11 +8,10 @@ use backend_uzu::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ManualKernels,
-                matmul::MatmulKernel,
-                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration},
+                matmul::{MatmulArguments, MatmulKernel, MatmulWeights},
             },
         },
-        metal::{Metal, MetalContext, QuantizedMatmulDispatchPath},
+        metal::{MatmulDispatchPath, Metal, MetalContext},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -61,16 +54,6 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
         let num_groups = k.div_ceil(group_size as usize);
         let mut rng = SmallRng::seed_from_u64(42);
 
-        let configuration = QuantizedMatmulConfiguration {
-            data_type: T::data_type(),
-            group_size: group_size as usize,
-            input_dim: k,
-            output_dim: n,
-            mode,
-            quantization_method: quant_method,
-            use_hadamard: false,
-        };
-
         let mut matmul =
             <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type()).unwrap();
 
@@ -111,20 +94,26 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
                 let mut encoder = Encoder::<Metal>::new(context).unwrap();
                 for _ in 0..n_iters {
                     matmul
-                        .encode_quantized_with_path(
-                            QuantizedMatmulArguments {
+                        .encode_with_path(
+                            MatmulArguments {
                                 a: &x_buf,
                                 a_offset: 0,
-                                b: &w_buf,
-                                scales: &scales_buf,
-                                zero_points_or_biases: &zp_or_bias,
-                                output: &mut y_buf,
-                                hadamard_factors: None,
-                                batch_dim: m,
+                                b: MatmulWeights::Quantized {
+                                    b: &w_buf,
+                                    scales: &scales_buf,
+                                    zero_points_or_biases: &zp_or_bias,
+                                    method: quant_method,
+                                    mode,
+                                    group_size,
+                                    hadamard_factors: None,
+                                },
+                                d: &mut y_buf,
+                                batch_dim: m as u32,
+                                input_dim: k as u32,
+                                output_dim: n as u32,
                             },
-                            &configuration,
                             &mut encoder,
-                            QuantizedMatmulDispatchPath::Gemm,
+                            MatmulDispatchPath::QuantGemm,
                         )
                         .expect("encode unified quant matmul");
                 }

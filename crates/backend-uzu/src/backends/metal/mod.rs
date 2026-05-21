@@ -13,5 +13,5 @@ pub use backend::Metal;
 pub use buffer::BufferDowncastExt;
 pub use context::MetalContext;
 pub use device_capabilities::MetalDeviceCapabilities;
-pub use kernel::matmul::{MatmulDispatchPath, QuantizedMatmulDispatchPath};
+pub use kernel::matmul::MatmulDispatchPath;
 pub use metal_extensions::{DeviceExt, DeviceGeneration};

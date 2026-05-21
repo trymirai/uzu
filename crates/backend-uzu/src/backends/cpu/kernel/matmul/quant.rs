@@ -7,7 +7,7 @@ use crate::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration},
+            kernel::matmul::{MatmulArguments, MatmulWeights},
         },
         cpu::{Cpu, kernel::matmul::gemm::qmm_transposed::qmm_transposed},
     },
@@ -16,36 +16,45 @@ use crate::{
 
 pub(crate) fn encode_quantized_gemm(
     encoder: &mut Encoder<Cpu>,
-    arguments: QuantizedMatmulArguments<Cpu>,
-    configuration: &QuantizedMatmulConfiguration,
+    arguments: MatmulArguments<Cpu>,
+    data_type: DataType,
 ) {
-    let QuantizedMatmulArguments {
+    let MatmulArguments {
         a,
         a_offset,
         b,
+        d,
+        batch_dim,
+        input_dim,
+        output_dim,
+    } = arguments;
+    let MatmulWeights::Quantized {
+        b: weights,
         scales,
         zero_points_or_biases,
-        output,
+        method,
+        mode,
+        group_size,
         hadamard_factors: _,
-        batch_dim,
-    } = arguments;
+    } = b
+    else {
+        unreachable!();
+    };
 
-    let bits: usize = match configuration.mode {
+    let bits: usize = match mode {
         QuantizationMode::U4 => 4,
         QuantizationMode::I8 | QuantizationMode::U8 => 8,
     };
-    let quant_method = configuration.quantization_method;
-    let group_size = configuration.group_size;
-    let in_vec_size = configuration.input_dim;
-    let out_vec_size = configuration.output_dim;
-    let batch_size = batch_dim;
-    let data_type = configuration.data_type;
+    let in_vec_size = input_dim as usize;
+    let out_vec_size = output_dim as usize;
+    let batch_size = batch_dim as usize;
+    let group_size = group_size as usize;
 
     let a_buf = a.as_buffer_range_ref();
-    let b_buf = b.as_buffer_range_ref();
+    let b_buf = weights.as_buffer_range_ref();
     let scales_buf = scales.as_buffer_range_ref();
     let zp_buf = zero_points_or_biases.as_buffer_range_ref();
-    let d_buf = output.as_buffer_range_mut();
+    let d_buf = d.as_buffer_range_mut();
 
     let a_byte_off = a_buf.range().start + a_offset * data_type.size_in_bytes();
     let b_byte_off = b_buf.range().start;
@@ -55,50 +64,26 @@ pub(crate) fn encode_quantized_gemm(
 
     let a_ptr = SendPtr(unsafe { &*a_buf.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
     let b_ptr = SendPtr(unsafe { &*b_buf.buffer().get() }.as_ptr().wrapping_byte_add(b_byte_off));
-    let scales_ptr = SendPtr(unsafe { &*scales_buf.buffer().get() }.as_ptr().wrapping_byte_add(scales_byte_off));
+    let scales_ptr =
+        SendPtr(unsafe { &*scales_buf.buffer().get() }.as_ptr().wrapping_byte_add(scales_byte_off));
     let zp_ptr = SendPtr(unsafe { &*zp_buf.buffer().get() }.as_ptr().wrapping_byte_add(zp_byte_off));
-    let d_ptr = SendPtrMut(unsafe { (&*d_buf.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8 });
+    let d_ptr = SendPtrMut(unsafe {
+        (&*d_buf.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8
+    });
 
     let command_buffer = encoder.as_command_buffer_mut();
     command_buffer.push_command(move || match data_type {
         DataType::F32 => run::<f32>(
-            a_ptr,
-            b_ptr,
-            scales_ptr,
-            zp_ptr,
-            d_ptr,
-            in_vec_size,
-            out_vec_size,
-            batch_size,
-            quant_method,
-            group_size,
-            bits,
+            a_ptr, b_ptr, scales_ptr, zp_ptr, d_ptr, in_vec_size, out_vec_size, batch_size, method,
+            group_size, bits,
         ),
         DataType::F16 => run::<f16>(
-            a_ptr,
-            b_ptr,
-            scales_ptr,
-            zp_ptr,
-            d_ptr,
-            in_vec_size,
-            out_vec_size,
-            batch_size,
-            quant_method,
-            group_size,
-            bits,
+            a_ptr, b_ptr, scales_ptr, zp_ptr, d_ptr, in_vec_size, out_vec_size, batch_size, method,
+            group_size, bits,
         ),
         DataType::BF16 => run::<bf16>(
-            a_ptr,
-            b_ptr,
-            scales_ptr,
-            zp_ptr,
-            d_ptr,
-            in_vec_size,
-            out_vec_size,
-            batch_size,
-            quant_method,
-            group_size,
-            bits,
+            a_ptr, b_ptr, scales_ptr, zp_ptr, d_ptr, in_vec_size, out_vec_size, batch_size, method,
+            group_size, bits,
         ),
         _ => unreachable!(),
     });

@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{
             ManualKernels,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
+            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel, MatmulWeights},
         },
     },
     config::QuantizationConfig,
@@ -101,43 +101,51 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         let mut intermediate =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
 
-        adapter_kernel.encode(
-            MatmulArguments {
-                a: &input,
-                a_offset: 0,
-                b: &self.adapter_down,
-                b_offset: 0,
-                b_leading_dimension: None,
-                b_transpose: true,
-                ab_scale: 1.0,
-                c: MatmulArgumentC::None,
-                d: &mut intermediate,
-                batch_dim: batch_dim as u32,
-                input_dim: self.input_dim as u32,
-                output_dim: self.lora_rank as u32,
-            },
-            encoder,
-        );
+        adapter_kernel
+            .encode(
+                MatmulArguments {
+                    a: &input,
+                    a_offset: 0,
+                    b: MatmulWeights::FullPrecision {
+                        b: &self.adapter_down,
+                        b_offset: 0,
+                        b_leading_dimension: None,
+                        b_transpose: true,
+                        ab_scale: 1.0,
+                        c: MatmulArgumentC::None,
+                    },
+                    d: &mut intermediate,
+                    batch_dim: batch_dim as u32,
+                    input_dim: self.input_dim as u32,
+                    output_dim: self.lora_rank as u32,
+                },
+                encoder,
+            )
+            .expect("encode failed");
 
         let mut output = self.base_linear.encode(input, batch_dim, encoder)?;
 
-        adapter_kernel.encode(
-            MatmulArguments {
-                a: &intermediate,
-                a_offset: 0,
-                b: &self.adapter_up,
-                b_offset: 0,
-                b_leading_dimension: None,
-                b_transpose: true,
-                ab_scale: self.lora_scale,
-                c: MatmulArgumentC::Accumulate,
-                d: &mut output,
-                batch_dim: batch_dim as u32,
-                input_dim: self.lora_rank as u32,
-                output_dim: self.output_dim as u32,
-            },
-            encoder,
-        );
+        adapter_kernel
+            .encode(
+                MatmulArguments {
+                    a: &intermediate,
+                    a_offset: 0,
+                    b: MatmulWeights::FullPrecision {
+                        b: &self.adapter_up,
+                        b_offset: 0,
+                        b_leading_dimension: None,
+                        b_transpose: true,
+                        ab_scale: self.lora_scale,
+                        c: MatmulArgumentC::Accumulate,
+                    },
+                    d: &mut output,
+                    batch_dim: batch_dim as u32,
+                    input_dim: self.lora_rank as u32,
+                    output_dim: self.output_dim as u32,
+                },
+                encoder,
+            )
+            .expect("encode failed");
 
         Ok(output)
     }

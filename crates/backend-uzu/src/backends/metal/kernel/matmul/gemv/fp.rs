@@ -2,7 +2,7 @@ use super::{kernel::GemvKernel, spec::GemvSpecialization};
 use crate::backends::{
     common::{
         Encoder,
-        kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError},
+        kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulWeights},
     },
     metal::Metal,
 };
@@ -16,16 +16,22 @@ pub(crate) fn encode(
         a,
         a_offset,
         b,
-        b_offset,
-        b_leading_dimension,
-        b_transpose,
-        ab_scale,
-        c,
         d,
         batch_dim,
         input_dim,
         output_dim,
     } = arguments;
+    let MatmulWeights::FullPrecision {
+        b: weights,
+        b_offset,
+        b_leading_dimension,
+        b_transpose,
+        ab_scale,
+        c,
+    } = b
+    else {
+        panic!("FP gemv requires FullPrecision weights");
+    };
     assert!(b_transpose, "encode_gemv does not support b_transpose=false");
     assert!(b_offset == 0, "encode_gemv does not support nonzero b_offset");
     assert!(
@@ -42,7 +48,7 @@ pub(crate) fn encode(
     let specialization = GemvSpecialization::select(input_dim, output_dim, is_accumulate, output_bias.is_some());
 
     kernel.get_or_create(encoder.context(), specialization)?.encode(
-        b,
+        weights,
         (a, a_offset),
         output_bias,
         d,

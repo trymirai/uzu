@@ -13,7 +13,7 @@ use backend_uzu::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel, MatmulWeights},
             },
         },
         metal::{Metal, MatmulDispatchPath, MetalContext},
@@ -58,24 +58,28 @@ fn bench_gemm(c: &mut Criterion) {
                 bencher.iter_custom(|n_iters| {
                     let mut encoder = Encoder::<Metal>::new(&context).unwrap();
                     for _ in 0..n_iters {
-                        kernel.encode_with_path(
-                            MatmulArguments {
-                                a: &a,
-                                a_offset: 0,
-                                b: b_array.allocation(),
-                                b_offset: 0,
-                                b_leading_dimension: None,
-                                b_transpose: true,
-                                ab_scale: 1.0,
-                                c: MatmulArgumentC::None,
-                                d: &mut d,
-                                batch_dim: m as u32,
-                                input_dim: k as u32,
-                                output_dim: n as u32,
-                            },
-                            &mut encoder,
-                            MatmulDispatchPath::Gemm,
-                        );
+                        kernel
+                            .encode_with_path(
+                                MatmulArguments {
+                                    a: &a,
+                                    a_offset: 0,
+                                    b: MatmulWeights::FullPrecision {
+                                        b: b_array.allocation(),
+                                        b_offset: 0,
+                                        b_leading_dimension: None,
+                                        b_transpose: true,
+                                        ab_scale: 1.0,
+                                        c: MatmulArgumentC::None,
+                                    },
+                                    d: &mut d,
+                                    batch_dim: m as u32,
+                                    input_dim: k as u32,
+                                    output_dim: n as u32,
+                                },
+                                &mut encoder,
+                                MatmulDispatchPath::Gemm,
+                            )
+                            .expect("encode_with_path failed");
                     }
                     encoder
                         .end_encoding()

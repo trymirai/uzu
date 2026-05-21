@@ -7,7 +7,7 @@ use backend_uzu::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel, MatmulWeights},
             },
         },
         cpu::Cpu,
@@ -121,12 +121,14 @@ fn run<B: Backend, T: ArrayElement + Float>(
         MatmulArguments {
             a: &a_allocation,
             a_offset: 0,
-            b: b_array.allocation(),
-            b_offset: 0,
-            b_leading_dimension: None,
-            b_transpose: input.case.b_transpose,
-            ab_scale: input.case.ab_scale,
-            c: c_arg,
+            b: MatmulWeights::FullPrecision {
+                b: b_array.allocation(),
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: input.case.b_transpose,
+                ab_scale: input.case.ab_scale,
+                c: c_arg,
+            },
             d: &mut d_allocation,
             batch_dim: m as u32,
             input_dim: k as u32,
@@ -143,7 +145,7 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let mut kernel = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("CPU MatmulKernel");
     run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, encoder| {
-        kernel.encode(args, encoder);
+        kernel.encode(args, encoder).expect("encode failed");
     })
 }
 
@@ -156,6 +158,6 @@ pub fn run_metal<T: ArrayElement + Float>(
 ) -> Vec<T> {
     let path = variant.dispatch_path();
     run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
-        kernel.encode_with_path(args, encoder, path);
+        kernel.encode_with_path(args, encoder, path).expect("encode_with_path failed");
     })
 }

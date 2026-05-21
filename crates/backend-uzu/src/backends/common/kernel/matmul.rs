@@ -4,10 +4,8 @@ use crate::{
     DataType,
     backends::common::{
         Allocation, Backend, Encoder,
-        kernel::{
-            ManualKernels,
-            quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
-        },
+        gpu_types::{QuantizationMethod, QuantizationMode},
+        kernel::ManualKernels,
     },
 };
 
@@ -15,6 +13,10 @@ use crate::{
 pub enum MatmulError<B: Backend> {
     #[error("Unsupported data type: {0:?}")]
     UnsupportedDataType(DataType),
+    #[error("Unsupported group size: {0}")]
+    UnsupportedGroupSize(usize),
+    #[error("Hadamard not supported for this kernel configuration")]
+    UnsupportedHadamard,
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }
@@ -27,27 +29,41 @@ pub enum MatmulArgumentC<'a, B: Backend> {
     Bias(&'a Allocation<B>),
 }
 
+pub enum MatmulWeights<'a, B: Backend> {
+    FullPrecision {
+        b: &'a Allocation<B>,
+        b_offset: usize,
+        b_leading_dimension: Option<u32>,
+        b_transpose: bool,
+        ab_scale: f32,
+        c: MatmulArgumentC<'a, B>,
+    },
+    Quantized {
+        b: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+        zero_points_or_biases: &'a Allocation<B>,
+        method: QuantizationMethod,
+        mode: QuantizationMode,
+        group_size: u32,
+        hadamard_factors: Option<&'a Allocation<B>>,
+    },
+}
+
 // D = ab_scale * (A @ op(B)) + C, where op(B) = B^T when b_transpose else B.
+// For quantized weights, B is packed (4/8-bit) and dequantized internally.
 pub struct MatmulArguments<'a, B: Backend> {
     /// A: [M, K]
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
-    /// B: [N, K] when b_transpose, else [K, N]
-    pub b: &'a Allocation<B>,
-    pub b_offset: usize,
-    pub b_leading_dimension: Option<u32>,
-    pub b_transpose: bool,
-    /// AB scale: also known as alpha
-    pub ab_scale: f32,
-    /// C: behavior depends on enum variant
-    pub c: MatmulArgumentC<'a, B>,
+    /// B + weight-specific config.
+    pub b: MatmulWeights<'a, B>,
     /// D: [M, N]
     pub d: &'a mut Allocation<B>,
-    /// M dimension: usually batch/number of tokens (rows of A, rows of C)
+    /// M dimension: usually batch/number of tokens.
     pub batch_dim: u32,
-    /// K dimension: usually input_dim/reduction dimension (cols of A, rows of B)
+    /// K dimension: input/reduction dimension.
     pub input_dim: u32,
-    /// N dimension: usually output_dim (cols of B, cols of C)
+    /// N dimension: output dimension.
     pub output_dim: u32,
 }
 
@@ -63,12 +79,5 @@ pub trait MatmulKernel: Sized {
         &mut self,
         arguments: MatmulArguments<Self::Backend>,
         encoder: &mut Encoder<Self::Backend>,
-    );
-
-    fn encode_quantized(
-        &mut self,
-        arguments: QuantizedMatmulArguments<Self::Backend>,
-        configuration: &QuantizedMatmulConfiguration,
-        encoder: &mut Encoder<Self::Backend>,
-    ) -> Result<(), QuantizedMatmulError<Self::Backend>>;
+    ) -> Result<(), MatmulError<Self::Backend>>;
 }
