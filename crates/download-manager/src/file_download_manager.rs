@@ -5,8 +5,10 @@ use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
 use crate::{
     DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask,
-    backends::{apple::AppleDownloadManager, universal::UniversalDownloadManager},
+    backends::universal::UniversalDownloadManager,
 };
+#[cfg(target_vendor = "apple")]
+use crate::backends::apple::AppleDownloadManager;
 
 pub type DownloadEvent = (DownloadId, FileDownloadEvent);
 pub type DownloadEventSender = TokioBroadcastSender<DownloadEvent>;
