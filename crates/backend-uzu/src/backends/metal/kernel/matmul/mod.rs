@@ -18,10 +18,7 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        metal::{
-            Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel,
-            metal_extensions::DeviceExt,
-        },
+        metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
     },
 };
 
@@ -345,8 +342,7 @@ impl MatmulKernel for MatmulMetalKernel {
             return Err(MatmulError::UnsupportedDataType(data_type));
         }
 
-        let mxu_eligible =
-            context.device.supports_mxu() && matches!(data_type, DataType::F16 | DataType::BF16);
+        let mxu_eligible = context.device.supports_mxu() && matches!(data_type, DataType::F16 | DataType::BF16);
         let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
         let gemm = GemmKernel::new(context, data_type).map_err(MatmulError::BackendError)?;
         let gemv = GemvKernel::new(context, data_type)?;

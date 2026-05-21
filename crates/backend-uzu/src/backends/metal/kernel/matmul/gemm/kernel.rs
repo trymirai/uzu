@@ -16,8 +16,7 @@ use crate::{
             },
         },
         metal::{
-            Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel,
-            metal_extensions::DeviceExt,
+            Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel, metal_extensions::DeviceExt,
         },
     },
 };
@@ -99,129 +98,147 @@ impl GemmKernel {
             ..
         } = arguments;
 
-        let (weights, tiling, alignment, transpose_b, params, group_count_x, group_count_y, scales, biases, zero_points) =
-            match b {
-                MatmulB::FullPrecision {
-                    b: weights,
-                } => {
-                    let tiling = if use_mxu {
-                        select_mxu_tiling(m, n)
-                    } else {
-                        select_simdgroup_tiling(m, n, k)
-                    };
-                    let k_block = if use_mxu {
-                        MXU_THREADGROUP_BLOCK_K
-                    } else {
-                        tiling.block_k()
-                    };
+        let (
+            weights,
+            tiling,
+            alignment,
+            transpose_b,
+            params,
+            group_count_x,
+            group_count_y,
+            scales,
+            biases,
+            zero_points,
+        ) = match b {
+            MatmulB::FullPrecision {
+                b: weights,
+            } => {
+                let tiling = if use_mxu {
+                    select_mxu_tiling(m, n)
+                } else {
+                    select_simdgroup_tiling(m, n, k)
+                };
+                let k_block = if use_mxu {
+                    MXU_THREADGROUP_BLOCK_K
+                } else {
+                    tiling.block_k()
+                };
 
-                    let threadgroups_per_row = n.div_ceil(tiling.block_n());
-                    let threadgroups_per_column = m.div_ceil(tiling.block_m());
+                let threadgroups_per_row = n.div_ceil(tiling.block_n());
+                let threadgroups_per_column = m.div_ceil(tiling.block_m());
 
-                    let (use_morton, group_count_x, group_count_y) = if use_mxu {
-                        let max_dim = threadgroups_per_row.max(threadgroups_per_column);
-                        let min_dim = threadgroups_per_row.min(threadgroups_per_column);
-                        let morton_dim = max_dim.next_power_of_two();
-                        let morton_total = morton_dim.saturating_mul(morton_dim);
-                        let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
-                        let use_morton =
-                            min_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
-                        if use_morton {
-                            (true, morton_total, 1)
-                        } else {
-                            (false, threadgroups_per_row, threadgroups_per_column)
-                        }
+                let (use_morton, group_count_x, group_count_y) = if use_mxu {
+                    let max_dim = threadgroups_per_row.max(threadgroups_per_column);
+                    let min_dim = threadgroups_per_row.min(threadgroups_per_column);
+                    let morton_dim = max_dim.next_power_of_two();
+                    let morton_total = morton_dim.saturating_mul(morton_dim);
+                    let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
+                    let use_morton = min_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
+                    if use_morton {
+                        (true, morton_total, 1)
                     } else {
                         (false, threadgroups_per_row, threadgroups_per_column)
-                    };
+                    }
+                } else {
+                    (false, threadgroups_per_row, threadgroups_per_column)
+                };
 
-                    let alignment = GemmAlignment::new(
-                        m % tiling.block_m() == 0,
-                        n % tiling.block_n() == 0,
-                        k % k_block == 0,
-                    );
+                let alignment =
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % k_block == 0);
 
-                    let default_ldb = if b_transpose { k } else { n };
-                    let params = GemmParams {
-                        M: m,
-                        N: n,
-                        K: k,
-                        leading_dimension_a: k,
-                        leading_dimension_b: b_leading_dimension.unwrap_or(default_ldb),
-                        leading_dimension_d: n,
-                        threadgroups_per_row,
-                        threadgroups_per_column,
-                        aligned_inner_iterations: k / k_block,
-                        use_morton,
-                        ab_scale,
-                    };
+                let default_ldb = if b_transpose {
+                    k
+                } else {
+                    n
+                };
+                let params = GemmParams {
+                    M: m,
+                    N: n,
+                    K: k,
+                    leading_dimension_a: k,
+                    leading_dimension_b: b_leading_dimension.unwrap_or(default_ldb),
+                    leading_dimension_d: n,
+                    threadgroups_per_row,
+                    threadgroups_per_column,
+                    aligned_inner_iterations: k / k_block,
+                    use_morton,
+                    ab_scale,
+                };
 
-                    (
-                        GemmWeights::<Metal>::FullPrecision { weights },
-                        tiling,
-                        alignment,
-                        b_transpose,
-                        params,
-                        group_count_x,
-                        group_count_y,
-                        None,
-                        None,
-                        None,
-                    )
-                },
-                MatmulB::ScaleBiasDequant {
-                    b: weights,
-                    scales,
-                    biases,
-                    mode,
-                    group_size,
-                } => {
-                    let tiling = select_quant_tiling(self.data_type, m, n, group_size);
-                    let alignment = GemmAlignment::new(
-                        m % tiling.block_m() == 0,
-                        n % tiling.block_n() == 0,
-                        k % tiling.block_k() == 0,
-                    );
-                    (
-                        GemmWeights::ScaleBias { weights, scales, biases, mode, group_size },
-                        tiling,
-                        alignment,
-                        true,
-                        quant_params(m, n, k, tiling, ab_scale),
-                        n.div_ceil(tiling.block_n()),
-                        m.div_ceil(tiling.block_m()),
-                        Some(scales),
-                        Some(biases),
-                        None,
-                    )
-                },
-                MatmulB::ScaleZeroPointDequant {
-                    b: weights,
-                    scales,
-                    zero_points,
-                    mode,
-                    group_size,
-                } => {
-                    let tiling = select_quant_tiling(self.data_type, m, n, group_size);
-                    let alignment = GemmAlignment::new(
-                        m % tiling.block_m() == 0,
-                        n % tiling.block_n() == 0,
-                        k % tiling.block_k() == 0,
-                    );
-                    (
-                        GemmWeights::ScaleZeroPoint { weights, scales, zero_points, mode, group_size },
-                        tiling,
-                        alignment,
-                        true,
-                        quant_params(m, n, k, tiling, ab_scale),
-                        n.div_ceil(tiling.block_n()),
-                        m.div_ceil(tiling.block_m()),
-                        Some(scales),
-                        None,
-                        Some(zero_points),
-                    )
-                },
-            };
+                (
+                    GemmWeights::<Metal>::FullPrecision {
+                        weights,
+                    },
+                    tiling,
+                    alignment,
+                    b_transpose,
+                    params,
+                    group_count_x,
+                    group_count_y,
+                    None,
+                    None,
+                    None,
+                )
+            },
+            MatmulB::ScaleBiasDequant {
+                b: weights,
+                scales,
+                biases,
+                mode,
+                group_size,
+            } => {
+                let tiling = select_quant_tiling(self.data_type, m, n, group_size);
+                let alignment =
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
+                (
+                    GemmWeights::ScaleBias {
+                        weights,
+                        scales,
+                        biases,
+                        mode,
+                        group_size,
+                    },
+                    tiling,
+                    alignment,
+                    true,
+                    quant_params(m, n, k, tiling, ab_scale),
+                    n.div_ceil(tiling.block_n()),
+                    m.div_ceil(tiling.block_m()),
+                    Some(scales),
+                    Some(biases),
+                    None,
+                )
+            },
+            MatmulB::ScaleZeroPointDequant {
+                b: weights,
+                scales,
+                zero_points,
+                mode,
+                group_size,
+            } => {
+                let tiling = select_quant_tiling(self.data_type, m, n, group_size);
+                let alignment =
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
+                (
+                    GemmWeights::ScaleZeroPoint {
+                        weights,
+                        scales,
+                        zero_points,
+                        mode,
+                        group_size,
+                    },
+                    tiling,
+                    alignment,
+                    true,
+                    quant_params(m, n, k, tiling, ab_scale),
+                    n.div_ceil(tiling.block_n()),
+                    m.div_ceil(tiling.block_m()),
+                    Some(scales),
+                    None,
+                    Some(zero_points),
+                )
+            },
+        };
 
         let specialization = GemmSpecialization {
             data_type: self.data_type,
@@ -237,9 +254,17 @@ impl GemmKernel {
         specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
         let kernel = self.get_or_create(context, specialization)?;
         let b_alloc = match &weights {
-            GemmWeights::FullPrecision { weights } => *weights,
-            GemmWeights::ScaleBias { weights, .. } => *weights,
-            GemmWeights::ScaleZeroPoint { weights, .. } => *weights,
+            GemmWeights::FullPrecision {
+                weights,
+            } => *weights,
+            GemmWeights::ScaleBias {
+                weights,
+                ..
+            } => *weights,
+            GemmWeights::ScaleZeroPoint {
+                weights,
+                ..
+            } => *weights,
         };
         kernel.encode(
             (a, a_offset),
