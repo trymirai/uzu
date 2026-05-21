@@ -1,9 +1,7 @@
 use super::error::GemmSpecializationError;
 use crate::{
     DataType,
-    backends::common::gpu_types::gemm::{
-        GemmAlignment, GemmDTransform, GemmTiling, GemmWeightPrologueKind,
-    },
+    backends::common::gpu_types::gemm::{GemmAlignment, GemmDTransform, GemmTiling, GemmWeightPrologueKind},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -44,7 +44,9 @@ pub(crate) fn encode_quantized_gemm(
             mode,
             group_size,
         } => (w, scales, zero_points, QuantizationMethod::ScaleZeroPoint, mode, group_size),
-        MatmulB::FullPrecision { .. } => unreachable!(),
+        MatmulB::FullPrecision {
+            ..
+        } => unreachable!(),
     };
 
     let bits: usize = match mode {
@@ -70,26 +72,50 @@ pub(crate) fn encode_quantized_gemm(
 
     let a_ptr = SendPtr(unsafe { &*a_buf.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
     let b_ptr = SendPtr(unsafe { &*b_buf.buffer().get() }.as_ptr().wrapping_byte_add(b_byte_off));
-    let scales_ptr =
-        SendPtr(unsafe { &*scales_buf.buffer().get() }.as_ptr().wrapping_byte_add(scales_byte_off));
+    let scales_ptr = SendPtr(unsafe { &*scales_buf.buffer().get() }.as_ptr().wrapping_byte_add(scales_byte_off));
     let zp_ptr = SendPtr(unsafe { &*zp_buf.buffer().get() }.as_ptr().wrapping_byte_add(zp_byte_off));
-    let d_ptr = SendPtrMut(unsafe {
-        (&*d_buf.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8
-    });
+    let d_ptr = SendPtrMut(unsafe { (&*d_buf.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8 });
 
     let command_buffer = encoder.as_command_buffer_mut();
     command_buffer.push_command(move || match data_type {
         DataType::F32 => run::<f32>(
-            a_ptr, b_ptr, scales_ptr, zp_ptr, d_ptr, in_vec_size, out_vec_size, batch_size, method,
-            group_size, bits,
+            a_ptr,
+            b_ptr,
+            scales_ptr,
+            zp_ptr,
+            d_ptr,
+            in_vec_size,
+            out_vec_size,
+            batch_size,
+            method,
+            group_size,
+            bits,
         ),
         DataType::F16 => run::<f16>(
-            a_ptr, b_ptr, scales_ptr, zp_ptr, d_ptr, in_vec_size, out_vec_size, batch_size, method,
-            group_size, bits,
+            a_ptr,
+            b_ptr,
+            scales_ptr,
+            zp_ptr,
+            d_ptr,
+            in_vec_size,
+            out_vec_size,
+            batch_size,
+            method,
+            group_size,
+            bits,
         ),
         DataType::BF16 => run::<bf16>(
-            a_ptr, b_ptr, scales_ptr, zp_ptr, d_ptr, in_vec_size, out_vec_size, batch_size, method,
-            group_size, bits,
+            a_ptr,
+            b_ptr,
+            scales_ptr,
+            zp_ptr,
+            d_ptr,
+            in_vec_size,
+            out_vec_size,
+            batch_size,
+            method,
+            group_size,
+            bits,
         ),
         _ => unreachable!(),
     });

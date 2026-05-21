@@ -41,10 +41,7 @@ pub(crate) fn encode<'a>(
     };
     assert!(b_transpose, "encode_gemv does not support b_transpose=false");
     assert!(b_offset == 0, "encode_gemv does not support nonzero b_offset");
-    assert!(
-        b_leading_dimension.is_none_or(|ld| ld == k),
-        "encode_gemv does not support custom b_leading_dimension"
-    );
+    assert!(b_leading_dimension.is_none_or(|ld| ld == k), "encode_gemv does not support custom b_leading_dimension");
 
     let specialization = GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some());
 

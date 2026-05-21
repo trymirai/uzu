@@ -81,10 +81,16 @@ impl<'a, B: Backend> MatmulDOp<'a, B> {
     /// The bit-flag corresponding to this op's variant.
     pub fn bit(&self) -> GemmDTransform {
         match self {
-            MatmulDOp::Scale { .. } => GemmDTransform::SCALE,
+            MatmulDOp::Scale {
+                ..
+            } => GemmDTransform::SCALE,
             MatmulDOp::Accumulate => GemmDTransform::ACCUMULATE,
-            MatmulDOp::Bias { .. } => GemmDTransform::BIAS,
-            MatmulDOp::Rht { .. } => GemmDTransform::RHT,
+            MatmulDOp::Bias {
+                ..
+            } => GemmDTransform::BIAS,
+            MatmulDOp::Rht {
+                ..
+            } => GemmDTransform::RHT,
         }
     }
 

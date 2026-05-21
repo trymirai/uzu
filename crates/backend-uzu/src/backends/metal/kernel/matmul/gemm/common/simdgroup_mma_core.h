@@ -152,7 +152,8 @@ struct SimdgroupMmaCore {
       const thread ushort& tile_block_rows,
       const thread ushort& tile_block_cols,
       const bool needs_epilogue,
-      const thread uzu::matmul::TransformScaleAccumulate<float, float>& epilogue,
+      const thread uzu::matmul::TransformScaleAccumulate<float, float>&
+          epilogue,
       const device T* bias_block,
       const bool needs_bias
   ) {
@@ -239,7 +240,8 @@ struct SimdgroupMmaCore {
         params->K - params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
 
     const bool needs_scale = output_transform.contains(GemmDTransform::SCALE);
-    const bool needs_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
+    const bool needs_accumulate =
+        output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool needs_bias = output_transform.contains(GemmDTransform::BIAS);
     const bool needs_epilogue = needs_scale || needs_accumulate;
     const float alpha = needs_scale ? params->ab_scale : 1.0f;

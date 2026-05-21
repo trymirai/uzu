@@ -1,7 +1,7 @@
-#[cfg(metal_backend)]
-use backend_uzu::backends::metal::{Metal, MetalContext};
 use std::collections::HashSet;
 
+#[cfg(metal_backend)]
+use backend_uzu::backends::metal::{Metal, MetalContext};
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{

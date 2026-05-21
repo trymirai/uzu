@@ -5,10 +5,7 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Encoder, Kernels,
-            gpu_types::{
-                QuantizationMethod, QuantizationMode,
-                gemm::GemmDTransform,
-            },
+            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
@@ -44,10 +41,15 @@ impl MatmulKernel for MatmulCpuKernel {
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
         match arguments.b {
-            MatmulB::FullPrecision { .. } => self.encode_fp(arguments, encoder),
-            MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. } => {
-                self.encode_quant(arguments, encoder)
-            },
+            MatmulB::FullPrecision {
+                ..
+            } => self.encode_fp(arguments, encoder),
+            MatmulB::ScaleBiasDequant {
+                ..
+            }
+            | MatmulB::ScaleZeroPointDequant {
+                ..
+            } => self.encode_quant(arguments, encoder),
         }
     }
 }
@@ -95,7 +97,11 @@ impl MatmulCpuKernel {
         let n_u = n as usize;
         let k_u = k as usize;
         let lda = k_u;
-        let ldb = b_leading_dimension.map(|n| n as usize).unwrap_or(if b_transpose { k_u } else { n_u });
+        let ldb = b_leading_dimension.map(|n| n as usize).unwrap_or(if b_transpose {
+            k_u
+        } else {
+            n_u
+        });
         let ldd = n_u;
         let data_type = self.data_type;
         let a_buffer_range = a.as_buffer_range_ref();
@@ -219,7 +225,9 @@ impl MatmulCpuKernel {
                 group_size,
                 ..
             } => group_size,
-            MatmulB::FullPrecision { .. } => unreachable!(),
+            MatmulB::FullPrecision {
+                ..
+            } => unreachable!(),
         };
         if !matches!(group_size, 32 | 64 | 128) {
             return Err(MatmulError::UnsupportedGroupSize(group_size as usize));
@@ -257,7 +265,9 @@ impl MatmulCpuKernel {
                 mode,
                 group_size,
             } => (w, scales, zero_points, QuantizationMethod::ScaleZeroPoint, mode, group_size),
-            MatmulB::FullPrecision { .. } => unreachable!(),
+            MatmulB::FullPrecision {
+                ..
+            } => unreachable!(),
         };
 
         let bits = match mode {
@@ -282,43 +292,21 @@ impl MatmulCpuKernel {
                     hadamard_factors.is_some(),
                 )
                 .map_err(MatmulError::BackendError)?;
-            kernel.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                d,
-                hadamard_factors,
-                k,
-                n,
-                m,
-                encoder,
-            );
+            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, hadamard_factors, k, n, m, encoder);
         } else {
             if hadamard_factors.is_some() {
                 return Err(MatmulError::UnsupportedHadamard);
             }
-            let kernel = <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
-                context,
-                self.data_type,
-                group_size,
-                bits,
-                method,
-            )
-            .map_err(MatmulError::BackendError)?;
-            kernel.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                d,
-                k,
-                n,
-                m,
-                encoder,
-            );
+            let kernel =
+                <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+                    context,
+                    self.data_type,
+                    group_size,
+                    bits,
+                    method,
+                )
+                .map_err(MatmulError::BackendError)?;
+            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, k, n, m, encoder);
         }
         Ok(())
     }

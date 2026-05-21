@@ -68,20 +68,41 @@ impl MatmulMetalKernel {
     ) -> Result<(), MatmulError<Metal>> {
         match (path, &arguments.b) {
             (MatmulDispatchPath::Auto, _) => self.encode(arguments, encoder),
-            (MatmulDispatchPath::Gemv, MatmulB::FullPrecision { .. }) => self.dispatch_fp_gemv(arguments, encoder),
-            (MatmulDispatchPath::Gemm, MatmulB::FullPrecision { .. }) => {
-                self.dispatch_fp_gemm(arguments, encoder, false)
-            },
-            (MatmulDispatchPath::GemmMxu, MatmulB::FullPrecision { .. }) => {
-                self.dispatch_fp_gemm(arguments, encoder, true)
-            },
+            (
+                MatmulDispatchPath::Gemv,
+                MatmulB::FullPrecision {
+                    ..
+                },
+            ) => self.dispatch_fp_gemv(arguments, encoder),
+            (
+                MatmulDispatchPath::Gemm,
+                MatmulB::FullPrecision {
+                    ..
+                },
+            ) => self.dispatch_fp_gemm(arguments, encoder, false),
+            (
+                MatmulDispatchPath::GemmMxu,
+                MatmulB::FullPrecision {
+                    ..
+                },
+            ) => self.dispatch_fp_gemm(arguments, encoder, true),
             (
                 MatmulDispatchPath::QuantGemv,
-                MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. },
+                MatmulB::ScaleBiasDequant {
+                    ..
+                }
+                | MatmulB::ScaleZeroPointDequant {
+                    ..
+                },
             ) => self.dispatch_quant_gemv(arguments, encoder),
             (
                 MatmulDispatchPath::QuantGemm,
-                MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. },
+                MatmulB::ScaleBiasDequant {
+                    ..
+                }
+                | MatmulB::ScaleZeroPointDequant {
+                    ..
+                },
             ) => self.dispatch_quant_gemm(arguments, encoder),
             _ => panic!("MatmulDispatchPath does not match MatmulB variant"),
         }
@@ -117,7 +138,7 @@ impl MatmulMetalKernel {
             MatmulArguments {
                 a,
                 a_offset,
-    
+
                 b,
                 b_offset,
                 b_leading_dimension,
@@ -142,7 +163,6 @@ impl MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
         use_mxu: bool,
     ) -> Result<(), MatmulError<Metal>> {
-
         // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE.
         // Simdgroup path fuses BIAS too; MXU path still needs post-pass bias.
         // RHT always post-pass.
@@ -188,7 +208,7 @@ impl MatmulMetalKernel {
                 MatmulArguments {
                     a,
                     a_offset,
-        
+
                     b,
                     b_offset,
                     b_leading_dimension,
@@ -217,7 +237,6 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-
         // Quant gemv handles RHT (fused via qmv_fast when eligible); pull BIAS
         // out as post-pass. SCALE/ACCUMULATE are rejected by the inner kernel.
         let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
@@ -243,7 +262,7 @@ impl MatmulMetalKernel {
             MatmulArguments {
                 a,
                 a_offset,
-    
+
                 b,
                 b_offset,
                 b_leading_dimension,
@@ -267,7 +286,6 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-
         let mask = MatmulDOp::mask(&arguments.d_transform);
         if mask.contains(GemmDTransform::ACCUMULATE) {
             return Err(MatmulError::UnsupportedDOp {
@@ -309,7 +327,7 @@ impl MatmulMetalKernel {
                 MatmulArguments {
                     a,
                     a_offset,
-        
+
                     b,
                     b_offset,
                     b_leading_dimension,
@@ -365,7 +383,9 @@ impl MatmulKernel for MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         match &arguments.b {
-            MatmulB::FullPrecision { .. } => {
+            MatmulB::FullPrecision {
+                ..
+            } => {
                 let context = encoder.context();
                 let gemv_eligible = arguments.b_transpose
                     && arguments.b_offset == 0
@@ -379,7 +399,12 @@ impl MatmulKernel for MatmulMetalKernel {
                     self.dispatch_fp_gemm(arguments, encoder, use_mxu)
                 }
             },
-            MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. } => {
+            MatmulB::ScaleBiasDequant {
+                ..
+            }
+            | MatmulB::ScaleZeroPointDequant {
+                ..
+            } => {
                 if arguments.m >= 5 && arguments.n > 1 {
                     self.dispatch_quant_gemm(arguments, encoder)
                 } else {

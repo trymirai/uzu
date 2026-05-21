@@ -5,10 +5,7 @@ use crate::{
     backends::{
         common::{
             Encoder,
-            gpu_types::{
-                QuantizationMethod, QuantizationMode,
-                gemm::GemmDTransform,
-            },
+            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError},
@@ -110,7 +107,9 @@ impl QuantGemvKernel {
                 mode,
                 group_size,
             } => (w, scales, zero_points, QuantizationMethod::ScaleZeroPoint, mode, group_size),
-            MatmulB::FullPrecision { .. } => panic!("QuantGemvKernel requires quantized B"),
+            MatmulB::FullPrecision {
+                ..
+            } => panic!("QuantGemvKernel requires quantized B"),
         };
 
         let bits = match mode {
@@ -147,19 +146,7 @@ impl QuantGemvKernel {
                     entry.insert(kernel)
                 },
             };
-            kernel.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                d,
-                hadamard_factors,
-                k,
-                n,
-                m,
-                encoder,
-            );
+            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, hadamard_factors, k, n, m, encoder);
         } else {
             if hadamard_factors.is_some() {
                 return Err(MatmulError::UnsupportedHadamard);
@@ -184,18 +171,7 @@ impl QuantGemvKernel {
                     entry.insert(kernel)
                 },
             };
-            kernel.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                d,
-                k,
-                n,
-                m,
-                encoder,
-            );
+            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, k, n, m, encoder);
         }
 
         Ok(())
