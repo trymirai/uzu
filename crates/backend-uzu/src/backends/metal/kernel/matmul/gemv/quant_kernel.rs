@@ -43,12 +43,12 @@ impl QuantGemvKernel {
     pub(crate) fn new(
         _context: &MetalContext,
         data_type: DataType,
-    ) -> Result<Self, QuantizedMatmulError<Metal>> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             data_type,
             qmv: HashMap::new(),
             qmv_fast: HashMap::new(),
-        })
+        }
     }
 
     pub(crate) fn encode(

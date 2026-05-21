@@ -179,11 +179,7 @@ impl MatmulKernel for MatmulMetalKernel {
         let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
         let gemm = GemmKernel::new(context, data_type).map_err(MatmulError::BackendError)?;
         let gemv = GemvKernel::new(context, data_type)?;
-        let quant_gemv = QuantGemvKernel::new(context, data_type).map_err(|e| match e {
-            QuantizedMatmulError::BackendError(err) => MatmulError::BackendError(err),
-            QuantizedMatmulError::UnsupportedDataType(dt) => MatmulError::UnsupportedDataType(dt),
-            _ => unreachable!(),
-        })?;
+        let quant_gemv = QuantGemvKernel::new(context, data_type);
         let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
             .map_err(MatmulError::BackendError)?;
 

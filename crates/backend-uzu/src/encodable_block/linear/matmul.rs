@@ -12,9 +12,7 @@ use crate::{
         kernel::{
             Kernels, ManualKernels, TensorAddBiasKernel,
             matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
-            quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-            },
+            quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration},
         },
     },
     config::QuantizationConfig,
@@ -27,8 +25,6 @@ pub enum LinearMatmulError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Matmul error: {0}")]
     MatmulError(#[from] MatmulError<B>),
-    #[error("QuantizedMatmul error: {0}")]
-    QuantizedMatmulError(#[from] QuantizedMatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported data type: {0:?}")]
