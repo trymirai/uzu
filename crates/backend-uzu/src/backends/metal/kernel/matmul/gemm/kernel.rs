@@ -321,8 +321,6 @@ fn select_quant_tiling(
     if batch_dim < 32 {
         return GemmTiling::T8x32x32_1x1;
     }
-    // M=32..47: BM=64 would waste half the simdgroup rows. BM=32 uses every
-    // simdgroup at full M-utilization.
     if batch_dim < 48 {
         return GemmTiling::T32x32x32_2x2;
     }

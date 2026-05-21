@@ -1,6 +1,4 @@
-use half::{bf16, f16};
 use num_traits::Float;
-use proc_macros::kernel;
 
 use crate::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
 
@@ -33,7 +31,6 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                 for l in 0..in_vec_size {
                     let group_idx = l / group_size;
 
-                    // Transposed: weight at row j, col l
                     let weight_linear_idx = j * in_vec_size + l;
 
                     let val_q = if bits == 4 {
@@ -49,10 +46,6 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                     let val_a = (*input.add(i * in_vec_size + l)).to_f32().unwrap();
                     let scale_t = *scales.add(j * num_groups_k + group_idx);
 
-                    // Dequantize in f32 to serve as a precision-neutral reference.
-                    // Metal dequantizes in bf16/f16 which rounds differently across
-                    // GPU hardware; computing in f32 avoids biasing toward any
-                    // particular rounding pattern.
                     let w_dequant_f32 = match quant_method {
                         QuantizationMethod::ScaleZeroPoint => {
                             let zp = zero_points.unwrap();
@@ -82,65 +75,4 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
             }
         }
     }
-}
-
-#[kernel(QuantizedMatmulQmmTransposed)]
-#[variants(T, f32, f16, bf16)]
-#[variants(GROUP_SIZE, 32, 64, 128)]
-#[variants(BITS, 4, 8)]
-#[variants(BM, 8, 32, 64)]
-#[variants(BK, 32, 64)]
-#[variants(BN, 32, 64)]
-#[variants(WM, 1, 2)]
-#[variants(WN, 1, 2)]
-#[constraint(
-    (BM == 8  && BK == 32 && BN == 32 && WM == 1 && WN == 1) ||
-    (BM == 32 && BK == 32 && BN == 32 && WM == 2 && WN == 2) ||
-    (BM == 32 && BK == 64 && BN == 32 && WM == 2 && WN == 2) ||
-    (BM == 64 && BK == 32 && BN == 64 && WM == 2 && WN == 2) ||
-    (BM == 64 && BK == 64 && BN == 64 && WM == 2 && WN == 2))]
-#[constraint(BK <= GROUP_SIZE)]
-#[constraint(T != "f32" || BK < 64)]
-pub fn quantized_matmul_qmm_transposed<
-    T: ArrayElement + Float,
-    const GROUP_SIZE: u32,
-    const BITS: u32,
-    const BM: u32,
-    const BK: u32,
-    const BN: u32,
-    const WM: u32,
-    const WN: u32,
->(
-    weights: *const u32,
-    scales: *const T,
-    #[optional(quant_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
-    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
-    input: *const T,
-    output: *mut T,
-    #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
-    in_vec_size: u32,
-    out_vec_size: u32,
-    batch_size: u32,
-    #[specialize] quant_method: QuantizationMethod,
-    #[specialize] use_hadamard: bool,
-    #[specialize] aligned_n: bool,
-) {
-    let _ = (BM, BK, BN, WM, WN); // tile params unused in tile-agnostic CPU reference
-    if use_hadamard {
-        unimplemented!("not supported yet");
-    }
-    qmm_transposed::<T>(
-        weights,
-        scales,
-        zero_points,
-        biases,
-        input,
-        output,
-        in_vec_size as usize,
-        out_vec_size as usize,
-        batch_size as usize,
-        quant_method,
-        GROUP_SIZE as usize,
-        BITS as usize,
-    );
 }

@@ -15,14 +15,10 @@ use backend_uzu::{
     ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            Context, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::{
-                ManualKernels,
-                matmul::MatmulKernel,
-                quant_matmul::{
-                    QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
-                },
+            kernel::quant_matmul::{
+                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulKernelEncodable,
             },
         },
         metal::{
@@ -208,8 +204,6 @@ fn run_with_path<T: ArrayElement + Float>(
         use_hadamard: false,
     };
 
-    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
-        .expect("MatmulMetalKernel");
     let encodable = QuantizedMatmulKernelEncodable::<Metal>::new(context, configuration).expect("encodable");
 
     let w_buf = alloc_allocation_with_data::<Metal, u32>(context, &input.w_packed);
@@ -227,9 +221,7 @@ fn run_with_path<T: ArrayElement + Float>(
     let mut encoder = Encoder::new(context).expect("encoder");
     encode_quantized_matmul_with_path(
         context,
-        &mut matmul,
         &encodable,
-        &configuration,
         QuantizedMatmulArguments {
             a: &x_buf,
             a_offset: 0,

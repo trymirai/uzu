@@ -11,4 +11,5 @@ pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default
 
 impl ManualKernels for MetalKernels {
     type MatmulKernel = matmul::MatmulMetalKernel;
+    type QuantizedGemmKernel = matmul::quant::QuantizedGemmMetalKernel;
 }

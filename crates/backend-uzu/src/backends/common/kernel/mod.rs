@@ -4,6 +4,7 @@ include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
 pub trait ManualKernels: Kernels {
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
+    type QuantizedGemmKernel: quant_matmul::QuantizedGemmKernel<Backend = Self::Backend>;
 }
 
 pub mod attention;
