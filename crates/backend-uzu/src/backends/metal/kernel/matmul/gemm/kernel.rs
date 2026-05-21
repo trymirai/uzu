@@ -73,9 +73,12 @@ impl GemmKernel {
         arguments: MatmulArguments<'a, Metal>,
         use_mxu: bool,
     ) -> Result<(), MetalError> {
-        // DSL: read scale + accumulate state directly from d_transform.
+        // DSL: read scale/bias state directly from d_transform.
         let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
-        let core_kind = MatmulDOp::mask(&arguments.d_transform).core_kind();
+        let output_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
+        let core_kind = MatmulDOp::mask(&arguments.d_transform)
+            .core_kind()
+            .expect("unsupported D-transform combination for unified GEMM");
 
         let MatmulArguments {
             a,
@@ -164,6 +167,7 @@ impl GemmKernel {
                         },
                         b_offset,
                         d,
+                        output_bias,
                         params,
                         group_count_x,
                         group_count_y,
@@ -190,6 +194,8 @@ impl GemmKernel {
                 a_offset,
                 b_offset,
                 d,
+                output_bias,
+                core_kind,
                 ab_scale,
                 m,
                 n,
@@ -214,6 +220,8 @@ impl GemmKernel {
                 a_offset,
                 b_offset,
                 d,
+                output_bias,
+                core_kind,
                 ab_scale,
                 m,
                 n,
@@ -237,20 +245,16 @@ impl GemmKernel {
         a_offset: usize,
         b_offset: usize,
         d: &'a mut crate::backends::common::Allocation<Metal>,
+        output_bias: Option<&'a crate::backends::common::Allocation<Metal>>,
+        output_transform: crate::backends::common::gpu_types::gemm::GemmOutputTransformKind,
         ab_scale: f32,
         m: u32,
         n: u32,
         k: u32,
     ) -> Result<(), MetalError> {
-        use crate::backends::common::gpu_types::gemm::GemmOutputTransformKind;
         let tiling = select_quant_tiling(self.data_type, m, n, group_size);
         let threadgroups_per_row = n.div_ceil(tiling.block_n());
         let threadgroups_per_column = m.div_ceil(tiling.block_m());
-        let output_transform = if ab_scale != 1.0 {
-            GemmOutputTransformKind::Scale
-        } else {
-            GemmOutputTransformKind::Store
-        };
         self.encode_dispatch(
             context,
             GemmDispatch {
@@ -284,6 +288,7 @@ impl GemmKernel {
                 },
                 b_offset,
                 d,
+                output_bias,
                 params: GemmParams {
                     M: m,
                     N: n,
@@ -348,6 +353,7 @@ impl GemmKernel {
             scales,
             biases,
             zero_points,
+            dispatch.output_bias,
             std::slice::from_ref(&dispatch.params),
             dispatch.group_count_x,
             dispatch.group_count_y,

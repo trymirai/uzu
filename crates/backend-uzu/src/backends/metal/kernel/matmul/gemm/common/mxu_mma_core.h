@@ -43,8 +43,14 @@ struct MxuMmaCore {
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmOutputTransformKind output_transform,
+      const device T* output_bias,
       const thread ThreadContext& thread_context
   ) {
+    // MXU path doesn't fuse bias today; the outer Rust dispatcher applies it
+    // as a post-pass when use_mxu=true. Reject any bias-active output_transform
+    // by treating it as Store (which would be wrong) — but the dispatcher
+    // never selects bias-active variants for MXU, so this is a safety no-op.
+    (void)output_bias;
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::

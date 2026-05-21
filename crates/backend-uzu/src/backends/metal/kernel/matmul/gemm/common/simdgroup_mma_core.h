@@ -152,7 +152,9 @@ struct SimdgroupMmaCore {
       const thread ushort& tile_block_rows,
       const thread ushort& tile_block_cols,
       const bool needs_epilogue,
-      const thread uzu::matmul::TransformScaleAccumulate<float, float>& epilogue
+      const thread uzu::matmul::TransformScaleAccumulate<float, float>& epilogue,
+      const device T* bias_block,
+      const bool needs_bias
   ) {
     constexpr GemmAlignment gemm_alignment{GEMM_ALIGNMENT_RAW};
     if constexpr (
@@ -161,6 +163,9 @@ struct SimdgroupMmaCore {
     ) {
       if (needs_epilogue) {
         accumulator.apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
+      }
+      if (needs_bias) {
+        accumulator.apply_bias(bias_block);
       }
       accumulator.store_result(d, params->leading_dimension_d);
     } else {
@@ -171,6 +176,12 @@ struct SimdgroupMmaCore {
             1,
             short2(tile_block_cols, tile_block_rows),
             epilogue
+        );
+      }
+      if (needs_bias) {
+        accumulator.apply_bias_safe(
+            bias_block,
+            short2(tile_block_cols, tile_block_rows)
         );
       }
       accumulator.store_result_safe(
@@ -191,6 +202,7 @@ struct SimdgroupMmaCore {
       const device T* scales,
       const device T* biases,
       const device uint8_t* zero_points,
+      const device T* output_bias,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       const thread ThreadContext& thread_context
@@ -226,19 +238,32 @@ struct SimdgroupMmaCore {
     const ushort leftover_block_depth =
         params->K - params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
 
+    const bool needs_bias =
+        output_transform == GemmOutputTransformKind::Bias ||
+        output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
+        output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht;
     const bool needs_epilogue =
-        output_transform != GemmOutputTransformKind::Store;
+        output_transform == GemmOutputTransformKind::Scale ||
+        output_transform == GemmOutputTransformKind::Accumulate ||
+        output_transform == GemmOutputTransformKind::ScaleAccumulate ||
+        output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
+        output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht;
     const float alpha =
         (output_transform == GemmOutputTransformKind::Scale ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulate)
+         output_transform == GemmOutputTransformKind::ScaleAccumulate ||
+         output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
+         output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht)
             ? params->ab_scale
             : 1.0f;
     const float beta =
         (output_transform == GemmOutputTransformKind::Accumulate ||
-         output_transform == GemmOutputTransformKind::ScaleAccumulate)
+         output_transform == GemmOutputTransformKind::ScaleAccumulate ||
+         output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
+         output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht)
             ? 1.0f
             : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
+    const device T* bias_block = output_bias + block_col;
 
     const bool all_aligned = ((alignment.contains(GemmAlignment::M)) ||
                               (tile_block_rows == THREADGROUP_BLOCK_M)) &&
@@ -292,7 +317,9 @@ struct SimdgroupMmaCore {
             tile_block_rows,
             tile_block_cols,
             needs_epilogue,
-            epilogue
+            epilogue,
+            bias_block,
+            needs_bias
         );
       });
       return;
@@ -338,7 +365,9 @@ struct SimdgroupMmaCore {
             tile_block_rows,
             tile_block_cols,
             needs_epilogue,
-            epilogue
+            epilogue,
+            bias_block,
+            needs_bias
         );
       });
       return;
@@ -390,7 +419,9 @@ struct SimdgroupMmaCore {
             tile_block_rows,
             tile_block_cols,
             needs_epilogue,
-            epilogue
+            epilogue,
+            bias_block,
+            needs_bias
         );
       });
     }

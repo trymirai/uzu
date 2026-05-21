@@ -42,17 +42,21 @@ impl GemmSpecialization {
         let mut out = Vec::new();
         for &tiling in simdgroup_tiling_set(data_type) {
             for align_mn in [true, false] {
-                out.push(Self {
-                    tiling,
-                    input_prologue: GemmInputPrologueKind::FullPrecision,
-                    use_mxu: false,
-                    output_transform: GemmOutputTransformKind::Store,
-                    alignment: GemmAlignment::new(align_mn, align_mn, true),
-                    transpose_b: true,
-                    weight_prologue: GemmWeightPrologueKind::FullPrecision,
-                    bits_per_weight: 0,
-                    group_size: 0,
-                });
+                for output_transform in
+                    [GemmOutputTransformKind::Store, GemmOutputTransformKind::Bias]
+                {
+                    out.push(Self {
+                        tiling,
+                        input_prologue: GemmInputPrologueKind::FullPrecision,
+                        use_mxu: false,
+                        output_transform,
+                        alignment: GemmAlignment::new(align_mn, align_mn, true),
+                        transpose_b: true,
+                        weight_prologue: GemmWeightPrologueKind::FullPrecision,
+                        bits_per_weight: 0,
+                        group_size: 0,
+                    });
+                }
             }
         }
 
@@ -92,17 +96,21 @@ impl GemmSpecialization {
                         [GemmWeightPrologueKind::ScaleBiasDequant, GemmWeightPrologueKind::ScaleZeroPointDequant]
                     {
                         for align_n in [true, false] {
-                            out.push(Self {
-                                tiling,
-                                input_prologue: GemmInputPrologueKind::FullPrecision,
-                                use_mxu: false,
-                                output_transform: GemmOutputTransformKind::Store,
-                                alignment: GemmAlignment::new(true, align_n, true),
-                                transpose_b: true,
-                                weight_prologue,
-                                bits_per_weight: bits,
-                                group_size,
-                            });
+                            for output_transform in
+                                [GemmOutputTransformKind::Store, GemmOutputTransformKind::Bias]
+                            {
+                                out.push(Self {
+                                    tiling,
+                                    input_prologue: GemmInputPrologueKind::FullPrecision,
+                                    use_mxu: false,
+                                    output_transform,
+                                    alignment: GemmAlignment::new(true, align_n, true),
+                                    transpose_b: true,
+                                    weight_prologue,
+                                    bits_per_weight: bits,
+                                    group_size,
+                                });
+                            }
                         }
                     }
                 }

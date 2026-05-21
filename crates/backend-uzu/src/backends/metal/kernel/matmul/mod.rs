@@ -143,9 +143,14 @@ impl MatmulMetalKernel {
         use_mxu: bool,
     ) -> Result<(), MatmulError<Metal>> {
 
-        // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE;
-        // pull BIAS/RHT out as post-pass.
-        let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
+        // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE.
+        // Simdgroup path fuses BIAS too; MXU path still needs post-pass bias.
+        // RHT always post-pass.
+        let post_bias = if use_mxu {
+            arguments.d_transform.iter().find_map(|op| op.as_bias())
+        } else {
+            None
+        };
         let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
 
         let MatmulArguments {
@@ -162,7 +167,18 @@ impl MatmulMetalKernel {
             n,
             k,
         } = arguments;
-        d_transform.retain(|op| !matches!(op.bit(), GemmDTransform::BIAS | GemmDTransform::RHT));
+        // Strip ops that get post-passed here so the inner kernel sees only the
+        // ops it fuses. MXU strips BIAS too (it falls back to post-pass).
+        d_transform.retain(|op| {
+            let bit = op.bit();
+            if bit == GemmDTransform::RHT {
+                return false;
+            }
+            if use_mxu && bit == GemmDTransform::BIAS {
+                return false;
+            }
+            true
+        });
 
         let context = encoder.context();
         self.gemm
@@ -265,8 +281,8 @@ impl MatmulMetalKernel {
             });
         }
 
-        // Quant core handles SCALE via GemmParams.ab_scale; pull BIAS/RHT out as post-pass.
-        let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
+        // Quant core handles SCALE via GemmParams.ab_scale and BIAS via the
+        // fused output epilogue (simdgroup path). RHT is post-pass.
         let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
 
         let MatmulArguments {
@@ -283,7 +299,7 @@ impl MatmulMetalKernel {
             n,
             k,
         } = arguments;
-        d_transform.retain(|op| !matches!(op.bit(), GemmDTransform::BIAS | GemmDTransform::RHT));
+        d_transform.retain(|op| op.bit() != GemmDTransform::RHT);
 
         let context = encoder.context();
         self.gemm
@@ -308,9 +324,6 @@ impl MatmulMetalKernel {
             )
             .map_err(MatmulError::BackendError)?;
 
-        if let Some(bias) = post_bias {
-            self.bias_add.encode(None::<&<Metal as Backend>::DenseBuffer>, bias, &mut *d, n, m * n, encoder);
-        }
         if let Some(factors) = post_rht {
             self.hadamard.encode(d, factors, n, m, encoder);
         }

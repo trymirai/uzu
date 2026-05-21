@@ -79,6 +79,12 @@ KERNEL(Gemm)(
         OPTIONAL(WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant),
     const device uint8_t* zero_points
         OPTIONAL(WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant),
+    const device T* output_bias
+        OPTIONAL(
+            output_transform == GemmOutputTransformKind::Bias ||
+            output_transform == GemmOutputTransformKind::ScaleAccumulateBias ||
+            output_transform == GemmOutputTransformKind::ScaleAccumulateBiasRht
+        ),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -116,6 +122,7 @@ KERNEL(Gemm)(
         params,
         alignment,
         output_transform,
+        output_bias,
         thread_context
     );
   } else {
@@ -138,6 +145,7 @@ KERNEL(Gemm)(
             scales,
             biases,
             zero_points,
+            output_bias,
             a_shared,
             b_shared,
             thread_context);

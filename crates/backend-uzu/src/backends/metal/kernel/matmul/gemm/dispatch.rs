@@ -19,6 +19,7 @@ pub struct GemmDispatch<'a, B: Backend> {
     pub b: GemmWeights<'a, B>,
     pub b_offset: usize,
     pub d: &'a mut Allocation<B>,
+    pub output_bias: Option<&'a Allocation<B>>,
     pub params: GemmParams,
     pub group_count_x: u32,
     pub group_count_y: u32,

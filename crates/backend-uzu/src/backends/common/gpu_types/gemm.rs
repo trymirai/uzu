@@ -41,15 +41,28 @@ bitflags! {
 }
 
 impl GemmDTransform {
-    /// Maps the SCALE/ACCUMULATE bits to the kernel-binary wire-format
-    /// `GemmOutputTransformKind` discriminant. BIAS/RHT bits are post-pass and
-    /// don't affect what the core kernel sees.
-    pub fn core_kind(self) -> GemmOutputTransformKind {
-        match (self.contains(Self::SCALE), self.contains(Self::ACCUMULATE)) {
-            (false, false) => GemmOutputTransformKind::Store,
-            (true, false) => GemmOutputTransformKind::Scale,
-            (false, true) => GemmOutputTransformKind::Accumulate,
-            (true, true) => GemmOutputTransformKind::ScaleAccumulate,
+    /// Maps the SCALE/ACCUMULATE/BIAS bits to the kernel-binary wire-format
+    /// `GemmOutputTransformKind` discriminant. The unified GEMM kernel honors
+    /// these natively; RHT is still a post-pass and doesn't affect the core.
+    ///
+    /// Returns `None` for bit combinations that have no corresponding
+    /// discriminant in the wire format (e.g. SCALE+BIAS without ACCUMULATE).
+    /// Production paths today never request such combinations.
+    pub fn core_kind(self) -> Option<GemmOutputTransformKind> {
+        let scale = self.contains(Self::SCALE);
+        let accumulate = self.contains(Self::ACCUMULATE);
+        let bias = self.contains(Self::BIAS);
+        match (scale, accumulate, bias) {
+            (false, false, false) => Some(GemmOutputTransformKind::Store),
+            (true, false, false) => Some(GemmOutputTransformKind::Scale),
+            (false, true, false) => Some(GemmOutputTransformKind::Accumulate),
+            (true, true, false) => Some(GemmOutputTransformKind::ScaleAccumulate),
+            (false, false, true) => Some(GemmOutputTransformKind::Bias),
+            (true, true, true) => Some(GemmOutputTransformKind::ScaleAccumulateBias),
+            // Scale+Bias or Accumulate+Bias without all three set is undefined
+            // in the wire format. Callers should reject these via
+            // MatmulError::UnsupportedDOp.
+            _ => None,
         }
     }
 }
