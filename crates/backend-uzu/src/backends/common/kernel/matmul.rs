@@ -2,7 +2,13 @@ use thiserror::Error;
 
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder, kernel::ManualKernels},
+    backends::common::{
+        Allocation, Backend, Encoder,
+        kernel::{
+            ManualKernels,
+            quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
+        },
+    },
 };
 
 #[derive(Debug, Error)]
@@ -58,4 +64,11 @@ pub trait MatmulKernel: Sized {
         arguments: MatmulArguments<Self::Backend>,
         encoder: &mut Encoder<Self::Backend>,
     );
+
+    fn encode_quantized(
+        &mut self,
+        arguments: QuantizedMatmulArguments<Self::Backend>,
+        configuration: &QuantizedMatmulConfiguration,
+        encoder: &mut Encoder<Self::Backend>,
+    ) -> Result<(), QuantizedMatmulError<Self::Backend>>;
 }

@@ -4,10 +4,15 @@ use crate::{
     DataType,
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Encoder,
-            kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
+            AsBufferRangeMut, AsBufferRangeRef, Encoder, Kernels,
+            gpu_types::{QuantizationMethod, QuantizationMode},
+            kernel::{
+                QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
+                matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
+                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
+            },
         },
-        cpu::{Cpu, context::CpuContext},
+        cpu::{Cpu, context::CpuContext, kernel::matmul::quant::encode_quantized_gemm},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -149,6 +154,107 @@ impl MatmulKernel for MatmulCpuKernel {
             },
             _ => unreachable!(),
         });
+    }
+
+    fn encode_quantized(
+        &mut self,
+        arguments: QuantizedMatmulArguments<Cpu>,
+        configuration: &QuantizedMatmulConfiguration,
+        encoder: &mut Encoder<Cpu>,
+    ) -> Result<(), QuantizedMatmulError<Cpu>> {
+        if !matches!(
+            configuration.data_type,
+            DataType::F16 | DataType::BF16 | DataType::F32
+        ) {
+            return Err(QuantizedMatmulError::UnsupportedDataType(
+                configuration.data_type,
+            ));
+        }
+        if !matches!(configuration.group_size, 32 | 64 | 128) {
+            return Err(QuantizedMatmulError::UnsupportedGroupSize(
+                configuration.group_size,
+            ));
+        }
+
+        if arguments.batch_dim >= 5 && configuration.output_dim > 1 {
+            encode_quantized_gemm(encoder, arguments, configuration);
+            return Ok(());
+        }
+
+        let bits = match configuration.mode {
+            QuantizationMode::U4 => 4u32,
+            QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
+        };
+        let group_size = configuration.group_size as u32;
+        let use_fast = configuration.output_dim % 8 == 0 && configuration.input_dim % 512 == 0;
+
+        let QuantizedMatmulArguments {
+            a,
+            a_offset,
+            b,
+            scales,
+            zero_points_or_biases,
+            output,
+            hadamard_factors,
+            batch_dim,
+        } = arguments;
+
+        let (zero_points, biases) = match configuration.quantization_method {
+            QuantizationMethod::ScaleZeroPoint => (Some(zero_points_or_biases), None),
+            QuantizationMethod::ScaleBias => (None, Some(zero_points_or_biases)),
+        };
+
+        let context = encoder.context();
+        if use_fast {
+            let kernel = <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                context,
+                configuration.data_type,
+                group_size,
+                bits,
+                configuration.quantization_method,
+                configuration.use_hadamard,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?;
+            kernel.encode(
+                b,
+                scales,
+                zero_points,
+                biases,
+                (a, a_offset),
+                output,
+                hadamard_factors,
+                configuration.input_dim as u32,
+                configuration.output_dim as u32,
+                batch_dim as u32,
+                encoder,
+            );
+        } else {
+            if configuration.use_hadamard {
+                return Err(QuantizedMatmulError::UnsupportedHadamard);
+            }
+            let kernel = <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+                context,
+                configuration.data_type,
+                group_size,
+                bits,
+                configuration.quantization_method,
+            )
+            .map_err(QuantizedMatmulError::BackendError)?;
+            kernel.encode(
+                b,
+                scales,
+                zero_points,
+                biases,
+                (a, a_offset),
+                output,
+                configuration.input_dim as u32,
+                configuration.output_dim as u32,
+                batch_dim as u32,
+                encoder,
+            );
+        }
+
+        Ok(())
     }
 }
 

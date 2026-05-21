@@ -1,21 +1,23 @@
 pub mod gemm;
 pub mod gemv;
-pub mod quant;
 
 use std::sync::OnceLock;
 
 use self::{
     gemm::{GemmKernel, GemmRequest},
-    gemv::GemvKernel,
+    gemv::{GemvKernel, QuantGemvKernel},
 };
 use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            Backend, Encoder,
             kernel::{
-                TensorAddBiasKernel,
+                HadamardTransformKernel, Kernels, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
+                quant_matmul::{
+                    QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
+                },
             },
         },
         metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
@@ -25,8 +27,10 @@ use crate::{
 pub struct MatmulMetalKernel {
     data_type: DataType,
     gemv: GemvKernel,
+    quant_gemv: QuantGemvKernel,
     pub(crate) gemm: GemmKernel,
     pub(crate) bias_add: TensorAddBiasMetalKernel,
+    hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
 }
 
 const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
@@ -47,7 +51,6 @@ impl MatmulMetalKernel {
     }
 }
 
-/// Explicit dispatch paths for testing individual kernels independent of production routing.
 #[derive(Debug, Clone, Copy)]
 pub enum MatmulDispatchPath {
     Auto,
@@ -97,6 +100,79 @@ impl MatmulMetalKernel {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum QuantizedMatmulDispatchPath {
+    Auto,
+    Gemm,
+}
+
+impl MatmulMetalKernel {
+    pub fn encode_quantized_with_path(
+        &mut self,
+        arguments: QuantizedMatmulArguments<Metal>,
+        configuration: &QuantizedMatmulConfiguration,
+        encoder: &mut Encoder<Metal>,
+        path: QuantizedMatmulDispatchPath,
+    ) -> Result<(), QuantizedMatmulError<Metal>> {
+        match path {
+            QuantizedMatmulDispatchPath::Auto => self.encode_quantized(arguments, configuration, encoder),
+            QuantizedMatmulDispatchPath::Gemm => self.encode_quantized_gemm(arguments, configuration, encoder),
+        }
+    }
+
+    fn encode_quantized_gemm(
+        &mut self,
+        arguments: QuantizedMatmulArguments<Metal>,
+        configuration: &QuantizedMatmulConfiguration,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), QuantizedMatmulError<Metal>> {
+        let QuantizedMatmulArguments {
+            a,
+            a_offset,
+            b,
+            scales,
+            zero_points_or_biases,
+            output,
+            hadamard_factors,
+            batch_dim,
+        } = arguments;
+
+        let context = encoder.context();
+        self.gemm
+            .encode(
+                context,
+                encoder,
+                GemmRequest::Quant {
+                    configuration,
+                    arguments: QuantizedMatmulArguments {
+                        a,
+                        a_offset,
+                        b,
+                        scales,
+                        zero_points_or_biases,
+                        output: &mut *output,
+                        hadamard_factors: None,
+                        batch_dim,
+                    },
+                },
+            )
+            .map_err(QuantizedMatmulError::BackendError)?;
+
+        if configuration.use_hadamard
+            && let Some(factors) = hadamard_factors
+        {
+            self.hadamard.encode(
+                output,
+                factors,
+                configuration.output_dim as u32,
+                batch_dim as u32,
+                encoder,
+            );
+        }
+        Ok(())
+    }
+}
+
 impl MatmulKernel for MatmulMetalKernel {
     type Backend = Metal;
 
@@ -111,12 +187,22 @@ impl MatmulKernel for MatmulMetalKernel {
         let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
         let gemm = GemmKernel::new(context, data_type).map_err(MatmulError::BackendError)?;
         let gemv = GemvKernel::new(context, data_type)?;
+        let quant_gemv =
+            QuantGemvKernel::new(context, data_type).map_err(|e| match e {
+                QuantizedMatmulError::BackendError(err) => MatmulError::BackendError(err),
+                QuantizedMatmulError::UnsupportedDataType(dt) => MatmulError::UnsupportedDataType(dt),
+                _ => unreachable!(),
+            })?;
+        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
+            .map_err(MatmulError::BackendError)?;
 
         Ok(Self {
             data_type,
             gemv,
+            quant_gemv,
             gemm,
             bias_add,
+            hadamard,
         })
     }
 
@@ -125,7 +211,6 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal>,
         encoder: &mut Encoder<Metal>,
     ) {
-        // gemv only handles the canonical B layout; non-canonical inputs go to GEMM.
         let context = encoder.context();
         let gemv_eligible = arguments.b_transpose
             && arguments.b_offset == 0
@@ -149,5 +234,18 @@ impl MatmulKernel for MatmulMetalKernel {
                 },
             )
             .expect("Failed to encode GEMM");
+    }
+
+    fn encode_quantized(
+        &mut self,
+        arguments: QuantizedMatmulArguments<Metal>,
+        configuration: &QuantizedMatmulConfiguration,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), QuantizedMatmulError<Metal>> {
+        if arguments.batch_dim >= 5 && configuration.output_dim > 1 {
+            self.encode_quantized_gemm(arguments, configuration, encoder)
+        } else {
+            self.quant_gemv.encode(encoder, arguments, configuration)
+        }
     }
 }
