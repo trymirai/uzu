@@ -162,18 +162,11 @@ impl MatmulKernel for MatmulCpuKernel {
         configuration: &QuantizedMatmulConfiguration,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), QuantizedMatmulError<Cpu>> {
-        if !matches!(
-            configuration.data_type,
-            DataType::F16 | DataType::BF16 | DataType::F32
-        ) {
-            return Err(QuantizedMatmulError::UnsupportedDataType(
-                configuration.data_type,
-            ));
+        if !matches!(configuration.data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            return Err(QuantizedMatmulError::UnsupportedDataType(configuration.data_type));
         }
         if !matches!(configuration.group_size, 32 | 64 | 128) {
-            return Err(QuantizedMatmulError::UnsupportedGroupSize(
-                configuration.group_size,
-            ));
+            return Err(QuantizedMatmulError::UnsupportedGroupSize(configuration.group_size));
         }
 
         if arguments.batch_dim >= 5 && configuration.output_dim > 1 {
@@ -206,15 +199,16 @@ impl MatmulKernel for MatmulCpuKernel {
 
         let context = encoder.context();
         if use_fast {
-            let kernel = <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
-                context,
-                configuration.data_type,
-                group_size,
-                bits,
-                configuration.quantization_method,
-                configuration.use_hadamard,
-            )
-            .map_err(QuantizedMatmulError::BackendError)?;
+            let kernel =
+                <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                    context,
+                    configuration.data_type,
+                    group_size,
+                    bits,
+                    configuration.quantization_method,
+                    configuration.use_hadamard,
+                )
+                .map_err(QuantizedMatmulError::BackendError)?;
             kernel.encode(
                 b,
                 scales,
@@ -232,14 +226,15 @@ impl MatmulKernel for MatmulCpuKernel {
             if configuration.use_hadamard {
                 return Err(QuantizedMatmulError::UnsupportedHadamard);
             }
-            let kernel = <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
-                context,
-                configuration.data_type,
-                group_size,
-                bits,
-                configuration.quantization_method,
-            )
-            .map_err(QuantizedMatmulError::BackendError)?;
+            let kernel =
+                <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+                    context,
+                    configuration.data_type,
+                    group_size,
+                    bits,
+                    configuration.quantization_method,
+                )
+                .map_err(QuantizedMatmulError::BackendError)?;
             kernel.encode(
                 b,
                 scales,

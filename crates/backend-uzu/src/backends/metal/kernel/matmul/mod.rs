@@ -15,9 +15,7 @@ use crate::{
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
-                quant_matmul::{
-                    QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                },
+                quant_matmul::{QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError},
             },
         },
         metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
@@ -161,13 +159,7 @@ impl MatmulMetalKernel {
         if configuration.use_hadamard
             && let Some(factors) = hadamard_factors
         {
-            self.hadamard.encode(
-                output,
-                factors,
-                configuration.output_dim as u32,
-                batch_dim as u32,
-                encoder,
-            );
+            self.hadamard.encode(output, factors, configuration.output_dim as u32, batch_dim as u32, encoder);
         }
         Ok(())
     }
@@ -187,12 +179,11 @@ impl MatmulKernel for MatmulMetalKernel {
         let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
         let gemm = GemmKernel::new(context, data_type).map_err(MatmulError::BackendError)?;
         let gemv = GemvKernel::new(context, data_type)?;
-        let quant_gemv =
-            QuantGemvKernel::new(context, data_type).map_err(|e| match e {
-                QuantizedMatmulError::BackendError(err) => MatmulError::BackendError(err),
-                QuantizedMatmulError::UnsupportedDataType(dt) => MatmulError::UnsupportedDataType(dt),
-                _ => unreachable!(),
-            })?;
+        let quant_gemv = QuantGemvKernel::new(context, data_type).map_err(|e| match e {
+            QuantizedMatmulError::BackendError(err) => MatmulError::BackendError(err),
+            QuantizedMatmulError::UnsupportedDataType(dt) => MatmulError::UnsupportedDataType(dt),
+            _ => unreachable!(),
+        })?;
         let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
             .map_err(MatmulError::BackendError)?;
 

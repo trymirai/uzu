@@ -240,12 +240,11 @@ struct SimdgroupMmaCore {
             : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
 
-    const bool all_aligned =
-        ((alignment.contains(GemmAlignment::M)) ||
-         (tile_block_rows == THREADGROUP_BLOCK_M)) &&
-        ((alignment.contains(GemmAlignment::N)) ||
-         (tile_block_cols == THREADGROUP_BLOCK_N)) &&
-        alignment.contains(GemmAlignment::K);
+    const bool all_aligned = ((alignment.contains(GemmAlignment::M)) ||
+                              (tile_block_rows == THREADGROUP_BLOCK_M)) &&
+                             ((alignment.contains(GemmAlignment::N)) ||
+                              (tile_block_cols == THREADGROUP_BLOCK_N)) &&
+                             alignment.contains(GemmAlignment::K);
 
     constexpr uint MASK_ALL = static_cast<uint>(GemmAlignment::M) |
                               static_cast<uint>(GemmAlignment::N) |
@@ -271,12 +270,8 @@ struct SimdgroupMmaCore {
     if constexpr (WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision) {
       const device T* b = reinterpret_cast<const device T*>(b_packed);
       b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
-      thread BLoaderFp loader_b(
-          b,
-          params->leading_dimension_b,
-          b_shared,
-          thread_context
-      );
+      thread BLoaderFp
+          loader_b(b, params->leading_dimension_b, b_shared, thread_context);
       dispatch_kernel([&](auto gemm_alignment_mask) {
         constexpr uint mask = gemm_alignment_mask.value;
         k_loop<mask, BLoaderFp>(
