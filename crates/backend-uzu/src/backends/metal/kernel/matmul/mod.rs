@@ -18,12 +18,11 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
+        metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel},
     },
 };
 
 pub struct MatmulMetalKernel {
-    data_type: DataType,
     gemv: GemvKernel,
     quant_gemv: QuantGemvKernel,
     pub(crate) gemm: GemmKernel,
@@ -40,21 +39,11 @@ fn max_gemv_batch_threshold() -> u32 {
     })
 }
 
-impl MatmulMetalKernel {
-    fn is_mxu_eligible(
-        &self,
-        context: &MetalContext,
-    ) -> bool {
-        context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum MatmulDispatchPath {
     Auto,
     Gemv,
     Gemm,
-    GemmMxu,
     QuantGemv,
     QuantGemm,
 }
@@ -79,13 +68,7 @@ impl MatmulMetalKernel {
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, encoder, false),
-            (
-                MatmulDispatchPath::GemmMxu,
-                MatmulB::FullPrecision {
-                    ..
-                },
-            ) => self.dispatch_fp_gemm(arguments, encoder, true),
+            ) => self.dispatch_fp_gemm(arguments, encoder),
             (
                 MatmulDispatchPath::QuantGemv,
                 MatmulB::ScaleBiasDequant {
@@ -161,12 +144,12 @@ impl MatmulMetalKernel {
         &mut self,
         arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
-        use_mxu: bool,
     ) -> Result<(), MatmulError<Metal>> {
         // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE.
         // Simdgroup path fuses BIAS too; MXU path still needs post-pass bias.
         // RHT always post-pass.
-        let post_bias = if use_mxu {
+        let uses_mxu = self.gemm.uses_mxu();
+        let post_bias = if uses_mxu {
             arguments.d_transform.iter().find_map(|op| op.as_bias())
         } else {
             None
@@ -194,7 +177,7 @@ impl MatmulMetalKernel {
             if bit == GemmDTransform::RHT {
                 return false;
             }
-            if use_mxu && bit == GemmDTransform::BIAS {
+            if uses_mxu && bit == GemmDTransform::BIAS {
                 return false;
             }
             true
@@ -204,7 +187,6 @@ impl MatmulMetalKernel {
         self.gemm
             .encode(
                 context,
-                encoder,
                 MatmulArguments {
                     a,
                     a_offset,
@@ -219,7 +201,7 @@ impl MatmulMetalKernel {
                     n,
                     k,
                 },
-                use_mxu,
+                encoder,
             )
             .map_err(MatmulError::BackendError)?;
 
@@ -323,7 +305,6 @@ impl MatmulMetalKernel {
         self.gemm
             .encode(
                 context,
-                encoder,
                 MatmulArguments {
                     a,
                     a_offset,
@@ -338,7 +319,7 @@ impl MatmulMetalKernel {
                     n,
                     k,
                 },
-                false,
+                encoder,
             )
             .map_err(MatmulError::BackendError)?;
 
@@ -368,7 +349,6 @@ impl MatmulKernel for MatmulMetalKernel {
             .map_err(MatmulError::BackendError)?;
 
         Ok(Self {
-            data_type,
             gemv,
             quant_gemv,
             gemm,
@@ -386,7 +366,6 @@ impl MatmulKernel for MatmulMetalKernel {
             MatmulB::FullPrecision {
                 ..
             } => {
-                let context = encoder.context();
                 let gemv_eligible = arguments.b_transpose
                     && arguments.b_offset == 0
                     && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
@@ -395,8 +374,7 @@ impl MatmulKernel for MatmulMetalKernel {
                 if gemv_eligible {
                     self.dispatch_fp_gemv(arguments, encoder)
                 } else {
-                    let use_mxu = self.is_mxu_eligible(context);
-                    self.dispatch_fp_gemm(arguments, encoder, use_mxu)
+                    self.dispatch_fp_gemm(arguments, encoder)
                 }
             },
             MatmulB::ScaleBiasDequant {
