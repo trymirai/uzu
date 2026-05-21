@@ -15,7 +15,7 @@ use crate::{
     config::QuantizationConfig,
     encodable_block::{
         Linear,
-        linear::{LinearBlockError, QuantizedLinear, QuantizedLinearError},
+        linear::{LinearBlockError, LinearMatmul, LinearMatmulError},
     },
     prelude::{ParameterLoaderError, ParameterTree},
 };
@@ -24,8 +24,8 @@ use crate::{
 pub enum QLoRALinearWrapperError<B: Backend> {
     #[error("Inner linear error: {0}")]
     InnerLinearError(#[from] Box<LinearBlockError<B>>),
-    #[error("Quantized linear error: {0}")]
-    QuantizedLinearError(#[from] QuantizedLinearError<B>),
+    #[error("Linear matmul error: {0}")]
+    LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
     #[error("Matmul error: {0}")]
@@ -33,7 +33,7 @@ pub enum QLoRALinearWrapperError<B: Backend> {
 }
 
 pub struct QLoRALinearWrapper<B: Backend> {
-    base_linear: QuantizedLinear<B>,
+    base_linear: LinearMatmul<B>,
     adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
@@ -57,7 +57,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let data_type = quantization.activation_precision.into();
 
-        let base_linear = QuantizedLinear::new(
+        let base_linear = LinearMatmul::quantized(
             context,
             quantization,
             input_dim,
