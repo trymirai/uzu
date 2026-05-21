@@ -1,24 +1,18 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use super::{
-    MXU_THREADGROUP_BLOCK_K, dispatch::GemmDispatch, request::GemmRequest, specialization::GemmSpecialization,
-    weights::GemmWeights,
+    MXU_THREADGROUP_BLOCK_K, dispatch::GemmDispatch, specialization::GemmSpecialization, weights::GemmWeights,
 };
 use crate::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            Encoder,
             gpu_types::{
                 GemmParams, QuantizationMethod,
-                gemm::{
-                    GemmAlignment, GemmInputPrologueKind, GemmOutputTransformKind, GemmTiling, GemmWeightPrologueKind,
-                },
+                gemm::{GemmAlignment, GemmInputPrologueKind, GemmTiling, GemmWeightPrologueKind},
             },
-            kernel::{
-                TensorAddBiasKernel,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulWeights},
-            },
+            kernel::matmul::{MatmulArguments, MatmulB, ResolvedDTransform},
         },
         metal::{Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel},
     },
@@ -70,44 +64,38 @@ impl GemmKernel {
         }
     }
 
-    /// Unified entry point — encodes both FP and quantized GEMMs.
-    pub(crate) fn encode(
+    /// Unified entry point — encodes both FP and quantized GEMMs. Match arm on
+    /// `args.b` selects the path; `use_mxu` is honored only by the FP path.
+    pub(crate) fn encode<'a>(
         &mut self,
         context: &MetalContext,
         encoder: &mut Encoder<Metal>,
-        request: GemmRequest<'_>,
+        arguments: MatmulArguments<'a, Metal>,
+        resolved_d: ResolvedDTransform<'a, Metal>,
+        use_mxu: bool,
     ) -> Result<(), MetalError> {
-        match request {
-            GemmRequest::Fp {
-                bias_add,
-                arguments,
-                use_mxu,
-            } => {
-                let MatmulArguments {
-                    a,
-                    a_offset,
-                    b,
-                    d,
-                    batch_dim,
-                    input_dim,
-                    output_dim,
-                } = arguments;
-                let MatmulWeights::FullPrecision {
-                    b: weights,
-                    b_offset,
-                    b_leading_dimension,
-                    b_transpose,
-                    ab_scale,
-                    c,
-                } = b
-                else {
-                    panic!("GemmRequest::Fp requires FullPrecision weights");
-                };
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d,
+            m,
+            n,
+            k,
+            ..
+        } = arguments;
 
+        match b {
+            MatmulB::FullPrecision {
+                b: weights,
+            } => {
                 let tiling = if use_mxu {
-                    select_mxu_tiling(batch_dim, output_dim)
+                    select_mxu_tiling(m, n)
                 } else {
-                    select_simdgroup_tiling(batch_dim, output_dim, input_dim)
+                    select_simdgroup_tiling(m, n, k)
                 };
                 let k_block = if use_mxu {
                     MXU_THREADGROUP_BLOCK_K
@@ -115,8 +103,8 @@ impl GemmKernel {
                     tiling.block_k()
                 };
 
-                let threadgroups_per_row = output_dim.div_ceil(tiling.block_n());
-                let threadgroups_per_column = batch_dim.div_ceil(tiling.block_m());
+                let threadgroups_per_row = n.div_ceil(tiling.block_n());
+                let threadgroups_per_column = m.div_ceil(tiling.block_m());
 
                 let (use_morton, group_count_x, group_count_y) = if use_mxu {
                     let max_dim = threadgroups_per_row.max(threadgroups_per_column);
@@ -134,30 +122,27 @@ impl GemmKernel {
                     (false, threadgroups_per_row, threadgroups_per_column)
                 };
 
-                let alignment = GemmAlignment::new(
-                    batch_dim % tiling.block_m() == 0,
-                    output_dim % tiling.block_n() == 0,
-                    input_dim % k_block == 0,
-                );
-                let output_transform = output_transform_from(ab_scale, &c);
+                let alignment =
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % k_block == 0);
+                let output_transform = resolved_d.mask.core_kind();
 
                 let default_ldb = if b_transpose {
-                    input_dim
+                    k
                 } else {
-                    output_dim
+                    n
                 };
                 let params = GemmParams {
-                    M: batch_dim,
-                    N: output_dim,
-                    K: input_dim,
-                    leading_dimension_a: input_dim,
+                    M: m,
+                    N: n,
+                    K: k,
+                    leading_dimension_a: k,
                     leading_dimension_b: b_leading_dimension.unwrap_or(default_ldb),
-                    leading_dimension_d: output_dim,
+                    leading_dimension_d: n,
                     threadgroups_per_row,
                     threadgroups_per_column,
-                    aligned_inner_iterations: input_dim / k_block,
+                    aligned_inner_iterations: k / k_block,
                     use_morton,
-                    ab_scale,
+                    ab_scale: resolved_d.ab_scale,
                 };
 
                 self.encode_dispatch(
@@ -175,96 +160,145 @@ impl GemmKernel {
                             weights,
                         },
                         b_offset,
-                        d: &mut *d,
+                        d,
                         params,
                         group_count_x,
                         group_count_y,
                     },
                     encoder,
-                )?;
-
-                if let MatmulArgumentC::Bias(bias) = c {
-                    bias_add.encode(
-                        None::<&<Metal as Backend>::DenseBuffer>,
-                        bias,
-                        d,
-                        output_dim,
-                        batch_dim * output_dim,
-                        encoder,
-                    );
-                }
-                Ok(())
+                )
             },
-            GemmRequest::Quant {
-                method,
+            MatmulB::ScaleBiasDequant {
+                b: weights,
+                scales,
+                biases,
                 mode,
+                group_size,
+            } => self.encode_quant(
+                context,
+                encoder,
+                weights,
+                scales,
+                biases,
+                QuantizationMethod::ScaleBias,
+                mode.into(),
                 group_size,
                 a,
                 a_offset,
-                b,
-                scales,
-                zero_points_or_biases,
+                b_offset,
                 d,
-                batch_dim,
-                input_dim,
-                output_dim,
-            } => {
-                let tiling = select_quant_tiling(self.data_type, batch_dim, output_dim, group_size);
-                let threadgroups_per_row = output_dim.div_ceil(tiling.block_n());
-                let threadgroups_per_column = batch_dim.div_ceil(tiling.block_m());
-                self.encode_dispatch(
-                    context,
-                    GemmDispatch {
-                        tiling,
-                        input_prologue: GemmInputPrologueKind::FullPrecision,
-                        use_mxu: false,
-                        output_transform: GemmOutputTransformKind::Store,
-                        alignment: GemmAlignment::new(
-                            batch_dim % tiling.block_m() == 0,
-                            output_dim % tiling.block_n() == 0,
-                            input_dim % tiling.block_k() == 0,
-                        ),
-                        transpose_b: true,
-                        a,
-                        a_offset,
-                        b: match method {
-                            QuantizationMethod::ScaleBias => GemmWeights::ScaleBias {
-                                weights: b,
-                                scales,
-                                biases: zero_points_or_biases,
-                                mode,
-                                group_size,
-                            },
-                            QuantizationMethod::ScaleZeroPoint => GemmWeights::ScaleZeroPoint {
-                                weights: b,
-                                scales,
-                                zero_points: zero_points_or_biases,
-                                mode,
-                                group_size,
-                            },
-                        },
-                        b_offset: 0,
-                        d,
-                        params: GemmParams {
-                            M: batch_dim,
-                            N: output_dim,
-                            K: input_dim,
-                            leading_dimension_a: input_dim,
-                            leading_dimension_b: input_dim,
-                            leading_dimension_d: output_dim,
-                            threadgroups_per_row,
-                            threadgroups_per_column,
-                            aligned_inner_iterations: input_dim / tiling.block_k(),
-                            use_morton: false,
-                            ab_scale: 1.0,
-                        },
-                        group_count_x: threadgroups_per_row,
-                        group_count_y: threadgroups_per_column,
-                    },
-                    encoder,
-                )
-            },
+                resolved_d.ab_scale,
+                m,
+                n,
+                k,
+            ),
+            MatmulB::ScaleZeroPointDequant {
+                b: weights,
+                scales,
+                zero_points,
+                mode,
+                group_size,
+            } => self.encode_quant(
+                context,
+                encoder,
+                weights,
+                scales,
+                zero_points,
+                QuantizationMethod::ScaleZeroPoint,
+                mode.into(),
+                group_size,
+                a,
+                a_offset,
+                b_offset,
+                d,
+                resolved_d.ab_scale,
+                m,
+                n,
+                k,
+            ),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_quant<'a>(
+        &mut self,
+        context: &MetalContext,
+        encoder: &mut Encoder<Metal>,
+        weights: &'a crate::backends::common::Allocation<Metal>,
+        scales: &'a crate::backends::common::Allocation<Metal>,
+        zero_points_or_biases: &'a crate::backends::common::Allocation<Metal>,
+        method: QuantizationMethod,
+        mode: crate::backends::common::gpu_types::QuantizationMode,
+        group_size: u32,
+        a: &'a crate::backends::common::Allocation<Metal>,
+        a_offset: usize,
+        b_offset: usize,
+        d: &'a mut crate::backends::common::Allocation<Metal>,
+        ab_scale: f32,
+        m: u32,
+        n: u32,
+        k: u32,
+    ) -> Result<(), MetalError> {
+        use crate::backends::common::gpu_types::gemm::GemmOutputTransformKind;
+        let tiling = select_quant_tiling(self.data_type, m, n, group_size);
+        let threadgroups_per_row = n.div_ceil(tiling.block_n());
+        let threadgroups_per_column = m.div_ceil(tiling.block_m());
+        let output_transform = if ab_scale != 1.0 {
+            GemmOutputTransformKind::Scale
+        } else {
+            GemmOutputTransformKind::Store
+        };
+        self.encode_dispatch(
+            context,
+            GemmDispatch {
+                tiling,
+                input_prologue: GemmInputPrologueKind::FullPrecision,
+                use_mxu: false,
+                output_transform,
+                alignment: GemmAlignment::new(
+                    m % tiling.block_m() == 0,
+                    n % tiling.block_n() == 0,
+                    k % tiling.block_k() == 0,
+                ),
+                transpose_b: true,
+                a,
+                a_offset,
+                b: match method {
+                    QuantizationMethod::ScaleBias => GemmWeights::ScaleBias {
+                        weights,
+                        scales,
+                        biases: zero_points_or_biases,
+                        mode,
+                        group_size,
+                    },
+                    QuantizationMethod::ScaleZeroPoint => GemmWeights::ScaleZeroPoint {
+                        weights,
+                        scales,
+                        zero_points: zero_points_or_biases,
+                        mode,
+                        group_size,
+                    },
+                },
+                b_offset,
+                d,
+                params: GemmParams {
+                    M: m,
+                    N: n,
+                    K: k,
+                    leading_dimension_a: k,
+                    leading_dimension_b: k,
+                    leading_dimension_d: n,
+                    threadgroups_per_row,
+                    threadgroups_per_column,
+                    aligned_inner_iterations: k / tiling.block_k(),
+                    use_morton: false,
+                    ab_scale,
+                },
+                group_count_x: threadgroups_per_row,
+                group_count_y: threadgroups_per_column,
+            },
+            encoder,
+        )
     }
 
     fn encode_dispatch(
@@ -320,47 +354,47 @@ impl GemmKernel {
     }
 }
 
-fn select_simdgroup_tiling(
-    batch_dim: u32,
-    output_dim: u32,
-    input_dim: u32,
+pub(crate) fn select_simdgroup_tiling(
+    m: u32,
+    n: u32,
+    k: u32,
 ) -> GemmTiling {
-    if 2 * batch_dim.max(output_dim) > input_dim {
+    if 2 * m.max(n) > k {
         GemmTiling::T64x64x16_2x2
     } else {
         GemmTiling::T64x32x32_2x2
     }
 }
 
-fn select_mxu_tiling(
-    batch_dim: u32,
-    output_dim: u32,
+pub(crate) fn select_mxu_tiling(
+    m: u32,
+    n: u32,
 ) -> GemmTiling {
-    if batch_dim >= 256 && output_dim >= 128 {
+    if m >= 256 && n >= 128 {
         GemmTiling::T128x128x32_4x4
-    } else if output_dim < 64 {
+    } else if n < 64 {
         GemmTiling::T64x32x32_4x1
-    } else if batch_dim < 64 {
+    } else if m < 64 {
         GemmTiling::T32x64x32_2x2
     } else {
         GemmTiling::T64x64x32_2x2
     }
 }
 
-fn select_quant_tiling(
+pub(crate) fn select_quant_tiling(
     data_type: DataType,
-    batch_dim: u32,
-    output_dim: u32,
+    m: u32,
+    n: u32,
     group_size: u32,
 ) -> GemmTiling {
-    if batch_dim < 32 {
+    if m < 32 {
         return GemmTiling::T8x32x32_1x1;
     }
-    if batch_dim < 48 {
+    if m < 48 {
         return GemmTiling::T32x32x32_2x2;
     }
 
-    let aligned_n_64 = output_dim % 64 == 0;
+    let aligned_n_64 = n % 64 == 0;
     let can_use_64_tiling = aligned_n_64 && data_type == DataType::BF16;
 
     if can_use_64_tiling {
@@ -371,19 +405,5 @@ fn select_quant_tiling(
         }
     } else {
         GemmTiling::T32x32x32_2x2
-    }
-}
-
-fn output_transform_from(
-    ab_scale: f32,
-    c: &MatmulArgumentC<'_, Metal>,
-) -> GemmOutputTransformKind {
-    let scale = ab_scale != 1.0;
-    let accumulate = matches!(c, MatmulArgumentC::Accumulate);
-    match (scale, accumulate) {
-        (false, false) => GemmOutputTransformKind::Store,
-        (true, false) => GemmOutputTransformKind::Scale,
-        (false, true) => GemmOutputTransformKind::Accumulate,
-        (true, true) => GemmOutputTransformKind::ScaleAccumulate,
     }
 }

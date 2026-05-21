@@ -10,10 +10,8 @@ use crate::{
         Allocation, Backend, Encoder,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
-            Kernels, ManualKernels, TensorAddBiasKernel,
-            matmul::{
-                MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel, MatmulWeights,
-            },
+            ManualKernels,
+            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
         },
     },
     config::QuantizationConfig,
@@ -22,8 +20,6 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum LinearMatmulError<B: Backend> {
-    #[error("Backend error: {0}")]
-    BackendError(#[source] B::Error),
     #[error("Matmul error: {0}")]
     MatmulError(#[from] MatmulError<B>),
     #[error("Parameter loading error: {0}")]
@@ -102,7 +98,6 @@ enum Mode<B: Backend> {
 pub struct LinearMatmul<B: Backend> {
     kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     weights: Allocation<B>,
-    bias_add_kernel: Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
     biases: Option<Allocation<B>>,
     input_dim: usize,
     output_dim: usize,
@@ -138,7 +133,7 @@ impl<B: Backend> LinearMatmul<B> {
             });
         }
 
-        let (bias_add_kernel, biases) = load_biases(context, precision, output_dim, parameter_tree)?;
+        let biases = load_biases(precision, output_dim, parameter_tree)?;
 
         let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, precision)?;
         let weights = weights_leaf.read_allocation()?;
@@ -146,7 +141,6 @@ impl<B: Backend> LinearMatmul<B> {
         Ok(Self {
             kernel: RefCell::new(kernel),
             weights,
-            bias_add_kernel,
             biases,
             input_dim,
             output_dim,
@@ -239,14 +233,13 @@ impl<B: Backend> LinearMatmul<B> {
             },
         };
 
-        let (bias_add_kernel, biases) = load_biases(context, data_type, output_dim, parameter_tree)?;
+        let biases = load_biases(data_type, output_dim, parameter_tree)?;
 
         let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
             weights: weights_leaf.read_allocation()?,
-            bias_add_kernel,
             biases,
             input_dim,
             output_dim,
@@ -264,17 +257,10 @@ impl<B: Backend> LinearMatmul<B> {
 }
 
 fn load_biases<B: Backend>(
-    context: &B::Context,
     data_type: DataType,
     output_dim: usize,
     parameter_tree: &ParameterTree<B::Context>,
-) -> Result<
-    (
-        Option<<B::Kernels as Kernels>::TensorAddBiasKernel>,
-        Option<Allocation<B>>,
-    ),
-    LinearMatmulError<B>,
-> {
+) -> Result<Option<Allocation<B>>, LinearMatmulError<B>> {
     match parameter_tree.leaf("biases") {
         Ok(biases_leaf) => {
             let bias_shape = biases_leaf.shape().to_vec();
@@ -290,12 +276,9 @@ fn load_biases<B: Backend>(
                     got: biases_leaf.data_type(),
                 });
             }
-            let bias_add_kernel =
-                <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, true)
-                    .map_err(LinearMatmulError::BackendError)?;
-            Ok((Some(bias_add_kernel), Some(biases_leaf.read_allocation()?)))
+            Ok(Some(biases_leaf.read_allocation()?))
         },
-        Err(_) => Ok((None, None)),
+        Err(_) => Ok(None),
     }
 }
 
@@ -309,14 +292,9 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         let mut output =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.data_type))?;
 
-        let weights = match &self.mode {
-            Mode::FullPrecision => MatmulWeights::FullPrecision {
+        let b = match &self.mode {
+            Mode::FullPrecision => MatmulB::FullPrecision {
                 b: &self.weights,
-                b_offset: 0,
-                b_leading_dimension: None,
-                b_transpose: true,
-                ab_scale: 1.0,
-                c: MatmulArgumentC::None,
             },
             Mode::Quantized {
                 method,
@@ -324,17 +302,41 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 group_size,
                 scales,
                 zero_points_or_biases,
-                output_hadamard_factors,
-            } => MatmulWeights::Quantized {
-                b: &self.weights,
-                scales,
-                zero_points_or_biases,
-                method: *method,
-                mode: *mode,
-                group_size: *group_size,
-                hadamard_factors: output_hadamard_factors.as_ref(),
+                ..
+            } => match method {
+                QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+                    b: &self.weights,
+                    scales,
+                    biases: zero_points_or_biases,
+                    mode: *mode,
+                    group_size: *group_size,
+                },
+                QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+                    b: &self.weights,
+                    scales,
+                    zero_points: zero_points_or_biases,
+                    mode: *mode,
+                    group_size: *group_size,
+                },
             },
         };
+
+        // Build d_transform slice: bias post-pass + (for quant mode) output hadamard.
+        let mut ops: Vec<MatmulDOp<'_, B>> = Vec::new();
+        if let Some(bias) = self.biases.as_ref() {
+            ops.push(MatmulDOp::Bias {
+                bias,
+            });
+        }
+        if let Mode::Quantized {
+            output_hadamard_factors: Some(factors),
+            ..
+        } = &self.mode
+        {
+            ops.push(MatmulDOp::Rht {
+                factors,
+            });
+        }
 
         self.kernel
             .borrow_mut()
@@ -342,27 +344,20 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 MatmulArguments {
                     a: &input,
                     a_offset: 0,
-                    b: weights,
+                    a_prologue: &[],
+                    b,
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
                     d: &mut output,
-                    batch_dim: batch_dim as u32,
-                    input_dim: self.input_dim as u32,
-                    output_dim: self.output_dim as u32,
+                    d_transform: &ops,
+                    m: batch_dim as u32,
+                    n: self.output_dim as u32,
+                    k: self.input_dim as u32,
                 },
                 encoder,
             )
             .expect("encode failed");
-
-        if let (Some(bias_add_kernel), Some(biases)) = (&self.bias_add_kernel, &self.biases) {
-            let total_length = batch_dim * self.output_dim;
-            bias_add_kernel.encode(
-                None::<&Allocation<B>>,
-                biases,
-                &mut output,
-                self.output_dim as u32,
-                total_length as u32,
-                encoder,
-            );
-        }
 
         Ok(output)
     }

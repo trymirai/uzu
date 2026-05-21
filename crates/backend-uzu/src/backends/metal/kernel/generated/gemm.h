@@ -27,6 +27,29 @@ enum class GemmWeightPrologueKind : uint32_t {
   ScaleZeroPointDequant = 2,
 };
 
+struct GemmAPrologue {
+  uint raw_value;
+  constexpr GemmAPrologue() thread : raw_value(0) {}
+  constexpr GemmAPrologue(uint __dsl_v) thread : raw_value(__dsl_v) {}
+  static constant constexpr uint RHT = 1 << 0;
+  constexpr bool contains(uint flag) const thread {
+    return (raw_value & flag) != 0;
+  }
+};
+
+struct GemmDTransform {
+  uint raw_value;
+  constexpr GemmDTransform() thread : raw_value(0) {}
+  constexpr GemmDTransform(uint __dsl_v) thread : raw_value(__dsl_v) {}
+  static constant constexpr uint SCALE = 1 << 0;
+  static constant constexpr uint ACCUMULATE = 1 << 1;
+  static constant constexpr uint BIAS = 1 << 2;
+  static constant constexpr uint RHT = 1 << 3;
+  constexpr bool contains(uint flag) const thread {
+    return (raw_value & flag) != 0;
+  }
+};
+
 enum class GemmTiling : uint32_t {
   T8x32x32_1x1 = 0,
   T64x32x32_2x2 = 1,

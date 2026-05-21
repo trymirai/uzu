@@ -7,7 +7,7 @@ use crate::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::matmul::{MatmulArguments, MatmulWeights},
+            kernel::matmul::{MatmulArguments, MatmulB, ResolvedDTransform},
         },
         cpu::{Cpu, kernel::matmul::gemm::qmm_transposed::qmm_transposed},
     },
@@ -17,6 +17,7 @@ use crate::{
 pub(crate) fn encode_quantized_gemm(
     encoder: &mut Encoder<Cpu>,
     arguments: MatmulArguments<Cpu>,
+    _resolved_d: ResolvedDTransform<'_, Cpu>,
     data_type: DataType,
 ) {
     let MatmulArguments {
@@ -24,36 +25,42 @@ pub(crate) fn encode_quantized_gemm(
         a_offset,
         b,
         d,
-        batch_dim,
-        input_dim,
-        output_dim,
+        m,
+        n,
+        k,
+        ..
     } = arguments;
-    let MatmulWeights::Quantized {
-        b: weights,
-        scales,
-        zero_points_or_biases,
-        method,
-        mode,
-        group_size,
-        hadamard_factors: _,
-    } = b
-    else {
-        unreachable!();
+    let (weights, scales, zp_or_bias, method, mode, group_size) = match b {
+        MatmulB::ScaleBiasDequant {
+            b: w,
+            scales,
+            biases,
+            mode,
+            group_size,
+        } => (w, scales, biases, QuantizationMethod::ScaleBias, mode, group_size),
+        MatmulB::ScaleZeroPointDequant {
+            b: w,
+            scales,
+            zero_points,
+            mode,
+            group_size,
+        } => (w, scales, zero_points, QuantizationMethod::ScaleZeroPoint, mode, group_size),
+        MatmulB::FullPrecision { .. } => unreachable!(),
     };
 
     let bits: usize = match mode {
         QuantizationMode::U4 => 4,
         QuantizationMode::I8 | QuantizationMode::U8 => 8,
     };
-    let in_vec_size = input_dim as usize;
-    let out_vec_size = output_dim as usize;
-    let batch_size = batch_dim as usize;
+    let in_vec_size = k as usize;
+    let out_vec_size = n as usize;
+    let batch_size = m as usize;
     let group_size = group_size as usize;
 
     let a_buf = a.as_buffer_range_ref();
     let b_buf = weights.as_buffer_range_ref();
     let scales_buf = scales.as_buffer_range_ref();
-    let zp_buf = zero_points_or_biases.as_buffer_range_ref();
+    let zp_buf = zp_or_bias.as_buffer_range_ref();
     let d_buf = d.as_buffer_range_mut();
 
     let a_byte_off = a_buf.range().start + a_offset * data_type.size_in_bytes();

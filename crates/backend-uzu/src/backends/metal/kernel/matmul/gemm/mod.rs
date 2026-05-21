@@ -1,13 +1,11 @@
 mod dispatch;
 mod error;
 mod kernel;
-mod request;
 mod specialization;
 mod weights;
 
 pub use error::GemmSpecializationError;
 pub(crate) use kernel::GemmKernel;
-pub(crate) use request::GemmRequest;
 
 #[allow(unused_imports)]
 pub(crate) use crate::backends::common::gpu_types::gemm::GemmInputPrologueKind;

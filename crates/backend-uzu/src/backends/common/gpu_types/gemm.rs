@@ -29,6 +29,39 @@ pub enum GemmWeightPrologueKind {
     ScaleZeroPointDequant,
 }
 
+bitflags! {
+    #[repr(transparent)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct GemmAPrologue: u32 {
+        const RHT = 1 << 0;
+    }
+}
+
+bitflags! {
+    #[repr(transparent)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct GemmDTransform: u32 {
+        const SCALE      = 1 << 0;
+        const ACCUMULATE = 1 << 1;
+        const BIAS       = 1 << 2;
+        const RHT        = 1 << 3;
+    }
+}
+
+impl GemmDTransform {
+    /// Maps the SCALE/ACCUMULATE bits to the kernel-binary wire-format
+    /// `GemmOutputTransformKind` discriminant. BIAS/RHT bits are post-pass and
+    /// don't affect what the core kernel sees.
+    pub fn core_kind(self) -> GemmOutputTransformKind {
+        match (self.contains(Self::SCALE), self.contains(Self::ACCUMULATE)) {
+            (false, false) => GemmOutputTransformKind::Store,
+            (true, false) => GemmOutputTransformKind::Scale,
+            (false, true) => GemmOutputTransformKind::Accumulate,
+            (true, true) => GemmOutputTransformKind::ScaleAccumulate,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GemmTiling {

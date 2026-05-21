@@ -6,7 +6,7 @@ use backend_uzu::{
             kernel::{
                 AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
                 ManualKernels, SoftmaxKernel,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel, MatmulWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -96,18 +96,20 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                 MatmulArguments {
                     a: &qa,
                     a_offset: g as usize * GQA as usize * SUFFIX as usize * q_row,
-                    b: MatmulWeights::FullPrecision {
+                    a_prologue: &[],
+                    b: MatmulB::FullPrecision {
                         b: &ka,
-                        b_offset: g as usize * head_stride * dt,
-                        b_leading_dimension: Some(HEAD_DIM),
-                        b_transpose: true,
-                        ab_scale: scale,
-                        c: MatmulArgumentC::None,
                     },
+                    b_offset: g as usize * head_stride * dt,
+                    b_leading_dimension: Some(HEAD_DIM),
+                    b_transpose: true,
                     d: &mut grp_s,
-                    batch_dim: GQA * SUFFIX,
-                    input_dim: HEAD_DIM,
-                    output_dim: SEQ,
+                    d_transform: &[MatmulDOp::Scale {
+                        ab_scale: scale,
+                    }],
+                    m: GQA * SUFFIX,
+                    n: SEQ,
+                    k: HEAD_DIM,
                 },
                 &mut enc,
             )
@@ -124,18 +126,18 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                 MatmulArguments {
                     a: &scores,
                     a_offset: g as usize * GQA as usize * SUFFIX as usize * s_row,
-                    b: MatmulWeights::FullPrecision {
+                    a_prologue: &[],
+                    b: MatmulB::FullPrecision {
                         b: &va,
-                        b_offset: g as usize * head_stride * dt,
-                        b_leading_dimension: Some(HEAD_DIM),
-                        b_transpose: false,
-                        ab_scale: 1.0,
-                        c: MatmulArgumentC::None,
                     },
+                    b_offset: g as usize * head_stride * dt,
+                    b_leading_dimension: Some(HEAD_DIM),
+                    b_transpose: false,
                     d: &mut grp_o,
-                    batch_dim: GQA * SUFFIX,
-                    input_dim: SEQ,
-                    output_dim: HEAD_DIM,
+                    d_transform: &[],
+                    m: GQA * SUFFIX,
+                    n: HEAD_DIM,
+                    k: SEQ,
                 },
                 &mut enc,
             )

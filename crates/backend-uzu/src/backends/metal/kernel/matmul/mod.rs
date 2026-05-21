@@ -4,18 +4,20 @@ pub mod gemv;
 use std::sync::OnceLock;
 
 use self::{
-    gemm::{GemmKernel, GemmRequest},
+    gemm::GemmKernel,
     gemv::{GemvKernel, QuantGemvKernel},
 };
 use crate::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            Allocation, Backend, Encoder,
+            gpu_types::gemm::{GemmAPrologue, GemmDTransform},
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
                 matmul::{
-                    MatmulArguments, MatmulError, MatmulKernel, MatmulWeights,
+                    MatmulArguments, MatmulB, MatmulError, MatmulKernel, ResolvedAPrologue, ResolvedDTransform,
+                    resolve_a, resolve_d,
                 },
             },
         },
@@ -61,125 +63,318 @@ pub enum MatmulDispatchPath {
 }
 
 impl MatmulMetalKernel {
-    pub fn encode_with_path(
+    pub fn encode_with_path<'a>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) -> Result<(), MatmulError<Metal>> {
         match (path, &arguments.b) {
             (MatmulDispatchPath::Auto, _) => self.encode(arguments, encoder),
-            (MatmulDispatchPath::Gemv, MatmulWeights::FullPrecision { .. }) => {
-                self.encode_fp_gemv(arguments, encoder);
-                Ok(())
+            (MatmulDispatchPath::Gemv, MatmulB::FullPrecision { .. }) => self.dispatch_fp_gemv(arguments, encoder),
+            (MatmulDispatchPath::Gemm, MatmulB::FullPrecision { .. }) => {
+                self.dispatch_fp_gemm(arguments, encoder, false)
             },
-            (MatmulDispatchPath::Gemm, MatmulWeights::FullPrecision { .. }) => {
-                self.encode_fp_gemm(arguments, encoder, false);
-                Ok(())
+            (MatmulDispatchPath::GemmMxu, MatmulB::FullPrecision { .. }) => {
+                self.dispatch_fp_gemm(arguments, encoder, true)
             },
-            (MatmulDispatchPath::GemmMxu, MatmulWeights::FullPrecision { .. }) => {
-                self.encode_fp_gemm(arguments, encoder, true);
-                Ok(())
-            },
-            (MatmulDispatchPath::QuantGemv, MatmulWeights::Quantized { .. }) => {
-                self.encode_quant_gemv(arguments, encoder)
-            },
-            (MatmulDispatchPath::QuantGemm, MatmulWeights::Quantized { .. }) => {
-                self.encode_quant_gemm(arguments, encoder)
-            },
-            _ => panic!("MatmulDispatchPath does not match MatmulWeights variant"),
+            (
+                MatmulDispatchPath::QuantGemv,
+                MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. },
+            ) => self.dispatch_quant_gemv(arguments, encoder),
+            (
+                MatmulDispatchPath::QuantGemm,
+                MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. },
+            ) => self.dispatch_quant_gemm(arguments, encoder),
+            _ => panic!("MatmulDispatchPath does not match MatmulB variant"),
         }
     }
 
-    fn encode_fp_gemv(
-        &mut self,
-        arguments: MatmulArguments<Metal>,
-        encoder: &mut Encoder<Metal>,
-    ) {
-        gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV");
-    }
-
-    fn encode_fp_gemm(
-        &mut self,
-        arguments: MatmulArguments<Metal>,
-        encoder: &mut Encoder<Metal>,
-        use_mxu: bool,
-    ) {
-        let context = encoder.context();
-        self.gemm
-            .encode(
-                context,
-                encoder,
-                GemmRequest::Fp {
-                    bias_add: &mut self.bias_add,
-                    arguments,
-                    use_mxu,
-                },
-            )
-            .expect("Failed to encode GEMM");
-    }
-
-    fn encode_quant_gemm(
-        &mut self,
-        arguments: MatmulArguments<Metal>,
-        encoder: &mut Encoder<Metal>,
+    fn validate_no_a_prologue(
+        resolved_a: &ResolvedAPrologue<'_, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let MatmulArguments {
-            a,
-            a_offset,
-            b,
-            d,
-            batch_dim,
-            input_dim,
-            output_dim,
-        } = arguments;
-        let MatmulWeights::Quantized {
-            b: weights,
-            scales,
-            zero_points_or_biases,
-            method,
-            mode,
-            group_size,
-            hadamard_factors,
-        } = b
-        else {
-            unreachable!("encode_quant_gemm requires Quantized weights");
-        };
-
-        let context = encoder.context();
-        self.gemm
-            .encode(
-                context,
-                encoder,
-                GemmRequest::Quant {
-                    method,
-                    mode,
-                    group_size,
-                    a,
-                    a_offset,
-                    b: weights,
-                    scales,
-                    zero_points_or_biases,
-                    d: &mut *d,
-                    batch_dim,
-                    input_dim,
-                    output_dim,
-                },
-            )
-            .map_err(MatmulError::BackendError)?;
-
-        if let Some(factors) = hadamard_factors {
-            self.hadamard.encode(d, factors, output_dim, batch_dim, encoder);
+        if resolved_a.mask.contains(GemmAPrologue::RHT) {
+            return Err(MatmulError::UnsupportedAOp {
+                bit: GemmAPrologue::RHT,
+                path: "MatmulMetalKernel",
+            });
         }
         Ok(())
     }
 
-    fn encode_quant_gemv(
+    fn apply_d_post_passes(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        resolved_d: ResolvedDTransform<'_, Metal>,
+        d: &mut Allocation<Metal>,
+        m: u32,
+        n: u32,
+        encoder: &mut Encoder<Metal>,
+    ) {
+        if let Some(bias) = resolved_d.bias {
+            self.bias_add.encode(
+                None::<&<Metal as Backend>::DenseBuffer>,
+                bias,
+                &mut *d,
+                n,
+                m * n,
+                encoder,
+            );
+        }
+        if let Some(factors) = resolved_d.rht {
+            self.hadamard.encode(d, factors, n, m, encoder);
+        }
+    }
+
+    fn dispatch_fp_gemv<'a>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        self.quant_gemv.encode(encoder, arguments)
+        let resolved_a = resolve_a(arguments.a_prologue)?;
+        Self::validate_no_a_prologue(&resolved_a)?;
+        let resolved_d = resolve_d(arguments.d_transform)?;
+
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d,
+            m,
+            n,
+            k,
+            ..
+        } = arguments;
+
+        // Inner core handles SCALE/ACCUMULATE/BIAS natively; only RHT is post-pass.
+        let inner_d = ResolvedDTransform {
+            mask: resolved_d.mask,
+            ab_scale: resolved_d.ab_scale,
+            bias: resolved_d.bias,
+            rht: None,
+        };
+        let synthetic = MatmulArguments {
+            a,
+            a_offset,
+            a_prologue: &[],
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d: &mut *d,
+            d_transform: &[],
+            m,
+            n,
+            k,
+        };
+        gemv::fp::encode(&mut self.gemv, encoder, synthetic, inner_d)?;
+
+        if let Some(factors) = resolved_d.rht {
+            self.hadamard.encode(d, factors, n, m, encoder);
+        }
+        Ok(())
+    }
+
+    fn dispatch_fp_gemm<'a>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal>,
+        encoder: &mut Encoder<Metal>,
+        use_mxu: bool,
+    ) -> Result<(), MatmulError<Metal>> {
+        let resolved_a = resolve_a(arguments.a_prologue)?;
+        Self::validate_no_a_prologue(&resolved_a)?;
+        let resolved_d = resolve_d(arguments.d_transform)?;
+
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d,
+            m,
+            n,
+            k,
+            ..
+        } = arguments;
+
+        // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE;
+        // BIAS/RHT are outer post-pass.
+        let inner_d = ResolvedDTransform {
+            mask: resolved_d.mask & (GemmDTransform::SCALE | GemmDTransform::ACCUMULATE),
+            ab_scale: resolved_d.ab_scale,
+            bias: None,
+            rht: None,
+        };
+        let inner_args = MatmulArguments {
+            a,
+            a_offset,
+            a_prologue: &[],
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d: &mut *d,
+            d_transform: &[],
+            m,
+            n,
+            k,
+        };
+        let context = encoder.context();
+        self.gemm
+            .encode(context, encoder, inner_args, inner_d, use_mxu)
+            .map_err(MatmulError::BackendError)?;
+
+        // Post-passes: BIAS and RHT.
+        let post = ResolvedDTransform {
+            mask: resolved_d.mask & (GemmDTransform::BIAS | GemmDTransform::RHT),
+            ab_scale: 1.0,
+            bias: resolved_d.bias,
+            rht: resolved_d.rht,
+        };
+        self.apply_d_post_passes(post, d, m, n, encoder);
+        Ok(())
+    }
+
+    fn dispatch_quant_gemv<'a>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        let resolved_a = resolve_a(arguments.a_prologue)?;
+        Self::validate_no_a_prologue(&resolved_a)?;
+        let resolved_d = resolve_d(arguments.d_transform)?;
+
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d,
+            m,
+            n,
+            k,
+            ..
+        } = arguments;
+
+        // Quant gemv handles RHT (fused via qmv_fast when eligible); BIAS is post-pass.
+        // SCALE/ACCUMULATE are rejected by the kernel itself.
+        let inner_d = ResolvedDTransform {
+            mask: resolved_d.mask & (GemmDTransform::RHT),
+            ab_scale: resolved_d.ab_scale,
+            bias: None,
+            rht: resolved_d.rht,
+        };
+        let inner_args = MatmulArguments {
+            a,
+            a_offset,
+            a_prologue: &[],
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d: &mut *d,
+            d_transform: &[],
+            m,
+            n,
+            k,
+        };
+        self.quant_gemv.encode(encoder, inner_args, inner_d)?;
+
+        if let Some(bias) = resolved_d.bias {
+            self.bias_add.encode(
+                None::<&<Metal as Backend>::DenseBuffer>,
+                bias,
+                d,
+                n,
+                m * n,
+                encoder,
+            );
+        }
+        Ok(())
+    }
+
+    fn dispatch_quant_gemm<'a>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        let resolved_a = resolve_a(arguments.a_prologue)?;
+        Self::validate_no_a_prologue(&resolved_a)?;
+        let resolved_d = resolve_d(arguments.d_transform)?;
+
+        if resolved_d.mask.contains(GemmDTransform::ACCUMULATE) {
+            return Err(MatmulError::UnsupportedDOp {
+                bit: GemmDTransform::ACCUMULATE,
+                path: "QuantGemm",
+            });
+        }
+        if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "QuantGemm",
+            });
+        }
+
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d,
+            m,
+            n,
+            k,
+            ..
+        } = arguments;
+
+        // Quant core handles SCALE via GemmParams.ab_scale; BIAS/RHT are post-pass.
+        let inner_d = ResolvedDTransform {
+            mask: resolved_d.mask & GemmDTransform::SCALE,
+            ab_scale: resolved_d.ab_scale,
+            bias: None,
+            rht: None,
+        };
+        let inner_args = MatmulArguments {
+            a,
+            a_offset,
+            a_prologue: &[],
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d: &mut *d,
+            d_transform: &[],
+            m,
+            n,
+            k,
+        };
+        let context = encoder.context();
+        self.gemm
+            .encode(context, encoder, inner_args, inner_d, false)
+            .map_err(MatmulError::BackendError)?;
+
+        // Post-passes: BIAS and RHT.
+        if let Some(bias) = resolved_d.bias {
+            self.bias_add.encode(
+                None::<&<Metal as Backend>::DenseBuffer>,
+                bias,
+                &mut *d,
+                n,
+                m * n,
+                encoder,
+            );
+        }
+        if let Some(factors) = resolved_d.rht {
+            self.hadamard.encode(d, factors, n, m, encoder);
+        }
+        Ok(())
     }
 }
 
@@ -217,31 +412,25 @@ impl MatmulKernel for MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         match &arguments.b {
-            MatmulWeights::FullPrecision {
-                b_transpose,
-                b_offset,
-                b_leading_dimension,
-                ..
-            } => {
+            MatmulB::FullPrecision { .. } => {
                 let context = encoder.context();
-                let gemv_eligible = *b_transpose
-                    && *b_offset == 0
-                    && b_leading_dimension.is_none_or(|ld| ld == arguments.input_dim)
-                    && arguments.batch_dim <= max_gemv_batch_threshold();
+                let gemv_eligible = arguments.b_transpose
+                    && arguments.b_offset == 0
+                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
+                    && arguments.m <= max_gemv_batch_threshold();
 
                 if gemv_eligible {
-                    self.encode_fp_gemv(arguments, encoder);
+                    self.dispatch_fp_gemv(arguments, encoder)
                 } else {
                     let use_mxu = self.is_mxu_eligible(context);
-                    self.encode_fp_gemm(arguments, encoder, use_mxu);
+                    self.dispatch_fp_gemm(arguments, encoder, use_mxu)
                 }
-                Ok(())
             },
-            MatmulWeights::Quantized { .. } => {
-                if arguments.batch_dim >= 5 && arguments.output_dim > 1 {
-                    self.encode_quant_gemm(arguments, encoder)
+            MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. } => {
+                if arguments.m >= 5 && arguments.n > 1 {
+                    self.dispatch_quant_gemm(arguments, encoder)
                 } else {
-                    self.encode_quant_gemv(arguments, encoder)
+                    self.dispatch_quant_gemv(arguments, encoder)
                 }
             },
         }

@@ -10,7 +10,7 @@ use backend_uzu::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArguments, MatmulKernel, MatmulWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulKernel},
             },
         },
         metal::{MatmulDispatchPath, Metal, MetalContext},
@@ -194,9 +194,21 @@ fn run_with_path<T: ArrayElement + Float>(
     let x_buf = alloc_allocation_with_data::<Metal, T>(context, &input.x);
     let mut y_buf = alloc_allocation::<Metal, T>(context, (input.m as usize) * (input.n as usize));
 
-    let zp_or_bias = match input.quant_method {
-        QuantizationMethod::ScaleZeroPoint => zp_buf.as_ref().expect("zp"),
-        QuantizationMethod::ScaleBias => bias_buf.as_ref().expect("bias"),
+    let b_variant = match input.quant_method {
+        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+            b: &w_buf,
+            scales: &s_buf,
+            zero_points: zp_buf.as_ref().expect("zp"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
+        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            b: &w_buf,
+            scales: &s_buf,
+            biases: bias_buf.as_ref().expect("bias"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
     };
 
     let mut encoder = Encoder::new(context).expect("encoder");
@@ -205,19 +217,16 @@ fn run_with_path<T: ArrayElement + Float>(
             MatmulArguments {
                 a: &x_buf,
                 a_offset: 0,
-                b: MatmulWeights::Quantized {
-                    b: &w_buf,
-                    scales: &s_buf,
-                    zero_points_or_biases: zp_or_bias,
-                    method: input.quant_method,
-                    mode: input.mode,
-                    group_size: input.group_size,
-                    hadamard_factors: None,
-                },
+                a_prologue: &[],
+                b: b_variant,
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
                 d: &mut y_buf,
-                batch_dim: input.m,
-                input_dim: input.k,
-                output_dim: input.n,
+                d_transform: &[],
+                m: input.m,
+                n: input.n,
+                k: input.k,
             },
             &mut encoder,
             path,

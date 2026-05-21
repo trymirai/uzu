@@ -9,7 +9,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel, MatmulWeights},
+            matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
         },
     },
     config::EmbeddingConfig,
@@ -558,18 +558,18 @@ impl<B: Backend> Embedding<B> {
                         MatmulArguments {
                             a: input_allocation,
                             a_offset: 0,
-                            b: MatmulWeights::FullPrecision {
+                            a_prologue: &[],
+                            b: MatmulB::FullPrecision {
                                 b: weights,
-                                b_offset: 0,
-                                b_leading_dimension: None,
-                                b_transpose: true,
-                                ab_scale: 1.0,
-                                c: MatmulArgumentC::None,
                             },
+                            b_offset: 0,
+                            b_leading_dimension: None,
+                            b_transpose: true,
                             d: &mut output_allocation,
-                            batch_dim: batch_dim as u32,
-                            input_dim: input_dim as u32,
-                            output_dim: output_dim as u32,
+                            d_transform: &[],
+                            m: batch_dim as u32,
+                            n: output_dim as u32,
+                            k: input_dim as u32,
                         },
                         encoder,
                     )
@@ -597,25 +597,38 @@ impl<B: Backend> Embedding<B> {
                         readout_config,
                     },
             } => {
+                let b_variant = match readout_config.method {
+                    QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+                        b: weights,
+                        scales,
+                        biases,
+                        mode: readout_config.mode,
+                        group_size: readout_config.group_size,
+                    },
+                    QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+                        b: weights,
+                        scales,
+                        zero_points: biases,
+                        mode: readout_config.mode,
+                        group_size: readout_config.group_size,
+                    },
+                };
                 readout
                     .borrow_mut()
                     .encode(
                         MatmulArguments {
                             a: input_allocation,
                             a_offset: 0,
-                            b: MatmulWeights::Quantized {
-                                b: weights,
-                                scales,
-                                zero_points_or_biases: biases,
-                                method: readout_config.method,
-                                mode: readout_config.mode,
-                                group_size: readout_config.group_size,
-                                hadamard_factors: None,
-                            },
+                            a_prologue: &[],
+                            b: b_variant,
+                            b_offset: 0,
+                            b_leading_dimension: None,
+                            b_transpose: true,
                             d: &mut output_allocation,
-                            batch_dim: batch_dim as u32,
-                            input_dim: self.model_dim,
-                            output_dim: self.vocab_size,
+                            d_transform: &[],
+                            m: batch_dim as u32,
+                            n: self.vocab_size,
+                            k: self.model_dim,
                         },
                         encoder,
                     )

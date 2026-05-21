@@ -11,7 +11,7 @@ use backend_uzu::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel, MatmulWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -73,18 +73,18 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             MatmulArguments {
                 a: &a_allocation,
                 a_offset: 0,
-                b: MatmulWeights::FullPrecision {
+                a_prologue: &[],
+                b: MatmulB::FullPrecision {
                     b: b_array.allocation(),
-                    b_offset: 0,
-                    b_leading_dimension: None,
-                    b_transpose: true,
-                    ab_scale: 1.0,
-                    c: MatmulArgumentC::None,
                 },
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
                 d: &mut d_allocation,
-                batch_dim: m,
-                input_dim: k,
-                output_dim: n,
+                d_transform: &[],
+                m,
+                n,
+                k,
             },
             &mut encoder,
         )

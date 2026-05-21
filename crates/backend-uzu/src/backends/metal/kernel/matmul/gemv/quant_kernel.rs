@@ -5,15 +5,20 @@ use crate::{
     backends::{
         common::{
             Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{
+                QuantizationMethod, QuantizationMode,
+                gemm::GemmDTransform,
+            },
             kernel::{
                 Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-                matmul::{MatmulArguments, MatmulError, MatmulWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulError, ResolvedDTransform},
             },
         },
         metal::{Metal, context::MetalContext},
     },
 };
+
+const PATH: &str = "QuantGemv";
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct QmvKey {
@@ -51,42 +56,71 @@ impl QuantGemvKernel {
         }
     }
 
-    pub(crate) fn encode(
+    pub(crate) fn encode<'a>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, Metal>,
+        resolved_d: ResolvedDTransform<'a, Metal>,
     ) -> Result<(), MatmulError<Metal>> {
+        // Quant gemv: SCALE/ACCUMULATE not supported (deferred). BIAS handled
+        // as outer post-pass by the dispatcher; we only need to reject those
+        // bits. RHT is fused via qmv_fast when the fast path is eligible.
+        if resolved_d.mask.contains(GemmDTransform::SCALE) {
+            return Err(MatmulError::UnsupportedDOp {
+                bit: GemmDTransform::SCALE,
+                path: PATH,
+            });
+        }
+        if resolved_d.mask.contains(GemmDTransform::ACCUMULATE) {
+            return Err(MatmulError::UnsupportedDOp {
+                bit: GemmDTransform::ACCUMULATE,
+                path: PATH,
+            });
+        }
+        if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
+            return Err(MatmulError::UnsupportedLayout {
+                path: PATH,
+            });
+        }
+
         let MatmulArguments {
             a,
             a_offset,
             b,
             d,
-            batch_dim,
-            input_dim,
-            output_dim,
+            m,
+            n,
+            k,
+            ..
         } = arguments;
-        let MatmulWeights::Quantized {
-            b: weights,
-            scales,
-            zero_points_or_biases,
-            method,
-            mode,
-            group_size,
-            hadamard_factors,
-        } = b
-        else {
-            panic!("QuantGemvKernel requires Quantized weights");
+        let (weights, scales, zp_or_bias, method, mode, group_size) = match b {
+            MatmulB::ScaleBiasDequant {
+                b: w,
+                scales,
+                biases,
+                mode,
+                group_size,
+            } => (w, scales, biases, QuantizationMethod::ScaleBias, mode, group_size),
+            MatmulB::ScaleZeroPointDequant {
+                b: w,
+                scales,
+                zero_points,
+                mode,
+                group_size,
+            } => (w, scales, zero_points, QuantizationMethod::ScaleZeroPoint, mode, group_size),
+            MatmulB::FullPrecision { .. } => panic!("QuantGemvKernel requires quantized B"),
         };
 
         let bits = match mode {
             QuantizationMode::U4 => 4u32,
             QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
         };
-        let use_fast = output_dim % 8 == 0 && input_dim % 512 == 0;
+        let use_fast = n % 8 == 0 && k % 512 == 0;
+        let hadamard_factors = resolved_d.rht;
 
         let (zero_points, biases) = match method {
-            QuantizationMethod::ScaleZeroPoint => (Some(zero_points_or_biases), None),
-            QuantizationMethod::ScaleBias => (None, Some(zero_points_or_biases)),
+            QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
+            QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
         };
 
         if use_fast {
@@ -120,9 +154,9 @@ impl QuantGemvKernel {
                 (a, a_offset),
                 d,
                 hadamard_factors,
-                input_dim,
-                output_dim,
-                batch_dim,
+                k,
+                n,
+                m,
                 encoder,
             );
         } else {
@@ -156,9 +190,9 @@ impl QuantGemvKernel {
                 biases,
                 (a, a_offset),
                 d,
-                input_dim,
-                output_dim,
-                batch_dim,
+                k,
+                n,
+                m,
                 encoder,
             );
         }

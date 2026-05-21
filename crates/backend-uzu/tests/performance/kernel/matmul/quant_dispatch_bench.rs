@@ -8,7 +8,7 @@ use backend_uzu::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArguments, MatmulKernel, MatmulWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulKernel},
             },
         },
         metal::{MatmulDispatchPath, Metal, MetalContext},
@@ -93,24 +93,37 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             b.iter_custom(|n_iters| {
                 let mut encoder = Encoder::<Metal>::new(context).unwrap();
                 for _ in 0..n_iters {
+                    let b_variant = match quant_method {
+                        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+                            b: &w_buf,
+                            scales: &scales_buf,
+                            zero_points: &zp_or_bias,
+                            mode,
+                            group_size,
+                        },
+                        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+                            b: &w_buf,
+                            scales: &scales_buf,
+                            biases: &zp_or_bias,
+                            mode,
+                            group_size,
+                        },
+                    };
                     matmul
                         .encode_with_path(
                             MatmulArguments {
                                 a: &x_buf,
                                 a_offset: 0,
-                                b: MatmulWeights::Quantized {
-                                    b: &w_buf,
-                                    scales: &scales_buf,
-                                    zero_points_or_biases: &zp_or_bias,
-                                    method: quant_method,
-                                    mode,
-                                    group_size,
-                                    hadamard_factors: None,
-                                },
+                                a_prologue: &[],
+                                b: b_variant,
+                                b_offset: 0,
+                                b_leading_dimension: None,
+                                b_transpose: true,
                                 d: &mut y_buf,
-                                batch_dim: m as u32,
-                                input_dim: k as u32,
-                                output_dim: n as u32,
+                                d_transform: &[],
+                                m: m as u32,
+                                n: n as u32,
+                                k: k as u32,
                             },
                             &mut encoder,
                             MatmulDispatchPath::QuantGemm,

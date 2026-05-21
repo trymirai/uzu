@@ -489,18 +489,18 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     MatmulArguments {
                         a: slow_hidden_capture,
                         a_offset: 0,
-                        b: MatmulWeights::FullPrecision {
+                        a_prologue: &[],
+                        b: MatmulB::FullPrecision {
                             b: weights,
-                            b_offset: 0,
-                            b_leading_dimension: None,
-                            b_transpose: true,
-                            ab_scale: 1.0,
-                            c: MatmulArgumentC::None,
                         },
+                        b_offset: 0,
+                        b_leading_dimension: None,
+                        b_transpose: true,
                         d: output_embedding,
-                        batch_dim: 1,
-                        input_dim: slow_model_dim as u32,
-                        output_dim: fast_model_dim as u32,
+                        d_transform: &[],
+                        m: 1,
+                        n: fast_model_dim as u32,
+                        k: slow_model_dim as u32,
                     },
                     encoder,
                 )

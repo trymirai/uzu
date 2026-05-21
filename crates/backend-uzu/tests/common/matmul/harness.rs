@@ -7,7 +7,7 @@ use backend_uzu::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel, MatmulWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -109,11 +109,15 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .expect("create d allocation")
     };
 
-    let c_arg = if input.case.accumulate {
-        MatmulArgumentC::Accumulate
-    } else {
-        MatmulArgumentC::None
-    };
+    let mut d_ops: Vec<MatmulDOp<'_, B>> = Vec::new();
+    if input.case.ab_scale != 1.0 {
+        d_ops.push(MatmulDOp::Scale {
+            ab_scale: input.case.ab_scale,
+        });
+    }
+    if input.case.accumulate {
+        d_ops.push(MatmulDOp::Accumulate);
+    }
 
     let mut encoder = Encoder::new(context).expect("encoder");
     encode(
@@ -121,18 +125,18 @@ fn run<B: Backend, T: ArrayElement + Float>(
         MatmulArguments {
             a: &a_allocation,
             a_offset: 0,
-            b: MatmulWeights::FullPrecision {
+            a_prologue: &[],
+            b: MatmulB::FullPrecision {
                 b: b_array.allocation(),
-                b_offset: 0,
-                b_leading_dimension: None,
-                b_transpose: input.case.b_transpose,
-                ab_scale: input.case.ab_scale,
-                c: c_arg,
             },
+            b_offset: 0,
+            b_leading_dimension: None,
+            b_transpose: input.case.b_transpose,
             d: &mut d_allocation,
-            batch_dim: m as u32,
-            input_dim: k as u32,
-            output_dim: n as u32,
+            d_transform: &d_ops,
+            m: m as u32,
+            n: n as u32,
+            k: k as u32,
         },
         &mut encoder,
     );

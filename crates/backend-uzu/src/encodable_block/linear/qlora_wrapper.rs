@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{
             ManualKernels,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel, MatmulWeights},
+            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
         },
     },
     config::QuantizationConfig,
@@ -106,18 +106,18 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 MatmulArguments {
                     a: &input,
                     a_offset: 0,
-                    b: MatmulWeights::FullPrecision {
+                    a_prologue: &[],
+                    b: MatmulB::FullPrecision {
                         b: &self.adapter_down,
-                        b_offset: 0,
-                        b_leading_dimension: None,
-                        b_transpose: true,
-                        ab_scale: 1.0,
-                        c: MatmulArgumentC::None,
                     },
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
                     d: &mut intermediate,
-                    batch_dim: batch_dim as u32,
-                    input_dim: self.input_dim as u32,
-                    output_dim: self.lora_rank as u32,
+                    d_transform: &[],
+                    m: batch_dim as u32,
+                    n: self.lora_rank as u32,
+                    k: self.input_dim as u32,
                 },
                 encoder,
             )
@@ -130,18 +130,23 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 MatmulArguments {
                     a: &intermediate,
                     a_offset: 0,
-                    b: MatmulWeights::FullPrecision {
+                    a_prologue: &[],
+                    b: MatmulB::FullPrecision {
                         b: &self.adapter_up,
-                        b_offset: 0,
-                        b_leading_dimension: None,
-                        b_transpose: true,
-                        ab_scale: self.lora_scale,
-                        c: MatmulArgumentC::Accumulate,
                     },
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
                     d: &mut output,
-                    batch_dim: batch_dim as u32,
-                    input_dim: self.lora_rank as u32,
-                    output_dim: self.output_dim as u32,
+                    d_transform: &[
+                        MatmulDOp::Scale {
+                            ab_scale: self.lora_scale,
+                        },
+                        MatmulDOp::Accumulate,
+                    ],
+                    m: batch_dim as u32,
+                    n: self.output_dim as u32,
+                    k: self.lora_rank as u32,
                 },
                 encoder,
             )
