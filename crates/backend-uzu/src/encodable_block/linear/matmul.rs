@@ -344,7 +344,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 MatmulArguments {
                     a: &input,
                     a_offset: 0,
-                    a_prologue: HashSet::new(),
                     b,
                     b_offset: 0,
                     b_leading_dimension: None,

@@ -558,7 +558,6 @@ impl<B: Backend> Embedding<B> {
                         MatmulArguments {
                             a: input_allocation,
                             a_offset: 0,
-                            a_prologue: HashSet::new(),
                             b: MatmulB::FullPrecision {
                                 b: weights,
                             },
@@ -619,7 +618,6 @@ impl<B: Backend> Embedding<B> {
                         MatmulArguments {
                             a: input_allocation,
                             a_offset: 0,
-                            a_prologue: HashSet::new(),
                             b: b_variant,
                             b_offset: 0,
                             b_leading_dimension: None,

@@ -106,7 +106,6 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 MatmulArguments {
                     a: &input,
                     a_offset: 0,
-                    a_prologue: HashSet::new(),
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_down,
                     },
@@ -130,7 +129,6 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 MatmulArguments {
                     a: &intermediate,
                     a_offset: 0,
-                    a_prologue: HashSet::new(),
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_up,
                     },

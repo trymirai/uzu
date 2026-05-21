@@ -74,7 +74,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             MatmulArguments {
                 a: &a_allocation,
                 a_offset: 0,
-                a_prologue: HashSet::new(),
                 b: MatmulB::FullPrecision {
                     b: b_array.allocation(),
                 },

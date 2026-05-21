@@ -491,7 +491,6 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     MatmulArguments {
                         a: slow_hidden_capture,
                         a_offset: 0,
-                        a_prologue: HashSet::new(),
                         b: MatmulB::FullPrecision {
                             b: weights,
                         },

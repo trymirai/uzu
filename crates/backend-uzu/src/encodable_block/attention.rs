@@ -565,7 +565,6 @@ impl<B: Backend> Attention<B> {
                     MatmulArguments {
                         a: queries,
                         a_offset: group_index * gqa_factor * suffix_length * head_dim * dt_bytes,
-                        a_prologue: HashSet::new(),
                         b: MatmulB::FullPrecision {
                             b: keys,
                         },
@@ -622,7 +621,6 @@ impl<B: Backend> Attention<B> {
                     MatmulArguments {
                         a: &scores,
                         a_offset: group_index * gqa_factor * suffix_length * sequence_length * dt_bytes,
-                        a_prologue: HashSet::new(),
                         b: MatmulB::FullPrecision {
                             b: values,
                         },

@@ -127,7 +127,6 @@ fn run<B: Backend, T: ArrayElement + Float>(
         MatmulArguments {
             a: &a_allocation,
             a_offset: 0,
-            a_prologue: HashSet::new(),
             b: MatmulB::FullPrecision {
                 b: b_array.allocation(),
             },

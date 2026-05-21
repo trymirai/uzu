@@ -65,7 +65,6 @@ fn bench_gemm(c: &mut Criterion) {
                                 MatmulArguments {
                                     a: &a,
                                     a_offset: 0,
-                                    a_prologue: HashSet::new(),
                                     b: MatmulB::FullPrecision {
                                         b: b_array.allocation(),
                                     },

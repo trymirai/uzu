@@ -98,7 +98,6 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                 MatmulArguments {
                     a: &qa,
                     a_offset: g as usize * GQA as usize * SUFFIX as usize * q_row,
-                    a_prologue: HashSet::new(),
                     b: MatmulB::FullPrecision {
                         b: &ka,
                     },
@@ -128,7 +127,6 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                 MatmulArguments {
                     a: &scores,
                     a_offset: g as usize * GQA as usize * SUFFIX as usize * s_row,
-                    a_prologue: HashSet::new(),
                     b: MatmulB::FullPrecision {
                         b: &va,
                     },

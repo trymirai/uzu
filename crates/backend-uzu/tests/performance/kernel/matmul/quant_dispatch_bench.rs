@@ -116,7 +116,6 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
                             MatmulArguments {
                                 a: &x_buf,
                                 a_offset: 0,
-                                a_prologue: HashSet::new(),
                                 b: b_variant,
                                 b_offset: 0,
                                 b_leading_dimension: None,
