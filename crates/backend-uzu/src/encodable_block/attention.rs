@@ -1,6 +1,6 @@
 //! Attention kernel encodable.
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::RefCell, collections::{HashMap, HashSet}};
 
 use itertools::iproduct;
 
@@ -565,7 +565,7 @@ impl<B: Backend> Attention<B> {
                     MatmulArguments {
                         a: queries,
                         a_offset: group_index * gqa_factor * suffix_length * head_dim * dt_bytes,
-                        a_prologue: &[],
+                        a_prologue: HashSet::new(),
                         b: MatmulB::FullPrecision {
                             b: keys,
                         },
@@ -573,9 +573,9 @@ impl<B: Backend> Attention<B> {
                         b_leading_dimension: Some(k_seq_stride),
                         b_transpose: true,
                         d: &mut group_scores,
-                        d_transform: &[MatmulDOp::Scale {
+                        d_transform: HashSet::from([MatmulDOp::Scale {
                             ab_scale: scale,
-                        }],
+                        }]),
                         m: (gqa_factor * suffix_length) as u32,
                         n: sequence_length as u32,
                         k: head_dim as u32,
@@ -622,7 +622,7 @@ impl<B: Backend> Attention<B> {
                     MatmulArguments {
                         a: &scores,
                         a_offset: group_index * gqa_factor * suffix_length * sequence_length * dt_bytes,
-                        a_prologue: &[],
+                        a_prologue: HashSet::new(),
                         b: MatmulB::FullPrecision {
                             b: values,
                         },
@@ -630,7 +630,7 @@ impl<B: Backend> Attention<B> {
                         b_leading_dimension: Some(v_seq_stride),
                         b_transpose: false,
                         d: &mut group_output,
-                        d_transform: &[],
+                        d_transform: HashSet::new(),
                         m: (gqa_factor * suffix_length) as u32,
                         n: head_dim as u32,
                         k: sequence_length as u32,

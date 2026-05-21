@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::*;
 use crate::{
     array::ArrayContextExt,
@@ -489,7 +491,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                     MatmulArguments {
                         a: slow_hidden_capture,
                         a_offset: 0,
-                        a_prologue: &[],
+                        a_prologue: HashSet::new(),
                         b: MatmulB::FullPrecision {
                             b: weights,
                         },
@@ -497,7 +499,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                         b_leading_dimension: None,
                         b_transpose: true,
                         d: output_embedding,
-                        d_transform: &[],
+                        d_transform: HashSet::new(),
                         m: 1,
                         n: fast_model_dim as u32,
                         k: slow_model_dim as u32,

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fmt::{Debug, Display},
 };
 
@@ -73,7 +74,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
             MatmulArguments {
                 a: &a_allocation,
                 a_offset: 0,
-                a_prologue: &[],
+                a_prologue: HashSet::new(),
                 b: MatmulB::FullPrecision {
                     b: b_array.allocation(),
                 },
@@ -81,7 +82,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut d_allocation,
-                d_transform: &[],
+                d_transform: HashSet::new(),
                 m,
                 n,
                 k,

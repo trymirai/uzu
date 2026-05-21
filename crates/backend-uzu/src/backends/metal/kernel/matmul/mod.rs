@@ -1,7 +1,7 @@
 pub mod gemm;
 pub mod gemv;
 
-use std::sync::OnceLock;
+use std::{collections::HashSet, sync::OnceLock};
 
 use self::{
     gemm::GemmKernel,
@@ -130,9 +130,9 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let resolved_a = resolve_a(arguments.a_prologue)?;
+        let resolved_a = resolve_a(&arguments.a_prologue);
         Self::validate_no_a_prologue(&resolved_a)?;
-        let resolved_d = resolve_d(arguments.d_transform)?;
+        let resolved_d = resolve_d(&arguments.d_transform);
 
         let MatmulArguments {
             a,
@@ -158,13 +158,13 @@ impl MatmulMetalKernel {
         let synthetic = MatmulArguments {
             a,
             a_offset,
-            a_prologue: &[],
+            a_prologue: HashSet::new(),
             b,
             b_offset,
             b_leading_dimension,
             b_transpose,
             d: &mut *d,
-            d_transform: &[],
+            d_transform: HashSet::new(),
             m,
             n,
             k,
@@ -183,9 +183,9 @@ impl MatmulMetalKernel {
         encoder: &mut Encoder<Metal>,
         use_mxu: bool,
     ) -> Result<(), MatmulError<Metal>> {
-        let resolved_a = resolve_a(arguments.a_prologue)?;
+        let resolved_a = resolve_a(&arguments.a_prologue);
         Self::validate_no_a_prologue(&resolved_a)?;
-        let resolved_d = resolve_d(arguments.d_transform)?;
+        let resolved_d = resolve_d(&arguments.d_transform);
 
         let MatmulArguments {
             a,
@@ -212,13 +212,13 @@ impl MatmulMetalKernel {
         let inner_args = MatmulArguments {
             a,
             a_offset,
-            a_prologue: &[],
+            a_prologue: HashSet::new(),
             b,
             b_offset,
             b_leading_dimension,
             b_transpose,
             d: &mut *d,
-            d_transform: &[],
+            d_transform: HashSet::new(),
             m,
             n,
             k,
@@ -244,9 +244,9 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let resolved_a = resolve_a(arguments.a_prologue)?;
+        let resolved_a = resolve_a(&arguments.a_prologue);
         Self::validate_no_a_prologue(&resolved_a)?;
-        let resolved_d = resolve_d(arguments.d_transform)?;
+        let resolved_d = resolve_d(&arguments.d_transform);
 
         let MatmulArguments {
             a,
@@ -273,13 +273,13 @@ impl MatmulMetalKernel {
         let inner_args = MatmulArguments {
             a,
             a_offset,
-            a_prologue: &[],
+            a_prologue: HashSet::new(),
             b,
             b_offset,
             b_leading_dimension,
             b_transpose,
             d: &mut *d,
-            d_transform: &[],
+            d_transform: HashSet::new(),
             m,
             n,
             k,
@@ -304,9 +304,9 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let resolved_a = resolve_a(arguments.a_prologue)?;
+        let resolved_a = resolve_a(&arguments.a_prologue);
         Self::validate_no_a_prologue(&resolved_a)?;
-        let resolved_d = resolve_d(arguments.d_transform)?;
+        let resolved_d = resolve_d(&arguments.d_transform);
 
         if resolved_d.mask.contains(GemmDTransform::ACCUMULATE) {
             return Err(MatmulError::UnsupportedDOp {
@@ -344,13 +344,13 @@ impl MatmulMetalKernel {
         let inner_args = MatmulArguments {
             a,
             a_offset,
-            a_prologue: &[],
+            a_prologue: HashSet::new(),
             b,
             b_offset,
             b_leading_dimension,
             b_transpose,
             d: &mut *d,
-            d_transform: &[],
+            d_transform: HashSet::new(),
             m,
             n,
             k,

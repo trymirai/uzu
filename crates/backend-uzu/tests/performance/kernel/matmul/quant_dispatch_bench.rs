@@ -1,5 +1,7 @@
 #![cfg(metal_backend)]
 
+use std::collections::HashSet;
+
 use backend_uzu::{
     ArrayElement,
     backends::{
@@ -114,13 +116,13 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
                             MatmulArguments {
                                 a: &x_buf,
                                 a_offset: 0,
-                                a_prologue: &[],
+                                a_prologue: HashSet::new(),
                                 b: b_variant,
                                 b_offset: 0,
                                 b_leading_dimension: None,
                                 b_transpose: true,
                                 d: &mut y_buf,
-                                d_transform: &[],
+                                d_transform: HashSet::new(),
                                 m: m as u32,
                                 n: n as u32,
                                 k: k as u32,

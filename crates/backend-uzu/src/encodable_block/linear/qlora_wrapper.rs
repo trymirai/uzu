@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet};
 
 use thiserror::Error;
 
@@ -106,7 +106,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 MatmulArguments {
                     a: &input,
                     a_offset: 0,
-                    a_prologue: &[],
+                    a_prologue: HashSet::new(),
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_down,
                     },
@@ -114,7 +114,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut intermediate,
-                    d_transform: &[],
+                    d_transform: HashSet::new(),
                     m: batch_dim as u32,
                     n: self.lora_rank as u32,
                     k: self.input_dim as u32,
@@ -130,7 +130,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 MatmulArguments {
                     a: &intermediate,
                     a_offset: 0,
-                    a_prologue: &[],
+                    a_prologue: HashSet::new(),
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_up,
                     },
@@ -138,12 +138,12 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut output,
-                    d_transform: &[
+                    d_transform: HashSet::from([
                         MatmulDOp::Scale {
                             ab_scale: self.lora_scale,
                         },
                         MatmulDOp::Accumulate,
-                    ],
+                    ]),
                     m: batch_dim as u32,
                     n: self.output_dim as u32,
                     k: self.lora_rank as u32,

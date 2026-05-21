@@ -1,6 +1,6 @@
 #![cfg(metal_backend)]
 
-use std::fmt::{Debug, Display};
+use std::{collections::HashSet, fmt::{Debug, Display}};
 
 use backend_uzu::{
     ArrayElement,
@@ -217,13 +217,13 @@ fn run_with_path<T: ArrayElement + Float>(
             MatmulArguments {
                 a: &x_buf,
                 a_offset: 0,
-                a_prologue: &[],
+                a_prologue: HashSet::new(),
                 b: b_variant,
                 b_offset: 0,
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut y_buf,
-                d_transform: &[],
+                d_transform: HashSet::new(),
                 m: input.m,
                 n: input.n,
                 k: input.k,

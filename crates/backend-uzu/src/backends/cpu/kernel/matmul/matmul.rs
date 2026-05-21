@@ -45,7 +45,7 @@ impl MatmulKernel for MatmulCpuKernel {
         arguments: MatmulArguments<Cpu>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
-        let resolved_a = resolve_a(arguments.a_prologue)?;
+        let resolved_a = resolve_a(&arguments.a_prologue);
         if !resolved_a.mask.is_empty() {
             return Err(MatmulError::UnsupportedAOp {
                 bit: resolved_a.mask,
@@ -67,7 +67,7 @@ impl MatmulCpuKernel {
         arguments: MatmulArguments<Cpu>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
-        let resolved_d = resolve_d(arguments.d_transform)?;
+        let resolved_d = resolve_d(&arguments.d_transform);
         if resolved_d.mask.contains(GemmDTransform::RHT) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::RHT,
@@ -192,7 +192,7 @@ impl MatmulCpuKernel {
         arguments: MatmulArguments<Cpu>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
-        let resolved_d = resolve_d(arguments.d_transform)?;
+        let resolved_d = resolve_d(&arguments.d_transform);
         if resolved_d.mask.contains(GemmDTransform::SCALE) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::SCALE,

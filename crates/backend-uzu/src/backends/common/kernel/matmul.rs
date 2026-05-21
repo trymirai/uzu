@@ -1,3 +1,9 @@
+use std::{
+    collections::HashSet,
+    hash::{Hash, Hasher},
+    mem::discriminant,
+};
+
 use thiserror::Error;
 
 use crate::{
@@ -34,22 +40,39 @@ pub enum MatmulError<B: Backend> {
     UnsupportedLayout {
         path: &'static str,
     },
-    #[error("Duplicate A-prologue op {0:?}")]
-    DuplicateAOp(GemmAPrologue),
-    #[error("Duplicate D-transform op {0:?}")]
-    DuplicateDOp(GemmDTransform),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }
 
-/// Op applied to A before the matmul core. A SET of these in
-/// [`MatmulArguments::a_prologue`] describes the A-side prologue; empty slice
-/// means no prologue (pass A through unchanged).
+/// Op applied to A before the matmul core. `Hash`/`Eq` are implemented on the
+/// variant discriminant so that a `HashSet<MatmulAOp>` enforces at most one of
+/// each variant — duplicate inserts simply return `false` from `insert` and
+/// are discarded.
 pub enum MatmulAOp<'a, B: Backend> {
     Rht {
         factors: &'a Allocation<B>,
     },
 }
+
+impl<B: Backend> Hash for MatmulAOp<'_, B> {
+    fn hash<H: Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        discriminant(self).hash(state);
+    }
+}
+
+impl<B: Backend> PartialEq for MatmulAOp<'_, B> {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        discriminant(self) == discriminant(other)
+    }
+}
+
+impl<B: Backend> Eq for MatmulAOp<'_, B> {}
 
 /// Describes the B operand encoding. Memory layout fields
 /// (`b_leading_dimension`, `b_transpose`) are common to all encodings and live
@@ -74,13 +97,10 @@ pub enum MatmulB<'a, B: Backend> {
     },
 }
 
-/// Op applied to D after the matmul core. A SET of these in
-/// [`MatmulArguments::d_transform`] describes the D-side transform; empty slice
-/// means store-without-transform.
-///
-/// Canonical application order is scale → accumulate → bias → rht regardless
-/// of caller order. Duplicate ops within a single call return
-/// [`MatmulError::DuplicateDOp`].
+/// Op applied to D after the matmul core. `Hash`/`Eq` are implemented on the
+/// variant discriminant so that a `HashSet<MatmulDOp>` enforces at most one of
+/// each variant. The kernel applies set members in canonical order
+/// scale → accumulate → bias → rht regardless of insertion order.
 pub enum MatmulDOp<'a, B: Backend> {
     Scale {
         ab_scale: f32,
@@ -94,6 +114,26 @@ pub enum MatmulDOp<'a, B: Backend> {
     },
 }
 
+impl<B: Backend> Hash for MatmulDOp<'_, B> {
+    fn hash<H: Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        discriminant(self).hash(state);
+    }
+}
+
+impl<B: Backend> PartialEq for MatmulDOp<'_, B> {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        discriminant(self) == discriminant(other)
+    }
+}
+
+impl<B: Backend> Eq for MatmulDOp<'_, B> {}
+
 /// D = transform( (prologue(A) @ op(B)) ) where op(B) = B^T when b_transpose
 /// else B. For quantized B variants, B is packed and dequantized internally.
 pub struct MatmulArguments<'a, B: Backend> {
@@ -101,7 +141,7 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
     /// A-side prologue ops. Empty = no prologue.
-    pub a_prologue: &'a [MatmulAOp<'a, B>],
+    pub a_prologue: HashSet<MatmulAOp<'a, B>>,
     /// B operand: encoding + variant-specific aux buffers.
     pub b: MatmulB<'a, B>,
     pub b_offset: usize,
@@ -112,7 +152,7 @@ pub struct MatmulArguments<'a, B: Backend> {
     /// D: [M, N]
     pub d: &'a mut Allocation<B>,
     /// D-side transform ops. Empty = store, no transform.
-    pub d_transform: &'a [MatmulDOp<'a, B>],
+    pub d_transform: HashSet<MatmulDOp<'a, B>>,
     /// M dimension (rows of A and D).
     pub m: u32,
     /// N dimension (cols of B and D).
@@ -121,14 +161,14 @@ pub struct MatmulArguments<'a, B: Backend> {
     pub k: u32,
 }
 
-/// Bitmask + associated data resolved from a `&[MatmulAOp]` slice.
+/// Bitmask + associated data resolved from a [`HashSet<MatmulAOp>`].
 #[derive(Clone, Copy)]
 pub struct ResolvedAPrologue<'a, B: Backend> {
     pub mask: GemmAPrologue,
     pub rht: Option<&'a Allocation<B>>,
 }
 
-/// Bitmask + associated data resolved from a `&[MatmulDOp]` slice.
+/// Bitmask + associated data resolved from a [`HashSet<MatmulDOp>`].
 #[derive(Clone, Copy)]
 pub struct ResolvedDTransform<'a, B: Backend> {
     pub mask: GemmDTransform,
@@ -137,9 +177,7 @@ pub struct ResolvedDTransform<'a, B: Backend> {
     pub rht: Option<&'a Allocation<B>>,
 }
 
-pub fn resolve_a<'a, B: Backend>(
-    ops: &'a [MatmulAOp<'a, B>]
-) -> Result<ResolvedAPrologue<'a, B>, MatmulError<B>> {
+pub fn resolve_a<'a, B: Backend>(ops: &HashSet<MatmulAOp<'a, B>>) -> ResolvedAPrologue<'a, B> {
     let mut mask = GemmAPrologue::empty();
     let mut rht = None;
     for op in ops {
@@ -147,23 +185,18 @@ pub fn resolve_a<'a, B: Backend>(
             MatmulAOp::Rht {
                 factors,
             } => {
-                if mask.contains(GemmAPrologue::RHT) {
-                    return Err(MatmulError::DuplicateAOp(GemmAPrologue::RHT));
-                }
                 mask.insert(GemmAPrologue::RHT);
                 rht = Some(*factors);
             },
         }
     }
-    Ok(ResolvedAPrologue {
+    ResolvedAPrologue {
         mask,
         rht,
-    })
+    }
 }
 
-pub fn resolve_d<'a, B: Backend>(
-    ops: &'a [MatmulDOp<'a, B>]
-) -> Result<ResolvedDTransform<'a, B>, MatmulError<B>> {
+pub fn resolve_d<'a, B: Backend>(ops: &HashSet<MatmulDOp<'a, B>>) -> ResolvedDTransform<'a, B> {
     let mut mask = GemmDTransform::empty();
     let mut ab_scale = 1.0;
     let mut bias = None;
@@ -173,44 +206,32 @@ pub fn resolve_d<'a, B: Backend>(
             MatmulDOp::Scale {
                 ab_scale: s,
             } => {
-                if mask.contains(GemmDTransform::SCALE) {
-                    return Err(MatmulError::DuplicateDOp(GemmDTransform::SCALE));
-                }
                 mask.insert(GemmDTransform::SCALE);
                 ab_scale = *s;
             },
             MatmulDOp::Accumulate => {
-                if mask.contains(GemmDTransform::ACCUMULATE) {
-                    return Err(MatmulError::DuplicateDOp(GemmDTransform::ACCUMULATE));
-                }
                 mask.insert(GemmDTransform::ACCUMULATE);
             },
             MatmulDOp::Bias {
                 bias: b,
             } => {
-                if mask.contains(GemmDTransform::BIAS) {
-                    return Err(MatmulError::DuplicateDOp(GemmDTransform::BIAS));
-                }
                 mask.insert(GemmDTransform::BIAS);
                 bias = Some(*b);
             },
             MatmulDOp::Rht {
                 factors,
             } => {
-                if mask.contains(GemmDTransform::RHT) {
-                    return Err(MatmulError::DuplicateDOp(GemmDTransform::RHT));
-                }
                 mask.insert(GemmDTransform::RHT);
                 rht = Some(*factors);
             },
         }
     }
-    Ok(ResolvedDTransform {
+    ResolvedDTransform {
         mask,
         ab_scale,
         bias,
         rht,
-    })
+    }
 }
 
 pub trait MatmulKernel: Sized {

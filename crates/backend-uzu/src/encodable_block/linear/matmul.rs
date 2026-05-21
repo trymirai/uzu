@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet};
 
 use thiserror::Error;
 
@@ -321,10 +321,10 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             },
         };
 
-        // Build d_transform slice: bias post-pass + (for quant mode) output hadamard.
-        let mut ops: Vec<MatmulDOp<'_, B>> = Vec::new();
+        // Build d_transform set: bias post-pass + (for quant mode) output hadamard.
+        let mut d_transform: HashSet<MatmulDOp<'_, B>> = HashSet::new();
         if let Some(bias) = self.biases.as_ref() {
-            ops.push(MatmulDOp::Bias {
+            d_transform.insert(MatmulDOp::Bias {
                 bias,
             });
         }
@@ -333,7 +333,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             ..
         } = &self.mode
         {
-            ops.push(MatmulDOp::Rht {
+            d_transform.insert(MatmulDOp::Rht {
                 factors,
             });
         }
@@ -344,13 +344,13 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 MatmulArguments {
                     a: &input,
                     a_offset: 0,
-                    a_prologue: &[],
+                    a_prologue: HashSet::new(),
                     b,
                     b_offset: 0,
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut output,
-                    d_transform: &ops,
+                    d_transform,
                     m: batch_dim as u32,
                     n: self.output_dim as u32,
                     k: self.input_dim as u32,

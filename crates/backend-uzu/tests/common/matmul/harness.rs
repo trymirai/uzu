@@ -1,5 +1,7 @@
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{Metal, MetalContext};
+use std::collections::HashSet;
+
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -109,14 +111,14 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .expect("create d allocation")
     };
 
-    let mut d_ops: Vec<MatmulDOp<'_, B>> = Vec::new();
+    let mut d_transform: HashSet<MatmulDOp<'_, B>> = HashSet::new();
     if input.case.ab_scale != 1.0 {
-        d_ops.push(MatmulDOp::Scale {
+        d_transform.insert(MatmulDOp::Scale {
             ab_scale: input.case.ab_scale,
         });
     }
     if input.case.accumulate {
-        d_ops.push(MatmulDOp::Accumulate);
+        d_transform.insert(MatmulDOp::Accumulate);
     }
 
     let mut encoder = Encoder::new(context).expect("encoder");
@@ -125,7 +127,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
         MatmulArguments {
             a: &a_allocation,
             a_offset: 0,
-            a_prologue: &[],
+            a_prologue: HashSet::new(),
             b: MatmulB::FullPrecision {
                 b: b_array.allocation(),
             },
@@ -133,7 +135,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
             b_leading_dimension: None,
             b_transpose: input.case.b_transpose,
             d: &mut d_allocation,
-            d_transform: &d_ops,
+            d_transform,
             m: m as u32,
             n: n as u32,
             k: k as u32,

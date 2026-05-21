@@ -6,6 +6,8 @@
 
 #![cfg(metal_backend)]
 
+use std::collections::HashSet;
+
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -63,7 +65,7 @@ fn bench_gemm(c: &mut Criterion) {
                                 MatmulArguments {
                                     a: &a,
                                     a_offset: 0,
-                                    a_prologue: &[],
+                                    a_prologue: HashSet::new(),
                                     b: MatmulB::FullPrecision {
                                         b: b_array.allocation(),
                                     },
@@ -71,7 +73,7 @@ fn bench_gemm(c: &mut Criterion) {
                                     b_leading_dimension: None,
                                     b_transpose: true,
                                     d: &mut d,
-                                    d_transform: &[],
+                                    d_transform: HashSet::new(),
                                     m: m as u32,
                                     n: n as u32,
                                     k: k as u32,

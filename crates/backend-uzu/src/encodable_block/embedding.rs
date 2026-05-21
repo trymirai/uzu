@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet};
 
 use thiserror::Error;
 
@@ -558,7 +558,7 @@ impl<B: Backend> Embedding<B> {
                         MatmulArguments {
                             a: input_allocation,
                             a_offset: 0,
-                            a_prologue: &[],
+                            a_prologue: HashSet::new(),
                             b: MatmulB::FullPrecision {
                                 b: weights,
                             },
@@ -566,7 +566,7 @@ impl<B: Backend> Embedding<B> {
                             b_leading_dimension: None,
                             b_transpose: true,
                             d: &mut output_allocation,
-                            d_transform: &[],
+                            d_transform: HashSet::new(),
                             m: batch_dim as u32,
                             n: output_dim as u32,
                             k: input_dim as u32,
@@ -619,13 +619,13 @@ impl<B: Backend> Embedding<B> {
                         MatmulArguments {
                             a: input_allocation,
                             a_offset: 0,
-                            a_prologue: &[],
+                            a_prologue: HashSet::new(),
                             b: b_variant,
                             b_offset: 0,
                             b_leading_dimension: None,
                             b_transpose: true,
                             d: &mut output_allocation,
-                            d_transform: &[],
+                            d_transform: HashSet::new(),
                             m: batch_dim as u32,
                             n: self.vocab_size,
                             k: self.model_dim,
