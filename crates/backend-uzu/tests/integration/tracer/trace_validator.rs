@@ -12,9 +12,12 @@ use std::{
 };
 
 use backend_uzu::{
-    ActivationTrace, ArgmaxSampler, Array, ArrayElement, CacheLayers, Classifier, DataType, DecoderDecodeInput,
-    KVCacheLayer, LanguageModelGeneratorContext, LogitsSampler, ModelConfig, ModelMetadata, ModelType, ParameterLoader,
-    ParameterTree, Sampling, TokenInputs, allocation_to_vec,
+    _private::{
+        ActivationTrace, ArgmaxSampler, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
+        LanguageModelGeneratorContext, LogitsSampler, ModelConfig, ModelMetadata, ModelType, ParameterTree, Sampling,
+        TokenInputs,
+    },
+    Array, ArrayElement, DataType, ParameterLoader, allocation_to_vec,
     backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     read_safetensors_metadata,
     session::{

@@ -30,16 +30,18 @@ pub use parameters::{ParameterLoader, read_safetensors_metadata};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(feature = "tracing")]
-pub use crate::{
-    classifier::Classifier,
-    config::{ModelConfig, ModelMetadata, ModelType},
-    encodable_block::{DecoderDecodeInput, Sampling},
-    forward_pass::{
-        cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
-    },
-    language_model::{
-        language_model_generator_context::LanguageModelGeneratorContext,
-        sampler::{ArgmaxSampler, LogitsSampler},
-    },
-    parameters::ParameterTree,
-};
+pub mod _private {
+    pub use crate::{
+        classifier::Classifier,
+        config::{ModelConfig, ModelMetadata, ModelType},
+        encodable_block::{DecoderDecodeInput, Sampling},
+        forward_pass::{
+            cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
+        },
+        language_model::{
+            language_model_generator_context::LanguageModelGeneratorContext,
+            sampler::{ArgmaxSampler, LogitsSampler},
+        },
+        parameters::ParameterTree,
+    };
+}
