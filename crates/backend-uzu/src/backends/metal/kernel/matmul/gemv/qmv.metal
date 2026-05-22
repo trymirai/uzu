@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 #include "../../common/dsl.h"
 #include "../../generated/quantization_method.h"
-#include "../gemm/common/qmv_ops.h"
 #include "../gemm/common/quant_pack.h"
+#include "common/qmv_ops.h"
 
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
