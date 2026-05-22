@@ -20,8 +20,7 @@ template <
     short REDUCTION_DIMENSION,
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
-    short BITS,
-    bool PER_OUTPUT_LAYOUT = false>
+    short BITS>
 struct QuantizedBlockLoaderScaleZeroPoint {
   static_assert(
       THREADGROUP_TILE_COLS <= GROUP_SIZE,
@@ -62,9 +61,6 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   const device T* scales;
   const device T* scales_row_start;
   const device uint8_t* zero_points_row_start;
-  const int output_group_base;
-  const int output_groups_total;
-  const int zero_point_stride_total;
 
   QuantizedBlockLoaderScaleZeroPoint(
       const device uint8_t* src_,
@@ -74,10 +70,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       const int groups_per_row_,
       threadgroup T* dst_,
       ushort simd_group_id [[simdgroup_index_in_threadgroup]],
-      ushort simd_lane_id [[thread_index_in_simdgroup]],
-      const int output_group_base_ = 0,
-      const int output_groups_total_ = 0,
-      const int zero_point_stride_total_ = 0
+      ushort simd_lane_id [[thread_index_in_simdgroup]]
   )
       : src_leading_dim(src_leading_dim_), groups_per_row(groups_per_row_),
         tile_stride(
@@ -115,11 +108,6 @@ struct QuantizedBlockLoaderScaleZeroPoint {
                    tile_row_index * (BITS == 4 ? ((groups_per_row_ + 1) / 2)
                                                : groups_per_row_))
                 : zero_points_row_start_
-        ),
-        output_group_base(PER_OUTPUT_LAYOUT ? output_group_base_ : 0),
-        output_groups_total(PER_OUTPUT_LAYOUT ? output_groups_total_ : 0),
-        zero_point_stride_total(
-            PER_OUTPUT_LAYOUT ? zero_point_stride_total_ : 0
         ) {}
 
   inline void current_scale_bias(
@@ -128,40 +116,22 @@ struct QuantizedBlockLoaderScaleZeroPoint {
   ) const {
     uint zero_point_value;
     T scale_value;
-    if constexpr (PER_OUTPUT_LAYOUT) {
-      const int row_index = k_base + tile_row_index;
-      const int scale_index = row_index * groups_per_row + output_group_base;
-      scale_value = scales_row_start[scale_index];
-      if constexpr (BITS == 4) {
-        const int byte_index =
-            row_index * zero_point_stride_total + (output_group_base >> 1);
-        uint8_t zero_point_byte = zero_points_row_start[byte_index];
-        zero_point_value =
-            (uint(zero_point_byte) >> (uint(output_group_base & 1) * 4u)) &
-            0x0Fu;
-      } else {
-        const int zero_point_index =
-            row_index * zero_point_stride_total + output_group_base;
-        zero_point_value = zero_points_row_start[zero_point_index];
-      }
+    int group_index;
+    if constexpr (REDUCTION_DIMENSION == 0) {
+      group_index = k_base / GROUP_SIZE;
+      scale_value = scales_row_start[group_index];
     } else {
-      int group_index;
-      if constexpr (REDUCTION_DIMENSION == 0) {
-        group_index = k_base / GROUP_SIZE;
-        scale_value = scales_row_start[group_index];
-      } else {
-        group_index = static_cast<int>(scales - scales_row_start);
-        scale_value = *scales;
-      }
-      if constexpr (BITS == 4) {
-        const device uint8_t* zero_point_ptr =
-            zero_points_row_start + (group_index >> 1);
-        uint8_t zero_point_byte = *zero_point_ptr;
-        zero_point_value =
-            (uint(zero_point_byte) >> (uint(group_index & 1) * 4u)) & 0x0Fu;
-      } else {
-        zero_point_value = zero_points_row_start[group_index];
-      }
+      group_index = static_cast<int>(scales - scales_row_start);
+      scale_value = *scales;
+    }
+    if constexpr (BITS == 4) {
+      const device uint8_t* zero_point_ptr =
+          zero_points_row_start + (group_index >> 1);
+      uint8_t zero_point_byte = *zero_point_ptr;
+      zero_point_value =
+          (uint(zero_point_byte) >> (uint(group_index & 1) * 4u)) & 0x0Fu;
+    } else {
+      zero_point_value = zero_points_row_start[group_index];
     }
     out_scale = scale_value;
     out_bias = static_cast<T>(-scale_value * static_cast<T>(zero_point_value));
