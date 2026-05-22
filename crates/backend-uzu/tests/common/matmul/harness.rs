@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{Metal, MetalContext};
+use backend_uzu::backends::metal::{MatmulDispatchPath, Metal, MetalContext};
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -19,7 +19,7 @@ use num_traits::Float;
 
 use super::{
     super::helpers::{alloc_allocation_with_data, allocation_to_vec},
-    Shape, Variant,
+    Shape,
 };
 
 #[cfg(metal_backend)]
@@ -159,9 +159,8 @@ pub fn run_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     kernel: &mut MetalMatmulKernel,
     input: &Input<T>,
-    variant: Variant,
+    path: MatmulDispatchPath,
 ) -> Vec<T> {
-    let path = variant.dispatch_path();
     run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
         kernel.encode_with_path(args, encoder, path).expect("encode_with_path failed");
     })
