@@ -4,7 +4,13 @@ extern crate self as backend_uzu;
 
 mod array;
 mod audio;
+mod classifier;
+mod config;
 mod data_type;
+mod encodable_block;
+mod forward_pass;
+mod language_model;
+mod parameters;
 mod speculators;
 mod trie;
 mod utils;
@@ -23,25 +29,17 @@ pub use language_model::gumbel::{gumbel_float, revidx};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
-// The following modules are private in production builds, but exposed publicly
-// when the `tracing` feature is enabled so the trace-validation integration
-// test (`tests/integration/tracer/trace_validator.rs`) can reach internal types.
-macro_rules! tracing_visible_mod {
-    ($($name:ident),* $(,)?) => {
-        $(
-            #[cfg(feature = "tracing")]
-            pub mod $name;
-            #[cfg(not(feature = "tracing"))]
-            mod $name;
-        )*
-    };
-}
-
-tracing_visible_mod! {
-    classifier,
-    config,
-    encodable_block,
-    forward_pass,
-    language_model,
-    parameters,
-}
+#[cfg(feature = "tracing")]
+pub use crate::{
+    classifier::Classifier,
+    config::{ModelConfig, ModelMetadata, ModelType},
+    encodable_block::{DecoderDecodeInput, Sampling},
+    forward_pass::{
+        cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
+    },
+    language_model::{
+        language_model_generator_context::LanguageModelGeneratorContext,
+        sampler::{ArgmaxSampler, LogitsSampler},
+    },
+    parameters::ParameterTree,
+};

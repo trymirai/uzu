@@ -1,8 +1,8 @@
 use proc_macros::uzu_config;
 
-use super::{ClassifierModelConfig, LanguageModelConfig, ModelType};
 #[cfg(metal_backend)]
 use super::TtsModelConfig;
+use super::{ClassifierModelConfig, LanguageModelConfig, ModelType};
 use crate::{backends::common::gpu_types::QuantizationMode, utils::strict_serde::DeserializeStrictOwned};
 
 #[uzu_config]
