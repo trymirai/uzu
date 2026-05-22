@@ -80,6 +80,31 @@ fn scale_and_accumulate_bf16_gemm() {
     check_all_shapes::<bf16>(Variant::Gemm, 0.5, true, 1.0);
 }
 
+#[uzu_test]
+fn matches_cpu_reference_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 1.0, false, 1.0);
+}
+
+#[uzu_test]
+fn matches_cpu_reference_f16_gemm_mxu() {
+    check_all_shapes::<f16>(Variant::GemmMxu, 1.0, false, 0.5);
+}
+
+#[uzu_test]
+fn ab_scale_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 0.5, false, 1.0);
+}
+
+#[uzu_test]
+fn accumulate_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 1.0, true, 1.0);
+}
+
+#[uzu_test]
+fn scale_and_accumulate_bf16_gemm_mxu() {
+    check_all_shapes::<bf16>(Variant::GemmMxu, 0.5, true, 1.0);
+}
+
 fn check_b_transpose_false<T: ArrayElement + Float + Debug + Display>(
     variant: Variant,
     tolerance: f32,
