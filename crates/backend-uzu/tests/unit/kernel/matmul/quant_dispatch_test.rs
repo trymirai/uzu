@@ -17,6 +17,7 @@ use backend_uzu::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
+        cpu::Cpu,
         metal::{MatmulDispatchPath, Metal, MetalContext},
     },
 };
@@ -25,21 +26,14 @@ use num_traits::Float;
 use proc_macros::__internal_uzu_test as uzu_test;
 use rstest::rstest;
 
-use crate::common::{
-    helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
-    matmul::quant_oracle::quant_gemm_reference,
-};
+use crate::common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
 
 struct QuantInput<T: ArrayElement + Float> {
     w_packed: Vec<u32>,
-    weights_raw: Vec<u8>,
     scales: Vec<T>,
-    scales_f32: Vec<f32>,
     zero_points: Option<Vec<u8>>,
     biases: Option<Vec<T>>,
-    biases_f32: Option<Vec<f32>>,
     x: Vec<T>,
-    x_f32: Vec<f32>,
     k: u32,
     n: u32,
     m: u32,
@@ -118,13 +112,12 @@ fn make_input<T: ArrayElement + Float>(
     }
     let w_packed = pack_weights_u32(&weights_raw, bits);
 
-    let mut scales_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
-    for j in 0..n {
-        for g in 0..num_groups_k {
-            scales_f32.push(0.5 + 0.1 * ((j + g) % 5) as f32);
-        }
-    }
-    let scales: Vec<T> = scales_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+    let scales: Vec<T> = (0..n * num_groups_k)
+        .map(|i| {
+            let (j, g) = (i / num_groups_k, i % num_groups_k);
+            T::from(0.5 + 0.1 * ((j + g) % 5) as f32).unwrap()
+        })
+        .collect();
 
     let zp_stride = if bits == 4 { num_groups_k.div_ceil(2) } else { num_groups_k };
 
@@ -148,24 +141,19 @@ fn make_input<T: ArrayElement + Float>(
             (Some(zp_packed), None)
         },
         QuantizationMethod::ScaleBias => {
-            let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
-            for j in 0..n {
-                for g in 0..num_groups_k {
-                    biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
-                }
-            }
-            let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
-            (None, Some((biases, biases_f32)))
+            let biases: Vec<T> = (0..n * num_groups_k)
+                .map(|i| {
+                    let (j, g) = (i / num_groups_k, i % num_groups_k);
+                    T::from(0.01 * ((j + g * 2) % 7) as f32).unwrap()
+                })
+                .collect();
+            (None, Some(biases))
         },
     };
 
-    let mut x_f32: Vec<f32> = Vec::with_capacity(m * k);
-    for i in 0..m {
-        for l in 0..k {
-            x_f32.push(0.1 * f32::sin((i * k + l) as f32 * 0.05) + 0.5);
-        }
-    }
-    let x: Vec<T> = x_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+    let x: Vec<T> = (0..m * k)
+        .map(|i| T::from(0.1 * f32::sin(i as f32 * 0.05) + 0.5).unwrap())
+        .collect();
 
     let mode = match bits {
         4 => QuantizationMode::U4,
@@ -173,21 +161,12 @@ fn make_input<T: ArrayElement + Float>(
         _ => unreachable!(),
     };
 
-    let (biases, biases_f32) = match biases {
-        Some((b, b_f32)) => (Some(b), Some(b_f32)),
-        None => (None, None),
-    };
-
     QuantInput {
         w_packed,
-        weights_raw,
         scales,
-        scales_f32,
         zero_points,
         biases,
-        biases_f32,
         x,
-        x_f32,
         k: k as u32,
         n: n as u32,
         m: m as u32,
@@ -195,6 +174,57 @@ fn make_input<T: ArrayElement + Float>(
         quant_method,
         mode,
     }
+}
+
+fn run_with_cpu_backend<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
+    let context = <Cpu as Backend>::Context::new().expect("Cpu context");
+    let w_buf = alloc_allocation_with_data::<Cpu, u32>(&context, &input.w_packed);
+    let s_buf = alloc_allocation_with_data::<Cpu, T>(&context, &input.scales);
+    let zp_buf = input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<Cpu, u8>(&context, zp));
+    let bias_buf = input.biases.as_ref().map(|b| alloc_allocation_with_data::<Cpu, T>(&context, b));
+    let x_buf = alloc_allocation_with_data::<Cpu, T>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<Cpu, T>(&context, (input.m as usize) * (input.n as usize));
+
+    let b_variant: MatmulB<'_, Cpu> = match input.quant_method {
+        QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+            b: &w_buf,
+            scales: &s_buf,
+            zero_points: zp_buf.as_ref().expect("zp"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
+        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            b: &w_buf,
+            scales: &s_buf,
+            biases: bias_buf.as_ref().expect("bias"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
+    };
+
+    let mut matmul = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
+        .expect("MatmulCpuKernel");
+    let mut encoder = Encoder::<Cpu>::new(&context).expect("encoder");
+    matmul
+        .encode(
+            MatmulArguments {
+                a: &x_buf,
+                a_offset: 0,
+                b: b_variant,
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut y_buf,
+                d_transform: HashSet::new(),
+                m: input.m,
+                n: input.n,
+                k: input.k,
+            },
+            &mut encoder,
+        )
+        .expect("encode cpu quant");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<Cpu, T>(&y_buf)
 }
 
 fn run_with_path<T: ArrayElement + Float>(
@@ -294,21 +324,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
     let context = MetalContext::new().expect("Metal context");
     let input = make_input::<T>(m, k, n, group_size, bits, quant_method);
     let unified = run_with_path::<T>(&context, &input, MatmulDispatchPath::QuantGemm);
-
-    let reference_f32 = quant_gemm_reference(
-        m,
-        n,
-        k,
-        &input.x_f32,
-        &input.weights_raw,
-        &input.scales_f32,
-        input.biases_f32.as_deref(),
-        input.zero_points.as_deref(),
-        input.quant_method,
-        input.mode,
-        group_size as usize,
-    );
-    let reference: Vec<T> = reference_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+    let reference = run_with_cpu_backend::<T>(&input);
 
     assert_parity::<T>(
         &format!(
@@ -419,25 +435,13 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&y_buf);
 
-    let mut reference_f32 = quant_gemm_reference(
-        input.m as usize,
-        input.n as usize,
-        input.k as usize,
-        &input.x_f32,
-        &input.weights_raw,
-        &input.scales_f32,
-        input.biases_f32.as_deref(),
-        input.zero_points.as_deref(),
-        input.quant_method,
-        input.mode,
-        input.group_size as usize,
-    );
+    let mut reference = run_with_cpu_backend::<bf16>(&input);
     for i in 0..(input.m as usize) {
         for j in 0..(input.n as usize) {
-            reference_f32[i * input.n as usize + j] += bias_f32[j];
+            let idx = i * input.n as usize + j;
+            reference[idx] = bf16::from_f32(reference[idx].to_f32() + bias_f32[j]);
         }
     }
-    let reference: Vec<bf16> = reference_f32.iter().map(|&v| bf16::from_f32(v)).collect();
     assert_parity::<bf16>("with_bias", &reference, &actual, 0.1, 5.0);
 }
 
