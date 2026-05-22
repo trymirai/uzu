@@ -67,15 +67,24 @@ impl GemmKernel {
     }
 
     /// Unified entry point — encodes both FP and quantized GEMMs.
+    ///
+    /// `force_use_mxu` overrides the default MXU eligibility decision when set;
+    /// `None` lets the kernel pick based on device capability and operand type.
+    /// Quantized B always runs on the simdgroup path regardless of the override.
     pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         context: &MetalContext,
         arguments: MatmulArguments<'a, Metal, TB>,
+        force_use_mxu: Option<bool>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let use_mxu = context.device.supports_mxu()
+        let mxu_default = context.device.supports_mxu()
             && matches!(self.data_type, DataType::F16 | DataType::BF16)
             && matches!(arguments.b, MatmulB::FullPrecision { .. });
+        let use_mxu = match force_use_mxu {
+            Some(forced) => forced && matches!(arguments.b, MatmulB::FullPrecision { .. }),
+            None => mxu_default,
+        };
 
         // DSL: read scale/bias state directly from d_transform. The bitmask IS
         // the wire format; strip post-pass-only bits (RHT) since the kernel
