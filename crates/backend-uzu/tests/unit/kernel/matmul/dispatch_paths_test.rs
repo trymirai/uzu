@@ -42,10 +42,6 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
     tolerance: f32,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    if !variant.supported(&context) {
-        eprintln!("Skipping {variant:?}: device does not support MXU");
-        return;
-    }
     let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("MatmulKernel");
     for shape in all_correctness_shapes() {

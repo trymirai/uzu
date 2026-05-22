@@ -1,5 +1,5 @@
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{MatmulDispatchPath, MetalContext};
+use backend_uzu::backends::metal::MatmulDispatchPath;
 use derive_more::Display;
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
@@ -13,14 +13,6 @@ pub enum Variant {
 }
 
 impl Variant {
-    #[cfg(metal_backend)]
-    pub fn supported(
-        self,
-        _context: &MetalContext,
-    ) -> bool {
-        true
-    }
-
     #[cfg(metal_backend)]
     pub const fn dispatch_path(self) -> MatmulDispatchPath {
         match self {
