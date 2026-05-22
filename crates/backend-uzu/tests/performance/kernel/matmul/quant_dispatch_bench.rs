@@ -95,7 +95,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             b.iter_custom(|n_iters| {
                 let mut encoder = Encoder::<Metal>::new(context).unwrap();
                 for _ in 0..n_iters {
-                    let b_variant = match quant_method {
+                    let b_variant: MatmulB<'_, Metal> = match quant_method {
                         QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
                             b: &w_buf,
                             scales: &scales_buf,
