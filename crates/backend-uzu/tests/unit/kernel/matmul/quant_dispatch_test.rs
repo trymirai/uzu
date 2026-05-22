@@ -7,10 +7,10 @@ use backend_uzu::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArguments, MatmulB, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
         metal::{MatmulDispatchPath, Metal, MetalContext},
@@ -348,5 +348,54 @@ fn parity_f16_gs64_4bit_mlx() {
 #[uzu_test]
 fn parity_f16_gs128_8bit_zp() {
     run_parity::<half::f16>(32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint, 0.02, 0.5);
+}
+
+// Regression: encode returns Err on rejected D-transform instead of panicking.
+#[uzu_test]
+fn quant_gemm_accumulate_returns_unsupported_dop() {
+    let context = MetalContext::new().expect("Metal context");
+    let input = make_input::<bf16>(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias);
+
+    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, bf16::data_type())
+        .expect("MatmulMetalKernel");
+
+    let w_buf = alloc_allocation_with_data::<Metal, u32>(&context, &input.w_packed);
+    let s_buf = alloc_allocation_with_data::<Metal, bf16>(&context, &input.scales);
+    let bias_buf = alloc_allocation_with_data::<Metal, bf16>(&context, input.biases.as_ref().expect("bias"));
+    let x_buf = alloc_allocation_with_data::<Metal, bf16>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<Metal, bf16>(&context, (input.m as usize) * (input.n as usize));
+
+    let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+    let result = matmul.encode_with_path::<backend_uzu::backends::common::Allocation<Metal>>(
+        MatmulArguments {
+            a: &x_buf,
+            a_offset: 0,
+            b: MatmulB::ScaleBiasDequant {
+                b: &w_buf,
+                scales: &s_buf,
+                biases: &bias_buf,
+                mode: input.mode,
+                group_size: input.group_size,
+            },
+            b_offset: 0,
+            b_leading_dimension: None,
+            b_transpose: true,
+            d: &mut y_buf,
+            d_transform: HashSet::from([MatmulDOp::Accumulate]),
+            m: input.m,
+            n: input.n,
+            k: input.k,
+        },
+        &mut encoder,
+        MatmulDispatchPath::QuantGemm,
+    );
+
+    match result {
+        Err(MatmulError::UnsupportedDOp {
+            bit: GemmDTransform::ACCUMULATE,
+            ..
+        }) => {},
+        other => panic!("expected UnsupportedDOp(ACCUMULATE), got {other:?}"),
+    }
 }
 
