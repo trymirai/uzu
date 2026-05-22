@@ -23,6 +23,7 @@ use backend_uzu::{
 use half::bf16;
 use num_traits::Float;
 use proc_macros::__internal_uzu_test as uzu_test;
+use rstest::rstest;
 
 use crate::common::{
     helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
@@ -322,69 +323,51 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
     );
 }
 
-// --- bf16 wide and small shapes — exercises (BM,BK,BN) ∈ {(32,32,32),(64,32,64),(64,64,32)} ---
-
-#[uzu_test]
-fn parity_bf16_gs32_4bit_mlx_prefill() {
-    run_parity::<bf16>(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0.05, 0.5);
-}
-
-#[uzu_test]
-fn parity_bf16_gs64_4bit_mlx_prefill() {
-    run_parity::<bf16>(64, 256, 64, 64, 4, QuantizationMethod::ScaleBias, 0.05, 0.5);
-}
-
-#[uzu_test]
-fn parity_bf16_gs128_4bit_mlx_prefill() {
-    run_parity::<bf16>(64, 256, 64, 128, 4, QuantizationMethod::ScaleBias, 0.05, 0.5);
-}
-
-#[uzu_test]
-fn parity_bf16_gs32_8bit_mlx_prefill() {
-    run_parity::<bf16>(64, 256, 64, 32, 8, QuantizationMethod::ScaleBias, 0.05, 0.5);
-}
-
-// bf16 ZP cases use a wider tolerance: the new unified gemm kernel does the
+// --- bf16: parity vs CPU oracle across (group_size, bits, method, shape) ---
+// bf16 ZP cases use wider tolerance: the unified gemm kernel does the
 // (scale * w + bias) multiply-add in T precision per element, so the per-group
 // accumulator drifts further from the f32 oracle than the legacy qmm kernel did.
 // Deltas observed up to ~2.7 on inputs of magnitude ~30.
-#[uzu_test]
-fn parity_bf16_gs64_8bit_zp_prefill() {
-    run_parity::<bf16>(64, 256, 64, 64, 8, QuantizationMethod::ScaleZeroPoint, 0.1, 5.0);
+#[rstest]
+//                       (   m,    k,   n,   gs, bits, method,                                rel,  abs)
+#[case::gs32_4bit_mlx_prefill ( 64, 256,  64,  32, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
+#[case::gs64_4bit_mlx_prefill ( 64, 256,  64,  64, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
+#[case::gs128_4bit_mlx_prefill( 64, 256,  64, 128, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
+#[case::gs32_8bit_mlx_prefill ( 64, 256,  64,  32, 8, QuantizationMethod::ScaleBias,        0.05, 0.5)]
+#[case::gs64_8bit_zp_prefill  ( 64, 256,  64,  64, 8, QuantizationMethod::ScaleZeroPoint,   0.1,  5.0)]
+#[case::gs128_8bit_zp_prefill ( 64, 256,  64, 128, 8, QuantizationMethod::ScaleZeroPoint,   0.1,  5.0)]
+#[case::gs32_4bit_mlx_decode  (  8, 256,  64,  32, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
+#[case::gs64_4bit_zp_decode   (  8, 256,  64,  64, 4, QuantizationMethod::ScaleZeroPoint,   0.1,  5.0)]
+#[case::gs32_unaligned_n      ( 64, 256,  96,  32, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
+fn parity_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] gs: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+    #[case] rel: f64,
+    #[case] abs: f64,
+) {
+    run_parity::<bf16>(m, k, n, gs, bits, method, rel, abs);
 }
 
-#[uzu_test]
-fn parity_bf16_gs128_8bit_zp_prefill() {
-    run_parity::<bf16>(64, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint, 0.1, 5.0);
-}
-
-#[uzu_test]
-fn parity_bf16_gs32_4bit_mlx_decode() {
-    // batch < 32 → 32x32 tile.
-    run_parity::<bf16>(8, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0.05, 0.5);
-}
-
-#[uzu_test]
-fn parity_bf16_gs64_4bit_zp_decode() {
-    run_parity::<bf16>(8, 256, 64, 64, 4, QuantizationMethod::ScaleZeroPoint, 0.1, 5.0);
-}
-
-#[uzu_test]
-fn parity_bf16_gs32_unaligned_n() {
-    // n=96 → n % 64 != 0 — falls back to (32, 32, 32) tile.
-    run_parity::<bf16>(64, 256, 96, 32, 4, QuantizationMethod::ScaleBias, 0.05, 0.5);
-}
-
-// --- f16 — exercises (32,32,32) tile only ---
-
-#[uzu_test]
-fn parity_f16_gs64_4bit_mlx() {
-    run_parity::<half::f16>(32, 256, 64, 64, 4, QuantizationMethod::ScaleBias, 0.02, 0.5);
-}
-
-#[uzu_test]
-fn parity_f16_gs128_8bit_zp() {
-    run_parity::<half::f16>(32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint, 0.02, 0.5);
+// --- f16: exercises (32,32,32) tile only ---
+#[rstest]
+//                  (  m,    k,   n,   gs, bits, method,                              rel,  abs)
+#[case::gs64_4bit_mlx ( 32, 256,  64,  64, 4, QuantizationMethod::ScaleBias,        0.02, 0.5)]
+#[case::gs128_8bit_zp ( 32, 256,  64, 128, 8, QuantizationMethod::ScaleZeroPoint,   0.02, 0.5)]
+fn parity_f16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] gs: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+    #[case] rel: f64,
+    #[case] abs: f64,
+) {
+    run_parity::<half::f16>(m, k, n, gs, bits, method, rel, abs);
 }
 
 // Bias post-pass for quant_gemm: a MatmulDOp::Bias is applied as a separate
