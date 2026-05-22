@@ -6,7 +6,7 @@ use crate::{
     DataType,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        gpu_types::QuantizationMode,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
@@ -29,7 +29,6 @@ pub enum EmbeddingError<B: Backend> {
 }
 
 struct ReadoutQuantConfig {
-    method: QuantizationMethod,
     mode: QuantizationMode,
     group_size: u32,
 }
@@ -259,7 +258,6 @@ impl<B: Backend> Embedding<B> {
                 )
                 .map_err(EmbeddingError::BackendError)?;
                 let readout_config = ReadoutQuantConfig {
-                    method: QuantizationMethod::ScaleBias,
                     mode: *embedding_quantization_mode,
                     group_size: *group_size as u32,
                 };
@@ -330,7 +328,6 @@ impl<B: Backend> Embedding<B> {
                 )
                 .map_err(EmbeddingError::BackendError)?;
                 let readout_config = ReadoutQuantConfig {
-                    method: QuantizationMethod::ScaleBias,
                     mode: *embedding_quantization_mode,
                     group_size: *group_size as u32,
                 };
@@ -394,7 +391,6 @@ impl<B: Backend> Embedding<B> {
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
                 let readout_config = ReadoutQuantConfig {
-                    method: QuantizationMethod::ScaleBias,
                     mode: *embedding_quantization_mode,
                     group_size: *group_size as u32,
                 };
@@ -596,21 +592,12 @@ impl<B: Backend> Embedding<B> {
                         readout_config,
                     },
             } => {
-                let b_variant: MatmulB<'_, B> = match readout_config.method {
-                    QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
-                        b: weights,
-                        scales,
-                        biases,
-                        mode: readout_config.mode,
-                        group_size: readout_config.group_size,
-                    },
-                    QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
-                        b: weights,
-                        scales,
-                        zero_points: biases,
-                        mode: readout_config.mode,
-                        group_size: readout_config.group_size,
-                    },
+                let b_variant: MatmulB<'_, B> = MatmulB::ScaleBiasDequant {
+                    b: weights,
+                    scales,
+                    biases,
+                    mode: readout_config.mode,
+                    group_size: readout_config.group_size,
                 };
                 readout
                     .borrow_mut()
