@@ -1,4 +1,5 @@
 pub mod harness;
+pub mod quant_oracle;
 pub mod shape;
 pub mod variant;
 
