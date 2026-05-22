@@ -91,10 +91,10 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 }
 
 // --- bf16: parity vs CPU backend across (group_size, bits, method, shape) ---
-// bf16 tolerance is wide because the unified gemm kernel does the
-// (scale * w + bias) multiply-add in T precision per element. With random
-// inputs of magnitude ~30, the per-group accumulator drifts ~3 ULP from the
-// f32 reference — sqrt(256) * |product| * bf16_eps.
+// Test inputs are deliberately small-magnitude (see QuantInput::new) so that
+// the bf16 multiply-add drift accumulates to ~0.3 absolute. This lets us hold
+// a tight (rel=0.05, abs=0.4) tolerance — a bug that scales results by >5%
+// or shifts them by >0.4 won't slip through.
 #[rstest]
 //                            (   m,    k,   n,   gs, bits, method)
 #[case::gs32_4bit_mlx_prefill ( 64, 256,  64,  32, 4, QuantizationMethod::ScaleBias)]
@@ -114,7 +114,7 @@ fn parity_bf16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity::<bf16>(m, k, n, gs, bits, method, 0.1, 5.0);
+    run_parity::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
 }
 
 // --- f16: exercises (32,32,32) tile only ---
@@ -129,7 +129,7 @@ fn parity_f16(
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
 ) {
-    run_parity::<half::f16>(m, k, n, gs, bits, method, 0.02, 0.5);
+    run_parity::<half::f16>(m, k, n, gs, bits, method, 0.01, 0.05);
 }
 
 // Bias post-pass for quant_gemm: a MatmulDOp::Bias is applied as a separate
@@ -166,7 +166,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
             reference[idx] = bf16::from_f32(reference[idx].to_f32() + bias_f32[j]);
         }
     }
-    assert_parity::<bf16>("with_bias", &reference, &actual, 0.1, 5.0);
+    assert_parity::<bf16>("with_bias", &reference, &actual, 0.05, 0.4);
 }
 
 // Regression: quant dispatch rejects nonzero b_offset rather than silently dropping it.
