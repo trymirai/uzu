@@ -8,7 +8,7 @@ use backend_uzu::{
     session::{
         ChatSession,
         config::{DecodingConfig, RunConfig},
-        parameter::{ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy},
+        parameter::{PrefillStepSize, SamplingMethod, SamplingPolicy},
         types::{Input, Output},
     },
 };
@@ -38,20 +38,6 @@ impl Runner {
         }
     }
 
-    fn minimal_context_length(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let input = Input::Messages(self.task.messages.clone());
-        let mut session = ChatSession::new(PathBuf::from(self.model_path.clone()), DecodingConfig::default())?;
-        let run_config = RunConfig::default().tokens_limit(1);
-        let output = session.run(
-            input.clone(),
-            run_config,
-            Some(|_: Output| {
-                return true;
-            }),
-        )?;
-        return Ok(output.stats.total_stats.tokens_count_input as usize + self.task.tokens_limit as usize);
-    }
-
     pub fn run<F>(
         &self,
         mut progress: Option<F>,
@@ -59,9 +45,7 @@ impl Runner {
     where
         F: FnMut(f64),
     {
-        let context_length = self.minimal_context_length()?;
-
-        let mut decoding_config = DecodingConfig::default().with_context_length(ContextLength::Custom(context_length));
+        let mut decoding_config = DecodingConfig::default();
         if let Some(prefill_step_size) = self.prefill_step_size {
             decoding_config = decoding_config.with_prefill_step_size(PrefillStepSize::Custom(prefill_step_size));
         }

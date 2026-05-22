@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    cmp::min,
     fs::File,
     path::Path,
     rc::Rc,
@@ -12,11 +13,12 @@ use crate::{
         Backend, Context, Kernels,
         kernel::{TokenCopySampledKernel, kv_cache_update::KVCacheUpdate},
     },
-    config::{LanguageModelConfig, ModelMetadata},
+    config::{DecoderConfig, LanguageModelConfig, ModelMetadata},
     encodable_block::{Decoder, Sampling},
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     language_model::rng::PRng,
     parameters::ParameterLoader,
+    prelude::ContextLength,
     session::{
         config::DecodingConfig,
         parameter::{ConfigResolvableValue, ResolvableValue},
@@ -124,7 +126,8 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
 
         let prefill_step_size = decoding_config.prefill_step_size.resolve(&model_metadata.model_config);
         let generate_suffix_length = decoding_config.generate_suffix_length();
-        let max_prefix_length: usize = decoding_config.context_length.resolve(&model_metadata.model_config);
+        let max_prefix_length: usize =
+            Self::get_context_length_internal(&context, &model_metadata.model_config.model_config, decoding_config);
         let max_suffix_length: usize = std::cmp::max(prefill_step_size, generate_suffix_length);
 
         let weights_path = model_path.join("model.safetensors");
@@ -166,7 +169,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
 
         let seed = PRng::new(decoding_config.sampling_seed.resolve());
 
-        let context = Self {
+        Ok(Self {
             context,
             cache_layers,
             shared_buffers,
@@ -178,8 +181,35 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             seed,
             token_copy_sampled,
             async_buffers,
-        };
+        })
+    }
 
-        Ok(context)
+    pub fn get_context_length(
+        &self,
+        decoding_config: &DecodingConfig,
+    ) -> usize {
+        Self::get_context_length_internal(&self.context, &self.model_config.model_config, decoding_config)
+    }
+
+    fn get_context_length_internal(
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
+        decoding_config: &DecodingConfig,
+    ) -> usize {
+        let model_length = decoder_config.transformer_config.context_length;
+        let proposed_value = match decoding_config.context_length {
+            ContextLength::Default => {
+                if context.sparse_buffers_supported() {
+                    model_length
+                } else if cfg!(target_os = "ios") {
+                    8192
+                } else {
+                    16384
+                }
+            },
+            ContextLength::Maximal => model_length,
+            ContextLength::Custom(value) => value,
+        };
+        min(proposed_value, model_length)
     }
 }

@@ -124,6 +124,8 @@ pub trait LanguageModelGeneratorTrait {
         &mut self,
         context: &dyn Any,
     );
+
+    fn get_context_length(&self) -> usize;
 }
 
 impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
@@ -646,6 +648,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.cache_layers.borrow_mut().copy_from(&ctx.cache_layers, self.context.context.as_ref());
         self.tokens = ctx.tokens.clone();
         self.registered_prefix_len = self.tokens.len().saturating_sub(1);
+    }
+
+    fn get_context_length(&self) -> usize {
+        self.context.get_context_length(&self.decoding_config)
     }
 }
 
