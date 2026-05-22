@@ -13,12 +13,11 @@ use backend_uzu::{
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::{bf16, f16};
-use itertools::iproduct;
 use num_traits::Float;
 
 use crate::{
     common::{
-        matmul::{QuantBuffers, QuantInput, quant_arguments},
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, quant_arguments},
         type_short_name,
     },
     uzu_bench,
@@ -32,13 +31,8 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    let block_size: usize = if bits == 4 { 512 } else { 256 };
-
-    for (m, n, k) in iproduct!([4usize, 5, 6, 7, 8, 16, 32, 48, 64], [2048usize, 4096, 14336], [2048usize, 4096, 14336]) {
-        if n % 32 != 0 || k % block_size != 0 {
-            continue;
-        }
-
+    for shape in bench_quant_gemm_shapes(bits) {
+        let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
         let mut buffers = QuantBuffers::<Metal, T>::allocate(context, &input);
         let mut matmul =
@@ -47,7 +41,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
         let mut group =
             c.benchmark_group(format!("{}/Kernel/UnifiedQuantizedGemm/{}", type_short_name::<Metal>(), label));
         group.throughput(Throughput::Elements((m * n * k) as u64));
-        group.bench_function(BenchmarkId::from_parameter(format!("M[{m}]N[{n}]K[{k}]")), |b| {
+        group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
             b.iter_custom(|n_iters| {
                 let mut encoder = Encoder::<Metal>::new(context).unwrap();
                 for _ in 0..n_iters {
