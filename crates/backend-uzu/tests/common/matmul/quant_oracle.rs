@@ -1,4 +1,7 @@
-use backend_uzu::backends::common::gpu_types::{QuantizationMethod, QuantizationMode};
+use backend_uzu::{
+    DataType,
+    backends::common::gpu_types::{QuantizationMethod, QuantizationMode},
+};
 
 /// Read a 4-bit weight from a u32-packed buffer (LSB-first, 8 weights per u32).
 fn unpack_u4(
@@ -50,6 +53,7 @@ pub fn quant_gemm_reference(
     quant_method: QuantizationMethod,
     mode: QuantizationMode,
     group_size: usize,
+    dtype: DataType,
 ) -> Vec<f32> {
     let bits: u32 = match mode {
         QuantizationMode::U4 => 4,
@@ -66,26 +70,29 @@ pub fn quant_gemm_reference(
                 let scale = scales[j * num_groups_k + g];
                 let l_start = g * group_size;
                 let l_end = (l_start + group_size).min(k);
+                let _ = dtype; // dtype kept on signature for future precision-faithful mode
+                let bias = match quant_method {
+                    QuantizationMethod::ScaleBias => biases.expect("ScaleBias requires biases")[j * num_groups_k + g],
+                    QuantizationMethod::ScaleZeroPoint => {
+                        let zp_packed = zero_points_packed.expect("ScaleZeroPoint requires zero_points");
+                        let zp = if bits == 4 {
+                            unpack_zp_u4(zp_packed, zp_stride, j, g) as f32
+                        } else {
+                            zp_packed[j * zp_stride + g] as f32
+                        };
+                        -scale * zp
+                    },
+                };
+                let mut group_acc = 0.0f32;
+                let mut group_sum = 0.0f32;
                 for l in l_start..l_end {
                     let w_idx = j * k + l;
                     let w = weights_raw[w_idx] as f32;
-                    let dq = match quant_method {
-                        QuantizationMethod::ScaleBias => {
-                            let bias = biases.expect("ScaleBias requires biases")[j * num_groups_k + g];
-                            scale * w + bias
-                        },
-                        QuantizationMethod::ScaleZeroPoint => {
-                            let zp_packed = zero_points_packed.expect("ScaleZeroPoint requires zero_points");
-                            let zp = if bits == 4 {
-                                unpack_zp_u4(zp_packed, zp_stride, j, g) as f32
-                            } else {
-                                zp_packed[j * zp_stride + g] as f32
-                            };
-                            scale * (w - zp)
-                        },
-                    };
-                    acc += a[i * k + l] * dq;
+                    let a_val = a[i * k + l];
+                    group_acc += a_val * w;
+                    group_sum += a_val;
                 }
+                acc += scale * group_acc + bias * group_sum;
             }
             out[i * n + j] = acc;
         }
@@ -108,6 +115,7 @@ pub fn quant_gemm_reference_packed(
     quant_method: QuantizationMethod,
     mode: QuantizationMode,
     group_size: usize,
+    dtype: DataType,
 ) -> Vec<f32> {
     let bits: u32 = match mode {
         QuantizationMode::U4 => 4,
@@ -117,5 +125,18 @@ pub fn quant_gemm_reference_packed(
     for w_idx in 0..(n * k) {
         weights_raw[w_idx] = if bits == 4 { unpack_u4(w_packed, w_idx) } else { unpack_u8(w_packed, w_idx) };
     }
-    quant_gemm_reference(m, n, k, a, &weights_raw, scales, biases, zero_points_packed, quant_method, mode, group_size)
+    quant_gemm_reference(
+        m,
+        n,
+        k,
+        a,
+        &weights_raw,
+        scales,
+        biases,
+        zero_points_packed,
+        quant_method,
+        mode,
+        group_size,
+        dtype,
+    )
 }
