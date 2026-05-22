@@ -117,9 +117,6 @@ KERNEL(Gemm)(
         thread_context
     );
   } else {
-    (void)scales;
-    (void)biases;
-    (void)zero_points;
     SimdgroupMmaCore<
         T,
         GEMM_TILING,
