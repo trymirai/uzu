@@ -3,7 +3,7 @@
 use std::{collections::HashSet, fmt::{Debug, Display}};
 
 use backend_uzu::{
-    ArrayElement, DataType,
+    ArrayElement,
     backends::{
         common::{
             Backend, Context, Encoder,
@@ -381,6 +381,79 @@ fn parity_f16_gs64_4bit_mlx() {
 #[uzu_test]
 fn parity_f16_gs128_8bit_zp() {
     run_parity::<half::f16>(32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint, 0.02, 0.5);
+}
+
+// Bias post-pass for quant_gemm: a MatmulDOp::Bias is applied as a separate
+// bias-add kernel after the matmul core. Oracle adds the same broadcast bias.
+#[uzu_test]
+fn parity_bf16_gs32_4bit_mlx_with_bias() {
+    let context = MetalContext::new().expect("Metal context");
+    let input = make_input::<bf16>(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias);
+
+    let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.5 + 0.1 * (j % 5) as f32).collect();
+    let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
+
+    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, bf16::data_type())
+        .expect("MatmulMetalKernel");
+    let w_buf = alloc_allocation_with_data::<Metal, u32>(&context, &input.w_packed);
+    let s_buf = alloc_allocation_with_data::<Metal, bf16>(&context, &input.scales);
+    let bias_buf = alloc_allocation_with_data::<Metal, bf16>(&context, input.biases.as_ref().expect("bias"));
+    let bias_pp_buf = alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let x_buf = alloc_allocation_with_data::<Metal, bf16>(&context, &input.x);
+    let mut y_buf = alloc_allocation::<Metal, bf16>(&context, (input.m as usize) * (input.n as usize));
+
+    let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+    matmul
+        .encode_with_path::<backend_uzu::backends::common::Allocation<Metal>>(
+            MatmulArguments {
+                a: &x_buf,
+                a_offset: 0,
+                b: MatmulB::ScaleBiasDequant {
+                    b: &w_buf,
+                    scales: &s_buf,
+                    biases: &bias_buf,
+                    mode: input.mode,
+                    group_size: input.group_size,
+                },
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut y_buf,
+                d_transform: HashSet::from([MatmulDOp::Bias {
+                    bias: &bias_pp_buf,
+                }]),
+                m: input.m,
+                n: input.n,
+                k: input.k,
+            },
+            &mut encoder,
+            MatmulDispatchPath::QuantGemm,
+        )
+        .expect("encode quant with bias");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let actual = allocation_to_vec::<Metal, bf16>(&y_buf);
+
+    let mut reference_f32 = quant_gemm_reference(
+        input.m as usize,
+        input.n as usize,
+        input.k as usize,
+        &input.x_f32,
+        &input.weights_raw,
+        &input.scales_f32,
+        input.biases_f32.as_deref(),
+        input.zero_points.as_deref(),
+        input.quant_method,
+        input.mode,
+        input.group_size as usize,
+        bf16::data_type(),
+    );
+    for i in 0..(input.m as usize) {
+        for j in 0..(input.n as usize) {
+            reference_f32[i * input.n as usize + j] += bias_f32[j];
+        }
+    }
+    let reference: Vec<bf16> = reference_f32.iter().map(|&v| bf16::from_f32(v)).collect();
+    assert_parity::<bf16>("with_bias", &reference, &actual, 0.1, 5.0);
 }
 
 // Regression: quant dispatch rejects nonzero b_offset rather than silently dropping it.
