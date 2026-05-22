@@ -41,7 +41,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             continue;
         }
 
-        let input = QuantInput::<T>::random(m, k, n, group_size, bits, quant_method, 42);
+        let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
         let mut buffers = QuantBuffers::<Metal, T>::allocate(context, &input);
         let mut matmul =
             <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type()).unwrap();

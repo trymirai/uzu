@@ -74,7 +74,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
     abs_tol: f64,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<T>::deterministic(m, k, n, group_size, bits, quant_method);
+    let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
     let unified = run_quant_metal::<T>(&context, &input, MatmulDispatchPath::QuantGemm);
     let reference = run_quant_cpu::<T>(&input);
 
@@ -91,21 +91,21 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 }
 
 // --- bf16: parity vs CPU backend across (group_size, bits, method, shape) ---
-// bf16 ZP cases use wider tolerance: the unified gemm kernel does the
-// (scale * w + bias) multiply-add in T precision per element, so the per-group
-// accumulator drifts further from the f32 reference than the legacy qmm kernel.
-// Deltas observed up to ~2.7 on inputs of magnitude ~30.
+// bf16 tolerance is wide because the unified gemm kernel does the
+// (scale * w + bias) multiply-add in T precision per element. With random
+// inputs of magnitude ~30, the per-group accumulator drifts ~3 ULP from the
+// f32 reference — sqrt(256) * |product| * bf16_eps.
 #[rstest]
-//                            (   m,    k,   n,   gs, bits, method,                                rel,  abs)
-#[case::gs32_4bit_mlx_prefill ( 64, 256,  64,  32, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
-#[case::gs64_4bit_mlx_prefill ( 64, 256,  64,  64, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
-#[case::gs128_4bit_mlx_prefill( 64, 256,  64, 128, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
-#[case::gs32_8bit_mlx_prefill ( 64, 256,  64,  32, 8, QuantizationMethod::ScaleBias,        0.05, 0.5)]
-#[case::gs64_8bit_zp_prefill  ( 64, 256,  64,  64, 8, QuantizationMethod::ScaleZeroPoint,   0.1,  5.0)]
-#[case::gs128_8bit_zp_prefill ( 64, 256,  64, 128, 8, QuantizationMethod::ScaleZeroPoint,   0.1,  5.0)]
-#[case::gs32_4bit_mlx_decode  (  8, 256,  64,  32, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
-#[case::gs64_4bit_zp_decode   (  8, 256,  64,  64, 4, QuantizationMethod::ScaleZeroPoint,   0.1,  5.0)]
-#[case::gs32_unaligned_n      ( 64, 256,  96,  32, 4, QuantizationMethod::ScaleBias,        0.05, 0.5)]
+//                            (   m,    k,   n,   gs, bits, method)
+#[case::gs32_4bit_mlx_prefill ( 64, 256,  64,  32, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_mlx_prefill ( 64, 256,  64,  64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs128_4bit_mlx_prefill( 64, 256,  64, 128, 4, QuantizationMethod::ScaleBias)]
+#[case::gs32_8bit_mlx_prefill ( 64, 256,  64,  32, 8, QuantizationMethod::ScaleBias)]
+#[case::gs64_8bit_zp_prefill  ( 64, 256,  64,  64, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs128_8bit_zp_prefill ( 64, 256,  64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs32_4bit_mlx_decode  (  8, 256,  64,  32, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_zp_decode   (  8, 256,  64,  64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs32_unaligned_n      ( 64, 256,  96,  32, 4, QuantizationMethod::ScaleBias)]
 fn parity_bf16(
     #[case] m: usize,
     #[case] k: usize,
@@ -113,16 +113,14 @@ fn parity_bf16(
     #[case] gs: u32,
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
-    #[case] rel: f64,
-    #[case] abs: f64,
 ) {
-    run_parity::<bf16>(m, k, n, gs, bits, method, rel, abs);
+    run_parity::<bf16>(m, k, n, gs, bits, method, 0.1, 5.0);
 }
 
 // --- f16: exercises (32,32,32) tile only ---
 #[rstest]
-#[case::gs64_4bit_mlx (32, 256, 64,  64, 4, QuantizationMethod::ScaleBias,      0.02, 0.5)]
-#[case::gs128_8bit_zp (32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint, 0.02, 0.5)]
+#[case::gs64_4bit_mlx (32, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs128_8bit_zp (32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
 fn parity_f16(
     #[case] m: usize,
     #[case] k: usize,
@@ -130,10 +128,8 @@ fn parity_f16(
     #[case] gs: u32,
     #[case] bits: u32,
     #[case] method: QuantizationMethod,
-    #[case] rel: f64,
-    #[case] abs: f64,
 ) {
-    run_parity::<half::f16>(m, k, n, gs, bits, method, rel, abs);
+    run_parity::<half::f16>(m, k, n, gs, bits, method, 0.02, 0.5);
 }
 
 // Bias post-pass for quant_gemm: a MatmulDOp::Bias is applied as a separate
@@ -141,7 +137,7 @@ fn parity_f16(
 #[uzu_test]
 fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::deterministic(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias);
+    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
 
     let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.5 + 0.1 * (j % 5) as f32).collect();
     let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
@@ -177,7 +173,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
 #[uzu_test]
 fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::deterministic(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias);
+    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, bf16::data_type())
         .expect("MatmulMetalKernel");
@@ -202,7 +198,7 @@ fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
 #[uzu_test]
 fn quant_gemm_accumulate_returns_unsupported_dop() {
     let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::deterministic(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias);
+    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, bf16::data_type())
         .expect("MatmulMetalKernel");

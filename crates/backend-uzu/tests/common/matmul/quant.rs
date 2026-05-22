@@ -1,10 +1,9 @@
 //! Shared scaffolding for quantized matmul tests and benches.
 //!
-//! Provides `QuantInput<T>` (deterministic or random data), `QuantBuffers<B,T>`
-//! (per-backend allocations), and `quant_arguments` (the `MatmulArguments`
-//! builder). Tests use `run_quant_cpu` + `run_quant_metal` for one-shot encodes;
-//! benches use `QuantBuffers::allocate` + `quant_arguments` in a custom-iter
-//! loop.
+//! Provides `QuantInput<T>` (seeded random data), `QuantBuffers<B,T>` (per-backend
+//! allocations), and `quant_arguments` (the `MatmulArguments` builder). Tests use
+//! `run_quant_cpu` + `run_quant_metal` for one-shot encodes; benches use
+//! `QuantBuffers::allocate` + `quant_arguments` in a custom-iter loop.
 
 use std::collections::HashSet;
 
@@ -43,42 +42,6 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub mode: QuantizationMode,
 }
 
-fn pack_weights_u32(
-    values: &[u8],
-    bits: u32,
-) -> Vec<u32> {
-    let pack_factor = if bits == 4 { 8 } else { 4 };
-    values
-        .chunks(pack_factor)
-        .map(|chunk| {
-            let mut word = 0u32;
-            for (i, &v) in chunk.iter().enumerate() {
-                let masked = if bits == 4 { (v & 0xF) as u32 } else { v as u32 };
-                word |= masked << (i * (32 / pack_factor));
-            }
-            word
-        })
-        .collect()
-}
-
-fn pack_zero_points(
-    values: &[u8],
-    bits: u32,
-) -> Vec<u8> {
-    if bits == 4 {
-        values
-            .chunks(2)
-            .map(|chunk| {
-                let lo = chunk[0] & 0x0F;
-                let hi = if chunk.len() > 1 { chunk[1] & 0x0F } else { 0 };
-                lo | (hi << 4)
-            })
-            .collect()
-    } else {
-        values.to_vec()
-    }
-}
-
 fn mode_for_bits(bits: u32) -> QuantizationMode {
     match bits {
         4 => QuantizationMode::U4,
@@ -87,90 +50,11 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
     }
 }
 
-fn build_zp_packed(
-    zp_raw: &[u8],
-    n: usize,
-    num_groups_k: usize,
-    zp_stride: usize,
-    bits: u32,
-) -> Vec<u8> {
-    let mut zp_packed: Vec<u8> = Vec::with_capacity(n * zp_stride);
-    for j in 0..n {
-        let row = &zp_raw[j * num_groups_k..(j + 1) * num_groups_k];
-        let mut packed_row = pack_zero_points(row, bits);
-        packed_row.resize(zp_stride, 0);
-        zp_packed.extend_from_slice(&packed_row);
-    }
-    zp_packed
-}
-
 impl<T: ArrayElement + Float> QuantInput<T> {
-    /// Deterministic, reproducible input — small integer-friendly values for
-    /// parity testing.
-    pub fn deterministic(
-        m: usize,
-        k: usize,
-        n: usize,
-        group_size: u32,
-        bits: u32,
-        quant_method: QuantizationMethod,
-    ) -> Self {
-        let num_groups_k = k.div_ceil(group_size as usize);
-        let max_val: u8 = if bits == 4 { 15 } else { 255 };
-
-        let weights_raw: Vec<u8> =
-            (0..n * k).map(|i| ((i.wrapping_mul(7).wrapping_add(1)) % (max_val as usize + 1)) as u8).collect();
-        let w_packed = pack_weights_u32(&weights_raw, bits);
-
-        let scales: Vec<T> = (0..n * num_groups_k)
-            .map(|i| {
-                let (j, g) = (i / num_groups_k, i % num_groups_k);
-                T::from(0.5 + 0.1 * ((j + g) % 5) as f32).unwrap()
-            })
-            .collect();
-
-        let zp_stride = if bits == 4 { num_groups_k.div_ceil(2) } else { num_groups_k };
-
-        let (zero_points, biases) = match quant_method {
-            QuantizationMethod::ScaleZeroPoint => {
-                let zp_raw: Vec<u8> = (0..n * num_groups_k)
-                    .map(|i| {
-                        let (j, g) = (i / num_groups_k, i % num_groups_k);
-                        ((j * 2 + g * 3) % (max_val as usize + 1)) as u8
-                    })
-                    .collect();
-                (Some(build_zp_packed(&zp_raw, n, num_groups_k, zp_stride, bits)), None)
-            },
-            QuantizationMethod::ScaleBias => {
-                let biases: Vec<T> = (0..n * num_groups_k)
-                    .map(|i| {
-                        let (j, g) = (i / num_groups_k, i % num_groups_k);
-                        T::from(0.01 * ((j + g * 2) % 7) as f32).unwrap()
-                    })
-                    .collect();
-                (None, Some(biases))
-            },
-        };
-
-        let x: Vec<T> = (0..m * k).map(|i| T::from(0.1 * f32::sin(i as f32 * 0.05) + 0.5).unwrap()).collect();
-
-        Self {
-            w_packed,
-            scales,
-            zero_points,
-            biases,
-            x,
-            k: k as u32,
-            n: n as u32,
-            m: m as u32,
-            group_size,
-            quant_method,
-            mode: mode_for_bits(bits),
-        }
-    }
-
-    /// Seeded random input — for benchmarks where data values don't affect timing.
-    pub fn random(
+    /// Seeded random input. Tests and benches both call this with a fixed seed
+    /// for reproducibility; random bit patterns exercise the full nibble/byte
+    /// range, unlike a hand-rolled modular formula.
+    pub fn new(
         m: usize,
         k: usize,
         n: usize,
