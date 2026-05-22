@@ -6,5 +6,4 @@ pub enum GemmSpecializationError {
     },
     QuantizedRequiresSimdgroup,
     QuantizedRequiresTransposedB,
-    QuantizedRoutedThroughFpKernel,
 }
