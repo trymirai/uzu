@@ -220,6 +220,11 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
+        if arguments.b_offset != 0 {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "QuantGemv",
+            });
+        }
         // Quant gemv handles RHT (fused via qmv_fast when eligible); pull BIAS
         // out as post-pass. SCALE/ACCUMULATE are rejected by the inner kernel.
         let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
@@ -276,7 +281,7 @@ impl MatmulMetalKernel {
                 path: "QuantGemm",
             });
         }
-        if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
+        if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
             return Err(MatmulError::UnsupportedLayout {
                 path: "QuantGemm",
             });
