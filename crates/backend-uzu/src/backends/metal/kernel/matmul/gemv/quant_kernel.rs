@@ -22,23 +22,15 @@ struct QmvKey {
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
-}
-
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-struct QmvFastKey {
-    group_size: u32,
-    bits: u32,
-    quant_method: QuantizationMethod,
+    // `false` for the standard QMV kernel; `true`/`false` for the QMV-fast kernel.
+    // QMV doesn't take a hadamard variant, so its key always carries `false`.
     use_hadamard: bool,
 }
 
 pub(crate) struct QuantGemvKernel {
     data_type: DataType,
     qmv: HashMap<QmvKey, <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel>,
-    qmv_fast: HashMap<
-        QmvFastKey,
-        <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel,
-    >,
+    qmv_fast: HashMap<QmvKey, <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel>,
 }
 
 impl QuantGemvKernel {
@@ -124,7 +116,7 @@ impl QuantGemvKernel {
         };
 
         if use_fast {
-            let key = QmvFastKey {
+            let key = QmvKey {
                 group_size,
                 bits,
                 quant_method: method,
@@ -155,6 +147,7 @@ impl QuantGemvKernel {
                 group_size,
                 bits,
                 quant_method: method,
+                use_hadamard: false,
             };
             let context = encoder.context();
             let kernel = match self.qmv.entry(key) {
