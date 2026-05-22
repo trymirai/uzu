@@ -22,8 +22,6 @@ struct QmvKey {
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
-    // `false` for the standard QMV kernel; `true`/`false` for the QMV-fast kernel.
-    // QMV doesn't take a hadamard variant, so its key always carries `false`.
     use_hadamard: bool,
 }
 
@@ -50,9 +48,6 @@ impl QuantGemvKernel {
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<'a, Metal, TB>,
     ) -> Result<(), MatmulError<Metal>> {
-        // Quant gemv: SCALE/ACCUMULATE not supported (deferred). BIAS handled
-        // as outer post-pass by the dispatcher; we only need to reject those
-        // bits. RHT is fused via qmv_fast when the fast path is eligible.
         let mask = MatmulDOp::mask(&arguments.d_transform);
         if mask.contains(GemmDTransform::SCALE) {
             return Err(MatmulError::UnsupportedDOp {

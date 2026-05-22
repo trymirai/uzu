@@ -6,11 +6,6 @@ use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-/// Strips a C++ qualifier prefix from a VARIANT value: `Foo::Bar::Baz` → `Baz`.
-/// Mirrors what `#[derive(Display)]` on a Rust enum produces for its variants,
-/// so the static (build-time, from the source literal) and dynamic (runtime,
-/// from `.to_string()` of the Rust enum value) mangles agree. Non-qualified
-/// values (numbers, bools, plain identifiers) pass through unchanged.
 pub fn unqualify_variant(value: &str) -> &str {
     value.rsplit("::").next().unwrap_or(value)
 }

@@ -1,9 +1,3 @@
-//! FP (non-MXU) GEMM throughput bench. Drives `MatmulDispatchPath::Gemm`.
-//!
-//! Shapes and bench-ID format intentionally mirror the pre-unification
-//! `bench_gemm` in commit `26d23f9` (`tests/unit/kernel/matmul/gemm_test.rs`)
-//! so a worktree at that commit and this branch can be compared 1:1.
-
 #![cfg(metal_backend)]
 
 use std::collections::HashSet;

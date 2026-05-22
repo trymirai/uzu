@@ -41,8 +41,6 @@ pub enum MetalError {
 
 impl From<MatmulError<Metal>> for MetalError {
     fn from(value: MatmulError<Metal>) -> Self {
-        // Unwrap any backend error that bubbled up through the kernel layer so
-        // it doesn't end up wrapped twice; everything else is opaque.
         match value {
             MatmulError::BackendError(e) => e,
             other => MetalError::KernelDispatchFailed(Box::new(other)),

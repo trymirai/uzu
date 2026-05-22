@@ -66,10 +66,6 @@ impl GemmKernel {
         }
     }
 
-    /// Unified entry point — encodes both FP and quantized GEMMs.
-    ///
-    /// `force_simdgroup=true` disables MXU even on capable devices. Quantized B
-    /// always runs on the simdgroup path regardless.
     pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         context: &MetalContext,
@@ -82,9 +78,6 @@ impl GemmKernel {
             && matches!(self.data_type, DataType::F16 | DataType::BF16)
             && matches!(arguments.b, MatmulB::FullPrecision { .. });
 
-        // DSL: read scale/bias state directly from d_transform. The bitmask IS
-        // the wire format; strip post-pass-only bits (RHT) since the kernel
-        // doesn't see those.
         let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
         let output_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
         let output_transform = MatmulDOp::mask(&arguments.d_transform) - GemmDTransform::RHT;

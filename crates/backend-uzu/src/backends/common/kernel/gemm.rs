@@ -6,13 +6,6 @@ use crate::{
     },
 };
 
-/// Backend-agnostic description of how B is laid out for the unified GEMM
-/// kernel. Mirrors `MatmulB` after destructuring + tagging with the kernel-
-/// binary's [`GemmWeightPrologueKind`].
-///
-/// `TB` is the buffer type for the full-precision weights operand; defaults to
-/// [`Allocation<B>`] but can be specialized to KV-cache buffer types so long
-/// as `&TB: AsBufferRangeRef`. Quantized variants always use [`Allocation<B>`].
 #[allow(dead_code)]
 pub enum GemmWeights<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     FullPrecision {

@@ -36,14 +36,6 @@ pub enum MatmulError<B: Backend> {
     BackendError(#[source] B::Error),
 }
 
-/// Describes the B operand encoding. Memory layout fields
-/// (`b_leading_dimension`, `b_transpose`) are common to all encodings and live
-/// on [`MatmulArguments`].
-///
-/// `TB` is the buffer type for the full-precision B operand; it defaults to
-/// [`Allocation<B>`] but can be specialized to KV-cache buffer types
-/// (sparse/dense) as long as `&TB: AsBufferRangeRef`. Quantized variants always
-/// use [`Allocation<B>`] because quant weights are never KV-cache buffers.
 pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     FullPrecision {
         b: &'a TB,
@@ -64,11 +56,6 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     },
 }
 
-/// Op applied to D after the matmul core. `Hash`/`Eq` are implemented on the
-/// variant discriminant so that a `HashSet<MatmulDOp>` enforces at most one of
-/// each variant. Each variant exposes its corresponding [`GemmDTransform`] bit
-/// via [`MatmulDOp::bit`]. The kernel applies set members in canonical order
-/// scale → accumulate → bias → rht regardless of insertion order.
 pub enum MatmulDOp<'a, B: Backend> {
     Scale {
         ab_scale: f32,
@@ -83,7 +70,6 @@ pub enum MatmulDOp<'a, B: Backend> {
 }
 
 impl<'a, B: Backend> MatmulDOp<'a, B> {
-    /// The bit-flag corresponding to this op's variant.
     pub fn bit(&self) -> GemmDTransform {
         match self {
             MatmulDOp::Scale {
@@ -99,7 +85,6 @@ impl<'a, B: Backend> MatmulDOp<'a, B> {
         }
     }
 
-    /// OR-fold the bits of every op in a set.
     pub fn mask(set: &HashSet<Self>) -> GemmDTransform {
         set.iter().fold(GemmDTransform::empty(), |m, op| m | op.bit())
     }
@@ -152,29 +137,17 @@ impl<B: Backend> PartialEq for MatmulDOp<'_, B> {
 
 impl<B: Backend> Eq for MatmulDOp<'_, B> {}
 
-/// D = transform( A @ op(B) ) where op(B) = B^T when b_transpose else B.
-/// For quantized B variants, B is packed and dequantized internally. Input-side
-/// transforms (e.g. hadamard on A) are the caller's responsibility before invocation.
 pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
-    /// A: [M, K]
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
-    /// B operand: encoding + variant-specific aux buffers.
     pub b: MatmulB<'a, B, TB>,
     pub b_offset: usize,
-    /// Leading dimension of B (uniform across encodings).
     pub b_leading_dimension: Option<u32>,
-    /// Whether B is transposed (uniform across encodings).
     pub b_transpose: bool,
-    /// D: [M, N]
     pub d: &'a mut Allocation<B>,
-    /// D-side transform ops. Empty = store, no transform.
     pub d_transform: HashSet<MatmulDOp<'a, B>>,
-    /// M dimension (rows of A and D).
     pub m: u32,
-    /// N dimension (cols of B and D).
     pub n: u32,
-    /// K dimension (inner contraction).
     pub k: u32,
 }
 

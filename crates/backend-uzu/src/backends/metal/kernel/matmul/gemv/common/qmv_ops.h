@@ -7,8 +7,6 @@
 
 using namespace metal;
 
-// qmv ops live alongside the gemm quant pack/unpack utilities they call into
-// (uzu::gemm::uint4_to_fp4 etc.), so they share that namespace.
 namespace uzu {
 namespace gemm {
 

@@ -32,8 +32,6 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    // Mirror the shape/filter logic of `qmm_transposed_bench` so the criterion
-    // benchmark IDs line up axis-by-axis for `--baseline` comparison.
     let block_size: usize = if bits == 4 { 512 } else { 256 };
 
     for (m, n, k) in iproduct!([4usize, 5, 6, 7, 8, 16, 32, 48, 64], [2048usize, 4096, 14336], [2048usize, 4096, 14336]) {

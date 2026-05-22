@@ -10,10 +10,6 @@ pub enum GemmWeightPrologueKind {
 }
 
 bitflags! {
-    /// D-side transform option set. Mirrors the `MatmulDOp` enum variants
-    /// (SCALE, ACCUMULATE, BIAS) the unified GEMM kernel honors natively, plus
-    /// the post-pass-only RHT op. The kernel-binary `output_transform`
-    /// SPECIALIZE constant uses these bits directly — no enum mapping needed.
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct GemmDTransform: u32 {

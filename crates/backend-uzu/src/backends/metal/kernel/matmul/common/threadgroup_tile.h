@@ -257,9 +257,6 @@ struct ThreadgroupTile {
     }
   }
 
-  // Adds a per-column bias vector to the accumulator in-place. `bias` points
-  // to the row of bias values aligned to the tile's global column origin
-  // (i.e. bias_block_for_this_tile). Bias is broadcast across rows.
   METAL_FUNC void apply_bias(const device U* bias) {
     const device U* bias_pointer = bias + simdgroup_col_offset;
 
@@ -281,8 +278,6 @@ struct ThreadgroupTile {
     }
   }
 
-  // Bounds-checked variant of `apply_bias` for tiles that don't fully cover
-  // (M, N). Only elements falling within `tile_dimensions` are updated.
   METAL_FUNC void apply_bias_safe(
       const device U* bias,
       short2 tile_dimensions

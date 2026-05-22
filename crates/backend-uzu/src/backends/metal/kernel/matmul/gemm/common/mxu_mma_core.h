@@ -46,9 +46,6 @@ struct MxuMmaCore {
       const device T* output_bias,
       const thread ThreadContext& thread_context
   ) {
-    // MXU path doesn't fuse bias today: the Rust dispatcher strips BIAS from
-    // output_transform and applies it as a post-pass kernel. output_bias is
-    // therefore unused here.
     (void)output_bias;
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =

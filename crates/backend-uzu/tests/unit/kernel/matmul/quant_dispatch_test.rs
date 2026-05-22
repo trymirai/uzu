@@ -90,13 +90,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
     );
 }
 
-// --- bf16: parity vs CPU backend across (group_size, bits, method, shape) ---
-// Test inputs are deliberately small-magnitude (see QuantInput::new) so that
-// the bf16 multiply-add drift accumulates to ~0.3 absolute. This lets us hold
-// a tight (rel=0.05, abs=0.4) tolerance — a bug that scales results by >5%
-// or shifts them by >0.4 won't slip through.
 #[rstest]
-//                            (   m,    k,   n,   gs, bits, method)
 #[case::gs32_4bit_mlx_prefill ( 64, 256,  64,  32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs64_4bit_mlx_prefill ( 64, 256,  64,  64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs128_4bit_mlx_prefill( 64, 256,  64, 128, 4, QuantizationMethod::ScaleBias)]
@@ -117,7 +111,6 @@ fn parity_bf16(
     run_parity::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
 }
 
-// --- f16: exercises (32,32,32) tile only ---
 #[rstest]
 #[case::gs64_4bit_mlx (32, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs128_8bit_zp (32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
@@ -132,8 +125,6 @@ fn parity_f16(
     run_parity::<half::f16>(m, k, n, gs, bits, method, 0.01, 0.05);
 }
 
-// Bias post-pass for quant_gemm: a MatmulDOp::Bias is applied as a separate
-// bias-add kernel after the matmul core. Reference adds the same broadcast bias.
 #[uzu_test]
 fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let context = MetalContext::new().expect("Metal context");
@@ -169,7 +160,6 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     assert_parity::<bf16>("with_bias", &reference, &actual, 0.05, 0.4);
 }
 
-// Regression: quant dispatch rejects nonzero b_offset rather than silently dropping it.
 #[uzu_test]
 fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
     let context = MetalContext::new().expect("Metal context");
@@ -194,7 +184,6 @@ fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
     );
 }
 
-// Regression: encode returns Err on rejected D-transform instead of panicking.
 #[uzu_test]
 fn quant_gemm_accumulate_returns_unsupported_dop() {
     let context = MetalContext::new().expect("Metal context");

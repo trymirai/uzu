@@ -1,10 +1,3 @@
-//! Shared scaffolding for quantized matmul tests and benches.
-//!
-//! Provides `QuantInput<T>` (seeded random data), `QuantBuffers<B,T>` (per-backend
-//! allocations), and `quant_arguments` (the `MatmulArguments` builder). Tests use
-//! `run_quant_cpu` + `run_quant_metal` for one-shot encodes; benches use
-//! `QuantBuffers::allocate` + `quant_arguments` in a custom-iter loop.
-
 use std::collections::HashSet;
 
 #[cfg(metal_backend)]
@@ -51,9 +44,6 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
 }
 
 impl<T: ArrayElement + Float> QuantInput<T> {
-    /// Seeded random input. Tests and benches both call this with a fixed seed
-    /// for reproducibility; random bit patterns exercise the full nibble/byte
-    /// range, unlike a hand-rolled modular formula.
     pub fn new(
         m: usize,
         k: usize,
@@ -66,9 +56,6 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let num_groups_k = k.div_ceil(group_size as usize);
         let mut rng = SmallRng::seed_from_u64(seed);
 
-        // Magnitudes are deliberately small (~10x smaller than typical activations)
-        // so the bf16 multiply-add drift accumulates to ~0.3 absolute rather than
-        // ~3 — letting parity tests use a tight tolerance band.
         let w_packed: Vec<u32> =
             (0..n * k * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect();
         let scales: Vec<T> = (0..n * num_groups_k)
@@ -132,9 +119,6 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
     }
 }
 
-/// Build `MatmulArguments` referencing the given buffers. The lifetime of the
-/// returned args is tied to `buffers` (immutable for read-only buffers, mutable
-/// for `y`).
 pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     buffers: &'a mut QuantBuffers<B, T>,
     input: &QuantInput<T>,
@@ -170,7 +154,6 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     }
 }
 
-/// Single-shot encode through the CPU backend; returns the result vector.
 pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
@@ -182,7 +165,6 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
     allocation_to_vec::<Cpu, T>(&buffers.y)
 }
 
-/// Single-shot encode through the Metal backend with an explicit dispatch path.
 #[cfg(metal_backend)]
 pub fn run_quant_metal<T: ArrayElement + Float>(
     context: &MetalContext,

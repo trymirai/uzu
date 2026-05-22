@@ -44,10 +44,7 @@ fn max_gemv_batch_threshold() -> u32 {
 pub enum MatmulDispatchPath {
     Auto,
     Gemv,
-    /// FP GEMM. Picks MXU automatically on MXU-capable devices, otherwise
-    /// falls back to the simdgroup path.
     Gemm,
-    /// FP GEMM forced onto the simdgroup path even when MXU is available.
     GemmSimdgroup,
     QuantGemv,
     QuantGemm,
@@ -107,7 +104,6 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        // FP gemv handles SCALE/ACCUMULATE/BIAS natively; pull RHT out as post-pass.
         let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
 
         let MatmulArguments {
@@ -157,9 +153,6 @@ impl MatmulMetalKernel {
         force_simdgroup: bool,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE.
-        // Simdgroup path fuses BIAS too; MXU path still needs post-pass bias.
-        // RHT always post-pass.
         let uses_mxu = !force_simdgroup && self.mxu_eligible;
         let post_bias = if uses_mxu {
             arguments.d_transform.iter().find_map(|op| op.as_bias())
@@ -182,8 +175,6 @@ impl MatmulMetalKernel {
             n,
             k,
         } = arguments;
-        // Strip ops that get post-passed here so the inner kernel sees only the
-        // ops it fuses. MXU strips BIAS too (it falls back to post-pass).
         d_transform.retain(|op| {
             let bit = op.bit();
             if bit == GemmDTransform::RHT {
@@ -237,8 +228,6 @@ impl MatmulMetalKernel {
                 path: "QuantGemv",
             });
         }
-        // Quant gemv handles RHT (fused via qmv_fast when eligible); pull BIAS
-        // out as post-pass. SCALE/ACCUMULATE are rejected by the inner kernel.
         let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
 
         let MatmulArguments {
@@ -299,8 +288,6 @@ impl MatmulMetalKernel {
             });
         }
 
-        // Quant core handles SCALE via GemmParams.ab_scale and BIAS via the
-        // fused output epilogue (simdgroup path). RHT is post-pass.
         let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
 
         let MatmulArguments {

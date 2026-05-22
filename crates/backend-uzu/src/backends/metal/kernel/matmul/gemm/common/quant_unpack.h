@@ -9,7 +9,6 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-// Avoids air.convert (SFU) for int → float, which is slower on Apple GPU.
 template <typename U>
 METAL_FUNC U uint_to_fp(uint32_t x) {
   return static_cast<U>(as_type<float>(x | 0x4B000000u) - 8388608.0f);
@@ -20,8 +19,6 @@ METAL_FUNC bfloat uint_to_fp<bfloat>(uint32_t x) {
   return as_type<bfloat>(uint16_t(x | 0x4300u)) - bfloat(128.0f);
 }
 
-// Unpack 4 lanes of `BITS`-wide packed uints (low bits of each uint) into
-// `vec<U, 4>` of floats. `BITS` must fit in the float23 mantissa.
 template <int BITS>
 METAL_FUNC float4 _uint4_to_fp4_float(uint4 n) {
   static_assert(BITS > 0 && BITS <= 23, "BITS must fit in float23 mantissa");
@@ -63,10 +60,6 @@ METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 8>(uint4 n) {
   return bfloat4(_uint4_to_fp4_float<8>(n));
 }
 
-// Dequantize `N` packed weights from device → threadgroup memory.
-// The generic implementation handles bits=4/8; the bfloat × N=8 × bits=4 case
-// has an unrolled specialization below that fuses four nibble extracts into
-// one bfloat4 multiply-add pair.
 template <typename U, int N, int bits>
 inline void dequantize(
     const device uint8_t* w,
@@ -102,13 +95,11 @@ inline void dequantize<bfloat, 8, 4>(
 
   bfloat4 v0, v1;
 
-  // Low 4 nibbles
   v0.x = static_cast<bfloat>(packed & 0xF);
   v0.y = static_cast<bfloat>((packed >> 4) & 0xF);
   v0.z = static_cast<bfloat>((packed >> 8) & 0xF);
   v0.w = static_cast<bfloat>((packed >> 12) & 0xF);
 
-  // High 4 nibbles
   v1.x = static_cast<bfloat>((packed >> 16) & 0xF);
   v1.y = static_cast<bfloat>((packed >> 20) & 0xF);
   v1.z = static_cast<bfloat>((packed >> 24) & 0xF);

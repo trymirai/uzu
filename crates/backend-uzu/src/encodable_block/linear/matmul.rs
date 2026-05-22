@@ -323,7 +323,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             },
         };
 
-        // Build d_transform set: bias post-pass + (for quant mode) output hadamard.
         let mut d_transform: HashSet<MatmulDOp<'_, B>> = HashSet::new();
         if let Some(bias) = self.biases.as_ref() {
             d_transform.insert(MatmulDOp::Bias {

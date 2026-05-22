@@ -7,15 +7,11 @@ use crate::backends::{
     metal::Metal,
 };
 
-/// Encodes the FP gemv. Honors `Scale`/`Accumulate`/`Bias` ops in `d_transform`
-/// natively. The `Rht` op (if present) is the caller's responsibility as a
-/// post-pass (this function does not run hadamard).
 pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
     kernel: &mut GemvKernel,
     encoder: &mut Encoder<Metal>,
     arguments: MatmulArguments<'a, Metal, TB>,
 ) -> Result<(), MatmulError<Metal>> {
-    // DSL: extract ops from d_transform before destructuring.
     let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
     let output_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
     let is_accumulate = arguments.d_transform.contains(&MatmulDOp::Accumulate);
