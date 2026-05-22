@@ -8,7 +8,7 @@ use crate::{
     DataType,
     array::size_for_shape,
     backends::common::{
-        Allocation, Backend, Encoder, Kernels,
+        Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
         gpu_types::ring::RingParams,
         kernel::{
             AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
@@ -21,7 +21,7 @@ use crate::{
     config::AttentionConfig,
     forward_pass::{
         cache_layers::LayerCacheAccess,
-        kv_cache_layer::KVCacheLayerState,
+        kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
     },
 };
 
@@ -228,27 +228,26 @@ impl<B: Backend> Attention<B> {
             .expect("attention expects transformer cache")
         });
 
-        let (max_sequence_length, segment_prefix_length, ring_params) =
-            if let Some(layer) = cache_layer {
-                let max_sequence_length = layer.shape[0];
-                let ring_params = match layer.state {
-                    KVCacheLayerState::Windowed {
-                        ring_offset,
-                        ring_length,
-                        window_length,
-                    } => {
-                        let overflow = ring_length.saturating_sub(window_length);
-                        Some(RingParams {
-                            ring_offset: ((ring_offset + overflow) % window_length) as u32,
-                            ring_length: ring_length.min(window_length) as u32,
-                        })
-                    },
-                    _ => None,
-                };
-                (max_sequence_length, layer.prefix_segment_length(), ring_params)
-            } else {
-                (suffix_length, 0, None)
+        let (max_sequence_length, segment_prefix_length, ring_params) = if let Some(layer) = cache_layer {
+            let max_sequence_length = layer.shape()[0];
+            let ring_params = match layer.state() {
+                KVCacheLayerState::Windowed {
+                    ring_offset,
+                    ring_length,
+                    window_length,
+                } => {
+                    let overflow = ring_length.saturating_sub(window_length);
+                    Some(RingParams {
+                        ring_offset: ((ring_offset + overflow) % window_length) as u32,
+                        ring_length: ring_length.min(window_length) as u32,
+                    })
+                },
+                _ => None,
             };
+            (max_sequence_length, layer.prefix_segment_length(), ring_params)
+        } else {
+            (suffix_length, 0, None)
+        };
 
         let is_kv_cache_ring = ring_params.is_some();
 
@@ -312,62 +311,92 @@ impl<B: Backend> Attention<B> {
             is_kv_cache_ring,
         };
 
-        let (keys, values) = match args.cache_access {
-            Some(LayerCacheAccess::Shared {
-                source,
-            }) => {
-                let source = source.as_transformer().expect("kv_source must be a transformer cache");
-                (&source.keys, &source.values)
-            },
-            Some(LayerCacheAccess::Owned {
-                entry,
-            }) => {
-                let layer = entry.as_transformer_mut().expect("Attention layer expects transformer cache");
-                self.update_kv_cache_kernel.encode(
-                    Some(&rotated_keys),
-                    qkv,
-                    &mut layer.keys,
-                    &mut layer.values,
-                    num_groups as u32,
-                    num_heads as u32,
-                    head_dim as u32,
-                    suffix_length as u32,
-                    segment_prefix_length as u32,
-                    max_sequence_length as u32,
+        macro_rules! encode_cached_attention {
+            ($keys:expr, $values:expr) => {
+                self.encode_attention_variant(
+                    variant,
+                    &kernel_key,
+                    queries,
+                    $keys,
+                    $values,
+                    trie_allocation,
+                    sinks_allocation,
+                    gqa_factor,
+                    sequence_length,
+                    k_head_stride,
+                    k_seq_stride,
+                    v_head_stride,
+                    v_seq_stride,
+                    ring_params,
+                    scale,
+                    num_heads,
+                    num_groups,
+                    suffix_length,
+                    segment_prefix_length,
+                    max_sequence_length,
+                    head_dim,
                     encoder,
-                );
-                (&layer.keys, &layer.values)
-            },
-            None => (
-                &rotated_keys,
-                extracted_values.as_ref().expect("Missing extracted values for classifier attention"),
-            ),
-        };
+                )?
+            };
+        }
 
-        let mut attention_output = self.encode_attention_variant(
-            variant,
-            &kernel_key,
-            queries,
-            keys,
-            values,
-            trie_allocation,
-            sinks_allocation,
-            gqa_factor,
-            sequence_length,
-            k_head_stride,
-            k_seq_stride,
-            v_head_stride,
-            v_seq_stride,
-            ring_params,
-            scale,
-            num_heads,
-            num_groups,
-            suffix_length,
-            segment_prefix_length,
-            max_sequence_length,
-            head_dim,
-            encoder,
-        )?;
+        let mut attention_output = if let Some(access) = args.cache_access {
+            match access {
+                LayerCacheAccess::Owned {
+                    entry,
+                } => {
+                    let layer = entry.as_transformer_mut().expect("Attention layer expects transformer cache");
+                    if let Some(layer) = layer.as_any_mut().downcast_mut::<KVCacheLayer<B, B::SparseBuffer>>() {
+                        self.update_kv_cache_kernel.encode(
+                            Some(&rotated_keys),
+                            qkv,
+                            &mut layer.keys,
+                            &mut layer.values,
+                            num_groups as u32,
+                            num_heads as u32,
+                            head_dim as u32,
+                            suffix_length as u32,
+                            segment_prefix_length as u32,
+                            max_sequence_length as u32,
+                            encoder,
+                        );
+                        encode_cached_attention!(&layer.keys, &layer.values)
+                    } else if let Some(layer) = layer.as_any_mut().downcast_mut::<KVCacheLayer<B, B::DenseBuffer>>() {
+                        self.update_kv_cache_kernel.encode(
+                            Some(&rotated_keys),
+                            qkv,
+                            &mut layer.keys,
+                            &mut layer.values,
+                            num_groups as u32,
+                            num_heads as u32,
+                            head_dim as u32,
+                            suffix_length as u32,
+                            segment_prefix_length as u32,
+                            max_sequence_length as u32,
+                            encoder,
+                        );
+                        encode_cached_attention!(&layer.keys, &layer.values)
+                    } else {
+                        panic!("Attention layer expects sparse or dense transformer cache")
+                    }
+                },
+                LayerCacheAccess::Shared {
+                    source,
+                } => {
+                    let source = source.as_transformer().expect("kv_source must be a transformer cache");
+                    if let Some(source) = source.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
+                        encode_cached_attention!(&source.keys, &source.values)
+                    } else if let Some(source) = source.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
+                        encode_cached_attention!(&source.keys, &source.values)
+                    } else {
+                        panic!("kv_source must be a sparse or dense transformer cache")
+                    }
+                },
+            }
+        } else {
+            let values = extracted_values.as_ref().expect("Missing extracted values for classifier attention");
+            encode_cached_attention!(&rotated_keys, values)
+        };
 
         if let Some(gate_kernel) = &self.gate_kernel {
             let total_elements = (suffix_length * num_heads * head_dim) as u32;
@@ -379,13 +408,13 @@ impl<B: Backend> Attention<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_attention_variant(
+    fn encode_attention_variant<KVBuf: AsBufferRangeRef<Buffer: Buffer<Backend = B>>>(
         &self,
         variant: KernelVariant,
         kernel_key: &KernelKey,
         queries: &Allocation<B>,
-        keys: &Allocation<B>,
-        values: &Allocation<B>,
+        keys: &KVBuf,
+        values: &KVBuf,
         trie_allocation: Option<&Allocation<B>>,
         sinks_allocation: Option<&Allocation<B>>,
         gqa_factor: usize,
@@ -526,12 +555,15 @@ impl<B: Backend> Attention<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn encode_fallback(
+    fn encode_fallback<
+        Keys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        Values: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+    >(
         &self,
         is_kv_cache_ring: bool,
         queries: &Allocation<B>,
-        keys: &Allocation<B>,
-        values: &Allocation<B>,
+        keys: &Keys,
+        values: &Values,
         attention_output: &mut Allocation<B>,
         sinks_allocation: Option<&Allocation<B>>,
         gqa_factor: usize,

@@ -6,7 +6,7 @@ use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            AllocationType, Backend, Context, Encoder,
+            Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
@@ -124,7 +124,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
     let mut encoder = Encoder::new(context).expect("encoder");
     encode(
         kernel,
-        MatmulArguments {
+        MatmulArguments::<'_, B> {
             a: &a_allocation,
             a_offset: 0,
             b: MatmulB::FullPrecision {

@@ -194,7 +194,7 @@ fn run_with_path<T: ArrayElement + Float>(
     let x_buf = alloc_allocation_with_data::<Metal, T>(context, &input.x);
     let mut y_buf = alloc_allocation::<Metal, T>(context, (input.m as usize) * (input.n as usize));
 
-    let b_variant = match input.quant_method {
+    let b_variant: MatmulB<'_, Metal> = match input.quant_method {
         QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
             b: &w_buf,
             scales: &s_buf,

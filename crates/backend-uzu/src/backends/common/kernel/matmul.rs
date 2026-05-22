@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::{
     DataType,
     backends::common::{
-        Allocation, Backend, Encoder,
+        Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
         gpu_types::{QuantizationMode, gemm::GemmDTransform},
         kernel::ManualKernels,
     },
@@ -39,9 +39,14 @@ pub enum MatmulError<B: Backend> {
 /// Describes the B operand encoding. Memory layout fields
 /// (`b_leading_dimension`, `b_transpose`) are common to all encodings and live
 /// on [`MatmulArguments`].
-pub enum MatmulB<'a, B: Backend> {
+///
+/// `TB` is the buffer type for the full-precision B operand; it defaults to
+/// [`Allocation<B>`] but can be specialized to KV-cache buffer types
+/// (sparse/dense) as long as `&TB: AsBufferRangeRef`. Quantized variants always
+/// use [`Allocation<B>`] because quant weights are never KV-cache buffers.
+pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     FullPrecision {
-        b: &'a Allocation<B>,
+        b: &'a TB,
     },
     ScaleBiasDequant {
         b: &'a Allocation<B>,
@@ -150,12 +155,12 @@ impl<B: Backend> Eq for MatmulDOp<'_, B> {}
 /// D = transform( A @ op(B) ) where op(B) = B^T when b_transpose else B.
 /// For quantized B variants, B is packed and dequantized internally. Input-side
 /// transforms (e.g. hadamard on A) are the caller's responsibility before invocation.
-pub struct MatmulArguments<'a, B: Backend> {
+pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     /// A: [M, K]
     pub a: &'a Allocation<B>,
     pub a_offset: usize,
     /// B operand: encoding + variant-specific aux buffers.
-    pub b: MatmulB<'a, B>,
+    pub b: MatmulB<'a, B, TB>,
     pub b_offset: usize,
     /// Leading dimension of B (uniform across encodings).
     pub b_leading_dimension: Option<u32>,
@@ -181,9 +186,9 @@ pub trait MatmulKernel: Sized {
         data_type: DataType,
     ) -> Result<Self, MatmulError<Self::Backend>>;
 
-    fn encode(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Self::Backend>>>(
         &mut self,
-        arguments: MatmulArguments<Self::Backend>,
+        arguments: MatmulArguments<Self::Backend, TB>,
         encoder: &mut Encoder<Self::Backend>,
     ) -> Result<(), MatmulError<Self::Backend>>;
 }

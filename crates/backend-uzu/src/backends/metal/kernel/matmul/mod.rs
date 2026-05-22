@@ -11,7 +11,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Backend, Encoder,
+            AsBufferRangeRef, Backend, Buffer, Encoder,
             gpu_types::gemm::GemmDTransform,
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
@@ -50,9 +50,9 @@ pub enum MatmulDispatchPath {
 }
 
 impl MatmulMetalKernel {
-    pub fn encode_with_path<'a>(
+    pub fn encode_with_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) -> Result<(), MatmulError<Metal>> {
@@ -92,9 +92,9 @@ impl MatmulMetalKernel {
         }
     }
 
-    fn dispatch_fp_gemv<'a>(
+    fn dispatch_fp_gemv<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         // FP gemv handles SCALE/ACCUMULATE/BIAS natively; pull RHT out as post-pass.
@@ -141,9 +141,9 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn dispatch_fp_gemm<'a>(
+    fn dispatch_fp_gemm<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE.
@@ -215,9 +215,9 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn dispatch_quant_gemv<'a>(
+    fn dispatch_quant_gemv<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         // Quant gemv handles RHT (fused via qmv_fast when eligible); pull BIAS
@@ -264,9 +264,9 @@ impl MatmulMetalKernel {
         Ok(())
     }
 
-    fn dispatch_quant_gemm<'a>(
+    fn dispatch_quant_gemm<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<'a, Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         let mask = MatmulDOp::mask(&arguments.d_transform);
@@ -360,9 +360,9 @@ impl MatmulKernel for MatmulMetalKernel {
         })
     }
 
-    fn encode(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         match &arguments.b {

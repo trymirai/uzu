@@ -363,6 +363,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
 
             let mut cache_layers = self.ctx.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(&context, token_count);
             self.ctx
                 .executables
                 .encode_prefill(
@@ -571,6 +572,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             {
                 let mut logits = {
                     let mut cache_layers = cache_layers_rc.borrow_mut();
+                    cache_layers.prepare_for_forward_pass(&self.ctx.context, 1);
                     self.ctx
                         .executables
                         .encode_decode(
@@ -608,7 +610,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 pending_sampling_outputs.push(sampling_output);
             }
 
-            self.ctx.cache_layers.borrow_mut().update_after_acceptance(&[0], None, encoder, &self.ctx.kv_cache_update);
+            self.ctx.cache_layers.borrow_mut().update_after_acceptance(
+                &[0],
+                None,
+                &self.ctx.context,
+                encoder,
+                &self.ctx.kv_cache_update,
+            );
             self.ctx.cache_layers.borrow_mut().register_accepted_tokens(1);
         }
         Ok(())
@@ -787,6 +795,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         }
         let mut logits = {
             let mut cache_layers = self.ctx.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(&self.ctx.context, token_count);
             let decoder_arguments = DecoderArguments {
                 token_positions: token_inputs.token_positions(),
                 token_parents: token_inputs.token_parents(),
@@ -841,6 +850,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         self.ctx.cache_layers.borrow_mut().update_after_acceptance(
             accepted_suffix_indices,
             None,
+            &self.ctx.context,
             encoder,
             &self.ctx.kv_cache_update,
         );

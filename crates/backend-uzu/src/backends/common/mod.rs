@@ -30,4 +30,4 @@ pub use dense_buffer::DenseBuffer;
 pub use encoder::{Completed, Encoder, Executable, Pending};
 pub use hazard_tracker::Access;
 pub use kernel::Kernels;
-pub use sparse_buffer::SparseBuffer;
+pub use sparse_buffer::{SparseBuffer, SparseBufferExt};

@@ -4,7 +4,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
@@ -53,10 +53,10 @@ impl QuantGemvKernel {
         }
     }
 
-    pub(crate) fn encode<'a>(
+    pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<'a, Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
     ) -> Result<(), MatmulError<Metal>> {
         // Quant gemv: SCALE/ACCUMULATE not supported (deferred). BIAS handled
         // as outer post-pass by the dispatcher; we only need to reject those

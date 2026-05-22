@@ -5,7 +5,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Encoder,
+            Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
                 GemmParams,
                 gemm::{GemmAlignment, GemmDTransform, GemmTiling},
@@ -67,10 +67,10 @@ impl GemmKernel {
     }
 
     /// Unified entry point — encodes both FP and quantized GEMMs.
-    pub(crate) fn encode<'a>(
+    pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         context: &MetalContext,
-        arguments: MatmulArguments<'a, Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let use_mxu = context.device.supports_mxu()
@@ -98,18 +98,7 @@ impl GemmKernel {
             ..
         } = arguments;
 
-        let (
-            weights,
-            tiling,
-            alignment,
-            transpose_b,
-            params,
-            group_count_x,
-            group_count_y,
-            scales,
-            biases,
-            zero_points,
-        ) = match b {
+        match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
@@ -165,20 +154,35 @@ impl GemmKernel {
                     ab_scale,
                 };
 
-                (
-                    GemmWeights::<Metal>::FullPrecision {
-                        weights,
-                    },
+                let weights_gw: GemmWeights<'_, Metal, TB> = GemmWeights::FullPrecision {
+                    weights,
+                };
+                let specialization = GemmSpecialization {
+                    data_type: self.data_type,
                     tiling,
+                    use_mxu,
+                    output_transform,
                     alignment,
-                    b_transpose,
-                    params,
+                    transpose_b: b_transpose,
+                    weight_prologue: weights_gw.weight_prologue(),
+                    bits_per_weight: weights_gw.bits_per_weight(),
+                    group_size: weights_gw.group_size(),
+                };
+                specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
+                let kernel = self.get_or_create(context, specialization)?;
+                kernel.encode(
+                    (a, a_offset),
+                    (weights, b_offset),
+                    d,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    output_bias,
+                    std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
-                    None,
-                    None,
-                    None,
-                )
+                    encoder,
+                );
             },
             MatmulB::ScaleBiasDequant {
                 b: weights,
@@ -190,24 +194,43 @@ impl GemmKernel {
                 let tiling = select_quant_tiling(self.data_type, m, n, group_size);
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                (
-                    GemmWeights::ScaleBias {
-                        weights,
-                        scales,
-                        biases,
-                        mode,
-                        group_size,
-                    },
+                let params = quant_params(m, n, k, tiling, ab_scale);
+                let group_count_x = n.div_ceil(tiling.block_n());
+                let group_count_y = m.div_ceil(tiling.block_m());
+
+                let weights_gw: GemmWeights<'_, Metal, TB> = GemmWeights::ScaleBias {
+                    weights,
+                    scales,
+                    biases,
+                    mode,
+                    group_size,
+                };
+                let specialization = GemmSpecialization {
+                    data_type: self.data_type,
                     tiling,
+                    use_mxu,
+                    output_transform,
                     alignment,
-                    true,
-                    quant_params(m, n, k, tiling, ab_scale),
-                    n.div_ceil(tiling.block_n()),
-                    m.div_ceil(tiling.block_m()),
+                    transpose_b: true,
+                    weight_prologue: weights_gw.weight_prologue(),
+                    bits_per_weight: weights_gw.bits_per_weight(),
+                    group_size: weights_gw.group_size(),
+                };
+                specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
+                let kernel = self.get_or_create(context, specialization)?;
+                kernel.encode(
+                    (a, a_offset),
+                    (weights, b_offset),
+                    d,
                     Some(scales),
                     Some(biases),
-                    None,
-                )
+                    None::<&Allocation<Metal>>,
+                    output_bias,
+                    std::slice::from_ref(&params),
+                    group_count_x,
+                    group_count_y,
+                    encoder,
+                );
             },
             MatmulB::ScaleZeroPointDequant {
                 b: weights,
@@ -219,66 +242,45 @@ impl GemmKernel {
                 let tiling = select_quant_tiling(self.data_type, m, n, group_size);
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                (
-                    GemmWeights::ScaleZeroPoint {
-                        weights,
-                        scales,
-                        zero_points,
-                        mode,
-                        group_size,
-                    },
-                    tiling,
-                    alignment,
-                    true,
-                    quant_params(m, n, k, tiling, ab_scale),
-                    n.div_ceil(tiling.block_n()),
-                    m.div_ceil(tiling.block_m()),
-                    Some(scales),
-                    None,
-                    Some(zero_points),
-                )
-            },
-        };
+                let params = quant_params(m, n, k, tiling, ab_scale);
+                let group_count_x = n.div_ceil(tiling.block_n());
+                let group_count_y = m.div_ceil(tiling.block_m());
 
-        let specialization = GemmSpecialization {
-            data_type: self.data_type,
-            tiling,
-            use_mxu,
-            output_transform,
-            alignment,
-            transpose_b,
-            weight_prologue: weights.weight_prologue(),
-            bits_per_weight: weights.bits_per_weight(),
-            group_size: weights.group_size(),
-        };
-        specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
-        let kernel = self.get_or_create(context, specialization)?;
-        let b_alloc = match &weights {
-            GemmWeights::FullPrecision {
-                weights,
-            } => *weights,
-            GemmWeights::ScaleBias {
-                weights,
-                ..
-            } => *weights,
-            GemmWeights::ScaleZeroPoint {
-                weights,
-                ..
-            } => *weights,
-        };
-        kernel.encode(
-            (a, a_offset),
-            (b_alloc, b_offset),
-            d,
-            scales,
-            biases,
-            zero_points,
-            output_bias,
-            std::slice::from_ref(&params),
-            group_count_x,
-            group_count_y,
-            encoder,
-        );
+                let weights_gw: GemmWeights<'_, Metal, TB> = GemmWeights::ScaleZeroPoint {
+                    weights,
+                    scales,
+                    zero_points,
+                    mode,
+                    group_size,
+                };
+                let specialization = GemmSpecialization {
+                    data_type: self.data_type,
+                    tiling,
+                    use_mxu,
+                    output_transform,
+                    alignment,
+                    transpose_b: true,
+                    weight_prologue: weights_gw.weight_prologue(),
+                    bits_per_weight: weights_gw.bits_per_weight(),
+                    group_size: weights_gw.group_size(),
+                };
+                specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
+                let kernel = self.get_or_create(context, specialization)?;
+                kernel.encode(
+                    (a, a_offset),
+                    (weights, b_offset),
+                    d,
+                    Some(scales),
+                    None::<&Allocation<Metal>>,
+                    Some(zero_points),
+                    output_bias,
+                    std::slice::from_ref(&params),
+                    group_count_x,
+                    group_count_y,
+                    encoder,
+                );
+            },
+        }
         Ok(())
     }
 }

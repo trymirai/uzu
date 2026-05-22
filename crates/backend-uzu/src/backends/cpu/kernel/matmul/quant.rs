@@ -5,7 +5,7 @@ use crate::{
     ArrayElement, DataType,
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Encoder,
+            AsBufferRangeMut, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::matmul::{MatmulArguments, MatmulB},
         },
@@ -14,9 +14,9 @@ use crate::{
     utils::pointers::{SendPtr, SendPtrMut},
 };
 
-pub(crate) fn encode_quantized_gemm(
+pub(crate) fn encode_quantized_gemm<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
     encoder: &mut Encoder<Cpu>,
-    arguments: MatmulArguments<Cpu>,
+    arguments: MatmulArguments<Cpu, TB>,
     data_type: DataType,
 ) {
     let MatmulArguments {

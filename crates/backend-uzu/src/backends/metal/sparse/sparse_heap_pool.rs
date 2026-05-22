@@ -1,22 +1,24 @@
 use std::{
+    cell::RefCell,
     cmp::{max, min},
     ops::Range,
+    rc::Rc,
 };
 
-use metal::{MTLBuffer, MTLSparsePageSize};
-use objc2::runtime::ProtocolObject;
+use metal::{MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLSparsePageSize, MTLSparseTextureMappingMode};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use crate::{
     backends::metal::{
         error::MetalError,
         metal_extensions::SparsePageSizeExt,
-        sparse::{sparse_heap::MetalSparseHeap, sparse_utils::MetalSparseHeapMappingParameters},
+        sparse::{MetalSparseMappingOpsBatch, sparse_heap::MetalSparseHeap},
     },
     prelude::MetalContext,
 };
 
 pub struct MetalSparseHeapPool {
-    heaps: Vec<MetalSparseHeap>,
+    heaps: Vec<Rc<RefCell<MetalSparseHeap>>>,
     heap_capacity: usize,
     page_size: MTLSparsePageSize,
 }
@@ -33,112 +35,123 @@ impl MetalSparseHeapPool {
         }
     }
 
-    pub fn map(
+    pub fn ensure_enough_free_pages(
         &mut self,
         context: &MetalContext,
-        buffer: &ProtocolObject<dyn MTLBuffer>,
-        buffer_pages: &Range<usize>,
+        pages: usize,
     ) -> Result<(), MetalError> {
-        if buffer_pages.len() == 0 {
+        let mut pages_to_alloc = pages;
+        for heap in self.heaps.iter() {
+            for free_pages_range in heap.borrow().free_pages().iter() {
+                pages_to_alloc -= min(free_pages_range.len(), pages_to_alloc);
+            }
+        }
+        if pages_to_alloc == 0 {
             return Ok(());
         }
 
-        let mut pages_to_map = buffer_pages.clone();
-        let heap_capacity_pages = self.heap_capacity_pages();
-
-        // Try to find pages in existing heaps.
-        // While `pages_to_map` is not empty in each heap find unmapped pages, collect them into `mappings` and map
-        let mut existing_heaps_mappings: Vec<(usize, Box<[MetalSparseHeapMappingParameters]>)> = Vec::new();
-        for (i, heap) in self.heaps.iter_mut().enumerate() {
-            let mut mappings: Vec<MetalSparseHeapMappingParameters> = Vec::new();
-
-            for free_pages in heap.free_pages().iter() {
-                let map_pages_count = min(free_pages.len(), pages_to_map.len());
-                let mapping = MetalSparseHeapMappingParameters {
-                    buffer_pages: pages_to_map.start..(pages_to_map.start + map_pages_count),
-                    heap_page_offset: free_pages.start,
-                };
-                mappings.push(mapping);
-
-                pages_to_map.start += map_pages_count;
-                if pages_to_map.len() == 0 {
-                    break;
-                }
-            }
-
-            heap.execute(buffer, &context.command_queue4, &mappings, true);
-            existing_heaps_mappings.push((i, mappings.into_boxed_slice()));
-
-            if pages_to_map.len() == 0 {
-                break;
-            }
-        }
-
-        // If `pages_to_map` still not empty, it's necessary to allocate new heaps
-        let new_heaps_required = pages_to_map.len().div_ceil(heap_capacity_pages);
-        for _ in 0..new_heaps_required {
-            let map_pages_count = min(heap_capacity_pages, pages_to_map.len());
-            let buffer_pages = pages_to_map.start..(pages_to_map.start + map_pages_count);
-            let op_params = MetalSparseHeapMappingParameters {
-                buffer_pages,
-                heap_page_offset: 0,
-            };
-
-            match MetalSparseHeap::new(context, self.heap_capacity, self.page_size) {
-                Ok(mut heap) => {
-                    let operations = [op_params];
-                    heap.execute(buffer, &context.command_queue4, &operations, true);
-                    self.heaps.push(heap);
-                    pages_to_map.start += map_pages_count;
-                    existing_heaps_mappings.push((self.heaps.len() - 1, Box::new(operations)));
-                },
-                Err(err) => {
-                    // it's necessary to unmap previously mapped pages in existing heaps
-                    for (heap_pos, mappings) in existing_heaps_mappings {
-                        self.heaps[heap_pos].execute(buffer, &context.command_queue4, &mappings, false);
-                    }
-                    return Err(err);
-                },
-            };
+        let new_heaps_count = (pages_to_alloc * self.page_size.in_bytes()).div_ceil(self.heap_capacity);
+        for _ in 0..new_heaps_count {
+            let heap = MetalSparseHeap::new(context, self.heap_capacity, self.page_size)?;
+            self.heaps.push(Rc::new(RefCell::new(heap)));
         }
 
         Ok(())
     }
 
-    pub fn unmap(
+    pub fn create_map_operations(
         &mut self,
         context: &MetalContext,
-        buffer: &ProtocolObject<dyn MTLBuffer>,
+        buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
         buffer_pages: &Range<usize>,
-    ) -> Result<(), MetalError> {
+    ) -> Result<Vec<MetalSparseMappingOpsBatch>, MetalError> {
+        self.ensure_enough_free_pages(context, buffer_pages.len())?;
+
+        let mut pages_to_map = buffer_pages.clone();
+        let mut batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
+        for heap in self.heaps.iter() {
+            let mut heap_mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = Vec::new();
+            for heap_free_pages_range in heap.borrow().free_pages().iter() {
+                let map_pages_count = min(heap_free_pages_range.len(), pages_to_map.len());
+                if map_pages_count == 0 {
+                    break;
+                }
+
+                let mtl_operation = MTL4UpdateSparseBufferMappingOperation::new(
+                    MTLSparseTextureMappingMode::Map,
+                    pages_to_map.start..(pages_to_map.start + map_pages_count),
+                    heap_free_pages_range.start,
+                );
+                heap_mtl_operations.push(mtl_operation);
+
+                pages_to_map.start += map_pages_count;
+            }
+
+            if !heap_mtl_operations.is_empty() {
+                let batch = MetalSparseMappingOpsBatch {
+                    buffer: buffer.clone(),
+                    heap: heap.clone(),
+                    mtl_operations: heap_mtl_operations.into_boxed_slice(),
+                };
+                batches.push(batch);
+            }
+        }
+
+        Ok(batches)
+    }
+
+    pub fn create_unmap_operations(
+        &self,
+        buffer: &Retained<ProtocolObject<dyn MTLBuffer>>,
+        buffer_pages: &Range<usize>,
+    ) -> Vec<MetalSparseMappingOpsBatch> {
+        let mut batches: Vec<MetalSparseMappingOpsBatch> = Vec::new();
+
         let buffer_address = buffer.gpu_address();
+        for heap in self.heaps.iter() {
+            let mut heap_mtl_operations: Vec<MTL4UpdateSparseBufferMappingOperation> = Vec::new();
 
-        // Iterate over heaps, find mappings for `buffer_address`, unmap them
-        self.heaps.iter_mut().for_each(|heap| {
-            let unmappings: Vec<MetalSparseHeapMappingParameters> = heap
-                .mappings_for(buffer_address)
-                .filter_map(|(heap_range, mapping)| {
-                    let mapped_buffer_pages = mapping.buffer_pages_for(&heap_range);
-                    let unmap_start = max(buffer_pages.start, mapped_buffer_pages.start);
-                    let unmap_end = min(buffer_pages.end, mapped_buffer_pages.end);
-                    if unmap_start >= unmap_end {
-                        return None;
-                    };
+            for (heap_range, mapping) in heap.borrow().mappings_for(buffer_address) {
+                let mapped_buffer_pages = mapping.buffer_pages_for(&heap_range);
+                let unmap_start_page = max(buffer_pages.start, mapped_buffer_pages.start);
+                let unmap_end_page = min(buffer_pages.end, mapped_buffer_pages.end);
+                if unmap_start_page < unmap_end_page {
+                    let offset_within_range = unmap_start_page - mapped_buffer_pages.start;
+                    let mtl_operation = MTL4UpdateSparseBufferMappingOperation::new(
+                        MTLSparseTextureMappingMode::Unmap,
+                        unmap_start_page..unmap_end_page,
+                        heap_range.start + offset_within_range,
+                    );
+                    heap_mtl_operations.push(mtl_operation);
+                };
+            }
 
-                    let offset_within_range = unmap_start - mapped_buffer_pages.start;
-                    Some(MetalSparseHeapMappingParameters {
-                        buffer_pages: unmap_start..unmap_end,
-                        heap_page_offset: heap_range.start + offset_within_range,
-                    })
-                })
-                .collect();
-            heap.execute(buffer, &context.command_queue4, &unmappings, false);
-        });
+            if !heap_mtl_operations.is_empty() {
+                let batch = MetalSparseMappingOpsBatch {
+                    buffer: buffer.clone(),
+                    heap: heap.clone(),
+                    mtl_operations: heap_mtl_operations.into_boxed_slice(),
+                };
+                batches.push(batch);
+            }
+        }
 
-        // Remove empty heaps
-        self.heaps.retain(|heap| !heap.is_empty());
+        batches
+    }
 
-        Ok(())
+    pub fn apply_map_operations(
+        &mut self,
+        batches: &[MetalSparseMappingOpsBatch],
+    ) {
+        for batch in batches.iter() {
+            for sparse_heap in self.heaps.iter() {
+                if sparse_heap.borrow().heap() == batch.heap.borrow().heap() {
+                    sparse_heap.borrow_mut().apply_mapping_operations(batch);
+                }
+            }
+        }
+
+        self.heaps.retain(|heap| !heap.borrow().is_empty());
     }
 
     #[cfg(test)]
@@ -146,6 +159,7 @@ impl MetalSparseHeapPool {
         self.heap_capacity
     }
 
+    #[cfg(test)]
     pub fn heap_capacity_pages(&self) -> usize {
         self.heap_capacity / self.page_size.in_bytes()
     }

@@ -596,7 +596,7 @@ impl<B: Backend> Embedding<B> {
                         readout_config,
                     },
             } => {
-                let b_variant = match readout_config.method {
+                let b_variant: MatmulB<'_, B> = match readout_config.method {
                     QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
                         b: weights,
                         scales,

@@ -4,14 +4,14 @@ use crate::{
     DataType,
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Encoder, Kernels,
+            AsBufferRangeMut, AsBufferRangeRef, Buffer, Encoder, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        cpu::{Cpu, context::CpuContext, kernel::matmul::quant::encode_quantized_gemm},
+        cpu::{BufferDowncastExt, Cpu, context::CpuContext, kernel::matmul::quant::encode_quantized_gemm},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -35,9 +35,9 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn encode(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
         &mut self,
-        arguments: MatmulArguments<Cpu>,
+        arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
         match arguments.b {
@@ -55,9 +55,9 @@ impl MatmulKernel for MatmulCpuKernel {
 }
 
 impl MatmulCpuKernel {
-    fn encode_fp(
+    fn encode_fp<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
         &mut self,
-        arguments: MatmulArguments<Cpu>,
+        arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
         let d_mask = MatmulDOp::mask(&arguments.d_transform);
@@ -112,7 +112,8 @@ impl MatmulCpuKernel {
         let d_byte_off = d_buffer_range.range().start;
 
         let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
-        let b_ptr = SendPtr(unsafe { &*b_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(b_byte_off));
+        let b_ptr =
+            SendPtr(unsafe { &*b_buffer_range.buffer().downcast().get() }.as_ptr().wrapping_byte_add(b_byte_off));
         let d_ptr =
             SendPtrMut(unsafe { (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8 });
 
@@ -186,9 +187,9 @@ impl MatmulCpuKernel {
         Ok(())
     }
 
-    fn encode_quant(
+    fn encode_quant<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
         &mut self,
-        arguments: MatmulArguments<Cpu>,
+        arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
         let d_mask = MatmulDOp::mask(&arguments.d_transform);
