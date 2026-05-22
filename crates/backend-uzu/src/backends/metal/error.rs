@@ -1,3 +1,5 @@
+use std::error::Error as StdError;
+
 use thiserror::Error;
 
 use crate::backends::{
@@ -34,7 +36,7 @@ pub enum MetalError {
     #[error("Can not allocate heap with size={0} and page size={1}")]
     SparseHeapAlloc(usize, usize),
     #[error("Kernel dispatch failed: {0}")]
-    KernelDispatchFailed(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
+    KernelDispatchFailed(#[source] Box<dyn StdError + Send + Sync + 'static>),
 }
 
 impl From<MatmulError<Metal>> for MetalError {

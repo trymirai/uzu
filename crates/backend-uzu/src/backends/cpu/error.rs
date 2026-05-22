@@ -1,4 +1,4 @@
-use std::sync::mpsc::RecvError;
+use std::{error::Error as StdError, sync::mpsc::RecvError};
 
 use thiserror::Error;
 
@@ -11,7 +11,7 @@ pub enum CpuError {
     #[error("Command buffer execution failed")]
     CommandBufferExecutionFailed(RecvError),
     #[error("Kernel dispatch failed: {0}")]
-    KernelDispatchFailed(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
+    KernelDispatchFailed(#[source] Box<dyn StdError + Send + Sync + 'static>),
 }
 
 impl From<MatmulError<Cpu>> for CpuError {

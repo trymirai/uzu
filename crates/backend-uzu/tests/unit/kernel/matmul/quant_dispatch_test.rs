@@ -1,6 +1,10 @@
 #![cfg(metal_backend)]
 
-use std::{collections::HashSet, fmt::{Debug, Display}};
+use std::{
+    collections::HashSet,
+    error::Error as StdError,
+    fmt::{Debug, Display},
+};
 
 use backend_uzu::{
     ArrayElement,
@@ -497,7 +501,7 @@ fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
     );
 
     let err = result.expect_err("expected error");
-    let matmul: &MatmulError<Metal> = (&err as &dyn std::error::Error)
+    let matmul: &MatmulError<Metal> = (&err as &dyn StdError)
         .source()
         .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
         .expect("expected MatmulError source");
@@ -548,7 +552,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     );
 
     let err = result.expect_err("expected error");
-    let matmul: &MatmulError<Metal> = (&err as &dyn std::error::Error)
+    let matmul: &MatmulError<Metal> = (&err as &dyn StdError)
         .source()
         .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
         .expect("expected MatmulError source");
