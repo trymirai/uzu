@@ -197,13 +197,11 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         decoding_config: &DecodingConfig,
     ) -> usize {
         let model_length = decoder_config.transformer_config.context_length;
-        if context.sparse_buffers_supported() {
-            return model_length;
-        };
-
         let proposed_value = match decoding_config.context_length {
             ContextLength::Default => {
-                if cfg!(target_os = "ios") {
+                if context.sparse_buffers_supported() {
+                    model_length
+                } else if cfg!(target_os = "ios") {
                     8192
                 } else {
                     16384
