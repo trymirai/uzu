@@ -11,7 +11,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             ManualKernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
         },
     },
     config::QuantizationConfig,
@@ -20,8 +20,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum LinearMatmulError<B: Backend> {
-    #[error("Matmul error: {0}")]
-    MatmulError(#[from] MatmulError<B>),
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported data type: {0:?}")]
@@ -135,7 +135,8 @@ impl<B: Backend> LinearMatmul<B> {
 
         let biases = load_biases(precision, output_dim, parameter_tree)?;
 
-        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, precision)?;
+        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, precision)
+            .map_err(LinearMatmulError::BackendError)?;
         let weights = weights_leaf.read_allocation()?;
 
         Ok(Self {
@@ -235,7 +236,8 @@ impl<B: Backend> LinearMatmul<B> {
 
         let biases = load_biases(data_type, output_dim, parameter_tree)?;
 
-        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?;
+        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+            .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),

@@ -10,15 +10,15 @@ pub enum CpuError {
     NotSupported,
     #[error("Command buffer execution failed")]
     CommandBufferExecutionFailed(RecvError),
-    #[error("Matmul error: {0}")]
-    Matmul(#[source] Box<MatmulError<Cpu>>),
+    #[error("Kernel dispatch failed: {0}")]
+    KernelDispatchFailed(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl From<MatmulError<Cpu>> for CpuError {
     fn from(value: MatmulError<Cpu>) -> Self {
         match value {
             MatmulError::BackendError(e) => e,
-            other => CpuError::Matmul(Box::new(other)),
+            other => CpuError::KernelDispatchFailed(Box::new(other)),
         }
     }
 }

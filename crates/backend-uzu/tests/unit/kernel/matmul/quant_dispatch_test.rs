@@ -496,12 +496,15 @@ fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
         MatmulDispatchPath::QuantGemm,
     );
 
-    match result {
-        Err(MatmulError::UnsupportedLayout {
-            path: "QuantGemm",
-        }) => {},
-        other => panic!("expected UnsupportedLayout(QuantGemm), got {other:?}"),
-    }
+    let err = result.expect_err("expected error");
+    let matmul: &MatmulError<Metal> = (&err as &dyn std::error::Error)
+        .source()
+        .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
+        .expect("expected MatmulError source");
+    assert!(
+        matches!(matmul, MatmulError::UnsupportedLayout { path: "QuantGemm" }),
+        "got {matmul:?}"
+    );
 }
 
 // Regression: encode returns Err on rejected D-transform instead of panicking.
@@ -544,12 +547,20 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
         MatmulDispatchPath::QuantGemm,
     );
 
-    match result {
-        Err(MatmulError::UnsupportedDOp {
-            bit: GemmDTransform::ACCUMULATE,
-            ..
-        }) => {},
-        other => panic!("expected UnsupportedDOp(ACCUMULATE), got {other:?}"),
-    }
+    let err = result.expect_err("expected error");
+    let matmul: &MatmulError<Metal> = (&err as &dyn std::error::Error)
+        .source()
+        .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
+        .expect("expected MatmulError source");
+    assert!(
+        matches!(
+            matmul,
+            MatmulError::UnsupportedDOp {
+                bit: GemmDTransform::ACCUMULATE,
+                ..
+            }
+        ),
+        "got {matmul:?}"
+    );
 }
 

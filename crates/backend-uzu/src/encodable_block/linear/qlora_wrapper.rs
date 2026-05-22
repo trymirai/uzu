@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{
             ManualKernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
         },
     },
     config::QuantizationConfig,
@@ -28,8 +28,8 @@ pub enum QLoRALinearWrapperError<B: Backend> {
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
-    #[error("Matmul error: {0}")]
-    MatmulError(#[from] MatmulError<B>),
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
 }
 
 pub struct QLoRALinearWrapper<B: Backend> {
@@ -65,8 +65,10 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             parameter_tree,
             output_quantized_hadamard_factors,
         )?;
-        let adapter_kernel =
-            RefCell::new(<<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)?);
+        let adapter_kernel = RefCell::new(
+            <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
+                .map_err(QLoRALinearWrapperError::BackendError)?,
+        );
 
         let adapter_down_leaf = parameter_tree.leaf("down_weights")?;
         adapter_down_leaf.validate_shape(&[lora_rank, input_dim], data_type)?;

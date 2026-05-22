@@ -11,7 +11,7 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        cpu::{BufferDowncastExt, Cpu, context::CpuContext, kernel::matmul::quant::encode_quantized_gemm},
+        cpu::{BufferDowncastExt, Cpu, context::CpuContext, error::CpuError, kernel::matmul::quant::encode_quantized_gemm},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -26,9 +26,9 @@ impl MatmulKernel for MatmulCpuKernel {
     fn new(
         _context: &CpuContext,
         data_type: DataType,
-    ) -> Result<Self, MatmulError<Cpu>> {
+    ) -> Result<Self, CpuError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MatmulError::UnsupportedDataType(data_type));
+            return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
         }
         Ok(Self {
             data_type,
@@ -39,17 +39,17 @@ impl MatmulKernel for MatmulCpuKernel {
         &mut self,
         arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
-    ) -> Result<(), MatmulError<Cpu>> {
+    ) -> Result<(), CpuError> {
         match arguments.b {
             MatmulB::FullPrecision {
                 ..
-            } => self.encode_fp(arguments, encoder),
+            } => self.encode_fp(arguments, encoder).map_err(CpuError::from),
             MatmulB::ScaleBiasDequant {
                 ..
             }
             | MatmulB::ScaleZeroPointDequant {
                 ..
-            } => self.encode_quant(arguments, encoder),
+            } => self.encode_quant(arguments, encoder).map_err(CpuError::from),
         }
     }
 }

@@ -29,21 +29,27 @@ pub enum MetalError {
     CannotCreateFunction,
     #[error("Cannot create pipeline state: {0}")]
     CannotCreatePipelineState(String),
-    #[error("Invalid GEMM specialization: {0:?}")]
-    InvalidGemmSpecialization(GemmSpecializationError),
     #[error("Can not allocate buffer with size={0}")]
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]
     SparseHeapAlloc(usize, usize),
-    #[error("Matmul error: {0}")]
-    Matmul(#[source] Box<MatmulError<Metal>>),
+    #[error("Kernel dispatch failed: {0}")]
+    KernelDispatchFailed(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl From<MatmulError<Metal>> for MetalError {
     fn from(value: MatmulError<Metal>) -> Self {
+        // Unwrap any backend error that bubbled up through the kernel layer so
+        // it doesn't end up wrapped twice; everything else is opaque.
         match value {
             MatmulError::BackendError(e) => e,
-            other => MetalError::Matmul(Box::new(other)),
+            other => MetalError::KernelDispatchFailed(Box::new(other)),
         }
+    }
+}
+
+impl From<GemmSpecializationError> for MetalError {
+    fn from(value: GemmSpecializationError) -> Self {
+        MetalError::KernelDispatchFailed(Box::new(value))
     }
 }

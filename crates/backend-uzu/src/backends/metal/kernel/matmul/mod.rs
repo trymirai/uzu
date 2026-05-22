@@ -18,7 +18,7 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
+        metal::{Metal, context::MetalContext, error::MetalError, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
     },
 };
 
@@ -60,7 +60,7 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
-    ) -> Result<(), MatmulError<Metal>> {
+    ) -> Result<(), MetalError> {
         match (path, &arguments.b) {
             (MatmulDispatchPath::Auto, _) => self.encode(arguments, encoder),
             (
@@ -68,25 +68,25 @@ impl MatmulMetalKernel {
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemv(arguments, encoder),
+            ) => self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from),
             (
                 MatmulDispatchPath::Gemm,
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, None, encoder),
+            ) => self.dispatch_fp_gemm(arguments, None, encoder).map_err(MetalError::from),
             (
                 MatmulDispatchPath::GemmSimdgroup,
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, Some(false), encoder),
+            ) => self.dispatch_fp_gemm(arguments, Some(false), encoder).map_err(MetalError::from),
             (
                 MatmulDispatchPath::GemmMxu,
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, Some(true), encoder),
+            ) => self.dispatch_fp_gemm(arguments, Some(true), encoder).map_err(MetalError::from),
             (
                 MatmulDispatchPath::QuantGemv,
                 MatmulB::ScaleBiasDequant {
@@ -95,7 +95,7 @@ impl MatmulMetalKernel {
                 | MatmulB::ScaleZeroPointDequant {
                     ..
                 },
-            ) => self.dispatch_quant_gemv(arguments, encoder),
+            ) => self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from),
             (
                 MatmulDispatchPath::QuantGemm,
                 MatmulB::ScaleBiasDequant {
@@ -104,7 +104,7 @@ impl MatmulMetalKernel {
                 | MatmulB::ScaleZeroPointDequant {
                     ..
                 },
-            ) => self.dispatch_quant_gemm(arguments, encoder),
+            ) => self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from),
             _ => panic!("MatmulDispatchPath does not match MatmulB variant"),
         }
     }
@@ -365,18 +365,17 @@ impl MatmulKernel for MatmulMetalKernel {
     fn new(
         context: &MetalContext,
         data_type: DataType,
-    ) -> Result<Self, MatmulError<Metal>> {
+    ) -> Result<Self, MetalError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16) {
-            return Err(MatmulError::UnsupportedDataType(data_type));
+            return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
         }
 
         let mxu_eligible = context.device.supports_mxu() && matches!(data_type, DataType::F16 | DataType::BF16);
-        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
-        let gemm = GemmKernel::new(context, data_type).map_err(MatmulError::BackendError)?;
-        let gemv = GemvKernel::new(context, data_type)?;
+        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true)?;
+        let gemm = GemmKernel::new(context, data_type)?;
+        let gemv = GemvKernel::new(context, data_type).map_err(MetalError::from)?;
         let quant_gemv = QuantGemvKernel::new(context, data_type);
-        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
-            .map_err(MatmulError::BackendError)?;
+        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)?;
 
         Ok(Self {
             mxu_eligible,
@@ -392,7 +391,7 @@ impl MatmulKernel for MatmulMetalKernel {
         &mut self,
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
+    ) -> Result<(), MetalError> {
         match &arguments.b {
             MatmulB::FullPrecision {
                 ..
@@ -403,9 +402,9 @@ impl MatmulKernel for MatmulMetalKernel {
                     && arguments.m <= max_gemv_batch_threshold();
 
                 if gemv_eligible {
-                    self.dispatch_fp_gemv(arguments, encoder)
+                    self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from)
                 } else {
-                    self.dispatch_fp_gemm(arguments, None, encoder)
+                    self.dispatch_fp_gemm(arguments, None, encoder).map_err(MetalError::from)
                 }
             },
             MatmulB::ScaleBiasDequant {
@@ -415,9 +414,9 @@ impl MatmulKernel for MatmulMetalKernel {
                 ..
             } => {
                 if arguments.m >= 5 && arguments.n > 1 {
-                    self.dispatch_quant_gemm(arguments, encoder)
+                    self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from)
                 } else {
-                    self.dispatch_quant_gemv(arguments, encoder)
+                    self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
                 }
             },
         }

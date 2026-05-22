@@ -177,7 +177,7 @@ impl GemmKernel {
                     bits_per_weight: weights_gw.bits_per_weight(),
                     group_size: weights_gw.group_size(),
                 };
-                specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
+                specialization.validate().map_err(MetalError::from)?;
                 let kernel = self.get_or_create(context, specialization)?;
                 kernel.encode(
                     (a, a_offset),
@@ -225,7 +225,7 @@ impl GemmKernel {
                     bits_per_weight: weights_gw.bits_per_weight(),
                     group_size: weights_gw.group_size(),
                 };
-                specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
+                specialization.validate().map_err(MetalError::from)?;
                 let kernel = self.get_or_create(context, specialization)?;
                 kernel.encode(
                     (a, a_offset),
@@ -273,7 +273,7 @@ impl GemmKernel {
                     bits_per_weight: weights_gw.bits_per_weight(),
                     group_size: weights_gw.group_size(),
                 };
-                specialization.validate().map_err(MetalError::InvalidGemmSpecialization)?;
+                specialization.validate().map_err(MetalError::from)?;
                 let kernel = self.get_or_create(context, specialization)?;
                 kernel.encode(
                     (a, a_offset),

@@ -9,7 +9,7 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulKernel},
         },
     },
     config::EmbeddingConfig,
@@ -20,8 +20,6 @@ use crate::{
 pub enum EmbeddingError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
-    #[error("Matmul error: {0}")]
-    MatmulError(#[from] MatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported configuration: {0}")]
@@ -185,7 +183,7 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?);
+                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?);
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::FullPrecision {
@@ -211,7 +209,7 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?);
+                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?);
 
                 EmbeddingTying::Untied {
                     input_ty: UntiedEmbeddingLookupType::FullPrecision {
@@ -262,7 +260,7 @@ impl<B: Backend> Embedding<B> {
                     group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?,
                 );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
@@ -332,7 +330,7 @@ impl<B: Backend> Embedding<B> {
                     group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?,
                 );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
@@ -395,7 +393,7 @@ impl<B: Backend> Embedding<B> {
                     group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?,
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?,
                 );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
@@ -568,7 +566,7 @@ impl<B: Backend> Embedding<B> {
                         },
                         encoder,
                     )
-                    ?;
+                    .map_err(EmbeddingError::BackendError)?;
             },
             EmbeddingTying::Tied {
                 ty:
@@ -617,7 +615,7 @@ impl<B: Backend> Embedding<B> {
                         },
                         encoder,
                     )
-                    ?;
+                    .map_err(EmbeddingError::BackendError)?;
             },
         };
 
