@@ -1,6 +1,9 @@
 use thiserror::Error;
 
-use crate::backends::metal::kernel::matmul::gemm::GemmSpecializationError;
+use crate::backends::{
+    common::kernel::matmul::MatmulError,
+    metal::{Metal, kernel::matmul::gemm::GemmSpecializationError},
+};
 
 #[derive(Debug, Error)]
 pub enum MetalError {
@@ -32,4 +35,15 @@ pub enum MetalError {
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]
     SparseHeapAlloc(usize, usize),
+    #[error("Matmul error: {0}")]
+    Matmul(#[source] Box<MatmulError<Metal>>),
+}
+
+impl From<MatmulError<Metal>> for MetalError {
+    fn from(value: MatmulError<Metal>) -> Self {
+        match value {
+            MatmulError::BackendError(e) => e,
+            other => MetalError::Matmul(Box::new(other)),
+        }
+    }
 }
