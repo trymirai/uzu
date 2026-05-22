@@ -307,7 +307,6 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
         input.quant_method,
         input.mode,
         group_size as usize,
-        T::data_type(),
     );
     let reference: Vec<T> = reference_f32.iter().map(|&v| T::from(v).unwrap()).collect();
 
@@ -432,7 +431,6 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
         input.quant_method,
         input.mode,
         input.group_size as usize,
-        bf16::data_type(),
     );
     for i in 0..(input.m as usize) {
         for j in 0..(input.n as usize) {

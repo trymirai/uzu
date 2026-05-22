@@ -1,25 +1,4 @@
-use backend_uzu::{
-    DataType,
-    backends::common::gpu_types::{QuantizationMethod, QuantizationMode},
-};
-
-/// Read a 4-bit weight from a u32-packed buffer (LSB-first, 8 weights per u32).
-fn unpack_u4(
-    w_packed: &[u32],
-    index: usize,
-) -> u8 {
-    let word = w_packed[index / 8];
-    ((word >> ((index % 8) * 4)) & 0xF) as u8
-}
-
-/// Read an 8-bit weight from a u32-packed buffer (4 weights per u32).
-fn unpack_u8(
-    w_packed: &[u32],
-    index: usize,
-) -> u8 {
-    let word = w_packed[index / 4];
-    ((word >> ((index % 4) * 8)) & 0xFF) as u8
-}
+use backend_uzu::backends::common::gpu_types::{QuantizationMethod, QuantizationMode};
 
 fn unpack_zp_u4(
     zp_packed: &[u8],
@@ -53,7 +32,6 @@ pub fn quant_gemm_reference(
     quant_method: QuantizationMethod,
     mode: QuantizationMode,
     group_size: usize,
-    dtype: DataType,
 ) -> Vec<f32> {
     let bits: u32 = match mode {
         QuantizationMode::U4 => 4,
@@ -70,7 +48,6 @@ pub fn quant_gemm_reference(
                 let scale = scales[j * num_groups_k + g];
                 let l_start = g * group_size;
                 let l_end = (l_start + group_size).min(k);
-                let _ = dtype; // dtype kept on signature for future precision-faithful mode
                 let bias = match quant_method {
                     QuantizationMethod::ScaleBias => biases.expect("ScaleBias requires biases")[j * num_groups_k + g],
                     QuantizationMethod::ScaleZeroPoint => {
@@ -100,43 +77,3 @@ pub fn quant_gemm_reference(
     out
 }
 
-/// Same as [`quant_gemm_reference`] but unpacking weights from the u32 buffer
-/// directly. Useful when only `w_packed` is on hand.
-#[allow(clippy::too_many_arguments)]
-pub fn quant_gemm_reference_packed(
-    m: usize,
-    n: usize,
-    k: usize,
-    a: &[f32],
-    w_packed: &[u32],
-    scales: &[f32],
-    biases: Option<&[f32]>,
-    zero_points_packed: Option<&[u8]>,
-    quant_method: QuantizationMethod,
-    mode: QuantizationMode,
-    group_size: usize,
-    dtype: DataType,
-) -> Vec<f32> {
-    let bits: u32 = match mode {
-        QuantizationMode::U4 => 4,
-        QuantizationMode::I8 | QuantizationMode::U8 => 8,
-    };
-    let mut weights_raw = vec![0u8; n * k];
-    for w_idx in 0..(n * k) {
-        weights_raw[w_idx] = if bits == 4 { unpack_u4(w_packed, w_idx) } else { unpack_u8(w_packed, w_idx) };
-    }
-    quant_gemm_reference(
-        m,
-        n,
-        k,
-        a,
-        &weights_raw,
-        scales,
-        biases,
-        zero_points_packed,
-        quant_method,
-        mode,
-        group_size,
-        dtype,
-    )
-}
