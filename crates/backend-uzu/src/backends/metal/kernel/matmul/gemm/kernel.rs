@@ -317,27 +317,13 @@ fn select_mxu_tiling(
 }
 
 fn select_quant_tiling(
-    data_type: DataType,
+    _data_type: DataType,
     m: u32,
-    n: u32,
-    group_size: u32,
+    _n: u32,
+    _group_size: u32,
 ) -> GemmTiling {
     if m < 32 {
-        return GemmTiling::T8x32x32_1x1;
-    }
-    if m < 48 {
-        return GemmTiling::T32x32x32_2x2;
-    }
-
-    let aligned_n_64 = n % 64 == 0;
-    let can_use_64_tiling = aligned_n_64 && data_type == DataType::BF16;
-
-    if can_use_64_tiling {
-        if matches!(group_size, 64 | 128) {
-            GemmTiling::T64x64x64_2x2
-        } else {
-            GemmTiling::T64x64x32_2x2
-        }
+        GemmTiling::T8x32x32_1x1
     } else {
         GemmTiling::T32x32x32_2x2
     }
