@@ -44,12 +44,11 @@ fn max_gemv_batch_threshold() -> u32 {
 pub enum MatmulDispatchPath {
     Auto,
     Gemv,
-    /// FP GEMM with the default MXU eligibility (device-driven).
+    /// FP GEMM. Picks MXU automatically on MXU-capable devices, otherwise
+    /// falls back to the simdgroup path.
     Gemm,
-    /// FP GEMM forced onto the simdgroup path (no MXU fragment ops).
+    /// FP GEMM forced onto the simdgroup path even when MXU is available.
     GemmSimdgroup,
-    /// FP GEMM forced onto the MXU path. Requires MXU-capable device.
-    GemmMxu,
     QuantGemv,
     QuantGemm,
 }
@@ -74,19 +73,13 @@ impl MatmulMetalKernel {
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, None, encoder).map_err(MetalError::from),
+            ) => self.dispatch_fp_gemm(arguments, false, encoder).map_err(MetalError::from),
             (
                 MatmulDispatchPath::GemmSimdgroup,
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, Some(false), encoder).map_err(MetalError::from),
-            (
-                MatmulDispatchPath::GemmMxu,
-                MatmulB::FullPrecision {
-                    ..
-                },
-            ) => self.dispatch_fp_gemm(arguments, Some(true), encoder).map_err(MetalError::from),
+            ) => self.dispatch_fp_gemm(arguments, true, encoder).map_err(MetalError::from),
             (
                 MatmulDispatchPath::QuantGemv,
                 MatmulB::ScaleBiasDequant {
@@ -161,16 +154,13 @@ impl MatmulMetalKernel {
     fn dispatch_fp_gemm<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         arguments: MatmulArguments<'a, Metal, TB>,
-        force_use_mxu: Option<bool>,
+        force_simdgroup: bool,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
         // FP gemm core handles SCALE/ACCUMULATE natively via SPECIALIZE.
         // Simdgroup path fuses BIAS too; MXU path still needs post-pass bias.
         // RHT always post-pass.
-        let uses_mxu = match force_use_mxu {
-            Some(forced) => forced,
-            None => self.mxu_eligible,
-        };
+        let uses_mxu = !force_simdgroup && self.mxu_eligible;
         let post_bias = if uses_mxu {
             arguments.d_transform.iter().find_map(|op| op.as_bias())
         } else {
@@ -223,7 +213,7 @@ impl MatmulMetalKernel {
                     n,
                     k,
                 },
-                force_use_mxu,
+                force_simdgroup,
                 encoder,
             )
             .map_err(MatmulError::BackendError)?;
@@ -347,7 +337,7 @@ impl MatmulMetalKernel {
                     n,
                     k,
                 },
-                None,
+                false,
                 encoder,
             )
             .map_err(MatmulError::BackendError)?;
@@ -404,7 +394,7 @@ impl MatmulKernel for MatmulMetalKernel {
                 if gemv_eligible {
                     self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from)
                 } else {
-                    self.dispatch_fp_gemm(arguments, None, encoder).map_err(MetalError::from)
+                    self.dispatch_fp_gemm(arguments, false, encoder).map_err(MetalError::from)
                 }
             },
             MatmulB::ScaleBiasDequant {

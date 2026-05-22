@@ -1,33 +1,31 @@
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{DeviceExt, MatmulDispatchPath, MetalContext};
+use backend_uzu::backends::metal::{MatmulDispatchPath, MetalContext};
 use derive_more::Display;
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
+    /// Auto-selected FP gemm — picks MXU on capable chips, simdgroup otherwise.
     #[display("GEMM")]
     Gemm,
-    #[display("GEMM_MXU")]
-    GemmMxu,
+    /// Force the simdgroup path regardless of hardware capability.
+    #[display("GEMM_SIMDGROUP")]
+    GemmSimdgroup,
 }
 
 impl Variant {
-    pub const fn requires_mxu(self) -> bool {
-        matches!(self, Variant::GemmMxu)
-    }
-
     #[cfg(metal_backend)]
     pub fn supported(
         self,
-        context: &MetalContext,
+        _context: &MetalContext,
     ) -> bool {
-        !self.requires_mxu() || context.device.supports_mxu()
+        true
     }
 
     #[cfg(metal_backend)]
     pub const fn dispatch_path(self) -> MatmulDispatchPath {
         match self {
-            Variant::Gemm => MatmulDispatchPath::GemmSimdgroup,
-            Variant::GemmMxu => MatmulDispatchPath::GemmMxu,
+            Variant::Gemm => MatmulDispatchPath::Gemm,
+            Variant::GemmSimdgroup => MatmulDispatchPath::GemmSimdgroup,
         }
     }
 }
