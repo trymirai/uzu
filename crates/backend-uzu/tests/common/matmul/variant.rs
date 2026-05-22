@@ -1,28 +1,33 @@
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::MatmulDispatchPath;
-#[cfg(metal_backend)]
-use backend_uzu::backends::metal::MetalContext;
+use backend_uzu::backends::metal::{DeviceExt, MatmulDispatchPath, MetalContext};
 use derive_more::Display;
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     #[display("GEMM")]
     Gemm,
+    #[display("GEMM_MXU")]
+    GemmMxu,
 }
 
 impl Variant {
+    pub const fn requires_mxu(self) -> bool {
+        matches!(self, Variant::GemmMxu)
+    }
+
     #[cfg(metal_backend)]
     pub fn supported(
         self,
-        _context: &MetalContext,
+        context: &MetalContext,
     ) -> bool {
-        true
+        !self.requires_mxu() || context.device.supports_mxu()
     }
 
     #[cfg(metal_backend)]
     pub const fn dispatch_path(self) -> MatmulDispatchPath {
         match self {
-            Variant::Gemm => MatmulDispatchPath::Gemm,
+            Variant::Gemm => MatmulDispatchPath::GemmSimdgroup,
+            Variant::GemmMxu => MatmulDispatchPath::GemmMxu,
         }
     }
 }
