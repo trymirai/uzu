@@ -412,7 +412,8 @@ impl<B: Backend> LayerExecutables<B> {
             } => {
                 let Some(LayerCacheAccess::Owned {
                     entry,
-                }) = cache_access else {
+                }) = cache_access
+                else {
                     panic!("State-space layer requires writable cache state");
                 };
                 let layer = entry.as_state_space_mut().expect("State-space mixer expects SSM cache layer");
@@ -430,7 +431,8 @@ impl<B: Backend> LayerExecutables<B> {
             } => {
                 let Some(LayerCacheAccess::Owned {
                     entry,
-                }) = cache_access else {
+                }) = cache_access
+                else {
                     panic!("ShortConv layer requires writable cache state");
                 };
                 let layer = entry.as_short_conv_mut().expect("ShortConv mixer expects ShortConv cache layer");
@@ -451,7 +453,8 @@ impl<B: Backend> LayerExecutables<B> {
             } => {
                 let Some(LayerCacheAccess::Owned {
                     entry,
-                }) = cache_access else {
+                }) = cache_access
+                else {
                     panic!("DeltaNet layer requires writable cache state");
                 };
                 let layer = entry.as_delta_net_mut().expect("DeltaNet mixer expects DeltaNet cache layer");
