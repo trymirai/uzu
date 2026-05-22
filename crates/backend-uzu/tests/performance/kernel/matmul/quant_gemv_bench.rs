@@ -1,7 +1,7 @@
 use backend_uzu::{
     ArrayElement,
     backends::common::{
-        Allocation, Backend, Context, Encoder, Kernels, gpu_types::QuantizationMethod, kernel::QuantizedMatmulQmvFastKernel,
+        Allocation, Backend, Context, Kernels, gpu_types::QuantizationMethod, kernel::QuantizedMatmulQmvFastKernel,
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -10,7 +10,7 @@ use num_traits::Float;
 
 use crate::{
     common::{
-        matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes},
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop},
         type_short_name,
     },
     uzu_bench,
@@ -43,25 +43,21 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
 
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
-            b.iter_custom(|n_iters| {
-                let mut encoder = Encoder::<B>::new(context).unwrap();
-                for _ in 0..n_iters {
-                    kernel.encode(
-                        &buffers.w,
-                        &buffers.scales,
-                        buffers.zp.as_ref(),
-                        buffers.bias.as_ref(),
-                        &buffers.x,
-                        &mut buffers.y,
-                        None::<&Allocation<B>>,
-                        k as u32,
-                        n as u32,
-                        m as u32,
-                        &mut encoder,
-                    );
-                }
-                encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
-            })
+            iter_encode_loop::<B, _>(context, b, |encoder| {
+                kernel.encode(
+                    &buffers.w,
+                    &buffers.scales,
+                    buffers.zp.as_ref(),
+                    buffers.bias.as_ref(),
+                    &buffers.x,
+                    &mut buffers.y,
+                    None::<&Allocation<B>>,
+                    k as u32,
+                    n as u32,
+                    m as u32,
+                    encoder,
+                );
+            });
         });
     }
 }

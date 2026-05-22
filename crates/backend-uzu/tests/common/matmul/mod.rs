@@ -1,6 +1,9 @@
+pub mod bench;
 pub mod harness;
 pub mod quant;
 pub mod shape;
+
+pub use bench::iter_encode_loop;
 
 #[cfg(metal_backend)]
 pub use harness::run_metal;

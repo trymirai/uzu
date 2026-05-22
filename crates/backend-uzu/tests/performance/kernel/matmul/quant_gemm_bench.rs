@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayElement,
     backends::{
         common::{
-            Backend, Context, Encoder,
+            Backend, Context,
             gpu_types::QuantizationMethod,
             kernel::{ManualKernels, matmul::MatmulKernel},
         },
@@ -17,7 +17,7 @@ use num_traits::Float;
 
 use crate::{
     common::{
-        matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, quant_arguments},
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
         type_short_name,
     },
     uzu_bench,
@@ -42,19 +42,15 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             c.benchmark_group(format!("{}/Kernel/UnifiedQuantizedGemm/{}", type_short_name::<Metal>(), label));
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
-            b.iter_custom(|n_iters| {
-                let mut encoder = Encoder::<Metal>::new(context).unwrap();
-                for _ in 0..n_iters {
-                    matmul
-                        .encode_with_path(
-                            quant_arguments(&mut buffers, &input),
-                            &mut encoder,
-                            MatmulDispatchPath::QuantGemm,
-                        )
-                        .expect("encode unified quant matmul");
-                }
-                encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
-            })
+            iter_encode_loop::<Metal, _>(context, b, |encoder| {
+                matmul
+                    .encode_with_path(
+                        quant_arguments(&mut buffers, &input),
+                        encoder,
+                        MatmulDispatchPath::QuantGemm,
+                    )
+                    .expect("encode unified quant matmul");
+            });
         });
         drop(group);
     }

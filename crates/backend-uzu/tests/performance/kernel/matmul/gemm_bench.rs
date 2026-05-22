@@ -6,7 +6,7 @@ use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
         common::{
-            AllocationType, Backend, Context, Encoder,
+            AllocationType, Backend, Context,
             kernel::{
                 ManualKernels,
                 matmul::{MatmulArguments, MatmulB, MatmulKernel},
@@ -19,7 +19,10 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
 
 use crate::{
-    common::{matmul::bench_fp_gemm_shapes, type_short_name},
+    common::{
+        matmul::{bench_fp_gemm_shapes, iter_encode_loop},
+        type_short_name,
+    },
     uzu_bench,
 };
 
@@ -43,34 +46,30 @@ fn bench_gemm(c: &mut Criterion) {
             .expect("d allocation");
 
         group.throughput(Throughput::Elements((2 * m * k * n) as u64));
-        group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |bencher| {
-            bencher.iter_custom(|n_iters| {
-                let mut encoder = Encoder::<Metal>::new(&context).unwrap();
-                for _ in 0..n_iters {
-                    kernel
-                        .encode_with_path(
-                            MatmulArguments {
-                                a: &a,
-                                a_offset: 0,
-                                b: MatmulB::FullPrecision {
-                                    b: b_array.allocation(),
-                                },
-                                b_offset: 0,
-                                b_leading_dimension: None,
-                                b_transpose: true,
-                                d: &mut d,
-                                d_transform: HashSet::new(),
-                                m: m as u32,
-                                n: n as u32,
-                                k: k as u32,
+        group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
+            iter_encode_loop::<Metal, _>(&context, b, |encoder| {
+                kernel
+                    .encode_with_path(
+                        MatmulArguments {
+                            a: &a,
+                            a_offset: 0,
+                            b: MatmulB::FullPrecision {
+                                b: b_array.allocation(),
                             },
-                            &mut encoder,
-                            MatmulDispatchPath::Gemm,
-                        )
-                        .expect("encode_with_path failed");
-                }
-                encoder.end_encoding().submit().wait_until_completed().unwrap().gpu_execution_time()
-            })
+                            b_offset: 0,
+                            b_leading_dimension: None,
+                            b_transpose: true,
+                            d: &mut d,
+                            d_transform: HashSet::new(),
+                            m: m as u32,
+                            n: n as u32,
+                            k: k as u32,
+                        },
+                        encoder,
+                        MatmulDispatchPath::Gemm,
+                    )
+                    .expect("encode_with_path failed");
+            });
         });
     }
 }
