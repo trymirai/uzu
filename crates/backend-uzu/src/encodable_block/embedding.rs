@@ -572,7 +572,7 @@ impl<B: Backend> Embedding<B> {
                         },
                         encoder,
                     )
-                    .expect("encode failed");
+                    ?;
             },
             EmbeddingTying::Tied {
                 ty:
@@ -630,7 +630,7 @@ impl<B: Backend> Embedding<B> {
                         },
                         encoder,
                     )
-                    .expect("encode failed");
+                    ?;
             },
         };
 

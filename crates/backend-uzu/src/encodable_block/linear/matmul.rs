@@ -355,8 +355,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                     k: self.input_dim as u32,
                 },
                 encoder,
-            )
-            .expect("encode failed");
+            )?;
 
         Ok(output)
     }

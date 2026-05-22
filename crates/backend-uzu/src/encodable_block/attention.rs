@@ -287,7 +287,7 @@ impl<B: Backend> Attention<B> {
                     max_sequence_length as u32,
                     encoder,
                 );
-                Ok(values)
+                Ok::<_, B::Error>(values)
             })
             .transpose()?;
 
@@ -613,7 +613,7 @@ impl<B: Backend> Attention<B> {
                     },
                     encoder,
                 )
-                .expect("encode failed");
+                ?;
             scatter_scores.encode(
                 &group_scores,
                 &mut scores,
@@ -667,7 +667,7 @@ impl<B: Backend> Attention<B> {
                     },
                     encoder,
                 )
-                .expect("encode failed");
+                ?;
             self.fallback_scatter_values_kernel.encode(
                 &group_output,
                 &mut *attention_output,

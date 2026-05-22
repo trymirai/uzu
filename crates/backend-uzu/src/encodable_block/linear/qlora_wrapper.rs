@@ -120,7 +120,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 },
                 encoder,
             )
-            .expect("encode failed");
+            ?;
 
         let mut output = self.base_linear.encode(input, batch_dim, encoder)?;
 
@@ -148,7 +148,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 },
                 encoder,
             )
-            .expect("encode failed");
+            ?;
 
         Ok(output)
     }
