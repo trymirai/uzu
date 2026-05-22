@@ -173,10 +173,6 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     assert_parity::<bf16>("with_bias", &reference, &actual, 0.1, 5.0);
 }
 
-fn expect_matmul_error_source(err: impl StdError + 'static) -> Box<dyn StdError + 'static> {
-    Box::new(err)
-}
-
 // Regression: quant dispatch rejects nonzero b_offset rather than silently dropping it.
 #[uzu_test]
 fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
@@ -191,8 +187,8 @@ fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
     args.b_offset = 16;
     let result = matmul.encode_with_path(args, &mut encoder, MatmulDispatchPath::QuantGemm);
 
-    let err = expect_matmul_error_source(result.expect_err("expected error"));
-    let matmul: &MatmulError<Metal> = err
+    let err = result.expect_err("expected error");
+    let matmul: &MatmulError<Metal> = (&err as &dyn StdError)
         .source()
         .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
         .expect("expected MatmulError source");
@@ -216,8 +212,8 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     args.d_transform = HashSet::from([MatmulDOp::Accumulate]);
     let result = matmul.encode_with_path(args, &mut encoder, MatmulDispatchPath::QuantGemm);
 
-    let err = expect_matmul_error_source(result.expect_err("expected error"));
-    let matmul: &MatmulError<Metal> = err
+    let err = result.expect_err("expected error");
+    let matmul: &MatmulError<Metal> = (&err as &dyn StdError)
         .source()
         .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
         .expect("expected MatmulError source");
