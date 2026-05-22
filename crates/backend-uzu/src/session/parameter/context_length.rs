@@ -1,5 +1,3 @@
-use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
-
 #[derive(Debug, Clone, Copy)]
 pub enum ContextLength {
     Default,
@@ -10,26 +8,5 @@ pub enum ContextLength {
 impl Default for ContextLength {
     fn default() -> Self {
         ContextLength::Default
-    }
-}
-
-impl ConfigResolvableValue<LanguageModelConfig, usize> for ContextLength {
-    fn resolve(
-        &self,
-        config: &LanguageModelConfig,
-    ) -> usize {
-        let model_context_length = config.model_config.transformer_config.context_length;
-        let proposed_value = match self {
-            ContextLength::Default => {
-                if cfg!(target_os = "ios") {
-                    8192
-                } else {
-                    16384
-                }
-            },
-            ContextLength::Maximal => model_context_length,
-            ContextLength::Custom(value) => *value,
-        };
-        std::cmp::min(proposed_value, model_context_length)
     }
 }
