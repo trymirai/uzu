@@ -942,7 +942,7 @@ impl<B: Backend> TraceValidator<B> {
         desired_suffix_length: usize,
         context: &mut LanguageModelGeneratorContext<B>,
     ) {
-        let resolved_prefix_length = decoding_config.context_length.resolve(&context.model_config);
+        let resolved_prefix_length = context.get_context_length(decoding_config);
         let current_suffix_length = std::cmp::max(
             decoding_config.prefill_step_size.resolve(&context.model_config),
             decoding_config.generate_suffix_length(),
