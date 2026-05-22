@@ -144,8 +144,7 @@ inline U qdot_safe(
     if (remainder > 0) {
       uint16_t weight_word = weight_words[full_chunks];
       int base_index = 4 * full_chunks;
-      if (remainder > 0)
-        accumulator += x_thread[base_index] * uint_to_fp<U>(weight_word & 0xf);
+      accumulator += x_thread[base_index] * uint_to_fp<U>(weight_word & 0xf);
       if (remainder > 1)
         accumulator +=
             x_thread[base_index + 1] * uint_to_fp<U>((weight_word >> 4) & 0xf);
