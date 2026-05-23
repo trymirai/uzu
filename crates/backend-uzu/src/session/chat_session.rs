@@ -231,7 +231,7 @@ impl ChatSession {
             .collect();
 
         let language_model_generator = self.llm.as_mut().ok_or(Error::LanguageModelGeneratorNotLoaded)?;
-        let context_length = self.decoding_config.context_length.resolve(&self.model_metadata.model_config);
+        let context_length = language_model_generator.get_context_length();
         if tokens.len() >= context_length {
             return Err(Error::ContextLengthExceeded);
         }
