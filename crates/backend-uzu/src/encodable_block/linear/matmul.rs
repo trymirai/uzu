@@ -291,8 +291,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.data_type))?;
+        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.data_type))?;
 
         let b = match &self.mode {
             Mode::FullPrecision => MatmulB::FullPrecision {
@@ -339,24 +338,22 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             });
         }
 
-        self.kernel
-            .borrow_mut()
-            .encode(
-                MatmulArguments {
-                    a: &input,
-                    a_offset: 0,
-                    b,
-                    b_offset: 0,
-                    b_leading_dimension: None,
-                    b_transpose: true,
-                    d: &mut output,
-                    d_transform,
-                    m: batch_dim as u32,
-                    n: self.output_dim as u32,
-                    k: self.input_dim as u32,
-                },
-                encoder,
-            )?;
+        self.kernel.borrow_mut().encode(
+            MatmulArguments {
+                a: &input,
+                a_offset: 0,
+                b,
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut output,
+                d_transform,
+                m: batch_dim as u32,
+                n: self.output_dim as u32,
+                k: self.input_dim as u32,
+            },
+            encoder,
+        )?;
 
         Ok(output)
     }

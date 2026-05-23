@@ -1,6 +1,9 @@
 //! Attention kernel encodable.
 
-use std::{cell::RefCell, collections::{HashMap, HashSet}};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use itertools::iproduct;
 
@@ -591,29 +594,26 @@ impl<B: Backend> Attention<B> {
             encoder.allocate_scratch(size_for_shape(&[gqa_factor * suffix_length, sequence_length], self.data_type))?;
 
         for group_index in 0..num_groups {
-            matmul
-                .borrow_mut()
-                .encode(
-                    MatmulArguments {
-                        a: queries,
-                        a_offset: group_index * gqa_factor * suffix_length * head_dim * dt_bytes,
-                        b: MatmulB::FullPrecision {
-                            b: keys,
-                        },
-                        b_offset: group_index * k_head_stride as usize * dt_bytes,
-                        b_leading_dimension: Some(k_seq_stride),
-                        b_transpose: true,
-                        d: &mut group_scores,
-                        d_transform: HashSet::from([MatmulDOp::Scale {
-                            ab_scale: scale,
-                        }]),
-                        m: (gqa_factor * suffix_length) as u32,
-                        n: sequence_length as u32,
-                        k: head_dim as u32,
+            matmul.borrow_mut().encode(
+                MatmulArguments {
+                    a: queries,
+                    a_offset: group_index * gqa_factor * suffix_length * head_dim * dt_bytes,
+                    b: MatmulB::FullPrecision {
+                        b: keys,
                     },
-                    encoder,
-                )
-                ?;
+                    b_offset: group_index * k_head_stride as usize * dt_bytes,
+                    b_leading_dimension: Some(k_seq_stride),
+                    b_transpose: true,
+                    d: &mut group_scores,
+                    d_transform: HashSet::from([MatmulDOp::Scale {
+                        ab_scale: scale,
+                    }]),
+                    m: (gqa_factor * suffix_length) as u32,
+                    n: sequence_length as u32,
+                    k: head_dim as u32,
+                },
+                encoder,
+            )?;
             scatter_scores.encode(
                 &group_scores,
                 &mut scores,
@@ -647,27 +647,24 @@ impl<B: Backend> Attention<B> {
             encoder.allocate_scratch(size_for_shape(&[gqa_factor * suffix_length, head_dim], self.data_type))?;
 
         for group_index in 0..num_groups {
-            matmul
-                .borrow_mut()
-                .encode(
-                    MatmulArguments {
-                        a: &scores,
-                        a_offset: group_index * gqa_factor * suffix_length * sequence_length * dt_bytes,
-                        b: MatmulB::FullPrecision {
-                            b: values,
-                        },
-                        b_offset: group_index * v_head_stride as usize * dt_bytes,
-                        b_leading_dimension: Some(v_seq_stride),
-                        b_transpose: false,
-                        d: &mut group_output,
-                        d_transform: HashSet::new(),
-                        m: (gqa_factor * suffix_length) as u32,
-                        n: head_dim as u32,
-                        k: sequence_length as u32,
+            matmul.borrow_mut().encode(
+                MatmulArguments {
+                    a: &scores,
+                    a_offset: group_index * gqa_factor * suffix_length * sequence_length * dt_bytes,
+                    b: MatmulB::FullPrecision {
+                        b: values,
                     },
-                    encoder,
-                )
-                ?;
+                    b_offset: group_index * v_head_stride as usize * dt_bytes,
+                    b_leading_dimension: Some(v_seq_stride),
+                    b_transpose: false,
+                    d: &mut group_output,
+                    d_transform: HashSet::new(),
+                    m: (gqa_factor * suffix_length) as u32,
+                    n: head_dim as u32,
+                    k: sequence_length as u32,
+                },
+                encoder,
+            )?;
             self.fallback_scatter_values_kernel.encode(
                 &group_output,
                 &mut *attention_output,

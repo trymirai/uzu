@@ -103,54 +103,50 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         let mut intermediate =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
 
-        adapter_kernel
-            .encode(
-                MatmulArguments {
-                    a: &input,
-                    a_offset: 0,
-                    b: MatmulB::FullPrecision {
-                        b: &self.adapter_down,
-                    },
-                    b_offset: 0,
-                    b_leading_dimension: None,
-                    b_transpose: true,
-                    d: &mut intermediate,
-                    d_transform: HashSet::new(),
-                    m: batch_dim as u32,
-                    n: self.lora_rank as u32,
-                    k: self.input_dim as u32,
+        adapter_kernel.encode(
+            MatmulArguments {
+                a: &input,
+                a_offset: 0,
+                b: MatmulB::FullPrecision {
+                    b: &self.adapter_down,
                 },
-                encoder,
-            )
-            ?;
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut intermediate,
+                d_transform: HashSet::new(),
+                m: batch_dim as u32,
+                n: self.lora_rank as u32,
+                k: self.input_dim as u32,
+            },
+            encoder,
+        )?;
 
         let mut output = self.base_linear.encode(input, batch_dim, encoder)?;
 
-        adapter_kernel
-            .encode(
-                MatmulArguments {
-                    a: &intermediate,
-                    a_offset: 0,
-                    b: MatmulB::FullPrecision {
-                        b: &self.adapter_up,
-                    },
-                    b_offset: 0,
-                    b_leading_dimension: None,
-                    b_transpose: true,
-                    d: &mut output,
-                    d_transform: HashSet::from([
-                        MatmulDOp::Scale {
-                            ab_scale: self.lora_scale,
-                        },
-                        MatmulDOp::Accumulate,
-                    ]),
-                    m: batch_dim as u32,
-                    n: self.output_dim as u32,
-                    k: self.lora_rank as u32,
+        adapter_kernel.encode(
+            MatmulArguments {
+                a: &intermediate,
+                a_offset: 0,
+                b: MatmulB::FullPrecision {
+                    b: &self.adapter_up,
                 },
-                encoder,
-            )
-            ?;
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut output,
+                d_transform: HashSet::from([
+                    MatmulDOp::Scale {
+                        ab_scale: self.lora_scale,
+                    },
+                    MatmulDOp::Accumulate,
+                ]),
+                m: batch_dim as u32,
+                n: self.output_dim as u32,
+                k: self.lora_rank as u32,
+            },
+            encoder,
+        )?;
 
         Ok(output)
     }
