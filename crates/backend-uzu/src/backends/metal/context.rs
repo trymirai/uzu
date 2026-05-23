@@ -1,21 +1,22 @@
-#[cfg(test)]
-use std::cell::Ref;
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::Path,
     rc::{Rc, Weak},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(test)]
+use metal::MTLSharedEvent;
 use metal::{
-    MTL4CommandQueue, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager, MTLCommandQueue,
-    MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent, MTLFunctionConstantValues,
-    MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
+    MTL4CommandQueue, MTL4CommandQueueExt, MTLBuffer, MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager,
+    MTLCommandQueue, MTLCommandQueueExt, MTLComputePipelineState, MTLDevice, MTLDeviceExt, MTLEvent,
+    MTLFunctionConstantValues, MTLLibrary, MTLResourceOptions, MTLSparsePageSize,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
-    Metal,
+    DeviceExt, Metal,
     device_capabilities::MetalDeviceCapabilities,
     error::MetalError,
     kernel,
@@ -27,7 +28,7 @@ use crate::{
         metal::{
             command_buffer::MetalCommandBufferInitial,
             metal_extensions::SparsePageSizeExt,
-            sparse::{MetalSparseBuffer, MetalSparseHeapPool},
+            sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
         },
     },
     utils::model_size::ModelSize,
@@ -37,6 +38,8 @@ pub struct MetalContext {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub command_queue4: Retained<ProtocolObject<dyn MTL4CommandQueue>>,
+    timeline_event: Retained<ProtocolObject<dyn MTLEvent>>,
+    timeline_value: AtomicU64,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
     device_capabilities: MetalDeviceCapabilities,
@@ -44,6 +47,8 @@ pub struct MetalContext {
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
     weak_self: Weak<MetalContext>,
+    #[cfg(test)]
+    timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
 }
 
 impl MetalContext {
@@ -68,13 +73,40 @@ impl MetalContext {
         Ok(pipeline)
     }
 
-    #[cfg(test)]
     pub(super) fn sparse_heap_pool(&self) -> Ref<'_, MetalSparseHeapPool> {
         self.sparse_heap_pool.borrow()
     }
 
     pub(super) fn sparse_heap_pool_mut(&self) -> RefMut<'_, MetalSparseHeapPool> {
         self.sparse_heap_pool.borrow_mut()
+    }
+
+    pub(super) fn sparse_update_mappings(
+        &self,
+        mappings: &[MetalSparseMappingOpsBatch],
+    ) {
+        if mappings.is_empty() {
+            return;
+        }
+
+        let wait_value = self.timeline_get_and_increment();
+        self.command_queue4.wait_for_event_value(&self.timeline_event, wait_value);
+        for op in mappings {
+            self.command_queue4.update_buffer_mappings(&op.buffer, Some(op.heap.borrow().heap()), &op.mtl_operations);
+        }
+        self.command_queue4.signal_event_value(&self.timeline_event, wait_value + 1);
+
+        // This line prevent tests from freezing, showing pink screen and shutting down computer
+        #[cfg(test)]
+        self.timeline_shared_event.wait_until_signaled_value_timeout_ms(wait_value, 10);
+    }
+
+    pub(super) fn timeline_get_and_increment(&self) -> u64 {
+        self.timeline_value.fetch_add(1, Ordering::Release)
+    }
+
+    pub(super) fn timeline_event(&self) -> &ProtocolObject<dyn MTLEvent> {
+        &self.timeline_event
     }
 }
 
@@ -99,11 +131,16 @@ impl Context for MetalContext {
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = 64 * 4 * page_size.in_bytes();
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
+        let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
+        #[cfg(test)]
+        let timeline_shared_event = device.new_shared_event().ok_or(MetalError::CannotCreateEvent)?;
 
         Ok(Rc::new_cyclic(|weak_self| Self {
             device,
             command_queue,
             command_queue4,
+            timeline_event,
+            timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: RefCell::new(0),
             device_capabilities,
@@ -111,6 +148,8 @@ impl Context for MetalContext {
             pipeline_cache: RefCell::new(HashMap::new()),
             sparse_heap_pool: RefCell::new(sparse_pool),
             weak_self: weak_self.clone(),
+            #[cfg(test)]
+            timeline_shared_event,
         }))
     }
 
@@ -172,11 +211,8 @@ impl Context for MetalContext {
     fn create_command_buffer(&self) -> Result<MetalCommandBufferInitial, MetalError> {
         Ok(MetalCommandBufferInitial::new(
             self.command_queue.command_buffer().ok_or(MetalError::CannotCreateCommandBuffer)?,
+            self.weak_self.upgrade().unwrap(), // never fails
         ))
-    }
-
-    fn create_event(&self) -> Result<Retained<ProtocolObject<dyn MTLEvent>>, MetalError> {
-        self.device.new_event().ok_or(MetalError::CannotCreateEvent)
     }
 
     fn create_sparse_buffer(
@@ -221,5 +257,9 @@ impl Context for MetalContext {
         MTLCaptureManager::shared_capture_manager().stop_capture();
 
         Ok(())
+    }
+
+    fn sparse_buffers_supported(&self) -> bool {
+        self.device.supports_placement_sparse_resources()
     }
 }

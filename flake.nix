@@ -22,6 +22,7 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
+        lib = pkgs.lib;
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
@@ -30,7 +31,7 @@
             # for xgrammar-rs
             cmake
           ]
-          ++ (pkgs.lib.optionals pkgs.stdenv.isDarwin [
+          ++ (lib.optionals pkgs.stdenv.isDarwin [
             # impure hack to get metal toolchain
             (lib.hiPrio (writeShellScriptBin "xcrun" ''
               unset DEVELOPER_DIR
@@ -60,22 +61,31 @@
           default = mirai;
         };
 
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs =
-            nativeBuildInputs
-            ++ (with pkgs; [
-              nixd
-              uv
-              wasmtime
-              evcxr
-              rustToolchain
-              cargo-deny
-              cargo-nextest
-              cargo-flamegraph
-              cargo-show-asm
-              critcmp
-            ]);
-        };
+        devShells.default = pkgs.mkShell ({
+            nativeBuildInputs =
+              nativeBuildInputs
+              ++ (with pkgs; [
+                nixd
+                uv
+                wasmtime
+                evcxr
+                rustToolchain
+                cargo-deny
+                cargo-nextest
+                cargo-flamegraph
+                cargo-show-asm
+                critcmp
+              ])
+              ++ (lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+                pkg-config
+                openssl
+                alsa-lib
+                clang
+              ]));
+          }
+          // (lib.optionalAttrs pkgs.stdenv.isLinux {
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          }));
       }
     );
 }

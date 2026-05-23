@@ -1,10 +1,9 @@
-use monostate::MustBe;
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
 use super::{MLPConfig, MixerConfig, NormalizationConfig, RoPEConfig};
 use crate::utils::strict_serde::Unsupported;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TransformerLayerConfig {
     pub pre_mixer_norm_config: Option<NormalizationConfig>,
     pub mixer_config: MixerConfig,
@@ -15,6 +14,6 @@ pub struct TransformerLayerConfig {
     pub rope_config: Option<RoPEConfig>,
     pub hidden_dim: Option<usize>,
     pub ple_config: Option<Unsupported>,
-    pub has_post_layer_scalar: MustBe!(false),
-    pub kv_source_layer: Option<Unsupported>,
+    pub has_post_layer_scalar: bool,
+    pub kv_source_layer: Option<usize>,
 }

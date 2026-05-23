@@ -1,11 +1,4 @@
-use std::{
-    cell::UnsafeCell,
-    path::Path,
-    pin::Pin,
-    rc::Rc,
-    sync::{atomic::AtomicU64, mpsc},
-    thread,
-};
+use std::{cell::UnsafeCell, path::Path, pin::Pin, rc::Rc, sync::mpsc, thread};
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
@@ -77,10 +70,6 @@ impl Context for CpuContext {
         Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
     }
 
-    fn create_event(&self) -> Result<Pin<Box<AtomicU64>>, CpuError> {
-        Ok(Box::pin(AtomicU64::new(0)))
-    }
-
     fn create_sparse_buffer(
         &self,
         _capacity: usize,
@@ -103,5 +92,9 @@ impl Context for CpuContext {
 
     fn stop_capture(&self) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
+    }
+
+    fn sparse_buffers_supported(&self) -> bool {
+        false
     }
 }

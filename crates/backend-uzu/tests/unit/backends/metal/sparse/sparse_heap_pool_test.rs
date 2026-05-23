@@ -1,33 +1,18 @@
-use std::rc::Rc;
+#[path = "../../../../common/mod.rs"]
+mod common;
 
-use metal::{MTLBuffer, MTLDeviceExt, MTLResourceOptions};
-use objc2::{rc::Retained, runtime::ProtocolObject};
+use std::rc::Rc;
 
 use crate::{
     backends::{
-        common::{Backend, Context},
+        common::SparseBuffer,
         metal::{Metal, metal_extensions::SparsePageSizeExt},
     },
     prelude::MetalContext,
 };
 
 fn create_context() -> Rc<MetalContext> {
-    <Metal as Backend>::Context::new().expect("Failed to create Metal context")
-}
-
-fn create_sparse_buffer(
-    ctx: &MetalContext,
-    capacity_bytes: usize,
-) -> Retained<ProtocolObject<dyn MTLBuffer>> {
-    let page_size = ctx.sparse_heap_pool().page_size();
-    let aligned = capacity_bytes.next_multiple_of(page_size.in_bytes());
-    ctx.device
-        .new_buffer_with_length_options_placement_sparse_page_size(
-            aligned,
-            MTLResourceOptions::STORAGE_MODE_PRIVATE,
-            page_size,
-        )
-        .expect("Failed to create sparse buffer")
+    common::helpers::create_context::<Metal>()
 }
 
 #[test]
@@ -40,9 +25,9 @@ fn test_new_pool_is_empty() {
 fn test_map_empty_range_allocates_no_heaps() {
     let ctx = create_context();
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..0)).expect("map empty range");
+    sparse_buffer.map(&ctx, &(0..0)).expect("map empty range");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -52,9 +37,9 @@ fn test_map_single_heap_allocates_one_heap() {
     let ctx = create_context();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..pages_per_heap)).expect("map");
+    sparse_buffer.map(&ctx, &(0..pages_per_heap)).expect("map");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -64,9 +49,9 @@ fn test_map_multi_heap_allocates_minimum_heaps() {
     let ctx = create_context();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let cap = 4 * ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..4 * pages_per_heap)).expect("map");
+    sparse_buffer.map(&ctx, &(0..4 * pages_per_heap)).expect("map");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 4);
 }
@@ -76,9 +61,9 @@ fn test_map_partial_heap_rounds_up_heap_count() {
     let ctx = create_context();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let cap = 2 * ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..pages_per_heap + 1)).expect("map");
+    sparse_buffer.map(&ctx, &(0..pages_per_heap + 1)).expect("map");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -89,10 +74,10 @@ fn test_sequential_mappings_pack_into_one_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..half)).expect("map first");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(half..pages_per_heap)).expect("map second");
+    sparse_buffer.map(&ctx, &(0..half)).expect("map first");
+    sparse_buffer.map(&ctx, &(half..pages_per_heap)).expect("map second");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -103,10 +88,10 @@ fn test_map_overflows_existing_heap_into_new_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = 2 * ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..half)).expect("map first");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(half..half + pages_per_heap)).expect("map overflow");
+    sparse_buffer.map(&ctx, &(0..half)).expect("map first");
+    sparse_buffer.map(&ctx, &(half..half + pages_per_heap)).expect("map overflow");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -117,11 +102,11 @@ fn test_two_buffers_share_one_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..half)).expect("map b");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..half)).expect("map b");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -131,11 +116,11 @@ fn test_full_unmap_removes_heaps() {
     let ctx = create_context();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let cap = 2 * ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
     let pages = 0..2 * pages_per_heap;
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &pages).expect("map");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &pages).expect("unmap");
+    sparse_buffer.map(&ctx, &pages).expect("map");
+    sparse_buffer.unmap(&ctx, &pages).expect("unmap");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -145,10 +130,10 @@ fn test_partial_unmap_keeps_heap() {
     let ctx = create_context();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..pages_per_heap)).expect("map");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &(0..pages_per_heap / 2)).expect("partial unmap");
+    sparse_buffer.map(&ctx, &(0..pages_per_heap)).expect("map");
+    sparse_buffer.unmap(&ctx, &(0..pages_per_heap / 2)).expect("partial unmap");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -158,12 +143,12 @@ fn test_unmap_with_other_buffer_keeps_mappings() {
     let ctx = create_context();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
     let pages = 0..pages_per_heap;
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &pages).expect("map a");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_b, &pages).expect("unmap b");
+    sparse_buffer_a.map(&ctx, &pages).expect("map a");
+    sparse_buffer_b.unmap(&ctx, &pages).expect("unmap b");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -174,12 +159,12 @@ fn test_unmap_one_buffer_keeps_heap_for_other() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..half)).expect("map b");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_a, &(0..half)).expect("unmap a");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..half)).expect("map b");
+    sparse_buffer_a.unmap(&ctx, &(0..half)).expect("unmap a");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -189,13 +174,13 @@ fn test_remap_after_unmap_does_not_grow_pool() {
     let ctx = create_context();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let cap = 2 * ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
     let pages = 0..2 * pages_per_heap;
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &pages).expect("map");
+    sparse_buffer.map(&ctx, &pages).expect("map");
     let initial = ctx.sparse_heap_pool().heaps_count();
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &pages).expect("unmap");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &pages).expect("remap");
+    sparse_buffer.unmap(&ctx, &pages).expect("unmap");
+    sparse_buffer.map(&ctx, &pages).expect("remap");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), initial);
 }
@@ -206,11 +191,11 @@ fn test_remap_into_freed_gap_reuses_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..pages_per_heap)).expect("map full");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &(0..half)).expect("unmap half");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..half)).expect("remap into gap");
+    sparse_buffer.map(&ctx, &(0..pages_per_heap)).expect("map full");
+    sparse_buffer.unmap(&ctx, &(0..half)).expect("unmap half");
+    sparse_buffer.map(&ctx, &(0..half)).expect("remap into gap");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -224,11 +209,11 @@ fn test_sequential_partial_unmaps_release_full_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer, &(0..pages_per_heap)).expect("map");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &(0..half)).expect("unmap prefix");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer, &(half..pages_per_heap)).expect("unmap suffix");
+    sparse_buffer.map(&ctx, &(0..pages_per_heap)).expect("map");
+    sparse_buffer.unmap(&ctx, &(0..half)).expect("unmap prefix");
+    sparse_buffer.unmap(&ctx, &(half..pages_per_heap)).expect("unmap suffix");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -239,13 +224,13 @@ fn test_three_buffers_share_one_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let third = pages_per_heap / 3;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_c = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_c = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..third)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..third)).expect("map b");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_c, &(0..third)).expect("map c");
+    sparse_buffer_a.map(&ctx, &(0..third)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..third)).expect("map b");
+    sparse_buffer_c.map(&ctx, &(0..third)).expect("map c");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -256,11 +241,11 @@ fn test_two_buffers_exactly_fill_one_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..pages_per_heap - half)).expect("map b fills heap");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..pages_per_heap - half)).expect("map b fills heap");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -271,13 +256,13 @@ fn test_third_buffer_spills_when_heap_filled_by_others() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_c = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_c = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..pages_per_heap - half)).expect("map b fills heap");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_c, &(0..1)).expect("map c spills");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..pages_per_heap - half)).expect("map b fills heap");
+    sparse_buffer_c.map(&ctx, &(0..1)).expect("map c spills");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -288,14 +273,14 @@ fn test_unmap_buffer_frees_pages_for_another_in_same_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_c = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_c = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..pages_per_heap - half)).expect("map b fills heap");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_a, &(0..half)).expect("unmap a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_c, &(0..half)).expect("map c into gap");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..pages_per_heap - half)).expect("map b fills heap");
+    sparse_buffer_a.unmap(&ctx, &(0..half)).expect("unmap a");
+    sparse_buffer_c.map(&ctx, &(0..half)).expect("map c into gap");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -306,14 +291,14 @@ fn test_unmap_middle_of_three_buffers_keeps_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let third = pages_per_heap / 3;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_c = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_c = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..third)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..third)).expect("map b");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_c, &(0..third)).expect("map c");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_b, &(0..third)).expect("unmap b");
+    sparse_buffer_a.map(&ctx, &(0..third)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..third)).expect("map b");
+    sparse_buffer_c.map(&ctx, &(0..third)).expect("map c");
+    sparse_buffer_b.unmap(&ctx, &(0..third)).expect("unmap b");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -324,16 +309,16 @@ fn test_unmap_all_shared_buffers_releases_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let third = pages_per_heap / 3;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_c = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_c = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..third)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..third)).expect("map b");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_c, &(0..third)).expect("map c");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_a, &(0..third)).expect("unmap a");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_b, &(0..third)).expect("unmap b");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_c, &(0..third)).expect("unmap c");
+    sparse_buffer_a.map(&ctx, &(0..third)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..third)).expect("map b");
+    sparse_buffer_c.map(&ctx, &(0..third)).expect("map c");
+    sparse_buffer_a.unmap(&ctx, &(0..third)).expect("unmap a");
+    sparse_buffer_b.unmap(&ctx, &(0..third)).expect("unmap b");
+    sparse_buffer_c.unmap(&ctx, &(0..third)).expect("unmap c");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 0);
 }
@@ -344,11 +329,11 @@ fn test_second_buffer_spans_existing_and_new_heap() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = 2 * ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..pages_per_heap)).expect("map b spans heaps");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..pages_per_heap)).expect("map b spans heaps");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 2);
 }
@@ -359,12 +344,12 @@ fn test_unmap_spanning_buffer_keeps_heap_with_other_buffer() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = 2 * ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..pages_per_heap)).expect("map b spans heaps");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_b, &(0..pages_per_heap)).expect("unmap b");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..pages_per_heap)).expect("map b spans heaps");
+    sparse_buffer_b.unmap(&ctx, &(0..pages_per_heap)).expect("unmap b");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), 1);
 }
@@ -375,16 +360,16 @@ fn test_remap_two_buffers_after_unmap_does_not_grow_pool() {
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
     let half = pages_per_heap / 2;
     let cap = ctx.sparse_heap_pool().heap_capacity_bytes();
-    let buffer_a = create_sparse_buffer(ctx.as_ref(), cap);
-    let buffer_b = create_sparse_buffer(ctx.as_ref(), cap);
+    let mut sparse_buffer_a = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
+    let mut sparse_buffer_b = common::helpers::sparse_buffer_create::<Metal>(ctx.as_ref(), cap);
 
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("map a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..half)).expect("map b");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("map a");
+    sparse_buffer_b.map(&ctx, &(0..half)).expect("map b");
     let initial = ctx.sparse_heap_pool().heaps_count();
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_a, &(0..half)).expect("unmap a");
-    ctx.sparse_heap_pool_mut().unmap(ctx.as_ref(), &buffer_b, &(0..half)).expect("unmap b");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_a, &(0..half)).expect("remap a");
-    ctx.sparse_heap_pool_mut().map(ctx.as_ref(), &buffer_b, &(0..half)).expect("remap b");
+    sparse_buffer_a.unmap(&ctx, &(0..half)).expect("unmap a");
+    sparse_buffer_b.unmap(&ctx, &(0..half)).expect("unmap b");
+    sparse_buffer_a.map(&ctx, &(0..half)).expect("remap a");
+    sparse_buffer_b.map(&ctx, &(0..half)).expect("remap b");
 
     assert_eq!(ctx.sparse_heap_pool().heaps_count(), initial);
 }

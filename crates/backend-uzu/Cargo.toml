@@ -10,13 +10,14 @@ license.workspace = true
 build = "build/main.rs"
 
 [dependencies]
-dsl.workspace = true
+proc-macros.workspace = true
+bitflags.workspace = true
+derive_more.workspace = true
 shoji.workspace = true
 half.workspace = true
 ndarray.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_ignored.workspace = true
 monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
@@ -112,7 +113,7 @@ path = "tests/unit/kernel/test_entry.rs"
 
 [[bench]]
 name = "kernel"
-path = "tests/unit/kernel/bench_entry.rs"
+path = "tests/performance/kernel/bench_entry.rs"
 
 [[test]]
 name = "performance"

@@ -1,17 +1,17 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-use crate::ConfigDataType;
+use crate::DataType;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct RopeConfigCommon {
-    pub precision: ConfigDataType,
+    pub precision: DataType,
     pub base: f32,
     pub max_sequence_length: usize,
     pub head_dim: usize,
     pub partial_rotary_dim: Option<usize>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 #[serde(tag = "type")]
 pub enum RoPEConfig {
     #[serde(rename = "UnscaledRoPEConfig")]

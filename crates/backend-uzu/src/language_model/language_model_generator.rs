@@ -124,6 +124,8 @@ pub trait LanguageModelGeneratorTrait {
         &mut self,
         context: &dyn Any,
     );
+
+    fn get_context_length(&self) -> usize;
 }
 
 impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
@@ -499,9 +501,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_inputs = self.build_token_inputs(task, token_ids_array, None);
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
-        if is_continuation {
-            encoder.encode_wait_for_event(&self.context.async_buffers.event, current_counter);
-        }
         let resources = Self::encode_forward_pass_on(
             &self.context,
             &mut encoder,
@@ -538,15 +537,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.cache_layers.borrow_mut().update_after_acceptance(
             &[0],
             None,
+            &self.context.context,
             &mut encoder,
             &self.context.kv_cache_update,
         );
         self.context.cache_layers.borrow_mut().register_accepted_tokens(1);
-
-        // Signal event for next pass
-        let next_counter = current_counter + 1;
-        encoder.encode_signal_event(&self.context.async_buffers.event, next_counter);
-        self.context.async_buffers.counter.set(next_counter);
 
         // Add completion handler
         let handler = move |result: Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>| {
@@ -637,7 +632,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         range: Range<usize>,
     ) {
         let slice = slice.downcast_ref::<CacheLayersSlice<B>>().unwrap();
-        self.context.cache_layers.borrow_mut().apply_slice(slice, Some(range));
+        self.context.cache_layers.borrow_mut().apply_slice(&self.context.context, slice, Some(range));
     }
 
     fn build_llm_context(&self) -> Box<dyn Any> {
@@ -653,6 +648,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.cache_layers.borrow_mut().copy_from(&ctx.cache_layers, self.context.context.as_ref());
         self.tokens = ctx.tokens.clone();
         self.registered_prefix_len = self.tokens.len().saturating_sub(1);
+    }
+
+    fn get_context_length(&self) -> usize {
+        self.context.get_context_length(&self.decoding_config)
     }
 }
 
@@ -752,6 +751,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let mut logits = None;
         if is_prefilling {
             let mut cache_layers = context.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(&context.context, batch_dim);
             let decoder_arguments = token_inputs.decoder_arguments(
                 context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
@@ -767,6 +767,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         } else {
             let mut cache_layers = context.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(&context.context, batch_dim);
             let decoder_arguments = token_inputs.decoder_arguments(
                 context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
@@ -865,14 +866,15 @@ impl<B: Backend> LanguageModelGenerator<B> {
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) -> Result<(), Error> {
-        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
-            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
+        let mut encoder =
+            Encoder::<B>::new(&self.context.context).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
             cache_layers.update_after_acceptance(
                 accepted_token_indices,
                 suffix_start,
+                &self.context.context,
                 &mut encoder,
                 &self.context.kv_cache_update,
             );

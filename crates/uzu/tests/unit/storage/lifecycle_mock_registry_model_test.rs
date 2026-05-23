@@ -56,9 +56,11 @@ async fn test_storage_mock_registry_model_download_lifecycle(
     tracing::info!("pausing storage item");
     item.pause().await?;
     item.reconcile().await?;
-    let paused_state = item.state().await;
+    let paused_state = wait_for_item_state(&item, &mut progress, "pause transitions to Paused", |state| {
+        matches!(state.phase, DownloadPhase::Paused {})
+    })
+    .await;
     tracing::info!(?paused_state, "observed paused state");
-    assert!(matches!(paused_state.phase, DownloadPhase::Paused {}), "pause must transition to Paused; got {:?}", paused_state.phase);
 
     tracing::info!("resuming storage item");
     item.download().await?;

@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::backends::metal::kernel::matmul::gemm::GemmSpecializationError;
+
 #[derive(Debug, Error)]
 pub enum MetalError {
     #[error("Cannot open device")]
@@ -24,6 +26,8 @@ pub enum MetalError {
     CannotCreateFunction,
     #[error("Cannot create pipeline state: {0}")]
     CannotCreatePipelineState(String),
+    #[error("Invalid GEMM specialization: {0:?}")]
+    InvalidGemmSpecialization(GemmSpecializationError),
     #[error("Can not allocate buffer with size={0}")]
     SparseBufferAlloc(usize),
     #[error("Can not allocate heap with size={0} and page size={1}")]

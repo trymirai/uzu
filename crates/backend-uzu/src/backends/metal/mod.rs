@@ -5,7 +5,6 @@ mod context;
 mod dense_buffer;
 mod device_capabilities;
 mod error;
-mod event;
 mod kernel;
 mod metal_extensions;
 mod sparse;
@@ -14,5 +13,8 @@ pub use backend::Metal;
 pub use buffer::BufferDowncastExt;
 pub use context::MetalContext;
 pub use device_capabilities::MetalDeviceCapabilities;
-pub use kernel::matmul::MatmulDispatchPath;
+pub use kernel::matmul::{
+    MatmulDispatchPath,
+    quant::{QuantizedMatmulDispatchPath, encode_quantized_matmul_with_path},
+};
 pub use metal_extensions::{DeviceExt, DeviceGeneration};

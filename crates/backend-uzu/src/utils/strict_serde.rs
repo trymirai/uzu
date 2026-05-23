@@ -1,20 +1,27 @@
-use std::io::Read;
-
-use serde::{
-    Deserialize, Serialize,
-    de::{DeserializeOwned, Error as _},
-};
+use monostate::MustBeBool;
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum Unsupported {}
 
-pub fn from_reader_strict<T: DeserializeOwned>(reader: impl Read) -> Result<T, serde_json::Error> {
-    let value: serde_json::Value = serde_json::from_reader(reader)?;
-    let mut unknown: Vec<String> = Vec::new();
-    let parsed = serde_ignored::deserialize(value, |path| unknown.push(path.to_string()))?;
-    if unknown.is_empty() {
-        Ok(parsed)
-    } else {
-        Err(serde_json::Error::custom(format!("unknown config fields: {}", unknown.join(", "))))
-    }
+pub trait DeserializeStrict<'de>: Deserialize<'de> {}
+pub trait DeserializeStrictOwned: for<'de> DeserializeStrict<'de> {}
+impl<T> DeserializeStrictOwned for T where T: for<'de> DeserializeStrict<'de> {}
+
+macro_rules! impl_strict {
+  ($($ty:ty),* $(,)?) => {
+      $(impl<'de> DeserializeStrict<'de> for $ty {})*
+  };
+}
+
+impl_strict!(Unsupported, String, f32, i64, u32, usize, bool);
+
+impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Box<T> {}
+impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Vec<T> {}
+impl<'de, T: DeserializeStrict<'de>> DeserializeStrict<'de> for Option<T> {}
+impl<'de, A: DeserializeStrict<'de>, B: DeserializeStrict<'de>> DeserializeStrict<'de> for (A, B) {}
+impl<'de, const V: bool> DeserializeStrict<'de> for MustBeBool<V> {}
+
+pub fn required<'de, D: Deserializer<'de>, T: DeserializeStrict<'de>>(deserializer: D) -> Result<T, D::Error> {
+    T::deserialize(deserializer)
 }

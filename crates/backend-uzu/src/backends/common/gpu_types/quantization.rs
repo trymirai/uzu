@@ -1,65 +1,42 @@
-use serde::{Deserialize, Serialize};
+use derive_more::Display;
+use proc_macros::uzu_config;
 
 use crate::DataType;
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Display, Copy, Eq, Hash)]
+#[uzu_config]
 pub enum QuantizationMode {
-    UINT4,
-    INT8,
-    UINT8,
+    #[serde(rename = "uint4")]
+    U4,
+    #[serde(rename = "int8")]
+    I8,
+    #[serde(rename = "uint8")]
+    U8,
 }
 
 impl QuantizationMode {
     pub fn packing_divisor(&self) -> usize {
-        match self {
-            QuantizationMode::UINT4 => 2,
-            QuantizationMode::INT8 => 1,
-            QuantizationMode::UINT8 => 1,
-        }
+        let bits = DataType::from(*self).size_in_bits();
+        assert_eq!(8 % bits, 0, "QuantizationMode bit width ({bits}) must divide 8 evenly");
+        8 / bits
     }
 
     pub fn storage_type(&self) -> DataType {
         match self {
-            QuantizationMode::UINT4 => DataType::U8,
-            QuantizationMode::INT8 => DataType::I8,
-            QuantizationMode::UINT8 => DataType::U8,
+            QuantizationMode::U4 => DataType::U8,
+            QuantizationMode::I8 => DataType::I8,
+            QuantizationMode::U8 => DataType::U8,
         }
-    }
-
-    pub fn to_u32(&self) -> u32 {
-        (*self).into()
     }
 }
 
 impl From<QuantizationMode> for DataType {
     fn from(val: QuantizationMode) -> Self {
         match val {
-            QuantizationMode::UINT4 => DataType::U4,
-            QuantizationMode::INT8 => DataType::I8,
-            QuantizationMode::UINT8 => DataType::U8,
-        }
-    }
-}
-
-impl From<u32> for QuantizationMode {
-    fn from(val: u32) -> Self {
-        match val {
-            0 => QuantizationMode::UINT4,
-            1 => QuantizationMode::INT8,
-            2 => QuantizationMode::UINT8,
-            _ => panic!("Invalid QuantizationMode value: {val}"),
-        }
-    }
-}
-
-impl Into<u32> for QuantizationMode {
-    fn into(self) -> u32 {
-        match self {
-            QuantizationMode::UINT4 => 0,
-            QuantizationMode::INT8 => 1,
-            QuantizationMode::UINT8 => 2,
+            QuantizationMode::U4 => DataType::U4,
+            QuantizationMode::I8 => DataType::I8,
+            QuantizationMode::U8 => DataType::U8,
         }
     }
 }

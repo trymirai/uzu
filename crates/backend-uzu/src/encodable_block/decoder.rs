@@ -11,7 +11,8 @@ use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::DecoderConfig,
     encodable_block::{
-        Embedding, LayerArguments, LayerExecutables, QkUnpack, RMSNorm, Rope, embedding::EmbeddingError,
+        Embedding, LayerArguments, LayerExecutables, PostLayerScalar, QkUnpack, RMSNorm, Rope,
+        embedding::EmbeddingError,
     },
     forward_pass::{cache_layers::CacheLayers, state::SharedBuffers},
     parameters::ParameterTree,
@@ -145,6 +146,7 @@ impl<B: Backend> Decoder<B> {
             None,
             true,
             true,
+            PostLayerScalar::None,
         )
         .expect("Failed to create output RMS norm kernel");
 
@@ -181,7 +183,8 @@ impl<B: Backend> Decoder<B> {
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
 
-            let cache_layer = cache_layers.as_deref_mut().map(|cache_layers| &mut cache_layers.data[layer.layer_index]);
+            let cache_access =
+                cache_layers.as_deref_mut().map(|cache_layers| cache_layers.cache_for_layer(layer.layer_index));
             main = layer
                 .encode(
                     LayerArguments {
@@ -193,7 +196,7 @@ impl<B: Backend> Decoder<B> {
                         rope_buffers,
                         sampling_start,
                         sampling_length,
-                        cache_layer,
+                        cache_access,
                         #[cfg(feature = "tracing")]
                         trace: layer_trace,
                     },

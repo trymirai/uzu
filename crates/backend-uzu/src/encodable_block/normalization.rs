@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use super::{LayerNorm, LayerNormError, RMSNorm, RMSNormError};
+use super::{LayerNorm, LayerNormError, PostLayerScalar, RMSNorm, RMSNormError};
 use crate::{
     DataType,
     backends::common::{Allocation, Backend, Encoder},
@@ -44,6 +44,7 @@ impl<B: Backend> Normalization<B> {
                 None,
                 false,
                 false,
+                PostLayerScalar::None,
             )?))
         }
     }

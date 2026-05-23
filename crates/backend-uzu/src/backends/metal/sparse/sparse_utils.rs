@@ -1,7 +1,12 @@
-use std::ops::Range;
+use std::{cell::RefCell, ops::Range, rc::Rc};
+
+use metal::{MTL4UpdateSparseBufferMappingOperation, MTLBuffer};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+
+use crate::backends::metal::sparse::sparse_heap::MetalSparseHeap;
 
 #[derive(Clone, PartialEq)]
-pub(super) struct MetalSparseHeapBufferMapping {
+pub(crate) struct MetalSparseHeapBufferMapping {
     // Anchors for an originally inserted contiguous mapping. They survive
     // rangemap splits unchanged, so the heap↔buffer correspondence can always
     // be recovered from any surviving heap subrange via `buffer_pages_for`.
@@ -30,7 +35,8 @@ impl MetalSparseHeapBufferMapping {
     }
 }
 
-pub(super) struct MetalSparseHeapMappingParameters {
-    pub(super) buffer_pages: Range<usize>,
-    pub(super) heap_page_offset: usize,
+pub(crate) struct MetalSparseMappingOpsBatch {
+    pub buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+    pub heap: Rc<RefCell<MetalSparseHeap>>,
+    pub mtl_operations: Box<[MTL4UpdateSparseBufferMappingOperation]>,
 }

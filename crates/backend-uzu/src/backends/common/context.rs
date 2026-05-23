@@ -36,8 +36,6 @@ pub trait Context: Sized {
         reusable: bool,
     ) -> AllocationPool<Self::Backend>;
 
-    fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
-
     fn create_sparse_buffer(
         &self,
         capacity: usize,
@@ -53,6 +51,8 @@ pub trait Context: Sized {
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
+
+    fn sparse_buffers_supported(&self) -> bool;
 
     fn tf32_enabled() -> bool {
         env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)

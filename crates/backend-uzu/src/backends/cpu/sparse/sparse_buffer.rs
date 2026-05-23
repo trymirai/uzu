@@ -36,4 +36,8 @@ impl SparseBuffer for CpuSparseBuffer {
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         todo!()
     }
+
+    fn page_size_bytes(&self) -> usize {
+        todo!()
+    }
 }

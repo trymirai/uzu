@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::backends::common::{
-    AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend,
+    AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
     BufferGpuAddressRangeExt, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
     CommandBufferInitial, CommandBufferPending, Context,
     hazard_tracker::{Access, HazardTracker},
@@ -79,11 +79,14 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         )
     }
 
-    pub fn encode_copy(
+    pub fn encode_copy<
+        Src: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        Dst: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
+    >(
         &mut self,
-        src: &Allocation<B>,
+        src: &Src,
         src_range: impl RangeBounds<usize>,
-        dst: &mut Allocation<B>,
+        dst: &mut Dst,
         dst_range: impl RangeBounds<usize>,
     ) {
         let src_buffer_range = src.as_buffer_range_ref();
@@ -108,9 +111,9 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         self.command_buffer.encode_copy(src_buffer_range, dst_buffer_range);
     }
 
-    pub fn encode_fill(
+    pub fn encode_fill<Dst: AsBufferRangeMut<Buffer: Buffer<Backend = B>>>(
         &mut self,
-        dst: &mut Allocation<B>,
+        dst: &mut Dst,
         value: u8,
     ) {
         let dst_buffer_range = dst.as_buffer_range_mut();
@@ -129,22 +132,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         if let Some((after, before)) = self.hazard_tracker.access(accesses) {
             self.command_buffer.encode_barrier(after, before);
         }
-    }
-
-    pub fn encode_wait_for_event(
-        &mut self,
-        event: &B::Event,
-        value: u64,
-    ) {
-        self.command_buffer.encode_wait_for_event(event, value);
-    }
-
-    pub fn encode_signal_event(
-        &mut self,
-        event: &B::Event,
-        value: u64,
-    ) {
-        self.command_buffer.encode_signal_event(event, value);
     }
 
     pub fn add_completion_handler(

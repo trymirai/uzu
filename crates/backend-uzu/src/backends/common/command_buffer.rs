@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Backend, BufferRangeMut, BufferRangeRef};
+use super::{Backend, Buffer, BufferRangeMut, BufferRangeRef};
 
 pub trait CommandBuffer {
     type Backend: Backend<CommandBuffer = Self>;
@@ -70,15 +70,18 @@ impl AccessFlags {
 pub trait CommandBufferEncoding {
     type CommandBuffer: CommandBuffer<Encoding = Self>;
 
-    fn encode_copy(
+    fn encode_copy<
+        Src: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
+        Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>,
+    >(
         &mut self,
-        src: BufferRangeRef<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
-        dst: BufferRangeMut<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
+        src: BufferRangeRef<'_, Src>,
+        dst: BufferRangeMut<'_, Dst>,
     );
 
-    fn encode_fill(
+    fn encode_fill<Dst: Buffer<Backend = <Self::CommandBuffer as CommandBuffer>::Backend>>(
         &mut self,
-        dst: BufferRangeMut<'_, <<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::DenseBuffer>,
+        dst: BufferRangeMut<'_, Dst>,
         value: u8,
     );
 
@@ -86,18 +89,6 @@ pub trait CommandBufferEncoding {
         &mut self,
         after: AccessFlags,
         before: AccessFlags,
-    );
-
-    fn encode_wait_for_event(
-        &mut self,
-        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Event,
-        value: u64,
-    );
-
-    fn encode_signal_event(
-        &mut self,
-        event: &<<Self::CommandBuffer as CommandBuffer>::Backend as Backend>::Event,
-        value: u64,
     );
 
     fn add_completion_handler(

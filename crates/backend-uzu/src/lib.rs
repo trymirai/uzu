@@ -9,16 +9,14 @@ mod config;
 mod data_type;
 mod encodable_block;
 mod forward_pass;
-pub mod inference;
 mod language_model;
 mod parameters;
 mod speculators;
-#[cfg(feature = "tracing")]
-mod tracer;
 mod trie;
 mod utils;
 
 pub mod backends;
+pub mod inference;
 pub mod prelude;
 pub mod session;
 
@@ -26,10 +24,24 @@ pub use array::{Array, ArrayContextExt};
 #[cfg(metal_backend)]
 pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use backends::common::{AllocationAccessError, allocation_copy_from_slice, allocation_to_vec};
-pub use config::ConfigDataType;
 pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};
-#[cfg(feature = "tracing")]
-pub use tracer::TraceValidator;
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
+
+#[cfg(feature = "tracing")]
+pub mod _private {
+    pub use crate::{
+        classifier::Classifier,
+        config::{ModelConfig, ModelMetadata, ModelType},
+        encodable_block::{DecoderDecodeInput, Sampling},
+        forward_pass::{
+            cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
+        },
+        language_model::{
+            language_model_generator_context::LanguageModelGeneratorContext,
+            sampler::{ArgmaxSampler, LogitsSampler},
+        },
+        parameters::ParameterTree,
+    };
+}
