@@ -183,7 +183,7 @@ impl GemmKernel {
                 );
             },
             quant_b @ (MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. }) => {
-                let (weights, weights_gw, scales, biases, zero_points, group_size) = match quant_b {
+                let (weights, weights_gw, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
                         scales,
@@ -202,7 +202,6 @@ impl GemmKernel {
                         Some(scales),
                         Some(biases),
                         None,
-                        group_size,
                     ),
                     MatmulB::ScaleZeroPointDequant {
                         b: w,
@@ -222,13 +221,12 @@ impl GemmKernel {
                         Some(scales),
                         None,
                         Some(zero_points),
-                        group_size,
                     ),
                     _ => unreachable!(),
                 };
                 let weights_gw: GemmWeights<'_, Metal, TB> = weights_gw;
 
-                let tiling = select_quant_tiling(self.data_type, m, n, group_size);
+                let tiling = select_quant_tiling(m);
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
                 let params = quant_params(m, n, k, tiling, ab_scale);
@@ -316,12 +314,7 @@ fn select_mxu_tiling(
     }
 }
 
-fn select_quant_tiling(
-    _data_type: DataType,
-    m: u32,
-    _n: u32,
-    _group_size: u32,
-) -> GemmTiling {
+fn select_quant_tiling(m: u32) -> GemmTiling {
     if m < 32 {
         GemmTiling::T8x32x32_1x1
     } else {
