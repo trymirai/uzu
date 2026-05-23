@@ -183,7 +183,10 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?);
+                let readout = RefCell::new(
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                        .map_err(EmbeddingError::BackendError)?,
+                );
 
                 EmbeddingTying::Tied {
                     ty: TiedEmbeddingType::FullPrecision {
@@ -209,7 +212,10 @@ impl<B: Backend> Embedding<B> {
 
                 let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
                     .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?);
+                let readout = RefCell::new(
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                        .map_err(EmbeddingError::BackendError)?,
+                );
 
                 EmbeddingTying::Untied {
                     input_ty: UntiedEmbeddingLookupType::FullPrecision {
@@ -260,7 +266,8 @@ impl<B: Backend> Embedding<B> {
                     group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?,
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                        .map_err(EmbeddingError::BackendError)?,
                 );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
@@ -330,7 +337,8 @@ impl<B: Backend> Embedding<B> {
                     group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?,
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                        .map_err(EmbeddingError::BackendError)?,
                 );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
@@ -393,7 +401,8 @@ impl<B: Backend> Embedding<B> {
                     group_size: *group_size as u32,
                 };
                 let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?,
+                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                        .map_err(EmbeddingError::BackendError)?,
                 );
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
