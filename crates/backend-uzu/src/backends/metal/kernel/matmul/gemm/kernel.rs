@@ -182,7 +182,12 @@ impl GemmKernel {
                     encoder,
                 );
             },
-            quant_b @ (MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. }) => {
+            quant_b @ (MatmulB::ScaleBiasDequant {
+                ..
+            }
+            | MatmulB::ScaleZeroPointDequant {
+                ..
+            }) => {
                 let (weights, weights_gw, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,

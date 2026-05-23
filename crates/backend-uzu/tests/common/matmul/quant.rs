@@ -56,20 +56,20 @@ impl<T: ArrayElement + Float> QuantInput<T> {
         let num_groups_k = k.div_ceil(group_size as usize);
         let mut rng = SmallRng::seed_from_u64(seed);
 
-        let w_packed: Vec<u32> =
-            (0..n * k * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect();
-        let scales: Vec<T> = (0..n * num_groups_k)
-            .map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap())
-            .collect();
-        let x: Vec<T> =
-            (0..m * k).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
+        let w_packed: Vec<u32> = (0..n * k * bits as usize / 32).map(|_| rng.random_range(0..u32::MAX)).collect();
+        let scales: Vec<T> =
+            (0..n * num_groups_k).map(|_| T::from(rng.random_range(0.01f32..0.3f32)).unwrap()).collect();
+        let x: Vec<T> = (0..m * k).map(|_| T::from(rng.random_range(-0.3f32..0.3f32)).unwrap()).collect();
 
-        let zp_stride = if bits == 4 { num_groups_k.div_ceil(2) } else { num_groups_k };
+        let zp_stride = if bits == 4 {
+            num_groups_k.div_ceil(2)
+        } else {
+            num_groups_k
+        };
         let (zero_points, biases) = match quant_method {
-            QuantizationMethod::ScaleZeroPoint => (
-                Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()),
-                None,
-            ),
+            QuantizationMethod::ScaleZeroPoint => {
+                (Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
+            },
             QuantizationMethod::ScaleBias => (
                 None,
                 Some((0..n * num_groups_k).map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap()).collect()),
@@ -175,9 +175,7 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
         .expect("MatmulMetalKernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
-    matmul
-        .encode_with_path(quant_arguments(&mut buffers, input), &mut encoder, path)
-        .expect("encode metal quant");
+    matmul.encode_with_path(quant_arguments(&mut buffers, input), &mut encoder, path).expect("encode metal quant");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&buffers.y)
 }

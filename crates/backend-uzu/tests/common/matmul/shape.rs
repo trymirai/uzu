@@ -49,10 +49,15 @@ pub fn bench_fp_gemm_shapes() -> impl Iterator<Item = Shape> {
     BENCH_FP_GEMM.iter().copied()
 }
 
-const BENCH_NK: &[(usize, usize)] = &[(2048, 2048), (2048, 4096), (4096, 4096), (4096, 14336), (14336, 4096), (14336, 14336)];
+const BENCH_NK: &[(usize, usize)] =
+    &[(2048, 2048), (2048, 4096), (4096, 4096), (4096, 14336), (14336, 4096), (14336, 14336)];
 
 pub fn bench_quant_gemm_shapes(bits: u32) -> impl Iterator<Item = Shape> {
-    let block_size: usize = if bits == 4 { 512 } else { 256 };
+    let block_size: usize = if bits == 4 {
+        512
+    } else {
+        256
+    };
     let ms = &[4usize, 5, 6, 7, 8, 16, 32, 48, 64];
     BENCH_NK
         .iter()
@@ -61,7 +66,11 @@ pub fn bench_quant_gemm_shapes(bits: u32) -> impl Iterator<Item = Shape> {
 }
 
 pub fn bench_quant_gemv_shapes(bits: u32) -> impl Iterator<Item = Shape> {
-    let block_size: usize = if bits == 4 { 512 } else { 256 };
+    let block_size: usize = if bits == 4 {
+        512
+    } else {
+        256
+    };
     let nk: &[(usize, usize)] = &[(4096, 4096), (4096, 14336), (14336, 4096), (14336, 14336)];
     let ms = &[1usize, 2, 4, 8];
     nk.iter()
@@ -89,7 +98,11 @@ const QWEN3_LAYERS: &[(&str, usize, usize)] = &[
 ];
 
 pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shape)> {
-    let block_size: usize = if bits == 4 { 512 } else { 256 };
+    let block_size: usize = if bits == 4 {
+        512
+    } else {
+        256
+    };
     let decode_ms = &[1usize, 4, 8];
     let prefill_ms = &[32usize, 64];
     QWEN3_LAYERS.iter().flat_map(move |&(label, k, n)| {

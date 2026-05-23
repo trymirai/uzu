@@ -18,7 +18,10 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
+        metal::{
+            Metal, context::MetalContext, error::MetalError, kernel::TensorAddBiasMetalKernel,
+            metal_extensions::DeviceExt,
+        },
     },
 };
 

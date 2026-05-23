@@ -11,7 +11,9 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
-        cpu::{BufferDowncastExt, Cpu, context::CpuContext, error::CpuError, kernel::matmul::quant::encode_quantized_gemm},
+        cpu::{
+            BufferDowncastExt, Cpu, context::CpuContext, error::CpuError, kernel::matmul::quant::encode_quantized_gemm,
+        },
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };

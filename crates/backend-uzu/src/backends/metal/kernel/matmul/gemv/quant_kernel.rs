@@ -28,7 +28,10 @@ struct QmvKey {
 pub(crate) struct QuantGemvKernel {
     data_type: DataType,
     qmv: HashMap<QmvKey, <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel>,
-    qmv_fast: HashMap<QmvKey, <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel>,
+    qmv_fast: HashMap<
+        QmvKey,
+        <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel,
+    >,
 }
 
 impl QuantGemvKernel {
