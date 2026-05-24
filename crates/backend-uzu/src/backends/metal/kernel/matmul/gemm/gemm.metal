@@ -64,6 +64,7 @@ CONSTRAINT(
         (!USE_MXU && TRANSPOSE_B &&
          (GEMM_TILING == GemmTiling::T8x32x32_1x1 ||
           GEMM_TILING == GemmTiling::T32x32x32_2x2 ||
+          GEMM_TILING == GemmTiling::T64x32x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x64x64_2x2)))
 CONSTRAINT(

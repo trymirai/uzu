@@ -231,7 +231,7 @@ impl GemmKernel {
                 };
                 let weights_gw: GemmWeights<'_, Metal, TB> = weights_gw;
 
-                let tiling = select_quant_tiling(m);
+                let tiling = select_quant_tiling(m, n);
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
                 let params = quant_params(m, n, k, tiling, ab_scale);
@@ -319,9 +319,16 @@ fn select_mxu_tiling(
     }
 }
 
-fn select_quant_tiling(m: u32) -> GemmTiling {
+fn select_quant_tiling(
+    m: u32,
+    n: u32,
+) -> GemmTiling {
     if m < 32 {
         GemmTiling::T8x32x32_1x1
+    } else if m >= 64 && n <= 2048 {
+        GemmTiling::T64x32x32_2x2
+    } else if m >= 64 && n >= 6144 && n % 64 == 0 {
+        GemmTiling::T64x64x32_2x2
     } else {
         GemmTiling::T32x32x32_2x2
     }
