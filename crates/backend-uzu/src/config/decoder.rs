@@ -1,7 +1,6 @@
 use proc_macros::uzu_config;
 
-use super::{AttentionConfig, EmbeddingConfig, TransformerConfig};
-use crate::utils::strict_serde::Unsupported;
+use super::{AttentionConfig, EmbeddingConfig, PLEModelConfig, TransformerConfig};
 
 #[uzu_config]
 pub struct DecoderConfig {
@@ -9,7 +8,7 @@ pub struct DecoderConfig {
     pub transformer_config: TransformerConfig,
     pub vocab_size: usize,
     pub pard_token: Option<usize>,
-    pub ple_model_config: Option<Unsupported>,
+    pub ple_model_config: Option<PLEModelConfig>,
 }
 
 impl DecoderConfig {
