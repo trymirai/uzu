@@ -184,6 +184,18 @@ async fn download_once(
                 resume_from_bytes
             },
             StatusCode::OK => 0,
+            StatusCode::RANGE_NOT_SATISFIABLE => {
+                let advertised_total =
+                    content_range.as_ref().and_then(|header| header.to_str().ok()).and_then(parse_content_range_total);
+                if advertised_total == Some(resume_from_bytes) {
+                    backend_event_sender.send_progress(generation, resume_from_bytes, Some(resume_from_bytes)).await;
+                    return tokio::fs::rename(resume_artifact_path, &config.destination)
+                        .await
+                        .map_err(|error| error.to_string());
+                }
+                let _ = tokio::fs::remove_file(resume_artifact_path).await;
+                return Err(format!("server did not honor range request: status {status}"));
+            },
             _ => return Err(format!("server did not honor range request: status {status}")),
         }
     } else {
@@ -237,4 +249,13 @@ fn parse_content_range_start(header_value: &str) -> Option<u64> {
     let (range, _) = value.split_once('/')?;
     let (start, _) = range.split_once('-')?;
     start.parse::<u64>().ok()
+}
+
+fn parse_content_range_total(header_value: &str) -> Option<u64> {
+    let value = header_value.strip_prefix("bytes ")?.trim_start();
+    let (_, total) = value.split_once('/')?;
+    if total == "*" {
+        return None;
+    }
+    total.parse::<u64>().ok()
 }
