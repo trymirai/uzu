@@ -2,7 +2,7 @@ mod error;
 mod os;
 
 pub use error::DeviceError;
-use os::home_path;
+pub(crate) use os::home_path;
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 

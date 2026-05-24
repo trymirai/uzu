@@ -1,10 +1,7 @@
-use backend_uzu::VERSION;
-use indoc::indoc;
 use iocraft::prelude::*;
 
 use crate::{
     cli::helpers::ColorRgb,
-    device::Device,
     settings::{SettingKind, Settings, SettingsError},
 };
 
@@ -86,37 +83,6 @@ impl Theme {
 
     pub fn overlay_color(&self) -> Color {
         self.subtitle_color.darker(0.5)
-    }
-}
-
-impl Theme {
-    pub fn logo(&self) -> String {
-        let text = indoc! {r"
-  _ __ ___   (_)  _ __   __ _  (_)
- | '_ ` _ \  | | | '__| / _` | | |
- | | | | | | | | | |   | (_| | | |
- |_| |_| |_| |_| |_|    \__,_| |_|"};
-        text.to_string()
-    }
-
-    pub fn about(&self) -> String {
-        let current_path = std::env::current_dir().ok().map(|path| path.display().to_string());
-        let home_path = Device::new().ok().map(|device| device.home_path);
-        let mut lines = vec![
-            format!("v{}", VERSION),
-            "A high-performance inference engine for AI models".to_string(),
-            "Zero latency, full data privacy, no inference costs".to_string(),
-        ];
-        if let Some(current_path) = current_path {
-            let path = match &home_path {
-                Some(home_path) if current_path.starts_with(home_path.as_str()) => {
-                    format!("~{}", &current_path[home_path.len()..])
-                },
-                _ => current_path,
-            };
-            lines.push(path);
-        }
-        lines.join("\n")
     }
 }
 
