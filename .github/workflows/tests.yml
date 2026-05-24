@@ -142,10 +142,30 @@ jobs:
           cargo tools test swift
           cargo tools test typescript
 
+  linux-build:
+    name: linux-build
+    runs-on: ubuntu-latest
+
+    env:
+      CARGO_ENCODED_RUSTFLAGS: "-Dwarnings"
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check backend-uzu (CPU-only, no default features)
+        run: cargo check -p backend-uzu --no-default-features
+
+      - name: Check uzu (CPU-only)
+        run: cargo check -p uzu --no-default-features --features backend-cpu
+
+      - name: Check cli (CPU-only)
+        run: cargo check -p cli --no-default-features --features backend-cpu,capability-cli
+
   completed:
     name: completed
     runs-on: ubuntu-latest
-    needs: [ linters, tests, validate-bindings ]
+    needs: [ linters, tests, validate-bindings, linux-build ]
     if: ${{ always() }}
 
     steps:
@@ -153,3 +173,4 @@ jobs:
           [ "${{ needs.linters.result }}" = success ]
           [ "${{ needs.tests.result }}" = success ]
           [ "${{ needs.validate-bindings.result }}" = success ]
+          [ "${{ needs.linux-build.result }}" = success ]
