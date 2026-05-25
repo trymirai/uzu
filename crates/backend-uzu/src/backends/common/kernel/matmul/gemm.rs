@@ -42,11 +42,11 @@ impl<B: Backend, TB: AsBufferRangeRef> GemmWeights<'_, B, TB> {
         }
     }
 
-    pub fn bits_per_weight(&self) -> u32 {
+    pub fn bits_per_weight(&self) -> Option<u32> {
         match self {
             Self::FullPrecision {
                 ..
-            } => 0,
+            } => None,
             Self::ScaleBias {
                 mode,
                 ..
@@ -54,15 +54,15 @@ impl<B: Backend, TB: AsBufferRangeRef> GemmWeights<'_, B, TB> {
             | Self::ScaleZeroPoint {
                 mode,
                 ..
-            } => DataType::from(*mode).size_in_bits() as u32,
+            } => Some(DataType::from(*mode).size_in_bits() as u32),
         }
     }
 
-    pub fn group_size(&self) -> u32 {
+    pub fn group_size(&self) -> Option<u32> {
         match self {
             Self::FullPrecision {
                 ..
-            } => 0,
+            } => None,
             Self::ScaleBias {
                 group_size,
                 ..
@@ -70,7 +70,7 @@ impl<B: Backend, TB: AsBufferRangeRef> GemmWeights<'_, B, TB> {
             | Self::ScaleZeroPoint {
                 group_size,
                 ..
-            } => *group_size,
+            } => Some(*group_size),
         }
     }
 }

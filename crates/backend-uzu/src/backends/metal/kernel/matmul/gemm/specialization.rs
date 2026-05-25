@@ -13,17 +13,19 @@ pub(crate) struct GemmSpecialization {
     pub(crate) alignment: GemmAlignment,
     pub(crate) transpose_b: bool,
     pub(crate) weight_prologue: GemmWeightPrologueKind,
-    pub(crate) bits_per_weight: u32,
-    pub(crate) group_size: u32,
+    pub(crate) bits_per_weight: Option<u32>,
+    pub(crate) group_size: Option<u32>,
 }
 
 impl GemmSpecialization {
     pub(crate) fn validate(&self) -> Result<(), GemmSpecializationError> {
-        if self.group_size != 0 && self.tiling.block_k() > self.group_size {
-            return Err(GemmSpecializationError::ThreadgroupKExceedsGroupSize {
-                threadgroup_k: self.tiling.block_k(),
-                group_size: self.group_size,
-            });
+        if let Some(group_size) = self.group_size {
+            if self.tiling.block_k() > group_size {
+                return Err(GemmSpecializationError::ThreadgroupKExceedsGroupSize {
+                    threadgroup_k: self.tiling.block_k(),
+                    group_size,
+                });
+            }
         }
         if self.weight_prologue != GemmWeightPrologueKind::FullPrecision {
             if self.use_mxu {
@@ -49,8 +51,8 @@ impl GemmSpecialization {
                         alignment: GemmAlignment::new(align_mn, align_mn, true),
                         transpose_b: true,
                         weight_prologue: GemmWeightPrologueKind::FullPrecision,
-                        bits_per_weight: 0,
-                        group_size: 0,
+                        bits_per_weight: None,
+                        group_size: None,
                     });
                 }
             }
@@ -74,8 +76,8 @@ impl GemmSpecialization {
                                 alignment: GemmAlignment::new(align_m, align_n, align_k),
                                 transpose_b: true,
                                 weight_prologue: GemmWeightPrologueKind::FullPrecision,
-                                bits_per_weight: 0,
-                                group_size: 0,
+                                bits_per_weight: None,
+                                group_size: None,
                             });
                         }
                     }
@@ -101,8 +103,8 @@ impl GemmSpecialization {
                                     alignment: GemmAlignment::new(true, align_n, true),
                                     transpose_b: true,
                                     weight_prologue,
-                                    bits_per_weight: bits,
-                                    group_size,
+                                    bits_per_weight: Some(bits),
+                                    group_size: Some(group_size),
                                 });
                             }
                         }

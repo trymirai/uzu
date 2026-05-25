@@ -53,8 +53,8 @@ impl GemmKernel {
                     specialization.transpose_b,
                     specialization.use_mxu,
                     specialization.weight_prologue,
-                    specialization.bits_per_weight,
-                    specialization.group_size,
+                    specialization.bits_per_weight.unwrap_or(0),
+                    specialization.group_size.unwrap_or(0),
                     specialization.output_transform,
                     specialization.alignment,
                 )?;
