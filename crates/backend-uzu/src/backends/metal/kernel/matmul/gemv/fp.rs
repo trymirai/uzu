@@ -2,7 +2,7 @@ use super::{kernel::GemvKernel, spec::GemvSpecialization};
 use crate::backends::{
     common::{
         AsBufferRangeRef, Buffer, Encoder,
-        kernel::matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError},
+        kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
     },
     metal::Metal,
 };
@@ -12,9 +12,9 @@ pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
     encoder: &mut Encoder<Metal>,
     arguments: MatmulArguments<'a, Metal, TB>,
 ) -> Result<(), MatmulError<Metal>> {
-    let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
-    let output_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
-    let is_accumulate = arguments.d_transform.contains(&MatmulDOp::Accumulate);
+    let ab_scale = arguments.d_transform.ab_scale().unwrap_or(1.0);
+    let output_bias = arguments.d_transform.bias();
+    let is_accumulate = arguments.d_transform.accumulate();
 
     let MatmulArguments {
         a,

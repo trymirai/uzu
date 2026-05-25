@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use super::*;
 use crate::{
     array::ArrayContextExt,
@@ -498,7 +496,7 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
                         b_leading_dimension: None,
                         b_transpose: true,
                         d: output_embedding,
-                        d_transform: HashSet::new(),
+                        d_transform: MatmulDOps::none(),
                         m: 1,
                         n: fast_model_dim as u32,
                         k: slow_model_dim as u32,

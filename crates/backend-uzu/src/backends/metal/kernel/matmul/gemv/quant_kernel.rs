@@ -8,7 +8,7 @@ use crate::{
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError},
+                matmul::{MatmulArguments, MatmulB, MatmulError},
             },
         },
         metal::{Metal, context::MetalContext},
@@ -51,7 +51,7 @@ impl QuantGemvKernel {
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<'a, Metal, TB>,
     ) -> Result<(), MatmulError<Metal>> {
-        let mask = MatmulDOp::mask(&arguments.d_transform);
+        let mask = arguments.d_transform.mask();
         if mask.contains(GemmDTransform::SCALE) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::SCALE,
@@ -70,7 +70,7 @@ impl QuantGemvKernel {
             });
         }
 
-        let hadamard_factors = arguments.d_transform.iter().find_map(|op| op.as_rht());
+        let hadamard_factors = arguments.d_transform.rht_factors();
 
         let MatmulArguments {
             a,

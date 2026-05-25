@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{MatmulDispatchPath, Metal, MetalContext};
 use backend_uzu::{
@@ -10,7 +8,7 @@ use backend_uzu::{
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArguments, MatmulB, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -147,7 +145,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         b_leading_dimension: None,
         b_transpose: true,
         d: &mut buffers.y,
-        d_transform: HashSet::new(),
+        d_transform: MatmulDOps::none(),
         m: input.m,
         n: input.n,
         k: input.k,

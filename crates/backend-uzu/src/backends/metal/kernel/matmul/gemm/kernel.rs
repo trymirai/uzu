@@ -12,7 +12,7 @@ use crate::{
             },
             kernel::{
                 gemm::GemmWeights,
-                matmul::{MatmulArguments, MatmulB, MatmulDOp},
+                matmul::{MatmulArguments, MatmulB},
             },
         },
         metal::{
@@ -78,9 +78,9 @@ impl GemmKernel {
             && matches!(self.data_type, DataType::F16 | DataType::BF16)
             && matches!(arguments.b, MatmulB::FullPrecision { .. });
 
-        let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
-        let output_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
-        let output_transform = MatmulDOp::mask(&arguments.d_transform) - GemmDTransform::RHT;
+        let ab_scale = arguments.d_transform.ab_scale().unwrap_or(1.0);
+        let output_bias = arguments.d_transform.bias();
+        let output_transform = arguments.d_transform.mask() - GemmDTransform::RHT;
 
         let MatmulArguments {
             a,

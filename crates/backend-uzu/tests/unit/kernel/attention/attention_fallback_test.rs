@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 
 use backend_uzu::{
     DataType,
@@ -8,7 +7,7 @@ use backend_uzu::{
             kernel::{
                 AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
                 ManualKernels, SoftmaxKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -105,9 +104,7 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                     b_leading_dimension: Some(HEAD_DIM),
                     b_transpose: true,
                     d: &mut grp_s,
-                    d_transform: HashSet::from([MatmulDOp::Scale {
-                        ab_scale: scale,
-                    }]),
+                    d_transform: MatmulDOps::new(Some(scale), false, None, None),
                     m: GQA * SUFFIX,
                     n: SEQ,
                     k: HEAD_DIM,
@@ -134,7 +131,7 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                     b_leading_dimension: Some(HEAD_DIM),
                     b_transpose: false,
                     d: &mut grp_o,
-                    d_transform: HashSet::new(),
+                    d_transform: MatmulDOps::none(),
                     m: GQA * SUFFIX,
                     n: HEAD_DIM,
                     k: SEQ,

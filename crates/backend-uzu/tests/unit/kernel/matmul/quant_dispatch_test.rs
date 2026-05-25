@@ -1,7 +1,6 @@
 #![cfg(metal_backend)]
 
 use std::{
-    collections::HashSet,
     error::Error as StdError,
     fmt::{Debug, Display},
 };
@@ -14,7 +13,7 @@ use backend_uzu::{
             gpu_types::{QuantizationMethod, gemm::GemmDTransform},
             kernel::{
                 ManualKernels,
-                matmul::{MatmulDOp, MatmulError, MatmulKernel},
+                matmul::{MatmulDOps, MatmulError, MatmulKernel},
             },
         },
         metal::{MatmulDispatchPath, Metal, MetalContext},
@@ -141,9 +140,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = HashSet::from([MatmulDOp::Bias {
-        bias: &bias_pp_buf,
-    }]);
+    args.d_transform = MatmulDOps::new(None, false, Some(&bias_pp_buf), None);
     matmul
         .encode_with_path(args, &mut encoder, MatmulDispatchPath::QuantGemm)
         .expect("encode quant with bias");
@@ -194,7 +191,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = HashSet::from([MatmulDOp::Accumulate]);
+    args.d_transform = MatmulDOps::new(None, true, None, None);
     let result = matmul.encode_with_path(args, &mut encoder, MatmulDispatchPath::QuantGemm);
 
     let err = result.expect_err("expected error");

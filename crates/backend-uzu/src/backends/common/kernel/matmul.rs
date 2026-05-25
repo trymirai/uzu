@@ -1,9 +1,3 @@
-use std::{
-    collections::HashSet,
-    hash::{Hash, Hasher},
-    mem::discriminant,
-};
-
 use thiserror::Error;
 
 use crate::{
@@ -56,86 +50,101 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     },
 }
 
-pub enum MatmulDOp<'a, B: Backend> {
-    Scale {
-        ab_scale: f32,
-    },
-    Accumulate,
-    Bias {
-        bias: &'a Allocation<B>,
-    },
-    Rht {
-        factors: &'a Allocation<B>,
-    },
+/// Output-side post-ops for a matmul: `d = op(a @ b)`.
+///
+/// Constructed via [`MatmulDOps::new`] so the [`GemmDTransform`] mask and the
+/// optional data fields can never disagree. Use [`MatmulDOps::none`] for an
+/// op-free transform.
+pub struct MatmulDOps<'a, B: Backend> {
+    mask: GemmDTransform,
+    ab_scale: Option<f32>,
+    accumulate: bool,
+    bias: Option<&'a Allocation<B>>,
+    rht_factors: Option<&'a Allocation<B>>,
 }
 
-impl<'a, B: Backend> MatmulDOp<'a, B> {
-    pub fn bit(&self) -> GemmDTransform {
-        match self {
-            MatmulDOp::Scale {
-                ..
-            } => GemmDTransform::SCALE,
-            MatmulDOp::Accumulate => GemmDTransform::ACCUMULATE,
-            MatmulDOp::Bias {
-                ..
-            } => GemmDTransform::BIAS,
-            MatmulDOp::Rht {
-                ..
-            } => GemmDTransform::RHT,
+impl<'a, B: Backend> MatmulDOps<'a, B> {
+    pub fn new(
+        ab_scale: Option<f32>,
+        accumulate: bool,
+        bias: Option<&'a Allocation<B>>,
+        rht_factors: Option<&'a Allocation<B>>,
+    ) -> Self {
+        let mut mask = GemmDTransform::empty();
+        if ab_scale.is_some() {
+            mask |= GemmDTransform::SCALE;
+        }
+        if accumulate {
+            mask |= GemmDTransform::ACCUMULATE;
+        }
+        if bias.is_some() {
+            mask |= GemmDTransform::BIAS;
+        }
+        if rht_factors.is_some() {
+            mask |= GemmDTransform::RHT;
+        }
+        Self {
+            mask,
+            ab_scale,
+            accumulate,
+            bias,
+            rht_factors,
         }
     }
 
-    pub fn mask(set: &HashSet<Self>) -> GemmDTransform {
-        set.iter().fold(GemmDTransform::empty(), |m, op| m | op.bit())
+    pub fn none() -> Self {
+        Self::new(None, false, None, None)
     }
 
-    pub fn as_scale(&self) -> Option<f32> {
-        match self {
-            MatmulDOp::Scale {
-                ab_scale,
-            } => Some(*ab_scale),
-            _ => None,
-        }
+    pub fn mask(&self) -> GemmDTransform {
+        self.mask
     }
 
-    pub fn as_bias(&self) -> Option<&'a Allocation<B>> {
-        match self {
-            MatmulDOp::Bias {
-                bias,
-            } => Some(*bias),
-            _ => None,
-        }
+    pub fn ab_scale(&self) -> Option<f32> {
+        self.ab_scale
     }
 
-    pub fn as_rht(&self) -> Option<&'a Allocation<B>> {
-        match self {
-            MatmulDOp::Rht {
-                factors,
-            } => Some(*factors),
-            _ => None,
-        }
+    pub fn accumulate(&self) -> bool {
+        self.accumulate
+    }
+
+    pub fn bias(&self) -> Option<&'a Allocation<B>> {
+        self.bias
+    }
+
+    pub fn rht_factors(&self) -> Option<&'a Allocation<B>> {
+        self.rht_factors
+    }
+
+    /// Return a copy of `self` with the ops named by `bits` cleared.
+    pub fn without(
+        self,
+        bits: GemmDTransform,
+    ) -> Self {
+        Self::new(
+            if bits.contains(GemmDTransform::SCALE) {
+                None
+            } else {
+                self.ab_scale
+            },
+            if bits.contains(GemmDTransform::ACCUMULATE) {
+                false
+            } else {
+                self.accumulate
+            },
+            if bits.contains(GemmDTransform::BIAS) {
+                None
+            } else {
+                self.bias
+            },
+            if bits.contains(GemmDTransform::RHT) {
+                None
+            } else {
+                self.rht_factors
+            },
+        )
     }
 }
-
-impl<B: Backend> Hash for MatmulDOp<'_, B> {
-    fn hash<H: Hasher>(
-        &self,
-        state: &mut H,
-    ) {
-        discriminant(self).hash(state);
-    }
-}
-
-impl<B: Backend> PartialEq for MatmulDOp<'_, B> {
-    fn eq(
-        &self,
-        other: &Self,
-    ) -> bool {
-        discriminant(self) == discriminant(other)
-    }
-}
-
-impl<B: Backend> Eq for MatmulDOp<'_, B> {}
 
 pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     pub a: &'a Allocation<B>,
@@ -145,7 +154,7 @@ pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>>
     pub b_leading_dimension: Option<u32>,
     pub b_transpose: bool,
     pub d: &'a mut Allocation<B>,
-    pub d_transform: HashSet<MatmulDOp<'a, B>>,
+    pub d_transform: MatmulDOps<'a, B>,
     pub m: u32,
     pub n: u32,
     pub k: u32,

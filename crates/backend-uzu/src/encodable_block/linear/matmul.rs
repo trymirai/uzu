@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashSet};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
@@ -11,7 +11,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             ManualKernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::QuantizationConfig,
@@ -322,21 +322,14 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             },
         };
 
-        let mut d_transform: HashSet<MatmulDOp<'_, B>> = HashSet::new();
-        if let Some(bias) = self.biases.as_ref() {
-            d_transform.insert(MatmulDOp::Bias {
-                bias,
-            });
-        }
-        if let Mode::Quantized {
-            output_hadamard_factors: Some(factors),
-            ..
-        } = &self.mode
-        {
-            d_transform.insert(MatmulDOp::Rht {
-                factors,
-            });
-        }
+        let rht_factors = match &self.mode {
+            Mode::Quantized {
+                output_hadamard_factors: Some(factors),
+                ..
+            } => Some(factors),
+            _ => None,
+        };
+        let d_transform = MatmulDOps::new(None, false, self.biases.as_ref(), rht_factors);
 
         self.kernel.borrow_mut().encode(
             MatmulArguments {

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashSet};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
@@ -9,7 +9,7 @@ use crate::{
         gpu_types::QuantizationMode,
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::EmbeddingConfig,
@@ -568,7 +568,7 @@ impl<B: Backend> Embedding<B> {
                             b_leading_dimension: None,
                             b_transpose: true,
                             d: &mut output_allocation,
-                            d_transform: HashSet::new(),
+                            d_transform: MatmulDOps::none(),
                             m: batch_dim as u32,
                             n: output_dim as u32,
                             k: input_dim as u32,
@@ -617,7 +617,7 @@ impl<B: Backend> Embedding<B> {
                             b_leading_dimension: None,
                             b_transpose: true,
                             d: &mut output_allocation,
-                            d_transform: HashSet::new(),
+                            d_transform: MatmulDOps::none(),
                             m: batch_dim as u32,
                             n: self.vocab_size,
                             k: self.model_dim,

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashSet};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{
             ManualKernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::QuantizationConfig,
@@ -114,7 +114,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut intermediate,
-                d_transform: HashSet::new(),
+                d_transform: MatmulDOps::none(),
                 m: batch_dim as u32,
                 n: self.lora_rank as u32,
                 k: self.input_dim as u32,
@@ -135,12 +135,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
-                d_transform: HashSet::from([
-                    MatmulDOp::Scale {
-                        ab_scale: self.lora_scale,
-                    },
-                    MatmulDOp::Accumulate,
-                ]),
+                d_transform: MatmulDOps::new(Some(self.lora_scale), true, None, None),
                 m: batch_dim as u32,
                 n: self.output_dim as u32,
                 k: self.lora_rank as u32,

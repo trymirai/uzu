@@ -1,9 +1,6 @@
 //! Attention kernel encodable.
 
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-};
+use std::{cell::RefCell, collections::HashMap};
 
 use itertools::iproduct;
 
@@ -18,7 +15,7 @@ use crate::{
             AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel, ManualKernels,
             SigmoidGateKernel, SoftmaxKernel,
             attention::{AttentionGemmArguments, AttentionGemmBlock},
-            matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::AttentionConfig,
@@ -605,9 +602,7 @@ impl<B: Backend> Attention<B> {
                     b_leading_dimension: Some(k_seq_stride),
                     b_transpose: true,
                     d: &mut group_scores,
-                    d_transform: HashSet::from([MatmulDOp::Scale {
-                        ab_scale: scale,
-                    }]),
+                    d_transform: MatmulDOps::new(Some(scale), false, None, None),
                     m: (gqa_factor * suffix_length) as u32,
                     n: sequence_length as u32,
                     k: head_dim as u32,
@@ -658,7 +653,7 @@ impl<B: Backend> Attention<B> {
                     b_leading_dimension: Some(v_seq_stride),
                     b_transpose: false,
                     d: &mut group_output,
-                    d_transform: HashSet::new(),
+                    d_transform: MatmulDOps::none(),
                     m: (gqa_factor * suffix_length) as u32,
                     n: head_dim as u32,
                     k: sequence_length as u32,

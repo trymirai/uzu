@@ -34,7 +34,7 @@ use crate::{
         kernel::{
             EmbeddingRowsSumKernel, ManualKernels, TensorAddScaleKernel, TokenCopySampledKernel,
             kv_cache_update::KVCacheUpdate,
-            matmul::{MatmulArguments, MatmulB, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::{ModelMetadata, TtsMessageProcessorConfig, TtsModelConfig},

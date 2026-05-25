@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{MatmulDispatchPath, Metal, MetalContext};
 use backend_uzu::{
@@ -9,7 +7,7 @@ use backend_uzu::{
             Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -111,15 +109,12 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .expect("create d allocation")
     };
 
-    let mut d_transform: HashSet<MatmulDOp<'_, B>> = HashSet::new();
-    if input.case.ab_scale != 1.0 {
-        d_transform.insert(MatmulDOp::Scale {
-            ab_scale: input.case.ab_scale,
-        });
-    }
-    if input.case.accumulate {
-        d_transform.insert(MatmulDOp::Accumulate);
-    }
+    let ab_scale = if input.case.ab_scale != 1.0 {
+        Some(input.case.ab_scale)
+    } else {
+        None
+    };
+    let d_transform = MatmulDOps::<'_, B>::new(ab_scale, input.case.accumulate, None, None);
 
     let mut encoder = Encoder::new(context).expect("encoder");
     encode(

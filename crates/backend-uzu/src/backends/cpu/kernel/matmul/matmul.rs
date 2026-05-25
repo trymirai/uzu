@@ -8,7 +8,7 @@ use crate::{
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
         cpu::{
@@ -70,17 +70,16 @@ impl MatmulCpuKernel {
         arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
-        let d_mask = MatmulDOp::mask(&arguments.d_transform);
-        if d_mask.contains(GemmDTransform::RHT) {
+        if arguments.d_transform.mask().contains(GemmDTransform::RHT) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::RHT,
                 path: "MatmulCpuKernel",
             });
         }
 
-        let ab_scale = arguments.d_transform.iter().find_map(|op| op.as_scale()).unwrap_or(1.0);
-        let bias_alloc = arguments.d_transform.iter().find_map(|op| op.as_bias());
-        let is_accumulate = arguments.d_transform.contains(&MatmulDOp::Accumulate);
+        let ab_scale = arguments.d_transform.ab_scale().unwrap_or(1.0);
+        let bias_alloc = arguments.d_transform.bias();
+        let is_accumulate = arguments.d_transform.accumulate();
 
         let MatmulArguments {
             a,
@@ -202,7 +201,7 @@ impl MatmulCpuKernel {
         arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
-        let d_mask = MatmulDOp::mask(&arguments.d_transform);
+        let d_mask = arguments.d_transform.mask();
         if d_mask.contains(GemmDTransform::SCALE) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::SCALE,
@@ -238,8 +237,8 @@ impl MatmulCpuKernel {
             return Err(MatmulError::UnsupportedGroupSize(group_size as usize));
         }
 
-        let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
-        let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
+        let post_rht = arguments.d_transform.rht_factors();
+        let post_bias = arguments.d_transform.bias();
 
         if arguments.m >= 5 && arguments.n > 1 {
             let MatmulArguments {
@@ -250,12 +249,12 @@ impl MatmulCpuKernel {
                 b_leading_dimension,
                 b_transpose,
                 d,
-                mut d_transform,
+                d_transform,
                 m,
                 n,
                 k,
             } = arguments;
-            d_transform.retain(|op| op.bit() != GemmDTransform::RHT && op.bit() != GemmDTransform::BIAS);
+            let d_transform = d_transform.without(GemmDTransform::RHT | GemmDTransform::BIAS);
             encode_quantized_gemm(
                 encoder,
                 MatmulArguments {

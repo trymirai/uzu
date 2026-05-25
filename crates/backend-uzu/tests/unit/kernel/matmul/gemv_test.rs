@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
@@ -10,7 +7,7 @@ use backend_uzu::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArguments, MatmulB, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -82,7 +79,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut d_allocation,
-                d_transform: HashSet::new(),
+                d_transform: MatmulDOps::none(),
                 m,
                 n,
                 k,

@@ -15,7 +15,7 @@ use crate::{
             gpu_types::gemm::GemmDTransform,
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
         metal::{
@@ -107,7 +107,7 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
+        let post_rht = arguments.d_transform.rht_factors();
 
         let MatmulArguments {
             a,
@@ -118,12 +118,12 @@ impl MatmulMetalKernel {
             b_leading_dimension,
             b_transpose,
             d,
-            mut d_transform,
+            d_transform,
             m,
             n,
             k,
         } = arguments;
-        d_transform.retain(|op| op.bit() != GemmDTransform::RHT);
+        let d_transform = d_transform.without(GemmDTransform::RHT);
 
         gemv::fp::encode(
             &mut self.gemv,
@@ -158,11 +158,11 @@ impl MatmulMetalKernel {
     ) -> Result<(), MatmulError<Metal>> {
         let uses_mxu = !force_simdgroup && self.mxu_eligible;
         let post_bias = if uses_mxu {
-            arguments.d_transform.iter().find_map(|op| op.as_bias())
+            arguments.d_transform.bias()
         } else {
             None
         };
-        let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
+        let post_rht = arguments.d_transform.rht_factors();
 
         let MatmulArguments {
             a,
@@ -173,21 +173,16 @@ impl MatmulMetalKernel {
             b_leading_dimension,
             b_transpose,
             d,
-            mut d_transform,
+            d_transform,
             m,
             n,
             k,
         } = arguments;
-        d_transform.retain(|op| {
-            let bit = op.bit();
-            if bit == GemmDTransform::RHT {
-                return false;
-            }
-            if uses_mxu && bit == GemmDTransform::BIAS {
-                return false;
-            }
-            true
-        });
+        let mut stripped = GemmDTransform::RHT;
+        if uses_mxu {
+            stripped |= GemmDTransform::BIAS;
+        }
+        let d_transform = d_transform.without(stripped);
 
         let context = encoder.context();
         self.gemm
@@ -231,7 +226,7 @@ impl MatmulMetalKernel {
                 path: "QuantGemv",
             });
         }
-        let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
+        let post_bias = arguments.d_transform.bias();
 
         let MatmulArguments {
             a,
@@ -242,12 +237,12 @@ impl MatmulMetalKernel {
             b_leading_dimension,
             b_transpose,
             d,
-            mut d_transform,
+            d_transform,
             m,
             n,
             k,
         } = arguments;
-        d_transform.retain(|op| op.bit() != GemmDTransform::BIAS);
+        let d_transform = d_transform.without(GemmDTransform::BIAS);
 
         self.quant_gemv.encode(
             encoder,
@@ -278,8 +273,7 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let mask = MatmulDOp::mask(&arguments.d_transform);
-        if mask.contains(GemmDTransform::ACCUMULATE) {
+        if arguments.d_transform.mask().contains(GemmDTransform::ACCUMULATE) {
             return Err(MatmulError::UnsupportedDOp {
                 bit: GemmDTransform::ACCUMULATE,
                 path: "QuantGemm",
@@ -291,7 +285,7 @@ impl MatmulMetalKernel {
             });
         }
 
-        let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
+        let post_rht = arguments.d_transform.rht_factors();
 
         let MatmulArguments {
             a,
@@ -302,12 +296,12 @@ impl MatmulMetalKernel {
             b_leading_dimension,
             b_transpose,
             d,
-            mut d_transform,
+            d_transform,
             m,
             n,
             k,
         } = arguments;
-        d_transform.retain(|op| op.bit() != GemmDTransform::RHT);
+        let d_transform = d_transform.without(GemmDTransform::RHT);
 
         let context = encoder.context();
         self.gemm
