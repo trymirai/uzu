@@ -158,9 +158,8 @@ pub fn run_metal<T: ArrayElement + Float>(
 ) -> Vec<T> {
     run::<Metal, T>(context, kernel, input, |kernel, args, encoder| match path {
         None => kernel.encode(args, encoder).expect("matmul encode failed"),
-        Some(gemm_path) => kernel
-            .gemm
-            .encode_dispatch_path(args, gemm_path, encoder)
-            .expect("gemm encode_dispatch_path failed"),
+        Some(gemm_path) => {
+            kernel.gemm.encode_dispatch_path(args, gemm_path, encoder).expect("gemm encode_dispatch_path failed")
+        },
     })
 }
