@@ -8,6 +8,7 @@ pub struct GemvSpecialization {
     pub elements_per_thread_col: u32,
     pub is_accumulate: bool,
     pub is_bias: bool,
+    pub is_hadamard: bool,
 }
 
 impl GemvSpecialization {
@@ -24,6 +25,7 @@ impl GemvSpecialization {
                     elements_per_thread_col: 4,
                     is_accumulate: false,
                     is_bias: false,
+                    is_hadamard: false,
                 },
                 Self {
                     threadgroup_rows: 4,
@@ -34,6 +36,7 @@ impl GemvSpecialization {
                     elements_per_thread_col: 4,
                     is_accumulate: false,
                     is_bias: true,
+                    is_hadamard: false,
                 },
                 Self {
                     threadgroup_rows: 8,
@@ -44,6 +47,7 @@ impl GemvSpecialization {
                     elements_per_thread_col: 4,
                     is_accumulate: false,
                     is_bias: false,
+                    is_hadamard: false,
                 },
                 Self {
                     threadgroup_rows: 8,
@@ -54,18 +58,55 @@ impl GemvSpecialization {
                     elements_per_thread_col: 4,
                     is_accumulate: false,
                     is_bias: true,
+                    is_hadamard: false,
+                },
+                Self {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    is_accumulate: false,
+                    is_bias: false,
+                    is_hadamard: true,
+                },
+                Self {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    is_accumulate: false,
+                    is_bias: true,
+                    is_hadamard: true,
                 },
             ],
-            DataType::F16 => &[Self {
-                threadgroup_rows: 8,
-                threadgroup_cols: 1,
-                threads_per_simdgroup_row: 1,
-                threads_per_simdgroup_col: 32,
-                elements_per_thread_row: 4,
-                elements_per_thread_col: 4,
-                is_accumulate: false,
-                is_bias: false,
-            }],
+            DataType::F16 => &[
+                Self {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    is_accumulate: false,
+                    is_bias: false,
+                    is_hadamard: false,
+                },
+                Self {
+                    threadgroup_rows: 8,
+                    threadgroup_cols: 1,
+                    threads_per_simdgroup_row: 1,
+                    threads_per_simdgroup_col: 32,
+                    elements_per_thread_row: 4,
+                    elements_per_thread_col: 4,
+                    is_accumulate: false,
+                    is_bias: false,
+                    is_hadamard: true,
+                },
+            ],
             _ => &[],
         }
     }
@@ -79,6 +120,7 @@ impl GemvSpecialization {
         output_dimension: u32,
         is_accumulate: bool,
         is_bias: bool,
+        is_hadamard: bool,
     ) -> Self {
         let (threadgroup_rows, threadgroup_cols);
         let (threads_per_simdgroup_row, threads_per_simdgroup_col);
@@ -89,7 +131,9 @@ impl GemvSpecialization {
         let mut simdgroup_thread_cols = 32;
         let mut threadgroup_simd_cols = 1;
 
-        if input_dimension <= 64 {
+        if is_hadamard {
+            threadgroup_simd_rows = 8;
+        } else if input_dimension <= 64 {
             threadgroup_simd_rows = 1;
             simdgroup_thread_rows = 8;
             simdgroup_thread_cols = 4;
@@ -124,6 +168,7 @@ impl GemvSpecialization {
             elements_per_thread_col,
             is_accumulate,
             is_bias,
+            is_hadamard,
         }
     }
 }
