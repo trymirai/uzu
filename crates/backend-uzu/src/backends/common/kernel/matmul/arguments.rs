@@ -1,4 +1,4 @@
-use super::{b::MatmulB, d_ops::MatmulDOps};
+use super::{d_ops::MatmulDOps, matmul_b::MatmulB};
 use crate::backends::common::{Allocation, AsBufferRangeRef, Backend};
 
 pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
