@@ -82,8 +82,8 @@ impl GemmKernel {
                     specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
-                    specialization.weight_prologue,
-                    specialization.bits_per_weight.unwrap_or(0),
+                    specialization.b_prologue,
+                    specialization.bits_per_b.unwrap_or(0),
                     specialization.group_size.unwrap_or(0),
                     specialization.output_transform,
                     specialization.alignment,
@@ -170,8 +170,8 @@ impl GemmKernel {
             output_transform.remove(GemmDTransform::BIAS);
         }
 
-        let weight_prologue = arguments.b.weight_prologue();
-        let bits_per_weight = arguments.b.bits_per_weight();
+        let b_prologue = arguments.b.b_prologue();
+        let bits_per_b = arguments.b.bits_per_b();
         let group_size = arguments.b.group_size();
 
         let MatmulArguments {
@@ -251,8 +251,8 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: b_transpose,
-                    weight_prologue,
-                    bits_per_weight,
+                    b_prologue,
+                    bits_per_b,
                     group_size,
                 };
                 specialization.validate().map_err(MetalError::from)?;
@@ -307,8 +307,8 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: true,
-                    weight_prologue,
-                    bits_per_weight,
+                    b_prologue,
+                    bits_per_b,
                     group_size,
                 };
                 specialization.validate().map_err(MetalError::from)?;

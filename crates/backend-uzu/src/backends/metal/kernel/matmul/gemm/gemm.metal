@@ -24,7 +24,7 @@ template <
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     bool USE_MXU,
-    GemmWeightPrologueKind WEIGHT_PROLOGUE,
+    GemmBPrologueKind B_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
 VARIANTS(T, half, bfloat)
@@ -42,10 +42,10 @@ VARIANTS(
 VARIANTS(TRANSPOSE_B, false, true)
 VARIANTS(USE_MXU, false, true)
 VARIANTS(
-    WEIGHT_PROLOGUE,
-    GemmWeightPrologueKind::FullPrecision,
-    GemmWeightPrologueKind::ScaleBiasDequant,
-    GemmWeightPrologueKind::ScaleZeroPointDequant)
+    B_PROLOGUE,
+    GemmBPrologueKind::FullPrecision,
+    GemmBPrologueKind::ScaleBiasDequant,
+    GemmBPrologueKind::ScaleZeroPointDequant)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
 CONSTRAINT(
@@ -54,13 +54,13 @@ CONSTRAINT(
         GEMM_TILING == GemmTiling::T64x32x32_4x1 ||
         GEMM_TILING == GemmTiling::T128x128x32_4x4)
 CONSTRAINT(
-    WEIGHT_PROLOGUE != GemmWeightPrologueKind::FullPrecision ||
+    B_PROLOGUE != GemmBPrologueKind::FullPrecision ||
         (BITS == 0 && GROUP_SIZE == 0))
 CONSTRAINT(
-    WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
+    B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
         (BITS != 0 && GROUP_SIZE != 0))
 CONSTRAINT(
-    WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
+    B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
         (!USE_MXU && TRANSPOSE_B &&
          (GEMM_TILING == GemmTiling::T8x32x32_1x1 ||
           GEMM_TILING == GemmTiling::T32x32x32_2x2 ||
@@ -75,11 +75,11 @@ KERNEL(Gemm)(
     const device uint8_t* b_packed,
     device T* d,
     const device T* scales
-        OPTIONAL(WEIGHT_PROLOGUE != GemmWeightPrologueKind::FullPrecision),
+        OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
     const device T* biases
-        OPTIONAL(WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant),
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
     const device uint8_t* zero_points
-        OPTIONAL(WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant),
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device T* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const constant uzu::matmul::GemmParams* params,
@@ -122,7 +122,7 @@ KERNEL(Gemm)(
         T,
         GEMM_TILING,
         TRANSPOSE_B,
-        WEIGHT_PROLOGUE,
+        B_PROLOGUE,
         BITS,
         GROUP_SIZE>::
         run(a,

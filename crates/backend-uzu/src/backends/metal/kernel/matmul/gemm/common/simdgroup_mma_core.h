@@ -22,8 +22,8 @@ template <
     typename T,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
-    GemmWeightPrologueKind WEIGHT_PROLOGUE =
-        GemmWeightPrologueKind::FullPrecision,
+    GemmBPrologueKind B_PROLOGUE =
+        GemmBPrologueKind::FullPrecision,
     int BITS = 0,
     int GROUP_SIZE = 0>
 struct SimdgroupMmaCore {
@@ -276,7 +276,7 @@ struct SimdgroupMmaCore {
       }
     };
 
-    if constexpr (WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       const device T* b = reinterpret_cast<const device T*>(b_packed);
       b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
       thread BLoaderFp
@@ -309,7 +309,7 @@ struct SimdgroupMmaCore {
       return;
     }
 
-    if constexpr (WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       constexpr int pack_factor = get_pack_factor<BITS, 8>();
       constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
       const int k_elements = int(params->K);
@@ -358,7 +358,7 @@ struct SimdgroupMmaCore {
     }
 
     if constexpr (
-        WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant
+        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
     ) {
       constexpr int pack_factor = get_pack_factor<BITS, 8>();
       constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();

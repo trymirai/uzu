@@ -4,7 +4,7 @@ use crate::{
     backends::common::{
         gpu_types::{
             QuantizationMethod,
-            gemm::{GemmAlignment, GemmDTransform, GemmTiling, GemmWeightPrologueKind},
+            gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
         },
         kernel::matmul::MatmulQuantCombo,
     },
@@ -18,8 +18,8 @@ pub(crate) struct GemmSpecialization {
     pub(crate) output_transform: GemmDTransform,
     pub(crate) alignment: GemmAlignment,
     pub(crate) transpose_b: bool,
-    pub(crate) weight_prologue: GemmWeightPrologueKind,
-    pub(crate) bits_per_weight: Option<u32>,
+    pub(crate) b_prologue: GemmBPrologueKind,
+    pub(crate) bits_per_b: Option<u32>,
     pub(crate) group_size: Option<u32>,
 }
 
@@ -33,7 +33,7 @@ impl GemmSpecialization {
                 });
             }
         }
-        if self.weight_prologue != GemmWeightPrologueKind::FullPrecision {
+        if self.b_prologue != GemmBPrologueKind::FullPrecision {
             if self.use_mxu {
                 return Err(GemmSpecializationError::QuantizedRequiresSimdgroup);
             }
@@ -56,8 +56,8 @@ impl GemmSpecialization {
                         output_transform,
                         alignment: GemmAlignment::new(align_mn, align_mn, true),
                         transpose_b: true,
-                        weight_prologue: GemmWeightPrologueKind::FullPrecision,
-                        bits_per_weight: None,
+                        b_prologue: GemmBPrologueKind::FullPrecision,
+                        bits_per_b: None,
                         group_size: None,
                     });
                 }
@@ -81,8 +81,8 @@ impl GemmSpecialization {
                                 output_transform,
                                 alignment: GemmAlignment::new(align_m, align_n, align_k),
                                 transpose_b: true,
-                                weight_prologue: GemmWeightPrologueKind::FullPrecision,
-                                bits_per_weight: None,
+                                b_prologue: GemmBPrologueKind::FullPrecision,
+                                bits_per_b: None,
                                 group_size: None,
                             });
                         }
@@ -99,9 +99,9 @@ impl GemmSpecialization {
     ) -> Vec<Self> {
         let bits = DataType::from(combo.mode).size_in_bits() as u32;
         let group_size = combo.group_size;
-        let weight_prologue = match combo.method {
-            QuantizationMethod::ScaleBias => GemmWeightPrologueKind::ScaleBiasDequant,
-            QuantizationMethod::ScaleZeroPoint => GemmWeightPrologueKind::ScaleZeroPointDequant,
+        let b_prologue = match combo.method {
+            QuantizationMethod::ScaleBias => GemmBPrologueKind::ScaleBiasDequant,
+            QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
         };
         let mut out = Vec::new();
         for &tiling in quant_tiling_set(data_type) {
@@ -117,8 +117,8 @@ impl GemmSpecialization {
                         output_transform,
                         alignment: GemmAlignment::new(true, align_n, true),
                         transpose_b: true,
-                        weight_prologue,
-                        bits_per_weight: Some(bits),
+                        b_prologue,
+                        bits_per_b: Some(bits),
                         group_size: Some(group_size),
                     });
                 }

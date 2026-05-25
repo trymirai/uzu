@@ -5,7 +5,7 @@
 using namespace metal;
 
 namespace uzu::gemm {
-enum class GemmWeightPrologueKind : uint32_t {
+enum class GemmBPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,
   ScaleZeroPointDequant = 2,
