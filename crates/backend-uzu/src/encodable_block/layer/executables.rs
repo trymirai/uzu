@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use half::{bf16, f16};
+use thiserror::Error;
 
 use super::MixerExecutables;
 #[cfg(feature = "tracing")]
@@ -15,7 +16,8 @@ use crate::{
     config::{MixerConfig, TransformerConfig, TransformerLayerConfig},
     encodable_block::{
         Attention, AttentionArguments, DeltaNetArguments, DeltaNetMixer, Linear, MambaArguments, MambaMixer, Mlp,
-        PostLayerScalar, QKVNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments, ShortConvMixer,
+        PerLayerEmbeddingProjection, PostLayerScalar, QKVNorm, QkUnpack, RMSNorm, Rope, ShortConvArguments,
+        ShortConvMixer,
     },
     forward_pass::{cache_layers::LayerCacheAccess, state::RopeBuffers},
     parameters::ParameterTree,
@@ -32,8 +34,29 @@ pub struct LayerExecutables<B: Backend> {
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
+    pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
     #[cfg(feature = "tracing")]
     model_dim: usize,
+}
+
+#[derive(Debug, Error)]
+pub enum LayerEncodeError<B: Backend> {
+    #[error("Backend error: {0}")]
+    BackendError(#[from] B::Error),
+    #[error("Missing cache for {mixer} layer {layer_index}")]
+    MissingCacheState {
+        layer_index: usize,
+        mixer: &'static str,
+    },
+    #[error("Invalid cache for {mixer} layer {layer_index}")]
+    InvalidCacheLayer {
+        layer_index: usize,
+        mixer: &'static str,
+    },
+    #[error("Missing per-layer inputs for layer {layer_index}")]
+    MissingPerLayerInputs {
+        layer_index: usize,
+    },
 }
 
 impl<B: Backend> LayerExecutables<B> {
@@ -49,23 +72,27 @@ impl<B: Backend> LayerExecutables<B> {
     ) -> Self {
         let intermediate_data_type: DataType = layer_config.mixer_config.activation_precision().into();
 
-        let (residual_sum_scalar, output_scalar) = if layer_config.has_post_layer_scalar {
+        let post_layer_scalar = if layer_config.has_post_layer_scalar {
             assert!(
                 layer_config.post_mlp_norm_config.is_some(),
                 "layer {layer_index} sets post_layer_scalar but has no post_mlp_norm"
             );
             let leaf = decoder_layer_loader.leaf("post_layer_scalar").expect("Failed to read post_layer_scalar weight");
-            let scalar = match leaf.data_type() {
+            Some(match leaf.data_type() {
                 DataType::BF16 => {
                     leaf.read_slice::<bf16>().expect("Failed to read post_layer_scalar weight")[0].to_f32()
                 },
                 DataType::F16 => leaf.read_slice::<f16>().expect("Failed to read post_layer_scalar weight")[0].to_f32(),
                 DataType::F32 => leaf.read_slice::<f32>().expect("Failed to read post_layer_scalar weight")[0],
                 other => panic!("post_layer_scalar must be a float dtype, got {other:?}"),
-            };
-            (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar))
+            })
         } else {
-            (PostLayerScalar::None, PostLayerScalar::None)
+            None
+        };
+
+        let (residual_sum_scalar, output_scalar) = match (post_layer_scalar, layer_config.ple_config.is_none()) {
+            (Some(scalar), true) => (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar)),
+            _ => (PostLayerScalar::None, PostLayerScalar::None),
         };
 
         #[cfg(feature = "tracing")]
@@ -299,6 +326,18 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
+        let ple_projection = layer_config.ple_config.as_ref().map(|ple_config| {
+            PerLayerEmbeddingProjection::new(
+                context,
+                ple_config,
+                transformer_config.model_dim,
+                transformer_config.layer_configs.len(),
+                post_layer_scalar.unwrap_or(1.0),
+                &decoder_layer_loader.subtree("ple").unwrap(),
+            )
+            .expect("Failed to create per-layer embedding projection")
+        });
+
         Self {
             layer_index,
             #[cfg(feature = "tracing")]
@@ -309,6 +348,7 @@ impl<B: Backend> LayerExecutables<B> {
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
+            ple_projection,
             #[cfg(feature = "tracing")]
             model_dim: transformer_config.model_dim,
         }
@@ -320,7 +360,7 @@ impl<B: Backend> LayerExecutables<B> {
         input: Allocation<B>,
         shortcut: &mut Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
+    ) -> Result<Allocation<B>, LayerEncodeError<B>> {
         let LayerArguments {
             batch_dim,
             token_positions,
@@ -328,6 +368,7 @@ impl<B: Backend> LayerExecutables<B> {
             token_subtrie_ranges,
             attention_sinks,
             rope_buffers,
+            per_layer_inputs,
             sampling_start,
             sampling_length,
             cache_access,
@@ -414,9 +455,15 @@ impl<B: Backend> LayerExecutables<B> {
                     entry,
                 }) = cache_access
                 else {
-                    panic!("State-space layer requires writable cache state");
+                    return Err(LayerEncodeError::MissingCacheState {
+                        layer_index: self.layer_index,
+                        mixer: "state-space",
+                    });
                 };
-                let layer = entry.as_state_space_mut().expect("State-space mixer expects SSM cache layer");
+                let layer = entry.as_state_space_mut().ok_or(LayerEncodeError::InvalidCacheLayer {
+                    layer_index: self.layer_index,
+                    mixer: "state-space",
+                })?;
                 mixer.encode(
                     MambaArguments {
                         active_row_count: batch_dim,
@@ -433,9 +480,15 @@ impl<B: Backend> LayerExecutables<B> {
                     entry,
                 }) = cache_access
                 else {
-                    panic!("ShortConv layer requires writable cache state");
+                    return Err(LayerEncodeError::MissingCacheState {
+                        layer_index: self.layer_index,
+                        mixer: "short-conv",
+                    });
                 };
-                let layer = entry.as_short_conv_mut().expect("ShortConv mixer expects ShortConv cache layer");
+                let layer = entry.as_short_conv_mut().ok_or(LayerEncodeError::InvalidCacheLayer {
+                    layer_index: self.layer_index,
+                    mixer: "short-conv",
+                })?;
                 mixer.encode(
                     ShortConvArguments {
                         active_row_count: batch_dim,
@@ -455,9 +508,15 @@ impl<B: Backend> LayerExecutables<B> {
                     entry,
                 }) = cache_access
                 else {
-                    panic!("DeltaNet layer requires writable cache state");
+                    return Err(LayerEncodeError::MissingCacheState {
+                        layer_index: self.layer_index,
+                        mixer: "delta-net",
+                    });
                 };
-                let layer = entry.as_delta_net_mut().expect("DeltaNet mixer expects DeltaNet cache layer");
+                let layer = entry.as_delta_net_mut().ok_or(LayerEncodeError::InvalidCacheLayer {
+                    layer_index: self.layer_index,
+                    mixer: "delta-net",
+                })?;
                 mixer.encode(
                     DeltaNetArguments {
                         active_row_count: batch_dim,
@@ -502,6 +561,16 @@ impl<B: Backend> LayerExecutables<B> {
             }
         }
 
+        if let Some(ple_projection) = &self.ple_projection {
+            let Some(per_layer_inputs) = per_layer_inputs else {
+                return Err(LayerEncodeError::MissingPerLayerInputs {
+                    layer_index: self.layer_index,
+                });
+            };
+            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim, encoder)?;
+            encoder.encode_fill(&mut hidden, 0);
+        }
+
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             let size = (batch_dim * self.model_dim) as u32;
@@ -526,6 +595,7 @@ pub struct LayerArguments<'a, B: Backend> {
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub attention_sinks: Option<&'a Allocation<B>>,
     pub rope_buffers: Option<&'a RopeBuffers<B>>,
+    pub per_layer_inputs: Option<&'a Allocation<B>>,
     pub sampling_start: usize,
     pub sampling_length: usize,
     pub cache_access: Option<LayerCacheAccess<'a, B>>,

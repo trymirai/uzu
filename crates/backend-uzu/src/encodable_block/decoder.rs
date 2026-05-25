@@ -11,8 +11,8 @@ use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::DecoderConfig,
     encodable_block::{
-        Embedding, LayerArguments, LayerExecutables, PostLayerScalar, QkUnpack, RMSNorm, Rope,
-        embedding::EmbeddingError,
+        Embedding, LayerArguments, LayerEncodeError, LayerExecutables, PerLayerEmbedding, PostLayerScalar, QkUnpack,
+        RMSNorm, Rope, embedding::EmbeddingError,
     },
     forward_pass::{cache_layers::CacheLayers, state::SharedBuffers},
     parameters::ParameterTree,
@@ -24,6 +24,10 @@ pub enum DecoderError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Embedding error: {0}")]
     EmbeddingError(#[from] EmbeddingError<B>),
+    #[error("Layer error: {0}")]
+    LayerError(#[from] LayerEncodeError<B>),
+    #[error("Invalid decode input: {0}")]
+    InvalidDecodeInput(&'static str),
 }
 
 /// Full decoder executable with all layers and components.
@@ -31,6 +35,7 @@ pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
+    pub per_layer_embedding: Option<PerLayerEmbedding<B>>,
 }
 
 pub struct DecoderArguments<'a, B: Backend> {
@@ -72,10 +77,13 @@ impl<B: Backend> Decoder<B> {
         let (layers, norm) =
             Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, "transformer");
 
+        let per_layer_embedding = Self::build_per_layer_embedding(context, decoder_config, root_weight_loader);
+
         Self {
             embed,
             layers,
             norm,
+            per_layer_embedding,
         }
     }
 
@@ -106,10 +114,13 @@ impl<B: Backend> Decoder<B> {
         let (layers, norm) =
             Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, transformer_subtree);
 
+        let per_layer_embedding = Self::build_per_layer_embedding(context, decoder_config, root_weight_loader);
+
         Self {
             embed,
             layers,
             norm,
+            per_layer_embedding,
         }
     }
 
@@ -153,10 +164,44 @@ impl<B: Backend> Decoder<B> {
         (layers.into_boxed_slice(), norm_block)
     }
 
+    fn build_per_layer_embedding(
+        context: &B::Context,
+        decoder_config: &DecoderConfig,
+        root_weight_loader: &ParameterTree<B::Context>,
+    ) -> Option<PerLayerEmbedding<B>> {
+        decoder_config.ple_model_config.as_ref().map(|ple_config| {
+            let layer_count = decoder_config.transformer_config.layer_configs.len();
+            assert_eq!(
+                ple_config.num_layers, layer_count,
+                "per-layer embedding num_layers must match transformer layer count"
+            );
+            let ple_weight_loader =
+                root_weight_loader.subtree("per_layer_embedding").expect("Failed to get per_layer_embedding subtree");
+            PerLayerEmbedding::new(context, ple_config, decoder_config.transformer_config.model_dim, &ple_weight_loader)
+                .expect("Failed to create per-layer embedding")
+        })
+    }
+
+    fn encode_per_layer_inputs(
+        &self,
+        token_ids: &Allocation<B>,
+        inner_features: &Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Option<Allocation<B>>, DecoderError<B>> {
+        match &self.per_layer_embedding {
+            Some(ple) => {
+                ple.encode(token_ids, inner_features, batch_dim, encoder).map(Some).map_err(DecoderError::BackendError)
+            },
+            None => Ok(None),
+        }
+    }
+
     fn run_layers(
         &self,
         args: DecoderArguments<B>,
         mut main: Allocation<B>,
+        per_layer_inputs: Option<&Allocation<B>>,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
         let DecoderArguments {
@@ -194,6 +239,7 @@ impl<B: Backend> Decoder<B> {
                         token_subtrie_ranges,
                         attention_sinks,
                         rope_buffers,
+                        per_layer_inputs,
                         sampling_start,
                         sampling_length,
                         cache_access,
@@ -204,7 +250,7 @@ impl<B: Backend> Decoder<B> {
                     &mut shortcut,
                     encoder,
                 )
-                .map_err(DecoderError::BackendError)?;
+                .map_err(DecoderError::LayerError)?;
         }
 
         Ok((main, shortcut))
@@ -217,7 +263,8 @@ impl<B: Backend> Decoder<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
         let main = self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?;
-        let (main, _) = self.run_layers(args, main, encoder)?;
+        let per_layer_inputs = self.encode_per_layer_inputs(token_ids, &main, args.batch_dim, encoder)?;
+        let (main, _) = self.run_layers(args, main, per_layer_inputs.as_ref(), encoder)?;
         Ok(main)
     }
 
@@ -233,10 +280,20 @@ impl<B: Backend> Decoder<B> {
         let batch_dim = args.batch_dim;
         #[cfg(feature = "tracing")]
         let mut trace = args.trace;
-        let main = match input {
-            DecoderDecodeInput::TokenIds(token_ids) => self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?,
+        let (main, token_ids) = match input {
+            DecoderDecodeInput::TokenIds(token_ids) => {
+                let main = self.embed.encode_lookup(token_ids, batch_dim, encoder)?;
+                (main, Some(token_ids))
+            },
             #[cfg(metal_backend)]
-            DecoderDecodeInput::Embeddings(main) => main,
+            DecoderDecodeInput::Embeddings(main) => (main, None),
+        };
+        let per_layer_inputs = match token_ids {
+            Some(token_ids) => self.encode_per_layer_inputs(token_ids, &main, batch_dim, encoder)?,
+            None if self.per_layer_embedding.is_some() => {
+                return Err(DecoderError::InvalidDecodeInput("per-layer embedding requires token ids"));
+            },
+            None => None,
         };
         let (main, mut shortcut) = self.run_layers(
             DecoderArguments {
@@ -252,6 +309,7 @@ impl<B: Backend> Decoder<B> {
                 trace: trace.as_deref_mut(),
             },
             main,
+            per_layer_inputs.as_ref(),
             encoder,
         )?;
 

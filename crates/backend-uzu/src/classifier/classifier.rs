@@ -145,6 +145,7 @@ impl<B: Backend> Classifier<B> {
                         token_subtrie_ranges: None,
                         attention_sinks: self.context.shared_buffers.attention_sinks(layer_index),
                         rope_buffers,
+                        per_layer_inputs: None,
                         sampling_start: 0,
                         sampling_length: batch_dim,
                         cache_access: None,
