@@ -24,7 +24,7 @@ pub enum GemmDispatchPath {
     Mxu,
 }
 
-pub(crate) struct GemmKernel {
+pub struct GemmKernel {
     data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
 }
@@ -69,12 +69,29 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn encode_dispatch_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         context: &MetalContext,
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        let path = if context.device.supports_mxu()
+            && matches!(self.data_type, DataType::F16 | DataType::BF16)
+            && matches!(arguments.b, MatmulB::FullPrecision { .. })
+        {
+            GemmDispatchPath::Mxu
+        } else {
+            GemmDispatchPath::Simdgroup
+        };
+        self.encode_dispatch_path(context, arguments, path, encoder)
+    }
+
+    pub fn encode_dispatch_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        context: &MetalContext,
+        arguments: MatmulArguments<'a, Metal, TB>,
         path: GemmDispatchPath,
+        encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let use_mxu = match path {
             GemmDispatchPath::Mxu => {

@@ -1,5 +1,5 @@
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{MatmulDispatchPath, Metal, MetalContext};
+use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use backend_uzu::{
     ArrayElement,
     backends::{
@@ -167,13 +167,20 @@ pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
 pub fn run_quant_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     input: &QuantInput<T>,
-    path: MatmulDispatchPath,
+    path: Option<GemmDispatchPath>,
 ) -> Vec<T> {
     let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
     let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
         .expect("MatmulMetalKernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
-    matmul.encode_dispatch_path(quant_arguments(&mut buffers, input), &mut encoder, path).expect("encode metal quant");
+    let args = quant_arguments(&mut buffers, input);
+    match path {
+        None => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
+        Some(gemm_path) => matmul
+            .gemm
+            .encode_dispatch_path(context, args, gemm_path, &mut encoder)
+            .expect("gemm encode_dispatch_path failed"),
+    }
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&buffers.y)
 }

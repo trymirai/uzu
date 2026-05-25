@@ -1,5 +1,5 @@
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{MatmulDispatchPath, Metal, MetalContext};
+use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -154,9 +154,16 @@ pub fn run_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     kernel: &mut MetalMatmulKernel,
     input: &Input<T>,
-    path: MatmulDispatchPath,
+    path: Option<GemmDispatchPath>,
 ) -> Vec<T> {
-    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
-        kernel.encode_dispatch_path(args, encoder, path).expect("encode_dispatch_path failed");
+    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| match path {
+        None => kernel.encode(args, encoder).expect("matmul encode failed"),
+        Some(gemm_path) => {
+            let metal_context = encoder.context();
+            kernel
+                .gemm
+                .encode_dispatch_path(metal_context, args, gemm_path, encoder)
+                .expect("gemm encode_dispatch_path failed");
+        },
     })
 }

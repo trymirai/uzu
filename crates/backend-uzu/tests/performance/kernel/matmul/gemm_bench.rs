@@ -10,7 +10,7 @@ use backend_uzu::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
-        metal::{GemmDispatchPath, MatmulDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal, MetalContext},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -47,7 +47,9 @@ fn bench_gemm(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
             iter_encode_loop::<Metal, _>(&context, b, |encoder| {
                 kernel
+                    .gemm
                     .encode_dispatch_path(
+                        &context,
                         MatmulArguments {
                             a: &a,
                             a_offset: 0,
@@ -63,8 +65,8 @@ fn bench_gemm(c: &mut Criterion) {
                             n: n as u32,
                             k: k as u32,
                         },
+                        GemmDispatchPath::Mxu,
                         encoder,
-                        MatmulDispatchPath::Gemm(GemmDispatchPath::Mxu),
                     )
                     .expect("encode_dispatch_path failed");
             });

@@ -8,7 +8,7 @@ use backend_uzu::{
             gpu_types::QuantizationMethod,
             kernel::{ManualKernels, matmul::MatmulKernel},
         },
-        metal::{MatmulDispatchPath, Metal, MetalContext},
+        metal::{Metal, MetalContext},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -43,13 +43,7 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(format!("{layer}_{shape}")), |b| {
             iter_encode_loop::<Metal, _>(context, b, |encoder| {
-                matmul
-                    .encode_dispatch_path(
-                        quant_arguments(&mut buffers, &input),
-                        encoder,
-                        MatmulDispatchPath::Auto,
-                    )
-                    .expect("encode qwen3 layer");
+                matmul.encode(quant_arguments(&mut buffers, &input), encoder).expect("encode qwen3 layer");
             });
         });
     }

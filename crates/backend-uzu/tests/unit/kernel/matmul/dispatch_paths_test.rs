@@ -6,24 +6,22 @@ use backend_uzu::{
     ArrayElement,
     backends::{
         common::{Backend, Context, kernel::ManualKernels, kernel::matmul::MatmulKernel},
-        metal::{GemmDispatchPath, MatmulDispatchPath, Metal, MetalContext},
+        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
     },
 };
 use half::{bf16, f16};
 use num_traits::Float;
 use rstest::rstest;
 
-use backend_uzu::backends::metal::DeviceExt;
-
 use crate::common::{
     assert::assert_eq_float,
     matmul::{Case, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
 };
 
-fn gemm_paths_for_hw(context: &MetalContext) -> Vec<MatmulDispatchPath> {
-    let mut paths = vec![MatmulDispatchPath::Gemm(GemmDispatchPath::Simdgroup)];
+fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {
+    let mut paths = vec![GemmDispatchPath::Simdgroup];
     if context.device.supports_mxu() {
-        paths.push(MatmulDispatchPath::Gemm(GemmDispatchPath::Mxu));
+        paths.push(GemmDispatchPath::Mxu);
     }
     paths
 }
@@ -31,7 +29,7 @@ fn gemm_paths_for_hw(context: &MetalContext) -> Vec<MatmulDispatchPath> {
 fn check_case<T: ArrayElement + Float + Debug + Display>(
     context: &MetalContext,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
-    path: MatmulDispatchPath,
+    path: Option<GemmDispatchPath>,
     case: Case,
     tolerance: f32,
 ) {
@@ -56,7 +54,7 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
     for path in gemm_paths_for_hw(&context) {
         for shape in all_correctness_shapes() {
             let case = case_for_shape(shape);
-            check_case::<T>(&context, &mut kernel, path, case, tolerance);
+            check_case::<T>(&context, &mut kernel, Some(path), case, tolerance);
         }
     }
 }

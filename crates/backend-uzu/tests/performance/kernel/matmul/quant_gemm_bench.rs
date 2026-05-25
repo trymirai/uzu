@@ -8,7 +8,7 @@ use backend_uzu::{
             gpu_types::QuantizationMethod,
             kernel::{ManualKernels, matmul::MatmulKernel},
         },
-        metal::{GemmDispatchPath, MatmulDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal, MetalContext},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -44,10 +44,12 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
             iter_encode_loop::<Metal, _>(context, b, |encoder| {
                 matmul
+                    .gemm
                     .encode_dispatch_path(
+                        context,
                         quant_arguments(&mut buffers, &input),
+                        GemmDispatchPath::Simdgroup,
                         encoder,
-                        MatmulDispatchPath::Gemm(GemmDispatchPath::Simdgroup),
                     )
                     .expect("encode unified quant matmul");
             });
