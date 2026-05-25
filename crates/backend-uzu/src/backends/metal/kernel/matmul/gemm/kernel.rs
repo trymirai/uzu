@@ -5,15 +5,22 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Buffer, Encoder,
+            Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
             gpu_types::{
                 GemmParams,
                 gemm::{GemmAlignment, GemmDTransform, GemmTiling},
             },
-            kernel::matmul::{MatmulArguments, MatmulB, gemm::GemmWeights},
+            kernel::{
+                HadamardTransformKernel, Kernels, TensorAddBiasKernel,
+                matmul::{MatmulArguments, MatmulB, MatmulError, gemm::GemmWeights},
+            },
         },
         metal::{
-            Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel, metal_extensions::DeviceExt,
+            Metal,
+            context::MetalContext,
+            error::MetalError,
+            kernel::{GemmMetalKernel, TensorAddBiasMetalKernel},
+            metal_extensions::DeviceExt,
         },
     },
 };
@@ -27,6 +34,8 @@ pub enum GemmDispatchPath {
 pub struct GemmKernel {
     data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
+    pub bias_add: TensorAddBiasMetalKernel,
+    pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
 }
 
 impl GemmKernel {
@@ -34,9 +43,13 @@ impl GemmKernel {
         context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MetalError> {
+        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true)?;
+        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)?;
         let mut kernel = Self {
             data_type,
             kernels: HashMap::new(),
+            bias_add,
+            hadamard,
         };
         for specialization in GemmSpecialization::precompile_configs(data_type) {
             kernel.get_or_create(context, specialization)?;
@@ -113,10 +126,40 @@ impl GemmKernel {
             GemmDispatchPath::Simdgroup => false,
         };
 
+        let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+        if is_quant {
+            if arguments.d_transform.mask().contains(GemmDTransform::ACCUMULATE) {
+                return Err(MatmulError::UnsupportedDOp {
+                    bit: GemmDTransform::ACCUMULATE,
+                    path: "QuantGemm",
+                }
+                .into());
+            }
+            if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
+                return Err(MatmulError::UnsupportedLayout {
+                    path: "QuantGemm",
+                }
+                .into());
+            }
+        }
+
         let ab_scale = arguments.d_transform.ab_scale.unwrap_or(1.0);
-        let output_bias = arguments.d_transform.bias;
+        let post_bias = if use_mxu {
+            arguments.d_transform.bias
+        } else {
+            None
+        };
+        let output_bias = if use_mxu {
+            None
+        } else {
+            arguments.d_transform.bias
+        };
+        let post_rht = arguments.d_transform.rht_factors;
         let mut output_transform = arguments.d_transform.mask();
         output_transform.remove(GemmDTransform::RHT);
+        if use_mxu {
+            output_transform.remove(GemmDTransform::BIAS);
+        }
 
         let MatmulArguments {
             a,
@@ -207,7 +250,7 @@ impl GemmKernel {
                 kernel.encode(
                     (a, a_offset),
                     (weights, b_offset),
-                    d,
+                    &mut *d,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
@@ -290,7 +333,7 @@ impl GemmKernel {
                 kernel.encode(
                     (a, a_offset),
                     (weights, b_offset),
-                    d,
+                    &mut *d,
                     scales,
                     biases,
                     zero_points,
@@ -301,6 +344,13 @@ impl GemmKernel {
                     encoder,
                 );
             },
+        }
+
+        if let Some(bias) = post_bias {
+            self.bias_add.encode(None::<&<Metal as Backend>::DenseBuffer>, bias, &mut *d, n, m * n, encoder);
+        }
+        if let Some(factors) = post_rht {
+            self.hadamard.encode(d, factors, n, m, encoder);
         }
         Ok(())
     }
