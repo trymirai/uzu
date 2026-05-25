@@ -4,10 +4,10 @@ use crate::{
     DataType,
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Buffer, Encoder, Kernels,
+            AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
-                QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
+                HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
@@ -20,20 +20,24 @@ use crate::{
 
 pub struct MatmulCpuKernel {
     data_type: DataType,
+    hadamard: <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel,
 }
 
 impl MatmulKernel for MatmulCpuKernel {
     type Backend = Cpu;
 
     fn new(
-        _context: &CpuContext,
+        context: &CpuContext,
         data_type: DataType,
     ) -> Result<Self, CpuError> {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
         }
+        let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
+            .map_err(CpuError::from)?;
         Ok(Self {
             data_type,
+            hadamard,
         })
     }
 
@@ -236,12 +240,47 @@ impl MatmulCpuKernel {
             return Err(MatmulError::UnsupportedGroupSize(group_size as usize));
         }
 
+        let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
+
         if arguments.m >= 5 && arguments.n > 1 {
-            encode_quantized_gemm(encoder, arguments, self.data_type);
+            let MatmulArguments {
+                a,
+                a_offset,
+                b,
+                b_offset,
+                b_leading_dimension,
+                b_transpose,
+                d,
+                mut d_transform,
+                m,
+                n,
+                k,
+            } = arguments;
+            d_transform.retain(|op| op.bit() != GemmDTransform::RHT);
+            encode_quantized_gemm(
+                encoder,
+                MatmulArguments {
+                    a,
+                    a_offset,
+                    b,
+                    b_offset,
+                    b_leading_dimension,
+                    b_transpose,
+                    d: &mut *d,
+                    d_transform,
+                    m,
+                    n,
+                    k,
+                },
+                self.data_type,
+            );
+            if let Some(factors) = post_rht {
+                self.hadamard.encode(d, factors, n, m, encoder);
+            }
             return Ok(());
         }
 
-        let hadamard_factors = arguments.d_transform.iter().find_map(|op| op.as_rht());
+        let hadamard_factors = post_rht;
 
         let MatmulArguments {
             a,
