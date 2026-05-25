@@ -42,46 +42,6 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 impl MatmulMetalKernel {
-    fn dispatch_auto<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
-        &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<(), MetalError> {
-        match &arguments.b {
-            MatmulB::FullPrecision {
-                ..
-            } => {
-                let gemv_eligible = arguments.b_transpose
-                    && arguments.b_offset == 0
-                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
-                    && arguments.m <= max_gemv_batch_threshold();
-
-                if gemv_eligible {
-                    self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from)
-                } else {
-                    let gemm_path = if self.mxu_eligible {
-                        GemmDispatchPath::Mxu
-                    } else {
-                        GemmDispatchPath::Simdgroup
-                    };
-                    self.dispatch_fp_gemm(arguments, gemm_path, encoder).map_err(MetalError::from)
-                }
-            },
-            MatmulB::ScaleBiasDequant {
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                ..
-            } => {
-                if arguments.m >= 5 && arguments.n > 1 {
-                    self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from)
-                } else {
-                    self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
-                }
-            },
-        }
-    }
-
     fn dispatch_fp_gemv<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         arguments: MatmulArguments<'a, Metal, TB>,
@@ -340,6 +300,38 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        self.dispatch_auto(arguments, encoder)
+        match &arguments.b {
+            MatmulB::FullPrecision {
+                ..
+            } => {
+                let gemv_eligible = arguments.b_transpose
+                    && arguments.b_offset == 0
+                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
+                    && arguments.m <= max_gemv_batch_threshold();
+
+                if gemv_eligible {
+                    self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from)
+                } else {
+                    let gemm_path = if self.mxu_eligible {
+                        GemmDispatchPath::Mxu
+                    } else {
+                        GemmDispatchPath::Simdgroup
+                    };
+                    self.dispatch_fp_gemm(arguments, gemm_path, encoder).map_err(MetalError::from)
+                }
+            },
+            MatmulB::ScaleBiasDequant {
+                ..
+            }
+            | MatmulB::ScaleZeroPointDequant {
+                ..
+            } => {
+                if arguments.m >= 5 && arguments.n > 1 {
+                    self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from)
+                } else {
+                    self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
+                }
+            },
+        }
     }
 }
