@@ -5,22 +5,15 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
+            Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
                 GemmParams,
                 gemm::{GemmAlignment, GemmDTransform, GemmTiling},
             },
-            kernel::{
-                HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
-            },
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
         },
         metal::{
-            Metal,
-            context::MetalContext,
-            error::MetalError,
-            kernel::{GemmMetalKernel, TensorAddBiasMetalKernel},
-            metal_extensions::DeviceExt,
+            Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel, metal_extensions::DeviceExt,
         },
     },
 };
@@ -34,8 +27,6 @@ pub enum GemmDispatchPath {
 pub struct GemmKernel {
     data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
-    pub bias_add: TensorAddBiasMetalKernel,
-    pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
 }
 
 impl GemmKernel {
@@ -43,13 +34,9 @@ impl GemmKernel {
         context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MetalError> {
-        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true)?;
-        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)?;
         let mut kernel = Self {
             data_type,
             kernels: HashMap::new(),
-            bias_add,
-            hadamard,
         };
         for specialization in GemmSpecialization::precompile_configs(data_type) {
             kernel.get_or_create(context, specialization)?;
