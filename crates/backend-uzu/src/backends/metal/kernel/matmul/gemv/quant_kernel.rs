@@ -139,7 +139,10 @@ impl QuantGemvKernel {
             kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, hadamard_factors, k, n, m, encoder);
         } else {
             if hadamard_factors.is_some() {
-                return Err(MatmulError::UnsupportedHadamard);
+                return Err(MatmulError::UnsupportedDOp {
+                    bit: GemmDTransform::RHT,
+                    path: PATH,
+                });
             }
             let key = QmvKey {
                 group_size,

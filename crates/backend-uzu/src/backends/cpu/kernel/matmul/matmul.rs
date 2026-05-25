@@ -350,7 +350,10 @@ impl MatmulCpuKernel {
             );
         } else {
             if hadamard_factors.is_some() {
-                return Err(MatmulError::UnsupportedHadamard);
+                return Err(MatmulError::UnsupportedDOp {
+                    bit: GemmDTransform::RHT,
+                    path: "MatmulCpuKernel/Quant",
+                });
             }
             let kernel =
                 <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(

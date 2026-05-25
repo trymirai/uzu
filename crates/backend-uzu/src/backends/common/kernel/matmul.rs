@@ -15,8 +15,6 @@ pub enum MatmulError<B: Backend> {
     UnsupportedDataType(DataType),
     #[error("Unsupported group size: {0}")]
     UnsupportedGroupSize(usize),
-    #[error("Hadamard not supported for this kernel configuration")]
-    UnsupportedHadamard,
     #[error("Unsupported D-transform op {bit:?} on path {path}")]
     UnsupportedDOp {
         bit: GemmDTransform,
