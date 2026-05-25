@@ -8,7 +8,7 @@ use crate::{
             Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
-                Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, TensorAddBiasKernel,
+                Kernels, QuantizedMatmulQmvFastKernel, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError},
             },
         },
@@ -34,7 +34,6 @@ struct QmvKey {
 pub(crate) struct GemvKernel {
     data_type: DataType,
     fp_pipelines: HashMap<GemvSpecialization, MatmulGemvMetalKernel>,
-    qmv: HashMap<QmvKey, <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel>,
     qmv_fast: HashMap<QmvKey, <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel>,
     bias_add: TensorAddBiasMetalKernel,
 }
@@ -48,7 +47,6 @@ impl GemvKernel {
         let mut kernel = Self {
             data_type,
             fp_pipelines: HashMap::new(),
-            qmv: HashMap::new(),
             qmv_fast: HashMap::new(),
             bias_add,
         };
@@ -230,79 +228,52 @@ impl GemvKernel {
             QuantizationMode::U4 => 4u32,
             QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
         };
-        let use_fast = n % 8 == 0 && k % 512 == 0;
+        if n % 8 != 0 {
+            return Err(MatmulError::UnsupportedLayout {
+                path: QUANT_PATH,
+            });
+        }
 
         let (zero_points, biases) = match method {
             QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
             QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
         };
 
-        if use_fast {
-            let key = QmvKey {
-                group_size,
-                bits,
-                quant_method: method,
-                use_hadamard: hadamard_factors.is_some(),
-            };
-            let context = encoder.context();
-            let kernel = match self.qmv_fast.entry(key) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => {
-                    let kernel = <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
-                        context,
-                        self.data_type,
-                        group_size,
-                        bits,
-                        method,
-                        hadamard_factors.is_some(),
-                    )
-                    .map_err(MatmulError::BackendError)?;
-                    entry.insert(kernel)
-                },
-            };
-            kernel.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                hadamard_factors,
-                k,
-                n,
-                m,
-                encoder,
-            );
-        } else {
-            if hadamard_factors.is_some() {
-                return Err(MatmulError::UnsupportedDOp {
-                    bit: GemmDTransform::RHT,
-                    path: QUANT_PATH,
-                });
-            }
-            let key = QmvKey {
-                group_size,
-                bits,
-                quant_method: method,
-                use_hadamard: false,
-            };
-            let context = encoder.context();
-            let kernel = match self.qmv.entry(key) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => {
-                    let kernel = <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
-                        context,
-                        self.data_type,
-                        group_size,
-                        bits,
-                        method,
-                    )
-                    .map_err(MatmulError::BackendError)?;
-                    entry.insert(kernel)
-                },
-            };
-            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), &mut *d, k, n, m, encoder);
-        }
+        let key = QmvKey {
+            group_size,
+            bits,
+            quant_method: method,
+            use_hadamard: hadamard_factors.is_some(),
+        };
+        let context = encoder.context();
+        let kernel = match self.qmv_fast.entry(key) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let kernel = <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                    context,
+                    self.data_type,
+                    group_size,
+                    bits,
+                    method,
+                    hadamard_factors.is_some(),
+                )
+                .map_err(MatmulError::BackendError)?;
+                entry.insert(kernel)
+            },
+        };
+        kernel.encode(
+            weights,
+            scales,
+            zero_points,
+            biases,
+            (a, a_offset),
+            &mut *d,
+            hadamard_factors,
+            k,
+            n,
+            m,
+            encoder,
+        );
 
         if let Some(bias) = post_bias {
             self.bias_add.encode(None::<&Allocation<Metal>>, bias, d, n, m * n, encoder);
