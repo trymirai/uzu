@@ -1,29 +1,29 @@
 pub mod gemm;
 pub mod gemv;
-pub mod quant;
 
 use std::sync::OnceLock;
 
-use self::{gemm::GemmKernel, gemv::GemvKernel};
+pub use self::gemm::{GemmDispatchPath, GemmKernel};
+use self::gemv::{GemvKernel, QuantGemvKernel};
 use crate::{
     DataType,
     backends::{
         common::{
-            AsBufferRangeRef, Buffer, Encoder,
+            AsBufferRangeRef, Backend, Buffer, Encoder,
+            gpu_types::gemm::GemmDTransform,
             kernel::{
-                TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulError, MatmulKernel},
+                HadamardTransformKernel, TensorAddBiasKernel,
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel, MatmulQuantCombo},
             },
         },
-        metal::{Metal, context::MetalContext, kernel::TensorAddBiasMetalKernel, metal_extensions::DeviceExt},
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
 };
 
 pub struct MatmulMetalKernel {
-    data_type: DataType,
     gemv: GemvKernel,
-    pub(crate) gemm: GemmKernel,
-    pub(crate) bias_add: TensorAddBiasMetalKernel,
+    quant_gemv: QuantGemvKernel,
+    pub gemm: GemmKernel,
 }
 
 const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
@@ -36,45 +36,102 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 impl MatmulMetalKernel {
-    fn is_mxu_eligible(
-        &self,
-        context: &MetalContext,
-    ) -> bool {
-        context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
-    }
-}
-
-/// Explicit dispatch paths for testing individual kernels independent of production routing.
-#[derive(Debug, Clone, Copy)]
-pub enum MatmulDispatchPath {
-    Auto,
-    Gemv,
-    Gemm,
-    GemmMxu,
-}
-
-impl MatmulMetalKernel {
-    pub fn encode_with_path(
+    fn dispatch_gemv<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        arguments: MatmulArguments<Metal>,
+        arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
-        path: MatmulDispatchPath,
-    ) {
-        let context = encoder.context();
-        match path {
-            MatmulDispatchPath::Auto => self.encode(arguments, encoder),
-            MatmulDispatchPath::Gemv => {
-                gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV")
+    ) -> Result<(), MatmulError<Metal>> {
+        let post_rht = arguments.d_transform.rht_factors;
+
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d,
+            d_transform,
+            m,
+            n,
+            k,
+        } = arguments;
+
+        // A temopary hack, will port the post ops to the gemv later.
+        let d_transform = d_transform.without(GemmDTransform::RHT);
+
+        gemv::fp::encode(
+            &mut self.gemv,
+            encoder,
+            MatmulArguments {
+                a,
+                a_offset,
+                b,
+                b_offset,
+                b_leading_dimension,
+                b_transpose,
+                d: &mut *d,
+                d_transform,
+                m,
+                n,
+                k,
             },
-            MatmulDispatchPath::Gemm => {
-                gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, false)
-                    .expect("Failed to encode Gemm")
-            },
-            MatmulDispatchPath::GemmMxu => {
-                gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, true)
-                    .expect("Failed to encode GemmMxu")
-            },
+        )?;
+
+        if let Some(factors) = post_rht {
+            self.gemm.hadamard.encode(d, factors, n, m, encoder);
         }
+        Ok(())
+    }
+
+    fn dispatch_quant_gemv<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal, TB>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        if arguments.b_offset != 0 {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "QuantGemv",
+            });
+        }
+        let post_bias = arguments.d_transform.bias;
+
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            b_offset,
+            b_leading_dimension,
+            b_transpose,
+            d,
+            d_transform,
+            m,
+            n,
+            k,
+        } = arguments;
+        let d_transform = d_transform.without(GemmDTransform::BIAS);
+
+        self.quant_gemv.encode(
+            encoder,
+            MatmulArguments {
+                a,
+                a_offset,
+                b,
+                b_offset,
+                b_leading_dimension,
+                b_transpose,
+                d: &mut *d,
+                d_transform,
+                m,
+                n,
+                k,
+            },
+        )?;
+
+        if let Some(bias) = post_bias {
+            self.gemm.bias_add.encode(None::<&<Metal as Backend>::DenseBuffer>, bias, d, n, m * n, encoder);
+        }
+        Ok(())
     }
 }
 
@@ -84,20 +141,19 @@ impl MatmulKernel for MatmulMetalKernel {
     fn new(
         context: &MetalContext,
         data_type: DataType,
-    ) -> Result<Self, MatmulError<Metal>> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MatmulError::UnsupportedDataType(data_type));
+    ) -> Result<Self, MetalError> {
+        if !matches!(data_type, DataType::F16 | DataType::BF16) {
+            return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
         }
 
-        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
-        let gemm = GemmKernel::new(context, data_type).map_err(MatmulError::BackendError)?;
-        let gemv = GemvKernel::new(context, data_type)?;
+        let gemm = GemmKernel::new(context, data_type)?;
+        let gemv = GemvKernel::new(context, data_type).map_err(MetalError::from)?;
+        let quant_gemv = QuantGemvKernel::new(context, data_type);
 
         Ok(Self {
-            data_type,
             gemv,
+            quant_gemv,
             gemm,
-            bias_add,
         })
     }
 
@@ -105,21 +161,33 @@ impl MatmulKernel for MatmulMetalKernel {
         &mut self,
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
-    ) {
-        // gemv only handles the canonical B layout; non-canonical inputs go to GEMM.
-        let context = encoder.context();
-        let gemv_eligible = arguments.b_transpose
-            && arguments.b_offset == 0
-            && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.input_dim)
-            && arguments.batch_dim <= max_gemv_batch_threshold();
+    ) -> Result<(), MetalError> {
+        let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+        let gemv_eligible = if is_quant {
+            arguments.m < 5 || arguments.n == 1
+        } else {
+            arguments.b_transpose
+                && arguments.b_offset == 0
+                && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
+                && arguments.m <= max_gemv_batch_threshold()
+        };
 
         if gemv_eligible {
-            gemv::fp::encode(&mut self.gemv, encoder, arguments).expect("Failed to encode GEMV kernel");
-            return;
+            if is_quant {
+                self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
+            } else {
+                self.dispatch_gemv(arguments, encoder).map_err(MetalError::from)
+            }
+        } else {
+            self.gemm.encode(arguments, encoder)
         }
+    }
 
-        let use_mxu = self.is_mxu_eligible(context);
-        gemm::fp::encode(&mut self.gemm, &mut self.bias_add, self.data_type, context, encoder, arguments, use_mxu)
-            .expect("Failed to encode GEMM");
+    fn preheat_quant_combo(
+        &mut self,
+        context: &MetalContext,
+        combo: MatmulQuantCombo,
+    ) -> Result<(), MetalError> {
+        self.gemm.preheat_quant_combo(context, combo)
     }
 }

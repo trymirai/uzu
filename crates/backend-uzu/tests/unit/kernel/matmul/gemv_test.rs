@@ -1,9 +1,5 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
-use num_traits::Float;
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -11,16 +7,19 @@ use backend_uzu::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
+use rstest::rstest;
 
-use crate::{
-    common::{assert::assert_eq_float, helpers::{alloc_allocation_with_data, allocation_to_vec}},
-    uzu_test,
+use crate::common::{
+    assert::assert_eq_float,
+    helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -68,23 +67,26 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        MatmulArguments {
-            a: &a_allocation,
-            a_offset: 0,
-            b: b_array.allocation(),
-            b_offset: 0,
-            b_leading_dimension: None,
-            b_transpose: true,
-            ab_scale: 1.0,
-            c: MatmulArgumentC::None,
-            d: &mut d_allocation,
-            batch_dim: m,
-            input_dim: k,
-            output_dim: n,
-        },
-        &mut encoder,
-    );
+    kernel
+        .encode(
+            MatmulArguments {
+                a: &a_allocation,
+                a_offset: 0,
+                b: MatmulB::FullPrecision {
+                    b: b_array.allocation(),
+                },
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut d_allocation,
+                d_transform: MatmulDOps::none(),
+                m,
+                n,
+                k,
+            },
+            &mut encoder,
+        )
+        .expect("encode failed");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<B, T>(&d_allocation)
 }
@@ -102,107 +104,34 @@ fn test<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-#[uzu_test]
-fn test_f32_m1() {
-    test::<f32>(1, 128, 64, 0.01);
+#[rstest]
+#[case::m1(1, 128, 64)]
+#[case::batched(4, 128, 64)]
+#[case::max_batch(8, 128, 64)]
+#[case::unaligned_k(1, 33, 64)]
+#[case::unaligned_n(1, 128, 11)]
+#[case::large(1, 4096, 2048)]
+#[case::small_n(1, 128, 3)]
+fn gemv_f16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+) {
+    test::<f16>(m, k, n, 0.01);
 }
 
-#[uzu_test]
-fn test_f16_m1() {
-    test::<f16>(1, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_m1() {
-    test::<bf16>(1, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_batched() {
-    test::<f32>(4, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_batched() {
-    test::<f16>(4, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_batched() {
-    test::<bf16>(4, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_max_batch() {
-    test::<f32>(8, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_max_batch() {
-    test::<f16>(8, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_max_batch() {
-    test::<bf16>(8, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_unaligned_k() {
-    test::<f32>(1, 33, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_unaligned_k() {
-    test::<f16>(1, 33, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_unaligned_k() {
-    test::<bf16>(1, 33, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_unaligned_n() {
-    test::<f32>(1, 128, 11, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_unaligned_n() {
-    test::<f16>(1, 128, 11, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_unaligned_n() {
-    test::<bf16>(1, 128, 11, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_large() {
-    test::<f32>(1, 4096, 2048, 0.05);
-}
-
-#[uzu_test]
-fn test_f16_large() {
-    test::<f16>(1, 4096, 2048, 0.5);
-}
-
-#[uzu_test]
-fn test_bf16_large() {
-    test::<bf16>(1, 4096, 2048, 1.0);
-}
-
-#[uzu_test]
-fn test_f32_small_n() {
-    test::<f32>(1, 128, 3, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_small_n() {
-    test::<f16>(1, 128, 3, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_small_n() {
-    test::<bf16>(1, 128, 3, 0.1);
+#[rstest]
+#[case::m1(1, 128, 64)]
+#[case::batched(4, 128, 64)]
+#[case::max_batch(8, 128, 64)]
+#[case::unaligned_k(1, 33, 64)]
+#[case::unaligned_n(1, 128, 11)]
+#[case::large(1, 4096, 2048)]
+#[case::small_n(1, 128, 3)]
+fn gemv_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+) {
+    test::<bf16>(m, k, n, 0.1);
 }

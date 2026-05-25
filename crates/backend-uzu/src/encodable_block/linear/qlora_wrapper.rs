@@ -9,13 +9,13 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{
             ManualKernels,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::QuantizationConfig,
     encodable_block::{
         Linear,
-        linear::{LinearBlockError, QuantizedLinear, QuantizedLinearError},
+        linear::{LinearBlockError, LinearMatmul, LinearMatmulError},
     },
     prelude::{ParameterLoaderError, ParameterTree},
 };
@@ -24,16 +24,16 @@ use crate::{
 pub enum QLoRALinearWrapperError<B: Backend> {
     #[error("Inner linear error: {0}")]
     InnerLinearError(#[from] Box<LinearBlockError<B>>),
-    #[error("Quantized linear error: {0}")]
-    QuantizedLinearError(#[from] QuantizedLinearError<B>),
+    #[error("Linear matmul error: {0}")]
+    LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
-    #[error("Matmul error: {0}")]
-    MatmulError(#[from] MatmulError<B>),
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
 }
 
 pub struct QLoRALinearWrapper<B: Backend> {
-    base_linear: QuantizedLinear<B>,
+    base_linear: LinearMatmul<B>,
     adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
@@ -57,7 +57,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let data_type = quantization.activation_precision.into();
 
-        let base_linear = QuantizedLinear::new(
+        let base_linear = LinearMatmul::quantized(
             context,
             quantization,
             input_dim,
@@ -65,8 +65,10 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             parameter_tree,
             output_quantized_hadamard_factors,
         )?;
-        let adapter_kernel =
-            RefCell::new(<<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)?);
+        let adapter_kernel = RefCell::new(
+            <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
+                .map_err(QLoRALinearWrapperError::BackendError)?,
+        );
 
         let adapter_down_leaf = parameter_tree.leaf("down_weights")?;
         adapter_down_leaf.validate_shape(&[lora_rank, input_dim], data_type)?;
@@ -105,19 +107,20 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             MatmulArguments {
                 a: &input,
                 a_offset: 0,
-                b: &self.adapter_down,
+                b: MatmulB::FullPrecision {
+                    b: &self.adapter_down,
+                },
                 b_offset: 0,
                 b_leading_dimension: None,
                 b_transpose: true,
-                ab_scale: 1.0,
-                c: MatmulArgumentC::None,
                 d: &mut intermediate,
-                batch_dim: batch_dim as u32,
-                input_dim: self.input_dim as u32,
-                output_dim: self.lora_rank as u32,
+                d_transform: MatmulDOps::none(),
+                m: batch_dim as u32,
+                n: self.lora_rank as u32,
+                k: self.input_dim as u32,
             },
             encoder,
-        );
+        )?;
 
         let mut output = self.base_linear.encode(input, batch_dim, encoder)?;
 
@@ -125,19 +128,25 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
             MatmulArguments {
                 a: &intermediate,
                 a_offset: 0,
-                b: &self.adapter_up,
+                b: MatmulB::FullPrecision {
+                    b: &self.adapter_up,
+                },
                 b_offset: 0,
                 b_leading_dimension: None,
                 b_transpose: true,
-                ab_scale: self.lora_scale,
-                c: MatmulArgumentC::Accumulate,
                 d: &mut output,
-                batch_dim: batch_dim as u32,
-                input_dim: self.lora_rank as u32,
-                output_dim: self.output_dim as u32,
+                d_transform: MatmulDOps {
+                    ab_scale: self.lora_scale,
+                    accumulate: true,
+                    bias: None,
+                    rht_factors: None,
+                },
+                m: batch_dim as u32,
+                n: self.output_dim as u32,
+                k: self.lora_rank as u32,
             },
             encoder,
-        );
+        )?;
 
         Ok(output)
     }

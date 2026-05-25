@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 #include "../activation/activations.h"
+#include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "../quant_matmul/mma.h"
 
 // ------------------------ helpers ------------------------
 static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
