@@ -75,7 +75,8 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   input += batch_idx * in_vec_size + simd_lane * values_per_thread;
   output += batch_idx * out_vec_size + out_row;
 
-  for (uint k = 0; k < in_vec_size; k += block_size) {
+  uint k = 0;
+  for (; k + block_size <= in_vec_size; k += block_size) {
     U sum = load_vector<T, U, values_per_thread, BITS>(input, x_thread);
 
     {
@@ -159,6 +160,58 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
       }
     }
     input += block_size;
+  }
+
+  const uint thread_offset = simd_lane * values_per_thread;
+  const int remaining = (k + thread_offset < in_vec_size)
+      ? min(int(in_vec_size - k - thread_offset), int(values_per_thread))
+      : 0;
+  if (remaining > 0) {
+    U sum = load_vector_safe<T, U, values_per_thread, BITS>(
+        input, x_thread, remaining);
+
+    auto wl0 = (const device uint8_t*)(ws);
+    auto wl1 = (const device uint8_t*)(ws + in_vec_size_w);
+    auto wl2 = (const device uint8_t*)(ws + 2 * in_vec_size_w);
+    auto wl3 = (const device uint8_t*)(ws + 3 * in_vec_size_w);
+
+    U s0 = static_cast<U>(scales[0]);
+    U s1 = static_cast<U>(scales[in_vec_size_g]);
+    U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
+    U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
+
+    if (quant_method == QuantizationMethod::ScaleBias) {
+      U b0 = static_cast<U>(biases[0]);
+      U b1 = static_cast<U>(biases[in_vec_size_g]);
+      U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
+      U b3 = static_cast<U>(biases[3 * in_vec_size_g]);
+      result[0] +=
+          qdot_safe<U, values_per_thread, BITS>(wl0, x_thread, s0, b0, sum, remaining);
+      result[1] +=
+          qdot_safe<U, values_per_thread, BITS>(wl1, x_thread, s1, b1, sum, remaining);
+      result[2] +=
+          qdot_safe<U, values_per_thread, BITS>(wl2, x_thread, s2, b2, sum, remaining);
+      result[3] +=
+          qdot_safe<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum, remaining);
+    } else {
+      uchar4 zp_bytes = uchar4(
+          zps[0], zps[zp_stride], zps[2 * zp_stride], zps[3 * zp_stride]);
+      uchar4 zp_nibbles;
+      if (BITS == 4) {
+        const uint8_t shift = high_nibble ? 4u : 0u;
+        zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
+      } else {
+        zp_nibbles = zp_bytes;
+      }
+      result[0] += qdot_safe<U, values_per_thread, BITS>(
+          wl0, x_thread, s0, -s0 * static_cast<U>(zp_nibbles.x), sum, remaining);
+      result[1] += qdot_safe<U, values_per_thread, BITS>(
+          wl1, x_thread, s1, -s1 * static_cast<U>(zp_nibbles.y), sum, remaining);
+      result[2] += qdot_safe<U, values_per_thread, BITS>(
+          wl2, x_thread, s2, -s2 * static_cast<U>(zp_nibbles.z), sum, remaining);
+      result[3] += qdot_safe<U, values_per_thread, BITS>(
+          wl3, x_thread, s3, -s3 * static_cast<U>(zp_nibbles.w), sum, remaining);
+    }
   }
 
   for (uint row = 0; row < results_per_simdgroup; row++) {
