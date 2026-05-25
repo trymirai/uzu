@@ -42,7 +42,7 @@ pub struct LayerExecutables<B: Backend> {
 #[derive(Debug, Error)]
 pub enum LayerEncodeError<B: Backend> {
     #[error("Backend error: {0}")]
-    BackendError(#[from] B::Error),
+    BackendError(#[source] B::Error),
     #[error("Missing cache for {mixer} layer {layer_index}")]
     MissingCacheState {
         layer_index: usize,
@@ -378,7 +378,7 @@ impl<B: Backend> LayerExecutables<B> {
         #[cfg(feature = "tracing")]
         let mut layer_traces = trace;
 
-        let mut hidden = self.pre_mixer_norm.encode(&input, 0, batch_dim, Some(shortcut), encoder)?;
+        let mut hidden = self.pre_mixer_norm.encode(&input, 0, batch_dim, Some(shortcut), encoder).map_err(LayerEncodeError::BackendError)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             encoder.encode_copy(shortcut, .., layer_traces.inputs.allocation_mut(), ..);
@@ -400,53 +400,58 @@ impl<B: Backend> LayerExecutables<B> {
             } => {
                 let gate_input = if gate_projection.is_some() {
                     let hidden_len = hidden.as_buffer_range_ref().range().len();
-                    let mut gate_input = encoder.allocate_scratch(hidden_len)?;
+                    let mut gate_input =
+                        encoder.allocate_scratch(hidden_len).map_err(LayerEncodeError::BackendError)?;
                     encoder.encode_copy(&hidden, .., &mut gate_input, ..);
                     Some(gate_input)
                 } else {
                     None
                 };
-                let mut qkv = qkv_projection.encode(hidden, batch_dim, encoder)?;
+                let mut qkv = qkv_projection.encode(hidden, batch_dim, encoder).map_err(LayerEncodeError::BackendError)?;
                 let gate = match (gate_projection, gate_input) {
-                    (Some(gate_proj), Some(gate_input)) => Some(gate_proj.encode(gate_input, batch_dim, encoder)?),
+                    (Some(gate_proj), Some(gate_input)) => Some(gate_proj.encode(gate_input, batch_dim, encoder).map_err(LayerEncodeError::BackendError)?),
                     _ => None,
                 };
                 if let Some(norm) = qkv_norm {
-                    norm.encode(&mut qkv, batch_dim, encoder)?;
+                    norm.encode(&mut qkv, batch_dim, encoder).map_err(LayerEncodeError::BackendError)?;
                 }
                 let (queries, rotated_keys) = match rope_buffers {
-                    Some(rope_buffers) => rope.encode(
+                    Some(rope_buffers) => rope
+                        .encode(
+                            &qkv,
+                            token_positions,
+                            &rope_buffers.cosines,
+                            &rope_buffers.sines,
+                            batch_dim,
+                            *num_heads,
+                            *num_groups,
+                            *head_dim,
+                            rope_buffers.max_sequence_length(),
+                            rope_buffers.dim(),
+                            encoder,
+                        )
+                        .map_err(LayerEncodeError::BackendError)?,
+                    None => qk_unpack.encode(&qkv, batch_dim, *num_heads, *num_groups, *head_dim, encoder).map_err(LayerEncodeError::BackendError)?,
+                };
+                let attention_output = attention
+                    .encode(
+                        AttentionArguments {
+                            token_subtrie_ranges,
+                            attention_sinks,
+                            cache_access,
+                        },
                         &qkv,
-                        token_positions,
-                        &rope_buffers.cosines,
-                        &rope_buffers.sines,
+                        &queries,
+                        rotated_keys,
+                        gate.as_ref(),
                         batch_dim,
                         *num_heads,
                         *num_groups,
                         *head_dim,
-                        rope_buffers.max_sequence_length(),
-                        rope_buffers.dim(),
                         encoder,
-                    )?,
-                    None => qk_unpack.encode(&qkv, batch_dim, *num_heads, *num_groups, *head_dim, encoder)?,
-                };
-                let attention_output = attention.encode(
-                    AttentionArguments {
-                        token_subtrie_ranges,
-                        attention_sinks,
-                        cache_access,
-                    },
-                    &qkv,
-                    &queries,
-                    rotated_keys,
-                    gate.as_ref(),
-                    batch_dim,
-                    *num_heads,
-                    *num_groups,
-                    *head_dim,
-                    encoder,
-                )?;
-                out_projection.encode(attention_output, batch_dim, encoder)?
+                    )
+                    .map_err(LayerEncodeError::BackendError)?;
+                out_projection.encode(attention_output, batch_dim, encoder).map_err(LayerEncodeError::BackendError)?
             },
             MixerExecutables::StateSpace {
                 mixer,
@@ -464,14 +469,16 @@ impl<B: Backend> LayerExecutables<B> {
                     layer_index: self.layer_index,
                     mixer: "state-space",
                 })?;
-                mixer.encode(
-                    MambaArguments {
-                        active_row_count: batch_dim,
-                        layer,
-                    },
-                    hidden,
-                    encoder,
-                )?
+                mixer
+                    .encode(
+                        MambaArguments {
+                            active_row_count: batch_dim,
+                            layer,
+                        },
+                        hidden,
+                        encoder,
+                    )
+                    .map_err(LayerEncodeError::BackendError)?
             },
             MixerExecutables::ShortConv {
                 mixer,
@@ -489,17 +496,19 @@ impl<B: Backend> LayerExecutables<B> {
                     layer_index: self.layer_index,
                     mixer: "short-conv",
                 })?;
-                mixer.encode(
-                    ShortConvArguments {
-                        active_row_count: batch_dim,
-                        sampling_start,
-                        sampling_length,
-                        token_parents,
-                        layer,
-                    },
-                    hidden,
-                    encoder,
-                )?
+                mixer
+                    .encode(
+                        ShortConvArguments {
+                            active_row_count: batch_dim,
+                            sampling_start,
+                            sampling_length,
+                            token_parents,
+                            layer,
+                        },
+                        hidden,
+                        encoder,
+                    )
+                    .map_err(LayerEncodeError::BackendError)?
             },
             MixerExecutables::DeltaNet {
                 mixer,
@@ -517,14 +526,16 @@ impl<B: Backend> LayerExecutables<B> {
                     layer_index: self.layer_index,
                     mixer: "delta-net",
                 })?;
-                mixer.encode(
-                    DeltaNetArguments {
-                        active_row_count: batch_dim,
-                        layer,
-                    },
-                    hidden,
-                    encoder,
-                )?
+                mixer
+                    .encode(
+                        DeltaNetArguments {
+                            active_row_count: batch_dim,
+                            layer,
+                        },
+                        hidden,
+                        encoder,
+                    )
+                    .map_err(LayerEncodeError::BackendError)?
             },
         };
         #[cfg(feature = "tracing")]
@@ -533,28 +544,28 @@ impl<B: Backend> LayerExecutables<B> {
         }
 
         if let Some(post_mixer_norm) = &self.post_mixer_norm {
-            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
+            hidden = post_mixer_norm.encode(&hidden, 0, batch_dim, None, encoder).map_err(LayerEncodeError::BackendError)?;
             #[cfg(feature = "tracing")]
             if let Some(layer_traces) = layer_traces.as_deref_mut() {
                 encoder.encode_copy(&hidden, .., layer_traces.post_attention_norm.allocation_mut(), ..);
             }
         }
 
-        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim, Some(shortcut), encoder)?;
+        hidden = self.pre_mlp_norm.encode(&hidden, 0, batch_dim, Some(shortcut), encoder).map_err(LayerEncodeError::BackendError)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             encoder.encode_copy(shortcut, .., layer_traces.mlp_inputs.allocation_mut(), ..);
             encoder.encode_copy(&hidden, .., layer_traces.pre_mlp_norm.allocation_mut(), ..);
         }
 
-        hidden = self.mlp.encode(hidden, batch_dim, encoder)?;
+        hidden = self.mlp.encode(hidden, batch_dim, encoder).map_err(LayerEncodeError::BackendError)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             encoder.encode_copy(&hidden, .., layer_traces.mlp.allocation_mut(), ..);
         }
 
         if let Some(post_mlp_norm) = &self.post_mlp_norm {
-            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim, None, encoder)?;
+            hidden = post_mlp_norm.encode(&hidden, 0, batch_dim, None, encoder).map_err(LayerEncodeError::BackendError)?;
             #[cfg(feature = "tracing")]
             if let Some(layer_traces) = layer_traces.as_deref_mut() {
                 encoder.encode_copy(&hidden, .., layer_traces.post_mlp_norm.allocation_mut(), ..);
@@ -567,7 +578,7 @@ impl<B: Backend> LayerExecutables<B> {
                     layer_index: self.layer_index,
                 });
             };
-            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim, encoder)?;
+            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim, encoder).map_err(LayerEncodeError::BackendError)?;
             encoder.encode_fill(&mut hidden, 0);
         }
 
