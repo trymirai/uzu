@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    ArrayContextExt, ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::PleGateActMulKernel},
 };
 use half::{bf16, f16};
