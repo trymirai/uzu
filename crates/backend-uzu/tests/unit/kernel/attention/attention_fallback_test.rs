@@ -104,7 +104,12 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                     b_leading_dimension: Some(HEAD_DIM),
                     b_transpose: true,
                     d: &mut grp_s,
-                    d_transform: MatmulDOps::new(Some(scale), false, None, None),
+                    d_transform: MatmulDOps {
+                        ab_scale: scale,
+                        accumulate: false,
+                        bias: None,
+                        rht_factors: None,
+                    },
                     m: GQA * SUFFIX,
                     n: SEQ,
                     k: HEAD_DIM,

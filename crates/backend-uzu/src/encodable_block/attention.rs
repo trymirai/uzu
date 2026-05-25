@@ -602,7 +602,12 @@ impl<B: Backend> Attention<B> {
                     b_leading_dimension: Some(k_seq_stride),
                     b_transpose: true,
                     d: &mut group_scores,
-                    d_transform: MatmulDOps::new(Some(scale), false, None, None),
+                    d_transform: MatmulDOps {
+                        ab_scale: scale,
+                        accumulate: false,
+                        bias: None,
+                        rht_factors: None,
+                    },
                     m: (gqa_factor * suffix_length) as u32,
                     n: sequence_length as u32,
                     k: head_dim as u32,

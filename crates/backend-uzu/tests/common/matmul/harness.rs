@@ -109,12 +109,12 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .expect("create d allocation")
     };
 
-    let ab_scale = if input.case.ab_scale != 1.0 {
-        Some(input.case.ab_scale)
-    } else {
-        None
+    let d_transform = MatmulDOps::<'_, B> {
+        ab_scale: input.case.ab_scale,
+        accumulate: input.case.accumulate,
+        bias: None,
+        rht_factors: None,
     };
-    let d_transform = MatmulDOps::<'_, B>::new(ab_scale, input.case.accumulate, None, None);
 
     let mut encoder = Encoder::new(context).expect("encoder");
     encode(

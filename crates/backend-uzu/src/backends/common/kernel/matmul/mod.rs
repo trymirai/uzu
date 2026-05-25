@@ -58,76 +58,65 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
 }
 
 pub struct MatmulDOps<'a, B: Backend> {
-    mask: GemmDTransform,
-    pub ab_scale: Option<f32>,
+    pub ab_scale: f32,
     pub accumulate: bool,
     pub bias: Option<&'a Allocation<B>>,
     pub rht_factors: Option<&'a Allocation<B>>,
 }
 
 impl<'a, B: Backend> MatmulDOps<'a, B> {
-    pub fn new(
-        ab_scale: Option<f32>,
-        accumulate: bool,
-        bias: Option<&'a Allocation<B>>,
-        rht_factors: Option<&'a Allocation<B>>,
-    ) -> Self {
-        let mut mask = GemmDTransform::empty();
-        if ab_scale.is_some() {
-            mask |= GemmDTransform::SCALE;
-        }
-        if accumulate {
-            mask |= GemmDTransform::ACCUMULATE;
-        }
-        if bias.is_some() {
-            mask |= GemmDTransform::BIAS;
-        }
-        if rht_factors.is_some() {
-            mask |= GemmDTransform::RHT;
-        }
-        Self {
-            mask,
-            ab_scale,
-            accumulate,
-            bias,
-            rht_factors,
-        }
-    }
-
     pub fn none() -> Self {
-        Self::new(None, false, None, None)
+        Self {
+            ab_scale: 1.0,
+            accumulate: false,
+            bias: None,
+            rht_factors: None,
+        }
     }
 
     pub fn mask(&self) -> GemmDTransform {
-        self.mask
+        let mut m = GemmDTransform::empty();
+        if self.ab_scale != 1.0 {
+            m |= GemmDTransform::SCALE;
+        }
+        if self.accumulate {
+            m |= GemmDTransform::ACCUMULATE;
+        }
+        if self.bias.is_some() {
+            m |= GemmDTransform::BIAS;
+        }
+        if self.rht_factors.is_some() {
+            m |= GemmDTransform::RHT;
+        }
+        m
     }
 
     pub fn without(
         self,
         bits: GemmDTransform,
     ) -> Self {
-        Self::new(
-            if bits.contains(GemmDTransform::SCALE) {
-                None
+        Self {
+            ab_scale: if bits.contains(GemmDTransform::SCALE) {
+                1.0
             } else {
                 self.ab_scale
             },
-            if bits.contains(GemmDTransform::ACCUMULATE) {
+            accumulate: if bits.contains(GemmDTransform::ACCUMULATE) {
                 false
             } else {
                 self.accumulate
             },
-            if bits.contains(GemmDTransform::BIAS) {
+            bias: if bits.contains(GemmDTransform::BIAS) {
                 None
             } else {
                 self.bias
             },
-            if bits.contains(GemmDTransform::RHT) {
+            rht_factors: if bits.contains(GemmDTransform::RHT) {
                 None
             } else {
                 self.rht_factors
             },
-        )
+        }
     }
 }
 

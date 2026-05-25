@@ -140,7 +140,12 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = MatmulDOps::new(None, false, Some(&bias_pp_buf), None);
+    args.d_transform = MatmulDOps {
+        ab_scale: 1.0,
+        accumulate: false,
+        bias: Some(&bias_pp_buf),
+        rht_factors: None,
+    };
     matmul
         .gemm
         .encode_dispatch_path(args, GemmDispatchPath::Simdgroup, &mut encoder)
@@ -192,7 +197,12 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
-    args.d_transform = MatmulDOps::new(None, true, None, None);
+    args.d_transform = MatmulDOps {
+        ab_scale: 1.0,
+        accumulate: true,
+        bias: None,
+        rht_factors: None,
+    };
     let result = matmul.encode(args, &mut encoder);
 
     let err = result.expect_err("expected error");

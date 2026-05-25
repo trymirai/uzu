@@ -77,7 +77,7 @@ impl MatmulCpuKernel {
             });
         }
 
-        let ab_scale = arguments.d_transform.ab_scale.unwrap_or(1.0);
+        let ab_scale = arguments.d_transform.ab_scale;
         let bias_alloc = arguments.d_transform.bias;
         let is_accumulate = arguments.d_transform.accumulate;
 

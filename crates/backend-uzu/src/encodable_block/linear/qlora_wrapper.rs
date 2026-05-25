@@ -135,7 +135,12 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
-                d_transform: MatmulDOps::new(Some(self.lora_scale), true, None, None),
+                d_transform: MatmulDOps {
+                    ab_scale: self.lora_scale,
+                    accumulate: true,
+                    bias: None,
+                    rht_factors: None,
+                },
                 m: batch_dim as u32,
                 n: self.output_dim as u32,
                 k: self.lora_rank as u32,

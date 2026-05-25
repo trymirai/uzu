@@ -152,7 +152,7 @@ impl GemmKernel {
             }
         }
 
-        let ab_scale = arguments.d_transform.ab_scale.unwrap_or(1.0);
+        let ab_scale = arguments.d_transform.ab_scale;
         let post_bias = if use_mxu {
             arguments.d_transform.bias
         } else {

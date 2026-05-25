@@ -339,7 +339,12 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             } => Some(factors),
             _ => None,
         };
-        let d_transform = MatmulDOps::new(None, false, self.biases.as_ref(), rht_factors);
+        let d_transform = MatmulDOps {
+            ab_scale: 1.0,
+            accumulate: false,
+            bias: self.biases.as_ref(),
+            rht_factors,
+        };
 
         self.kernel.borrow_mut().encode(
             MatmulArguments {
