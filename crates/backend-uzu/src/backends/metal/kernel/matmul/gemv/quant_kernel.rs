@@ -70,7 +70,7 @@ impl QuantGemvKernel {
             });
         }
 
-        let hadamard_factors = arguments.d_transform.rht_factors();
+        let hadamard_factors = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
             a,

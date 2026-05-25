@@ -107,7 +107,7 @@ impl MatmulMetalKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let post_rht = arguments.d_transform.rht_factors();
+        let post_rht = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
             a,
@@ -158,11 +158,11 @@ impl MatmulMetalKernel {
     ) -> Result<(), MatmulError<Metal>> {
         let uses_mxu = !force_simdgroup && self.mxu_eligible;
         let post_bias = if uses_mxu {
-            arguments.d_transform.bias()
+            arguments.d_transform.bias
         } else {
             None
         };
-        let post_rht = arguments.d_transform.rht_factors();
+        let post_rht = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
             a,
@@ -224,7 +224,7 @@ impl MatmulMetalKernel {
                 path: "QuantGemv",
             });
         }
-        let post_bias = arguments.d_transform.bias();
+        let post_bias = arguments.d_transform.bias;
 
         let MatmulArguments {
             a,
@@ -281,7 +281,7 @@ impl MatmulMetalKernel {
             });
         }
 
-        let post_rht = arguments.d_transform.rht_factors();
+        let post_rht = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
             a,

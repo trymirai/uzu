@@ -77,9 +77,9 @@ impl MatmulCpuKernel {
             });
         }
 
-        let ab_scale = arguments.d_transform.ab_scale().unwrap_or(1.0);
-        let bias_alloc = arguments.d_transform.bias();
-        let is_accumulate = arguments.d_transform.accumulate();
+        let ab_scale = arguments.d_transform.ab_scale.unwrap_or(1.0);
+        let bias_alloc = arguments.d_transform.bias;
+        let is_accumulate = arguments.d_transform.accumulate;
 
         let MatmulArguments {
             a,
@@ -237,8 +237,8 @@ impl MatmulCpuKernel {
             return Err(MatmulError::UnsupportedGroupSize(group_size as usize));
         }
 
-        let post_rht = arguments.d_transform.rht_factors();
-        let post_bias = arguments.d_transform.bias();
+        let post_rht = arguments.d_transform.rht_factors;
+        let post_bias = arguments.d_transform.bias;
 
         if arguments.m >= 5 && arguments.n > 1 {
             let MatmulArguments {

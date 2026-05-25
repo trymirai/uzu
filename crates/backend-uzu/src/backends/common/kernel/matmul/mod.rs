@@ -57,10 +57,10 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
 /// op-free transform.
 pub struct MatmulDOps<'a, B: Backend> {
     mask: GemmDTransform,
-    ab_scale: Option<f32>,
-    accumulate: bool,
-    bias: Option<&'a Allocation<B>>,
-    rht_factors: Option<&'a Allocation<B>>,
+    pub ab_scale: Option<f32>,
+    pub accumulate: bool,
+    pub bias: Option<&'a Allocation<B>>,
+    pub rht_factors: Option<&'a Allocation<B>>,
 }
 
 impl<'a, B: Backend> MatmulDOps<'a, B> {
@@ -98,22 +98,6 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
 
     pub fn mask(&self) -> GemmDTransform {
         self.mask
-    }
-
-    pub fn ab_scale(&self) -> Option<f32> {
-        self.ab_scale
-    }
-
-    pub fn accumulate(&self) -> bool {
-        self.accumulate
-    }
-
-    pub fn bias(&self) -> Option<&'a Allocation<B>> {
-        self.bias
-    }
-
-    pub fn rht_factors(&self) -> Option<&'a Allocation<B>> {
-        self.rht_factors
     }
 
     /// Return a copy of `self` with the ops named by `bits` cleared.
