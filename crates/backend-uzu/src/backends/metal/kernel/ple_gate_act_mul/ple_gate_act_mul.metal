@@ -20,10 +20,12 @@ PUBLIC KERNEL(PleGateActMul)(
 ) {
   const uint layer_stride = static_cast<uint>(num_layers * ple_dim);
   const uint gate_index = row * static_cast<uint>(ple_dim) + col;
-  const uint input_index = row * layer_stride + static_cast<uint>(layer_offset) + col;
+  const uint input_index =
+      row * layer_stride + static_cast<uint>(layer_offset) + col;
   T gate_value = gate_out[gate_index];
   T activated = activate(gate_value, act_type);
   T input_value = per_layer_input[input_index];
-  output[gate_index] =
-      static_cast<T>(static_cast<float>(activated) * static_cast<float>(input_value));
+  output[gate_index] = static_cast<T>(
+      static_cast<float>(activated) * static_cast<float>(input_value)
+  );
 }
