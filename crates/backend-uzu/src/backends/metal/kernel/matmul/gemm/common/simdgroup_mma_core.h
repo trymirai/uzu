@@ -204,10 +204,12 @@ struct SimdgroupMmaCore {
       const device T* biases,
       const device uint8_t* zero_points,
       const device T* output_bias,
+      const device int32_t* rht_factors,
       threadgroup T* a_shared,
       threadgroup T* b_shared,
       const thread ThreadContext& thread_context
   ) {
+    (void)rht_factors;
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::

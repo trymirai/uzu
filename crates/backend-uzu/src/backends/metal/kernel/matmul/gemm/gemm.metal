@@ -82,6 +82,8 @@ KERNEL(Gemm)(
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device T* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
+    const device int32_t* rht_factors
+        OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
@@ -115,6 +117,7 @@ KERNEL(Gemm)(
         alignment,
         output_transform,
         output_bias,
+        rht_factors,
         thread_context
     );
   } else {
@@ -135,6 +138,7 @@ KERNEL(Gemm)(
             biases,
             zero_points,
             output_bias,
+            rht_factors,
             a_shared,
             b_shared,
             thread_context);
