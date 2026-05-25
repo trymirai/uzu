@@ -13,7 +13,7 @@ use crate::{
             gpu_types::gemm::GemmDTransform,
             kernel::{
                 HadamardTransformKernel, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel, MatmulQuantCombo},
             },
         },
         metal::{Metal, context::MetalContext, error::MetalError},
@@ -181,5 +181,13 @@ impl MatmulKernel for MatmulMetalKernel {
         } else {
             self.gemm.encode(arguments, encoder)
         }
+    }
+
+    fn preheat_quant_combo(
+        &mut self,
+        context: &MetalContext,
+        combo: MatmulQuantCombo,
+    ) -> Result<(), MetalError> {
+        self.gemm.preheat_quant_combo(context, combo)
     }
 }

@@ -6,10 +6,10 @@ use crate::{
     DataType,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::QuantizationMode,
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulQuantCombo},
         },
     },
     config::EmbeddingConfig,
@@ -265,10 +265,19 @@ impl<B: Backend> Embedding<B> {
                     mode: *embedding_quantization_mode,
                     group_size: *group_size as u32,
                 };
-                let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
-                        .map_err(EmbeddingError::BackendError)?,
-                );
+                let mut readout_kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                    .map_err(EmbeddingError::BackendError)?;
+                readout_kernel
+                    .preheat_quant_combo(
+                        context,
+                        MatmulQuantCombo {
+                            method: QuantizationMethod::ScaleBias,
+                            mode: *embedding_quantization_mode,
+                            group_size: *group_size as u32,
+                        },
+                    )
+                    .map_err(EmbeddingError::BackendError)?;
+                let readout = RefCell::new(readout_kernel);
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
                     return Err(EmbeddingError::UnsupportedConfiguration(format!(
@@ -336,10 +345,19 @@ impl<B: Backend> Embedding<B> {
                     mode: *embedding_quantization_mode,
                     group_size: *group_size as u32,
                 };
-                let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
-                        .map_err(EmbeddingError::BackendError)?,
-                );
+                let mut readout_kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                    .map_err(EmbeddingError::BackendError)?;
+                readout_kernel
+                    .preheat_quant_combo(
+                        context,
+                        MatmulQuantCombo {
+                            method: QuantizationMethod::ScaleBias,
+                            mode: *embedding_quantization_mode,
+                            group_size: *group_size as u32,
+                        },
+                    )
+                    .map_err(EmbeddingError::BackendError)?;
+                let readout = RefCell::new(readout_kernel);
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
                     return Err(EmbeddingError::UnsupportedConfiguration(format!(
@@ -400,10 +418,19 @@ impl<B: Backend> Embedding<B> {
                     mode: *embedding_quantization_mode,
                     group_size: *group_size as u32,
                 };
-                let readout = RefCell::new(
-                    <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
-                        .map_err(EmbeddingError::BackendError)?,
-                );
+                let mut readout_kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
+                    .map_err(EmbeddingError::BackendError)?;
+                readout_kernel
+                    .preheat_quant_combo(
+                        context,
+                        MatmulQuantCombo {
+                            method: QuantizationMethod::ScaleBias,
+                            mode: *embedding_quantization_mode,
+                            group_size: *group_size as u32,
+                        },
+                    )
+                    .map_err(EmbeddingError::BackendError)?;
+                let readout = RefCell::new(readout_kernel);
 
                 if let Some(activation_quantization_mode) = activation_quantization_mode {
                     return Err(EmbeddingError::UnsupportedConfiguration(format!(

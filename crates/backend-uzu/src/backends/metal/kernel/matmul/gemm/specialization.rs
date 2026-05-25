@@ -1,7 +1,13 @@
 use super::error::GemmSpecializationError;
 use crate::{
     DataType,
-    backends::common::gpu_types::gemm::{GemmAlignment, GemmDTransform, GemmTiling, GemmWeightPrologueKind},
+    backends::common::{
+        gpu_types::{
+            QuantizationMethod,
+            gemm::{GemmAlignment, GemmDTransform, GemmTiling, GemmWeightPrologueKind},
+        },
+        kernel::matmul::MatmulQuantCombo,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,31 +90,37 @@ impl GemmSpecialization {
                 }
             }
         }
+        out
+    }
+
+    pub(crate) fn quant_combo_specs(
+        data_type: DataType,
+        combo: MatmulQuantCombo,
+    ) -> Vec<Self> {
+        let bits = DataType::from(combo.mode).size_in_bits() as u32;
+        let group_size = combo.group_size;
+        let weight_prologue = match combo.method {
+            QuantizationMethod::ScaleBias => GemmWeightPrologueKind::ScaleBiasDequant,
+            QuantizationMethod::ScaleZeroPoint => GemmWeightPrologueKind::ScaleZeroPointDequant,
+        };
+        let mut out = Vec::new();
         for &tiling in quant_tiling_set(data_type) {
-            for &group_size in &[32u32, 64, 128] {
-                if tiling.block_k() > group_size {
-                    continue;
-                }
-                for &bits in &[4u32, 8] {
-                    for weight_prologue in
-                        [GemmWeightPrologueKind::ScaleBiasDequant, GemmWeightPrologueKind::ScaleZeroPointDequant]
-                    {
-                        for align_n in [true, false] {
-                            for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
-                                out.push(Self {
-                                    data_type,
-                                    tiling,
-                                    use_mxu: false,
-                                    output_transform,
-                                    alignment: GemmAlignment::new(true, align_n, true),
-                                    transpose_b: true,
-                                    weight_prologue,
-                                    bits_per_weight: Some(bits),
-                                    group_size: Some(group_size),
-                                });
-                            }
-                        }
-                    }
+            if tiling.block_k() > group_size {
+                continue;
+            }
+            for align_n in [true, false] {
+                for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
+                    out.push(Self {
+                        data_type,
+                        tiling,
+                        use_mxu: false,
+                        output_transform,
+                        alignment: GemmAlignment::new(true, align_n, true),
+                        transpose_b: true,
+                        weight_prologue,
+                        bits_per_weight: Some(bits),
+                        group_size: Some(group_size),
+                    });
                 }
             }
         }

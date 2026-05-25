@@ -12,7 +12,7 @@ use crate::{
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, gemm::GemmWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo, gemm::GemmWeights},
             },
         },
         metal::{
@@ -55,6 +55,17 @@ impl GemmKernel {
             kernel.get_or_create(context, specialization)?;
         }
         Ok(kernel)
+    }
+
+    pub fn preheat_quant_combo(
+        &mut self,
+        context: &MetalContext,
+        combo: MatmulQuantCombo,
+    ) -> Result<(), MetalError> {
+        for specialization in GemmSpecialization::quant_combo_specs(self.data_type, combo) {
+            self.get_or_create(context, specialization)?;
+        }
+        Ok(())
     }
 
     fn get_or_create(
