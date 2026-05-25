@@ -44,7 +44,7 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
         group.bench_function(BenchmarkId::from_parameter(format!("{layer}_{shape}")), |b| {
             iter_encode_loop::<Metal, _>(context, b, |encoder| {
                 matmul
-                    .encode_with_path(
+                    .encode_dispatch_path(
                         quant_arguments(&mut buffers, &input),
                         encoder,
                         MatmulDispatchPath::Auto,

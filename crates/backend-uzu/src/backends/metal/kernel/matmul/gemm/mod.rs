@@ -3,6 +3,7 @@ mod kernel;
 mod specialization;
 
 pub use error::GemmSpecializationError;
+pub use kernel::GemmDispatchPath;
 pub(crate) use kernel::GemmKernel;
 
 // Matches `MxuMmaCore::THREADGROUP_BLOCK_K` in `common/mxu_mma_core.h`.

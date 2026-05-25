@@ -18,6 +18,12 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum GemmDispatchPath {
+    Simdgroup,
+    Mxu,
+}
+
 pub(crate) struct GemmKernel {
     data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
@@ -63,17 +69,32 @@ impl GemmKernel {
         }
     }
 
-    pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub(crate) fn encode_dispatch_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         context: &MetalContext,
         arguments: MatmulArguments<'a, Metal, TB>,
-        force_simdgroup: bool,
         encoder: &mut Encoder<Metal>,
+        path: GemmDispatchPath,
     ) -> Result<(), MetalError> {
-        let use_mxu = !force_simdgroup
-            && context.device.supports_mxu()
-            && matches!(self.data_type, DataType::F16 | DataType::BF16)
-            && matches!(arguments.b, MatmulB::FullPrecision { .. });
+        let use_mxu = match path {
+            GemmDispatchPath::Mxu => {
+                assert!(
+                    context.device.supports_mxu(),
+                    "GemmDispatchPath::Mxu requested on hardware without MXU support",
+                );
+                assert!(
+                    matches!(self.data_type, DataType::F16 | DataType::BF16),
+                    "GemmDispatchPath::Mxu requires F16 or BF16 data type, got {:?}",
+                    self.data_type,
+                );
+                assert!(
+                    matches!(arguments.b, MatmulB::FullPrecision { .. }),
+                    "GemmDispatchPath::Mxu requires FullPrecision B",
+                );
+                true
+            },
+            GemmDispatchPath::Simdgroup => false,
+        };
 
         let ab_scale = arguments.d_transform.ab_scale.unwrap_or(1.0);
         let output_bias = arguments.d_transform.bias;

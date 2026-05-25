@@ -16,7 +16,7 @@ use backend_uzu::{
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
             },
         },
-        metal::{MatmulDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, MatmulDispatchPath, Metal, MetalContext},
     },
 };
 use half::bf16;
@@ -74,7 +74,7 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 ) {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
-    let unified = run_quant_metal::<T>(&context, &input, MatmulDispatchPath::QuantGemm);
+    let unified = run_quant_metal::<T>(&context, &input, MatmulDispatchPath::Gemm(GemmDispatchPath::Simdgroup));
     let reference = run_quant_cpu::<T>(&input);
 
     assert_parity::<T>(
@@ -142,7 +142,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let mut args = quant_arguments(&mut buffers, &input);
     args.d_transform = MatmulDOps::new(None, false, Some(&bias_pp_buf), None);
     matmul
-        .encode_with_path(args, &mut encoder, MatmulDispatchPath::QuantGemm)
+        .encode_dispatch_path(args, &mut encoder, MatmulDispatchPath::Gemm(GemmDispatchPath::Simdgroup))
         .expect("encode quant with bias");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
@@ -168,7 +168,7 @@ fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
     args.b_offset = 16;
-    let result = matmul.encode_with_path(args, &mut encoder, MatmulDispatchPath::QuantGemm);
+    let result = matmul.encode_dispatch_path(args, &mut encoder, MatmulDispatchPath::Gemm(GemmDispatchPath::Simdgroup));
 
     let err = result.expect_err("expected error");
     let matmul: &MatmulError<Metal> = (&err as &dyn StdError)
@@ -192,7 +192,7 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
     args.d_transform = MatmulDOps::new(None, true, None, None);
-    let result = matmul.encode_with_path(args, &mut encoder, MatmulDispatchPath::QuantGemm);
+    let result = matmul.encode_dispatch_path(args, &mut encoder, MatmulDispatchPath::Gemm(GemmDispatchPath::Simdgroup));
 
     let err = result.expect_err("expected error");
     let matmul: &MatmulError<Metal> = (&err as &dyn StdError)

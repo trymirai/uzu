@@ -3,6 +3,7 @@ pub mod gemv;
 
 use std::sync::OnceLock;
 
+pub use self::gemm::GemmDispatchPath;
 use self::{
     gemm::GemmKernel,
     gemv::{GemvKernel, QuantGemvKernel},
@@ -47,21 +48,19 @@ fn max_gemv_batch_threshold() -> u32 {
 pub enum MatmulDispatchPath {
     Auto,
     Gemv,
-    Gemm,
-    GemmSimdgroup,
+    Gemm(GemmDispatchPath),
     QuantGemv,
-    QuantGemm,
 }
 
 impl MatmulMetalKernel {
-    pub fn encode_with_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub fn encode_dispatch_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
         path: MatmulDispatchPath,
     ) -> Result<(), MetalError> {
         match (path, &arguments.b) {
-            (MatmulDispatchPath::Auto, _) => self.encode(arguments, encoder),
+            (MatmulDispatchPath::Auto, _) => self.dispatch_auto(arguments, encoder),
             (
                 MatmulDispatchPath::Gemv,
                 MatmulB::FullPrecision {
@@ -69,17 +68,29 @@ impl MatmulMetalKernel {
                 },
             ) => self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from),
             (
-                MatmulDispatchPath::Gemm,
+                MatmulDispatchPath::Gemm(gemm_path),
                 MatmulB::FullPrecision {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, false, encoder).map_err(MetalError::from),
+            ) => self.dispatch_fp_gemm(arguments, gemm_path, encoder).map_err(MetalError::from),
             (
-                MatmulDispatchPath::GemmSimdgroup,
-                MatmulB::FullPrecision {
+                MatmulDispatchPath::Gemm(GemmDispatchPath::Simdgroup),
+                MatmulB::ScaleBiasDequant {
+                    ..
+                }
+                | MatmulB::ScaleZeroPointDequant {
                     ..
                 },
-            ) => self.dispatch_fp_gemm(arguments, true, encoder).map_err(MetalError::from),
+            ) => self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from),
+            (
+                MatmulDispatchPath::Gemm(GemmDispatchPath::Mxu),
+                MatmulB::ScaleBiasDequant {
+                    ..
+                }
+                | MatmulB::ScaleZeroPointDequant {
+                    ..
+                },
+            ) => panic!("GemmDispatchPath::Mxu is not supported with quantized B"),
             (
                 MatmulDispatchPath::QuantGemv,
                 MatmulB::ScaleBiasDequant {
@@ -89,16 +100,47 @@ impl MatmulMetalKernel {
                     ..
                 },
             ) => self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from),
-            (
-                MatmulDispatchPath::QuantGemm,
-                MatmulB::ScaleBiasDequant {
-                    ..
-                }
-                | MatmulB::ScaleZeroPointDequant {
-                    ..
-                },
-            ) => self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from),
             _ => panic!("MatmulDispatchPath does not match MatmulB variant"),
+        }
+    }
+
+    fn dispatch_auto<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal, TB>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        match &arguments.b {
+            MatmulB::FullPrecision {
+                ..
+            } => {
+                let gemv_eligible = arguments.b_transpose
+                    && arguments.b_offset == 0
+                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
+                    && arguments.m <= max_gemv_batch_threshold();
+
+                if gemv_eligible {
+                    self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from)
+                } else {
+                    let gemm_path = if self.mxu_eligible {
+                        GemmDispatchPath::Mxu
+                    } else {
+                        GemmDispatchPath::Simdgroup
+                    };
+                    self.dispatch_fp_gemm(arguments, gemm_path, encoder).map_err(MetalError::from)
+                }
+            },
+            MatmulB::ScaleBiasDequant {
+                ..
+            }
+            | MatmulB::ScaleZeroPointDequant {
+                ..
+            } => {
+                if arguments.m >= 5 && arguments.n > 1 {
+                    self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from)
+                } else {
+                    self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
+                }
+            },
         }
     }
 
@@ -153,10 +195,10 @@ impl MatmulMetalKernel {
     fn dispatch_fp_gemm<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         arguments: MatmulArguments<'a, Metal, TB>,
-        force_simdgroup: bool,
+        gemm_path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let uses_mxu = !force_simdgroup && self.mxu_eligible;
+        let uses_mxu = matches!(gemm_path, GemmDispatchPath::Mxu);
         let post_bias = if uses_mxu {
             arguments.d_transform.bias
         } else {
@@ -185,7 +227,7 @@ impl MatmulMetalKernel {
 
         let context = encoder.context();
         self.gemm
-            .encode(
+            .encode_dispatch_path(
                 context,
                 MatmulArguments {
                     a,
@@ -200,8 +242,8 @@ impl MatmulMetalKernel {
                     n,
                     k,
                 },
-                force_simdgroup,
                 encoder,
+                gemm_path,
             )
             .map_err(MatmulError::BackendError)?;
 
@@ -300,7 +342,7 @@ impl MatmulMetalKernel {
 
         let context = encoder.context();
         self.gemm
-            .encode(
+            .encode_dispatch_path(
                 context,
                 MatmulArguments {
                     a,
@@ -315,8 +357,8 @@ impl MatmulMetalKernel {
                     n,
                     k,
                 },
-                false,
                 encoder,
+                GemmDispatchPath::Simdgroup,
             )
             .map_err(MatmulError::BackendError)?;
 
@@ -360,33 +402,6 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        match &arguments.b {
-            MatmulB::FullPrecision {
-                ..
-            } => {
-                let gemv_eligible = arguments.b_transpose
-                    && arguments.b_offset == 0
-                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
-                    && arguments.m <= max_gemv_batch_threshold();
-
-                if gemv_eligible {
-                    self.dispatch_fp_gemv(arguments, encoder).map_err(MetalError::from)
-                } else {
-                    self.dispatch_fp_gemm(arguments, false, encoder).map_err(MetalError::from)
-                }
-            },
-            MatmulB::ScaleBiasDequant {
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                ..
-            } => {
-                if arguments.m >= 5 && arguments.n > 1 {
-                    self.dispatch_quant_gemm(arguments, encoder).map_err(MetalError::from)
-                } else {
-                    self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
-                }
-            },
-        }
+        self.encode_dispatch_path(arguments, encoder, MatmulDispatchPath::Auto)
     }
 }

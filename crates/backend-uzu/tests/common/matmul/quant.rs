@@ -173,7 +173,7 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
         .expect("MatmulMetalKernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
-    matmul.encode_with_path(quant_arguments(&mut buffers, input), &mut encoder, path).expect("encode metal quant");
+    matmul.encode_dispatch_path(quant_arguments(&mut buffers, input), &mut encoder, path).expect("encode metal quant");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Metal, T>(&buffers.y)
 }

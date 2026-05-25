@@ -157,6 +157,6 @@ pub fn run_metal<T: ArrayElement + Float>(
     path: MatmulDispatchPath,
 ) -> Vec<T> {
     run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
-        kernel.encode_with_path(args, encoder, path).expect("encode_with_path failed");
+        kernel.encode_dispatch_path(args, encoder, path).expect("encode_dispatch_path failed");
     })
 }
