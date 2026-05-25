@@ -178,7 +178,7 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
         None => matmul.encode(args, &mut encoder).expect("matmul encode failed"),
         Some(gemm_path) => matmul
             .gemm
-            .encode_dispatch_path(context, args, gemm_path, &mut encoder)
+            .encode_dispatch_path(args, gemm_path, &mut encoder)
             .expect("gemm encode_dispatch_path failed"),
     }
     encoder.end_encoding().submit().wait_until_completed().unwrap();

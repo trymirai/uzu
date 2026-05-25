@@ -49,7 +49,6 @@ fn bench_gemm(c: &mut Criterion) {
                 kernel
                     .gemm
                     .encode_dispatch_path(
-                        &context,
                         MatmulArguments {
                             a: &a,
                             a_offset: 0,

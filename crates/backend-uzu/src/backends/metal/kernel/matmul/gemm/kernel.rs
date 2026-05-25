@@ -84,11 +84,10 @@ impl GemmKernel {
 
     pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        context: &MetalContext,
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let path = if context.device.supports_mxu()
+        let path = if encoder.context().device.supports_mxu()
             && matches!(self.data_type, DataType::F16 | DataType::BF16)
             && matches!(arguments.b, MatmulB::FullPrecision { .. })
         {
@@ -96,12 +95,11 @@ impl GemmKernel {
         } else {
             GemmDispatchPath::Simdgroup
         };
-        self.encode_dispatch_path(context, arguments, path, encoder)
+        self.encode_dispatch_path(arguments, path, encoder)
     }
 
     pub fn encode_dispatch_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
-        context: &MetalContext,
         arguments: MatmulArguments<'a, Metal, TB>,
         path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
@@ -109,7 +107,7 @@ impl GemmKernel {
         let use_mxu = match path {
             GemmDispatchPath::Mxu => {
                 assert!(
-                    context.device.supports_mxu(),
+                    encoder.context().device.supports_mxu(),
                     "GemmDispatchPath::Mxu requested on hardware without MXU support",
                 );
                 assert!(
@@ -246,7 +244,7 @@ impl GemmKernel {
                     group_size: gemm_weights.group_size(),
                 };
                 specialization.validate().map_err(MetalError::from)?;
-                let kernel = self.get_or_create(context, specialization)?;
+                let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
                     (weights, b_offset),
@@ -329,7 +327,7 @@ impl GemmKernel {
                     group_size: gemm_weights.group_size(),
                 };
                 specialization.validate().map_err(MetalError::from)?;
-                let kernel = self.get_or_create(context, specialization)?;
+                let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
                     (weights, b_offset),

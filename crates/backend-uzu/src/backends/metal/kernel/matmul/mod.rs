@@ -16,12 +16,11 @@ use crate::{
                 matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
-        metal::{Metal, context::MetalContext, error::MetalError, metal_extensions::DeviceExt},
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
 };
 
 pub struct MatmulMetalKernel {
-    mxu_eligible: bool,
     gemv: GemvKernel,
     quant_gemv: QuantGemvKernel,
     pub gemm: GemmKernel,
@@ -147,13 +146,11 @@ impl MatmulKernel for MatmulMetalKernel {
             return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
         }
 
-        let mxu_eligible = context.device.supports_mxu() && matches!(data_type, DataType::F16 | DataType::BF16);
         let gemm = GemmKernel::new(context, data_type)?;
         let gemv = GemvKernel::new(context, data_type).map_err(MetalError::from)?;
         let quant_gemv = QuantGemvKernel::new(context, data_type);
 
         Ok(Self {
-            mxu_eligible,
             gemv,
             quant_gemv,
             gemm,
@@ -165,40 +162,24 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        match &arguments.b {
-            MatmulB::FullPrecision {
-                ..
-            } => {
-                let gemv_eligible = arguments.b_transpose
-                    && arguments.b_offset == 0
-                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
-                    && arguments.m <= max_gemv_batch_threshold();
+        let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+        let gemv_eligible = if is_quant {
+            arguments.m < 5 || arguments.n == 1
+        } else {
+            arguments.b_transpose
+                && arguments.b_offset == 0
+                && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
+                && arguments.m <= max_gemv_batch_threshold()
+        };
 
-                if gemv_eligible {
-                    self.dispatch_gemv(arguments, encoder).map_err(MetalError::from)
-                } else {
-                    let gemm_path = if self.mxu_eligible {
-                        GemmDispatchPath::Mxu
-                    } else {
-                        GemmDispatchPath::Simdgroup
-                    };
-                    let context = encoder.context();
-                    self.gemm.encode_dispatch_path(context, arguments, gemm_path, encoder)
-                }
-            },
-            MatmulB::ScaleBiasDequant {
-                ..
+        if gemv_eligible {
+            if is_quant {
+                self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
+            } else {
+                self.dispatch_gemv(arguments, encoder).map_err(MetalError::from)
             }
-            | MatmulB::ScaleZeroPointDequant {
-                ..
-            } => {
-                if arguments.m >= 5 && arguments.n > 1 {
-                    let context = encoder.context();
-                    self.gemm.encode_dispatch_path(context, arguments, GemmDispatchPath::Simdgroup, encoder)
-                } else {
-                    self.dispatch_quant_gemv(arguments, encoder).map_err(MetalError::from)
-                }
-            },
+        } else {
+            self.gemm.encode(arguments, encoder)
         }
     }
 }

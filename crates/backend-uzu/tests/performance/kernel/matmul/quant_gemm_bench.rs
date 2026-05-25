@@ -46,7 +46,6 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
                 matmul
                     .gemm
                     .encode_dispatch_path(
-                        context,
                         quant_arguments(&mut buffers, &input),
                         GemmDispatchPath::Simdgroup,
                         encoder,

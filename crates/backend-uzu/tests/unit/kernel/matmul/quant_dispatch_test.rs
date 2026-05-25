@@ -143,7 +143,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     args.d_transform = MatmulDOps::new(None, false, Some(&bias_pp_buf), None);
     matmul
         .gemm
-        .encode_dispatch_path(&context, args, GemmDispatchPath::Simdgroup, &mut encoder)
+        .encode_dispatch_path(args, GemmDispatchPath::Simdgroup, &mut encoder)
         .expect("encode quant with bias");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
     let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
