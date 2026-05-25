@@ -112,7 +112,6 @@ impl MatmulMetalKernel {
         let MatmulArguments {
             a,
             a_offset,
-
             b,
             b_offset,
             b_leading_dimension,
@@ -123,6 +122,8 @@ impl MatmulMetalKernel {
             n,
             k,
         } = arguments;
+
+        // A temopary hack, will port the post ops to the gemv later.
         let d_transform = d_transform.without(GemmDTransform::RHT);
 
         gemv::fp::encode(
@@ -131,7 +132,6 @@ impl MatmulMetalKernel {
             MatmulArguments {
                 a,
                 a_offset,
-
                 b,
                 b_offset,
                 b_leading_dimension,
@@ -167,7 +167,6 @@ impl MatmulMetalKernel {
         let MatmulArguments {
             a,
             a_offset,
-
             b,
             b_offset,
             b_leading_dimension,
@@ -191,7 +190,6 @@ impl MatmulMetalKernel {
                 MatmulArguments {
                     a,
                     a_offset,
-
                     b,
                     b_offset,
                     b_leading_dimension,
@@ -231,7 +229,6 @@ impl MatmulMetalKernel {
         let MatmulArguments {
             a,
             a_offset,
-
             b,
             b_offset,
             b_leading_dimension,
@@ -249,7 +246,6 @@ impl MatmulMetalKernel {
             MatmulArguments {
                 a,
                 a_offset,
-
                 b,
                 b_offset,
                 b_leading_dimension,
@@ -290,7 +286,6 @@ impl MatmulMetalKernel {
         let MatmulArguments {
             a,
             a_offset,
-
             b,
             b_offset,
             b_leading_dimension,
@@ -310,7 +305,6 @@ impl MatmulMetalKernel {
                 MatmulArguments {
                     a,
                     a_offset,
-
                     b,
                     b_offset,
                     b_leading_dimension,
