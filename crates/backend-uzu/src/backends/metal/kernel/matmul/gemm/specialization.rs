@@ -48,7 +48,12 @@ impl GemmSpecialization {
         let mut out = Vec::new();
         for &tiling in simdgroup_tiling_set(data_type) {
             for align_mn in [true, false] {
-                for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
+                for output_transform in [
+                    GemmDTransform::empty(),
+                    GemmDTransform::BIAS,
+                    GemmDTransform::RHT,
+                    GemmDTransform::BIAS | GemmDTransform::RHT,
+                ] {
                     out.push(Self {
                         data_type,
                         tiling,
@@ -77,6 +82,23 @@ impl GemmSpecialization {
                             GemmDTransform::BIAS | GemmDTransform::SCALE,
                             GemmDTransform::BIAS | GemmDTransform::ACCUMULATE,
                             GemmDTransform::BIAS
+                                | GemmDTransform::SCALE
+                                | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::RHT,
+                            GemmDTransform::RHT | GemmDTransform::SCALE,
+                            GemmDTransform::RHT | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::RHT
+                                | GemmDTransform::SCALE
+                                | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::BIAS | GemmDTransform::RHT,
+                            GemmDTransform::BIAS
+                                | GemmDTransform::RHT
+                                | GemmDTransform::SCALE,
+                            GemmDTransform::BIAS
+                                | GemmDTransform::RHT
+                                | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::BIAS
+                                | GemmDTransform::RHT
                                 | GemmDTransform::SCALE
                                 | GemmDTransform::ACCUMULATE,
                         ] {
@@ -115,7 +137,12 @@ impl GemmSpecialization {
                 continue;
             }
             for align_n in [true, false] {
-                for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
+                for output_transform in [
+                    GemmDTransform::empty(),
+                    GemmDTransform::BIAS,
+                    GemmDTransform::RHT,
+                    GemmDTransform::BIAS | GemmDTransform::RHT,
+                ] {
                     out.push(Self {
                         data_type,
                         tiling,
