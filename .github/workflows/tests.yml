@@ -55,33 +55,30 @@ jobs:
 
   tests:
     name: ${{ matrix.backend }}
-      ${{ matrix.linux_cpu && ' (linux)' || '' }}
+      ${{ matrix.host == 'linux' && ' (linux)' || '' }}
       ${{ matrix.tracing && ' (tracing)' || '' }}
       ${{ matrix.grammar && ' (grammar)' || '' }}
       ${{ matrix.target != '' && format(' ({0})', matrix.target) || '' }}
-    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    runs-on: ${{ matrix.host == 'linux' && 'ubuntu-latest' || fromJSON('["self-hosted","macos","mac","arm64"]') }}
 
     strategy:
       matrix:
         backend: [ 'cpu', 'metal' ]
+        host: [ 'macos' ]
         target: [ '' ]
         tracing: [ false, true ]
-        runs_on: [ '["self-hosted","macos","mac","arm64"]' ]
-        linux_cpu: [ false ]
         include:
           - grammar: true
           - backend: 'cpu'
+            host: 'macos'
             target: 'wasm32-wasip1-threads'
             tracing: false
             grammar: false
-            runs_on: '["self-hosted","macos","mac","arm64"]'
-            linux_cpu: false
           - backend: 'cpu'
+            host: 'linux'
             target: ''
             tracing: false
             grammar: false
-            runs_on: '"ubuntu-latest"'
-            linux_cpu: true
         exclude:
           - backend: 'cpu'
             tracing: true
@@ -98,30 +95,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-        if: ${{ !matrix.linux_cpu }}
         with:
           metal: ${{ matrix.backend == 'metal' }}
-          test_data: true
-          nextest: true
+          test_data: ${{ matrix.host != 'linux' }}
+          nextest: ${{ matrix.host != 'linux' }}
           target: ${{ matrix.target }}
-
-      - uses: dtolnay/rust-toolchain@stable
-        if: ${{ matrix.linux_cpu }}
-
-      - name: Install Linux CPU dependencies
-        if: ${{ matrix.linux_cpu }}
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+          linux: ${{ matrix.host == 'linux' }}
 
       - name: Build crates
-        if: ${{ !matrix.linux_cpu }}
-        run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }}
-
-      - name: Check Linux CPU crates
-        if: ${{ matrix.linux_cpu }}
-        run: |
-          cargo +stable check -p backend-uzu --no-default-features
-          cargo +stable check -p uzu --no-default-features --features backend-cpu
-          cargo +stable check -p cli --no-default-features --features backend-cpu,capability-cli
+        run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} ${{ matrix.host == 'linux' && '-p cli --features backend-cpu,capability-cli' || '' }}
 
       - name: Build benches
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
