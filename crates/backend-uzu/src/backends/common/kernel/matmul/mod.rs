@@ -1,3 +1,5 @@
+pub mod gemm;
+
 use thiserror::Error;
 
 use crate::{

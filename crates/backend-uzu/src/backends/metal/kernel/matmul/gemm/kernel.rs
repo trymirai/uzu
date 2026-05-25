@@ -10,10 +10,7 @@ use crate::{
                 GemmParams,
                 gemm::{GemmAlignment, GemmDTransform, GemmTiling},
             },
-            kernel::{
-                gemm::GemmWeights,
-                matmul::{MatmulArguments, MatmulB},
-            },
+            kernel::matmul::{MatmulArguments, MatmulB, gemm::GemmWeights},
         },
         metal::{
             Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel, metal_extensions::DeviceExt,
