@@ -3,6 +3,7 @@
 #include "../../common/defines.h"
 #include "../../common/dsl.h"
 #include "../../common/thread_context.h"
+#include "../../hadamard_transform/hadamard_transform.h"
 
 #include <metal_simdgroup>
 
@@ -19,6 +20,7 @@ KERNEL(MatmulGemv)(
     const device T* matrix,
     const device T* input_vector,
     const device T* output_bias OPTIONAL(is_bias),
+    const device int32_t* rht_factors OPTIONAL(use_hadamard),
     device T* output_vector,
     const constant uint& input_dimension,
     const constant uint& output_dimension,
@@ -35,6 +37,7 @@ KERNEL(MatmulGemv)(
     const uint thread_out_cols SPECIALIZE,
     const bool is_accumulate SPECIALIZE,
     const bool is_bias SPECIALIZE,
+    const bool use_hadamard SPECIALIZE,
     const uint threadgroup_index_x GROUPS((output_dimension + output_rows_per_threadgroup - 1) / output_rows_per_threadgroup),
     const uint threadgroup_index_y GROUPS(batch_rows),
     const uint thread_index_x THREADS(32),
@@ -306,6 +309,28 @@ KERNEL(MatmulGemv)(
         accumulated_c += output_bias[output_row_start + output_row_offset];
       }
       output_row_values[output_row_start + output_row_offset] = accumulated_c;
+    }
+  }
+
+  if (use_hadamard) {
+    threadgroup_barrier(mem_flags::mem_device);
+    const uint sg_count = tg_simd_rows * tg_simd_cols;
+    const uint sg_id = thread_context.simdgroup_index;
+    const ushort lane = thread_context.simd_lane_id;
+    const uint tg_block_start =
+        threadgroup_index_x * output_rows_per_threadgroup;
+    const uint stripes_per_tg = output_rows_per_threadgroup / METAL_SIMD_SIZE;
+    device T* output_row_values =
+        output_vector + batch_row * output_dimension;
+    for (uint stripe = sg_id; stripe < stripes_per_tg; stripe += sg_count) {
+      const uint global_col =
+          tg_block_start + stripe * METAL_SIMD_SIZE + lane;
+      if (global_col < output_dimension) {
+        T value = output_row_values[global_col];
+        output_row_values[global_col] = simdgroup_random_hadamard_transform(
+            lane, value, rht_factors[global_col]
+        );
+      }
     }
   }
 }
