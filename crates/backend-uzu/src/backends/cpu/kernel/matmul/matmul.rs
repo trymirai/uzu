@@ -4,10 +4,10 @@ use crate::{
     DataType,
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
+            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
-                HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
+                HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulDOp, MatmulError, MatmulKernel},
             },
         },
@@ -21,6 +21,7 @@ use crate::{
 pub struct MatmulCpuKernel {
     data_type: DataType,
     hadamard: <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel,
+    bias_add: <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
 }
 
 impl MatmulKernel for MatmulCpuKernel {
@@ -35,9 +36,12 @@ impl MatmulKernel for MatmulCpuKernel {
         }
         let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
             .map_err(CpuError::from)?;
+        let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, true)
+            .map_err(CpuError::from)?;
         Ok(Self {
             data_type,
             hadamard,
+            bias_add,
         })
     }
 
@@ -211,12 +215,6 @@ impl MatmulCpuKernel {
                 path: "MatmulCpuKernel/Quant",
             });
         }
-        if d_mask.contains(GemmDTransform::BIAS) {
-            return Err(MatmulError::UnsupportedDOp {
-                bit: GemmDTransform::BIAS,
-                path: "MatmulCpuKernel/Quant",
-            });
-        }
         if !arguments.b_transpose || arguments.b_leading_dimension.is_some() {
             return Err(MatmulError::UnsupportedLayout {
                 path: "MatmulCpuKernel/Quant",
@@ -241,6 +239,7 @@ impl MatmulCpuKernel {
         }
 
         let post_rht = arguments.d_transform.iter().find_map(|op| op.as_rht());
+        let post_bias = arguments.d_transform.iter().find_map(|op| op.as_bias());
 
         if arguments.m >= 5 && arguments.n > 1 {
             let MatmulArguments {
@@ -256,7 +255,7 @@ impl MatmulCpuKernel {
                 n,
                 k,
             } = arguments;
-            d_transform.retain(|op| op.bit() != GemmDTransform::RHT);
+            d_transform.retain(|op| op.bit() != GemmDTransform::RHT && op.bit() != GemmDTransform::BIAS);
             encode_quantized_gemm(
                 encoder,
                 MatmulArguments {
@@ -274,6 +273,9 @@ impl MatmulCpuKernel {
                 },
                 self.data_type,
             );
+            if let Some(bias) = post_bias {
+                self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, m * n, encoder);
+            }
             if let Some(factors) = post_rht {
                 self.hadamard.encode(d, factors, n, m, encoder);
             }
@@ -334,7 +336,19 @@ impl MatmulCpuKernel {
                     hadamard_factors.is_some(),
                 )
                 .map_err(MatmulError::BackendError)?;
-            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, hadamard_factors, k, n, m, encoder);
+            kernel.encode(
+                weights,
+                scales,
+                zero_points,
+                biases,
+                (a, a_offset),
+                &mut *d,
+                hadamard_factors,
+                k,
+                n,
+                m,
+                encoder,
+            );
         } else {
             if hadamard_factors.is_some() {
                 return Err(MatmulError::UnsupportedHadamard);
@@ -348,7 +362,10 @@ impl MatmulCpuKernel {
                     method,
                 )
                 .map_err(MatmulError::BackendError)?;
-            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, k, n, m, encoder);
+            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), &mut *d, k, n, m, encoder);
+        }
+        if let Some(bias) = post_bias {
+            self.bias_add.encode(None::<&Allocation<Cpu>>, bias, d, n, m * n, encoder);
         }
         Ok(())
     }
