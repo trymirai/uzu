@@ -3,9 +3,11 @@ use std::{path::Path, sync::Arc};
 use tokio::{runtime::Handle as TokioHandle, sync::broadcast::Sender as TokioBroadcastSender};
 use tokio_stream::wrappers::BroadcastStream as TokioBroadcastStream;
 
+#[cfg(target_vendor = "apple")]
+use crate::backends::apple::AppleDownloadManager;
 use crate::{
     DownloadError, DownloadId, FileCheck, FileDownloadEvent, FileDownloadTask,
-    backends::{apple::AppleDownloadManager, universal::UniversalDownloadManager},
+    backends::universal::UniversalDownloadManager,
 };
 
 pub type DownloadEvent = (DownloadId, FileDownloadEvent);
