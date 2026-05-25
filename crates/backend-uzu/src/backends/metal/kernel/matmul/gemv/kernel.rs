@@ -8,8 +8,7 @@ use crate::{
             Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
-                HadamardTransformKernel, Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-                TensorAddBiasKernel,
+                Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError},
             },
         },
@@ -37,7 +36,6 @@ pub(crate) struct GemvKernel {
     fp_pipelines: HashMap<GemvSpecialization, MatmulGemvMetalKernel>,
     qmv: HashMap<QmvKey, <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel>,
     qmv_fast: HashMap<QmvKey, <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel>,
-    hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
     bias_add: TensorAddBiasMetalKernel,
 }
 
@@ -46,15 +44,12 @@ impl GemvKernel {
         context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MatmulError<Metal>> {
-        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
-            .map_err(MatmulError::BackendError)?;
         let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
         let mut kernel = Self {
             data_type,
             fp_pipelines: HashMap::new(),
             qmv: HashMap::new(),
             qmv_fast: HashMap::new(),
-            hadamard,
             bias_add,
         };
         for &config in GemvSpecialization::precompile_configs(data_type) {
@@ -82,6 +77,7 @@ impl GemvKernel {
                     specialization.elements_per_thread_col,
                     specialization.is_accumulate,
                     specialization.is_bias,
+                    specialization.is_hadamard,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -115,7 +111,7 @@ impl GemvKernel {
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let is_accumulate = arguments.d_transform.accumulate;
-        let post_rht = arguments.d_transform.rht_factors;
+        let rht_factors = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
             a,
@@ -152,12 +148,14 @@ impl GemvKernel {
             });
         }
 
-        let specialization = GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some());
+        let specialization =
+            GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some(), rht_factors.is_some());
 
         self.fp_get_or_create(encoder.context(), specialization)?.encode(
             weights,
             (a, a_offset),
             output_bias,
+            rht_factors,
             &mut *d,
             k,
             n,
@@ -168,9 +166,6 @@ impl GemvKernel {
             encoder,
         );
 
-        if let Some(factors) = post_rht {
-            self.hadamard.encode(d, factors, n, m, encoder);
-        }
         Ok(())
     }
 
