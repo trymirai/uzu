@@ -23,7 +23,7 @@ pub enum EmbeddingConfig {
         common: EmbeddingConfigCommon,
         precision: DataType,
     },
-    #[serde(rename = "ScaleBiasQuantizedTiedEmbeddingConfig", alias = "MLXQuantizedTiedEmbeddingConfig")]
+    #[serde(rename = "MLXQuantizedTiedEmbeddingConfig")]
     ScaleBiasQuantizedTied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
@@ -32,7 +32,7 @@ pub enum EmbeddingConfig {
         activation_quantization_mode: Option<QuantizationMode>,
         activation_precision: DataType,
     },
-    #[serde(rename = "ScaleBiasQuantizedUntiedEmbeddingConfig", alias = "MLXQuantizedUntiedEmbeddingConfig")]
+    #[serde(rename = "MLXQuantizedUntiedEmbeddingConfig")]
     ScaleBiasQuantizedUntied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
@@ -41,7 +41,7 @@ pub enum EmbeddingConfig {
         activation_quantization_mode: Option<QuantizationMode>,
         activation_precision: DataType,
     },
-    #[serde(rename = "ScaleBiasSemiQuantizedUntiedEmbeddingConfig", alias = "MLXSemiQuantizedUntiedEmbeddingConfig")]
+    #[serde(rename = "MLXSemiQuantizedUntiedEmbeddingConfig")]
     ScaleBiasSemiQuantizedUntied {
         #[serde(flatten)]
         common: EmbeddingConfigCommon,
