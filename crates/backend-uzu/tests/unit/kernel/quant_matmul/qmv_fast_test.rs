@@ -6,7 +6,7 @@ use backend_uzu::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels, gpu_types::QuantizationMethod,
 
-            kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
+            kernel::QuantizedMatmulQmvFastKernel,
         },
         cpu::Cpu,
     },
@@ -31,14 +31,15 @@ fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-    let kernel = <<Cpu as Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+    let kernel = <<Cpu as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
         &context,
         T::data_type(),
         input.group_size,
         input.bits,
         input.quant_method,
+        false,
     )
-    .expect("Failed to create QuantizedMatmulQmvKernel");
+    .expect("Failed to create QuantizedMatmulQmvFastKernel");
     kernel.encode(
         &w_buf,
         &scales_buf,
@@ -46,6 +47,7 @@ fn get_expected<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
         bias_buf.as_ref(),
         &x_buf,
         &mut y_buf,
+        None::<&Allocation<Cpu>>,
         input.k,
         input.n,
         input.m,
