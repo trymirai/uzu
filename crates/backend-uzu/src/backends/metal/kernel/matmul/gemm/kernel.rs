@@ -12,7 +12,7 @@ use crate::{
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo, gemm::GemmWeights},
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
             },
         },
         metal::{
@@ -170,6 +170,10 @@ impl GemmKernel {
             output_transform.remove(GemmDTransform::BIAS);
         }
 
+        let weight_prologue = arguments.b.weight_prologue();
+        let bits_per_weight = arguments.b.bits_per_weight();
+        let group_size = arguments.b.group_size();
+
         let MatmulArguments {
             a,
             a_offset,
@@ -240,9 +244,6 @@ impl GemmKernel {
                     ab_scale,
                 };
 
-                let gemm_weights: GemmWeights<'_, Metal, TB> = GemmWeights::FullPrecision {
-                    weights,
-                };
                 let specialization = GemmSpecialization {
                     data_type: self.data_type,
                     tiling,
@@ -250,9 +251,9 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: b_transpose,
-                    weight_prologue: gemm_weights.weight_prologue(),
-                    bits_per_weight: gemm_weights.bits_per_weight(),
-                    group_size: gemm_weights.group_size(),
+                    weight_prologue,
+                    bits_per_weight,
+                    group_size,
                 };
                 specialization.validate().map_err(MetalError::from)?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
@@ -276,48 +277,21 @@ impl GemmKernel {
             | MatmulB::ScaleZeroPointDequant {
                 ..
             }) => {
-                let (weights, gemm_weights, scales, biases, zero_points) = match quant_b {
+                let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
                         scales,
                         biases,
-                        mode,
-                        group_size,
-                    } => (
-                        w,
-                        GemmWeights::ScaleBias {
-                            weights: w,
-                            scales,
-                            biases,
-                            mode,
-                            group_size,
-                        },
-                        Some(scales),
-                        Some(biases),
-                        None,
-                    ),
+                        ..
+                    } => (w, Some(scales), Some(biases), None),
                     MatmulB::ScaleZeroPointDequant {
                         b: w,
                         scales,
                         zero_points,
-                        mode,
-                        group_size,
-                    } => (
-                        w,
-                        GemmWeights::ScaleZeroPoint {
-                            weights: w,
-                            scales,
-                            zero_points,
-                            mode,
-                            group_size,
-                        },
-                        Some(scales),
-                        None,
-                        Some(zero_points),
-                    ),
+                        ..
+                    } => (w, Some(scales), None, Some(zero_points)),
                     _ => unreachable!(),
                 };
-                let gemm_weights: GemmWeights<'_, Metal, TB> = gemm_weights;
 
                 let tiling = select_quant_tiling(m, n);
                 let alignment =
@@ -333,9 +307,9 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: true,
-                    weight_prologue: gemm_weights.weight_prologue(),
-                    bits_per_weight: gemm_weights.bits_per_weight(),
-                    group_size: gemm_weights.group_size(),
+                    weight_prologue,
+                    bits_per_weight,
+                    group_size,
                 };
                 specialization.validate().map_err(MetalError::from)?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
