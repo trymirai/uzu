@@ -2,6 +2,7 @@
 
 #include "../../../common/integral_constant.h"
 #include "../../../common/thread_context.h"
+#include "../../../hadamard_transform/hadamard_transform.h"
 #include "../../common/fragment.h"
 #include "../../common/mxu_fragment_ops.h"
 #include "../../common/mxu_gemm_loop.h"
@@ -47,7 +48,6 @@ struct MxuMmaCore {
       const device int32_t* rht_factors,
       const thread ThreadContext& thread_context
   ) {
-    (void)rht_factors;
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
@@ -240,6 +240,37 @@ struct MxuMmaCore {
           }
       );
     });
+
+    if (output_transform.contains(GemmDTransform::RHT)) {
+      threadgroup_barrier(mem_flags::mem_device);
+      device T* d_block = d + block_row * params->leading_dimension_d +
+          block_col;
+      const device int32_t* rht_factors_block = rht_factors + block_col;
+      const ushort tile_block_rows =
+          ushort(min(int(THREADGROUP_BLOCK_M),
+                     int(params->M) - int(block_row)));
+      const ushort tile_block_cols =
+          ushort(min(int(THREADGROUP_BLOCK_N),
+                     int(params->N) - int(block_col)));
+      constexpr ushort SIMDGROUP_COUNT =
+          SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
+      const ushort stripes_per_row = tile_block_cols / METAL_SIMD_SIZE;
+      const ushort sg_index = thread_context.simdgroup_index;
+      const ushort simd_lane = thread_context.simd_lane_id;
+      const uint total_work = uint(tile_block_rows) * uint(stripes_per_row);
+      for (uint w = sg_index; w < total_work; w += SIMDGROUP_COUNT) {
+        const ushort row_local = ushort(w / stripes_per_row);
+        const ushort stripe = ushort(w % stripes_per_row);
+        const ushort col_local = stripe * ushort(METAL_SIMD_SIZE) + simd_lane;
+        const size_t d_idx =
+            size_t(row_local) * size_t(params->leading_dimension_d) +
+            size_t(col_local);
+        T value = d_block[d_idx];
+        d_block[d_idx] = simdgroup_random_hadamard_transform(
+            simd_lane, value, rht_factors_block[col_local]
+        );
+      }
+    }
   }
 };
 
