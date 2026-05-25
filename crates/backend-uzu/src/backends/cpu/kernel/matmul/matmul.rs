@@ -7,7 +7,7 @@ use crate::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
-                HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, TensorAddBiasKernel,
+                HadamardTransformKernel, QuantizedMatmulQmvFastKernel, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
@@ -316,55 +316,40 @@ impl MatmulCpuKernel {
             QuantizationMode::U4 => 4u32,
             QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
         };
-        let use_fast = n % 8 == 0 && k % 512 == 0;
+        if n % 8 != 0 {
+            return Err(MatmulError::UnsupportedLayout {
+                path: "MatmulCpuKernel/Quant",
+            });
+        }
         let (zero_points, biases) = match method {
             QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
             QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
         };
 
         let context = encoder.context();
-        if use_fast {
-            let kernel =
-                <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
-                    context,
-                    self.data_type,
-                    group_size,
-                    bits,
-                    method,
-                    hadamard_factors.is_some(),
-                )
-                .map_err(MatmulError::BackendError)?;
-            kernel.encode(
-                weights,
-                scales,
-                zero_points,
-                biases,
-                (a, a_offset),
-                &mut *d,
-                hadamard_factors,
-                k,
-                n,
-                m,
-                encoder,
-            );
-        } else {
-            if hadamard_factors.is_some() {
-                return Err(MatmulError::UnsupportedDOp {
-                    bit: GemmDTransform::RHT,
-                    path: "MatmulCpuKernel/Quant",
-                });
-            }
-            let kernel =
-                <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
-                    context,
-                    self.data_type,
-                    group_size,
-                    bits,
-                    method,
-                )
-                .map_err(MatmulError::BackendError)?;
-            kernel.encode(weights, scales, zero_points, biases, (a, a_offset), &mut *d, k, n, m, encoder);
-        }
+        let kernel =
+            <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                context,
+                self.data_type,
+                group_size,
+                bits,
+                method,
+                hadamard_factors.is_some(),
+            )
+            .map_err(MatmulError::BackendError)?;
+        kernel.encode(
+            weights,
+            scales,
+            zero_points,
+            biases,
+            (a, a_offset),
+            &mut *d,
+            hadamard_factors,
+            k,
+            n,
+            m,
+            encoder,
+        );
         if let Some(bias) = post_bias {
             self.bias_add.encode(None::<&Allocation<Cpu>>, bias, d, n, m * n, encoder);
         }
