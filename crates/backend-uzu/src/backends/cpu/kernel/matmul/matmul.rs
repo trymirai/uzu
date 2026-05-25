@@ -70,16 +70,10 @@ impl MatmulCpuKernel {
         arguments: MatmulArguments<Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), MatmulError<Cpu>> {
-        if arguments.d_transform.mask().contains(GemmDTransform::RHT) {
-            return Err(MatmulError::UnsupportedDOp {
-                bit: GemmDTransform::RHT,
-                path: "MatmulCpuKernel",
-            });
-        }
-
         let ab_scale = arguments.d_transform.ab_scale;
         let bias_alloc = arguments.d_transform.bias;
         let is_accumulate = arguments.d_transform.accumulate;
+        let post_rht = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
             a,
@@ -101,7 +95,6 @@ impl MatmulCpuKernel {
             _ => unreachable!(),
         };
 
-        let command_buffer = encoder.as_command_buffer_mut();
         let m_u = m as usize;
         let n_u = n as usize;
         let k_u = k as usize;
@@ -115,23 +108,25 @@ impl MatmulCpuKernel {
         let data_type = self.data_type;
         let a_buffer_range = a.as_buffer_range_ref();
         let b_buffer_range = weights.as_buffer_range_ref();
-        let d_buffer_range = d.as_buffer_range_mut();
         let a_byte_off = a_buffer_range.range().start + a_offset;
         let b_byte_off = b_buffer_range.range().start + b_offset;
-        let d_byte_off = d_buffer_range.range().start;
-
         let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
         let b_ptr =
             SendPtr(unsafe { &*b_buffer_range.buffer().downcast().get() }.as_ptr().wrapping_byte_add(b_byte_off));
-        let d_ptr =
-            SendPtrMut(unsafe { (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8 });
-
         let bias_ptr = bias_alloc.map(|bias| {
             let bias_buffer_range = bias.as_buffer_range_ref();
             let bias_range = bias_buffer_range.range();
             SendPtr(unsafe { &*bias_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(bias_range.start))
         });
+        let d_ptr = {
+            let d_buffer_range = d.as_buffer_range_mut();
+            let d_byte_off = d_buffer_range.range().start;
+            SendPtrMut(unsafe {
+                (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8
+            })
+        };
 
+        let command_buffer = encoder.as_command_buffer_mut();
         command_buffer.push_command(move || match data_type {
             DataType::F32 => {
                 super::gemm::shaders::steel_gemm::matmul_gemm_impl::<f32>(
@@ -192,6 +187,10 @@ impl MatmulCpuKernel {
             },
             _ => unreachable!(),
         });
+
+        if let Some(factors) = post_rht {
+            self.hadamard.encode(d, factors, n, m, encoder);
+        }
 
         Ok(())
     }
