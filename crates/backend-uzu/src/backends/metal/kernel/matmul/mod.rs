@@ -165,7 +165,6 @@ impl MatmulMetalKernel {
             k,
         } = arguments;
 
-        // A temopary hack, will port the post ops to the gemv later.
         let d_transform = d_transform.without(GemmDTransform::RHT);
 
         gemv::fp::encode(

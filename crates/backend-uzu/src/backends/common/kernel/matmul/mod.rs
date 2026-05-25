@@ -50,11 +50,6 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
     },
 }
 
-/// Output-side post-ops for a matmul: `d = op(a @ b)`.
-///
-/// Constructed via [`MatmulDOps::new`] so the [`GemmDTransform`] mask and the
-/// optional data fields can never disagree. Use [`MatmulDOps::none`] for an
-/// op-free transform.
 pub struct MatmulDOps<'a, B: Backend> {
     mask: GemmDTransform,
     pub ab_scale: Option<f32>,
@@ -100,7 +95,6 @@ impl<'a, B: Backend> MatmulDOps<'a, B> {
         self.mask
     }
 
-    /// Return a copy of `self` with the ops named by `bits` cleared.
     pub fn without(
         self,
         bits: GemmDTransform,
