@@ -77,7 +77,8 @@ impl GemmKernel {
 
         let ab_scale = arguments.d_transform.ab_scale.unwrap_or(1.0);
         let output_bias = arguments.d_transform.bias;
-        let output_transform = arguments.d_transform.mask() - GemmDTransform::RHT;
+        let mut output_transform = arguments.d_transform.mask();
+        output_transform.remove(GemmDTransform::RHT);
 
         let MatmulArguments {
             a,
