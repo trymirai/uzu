@@ -157,13 +157,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - name: Check backend-uzu (CPU-only, no default features)
-        run: cargo check -p backend-uzu --no-default-features
+        run: cargo +stable check -p backend-uzu --no-default-features
 
       - name: Check uzu (CPU-only)
-        run: cargo check -p uzu --no-default-features --features backend-cpu
+        run: cargo +stable check -p uzu --no-default-features --features backend-cpu
 
       - name: Check cli (CPU-only)
-        run: cargo check -p cli --no-default-features --features backend-cpu,capability-cli
+        run: cargo +stable check -p cli --no-default-features --features backend-cpu,capability-cli
 
   completed:
     name: completed
