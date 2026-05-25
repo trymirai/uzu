@@ -154,9 +154,8 @@ impl GemmKernel {
 
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
-        let post_rht = arguments.d_transform.rht_factors;
-        let mut output_transform = arguments.d_transform.mask();
-        output_transform.remove(GemmDTransform::RHT);
+        let rht_factors = arguments.d_transform.rht_factors;
+        let output_transform = arguments.d_transform.mask();
 
         let b_prologue = arguments.b.b_prologue();
         let bits_per_b = arguments.b.bits_per_b();
@@ -253,7 +252,7 @@ impl GemmKernel {
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     output_bias,
-                    None::<&Allocation<Metal>>,
+                    rht_factors,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -310,7 +309,7 @@ impl GemmKernel {
                     biases,
                     zero_points,
                     output_bias,
-                    None::<&Allocation<Metal>>,
+                    rht_factors,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -319,9 +318,6 @@ impl GemmKernel {
             },
         }
 
-        if let Some(factors) = post_rht {
-            self.hadamard.encode(d, factors, n, m, encoder);
-        }
         Ok(())
     }
 }
