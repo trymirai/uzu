@@ -1,10 +1,12 @@
 #include <metal_stdlib>
-#include "../common/dsl.h"
-#include "../hadamard_transform/hadamard_transform.h"
-#include "../generated/quantization_method.h"
-#include "quant_matmul.h"
+#include "../../common/dsl.h"
+#include "../../hadamard_transform/hadamard_transform.h"
+#include "../../generated/quantization_method.h"
+#include "../gemm/common/quant_pack.h"
+#include "common/qmv_ops.h"
 
 using namespace uzu::quantization_method;
+using namespace uzu::gemm;
 
 template <typename T, uint GROUP_SIZE, uint BITS>
 VARIANTS(T, float, half, bfloat)

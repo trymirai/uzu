@@ -14,7 +14,7 @@ using namespace metal;
 #define GEMV_MAX_THREADGROUP_MEMORY 320
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, half, bfloat)
 KERNEL(MatmulGemv)(
     const device T* matrix,
     const device T* input_vector,

@@ -2,16 +2,20 @@ use super::{kernel::GemvKernel, spec::GemvSpecialization};
 use crate::backends::{
     common::{
         AsBufferRangeRef, Buffer, Encoder,
-        kernel::matmul::{MatmulArgumentC, MatmulArguments, MatmulError},
+        kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
     },
     metal::Metal,
 };
 
-pub(crate) fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
     kernel: &mut GemvKernel,
     encoder: &mut Encoder<Metal>,
-    arguments: MatmulArguments<Metal, TB>,
+    arguments: MatmulArguments<'a, Metal, TB>,
 ) -> Result<(), MatmulError<Metal>> {
+    let ab_scale = arguments.d_transform.ab_scale;
+    let output_bias = arguments.d_transform.bias;
+    let is_accumulate = arguments.d_transform.accumulate;
+
     let MatmulArguments {
         a,
         a_offset,
@@ -19,38 +23,34 @@ pub(crate) fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         b_offset,
         b_leading_dimension,
         b_transpose,
-        ab_scale,
-        c,
         d,
-        batch_dim,
-        input_dim,
-        output_dim,
+        m,
+        n,
+        k,
+        ..
     } = arguments;
+    let weights = match b {
+        MatmulB::FullPrecision {
+            b: w,
+        } => w,
+        _ => panic!("FP gemv requires FullPrecision B"),
+    };
     assert!(b_transpose, "encode_gemv does not support b_transpose=false");
     assert!(b_offset == 0, "encode_gemv does not support nonzero b_offset");
-    assert!(
-        b_leading_dimension.is_none_or(|ld| ld == input_dim),
-        "encode_gemv does not support custom b_leading_dimension"
-    );
+    assert!(b_leading_dimension.is_none_or(|ld| ld == k), "encode_gemv does not support custom b_leading_dimension");
 
-    let (is_accumulate, output_bias) = match c {
-        MatmulArgumentC::Accumulate => (true, None),
-        MatmulArgumentC::Bias(bias) => (false, Some(bias)),
-        MatmulArgumentC::None => (false, None),
-    };
-
-    let specialization = GemvSpecialization::select(input_dim, output_dim, is_accumulate, output_bias.is_some());
+    let specialization = GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some());
 
     kernel.get_or_create(encoder.context(), specialization)?.encode(
-        b,
+        weights,
         (a, a_offset),
         output_bias,
         d,
-        input_dim,
-        output_dim,
-        input_dim,
+        k,
+        n,
+        k,
         ab_scale,
-        batch_dim,
+        m,
         specialization.output_rows_per_threadgroup(),
         encoder,
     );

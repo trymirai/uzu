@@ -483,23 +483,27 @@ impl<B: Backend> FishAudioTextDecoderRuntime<B> {
             if semantic_bridge.fast_model_dim != fast_model_dim || semantic_bridge.slow_model_dim != slow_model_dim {
                 return Err(Error::GenerateFailed);
             }
-            semantic_bridge.projection.encode(
-                MatmulArguments {
-                    a: slow_hidden_capture,
-                    a_offset: 0,
-                    b: weights,
-                    b_offset: 0,
-                    b_leading_dimension: None,
-                    b_transpose: true,
-                    ab_scale: 1.0,
-                    c: MatmulArgumentC::None,
-                    d: output_embedding,
-                    batch_dim: 1,
-                    input_dim: slow_model_dim as u32,
-                    output_dim: fast_model_dim as u32,
-                },
-                encoder,
-            );
+            semantic_bridge
+                .projection
+                .encode(
+                    MatmulArguments {
+                        a: slow_hidden_capture,
+                        a_offset: 0,
+                        b: MatmulB::FullPrecision {
+                            b: weights,
+                        },
+                        b_offset: 0,
+                        b_leading_dimension: None,
+                        b_transpose: true,
+                        d: output_embedding,
+                        d_transform: MatmulDOps::none(),
+                        m: 1,
+                        n: fast_model_dim as u32,
+                        k: slow_model_dim as u32,
+                    },
+                    encoder,
+                )
+                .expect("encode failed");
             return Ok(());
         }
 

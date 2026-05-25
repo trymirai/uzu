@@ -8,22 +8,21 @@
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
 #include "block_geometry.h"
+#include "gemm_tiling.h"
 
 using namespace metal;
 
 namespace uzu {
 namespace gemm {
 
-// MPP `matmul2d_descriptor.transpose_right` drives `TRANSPOSE_B` (MSL
-// Spec 6.18).
-template <
-    typename T,
-    ushort THREADGROUP_BLOCK_M,
-    ushort THREADGROUP_BLOCK_N,
-    ushort SIMDGROUPS_PER_ROW,
-    ushort SIMDGROUPS_PER_COLUMN,
-    bool TRANSPOSE_B>
+template <typename T, GemmTiling GEMM_TILING, bool TRANSPOSE_B>
 struct MxuMmaCore {
+  METAL_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
+  METAL_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
+  METAL_CONST ushort SIMDGROUPS_PER_ROW =
+      gemm_tiling_simdgroups_per_row(GEMM_TILING);
+  METAL_CONST ushort SIMDGROUPS_PER_COLUMN =
+      gemm_tiling_simdgroups_per_column(GEMM_TILING);
   METAL_CONST ushort SIMDGROUP_BLOCK_M =
       THREADGROUP_BLOCK_M / SIMDGROUPS_PER_ROW;
   METAL_CONST ushort SIMDGROUP_BLOCK_N =
@@ -43,9 +42,11 @@ struct MxuMmaCore {
       device T* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
-      GemmOutputTransformKind output_transform,
+      GemmDTransform output_transform,
+      const device T* output_bias,
       const thread ThreadContext& thread_context
   ) {
+    (void)output_bias;
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
@@ -98,12 +99,9 @@ struct MxuMmaCore {
 
     const int aligned_k_iterations = int(params->K) / int(THREADGROUP_BLOCK_K);
 
-    const bool apply_scale =
-        output_transform == GemmOutputTransformKind::Scale ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulate;
+    const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool apply_accumulate =
-        output_transform == GemmOutputTransformKind::Accumulate ||
-        output_transform == GemmOutputTransformKind::ScaleAccumulate;
+        output_transform.contains(GemmDTransform::ACCUMULATE);
 
     dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       dispatch_bool(

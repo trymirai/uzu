@@ -4,7 +4,7 @@ use proc_macros::kernel;
 
 use crate::{
     ArrayElement,
-    backends::{common::gpu_types::QuantizationMethod, cpu::kernel::quant_matmul::qmv::qmv},
+    backends::{common::gpu_types::QuantizationMethod, cpu::kernel::matmul::gemv::qmv::qmv},
 };
 
 #[kernel(QuantizedMatmulQmvFast)]

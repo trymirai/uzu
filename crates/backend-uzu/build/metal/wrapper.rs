@@ -137,7 +137,9 @@ fn kernel_wrappers(
         kernel_wrappers.push(kernel_header(&bindings, base).into_boxed_str());
     }
 
-    let engine = rhai::Engine::new();
+    let evaluator = crate::common::constraints::Evaluator::new(
+        kernel.variants.as_deref().into_iter().flatten().flat_map(|tp| tp.variants.iter().map(|v| v.as_ref())),
+    );
     for type_variant in if let Some(variants) = &kernel.variants {
         variants
             .iter()
@@ -157,7 +159,7 @@ fn kernel_wrappers(
         vec![None]
     } {
         if let Some(ref tv) = type_variant {
-            if !crate::common::constraints::satisfied(&engine, tv, &kernel.constraints) {
+            if !evaluator.satisfied(tv, &kernel.constraints) {
                 continue;
             }
         }
