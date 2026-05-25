@@ -73,6 +73,12 @@ impl GemmSpecialization {
                             GemmDTransform::SCALE,
                             GemmDTransform::ACCUMULATE,
                             GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::BIAS,
+                            GemmDTransform::BIAS | GemmDTransform::SCALE,
+                            GemmDTransform::BIAS | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::BIAS
+                                | GemmDTransform::SCALE
+                                | GemmDTransform::ACCUMULATE,
                         ] {
                             out.push(Self {
                                 data_type,

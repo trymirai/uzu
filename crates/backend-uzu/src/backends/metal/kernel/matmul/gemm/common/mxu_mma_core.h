@@ -46,7 +46,6 @@ struct MxuMmaCore {
       const device T* output_bias,
       const thread ThreadContext& thread_context
   ) {
-    (void)output_bias;
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
@@ -102,6 +101,13 @@ struct MxuMmaCore {
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool apply_accumulate =
         output_transform.contains(GemmDTransform::ACCUMULATE);
+    const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
+
+    const device T* bias_simdgroup = output_bias + size_t(block_col) +
+        size_t(tile_col_offset);
+    using FragType =
+        uzu::matmul::Fragment<T, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
+    const short2 thread_position = FragType::get_position(thread_context);
 
     dispatch_bool(alignment.contains(GemmAlignment::K), [&](auto aligned_k) {
       dispatch_bool(
@@ -169,6 +175,49 @@ struct MxuMmaCore {
                          i++) {
                       accumulator_tile.elements()[i] +=
                           AccumulatorType(existing_output.elements()[i]);
+                    }
+                  }
+
+                  if (apply_bias) {
+                    METAL_PRAGMA_UNROLL
+                    for (ushort tile_row = 0; tile_row < TILES_M; ++tile_row) {
+                      METAL_PRAGMA_UNROLL
+                      for (ushort tile_col = 0; tile_col < TILES_N;
+                           ++tile_col) {
+                        thread auto& frag =
+                            accumulator_tile.fragment_at(tile_row, tile_col);
+                        const short col_base = short(
+                            tile_col *
+                                uzu::matmul::MxuFragmentOps::FRAGMENT_COLS +
+                            thread_position.x
+                        );
+                        METAL_PRAGMA_UNROLL
+                        for (ushort i = 0;
+                             i < uzu::matmul::MxuFragmentOps::
+                                     THREAD_ELEMENT_ROWS;
+                             ++i) {
+                          METAL_PRAGMA_UNROLL
+                          for (ushort j = 0;
+                               j < uzu::matmul::MxuFragmentOps::
+                                       THREAD_ELEMENT_COLS;
+                               ++j) {
+                            const ushort element_index = i *
+                                    uzu::matmul::MxuFragmentOps::
+                                        THREAD_ELEMENT_COLS +
+                                j;
+                            const short col_local = short(col_base + j);
+                            if constexpr (aligned_n.value) {
+                              frag[element_index] +=
+                                  AccumulatorType(bias_simdgroup[col_local]);
+                            } else {
+                              if (col_local < simdgroup_limit_n) {
+                                frag[element_index] +=
+                                    AccumulatorType(bias_simdgroup[col_local]);
+                              }
+                            }
+                          }
+                        }
+                      }
                     }
                   }
 

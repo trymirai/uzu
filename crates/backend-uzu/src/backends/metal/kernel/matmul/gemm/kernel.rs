@@ -153,22 +153,10 @@ impl GemmKernel {
         }
 
         let ab_scale = arguments.d_transform.ab_scale;
-        let post_bias = if use_mxu {
-            arguments.d_transform.bias
-        } else {
-            None
-        };
-        let output_bias = if use_mxu {
-            None
-        } else {
-            arguments.d_transform.bias
-        };
+        let output_bias = arguments.d_transform.bias;
         let post_rht = arguments.d_transform.rht_factors;
         let mut output_transform = arguments.d_transform.mask();
         output_transform.remove(GemmDTransform::RHT);
-        if use_mxu {
-            output_transform.remove(GemmDTransform::BIAS);
-        }
 
         let b_prologue = arguments.b.b_prologue();
         let bits_per_b = arguments.b.bits_per_b();
@@ -329,9 +317,6 @@ impl GemmKernel {
             },
         }
 
-        if let Some(bias) = post_bias {
-            self.bias_add.encode(None::<&<Metal as Backend>::DenseBuffer>, bias, &mut *d, n, m * n, encoder);
-        }
         if let Some(factors) = post_rht {
             self.hadamard.encode(d, factors, n, m, encoder);
         }
