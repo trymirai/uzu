@@ -7,6 +7,7 @@
 #include "../../common/threadgroup_tile.h"
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
+#include "../../../hadamard_transform/hadamard_transform.h"
 #include "block_geometry.h"
 #include "gemm_alignment.h"
 #include "gemm_tiling.h"
@@ -155,7 +156,10 @@ struct SimdgroupMmaCore {
       const thread uzu::matmul::TransformScaleAccumulate<float, float>&
           epilogue,
       const device T* bias_block,
-      const bool needs_bias
+      const bool needs_bias,
+      const device int32_t* rht_factors_block,
+      const bool needs_rht,
+      const thread ThreadContext& thread_context
   ) {
     constexpr GemmAlignment gemm_alignment{GEMM_ALIGNMENT_RAW};
     if constexpr (
@@ -191,6 +195,28 @@ struct SimdgroupMmaCore {
           short2(tile_block_cols, tile_block_rows)
       );
     }
+
+    if (needs_rht) {
+      threadgroup_barrier(mem_flags::mem_device);
+      constexpr ushort SIMDGROUP_COUNT =
+          SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
+      const ushort stripes_per_row = tile_block_cols / METAL_SIMD_SIZE;
+      const ushort sg_index = thread_context.simdgroup_index;
+      const ushort simd_lane = thread_context.simd_lane_id;
+      const uint total_work = uint(tile_block_rows) * uint(stripes_per_row);
+      for (uint w = sg_index; w < total_work; w += SIMDGROUP_COUNT) {
+        const ushort row_local = ushort(w / stripes_per_row);
+        const ushort stripe = ushort(w % stripes_per_row);
+        const ushort col_local = stripe * ushort(METAL_SIMD_SIZE) + simd_lane;
+        const size_t d_idx =
+            size_t(row_local) * size_t(params->leading_dimension_d) +
+            size_t(col_local);
+        T value = d[d_idx];
+        d[d_idx] = simdgroup_random_hadamard_transform(
+            simd_lane, value, rht_factors_block[col_local]
+        );
+      }
+    }
   }
 
   static METAL_FUNC void run(
@@ -209,7 +235,6 @@ struct SimdgroupMmaCore {
       threadgroup T* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    (void)rht_factors;
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
@@ -245,11 +270,13 @@ struct SimdgroupMmaCore {
     const bool needs_accumulate =
         output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool needs_bias = output_transform.contains(GemmDTransform::BIAS);
+    const bool needs_rht = output_transform.contains(GemmDTransform::RHT);
     const bool needs_epilogue = needs_scale || needs_accumulate;
     const float alpha = needs_scale ? params->ab_scale : 1.0f;
     const float beta = needs_accumulate ? 1.0f : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
     const device T* bias_block = output_bias + block_col;
+    const device int32_t* rht_factors_block = rht_factors + block_col;
 
     const bool all_aligned = ((alignment.contains(GemmAlignment::M)) ||
                               (tile_block_rows == THREADGROUP_BLOCK_M)) &&
@@ -305,7 +332,10 @@ struct SimdgroupMmaCore {
             needs_epilogue,
             epilogue,
             bias_block,
-            needs_bias
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
         );
       });
       return;
@@ -353,7 +383,10 @@ struct SimdgroupMmaCore {
             needs_epilogue,
             epilogue,
             bias_block,
-            needs_bias
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
         );
       });
       return;
@@ -407,7 +440,10 @@ struct SimdgroupMmaCore {
             needs_epilogue,
             epilogue,
             bias_block,
-            needs_bias
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
         );
       });
     }
