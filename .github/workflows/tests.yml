@@ -55,20 +55,28 @@ jobs:
 
   tests:
     name: ${{ matrix.backend }}
+      ${{ matrix.host == 'linux' && ' (linux)' || '' }}
       ${{ matrix.tracing && ' (tracing)' || '' }}
       ${{ matrix.grammar && ' (grammar)' || '' }}
       ${{ matrix.target != '' && format(' ({0})', matrix.target) || '' }}
-    runs-on: [ self-hosted, macos, mac, arm64 ]
+    runs-on: ${{ matrix.host == 'linux' && 'ubuntu-latest' || fromJSON('["self-hosted","macos","mac","arm64"]') }}
 
     strategy:
       matrix:
         backend: [ 'cpu', 'metal' ]
+        host: [ 'macos' ]
         target: [ '' ]
         tracing: [ false, true ]
         include:
           - grammar: true
           - backend: 'cpu'
+            host: 'macos'
             target: 'wasm32-wasip1-threads'
+            tracing: false
+            grammar: false
+          - backend: 'cpu'
+            host: 'linux'
+            target: ''
             tracing: false
             grammar: false
         exclude:
@@ -89,12 +97,13 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           metal: ${{ matrix.backend == 'metal' }}
-          test_data: true
-          nextest: true
+          test_data: ${{ matrix.host != 'linux' }}
+          nextest: ${{ matrix.host != 'linux' }}
           target: ${{ matrix.target }}
+          linux: ${{ matrix.host == 'linux' }}
 
       - name: Build crates
-        run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }}
+        run: cargo +stable build --no-default-features $FEATURE_FLAGS ${{ matrix.target == 'wasm32-wasip1-threads' && '-p uzu' || '' }} ${{ matrix.host == 'linux' && '-p cli --features backend-cpu,capability-cli' || '' }}
 
       - name: Build benches
         if: ${{ matrix.backend != 'cpu' && !matrix.tracing }}
