@@ -308,7 +308,7 @@ fn parse_argument_type(
     }
 
     if c_type.contains("threadgroup") && c_type.contains('*') {
-        let lbracket = source.rfind('[').context("threadgroup missing size bracket")? + 1;
+        let lbracket = source.find('[').context("threadgroup missing size bracket")? + 1;
         let rbracket = source.rfind(']').context("threadgroup missing size bracket")?;
         return Ok(MetalArgumentType::Shared(Some(source[lbracket..rbracket].into())));
     }
