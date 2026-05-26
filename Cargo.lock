@@ -221,6 +221,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ash"
+version = "0.38.0+1.3.281"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
+dependencies = [
+ "libloading 0.8.9",
+]
+
+[[package]]
 name = "askama"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -557,6 +566,7 @@ name = "backend-uzu"
 version = "0.4.9"
 dependencies = [
  "anyhow",
+ "ash",
  "async-trait",
  "bindgen",
  "bitflags 2.11.1",

@@ -3,6 +3,8 @@ pub mod common;
 pub mod cpu;
 #[cfg(metal_backend)]
 pub mod metal;
+#[cfg(all(feature = "vulkan", target_os = "linux"))]
+pub mod vulkan;
 
 macro_rules! select_backend {
     ($expr:expr, $unk:expr) => {{

@@ -46,6 +46,10 @@ objc2-foundation = { workspace = true, optional = true }
 bytesize = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
+# vulkan on linux requires ash
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = { workspace = true, optional = true }
+
 # grammar on non-wasm requires xgrammar
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 xgrammar = { workspace = true, optional = true }
@@ -102,6 +106,7 @@ metal = [
     "dep:metal",
 ]
 grammar = ["dep:xgrammar"]
+vulkan = ["dep:ash"]
 tracing = []
 
 [[test]]
