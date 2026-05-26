@@ -7,17 +7,24 @@
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
 
-template <typename T, uint GROUP_SIZE, uint BITS>
-VARIANTS(T, float, half, bfloat)
+template <
+    typename WeightT,
+    typename InputT,
+    typename OutputT,
+    uint GROUP_SIZE,
+    uint BITS>
+VARIANTS(WeightT, float, half, bfloat)
+VARIANTS(InputT, float, half, bfloat)
+VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
 PUBLIC KERNEL(QuantizedMatmulQmv)(
     const device uint32_t* weights,
-    const device T* scales,
+    const device WeightT* scales,
     const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::ScaleZeroPoint),
-    const device T* biases OPTIONAL(quant_method == QuantizationMethod::ScaleBias),
-    const device T* input,
-    device T* output,
+    const device WeightT* biases OPTIONAL(quant_method == QuantizationMethod::ScaleBias),
+    const device InputT* input,
+    device OutputT* output,
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
     const constant uint& batch_size,
@@ -44,7 +51,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
 
   const uint in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
   const uint in_vec_size_g = (in_vec_size + GROUP_SIZE - 1) / GROUP_SIZE;
-  const device T* scales_base = scales;
+  const device WeightT* scales_base = scales;
   const uint out_row =
       out_block_idx * (num_simdgroups * results_per_simdgroup) +
       simd_group * results_per_simdgroup;
@@ -62,7 +69,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
     const uint zp_stride =
         BITS == 4 ? ((in_vec_size_g + 1) / 2) : in_vec_size_g;
     const device uint8_t* zps_row_base = nullptr;
-    const device T* biases_row_base = nullptr;
+    const device WeightT* biases_row_base = nullptr;
     if (quant_method == QuantizationMethod::ScaleBias) {
       biases_row_base = biases + out_row * in_vec_size_g;
     } else {
@@ -74,19 +81,19 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
 
     uint k = 0;
     for (; k + block_size <= in_vec_size; k += block_size) {
-      U sum = load_vector<T, U, values_per_thread, BITS>(input, x_thread);
+      U sum = load_vector<InputT, U, values_per_thread, BITS>(input, x_thread);
 
       for (uint row = 0;
            out_row + row < out_vec_size && row < results_per_simdgroup;
            row++) {
         auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
         const uint row_idx = out_row + row;
-        const device T* sr = scales_base + row_idx * in_vec_size_g;
+        const device WeightT* sr = scales_base + row_idx * in_vec_size_g;
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
         if (quant_method == QuantizationMethod::ScaleBias) {
-          const device T* bl = biases_row_base + row * in_vec_size_g;
+          const device WeightT* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, b, sum);
@@ -114,7 +121,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
             ? min(in_vec_size - k - thread_offset, values_per_thread)
             : 0;
     if (remaining > 0) {
-      U sum = load_vector_safe<T, U, values_per_thread, BITS>(
+      U sum = load_vector_safe<InputT, U, values_per_thread, BITS>(
           input,
           x_thread,
           remaining
@@ -125,12 +132,12 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
            row++) {
         auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
         const uint row_idx = out_row + row;
-        const device T* sr = scales_base + row_idx * in_vec_size_g;
+        const device WeightT* sr = scales_base + row_idx * in_vec_size_g;
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
         if (quant_method == QuantizationMethod::ScaleBias) {
-          const device T* bl = biases_row_base + row * in_vec_size_g;
+          const device WeightT* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, b, sum);
@@ -154,7 +161,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
          row++) {
       result[row] = simd_sum(result[row]);
       if (simd_lane == 0) {
-        output[row] = static_cast<T>(result[row]);
+        output[row] = static_cast<OutputT>(result[row]);
       }
     }
   } else {
@@ -165,7 +172,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
     const uint zp_stride =
         BITS == 4 ? ((in_vec_size_g + 1) / 2) : in_vec_size_g;
     const device uint8_t* zps_row_base = nullptr;
-    const device T* biases_row_base = nullptr;
+    const device WeightT* biases_row_base = nullptr;
     if (quant_method == QuantizationMethod::ScaleBias) {
       biases_row_base = biases + used_out_row * in_vec_size_g;
     } else {
@@ -177,17 +184,17 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
 
     uint k = 0;
     for (; k + block_size <= in_vec_size; k += block_size) {
-      U sum = load_vector<T, U, values_per_thread, BITS>(input, x_thread);
+      U sum = load_vector<InputT, U, values_per_thread, BITS>(input, x_thread);
 
       for (uint row = 0; row < results_per_simdgroup; row++) {
         auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
         const uint row_idx = used_out_row + row;
-        const device T* sr = scales_base + row_idx * in_vec_size_g;
+        const device WeightT* sr = scales_base + row_idx * in_vec_size_g;
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
         if (quant_method == QuantizationMethod::ScaleBias) {
-          const device T* bl = biases_row_base + row * in_vec_size_g;
+          const device WeightT* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, b, sum);
@@ -216,7 +223,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
             : 0;
 
     if (remaining > 0) {
-      U sum = load_vector_safe<T, U, values_per_thread, BITS>(
+      U sum = load_vector_safe<InputT, U, values_per_thread, BITS>(
           input,
           x_thread,
           remaining
@@ -225,12 +232,12 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
       for (uint row = 0; row < results_per_simdgroup; row++) {
         auto wl = (const device uint8_t*)(ws + row * in_vec_size_w);
         const uint row_idx = used_out_row + row;
-        const device T* sr = scales_base + row_idx * in_vec_size_g;
+        const device WeightT* sr = scales_base + row_idx * in_vec_size_g;
 
         uint g = (k + simd_lane * values_per_thread) / GROUP_SIZE;
         U s = static_cast<U>(sr[g]);
         if (quant_method == QuantizationMethod::ScaleBias) {
-          const device T* bl = biases_row_base + row * in_vec_size_g;
+          const device WeightT* bl = biases_row_base + row * in_vec_size_g;
           U b = static_cast<U>(bl[g]);
           result[row] += qdot_safe<U, values_per_thread, BITS>(
               wl,
@@ -258,7 +265,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
     for (uint row = 0; row < results_per_simdgroup; row++) {
       result[row] = simd_sum(result[row]);
       if (simd_lane == 0) {
-        output[row] = static_cast<T>(result[row]);
+        output[row] = static_cast<OutputT>(result[row]);
       }
     }
   }

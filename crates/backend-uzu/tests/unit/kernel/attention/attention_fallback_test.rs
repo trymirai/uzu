@@ -75,7 +75,9 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
         .unwrap();
     let scatter_values =
         <<B as Backend>::Kernels as Kernels>::AttentionFallbackScatterValuesKernel::new(&ctx, DataType::BF16).unwrap();
-    let mut matmul = <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&ctx, DataType::BF16).unwrap();
+    let mut matmul =
+        <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&ctx, DataType::BF16, DataType::BF16, DataType::BF16)
+            .unwrap();
 
     let qa = alloc_allocation_with_data::<B, bf16>(&ctx, q);
     let ka = alloc_allocation_with_data::<B, bf16>(&ctx, k);

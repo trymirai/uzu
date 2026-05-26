@@ -60,8 +60,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
 ) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(&context, T::data_type(), in_place)
-        .expect("Failed to create TensorAddBiasKernel");
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(&context, T::data_type(), T::data_type(), in_place)
+            .expect("Failed to create TensorAddBiasKernel");
 
     let size = input.length as usize;
     let input_allocation = (!in_place).then(|| alloc_allocation_with_data::<B, T>(&context, &input.input));

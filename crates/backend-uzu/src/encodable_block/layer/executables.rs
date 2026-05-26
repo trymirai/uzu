@@ -105,8 +105,8 @@ impl<B: Backend> LayerExecutables<B> {
         };
 
         #[cfg(feature = "tracing")]
-        let tensor_add =
-            TensorAddBiasKernel::new(context, data_type, false).map_err(LayerExecutablesError::BackendError)?;
+        let tensor_add = TensorAddBiasKernel::new(context, data_type, data_type, false)
+            .map_err(LayerExecutablesError::BackendError)?;
 
         let mixer_subtree = parameter_tree.subtree("mixer")?;
 

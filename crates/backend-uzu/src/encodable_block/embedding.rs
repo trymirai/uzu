@@ -158,8 +158,13 @@ impl<B: Backend> Embedding<B> {
                         )
                         .map_err(EmbeddingError::BackendError)?;
                         let readout = RefCell::new(
-                            <B::Kernels as ManualKernels>::MatmulKernel::new(context, model_shape.data_type)
-                                .map_err(EmbeddingError::BackendError)?,
+                            <B::Kernels as ManualKernels>::MatmulKernel::new(
+                                context,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                            )
+                            .map_err(EmbeddingError::BackendError)?,
                         );
 
                         (
@@ -362,8 +367,13 @@ impl<B: Backend> Embedding<B> {
                             .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
                             .read_allocation()?;
                         let readout = RefCell::new(
-                            <B::Kernels as ManualKernels>::MatmulKernel::new(context, model_shape.data_type)
-                                .map_err(EmbeddingError::BackendError)?,
+                            <B::Kernels as ManualKernels>::MatmulKernel::new(
+                                context,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                            )
+                            .map_err(EmbeddingError::BackendError)?,
                         );
 
                         UntiedEmbeddingReadoutType::FullPrecision {
@@ -730,8 +740,8 @@ fn quantized_readout<B: Backend>(
     method: QuantizationMethod,
     group_size: usize,
 ) -> Result<(RefCell<<B::Kernels as ManualKernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
-    let mut readout =
-        <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?;
+    let mut readout = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+        .map_err(EmbeddingError::BackendError)?;
     readout
         .preheat_quant_combo(
             context,

@@ -8,17 +8,24 @@
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
 
-template <typename T, uint GROUP_SIZE, uint BITS>
-VARIANTS(T, float, half, bfloat)
+template <
+    typename WeightT,
+    typename InputT,
+    typename OutputT,
+    uint GROUP_SIZE,
+    uint BITS>
+VARIANTS(WeightT, float, half, bfloat)
+VARIANTS(InputT, float, half, bfloat)
+VARIANTS(OutputT, float, half, bfloat)
 VARIANTS(GROUP_SIZE, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
 PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const device uint32_t* weights,
-    const device T* scales,
+    const device WeightT* scales,
     const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::ScaleZeroPoint),
-    const device T* biases OPTIONAL(quant_method == QuantizationMethod::ScaleBias),
-    const device T* input,
-    device T* output,
+    const device WeightT* biases OPTIONAL(quant_method == QuantizationMethod::ScaleBias),
+    const device InputT* input,
+    device OutputT* output,
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
     const constant uint& in_vec_size,
     const constant uint& out_vec_size,
@@ -76,7 +83,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   output += batch_idx * out_vec_size + out_row;
 
   for (uint k = 0; k < in_vec_size; k += block_size) {
-    U sum = load_vector<T, U, values_per_thread, BITS>(input, x_thread);
+    U sum = load_vector<InputT, U, values_per_thread, BITS>(input, x_thread);
 
     {
       auto wl0 = (const device uint8_t*)(ws);
@@ -179,7 +186,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
       if (global_out_idx < out_vec_size) {
         output[simd_lane] = simdgroup_output_random_hadamard_transform(
             static_cast<ushort>(simd_lane),
-            T(shared_results[simd_lane]),
+            OutputT(shared_results[simd_lane]),
             hadamard_factors[global_out_idx]
         );
       }
@@ -187,7 +194,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
   } else {
     if (simd_lane == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
-        output[row] = static_cast<T>(result[row]);
+        output[row] = static_cast<OutputT>(result[row]);
       }
     }
   }

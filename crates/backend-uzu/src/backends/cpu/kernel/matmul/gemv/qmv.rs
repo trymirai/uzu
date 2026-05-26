@@ -11,13 +11,13 @@ use crate::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
 /// where groups are along the K dimension.
 ///
 /// Computes y[i, j] = sum_l( x[i, l] * dequant(w[j, l]) ) for each batch i and output j.
-pub fn qmv<T: ArrayElement + Float>(
+pub fn qmv<WeightT: ArrayElement + Float, InputT: ArrayElement + Float, OutputT: ArrayElement + Float>(
     weights: *const u32,
-    scales: *const T,
+    scales: *const WeightT,
     zero_points: Option<*const u8>,
-    biases: Option<*const T>,
-    input: *const T,
-    output: *mut T,
+    biases: Option<*const WeightT>,
+    input: *const InputT,
+    output: *mut OutputT,
     in_vec_size: usize,
     out_vec_size: usize,
     batch_size: usize,
@@ -90,29 +90,37 @@ pub fn qmv<T: ArrayElement + Float>(
                     acc += val_a * (scale * val_q + bias);
                 }
 
-                *output.add(i * out_vec_size + j) = T::from(acc).unwrap();
+                *output.add(i * out_vec_size + j) = OutputT::from(acc).unwrap();
             }
         }
     }
 }
 
 #[kernel(QuantizedMatmulQmv)]
-#[variants(T, f32, f16, bf16)]
+#[variants(WeightT, f32, f16, bf16)]
+#[variants(InputT, f32, f16, bf16)]
+#[variants(OutputT, f32, f16, bf16)]
 #[variants(GROUP_SIZE, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
-pub fn quantized_matmul_qmv<T: ArrayElement + Float, const GROUP_SIZE: u32, const BITS: u32>(
+pub fn quantized_matmul_qmv<
+    WeightT: ArrayElement + Float,
+    InputT: ArrayElement + Float,
+    OutputT: ArrayElement + Float,
+    const GROUP_SIZE: u32,
+    const BITS: u32,
+>(
     weights: *const u32,
-    scales: *const T,
+    scales: *const WeightT,
     #[optional(quant_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
-    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
-    input: *const T,
-    output: *mut T,
+    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const WeightT>,
+    input: *const InputT,
+    output: *mut OutputT,
     in_vec_size: u32,
     out_vec_size: u32,
     batch_size: u32,
     #[specialize] quant_method: QuantizationMethod,
 ) {
-    qmv::<T>(
+    qmv::<WeightT, InputT, OutputT>(
         weights,
         scales,
         zero_points,

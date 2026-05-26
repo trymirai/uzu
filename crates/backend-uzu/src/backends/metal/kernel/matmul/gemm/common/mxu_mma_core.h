@@ -15,7 +15,12 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-template <typename T, GemmTiling GEMM_TILING, bool TRANSPOSE_B>
+template <
+    typename AT,
+    typename BT,
+    typename DT,
+    GemmTiling GEMM_TILING,
+    bool TRANSPOSE_B>
 struct MxuMmaCore {
   METAL_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   METAL_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
@@ -37,13 +42,13 @@ struct MxuMmaCore {
   using AccumulatorType = float;
 
   static METAL_FUNC void run(
-      const device T* a,
-      const device T* b,
-      device T* d,
+      const device AT* a,
+      const device BT* b,
+      device DT* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
-      const device T* output_bias,
+      const device BT* output_bias,
       const thread ThreadContext& thread_context
   ) {
     (void)output_bias;
@@ -58,8 +63,8 @@ struct MxuMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    const device T* a_block = a + block_row * params->leading_dimension_a;
-    const device T* b_block =
+    const device AT* a_block = a + block_row * params->leading_dimension_a;
+    const device BT* b_block =
         b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
     const ushort tile_row_offset =
@@ -69,7 +74,7 @@ struct MxuMmaCore {
         SIMDGROUP_BLOCK_N *
         (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
-    device T* d_simdgroup =
+    device DT* d_simdgroup =
         d + block_row * params->leading_dimension_d + block_col +
         tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
@@ -90,9 +95,9 @@ struct MxuMmaCore {
                           int(geometry.block_col_start + tile_col_offset))
               );
 
-    const device T* a_simdgroup =
+    const device AT* a_simdgroup =
         a_block + size_t(tile_row_offset) * params->leading_dimension_a;
-    const device T* b_simdgroup =
+    const device BT* b_simdgroup =
         b_block + (TRANSPOSE_B ? size_t(tile_col_offset) *
                                      int(params->leading_dimension_b)
                                : size_t(tile_col_offset));
@@ -113,7 +118,8 @@ struct MxuMmaCore {
                     (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   auto accumulator_tile = uzu::matmul::gemm_loop<
-                      T,
+                      AT,
+                      BT,
                       SIMDGROUP_BLOCK_M,
                       SIMDGROUP_BLOCK_N,
                       SIMDGROUP_BLOCK_K,
@@ -147,7 +153,7 @@ struct MxuMmaCore {
 
                   if (apply_accumulate) {
                     uzu::matmul::Fragment<
-                        T,
+                        DT,
                         TILES_M,
                         TILES_N,
                         uzu::matmul::MxuFragmentOps>

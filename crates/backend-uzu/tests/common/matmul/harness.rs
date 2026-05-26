@@ -142,8 +142,13 @@ fn run<B: Backend, T: ArrayElement + Float>(
 
 pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("CPU context");
-    let mut kernel = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
-        .expect("CPU MatmulKernel");
+    let mut kernel = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        &context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("CPU MatmulKernel");
     run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, encoder| {
         kernel.encode(args, encoder).expect("encode failed");
     })

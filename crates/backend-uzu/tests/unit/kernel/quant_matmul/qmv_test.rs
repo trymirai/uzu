@@ -35,6 +35,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
         &context,
         T::data_type(),
+        T::data_type(),
+        T::data_type(),
         input.group_size,
         input.bits,
         input.quant_method,

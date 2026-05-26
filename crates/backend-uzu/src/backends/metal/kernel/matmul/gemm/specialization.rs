@@ -12,7 +12,7 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemmSpecialization {
-    pub(crate) data_type: DataType,
+    pub(crate) weights_data_type: DataType,
     pub(crate) tiling: GemmTiling,
     pub(crate) use_mxu: bool,
     pub(crate) output_transform: GemmDTransform,
@@ -44,13 +44,13 @@ impl GemmSpecialization {
         Ok(())
     }
 
-    pub(crate) fn precompile_configs(data_type: DataType) -> Vec<Self> {
+    pub(crate) fn precompile_configs(weights_data_type: DataType) -> Vec<Self> {
         let mut out = Vec::new();
-        for &tiling in simdgroup_tiling_set(data_type) {
+        for &tiling in simdgroup_tiling_set(weights_data_type) {
             for align_mn in [true, false] {
                 for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                     out.push(Self {
-                        data_type,
+                        weights_data_type,
                         tiling,
                         use_mxu: false,
                         output_transform,
@@ -64,7 +64,7 @@ impl GemmSpecialization {
             }
         }
 
-        for &tiling in mxu_tiling_set(data_type) {
+        for &tiling in mxu_tiling_set(weights_data_type) {
             for align_m in [true, false] {
                 for align_n in [true, false] {
                     for align_k in [true, false] {
@@ -75,7 +75,7 @@ impl GemmSpecialization {
                             GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
                         ] {
                             out.push(Self {
-                                data_type,
+                                weights_data_type,
                                 tiling,
                                 use_mxu: true,
                                 output_transform,
@@ -94,7 +94,7 @@ impl GemmSpecialization {
     }
 
     pub(crate) fn quant_combo_specs(
-        data_type: DataType,
+        weights_data_type: DataType,
         combo: MatmulQuantCombo,
     ) -> Vec<Self> {
         let bits = DataType::from(combo.mode).size_in_bits() as u32;
@@ -104,14 +104,14 @@ impl GemmSpecialization {
             QuantizationMethod::ScaleZeroPoint => GemmWeightPrologueKind::ScaleZeroPointDequant,
         };
         let mut out = Vec::new();
-        for &tiling in quant_tiling_set(data_type) {
+        for &tiling in quant_tiling_set(weights_data_type) {
             if tiling.block_k() > group_size {
                 continue;
             }
             for align_n in [true, false] {
                 for output_transform in [GemmDTransform::empty(), GemmDTransform::BIAS] {
                     out.push(Self {
-                        data_type,
+                        weights_data_type,
                         tiling,
                         use_mxu: false,
                         output_transform,

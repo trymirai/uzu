@@ -8,16 +8,24 @@ use crate::{
 };
 
 #[kernel(QuantizedMatmulQmvFast)]
-#[variants(T, f32, f16, bf16)]
+#[variants(WeightT, f32, f16, bf16)]
+#[variants(InputT, f32, f16, bf16)]
+#[variants(OutputT, f32, f16, bf16)]
 #[variants(GROUP_SIZE, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
-pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32, const BITS: u32>(
+pub fn quantized_matmul_qmv_fast<
+    WeightT: ArrayElement + Float,
+    InputT: ArrayElement + Float,
+    OutputT: ArrayElement + Float,
+    const GROUP_SIZE: u32,
+    const BITS: u32,
+>(
     weights: *const u32,
-    scales: *const T,
+    scales: *const WeightT,
     #[optional(quant_method == QuantizationMethod::ScaleZeroPoint)] zero_points: Option<*const u8>,
-    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const T>,
-    input: *const T,
-    output: *mut T,
+    #[optional(quant_method == QuantizationMethod::ScaleBias)] biases: Option<*const WeightT>,
+    input: *const InputT,
+    output: *mut OutputT,
     #[optional(use_hadamard)] hadamard_factors: Option<*const i32>,
     in_vec_size: u32,
     out_vec_size: u32,
@@ -28,7 +36,7 @@ pub fn quantized_matmul_qmv_fast<T: ArrayElement + Float, const GROUP_SIZE: u32,
     if use_hadamard {
         unimplemented!("not supported yet");
     }
-    qmv::<T>(
+    qmv::<WeightT, InputT, OutputT>(
         weights,
         scales,
         zero_points,

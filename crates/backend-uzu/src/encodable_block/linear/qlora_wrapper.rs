@@ -37,13 +37,15 @@ pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: LinearMatmul<B>,
     input_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
     output_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
-    adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+    adapter_down_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+    adapter_up_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
     input_dim: usize,
     output_dim: usize,
     lora_rank: usize,
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
 }
 
 impl<B: Backend> QLoRALinearWrapper<B> {
@@ -55,7 +57,9 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         incoherence_processing_mode: IncoherenceProcessingMode,
         input_dim: usize,
         output_dim: usize,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
         weights_tree: &ParameterTree<B>,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
         let use_incoherence_signs = match (incoherence_block_size, incoherence_processing_mode) {
@@ -74,7 +78,9 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             quantization_spec,
             input_dim,
             output_dim,
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             &quantized_tree,
             None,
             None,
@@ -93,7 +99,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
                 Some((
                     <B::Kernels as Kernels>::HadamardTransformKernel::new(
                         context,
-                        data_type,
+                        input_data_type,
                         HadamardTransformOrder::Input,
                     )
                     .map_err(QLoRALinearWrapperError::BackendError)?,
@@ -102,7 +108,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
                 Some((
                     <B::Kernels as Kernels>::HadamardTransformKernel::new(
                         context,
-                        data_type,
+                        output_data_type,
                         HadamardTransformOrder::Output,
                     )
                     .map_err(QLoRALinearWrapperError::BackendError)?,
@@ -113,32 +119,48 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             (None, None)
         };
 
-        let adapter_kernel = RefCell::new(
-            <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
-                .map_err(QLoRALinearWrapperError::BackendError)?,
+        let adapter_down_kernel = RefCell::new(
+            <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(
+                context,
+                weights_data_type,
+                input_data_type,
+                weights_data_type,
+            )
+            .map_err(QLoRALinearWrapperError::BackendError)?,
+        );
+        let adapter_up_kernel = RefCell::new(
+            <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(
+                context,
+                weights_data_type,
+                weights_data_type,
+                output_data_type,
+            )
+            .map_err(QLoRALinearWrapperError::BackendError)?,
         );
 
         let adapter_down = weights_tree
             .leaf("adapter.down_projection")?
-            .validate(&[adapter_spec.rank, input_dim], data_type)?
+            .validate(&[adapter_spec.rank, input_dim], weights_data_type)?
             .read_allocation()?;
 
         let adapter_up = weights_tree
             .leaf("adapter.up_projection")?
-            .validate(&[output_dim, adapter_spec.rank], data_type)?
+            .validate(&[output_dim, adapter_spec.rank], weights_data_type)?
             .read_allocation()?;
 
         Ok(Self {
             base_linear,
             input_hadamard,
             output_hadamard,
-            adapter_kernel,
+            adapter_down_kernel,
+            adapter_up_kernel,
             adapter_down,
             adapter_up,
             input_dim,
             output_dim,
             lora_rank: adapter_spec.rank,
-            data_type,
+            weights_data_type,
+            input_data_type,
         })
     }
 }
@@ -151,10 +173,10 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut intermediate =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type))?;
 
         {
-            let mut adapter_kernel = self.adapter_kernel.borrow_mut();
+            let mut adapter_kernel = self.adapter_down_kernel.borrow_mut();
             adapter_kernel.encode(
                 MatmulArguments {
                     a: &input,
@@ -177,7 +199,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
 
         let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
             let mut base_input =
-                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.data_type))?;
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.input_data_type))?;
             encoder.encode_copy(&input, .., &mut base_input, ..);
             input_hadamard_kernel.encode(
                 &mut base_input,
@@ -194,7 +216,7 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         let mut output = self.base_linear.encode(base_input, batch_dim, encoder)?;
 
         {
-            let mut adapter_kernel = self.adapter_kernel.borrow_mut();
+            let mut adapter_kernel = self.adapter_up_kernel.borrow_mut();
             adapter_kernel.encode(
                 MatmulArguments {
                     a: &intermediate,

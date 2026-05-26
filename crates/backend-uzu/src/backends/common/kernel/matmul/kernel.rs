@@ -9,7 +9,9 @@ pub trait MatmulKernel: Sized {
 
     fn new(
         context: &<Self::Backend as Backend>::Context,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, <Self::Backend as Backend>::Error>;
 
     fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Self::Backend>>>(

@@ -49,7 +49,12 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
     tolerance: f32,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
+    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        &context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
         .expect("MatmulKernel");
     for path in gemm_paths_for_hw(&context) {
         for shape in all_correctness_shapes() {

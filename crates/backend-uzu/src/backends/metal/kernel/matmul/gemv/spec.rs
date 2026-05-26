@@ -11,9 +11,9 @@ pub struct GemvSpecialization {
 }
 
 impl GemvSpecialization {
-    pub fn precompile_configs(data_type: crate::DataType) -> &'static [Self] {
+    pub fn precompile_configs(weights_data_type: crate::DataType) -> &'static [Self] {
         use crate::DataType;
-        match data_type {
+        match weights_data_type {
             DataType::F32 => &[
                 Self {
                     threadgroup_rows: 4,

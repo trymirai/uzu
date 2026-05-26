@@ -8,7 +8,7 @@ pub mod path;
 pub mod perf;
 pub mod proptest;
 
-pub(crate) use proptest::{dispatch_dtype, for_each_context};
+pub(crate) use proptest::for_each_context;
 
 pub fn type_short_name<T>() -> &'static str {
     std::any::type_name::<T>().rsplit("::").next().unwrap()

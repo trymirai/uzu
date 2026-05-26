@@ -10,20 +10,26 @@ use crate::{
 };
 
 pub(crate) struct GemvKernel {
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     pipelines: HashMap<GemvSpecialization, MatmulGemvMetalKernel>,
 }
 
 impl GemvKernel {
     pub(crate) fn new(
         context: &MetalContext,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, MatmulError<Metal>> {
         let mut kernel = Self {
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             pipelines: HashMap::new(),
         };
-        for &config in GemvSpecialization::precompile_configs(data_type) {
+        for &config in GemvSpecialization::precompile_configs(weights_data_type) {
             kernel.get_or_create(context, config)?;
         }
         Ok(kernel)
@@ -39,7 +45,9 @@ impl GemvKernel {
             Entry::Vacant(entry) => {
                 let kernel = MatmulGemvMetalKernel::new(
                     context,
-                    self.data_type,
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
                     specialization.threadgroup_rows,
                     specialization.threadgroup_cols,
                     specialization.threads_per_simdgroup_row,
