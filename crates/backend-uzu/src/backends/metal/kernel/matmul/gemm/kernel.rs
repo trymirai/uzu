@@ -103,7 +103,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let path = if encoder.context().device.supports_mxu()
-            && matches!(self.data_type, DataType::F16 | DataType::BF16)
+            && matches!(self.data_type, DataType::F16 | DataType::BF16 | DataType::F32)
             && matches!(arguments.b, MatmulB::FullPrecision { .. })
         {
             GemmDispatchPath::Mxu
@@ -126,8 +126,8 @@ impl GemmKernel {
                     "GemmDispatchPath::Mxu requested on hardware without MXU support",
                 );
                 assert!(
-                    matches!(self.data_type, DataType::F16 | DataType::BF16),
-                    "GemmDispatchPath::Mxu requires F16 or BF16 data type, got {:?}",
+                    matches!(self.data_type, DataType::F16 | DataType::BF16 | DataType::F32),
+                    "GemmDispatchPath::Mxu requires F16, BF16, or F32 data type, got {:?}",
                     self.data_type,
                 );
                 assert!(

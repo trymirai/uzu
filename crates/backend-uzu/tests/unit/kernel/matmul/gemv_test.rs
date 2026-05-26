@@ -135,3 +135,19 @@ fn gemv_bf16(
 ) {
     test::<bf16>(m, k, n, 0.1);
 }
+
+#[rstest]
+#[case::m1(1, 128, 64)]
+#[case::batched(4, 128, 64)]
+#[case::max_batch(8, 128, 64)]
+#[case::unaligned_k(1, 33, 64)]
+#[case::unaligned_n(1, 128, 11)]
+#[case::large(1, 4096, 2048)]
+#[case::small_n(1, 128, 3)]
+fn gemv_f32(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+) {
+    test::<f32>(m, k, n, 0.01);
+}

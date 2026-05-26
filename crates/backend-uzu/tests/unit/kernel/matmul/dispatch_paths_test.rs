@@ -80,6 +80,11 @@ fn matches_cpu_reference_f16() {
 }
 
 #[test]
+fn matches_cpu_reference_f32() {
+    run_matrix::<f32>(|shape| Case::new(shape), 0.01);
+}
+
+#[test]
 fn b_transpose_false_bf16() {
     run_matrix::<bf16>(
         |shape| Case {
