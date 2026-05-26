@@ -27,7 +27,8 @@ VARIANTS(
     GemmBPrologueKind::FullPrecision,
     GemmBPrologueKind::ScaleBiasDequant,
     GemmBPrologueKind::ScaleZeroPointDequant,
-    GemmBPrologueKind::ScaleSymmetricDequant)
+    GemmBPrologueKind::ScaleSymmetricDequant,
+    GemmBPrologueKind::CodebookDequant)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
@@ -38,6 +39,8 @@ CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::FullPrecision || NUM_SIMDGROUPS == 8)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::CodebookDequant || INPUT_ALIGNED)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::CodebookDequant || BITS == 4)
 KERNEL(Gemv)(
     const device uint32_t* b,
     const device BT* scales
@@ -46,6 +49,8 @@ KERNEL(Gemv)(
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device BT* biases
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
+    const device half* codebook
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::CodebookDequant),
     const device AT* a,
     device DT* d,
     const device BT* output_bias
@@ -59,6 +64,7 @@ KERNEL(Gemv)(
     const constant uint& group_count_x,
     const GemmDTransform output_transform SPECIALIZE,
     threadgroup float shared_results[NUM_SIMDGROUPS * 4],
+    threadgroup half codebook_values[NUM_SIMDGROUPS * 16],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
     const uint simd_lane THREADS(32),
@@ -75,6 +81,16 @@ KERNEL(Gemv)(
       );
   d += batch_idx * out_vec_size + tile.out_row;
 
+  const threadgroup half* codebook_for_simdgroup = nullptr;
+  if constexpr (B_PROLOGUE == GemmBPrologueKind::CodebookDequant) {
+    threadgroup half* simdgroup_codebook = codebook_values + simd_group * 16;
+    for (uint entry = simd_lane; entry < 16; entry += METAL_SIMD_SIZE) {
+      simdgroup_codebook[entry] = codebook[entry];
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    codebook_for_simdgroup = simdgroup_codebook;
+  }
+
   BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, INPUT_ALIGNED>::
       accumulate(
           result,
@@ -82,6 +98,7 @@ KERNEL(Gemv)(
           scales,
           zero_points,
           biases,
+          codebook_for_simdgroup,
           a,
           in_vec_size,
           tile.out_row,

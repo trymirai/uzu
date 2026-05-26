@@ -70,6 +70,9 @@ impl GemvSpecialization {
             if args.n < QMV_RESULTS_PER_SIMDGROUP || args.m >= 5 {
                 return None;
             }
+            if matches!(args.b, MatmulB::CodebookDequant { .. }) && (!args.k.is_multiple_of(512) || !args.n.is_multiple_of(32)) {
+                return None;
+            }
         } else {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
@@ -112,6 +115,7 @@ impl GemvSpecialization {
             QuantizationMethod::ScaleBias => GemmBPrologueKind::ScaleBiasDequant,
             QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
             QuantizationMethod::ScaleSymmetric => GemmBPrologueKind::ScaleSymmetricDequant,
+            QuantizationMethod::Codebook => return Vec::new(),
         };
         let mut out = Vec::new();
         for output_transform in [
@@ -257,6 +261,7 @@ impl GemvDispatch {
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
                     (a, a_offset),
                     &mut *d,
                     output_bias,
@@ -277,25 +282,34 @@ impl GemvDispatch {
             }
             | MatmulB::ScaleSymmetricDequant {
                 ..
+            }
+            | MatmulB::CodebookDequant {
+                ..
             }) => {
-                let (weights, scales, zero_points, biases) = match quant_b {
+                let (weights, scales, zero_points, biases, codebook) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
                         scales,
                         biases,
                         ..
-                    } => (w, scales, None, Some(biases)),
+                    } => (w, scales, None, Some(biases), None),
                     MatmulB::ScaleZeroPointDequant {
                         b: w,
                         scales,
                         zero_points,
                         ..
-                    } => (w, scales, Some(zero_points), None),
+                    } => (w, scales, Some(zero_points), None, None),
                     MatmulB::ScaleSymmetricDequant {
                         b: w,
                         scales,
                         ..
-                    } => (w, scales, None, None),
+                    } => (w, scales, None, None, None),
+                    MatmulB::CodebookDequant {
+                        b: w,
+                        scales,
+                        codebook,
+                        ..
+                    } => (w, scales, None, None, Some(codebook)),
                     MatmulB::FullPrecision {
                         ..
                     } => unreachable!(),
@@ -305,6 +319,7 @@ impl GemvDispatch {
                     Some(scales),
                     zero_points,
                     biases,
+                    codebook,
                     (a, a_offset),
                     &mut *d,
                     output_bias,

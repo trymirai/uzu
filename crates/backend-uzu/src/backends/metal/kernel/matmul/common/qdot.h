@@ -35,6 +35,16 @@ METAL_FUNC U load_vector(const device T* x, thread U* x_thread) {
 }
 
 template <typename T, typename U, int VALUES_PER_THREAD>
+METAL_FUNC void load_vector_unscaled(const device T* x, thread U* x_thread) {
+  using U4 = vec<U, 4>;
+  thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
+  METAL_PRAGMA_UNROLL
+  for (int index = 0; index < VALUES_PER_THREAD / 4; index++) {
+    x_vec4[index] = U4(x[4 * index], x[4 * index + 1], x[4 * index + 2], x[4 * index + 3]);
+  }
+}
+
+template <typename T, typename U, int VALUES_PER_THREAD>
 METAL_FUNC U load_vector_safe(const device T* x, thread U* x_thread, int N) {
   U sum = 0;
   METAL_PRAGMA_UNROLL
@@ -93,6 +103,33 @@ METAL_FUNC U qdot(
     }
   }
   return scale * accumulator + sum * bias;
+}
+
+template <typename U, int VALUES_PER_THREAD, int BITS>
+METAL_FUNC U qdot_codebook(
+    const device uint8_t* w,
+    const thread U* x_thread,
+    const threadgroup half* codebook,
+    U scale
+) {
+  static_assert(BITS == 4, "Only int4 codebook QMV is supported");
+
+  using U4 = vec<U, 4>;
+  U accumulator = 0;
+  const device ushort* weight_words = reinterpret_cast<const device ushort*>(w);
+  const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
+
+  for (int value_idx = 0; value_idx < (VALUES_PER_THREAD / 4); value_idx++) {
+    uint weight_word = weight_words[value_idx];
+    U4 weight_vec4 =
+        U4(static_cast<U>(codebook[weight_word & 0x0fu]),
+           static_cast<U>(codebook[(weight_word >> 4) & 0x0fu]),
+           static_cast<U>(codebook[(weight_word >> 8) & 0x0fu]),
+           static_cast<U>(codebook[(weight_word >> 12) & 0x0fu]));
+    accumulator += dot(x_vec4[value_idx], weight_vec4);
+  }
+
+  return scale * accumulator;
 }
 
 template <typename U, int VALUES_PER_THREAD, int BITS>

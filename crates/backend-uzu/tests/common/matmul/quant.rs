@@ -14,6 +14,7 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
+use half::f16;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
@@ -30,6 +31,42 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub m: u32,
     pub group_size: u32,
     pub quant_method: QuantizationMethod,
+    pub mode: QuantizationMode,
+}
+
+pub const CODEBOOK_SIZE: usize = 16;
+
+pub fn nf4_codebook() -> [f16; CODEBOOK_SIZE] {
+    [
+        -1.0f32,
+        -0.696_192_8,
+        -0.525_073_05,
+        -0.394_917_5,
+        -0.284_441_38,
+        -0.184_773_43,
+        -0.091_050_04,
+        0.0,
+        0.079_580_3,
+        0.160_930_2,
+        0.246_112_3,
+        0.337_915_24,
+        0.440_709_83,
+        0.562_617,
+        0.722_956_84,
+        1.0,
+    ]
+    .map(f16::from_f32)
+}
+
+pub struct CodebookQuantInput<T: ArrayElement + Float> {
+    pub w_packed: Vec<u32>,
+    pub scales: Vec<T>,
+    pub codebook: [f16; CODEBOOK_SIZE],
+    pub x: Vec<T>,
+    pub k: u32,
+    pub n: u32,
+    pub m: u32,
+    pub group_size: u32,
     pub mode: QuantizationMode,
 }
 
@@ -73,6 +110,7 @@ impl<T: ArrayElement + Float> QuantInput<T> {
                 (Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
             },
             QuantizationMethod::ScaleSymmetric => (None, None),
+            QuantizationMethod::Codebook => unreachable!("use codebook-specific test input"),
         };
 
         Self {
@@ -91,11 +129,56 @@ impl<T: ArrayElement + Float> QuantInput<T> {
     }
 }
 
+impl<T: ArrayElement + Float> CodebookQuantInput<T> {
+    pub fn new(
+        m: usize,
+        k: usize,
+        n: usize,
+        group_size: u32,
+    ) -> Self {
+        let num_groups_k = k / group_size as usize;
+        let w_packed = (0..(n * k / 8)).map(|word_idx| word_idx.wrapping_mul(2_654_435_761) as u32).collect();
+        let scales = (0..n)
+            .flat_map(|row_idx| {
+                (0..num_groups_k)
+                    .map(move |group_idx| T::from(0.08 + 0.011 * ((row_idx + 3 * group_idx) % 17) as f32).unwrap())
+            })
+            .collect();
+        let x = (0..m)
+            .flat_map(|batch_idx| {
+                (0..k)
+                    .map(move |col_idx| T::from((((batch_idx * 17 + col_idx * 5) % 19) as f32 - 9.0) * 0.025).unwrap())
+            })
+            .collect();
+
+        Self {
+            w_packed,
+            scales,
+            codebook: nf4_codebook(),
+            x,
+            k: k as u32,
+            n: n as u32,
+            m: m as u32,
+            group_size,
+            mode: QuantizationMode::U4,
+        }
+    }
+}
+
 pub struct QuantBuffers<B: Backend, T: ArrayElement + Float> {
     pub w: Allocation<B>,
     pub scales: Allocation<B>,
     pub zp: Option<Allocation<B>>,
     pub bias: Option<Allocation<B>>,
+    pub x: Allocation<B>,
+    pub y: Allocation<B>,
+    _t: std::marker::PhantomData<T>,
+}
+
+pub struct CodebookQuantBuffers<B: Backend, T: ArrayElement + Float> {
+    pub w: Allocation<B>,
+    pub scales: Allocation<B>,
+    pub codebook: Allocation<B>,
     pub x: Allocation<B>,
     pub y: Allocation<B>,
     _t: std::marker::PhantomData<T>,
@@ -111,6 +194,22 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
             zp: input.zero_points.as_ref().map(|zp| alloc_allocation_with_data::<B, u8>(context, zp)),
             bias: input.biases.as_ref().map(|b| alloc_allocation_with_data::<B, T>(context, b)),
+            x: alloc_allocation_with_data::<B, T>(context, &input.x),
+            y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
+            _t: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<B: Backend, T: ArrayElement + Float> CodebookQuantBuffers<B, T> {
+    pub fn allocate(
+        context: &B::Context,
+        input: &CodebookQuantInput<T>,
+    ) -> Self {
+        Self {
+            w: alloc_allocation_with_data::<B, u32>(context, &input.w_packed),
+            scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
+            codebook: alloc_allocation_with_data::<B, f16>(context, &input.codebook),
             x: alloc_allocation_with_data::<B, T>(context, &input.x),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
@@ -143,11 +242,37 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             mode: input.mode,
             group_size: input.group_size,
         },
+        QuantizationMethod::Codebook => unreachable!("use codebook-specific matmul arguments"),
     };
     MatmulArguments {
         a: &buffers.x,
         a_offset: 0,
         b: b_variant,
+        b_offset: 0,
+        b_leading_dimension: None,
+        b_transpose: true,
+        d: &mut buffers.y,
+        d_transform: MatmulDOps::none(),
+        m: input.m,
+        n: input.n,
+        k: input.k,
+    }
+}
+
+pub fn codebook_quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
+    buffers: &'a mut CodebookQuantBuffers<B, T>,
+    input: &CodebookQuantInput<T>,
+) -> MatmulArguments<'a, B> {
+    MatmulArguments {
+        a: &buffers.x,
+        a_offset: 0,
+        b: MatmulB::CodebookDequant {
+            b: &buffers.w,
+            scales: &buffers.scales,
+            codebook: &buffers.codebook,
+            mode: input.mode,
+            group_size: input.group_size,
+        },
         b_offset: 0,
         b_leading_dimension: None,
         b_transpose: true,

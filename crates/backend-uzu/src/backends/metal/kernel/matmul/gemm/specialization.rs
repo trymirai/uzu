@@ -137,6 +137,7 @@ impl GemmSpecialization {
             QuantizationMethod::ScaleBias => GemmBPrologueKind::ScaleBiasDequant,
             QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
             QuantizationMethod::ScaleSymmetric => GemmBPrologueKind::ScaleSymmetricDequant,
+            QuantizationMethod::Codebook => return Vec::new(),
         };
         let mut out = Vec::new();
         for &tiling in quant_tiling_set(weights_data_type) {

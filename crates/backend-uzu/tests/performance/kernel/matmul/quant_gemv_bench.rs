@@ -28,7 +28,7 @@ fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
 ) {
     let mut group = c.benchmark_group(format!("{}/Kernel/Gemv/{}", type_short_name::<B>(), label));
 
-    for shape in bench_quant_gemv_shapes(bits) {
+    for shape in bench_quant_gemv_shapes() {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
         let mut buffers = QuantBuffers::<B, T>::allocate(context, &input);

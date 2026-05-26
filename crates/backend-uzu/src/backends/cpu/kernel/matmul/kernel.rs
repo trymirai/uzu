@@ -1,4 +1,6 @@
 use super::reference::{WeightData, read_f32, write_f32};
+use half::f16;
+
 use crate::{
     backends::{
         common::{
@@ -145,6 +147,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                     scales,
                                     zero_points,
                                     biases,
+                                    codebook,
                                     bits,
                                     group_size,
                                 } => {
@@ -164,7 +167,10 @@ impl MatmulKernel for MatmulCpuKernel {
                                     let group_index = inner / group_size;
                                     let scale =
                                         read_f32(scales.as_ptr(), weights_data_type, col * num_groups_k + group_index);
-                                    let bias_term = if let Some(zp) = zero_points {
+                                    let b_value = if let Some(codebook) = codebook {
+                                        let codebook_value = (*(codebook.as_ptr() as *const f16).add(quantized_value as usize)).to_f32();
+                                        scale * codebook_value
+                                    } else if let Some(zp) = zero_points {
                                         let zero_point = if *bits == 4 {
                                             let byte_index = col * zero_point_stride + (group_index >> 1);
                                             let byte_value = *zp.as_ptr().add(byte_index);
@@ -176,14 +182,15 @@ impl MatmulKernel for MatmulCpuKernel {
                                         } else {
                                             *zp.as_ptr().add(col * zero_point_stride + group_index) as f32
                                         };
-                                        -scale * zero_point
+                                        scale * quantized_value + -scale * zero_point
                                     } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, col * num_groups_k + group_index)
+                                        scale * quantized_value
+                                            + read_f32(b.as_ptr(), weights_data_type, col * num_groups_k + group_index)
                                     } else {
                                         let midpoint = (1u32 << (bits - 1)) as f32;
-                                        -scale * midpoint
+                                        scale * quantized_value + -scale * midpoint
                                     };
-                                    scale * quantized_value + bias_term
+                                    b_value
                                 },
                             };
                             accumulator += a_value * b_value;

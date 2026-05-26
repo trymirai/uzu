@@ -24,6 +24,7 @@ struct BSource {
       const device BT* scales,
       const device uint8_t* zero_points,
       const device BT* biases,
+      const threadgroup half* codebook,
       const device AT* a,
       uint in_vec_size,
       uint out_row,
@@ -129,7 +130,12 @@ struct BSource {
 
       uint k = 0;
       for (; k + block_size <= in_vec_size; k += block_size) {
-        U sum = load_vector<AT, U, values_per_thread, BITS>(in, x_thread);
+        U sum = 0;
+        if constexpr (B_PROLOGUE == GemmBPrologueKind::CodebookDequant) {
+          load_vector_unscaled<AT, U, values_per_thread>(in, x_thread);
+        } else {
+          sum = load_vector<AT, U, values_per_thread, BITS>(in, x_thread);
+        }
 
         const device uint8_t* wl0 = ws;
         const device uint8_t* wl1 = ws + in_vec_size_w;
@@ -139,34 +145,17 @@ struct BSource {
         U scale[4];
         U offset[4];
         prep.load(scale, offset);
-        result[0] += qdot<U, values_per_thread, BITS>(
-            wl0,
-            x_thread,
-            scale[0],
-            offset[0],
-            sum
-        );
-        result[1] += qdot<U, values_per_thread, BITS>(
-            wl1,
-            x_thread,
-            scale[1],
-            offset[1],
-            sum
-        );
-        result[2] += qdot<U, values_per_thread, BITS>(
-            wl2,
-            x_thread,
-            scale[2],
-            offset[2],
-            sum
-        );
-        result[3] += qdot<U, values_per_thread, BITS>(
-            wl3,
-            x_thread,
-            scale[3],
-            offset[3],
-            sum
-        );
+        if constexpr (B_PROLOGUE == GemmBPrologueKind::CodebookDequant) {
+          result[0] += qdot_codebook<U, values_per_thread, BITS>(wl0, x_thread, codebook, scale[0]);
+          result[1] += qdot_codebook<U, values_per_thread, BITS>(wl1, x_thread, codebook, scale[1]);
+          result[2] += qdot_codebook<U, values_per_thread, BITS>(wl2, x_thread, codebook, scale[2]);
+          result[3] += qdot_codebook<U, values_per_thread, BITS>(wl3, x_thread, codebook, scale[3]);
+        } else {
+          result[0] += qdot<U, values_per_thread, BITS>(wl0, x_thread, scale[0], offset[0], sum);
+          result[1] += qdot<U, values_per_thread, BITS>(wl1, x_thread, scale[1], offset[1], sum);
+          result[2] += qdot<U, values_per_thread, BITS>(wl2, x_thread, scale[2], offset[2], sum);
+          result[3] += qdot<U, values_per_thread, BITS>(wl3, x_thread, scale[3], offset[3], sum);
+        }
 
         ws += block_size * bytes_per_pack / pack_factor;
         prep.advance(block_size / GROUP_SIZE);
