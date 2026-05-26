@@ -25,7 +25,7 @@ PUBLIC KERNEL(MlpGateActMul) (
   T result = T(float(up) * float(g));
 
   if (use_hadamard) {
-    result = simdgroup_random_hadamard_transform(
+    result = simdgroup_input_random_hadamard_transform(
         static_cast<ushort>(j % METAL_SIMD_SIZE),
         result,
         hadamard_factors[j]

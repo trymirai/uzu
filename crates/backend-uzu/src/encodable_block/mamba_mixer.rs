@@ -9,12 +9,13 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
+        gpu_types::ActivationType,
         kernel::{
             Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel,
             ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
         },
     },
-    config::Mamba2Config,
+    config::token_mixer::mamba2::Mamba2Config,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::ssm_layer::SSMLayer,
     parameters::{ParameterLoaderError, ParameterTree},
@@ -25,13 +26,20 @@ pub enum MambaMixerError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Linear error: {0}")]
-    LinearError(#[from] Box<LinearBlockError<B>>),
+    LinearError(#[from] LinearBlockError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
 }
 
 pub(crate) struct MambaMixer<B: Backend> {
-    config: Mamba2Config,
+    conv_dim: usize,
+    inner_dim: usize,
+    num_heads: usize,
+    num_groups: usize,
+    head_dim: usize,
+    state_dim: usize,
+    kernel_size: usize,
+    activation_type: ActivationType,
     in_projection: Box<dyn Linear<B>>,
     out_projection: Box<dyn Linear<B>>,
     split_inproj: <B::Kernels as Kernels>::SplitInProjKernel,
@@ -79,41 +87,45 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
 impl<B: Backend> MambaMixer<B> {
     pub(crate) fn new(
         context: &B::Context,
-        mamba_config: Mamba2Config,
+        mamba_config: &Mamba2Config,
         model_dim: usize,
-        decoder_layer_loader: &ParameterTree<B::Context>,
+        parameter_tree: &ParameterTree<B>,
+        data_type: DataType,
     ) -> Result<(Self, Option<Allocation<B>>), MambaMixerError<B>> {
-        let split_tree = decoder_layer_loader.subtree("mixer")?;
-        let conv_tree = split_tree.subtree("conv")?;
-
-        let data_type: DataType = mamba_config.in_projection_config.activation_precision().into();
+        let conv_tree = parameter_tree.subtree("conv")?;
+        let conv_dim = mamba_config.conv_dim();
+        let inner_dim = mamba_config.inner_dim();
 
         let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-            &mamba_config.in_projection_config,
             model_dim,
-            [mamba_config.conv_dim(), mamba_config.inner_dim(), mamba_config.num_heads],
+            [conv_dim, inner_dim, mamba_config.num_heads],
+            mamba_config.has_in_biases,
             context,
-            &decoder_layer_loader.subtree("mixer.in_projection")?,
-        )
-        .map_err(|err| MambaMixerError::LinearError(Box::new(err)))?;
+            data_type,
+            &parameter_tree.subtree("in_projection")?,
+        )?;
 
         let out_projection = <dyn Linear<B>>::new(
-            &mamba_config.out_projection_config,
-            mamba_config.inner_dim(),
+            inner_dim,
             [model_dim],
+            mamba_config.has_out_biases,
             context,
-            &decoder_layer_loader.subtree("mixer.out_projection")?,
-        )
-        .map_err(|err| MambaMixerError::LinearError(Box::new(err)))?;
+            data_type,
+            &parameter_tree.subtree("out_projection")?,
+        )?;
 
-        let conv_weight = conv_tree.leaf("weights")?.read_allocation()?;
+        let conv_weight =
+            conv_tree.leaf("weights")?.validate(&[conv_dim, mamba_config.kernel_size], data_type)?.read_allocation()?;
         let conv_bias = if mamba_config.conv_config.has_biases {
-            Some(conv_tree.leaf("biases")?.read_allocation()?)
+            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], data_type)?.read_allocation()?)
         } else {
             None
         };
-        let gate_bias = split_tree.leaf("gate_bias")?.read_allocation()?;
-        let skip_connection_weight = split_tree.leaf("skip_connection_weight")?.read_allocation()?;
+        let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], data_type)?.read_allocation()?;
+        let skip_connection_weight = parameter_tree
+            .leaf("skip_connection_weight")?
+            .validate(&[mamba_config.num_heads], data_type)?
+            .read_allocation()?;
 
         let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
             .map_err(MambaMixerError::BackendError)?;
@@ -136,7 +148,14 @@ impl<B: Backend> MambaMixer<B> {
 
         Ok((
             Self {
-                config: mamba_config,
+                conv_dim,
+                inner_dim,
+                num_heads: mamba_config.num_heads,
+                num_groups: mamba_config.num_groups,
+                head_dim: mamba_config.head_dim,
+                state_dim: mamba_config.state_dim,
+                kernel_size: mamba_config.kernel_size,
+                activation_type: mamba_config.activation.act_type(),
                 in_projection,
                 out_projection,
                 split_inproj,
@@ -162,13 +181,13 @@ impl<B: Backend> MambaMixer<B> {
         suffix_length: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<SplitInProjectionOutput<B>, B::Error> {
-        let conv_dim = self.config.conv_dim();
-        let inner_dim = self.config.inner_dim();
-        let num_heads = self.config.num_heads;
+        let conv_dim = self.conv_dim;
+        let inner_dim = self.inner_dim;
+        let num_heads = self.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
         let mut conv_inputs = encoder.allocate_scratch(size_for_shape(&[suffix_length, conv_dim], self.data_type))?;
-        let mut gate = encoder
-            .allocate_scratch(size_for_shape(&[suffix_length, num_heads, self.config.head_dim], self.data_type))?;
+        let mut gate =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads, self.head_dim], self.data_type))?;
         let mut time_step = encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads], self.data_type))?;
         self.split_inproj.encode(
             in_proj,
@@ -197,20 +216,18 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) -> Result<ConvScanOutput<B>, B::Error> {
-        let conv_dim = self.config.conv_dim();
-        let inner_dim = self.config.inner_dim();
-        let proj_dim = self.config.num_groups * self.config.state_dim;
-        let state_stride = self.config.kernel_size.saturating_sub(1);
-        let mut conv_x = encoder.allocate_scratch(size_for_shape(
-            &[suffix_length, self.config.num_heads, self.config.head_dim],
-            self.data_type,
-        ))?;
-        let state_shape = [suffix_length, self.config.num_groups, self.config.state_dim];
+        let conv_dim = self.conv_dim;
+        let inner_dim = self.inner_dim;
+        let proj_dim = self.num_groups * self.state_dim;
+        let state_stride = self.kernel_size.saturating_sub(1);
+        let mut conv_x = encoder
+            .allocate_scratch(size_for_shape(&[suffix_length, self.num_heads, self.head_dim], self.data_type))?;
+        let state_shape = [suffix_length, self.num_groups, self.state_dim];
         let mut state_b = encoder.allocate_scratch(size_for_shape(&state_shape, self.data_type))?;
         let mut state_c = encoder.allocate_scratch(size_for_shape(&state_shape, self.data_type))?;
 
         if suffix_length == 1 {
-            if conv_dim > 0 && self.config.kernel_size > 0 {
+            if conv_dim > 0 && self.kernel_size > 0 {
                 let next_state = layer.conv_state.as_mut().unwrap_or(&mut layer.ssm_state);
                 self.conv_decode.encode(
                     conv_inputs,
@@ -221,14 +238,14 @@ impl<B: Backend> MambaMixer<B> {
                     &mut state_b,
                     &mut state_c,
                     next_state,
-                    self.config.kernel_size as u32,
+                    self.kernel_size as u32,
                     conv_dim as u32,
                     state_stride as u32,
                     conv_dim as u32,
                     suffix_length as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    self.config.activation.act_type(),
+                    self.activation_type,
                     encoder,
                 );
             }
@@ -252,7 +269,7 @@ impl<B: Backend> MambaMixer<B> {
                 );
             }
 
-            if conv_dim > 0 && self.config.kernel_size > 0 {
+            if conv_dim > 0 && self.kernel_size > 0 {
                 let conv_source = match &padded {
                     Some(padded) => padded,
                     None => conv_inputs,
@@ -267,13 +284,13 @@ impl<B: Backend> MambaMixer<B> {
                     &mut state_c,
                     next_state,
                     suffix_length as u32,
-                    self.config.kernel_size as u32,
+                    self.kernel_size as u32,
                     conv_dim as u32,
                     state_stride as u32,
                     conv_dim as u32,
                     inner_dim as u32,
                     proj_dim as u32,
-                    self.config.activation.act_type(),
+                    self.activation_type,
                     encoder,
                 );
             }
@@ -307,14 +324,14 @@ impl<B: Backend> MambaMixer<B> {
                 z: gate,
                 state: &mut layer.ssm_state,
                 suffix_len: suffix_length,
-                group_size: (self.config.num_heads / self.config.num_groups) as u32,
-                state_size: self.config.state_dim as u32,
-                x_strides: [self.config.num_heads * self.config.head_dim, self.config.head_dim, 1],
-                dt_strides: [self.config.num_heads, 1],
-                cb_strides: [self.config.num_groups * self.config.state_dim, self.config.state_dim, 1],
-                state_strides: [self.config.head_dim * self.config.state_dim, self.config.state_dim, 1],
-                channels: self.config.num_heads,
-                head_dim: self.config.head_dim,
+                group_size: (self.num_heads / self.num_groups) as u32,
+                state_size: self.state_dim as u32,
+                x_strides: [self.num_heads * self.head_dim, self.head_dim, 1],
+                dt_strides: [self.num_heads, 1],
+                cb_strides: [self.num_groups * self.state_dim, self.state_dim, 1],
+                state_strides: [self.head_dim * self.state_dim, self.state_dim, 1],
+                channels: self.num_heads,
+                head_dim: self.head_dim,
             },
             self.prefill_mode,
         )
@@ -331,12 +348,11 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut out =
-            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.config.inner_dim()], self.data_type))?;
-        let h = self.config.num_heads as u32;
-        let g = self.config.num_groups as u32;
-        let dh = self.config.head_dim as u32;
-        let n = self.config.state_dim as u32;
+        let mut out = encoder.allocate_scratch(size_for_shape(&[suffix_length, self.inner_dim], self.data_type))?;
+        let h = self.num_heads as u32;
+        let g = self.num_groups as u32;
+        let dh = self.head_dim as u32;
+        let n = self.state_dim as u32;
 
         let x_strides = [h * dh, dh, 1u32];
         let dt_strides = [h, 1u32];

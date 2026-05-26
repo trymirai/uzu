@@ -41,7 +41,7 @@ impl Instance {
     ) -> Result<Self, Error> {
         let model_path = PathBuf::from(reference.clone());
         let decoding_config = build_decoding_config(&config, &model_path)?;
-        let session = ChatSession::new(model_path, decoding_config).map_err(Error::from)?;
+        let session = ChatSession::new(model_path, decoding_config)?;
         let container = Container::new(session);
         Ok(Self {
             session_container: container,
@@ -62,9 +62,12 @@ impl InstanceTrait for Instance {
             .map_err(|error| Error::Runtime {
                 message: error.to_string(),
             })
-            .and_then(|mut session| session.reset().map_err(Error::from));
+            .and_then(|mut session| {
+                session.reset()?;
+                Ok(())
+            });
         Box::pin(async move {
-            result.map_err(|error| Box::new(error) as BackendError)?;
+            result?;
             Ok(Box::new(State) as Box<dyn StateTrait>)
         })
     }

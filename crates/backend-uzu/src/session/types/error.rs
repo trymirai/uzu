@@ -1,12 +1,7 @@
-use crate::{DataType, classifier::ClassifierError, config::ModelType, session::config::TtsRunConfigError};
+use crate::{DataType, classifier::ClassifierError, session::config::TtsRunConfigError};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TtsModelConfigError {
-    #[error("expected model_type={expected:?}, got {actual:?}")]
-    ModelTypeMismatch {
-        expected: ModelType,
-        actual: ModelType,
-    },
     #[error("missing TTS model config")]
     MissingTtsModelConfig,
     #[error("FishAudio tensor {key} dtype mismatch: expected {expected:?}, got {actual:?}")]
@@ -39,13 +34,13 @@ pub enum TtsModelConfigError {
     },
     #[error("FishAudio semantic token range is invalid: begin={begin}, end={end}")]
     FishAudioSemanticTokenRangeInvalid {
-        begin: i64,
-        end: i64,
+        begin: u64,
+        end: u64,
     },
     #[error("FishAudio semantic token range overflow: begin={begin}, end={end}")]
     FishAudioSemanticTokenRangeOverflow {
-        begin: i64,
-        end: i64,
+        begin: u64,
+        end: u64,
     },
     #[error(
         "FishAudio semantic codec cardinality={semantic_cardinality} does not match audio semantic codec cardinality={audio_semantic_cardinality}"
@@ -170,16 +165,24 @@ pub enum Error {
     UnableToCreateContext(Box<dyn std::error::Error>),
     #[error("Unable to create CommandBuffer: {0}")]
     UnableToCreateCommandBuffer(Box<dyn std::error::Error>),
-    #[error("Unable to load model configuration")]
-    UnableToLoadConfig,
+    #[error("Unable to open model configuration: {0}")]
+    UnableToOpenConfig(#[from] std::io::Error),
+    #[error("Unable to deserialize model configuration: {0}")]
+    UnableToDeserializeConfig(#[from] serde_json::Error),
+    #[error("Invalid model configuration: {0}")]
+    InvalidModelConfig(String),
     #[error("Invalid TTS model config: {0}")]
     InvalidTtsModelConfig(#[from] TtsModelConfigError),
     #[error("Invalid TTS run config: {0}")]
     InvalidTtsRunConfig(#[from] TtsRunConfigError),
-    #[error("Unable to load model weights")]
-    UnableToLoadWeights,
-    #[error("Unable to load tokenizer")]
-    UnableToLoadTokenizer,
+    #[error("Unable to load model weights: {0}")]
+    UnableToLoadWeights(#[source] Box<dyn std::error::Error>),
+    #[error("Unable to create decoder: {0}")]
+    UnableToCreateDecoder(#[source] Box<dyn std::error::Error>),
+    #[error("Unable to create classifier layer: {0}")]
+    UnableToCreateClassifierLayer(#[source] Box<dyn std::error::Error>),
+    #[error("Unable to load tokenizer: {0}")]
+    UnableToLoadTokenizer(#[source] tokenizers::Error),
     #[error("Model is too large to fit into available RAM")]
     NotEnoughMemory,
     #[error("Command buffer failed: {0}")]
@@ -190,20 +193,18 @@ pub enum Error {
     UnsupportedContextModeForModel,
     #[error("Unsupported speculator config for model")]
     UnsupportedSpeculatorConfigForModel,
-    #[error("Language model generator not loaded")]
-    LanguageModelGeneratorNotLoaded,
-    #[error("Unable to load prompt template")]
-    UnableToLoadPromptTemplate,
-    #[error("Unable to render prompt template")]
-    UnableToRenderPromptTemplate,
+    #[error("Unable to load prompt template: {0}")]
+    UnableToLoadPromptTemplate(#[source] minijinja::Error),
+    #[error("Unable to render prompt template: {0}")]
+    UnableToRenderPromptTemplate(#[source] minijinja::Error),
     #[error("Only assistant messages can have reasoning content")]
     UnexpectedReasoningContent,
-    #[error("Unable to build output parser regex")]
-    UnableToBuildOutputParserRegex,
-    #[error("Unable to encode text")]
-    UnableToEncodeText,
-    #[error("Unable to decode text")]
-    UnableToDecodeText,
+    #[error("Unable to build output parser regex: {0}")]
+    UnableToBuildOutputParserRegex(#[from] regex::Error),
+    #[error("Unable to encode text: {0}")]
+    UnableToEncodeText(#[source] tokenizers::Error),
+    #[error("Unable to decode text: {0}")]
+    UnableToDecodeText(#[source] tokenizers::Error),
     #[error("Context length exceeded")]
     ContextLengthExceeded,
     #[error("Prefill failed")]
@@ -220,8 +221,8 @@ pub enum Error {
     GrammarReject,
     #[error("Token {0} out of grammar vocabulary range (0..{1})")]
     TokenOutOfGrammarRange(u64, usize),
-    #[error("Capture failed")]
-    CaptureFailed,
+    #[error("Capture failed: {0}")]
+    CaptureFailed(#[source] Box<dyn std::error::Error>),
     #[error("Classifier error: {0}")]
     Classifier(#[from] ClassifierError),
     #[error("Audio codec error: {0}")]

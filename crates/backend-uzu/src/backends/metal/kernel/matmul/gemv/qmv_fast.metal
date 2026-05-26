@@ -230,7 +230,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     if (simd_group == 0) {
       uint global_out_idx = out_block_idx * 32 + simd_lane;
       if (global_out_idx < out_vec_size) {
-        output[simd_lane] = simdgroup_random_hadamard_transform(
+        output[simd_lane] = simdgroup_output_random_hadamard_transform(
             static_cast<ushort>(simd_lane),
             T(shared_results[simd_lane]),
             hadamard_factors[global_out_idx]

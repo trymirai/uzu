@@ -105,15 +105,30 @@ fn test_silu_bf16() {
 
 #[uzu_test]
 fn test_gelu_f32() {
-    test::<f32>(ActivationType::GELU);
+    test::<f32>(ActivationType::GELUApprox);
 }
 
 #[uzu_test]
 fn test_gelu_f16() {
-    test::<f16>(ActivationType::GELU);
+    test::<f16>(ActivationType::GELUApprox);
 }
 
 #[uzu_test]
 fn test_gelu_bf16() {
-    test::<bf16>(ActivationType::GELU);
+    test::<bf16>(ActivationType::GELUApprox);
+}
+
+#[uzu_test]
+fn test_gelu_exact_f32() {
+    test::<f32>(ActivationType::GELUExact);
+}
+
+#[uzu_test]
+fn test_gelu_exact_f16() {
+    test::<f16>(ActivationType::GELUExact);
+}
+
+#[uzu_test]
+fn test_gelu_exact_bf16() {
+    test::<bf16>(ActivationType::GELUExact);
 }

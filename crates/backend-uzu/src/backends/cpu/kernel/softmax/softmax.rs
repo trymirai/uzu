@@ -8,7 +8,7 @@ use crate::ArrayElement;
 #[variants(T, f32, f16, bf16)]
 pub fn softmax<T: ArrayElement + Float>(
     values: *mut T,
-    #[optional(has_sinks)] sinks: Option<*const f32>,
+    #[optional(has_sinks)] sinks: Option<*const T>,
     row_length: u32,
     outer_dim: u32,
     batch_dim: u32,
@@ -18,7 +18,7 @@ pub fn softmax<T: ArrayElement + Float>(
         for batch_index in 0..batch_dim {
             let row_offset = ((outer_index * batch_dim + batch_index) * row_length) as usize;
             let sink = if has_sinks {
-                unsafe { *sinks.unwrap().add(outer_index as usize) }
+                unsafe { *sinks.unwrap().add(outer_index as usize) }.to_f32().unwrap()
             } else {
                 f32::NEG_INFINITY
             };

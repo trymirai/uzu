@@ -54,7 +54,7 @@ PUBLIC KERNEL(AttentionGemm)(
     const constant RingParams& ring_params OPTIONAL(is_kv_cache_ring),
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
-    const device float* sinks OPTIONAL(has_sinks),
+    const device T* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
     const constant uint& suffix_length,
     const bool align_q SPECIALIZE,

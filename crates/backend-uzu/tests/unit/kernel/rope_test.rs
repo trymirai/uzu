@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -16,8 +14,8 @@ use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     qkv: Box<[T]>,
-    cosines: Box<[T]>,
-    sines: Box<[T]>,
+    cosines: Box<[f32]>,
+    sines: Box<[f32]>,
     token_positions: Box<[i32]>,
     head_dim: u32,
     rope_dim: u32,
@@ -44,11 +42,11 @@ fn get_test_data<T: ArrayElement + Float>(
         qkv[i] = T::from(((i as f32) * 0.1).sin() * 2.0).unwrap();
     }
 
-    let mut cosines = vec![T::zero(); cos_sin_size];
-    let mut sines = vec![T::zero(); cos_sin_size];
+    let mut cosines = vec![0.0f32; cos_sin_size];
+    let mut sines = vec![0.0f32; cos_sin_size];
     for i in 0..cos_sin_size {
-        cosines[i] = T::from(((i as f32) * 0.05).cos()).unwrap();
-        sines[i] = T::from(((i as f32) * 0.05).sin()).unwrap();
+        cosines[i] = ((i as f32) * 0.05).cos();
+        sines[i] = ((i as f32) * 0.05).sin();
     }
 
     let mut token_positions = vec![0i32; suffix_length as usize];
@@ -73,7 +71,9 @@ fn get_test_data<T: ArrayElement + Float>(
 fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, T::data_type())
+    let element_data_type = T::data_type();
+    let rope_data_type = DataType::F32;
+    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, element_data_type, rope_data_type)
         .expect("Failed to create RopeKernel");
 
     let total_heads = (input.num_heads + 2 * input.num_groups) as usize;
@@ -86,12 +86,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let cosines_array = context.create_array_from(&[cos_sin_len], &input.cosines);
     let sines_array = context.create_array_from(&[cos_sin_len], &input.sines);
     let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions);
-    let mut rotated_queries = context
-        .create_array_uninitialized(&[queries_len], T::data_type())
-        .into_allocation();
-    let mut rotated_keys = context
-        .create_array_uninitialized(&[keys_len], T::data_type())
-        .into_allocation();
+    let mut rotated_queries = context.create_array_uninitialized(&[queries_len], T::data_type()).into_allocation();
+    let mut rotated_keys = context.create_array_uninitialized(&[keys_len], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

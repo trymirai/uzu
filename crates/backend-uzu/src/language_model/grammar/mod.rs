@@ -29,8 +29,8 @@ pub fn create_compiled_grammar(
     #[cfg(grammar_xgrammar)]
     {
         use xgrammar::TokenizerInfo;
-        let tokenizer_info = TokenizerInfo::from_huggingface(&tokenizer, None, stop_token_ids)
-            .map_err(|msg| Error::GrammarError(msg))?;
+        let tokenizer_info =
+            TokenizerInfo::from_huggingface(&tokenizer, None, stop_token_ids).map_err(Error::GrammarError)?;
 
         use xgram::CompiledXGrammar;
         let grammar = CompiledXGrammar::from_config(config, None, &tokenizer_info)?;

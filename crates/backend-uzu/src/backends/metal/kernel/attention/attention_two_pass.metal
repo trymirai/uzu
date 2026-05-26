@@ -39,7 +39,7 @@ PUBLIC KERNEL(AttentionTwoPass1)(
     const constant uint& suffix_length,
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
-    const device float* sinks OPTIONAL(has_sinks),
+    const device T* sinks OPTIONAL(has_sinks),
     const bool has_sinks SPECIALIZE,
     const bool is_kv_cache_ring SPECIALIZE,
     const bool is_causal SPECIALIZE,

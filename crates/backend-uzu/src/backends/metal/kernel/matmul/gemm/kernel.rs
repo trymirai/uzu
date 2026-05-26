@@ -7,7 +7,7 @@ use crate::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
-                GemmParams,
+                GemmParams, HadamardTransformOrder,
                 gemm::{GemmAlignment, GemmDTransform, GemmTiling},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
@@ -124,13 +124,18 @@ impl GemmKernel {
 
         let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
         if is_quant {
-            if arguments.d_transform.mask().contains(GemmDTransform::ACCUMULATE) {
+            let d_mask = arguments.d_transform.mask();
+            if d_mask.contains(GemmDTransform::ACCUMULATE) {
                 return Err(MatmulError::UnsupportedDOp {
                     bit: GemmDTransform::ACCUMULATE,
                     path: "QuantGemm",
                 }
                 .into());
             }
+            assert!(
+                !d_mask.contains(GemmDTransform::BIAS | GemmDTransform::RHT),
+                "QuantGemm with both output bias and output RHT is not supported: bias must be applied after RHT",
+            );
             if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
                 return Err(MatmulError::UnsupportedLayout {
                     path: "QuantGemm",
@@ -229,7 +234,7 @@ impl GemmKernel {
                     bits_per_b,
                     group_size,
                 };
-                specialization.validate().map_err(MetalError::from)?;
+                specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),
@@ -286,7 +291,7 @@ impl GemmKernel {
                     bits_per_b,
                     group_size,
                 };
-                specialization.validate().map_err(MetalError::from)?;
+                specialization.validate()?;
                 let kernel = self.get_or_create(encoder.context(), specialization)?;
                 kernel.encode(
                     (a, a_offset),

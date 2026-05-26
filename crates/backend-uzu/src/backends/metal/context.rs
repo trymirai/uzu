@@ -160,17 +160,17 @@ impl Context for MetalContext {
     fn recommended_async_batch_size(
         &self,
         model_path: &Path,
-    ) -> usize {
+    ) -> Result<usize, MetalError> {
         let cores = self.device_capabilities.gpu_core_count;
-        let model_size = ModelSize::from_path(model_path);
-        match (model_size, cores) {
+        let model_size = ModelSize::from_path(model_path)?;
+        Ok(match (model_size, cores) {
             (ModelSize::Large, c) if c > 20 => 32,
             (ModelSize::Large, c) if c > 10 => 16,
             (ModelSize::Large, _) => 8,
             (ModelSize::Small, c) if c > 20 => 256,
             (ModelSize::Small, c) if c > 10 => 128,
             (ModelSize::Small, _) => 64,
-        }
+        })
     }
 
     fn debug_active(&self) -> bool {

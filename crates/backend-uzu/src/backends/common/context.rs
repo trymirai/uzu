@@ -10,7 +10,7 @@ pub trait Context: Sized {
     fn recommended_async_batch_size(
         &self,
         model_path: &Path,
-    ) -> usize;
+    ) -> Result<usize, <Self::Backend as Backend>::Error>;
 
     fn is_high_performance(&self) -> bool;
 

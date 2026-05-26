@@ -2,24 +2,23 @@ use std::{fs::File, io::BufReader, path::Path};
 
 use shoji::types::model::ModelSpecialization;
 
-use crate::config::{ModelConfig, ModelMetadata as InnerModelMetadata, ModelType};
+use crate::config::model::AnyModelConfig;
 
-pub struct ModelMetadata {
-    pub toolchain_version: String,
-    pub specialization: ModelSpecialization,
+#[derive(Debug, thiserror::Error)]
+pub enum ModelMetadataError {
+    #[error("Unable to open model configuration: {0}")]
+    UnableToOpenConfig(#[from] std::io::Error),
+    #[error("Unable to deserialize model configuration: {0}")]
+    UnableToDeserializeConfig(#[from] serde_json::Error),
 }
 
-pub fn resolve_model_metadata(model_path: &Path) -> Option<ModelMetadata> {
+pub fn resolve_model_specialization(model_path: &Path) -> Result<ModelSpecialization, ModelMetadataError> {
     let config_path = model_path.join("config.json");
-    let file = File::open(&config_path).ok()?;
-    let metadata: InnerModelMetadata<ModelConfig> = serde_json::from_reader(BufReader::new(file)).ok()?;
-    let specialization = match metadata.model_type {
-        ModelType::LanguageModel => ModelSpecialization::Chat {},
-        ModelType::ClassifierModel => ModelSpecialization::Classification {},
-        ModelType::TtsModel => ModelSpecialization::TextToSpeech {},
-    };
-    Some(ModelMetadata {
-        toolchain_version: metadata.toolchain_version,
-        specialization,
+    let file = File::open(&config_path)?;
+    let config: AnyModelConfig = serde_json::from_reader(BufReader::new(file))?;
+    Ok(match config {
+        AnyModelConfig::LanguageModelConfig(_) => ModelSpecialization::Chat {},
+        AnyModelConfig::ClassifierModelConfig(_) => ModelSpecialization::Classification {},
+        AnyModelConfig::TTSModelConfig(_) => ModelSpecialization::TextToSpeech {},
     })
 }

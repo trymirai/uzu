@@ -1,7 +1,7 @@
 use std::{path::Path, rc::Rc};
 
 use super::{AudioResult, NanoCodecFsqRuntime};
-use crate::{backends::common::Backend, config::TtsConfig};
+use crate::{backends::common::Backend, config::tts::TTSConfig};
 
 #[derive(Clone)]
 pub struct AudioGenerationContext<B: Backend> {
@@ -13,7 +13,7 @@ pub struct AudioGenerationContext<B: Backend> {
 
 impl<B: Backend> AudioGenerationContext<B> {
     pub fn from_tts_config_and_model_path(
-        tts_config: &TtsConfig,
+        tts_config: &TTSConfig,
         model_path: &Path,
     ) -> AudioResult<Self> {
         Self::with_runtime(NanoCodecFsqRuntime::from_tts_config_and_model_path(tts_config, model_path)?)

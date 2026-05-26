@@ -6,7 +6,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, QKVNormKernel},
     },
-    config::{NormalizationConfig, UpcastMode},
+    config::normalization::{NormalizationConfig, UpcastMode},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -40,21 +40,37 @@ impl<B: Backend> QKVNorm<B> {
         query_config: Option<NormalizationConfig>,
         key_config: Option<NormalizationConfig>,
         value_config: Option<NormalizationConfig>,
-        parameter_tree: &ParameterTree<B::Context>,
+        parameter_tree: &ParameterTree<B>,
         num_q_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
     ) -> Result<Self, QKVNormError<B>> {
         let query = query_config
             .map(|cfg| {
-                Self::build_head(context, intermediate_data_type, cfg, parameter_tree, Some("query_norm.scales"))
+                Self::build_head(
+                    context,
+                    intermediate_data_type,
+                    cfg,
+                    parameter_tree,
+                    Some("query_norm.scales"),
+                    head_dim,
+                )
             })
             .transpose()?;
         let key = key_config
-            .map(|cfg| Self::build_head(context, intermediate_data_type, cfg, parameter_tree, Some("key_norm.scales")))
+            .map(|cfg| {
+                Self::build_head(
+                    context,
+                    intermediate_data_type,
+                    cfg,
+                    parameter_tree,
+                    Some("key_norm.scales"),
+                    head_dim,
+                )
+            })
             .transpose()?;
         let value = value_config
-            .map(|cfg| Self::build_head(context, intermediate_data_type, cfg, parameter_tree, None))
+            .map(|cfg| Self::build_head(context, intermediate_data_type, cfg, parameter_tree, None, head_dim))
             .transpose()?;
 
         Ok(Self {
@@ -71,18 +87,27 @@ impl<B: Backend> QKVNorm<B> {
         context: &B::Context,
         intermediate_data_type: DataType,
         config: NormalizationConfig,
-        parameter_tree: &ParameterTree<B::Context>,
+        parameter_tree: &ParameterTree<B>,
         scales_leaf: Option<&str>,
+        head_dim: usize,
     ) -> Result<Head<B>, QKVNormError<B>> {
-        let scales = scales_leaf.map(|leaf| parameter_tree.leaf_allocation(leaf)).transpose()?;
+        let (scales, scale_data_type) = if let Some(scales_leaf) = scales_leaf {
+            let scale_data_type = super::normalization::NORMALIZATION_SCALE_DATA_TYPE;
+            (
+                Some(parameter_tree.leaf(scales_leaf)?.validate(&[head_dim], scale_data_type)?.read_allocation()?),
+                scale_data_type,
+            )
+        } else {
+            (None, intermediate_data_type)
+        };
         let scale_free = scales.is_none();
-        let scale_data_type: DataType = config.scale_precision.into();
-        let accumulation_data_type: DataType = config.accumulation_precision.into();
+        let accumulation_data_type = super::normalization::NORMALIZATION_ACCUMULATION_DATA_TYPE;
+        let output_data_type = intermediate_data_type;
         let kernel = <B::Kernels as Kernels>::QKVNormKernel::new(
             context,
             intermediate_data_type,
             scale_data_type,
-            scale_data_type,
+            output_data_type,
             accumulation_data_type,
             true,
             scale_free,

@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use super::*;
-use crate::array::Array;
+use crate::{array::Array, backends::common::gpu_types::ActivationType};
 
 pub(super) fn array_batch_byte_range<B: Backend>(
     array: &Array<B>,
@@ -91,6 +91,7 @@ pub(super) struct StructuredAudioNorm<B: Backend> {
 
 #[derive(Debug)]
 pub(super) struct StructuredAudioConvNeXt<B: Backend> {
+    pub(super) activation_type: ActivationType,
     pub(super) depthwise_conv: StructuredAudioConv1d<B>,
     pub(super) norm: StructuredAudioNorm<B>,
     pub(super) pwconv1: StructuredAudioPointwiseConv<B>,

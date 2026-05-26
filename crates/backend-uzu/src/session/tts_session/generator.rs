@@ -36,7 +36,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         let text_tokens: Vec<u64> = self
             .tokenizer
             .encode(prompt.as_str(), false)
-            .map_err(|_| Error::UnableToEncodeText)?
+            .map_err(Error::UnableToEncodeText)?
             .get_ids()
             .iter()
             .map(|&token| token as u64)
@@ -117,8 +117,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
                         sample_rate,
                         channels,
                         accumulated_lengths.into_boxed_slice(),
-                    )
-                    .map_err(Error::from)?
+                    )?
                 }
             },
         };
@@ -162,7 +161,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         let text_tokens: Vec<u64> = self
             .tokenizer
             .encode(prompt.as_str(), false)
-            .map_err(|_| Error::UnableToEncodeText)?
+            .map_err(Error::UnableToEncodeText)?
             .get_ids()
             .iter()
             .map(|&token| token as u64)
@@ -231,7 +230,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         let text_tokens: Vec<u64> = self
             .tokenizer
             .encode(prompt.as_str(), false)
-            .map_err(|_| Error::UnableToEncodeText)?
+            .map_err(Error::UnableToEncodeText)?
             .get_ids()
             .iter()
             .map(|&token| token as u64)
@@ -370,8 +369,7 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
             ss.output_sample_rate,
             ss.output_channels,
             vec![ss.output_frames].into_boxed_slice(),
-        )
-        .map_err(Error::from)?;
+        )?;
 
         let instrumentation = self.take_text_decoder_instrumentation();
         self.record_last_execution_stats(TtsExecutionStats {

@@ -9,7 +9,7 @@ pub struct Result {
     pub device: Device,
     pub engine_version: String,
     pub timestamp: u64,
-    pub precision: DataType,
+    pub data_type: DataType,
     pub memory_used: Option<u64>,
     pub tokens_count_input: u64,
     pub tokens_count_output: u64,

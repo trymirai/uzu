@@ -83,6 +83,6 @@ pub fn speculator_sample(
     speculator_probs
         .iter()
         .map(|(&k, &v)| (k, f32::ln(v) + gumbel_float(seed, revidx(k as u32))))
-        .max_by(|(_ak, av), (_bk, bv)| f32::total_cmp(av, bv))
-        .map(|(k, _v)| k)
+        .max_by(|(_, av), (_, bv)| f32::total_cmp(av, bv))
+        .map(|(k, _)| k)
 }

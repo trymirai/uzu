@@ -576,6 +576,7 @@ dependencies = [
  "is_close",
  "itertools 0.14.0",
  "libc",
+ "libm",
  "memmap2",
  "minijinja",
  "minijinja-contrib",

@@ -106,10 +106,10 @@ fn moe_cpu_reference(
             let mut hidden = vec![0.0f32; d_ff];
             for i in 0..d_ff {
                 hidden[i] = match gating_code {
-                    0 => ActivationType::GELU.activate(up_out[i]),
+                    0 => ActivationType::GELUApprox.activate(up_out[i]),
                     1 => activation_silu_alpha(up_out[i], silu_alpha),
                     2 => activation_silu_alpha(gate_out[i], silu_alpha) * up_out[i],
-                    3 => ActivationType::GELU.activate(gate_out[i]) * up_out[i],
+                    3 => ActivationType::GELUApprox.activate(gate_out[i]) * up_out[i],
                     _ => activation_silu_alpha(gate_out[i], silu_alpha) * up_out[i], // fallback to SwiGLU
                 };
             }
