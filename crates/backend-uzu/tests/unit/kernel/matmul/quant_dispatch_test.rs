@@ -244,6 +244,9 @@ fn mxu_quant_parity_bf16(
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
+    // MXU accumulates fragments in a different order than the simdgroup
+    // reference path, so bf16 reductions over k=256 can drift one element
+    // above the 0.4 absolute tolerance the simdgroup path uses.
     assert_parity::<bf16>(
         &format!(
             "MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"
@@ -254,3 +257,4 @@ fn mxu_quant_parity_bf16(
         0.5,
     );
 }
+

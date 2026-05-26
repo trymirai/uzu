@@ -31,13 +31,28 @@ impl GemmSpecialization {
                 use_mxu: self.use_mxu,
             });
         }
-        if let Some(group_size) = self.group_size {
-            let simdgroup_block_k = self.tiling.simdgroup_block_k();
-            if simdgroup_block_k > group_size {
-                return Err(GemmSpecializationError::SimdgroupKExceedsGroupSize {
-                    simdgroup_k: simdgroup_block_k,
-                    group_size,
-                });
+        if self.use_mxu
+            && self.b_prologue != GemmBPrologueKind::FullPrecision
+            && matches!(self.tiling, GemmTiling::Tile128x128x256_Simdgroups4x4)
+        {
+            if let Some(group_size) = self.group_size {
+                if group_size > 64 {
+                    return Err(GemmSpecializationError::MxuQuantTileTooLarge {
+                        tiling: self.tiling,
+                        group_size,
+                    });
+                }
+            }
+        }
+        if !self.use_mxu {
+            if let Some(group_size) = self.group_size {
+                let simdgroup_block_k = self.tiling.simdgroup_block_k();
+                if simdgroup_block_k > group_size {
+                    return Err(GemmSpecializationError::SimdgroupKExceedsGroupSize {
+                        simdgroup_k: simdgroup_block_k,
+                        group_size,
+                    });
+                }
             }
         }
         if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
@@ -160,6 +175,11 @@ impl GemmSpecialization {
             }
         }
         for &tiling in mxu_tiling_set(data_type) {
+            if matches!(tiling, GemmTiling::Tile128x128x256_Simdgroups4x4)
+                && group_size > 64
+            {
+                continue;
+            }
             for align_m in [true, false] {
                 for align_n in [true, false] {
                     for output_transform in [

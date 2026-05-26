@@ -16,4 +16,9 @@ pub enum GemmSpecializationError {
         tiling: GemmTiling,
         use_mxu: bool,
     },
+    #[error("MXU quantized GEMM with tile {tiling} requires group_size <= 64 (got {group_size}) due to threadgroup memory budget")]
+    MxuQuantTileTooLarge {
+        tiling: GemmTiling,
+        group_size: u32,
+    },
 }

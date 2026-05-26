@@ -10,14 +10,21 @@
 using namespace metal;
 using namespace uzu::gemm;
 
+#define GEMM_MXU_QUANT                                                         \
+  (USE_MXU && B_PROLOGUE != GemmBPrologueKind::FullPrecision)
 #define GEMM_TGA_ELEMENTS                                                      \
-  (USE_MXU ? 1                                                                 \
-           : (gemm_tiling_block_m(GEMM_TILING) *                               \
-              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
+  ((USE_MXU)                                                                   \
+       ? 1                                                                     \
+       : (gemm_tiling_block_m(GEMM_TILING) *                                   \
+          (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
 #define GEMM_TGB_ELEMENTS                                                      \
-  (USE_MXU ? 1                                                                 \
-           : (gemm_tiling_block_n(GEMM_TILING) *                               \
-              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
+  ((USE_MXU)                                                                   \
+       ? (GEMM_MXU_QUANT                                                       \
+              ? (gemm_tiling_block_n(GEMM_TILING) *                            \
+                 (int(GROUP_SIZE) + 16 / int(sizeof(T))))                      \
+              : 1)                                                             \
+       : (gemm_tiling_block_n(GEMM_TILING) *                                   \
+          (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
 
 template <
     typename T,
@@ -80,6 +87,10 @@ CONSTRAINT(
 CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile64x64x64_Simdgroups2x2 ||
         GROUP_SIZE == 64 || GROUP_SIZE == 128)
+CONSTRAINT(
+    B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
+        GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4 ||
+        GROUP_SIZE <= 64)
 KERNEL(Gemm)(
     const device T* a,
     const device uint8_t* b_packed,
@@ -115,20 +126,20 @@ KERNEL(Gemm)(
   (void)thread_z;
 
   if constexpr (USE_MXU) {
-    MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
-        a,
-        b_packed,
-        d,
-        params,
-        alignment,
-        output_transform,
-        scales,
-        biases,
-        zero_points,
-        output_bias,
-        rht_factors,
-        thread_context
-    );
+    MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::
+        run(a,
+            b_packed,
+            d,
+            params,
+            alignment,
+            output_transform,
+            scales,
+            biases,
+            zero_points,
+            output_bias,
+            rht_factors,
+            b_shared,
+            thread_context);
   } else {
     SimdgroupMmaCore<
         T,

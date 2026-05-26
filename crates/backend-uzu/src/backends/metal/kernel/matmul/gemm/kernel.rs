@@ -275,7 +275,7 @@ impl GemmKernel {
                 };
 
                 let tiling = if use_mxu {
-                    select_mxu_tiling(m, n)
+                    select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
                 } else {
                     select_quant_tiling(m, n)
                 };
@@ -361,6 +361,23 @@ fn select_mxu_tiling(
     n: u32,
 ) -> GemmTiling {
     if m >= 256 && n >= 128 {
+        GemmTiling::Tile128x128x256_Simdgroups4x4
+    } else if n < 64 {
+        GemmTiling::Tile64x32x256_Simdgroups4x1
+    } else if m < 64 {
+        GemmTiling::Tile32x64x256_Simdgroups2x2
+    } else {
+        GemmTiling::Tile64x64x256_Simdgroups2x2
+    }
+}
+
+fn select_mxu_quant_tiling(
+    m: u32,
+    n: u32,
+    group_size: u32,
+) -> GemmTiling {
+    let large_tile_fits = group_size > 0 && group_size <= 64;
+    if m >= 256 && n >= 128 && large_tile_fits {
         GemmTiling::Tile128x128x256_Simdgroups4x4
     } else if n < 64 {
         GemmTiling::Tile64x32x256_Simdgroups4x1
