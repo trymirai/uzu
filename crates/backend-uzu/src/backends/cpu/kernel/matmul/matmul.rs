@@ -123,9 +123,7 @@ impl MatmulCpuKernel {
         let d_ptr = {
             let d_buffer_range = d.as_buffer_range_mut();
             let d_byte_off = d_buffer_range.range().start;
-            SendPtrMut(unsafe {
-                (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8
-            })
+            SendPtrMut(unsafe { (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8 })
         };
 
         let command_buffer = encoder.as_command_buffer_mut();
@@ -343,19 +341,7 @@ impl MatmulCpuKernel {
                 hadamard_factors.is_some(),
             )
             .map_err(MatmulError::BackendError)?;
-        kernel.encode(
-            weights,
-            scales,
-            zero_points,
-            biases,
-            (a, a_offset),
-            &mut *d,
-            hadamard_factors,
-            k,
-            n,
-            m,
-            encoder,
-        );
+        kernel.encode(weights, scales, zero_points, biases, (a, a_offset), &mut *d, hadamard_factors, k, n, m, encoder);
         if let Some(bias) = post_bias {
             self.bias_add.encode(None::<&Allocation<Cpu>>, bias, d, n, m * n, encoder);
         }

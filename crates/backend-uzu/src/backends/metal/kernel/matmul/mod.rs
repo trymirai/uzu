@@ -31,8 +31,7 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 fn gemv_eligible<TB: AsBufferRangeRef>(args: &MatmulArguments<Metal, TB>) -> bool {
-    let is_quant =
-        matches!(args.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+    let is_quant = matches!(args.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
     if is_quant {
         args.m < 5 || args.n == 1
     } else {

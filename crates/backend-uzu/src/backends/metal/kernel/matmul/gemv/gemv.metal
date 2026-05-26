@@ -320,16 +320,17 @@ KERNEL(MatmulGemv)(
     const uint tg_block_start =
         threadgroup_index_x * output_rows_per_threadgroup;
     const uint stripes_per_tg = output_rows_per_threadgroup / METAL_SIMD_SIZE;
-    device T* output_row_values =
-        output_vector + batch_row * output_dimension;
+    device T* output_row_values = output_vector + batch_row * output_dimension;
     for (uint stripe = sg_id; stripe < stripes_per_tg; stripe += sg_count) {
-      const uint global_col =
-          tg_block_start + stripe * METAL_SIMD_SIZE + lane;
+      const uint global_col = tg_block_start + stripe * METAL_SIMD_SIZE + lane;
       if (global_col < output_dimension) {
         T value = output_row_values[global_col];
-        output_row_values[global_col] = simdgroup_output_random_hadamard_transform(
-            lane, value, rht_factors[global_col]
-        );
+        output_row_values[global_col] =
+            simdgroup_output_random_hadamard_transform(
+                lane,
+                value,
+                rht_factors[global_col]
+            );
       }
     }
   }

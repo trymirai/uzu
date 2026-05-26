@@ -23,8 +23,7 @@ template <
     typename T,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
-    GemmBPrologueKind B_PROLOGUE =
-        GemmBPrologueKind::FullPrecision,
+    GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
     int BITS = 0,
     int GROUP_SIZE = 0>
 struct SimdgroupMmaCore {
@@ -213,7 +212,9 @@ struct SimdgroupMmaCore {
             size_t(col_local);
         T value = d[d_idx];
         d[d_idx] = simdgroup_output_random_hadamard_transform(
-            simd_lane, value, rht_factors_block[col_local]
+            simd_lane,
+            value,
+            rht_factors_block[col_local]
         );
       }
     }
@@ -392,9 +393,7 @@ struct SimdgroupMmaCore {
       return;
     }
 
-    if constexpr (
-        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-    ) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
       constexpr int pack_factor = get_pack_factor<BITS, 8>();
       constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
       const int k_elements = int(params->K);

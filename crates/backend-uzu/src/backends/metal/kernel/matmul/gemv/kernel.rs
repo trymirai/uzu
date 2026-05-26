@@ -261,19 +261,7 @@ impl GemvKernel {
                 entry.insert(kernel)
             },
         };
-        kernel.encode(
-            weights,
-            scales,
-            zero_points,
-            biases,
-            (a, a_offset),
-            &mut *d,
-            hadamard_factors,
-            k,
-            n,
-            m,
-            encoder,
-        );
+        kernel.encode(weights, scales, zero_points, biases, (a, a_offset), &mut *d, hadamard_factors, k, n, m, encoder);
 
         if let Some(bias) = post_bias {
             self.bias_add.encode(None::<&Allocation<Metal>>, bias, d, n, m * n, encoder);

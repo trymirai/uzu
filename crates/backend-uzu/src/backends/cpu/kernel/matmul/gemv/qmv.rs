@@ -93,4 +93,3 @@ pub fn qmv<T: ArrayElement + Float>(
         }
     }
 }
-

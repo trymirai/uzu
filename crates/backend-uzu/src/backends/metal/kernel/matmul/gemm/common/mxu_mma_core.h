@@ -125,14 +125,11 @@ struct MxuMmaCore {
       threadgroup_barrier(mem_flags::mem_threadgroup);
 
       METAL_PRAGMA_NO_UNROLL
-      for (int inner_k = 0; inner_k < QUANT_BK;
-           inner_k += SIMDGROUP_BLOCK_K) {
-        uzu::matmul::
-            Fragment<T, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps>
-                left_tile(thread_context);
-        uzu::matmul::
-            Fragment<T, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps>
-                right_tile(thread_context);
+      for (int inner_k = 0; inner_k < QUANT_BK; inner_k += SIMDGROUP_BLOCK_K) {
+        uzu::matmul::Fragment<T, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps>
+            left_tile(thread_context);
+        uzu::matmul::Fragment<T, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps>
+            right_tile(thread_context);
 
         const int left_offset = inner_k;
         if constexpr (ALIGNED_M) {
@@ -145,10 +142,7 @@ struct MxuMmaCore {
           );
         }
 
-        right_tile.load(
-            b_shared_simdgroup + inner_k,
-            int(SHARED_STRIDE_B)
-        );
+        right_tile.load(b_shared_simdgroup + inner_k, int(SHARED_STRIDE_B));
 
         uzu::matmul::MxuFragmentOps::template tile_matmul<false, true>(
             accumulator,
@@ -232,15 +226,16 @@ struct MxuMmaCore {
 
     const ushort tile_block_cols = ushort(
         min(int(THREADGROUP_BLOCK_N),
-            int(params->N) - int(geometry.block_col_start)));
+            int(params->N) - int(geometry.block_col_start))
+    );
 
     const bool apply_scale = output_transform.contains(GemmDTransform::SCALE);
     const bool apply_accumulate =
         output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
 
-    const device T* bias_simdgroup = output_bias + size_t(block_col) +
-        size_t(tile_col_offset);
+    const device T* bias_simdgroup =
+        output_bias + size_t(block_col) + size_t(tile_col_offset);
     using FragType =
         uzu::matmul::Fragment<T, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
     const short2 thread_position = FragType::get_position(thread_context);
@@ -262,8 +257,9 @@ struct MxuMmaCore {
                     (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   auto accumulator_tile = [&]() {
-                    if constexpr (B_PROLOGUE ==
-                                  GemmBPrologueKind::FullPrecision) {
+                    if constexpr (
+                        B_PROLOGUE == GemmBPrologueKind::FullPrecision
+                    ) {
                       const int aligned_k_iterations_fp =
                           int(params->K) / int(THREADGROUP_BLOCK_K_FP);
                       return uzu::matmul::gemm_loop<
@@ -291,10 +287,8 @@ struct MxuMmaCore {
                     } else {
                       const int aligned_k_iterations_q =
                           int(params->K) / int(QUANT_BK);
-                      constexpr int pack_factor =
-                          get_pack_factor<BITS, 8>();
-                      constexpr int bytes_per_pack =
-                          get_bytes_per_pack<BITS>();
+                      constexpr int pack_factor = get_pack_factor<BITS, 8>();
+                      constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
                       const int k_elements = int(params->K);
                       const int weights_row_stride_bytes =
                           k_elements * bytes_per_pack / pack_factor;
@@ -304,8 +298,9 @@ struct MxuMmaCore {
                           b_packed + block_col * weights_row_stride_bytes;
                       const device T* scales_offset =
                           scales + block_col * groups_per_row;
-                      if constexpr (B_PROLOGUE ==
-                                    GemmBPrologueKind::ScaleBiasDequant) {
+                      if constexpr (
+                          B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
+                      ) {
                         const device T* biases_offset =
                             biases + block_col * groups_per_row;
                         thread BLoaderScaleBias loader_b(
@@ -333,12 +328,11 @@ struct MxuMmaCore {
                             thread_context
                         );
                       } else {
-                        const int zero_point_stride_per_row = (BITS == 4)
-                            ? ((groups_per_row + 1) / 2)
-                            : groups_per_row;
+                        const int zero_point_stride_per_row =
+                            (BITS == 4) ? ((groups_per_row + 1) / 2)
+                                        : groups_per_row;
                         const device uint8_t* zero_points_row_start =
-                            zero_points +
-                            block_col * zero_point_stride_per_row;
+                            zero_points + block_col * zero_point_stride_per_row;
                         thread BLoaderScaleZeroPoint loader_b(
                             weights_block,
                             scales_offset,
@@ -420,16 +414,16 @@ struct MxuMmaCore {
                         );
                         METAL_PRAGMA_UNROLL
                         for (ushort i = 0;
-                             i < uzu::matmul::MxuFragmentOps::
-                                     THREAD_ELEMENT_ROWS;
+                             i <
+                             uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_ROWS;
                              ++i) {
                           METAL_PRAGMA_UNROLL
                           for (ushort j = 0;
-                               j < uzu::matmul::MxuFragmentOps::
-                                       THREAD_ELEMENT_COLS;
+                               j <
+                               uzu::matmul::MxuFragmentOps::THREAD_ELEMENT_COLS;
                                ++j) {
-                            const ushort element_index = i *
-                                    uzu::matmul::MxuFragmentOps::
+                            const ushort element_index =
+                                i * uzu::matmul::MxuFragmentOps::
                                         THREAD_ELEMENT_COLS +
                                 j;
                             const short col_local = short(col_base + j);
@@ -468,19 +462,18 @@ struct MxuMmaCore {
 
     if (output_transform.contains(GemmDTransform::RHT)) {
       threadgroup_barrier(mem_flags::mem_device);
-      device T* d_block = d + block_row * params->leading_dimension_d +
-          block_col;
+      device T* d_block =
+          d + block_row * params->leading_dimension_d + block_col;
       const device int32_t* rht_factors_block = rht_factors + block_col;
-      const ushort tile_block_rows =
-          ushort(min(int(THREADGROUP_BLOCK_M),
-                     int(params->M) - int(block_row)));
-      const ushort tile_block_cols_local =
-          ushort(min(int(THREADGROUP_BLOCK_N),
-                     int(params->N) - int(block_col)));
+      const ushort tile_block_rows = ushort(
+          min(int(THREADGROUP_BLOCK_M), int(params->M) - int(block_row))
+      );
+      const ushort tile_block_cols_local = ushort(
+          min(int(THREADGROUP_BLOCK_N), int(params->N) - int(block_col))
+      );
       constexpr ushort SIMDGROUP_COUNT =
           SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
-      const ushort stripes_per_row =
-          tile_block_cols_local / METAL_SIMD_SIZE;
+      const ushort stripes_per_row = tile_block_cols_local / METAL_SIMD_SIZE;
       const ushort sg_index = thread_context.simdgroup_index;
       const ushort simd_lane = thread_context.simd_lane_id;
       const uint total_work = uint(tile_block_rows) * uint(stripes_per_row);
@@ -493,7 +486,9 @@ struct MxuMmaCore {
             size_t(col_local);
         T value = d_block[d_idx];
         d_block[d_idx] = simdgroup_output_random_hadamard_transform(
-            simd_lane, value, rht_factors_block[col_local]
+            simd_lane,
+            value,
+            rht_factors_block[col_local]
         );
       }
     }

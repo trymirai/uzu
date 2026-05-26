@@ -98,22 +98,14 @@ impl GemmSpecialization {
                             GemmDTransform::BIAS,
                             GemmDTransform::BIAS | GemmDTransform::SCALE,
                             GemmDTransform::BIAS | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::BIAS
-                                | GemmDTransform::SCALE
-                                | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::BIAS | GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
                             GemmDTransform::RHT,
                             GemmDTransform::RHT | GemmDTransform::SCALE,
                             GemmDTransform::RHT | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::RHT
-                                | GemmDTransform::SCALE
-                                | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::RHT | GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
                             GemmDTransform::BIAS | GemmDTransform::RHT,
-                            GemmDTransform::BIAS
-                                | GemmDTransform::RHT
-                                | GemmDTransform::SCALE,
-                            GemmDTransform::BIAS
-                                | GemmDTransform::RHT
-                                | GemmDTransform::ACCUMULATE,
+                            GemmDTransform::BIAS | GemmDTransform::RHT | GemmDTransform::SCALE,
+                            GemmDTransform::BIAS | GemmDTransform::RHT | GemmDTransform::ACCUMULATE,
                             GemmDTransform::BIAS
                                 | GemmDTransform::RHT
                                 | GemmDTransform::SCALE
@@ -175,9 +167,7 @@ impl GemmSpecialization {
             }
         }
         for &tiling in mxu_tiling_set(data_type) {
-            if matches!(tiling, GemmTiling::Tile128x128x256_Simdgroups4x4)
-                && group_size > 64
-            {
+            if matches!(tiling, GemmTiling::Tile128x128x256_Simdgroups4x4) && group_size > 64 {
                 continue;
             }
             for align_m in [true, false] {
@@ -211,14 +201,8 @@ impl GemmSpecialization {
 
 fn simdgroup_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
-        DataType::BF16 => &[
-            GemmTiling::Tile64x32x32_Simdgroups2x2,
-            GemmTiling::Tile64x64x16_Simdgroups2x2,
-        ],
-        DataType::F16 => &[
-            GemmTiling::Tile64x64x16_Simdgroups2x2,
-            GemmTiling::Tile64x32x32_Simdgroups2x2,
-        ],
+        DataType::BF16 => &[GemmTiling::Tile64x32x32_Simdgroups2x2, GemmTiling::Tile64x64x16_Simdgroups2x2],
+        DataType::F16 => &[GemmTiling::Tile64x64x16_Simdgroups2x2, GemmTiling::Tile64x32x32_Simdgroups2x2],
         _ => &[],
     }
 }
@@ -244,10 +228,7 @@ pub(crate) fn quant_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
             GemmTiling::Tile64x64x32_Simdgroups2x2,
             GemmTiling::Tile64x64x64_Simdgroups2x2,
         ],
-        DataType::F16 => &[
-            GemmTiling::Tile8x32x32_Simdgroups1x1,
-            GemmTiling::Tile32x32x32_Simdgroups2x2,
-        ],
+        DataType::F16 => &[GemmTiling::Tile8x32x32_Simdgroups1x1, GemmTiling::Tile32x32x32_Simdgroups2x2],
         _ => &[],
     }
 }

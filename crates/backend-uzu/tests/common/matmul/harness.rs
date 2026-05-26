@@ -99,7 +99,16 @@ pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
         (0..m * n).map(|i| T::from(((i % 7) as f32) * 0.03 - 0.09).unwrap()).collect::<Vec<_>>().into_boxed_slice()
     });
     let rht_factors = (case.enable_rht && n % 32 == 0).then(|| {
-        (0..n).map(|i| if (i % 2) == 0 { 1i32 } else { -1i32 }).collect::<Vec<_>>().into_boxed_slice()
+        (0..n)
+            .map(|i| {
+                if (i % 2) == 0 {
+                    1i32
+                } else {
+                    -1i32
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
     });
     let bias = case.enable_bias.then(|| {
         (0..n).map(|i| T::from(((i % 11) as f32) * 0.05 - 0.25).unwrap()).collect::<Vec<_>>().into_boxed_slice()
@@ -138,14 +147,9 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .create_allocation(m * n * std::mem::size_of::<T>(), AllocationType::Global)
             .expect("create d allocation")
     };
-    let rht_allocation = input
-        .rht_factors
-        .as_ref()
-        .map(|factors| alloc_allocation_with_data::<B, i32>(context, factors));
-    let bias_allocation = input
-        .bias
-        .as_ref()
-        .map(|bias| alloc_allocation_with_data::<B, T>(context, bias));
+    let rht_allocation =
+        input.rht_factors.as_ref().map(|factors| alloc_allocation_with_data::<B, i32>(context, factors));
+    let bias_allocation = input.bias.as_ref().map(|bias| alloc_allocation_with_data::<B, T>(context, bias));
 
     let d_transform = MatmulDOps::<'_, B> {
         ab_scale: input.case.ab_scale,

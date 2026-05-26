@@ -86,8 +86,15 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let mxu_eligible_for_quant = match &arguments.b {
-            MatmulB::FullPrecision { .. } => true,
-            MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. } => {
+            MatmulB::FullPrecision {
+                ..
+            } => true,
+            MatmulB::ScaleBiasDequant {
+                ..
+            }
+            | MatmulB::ScaleZeroPointDequant {
+                ..
+            } => {
                 arguments.b_transpose
                     && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
                     && arguments.b_offset == 0
@@ -199,11 +206,8 @@ impl GemmKernel {
                     (false, threadgroups_per_row, threadgroups_per_column)
                 };
 
-                let alignment = GemmAlignment::new(
-                    m % tiling.block_m() == 0,
-                    n % tiling.block_n() == 0,
-                    k % tiling.block_k() == 0,
-                );
+                let alignment =
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
                 let default_ldb = if b_transpose {
                     k
@@ -279,11 +283,8 @@ impl GemmKernel {
                 } else {
                     select_quant_tiling(m, n)
                 };
-                let alignment = GemmAlignment::new(
-                    m % tiling.block_m() == 0,
-                    n % tiling.block_n() == 0,
-                    k % tiling.block_k() == 0,
-                );
+                let alignment =
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
                 let params = quant_params(m, n, k, tiling, ab_scale);
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());

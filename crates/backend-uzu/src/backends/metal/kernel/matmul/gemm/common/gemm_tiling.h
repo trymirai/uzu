@@ -16,7 +16,7 @@ constexpr uint gemm_tiling_block_m(GemmTiling t) {
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 64
          : t == GemmTiling::Tile64x64x256_Simdgroups2x2   ? 64
          : t == GemmTiling::Tile128x128x256_Simdgroups4x4 ? 128
-                                             : 0;
+                                                          : 0;
 }
 
 constexpr uint gemm_tiling_block_n(GemmTiling t) {
@@ -30,7 +30,7 @@ constexpr uint gemm_tiling_block_n(GemmTiling t) {
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 32
          : t == GemmTiling::Tile64x64x256_Simdgroups2x2   ? 64
          : t == GemmTiling::Tile128x128x256_Simdgroups4x4 ? 128
-                                             : 0;
+                                                          : 0;
 }
 
 constexpr uint gemm_tiling_block_k(GemmTiling t) {
@@ -44,7 +44,7 @@ constexpr uint gemm_tiling_block_k(GemmTiling t) {
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 256
          : t == GemmTiling::Tile64x64x256_Simdgroups2x2   ? 256
          : t == GemmTiling::Tile128x128x256_Simdgroups4x4 ? 256
-                                             : 0;
+                                                          : 0;
 }
 
 constexpr uint gemm_tiling_simdgroups_per_row(GemmTiling t) {
@@ -58,7 +58,7 @@ constexpr uint gemm_tiling_simdgroups_per_row(GemmTiling t) {
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 4
          : t == GemmTiling::Tile64x64x256_Simdgroups2x2   ? 2
          : t == GemmTiling::Tile128x128x256_Simdgroups4x4 ? 4
-                                             : 0;
+                                                          : 0;
 }
 
 constexpr uint gemm_tiling_simdgroups_per_column(GemmTiling t) {
@@ -72,7 +72,7 @@ constexpr uint gemm_tiling_simdgroups_per_column(GemmTiling t) {
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 1
          : t == GemmTiling::Tile64x64x256_Simdgroups2x2   ? 2
          : t == GemmTiling::Tile128x128x256_Simdgroups4x4 ? 4
-                                             : 0;
+                                                          : 0;
 }
 
 } // namespace gemm
