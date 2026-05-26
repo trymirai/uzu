@@ -29,9 +29,10 @@ pub enum GemmTiling {
     T64x64x32_2x2,
     T64x64x64_2x2,
     T32x32x32_2x2,
-    T32x64x32_2x2,
-    T64x32x32_4x1,
-    T128x128x32_4x4,
+    T32x64x256_2x2,
+    T64x32x256_4x1,
+    T64x64x256_2x2,
+    T128x128x256_4x4,
 }
 
 impl GemmTiling {
@@ -43,9 +44,10 @@ impl GemmTiling {
             Self::T64x64x32_2x2 => 64,
             Self::T64x64x64_2x2 => 64,
             Self::T32x32x32_2x2 => 32,
-            Self::T32x64x32_2x2 => 32,
-            Self::T64x32x32_4x1 => 64,
-            Self::T128x128x32_4x4 => 128,
+            Self::T32x64x256_2x2 => 32,
+            Self::T64x32x256_4x1 => 64,
+            Self::T64x64x256_2x2 => 64,
+            Self::T128x128x256_4x4 => 128,
         }
     }
 
@@ -57,9 +59,10 @@ impl GemmTiling {
             Self::T64x64x32_2x2 => 64,
             Self::T64x64x64_2x2 => 64,
             Self::T32x32x32_2x2 => 32,
-            Self::T32x64x32_2x2 => 64,
-            Self::T64x32x32_4x1 => 32,
-            Self::T128x128x32_4x4 => 128,
+            Self::T32x64x256_2x2 => 64,
+            Self::T64x32x256_4x1 => 32,
+            Self::T64x64x256_2x2 => 64,
+            Self::T128x128x256_4x4 => 128,
         }
     }
 
@@ -71,9 +74,10 @@ impl GemmTiling {
             Self::T64x64x32_2x2 => 32,
             Self::T64x64x64_2x2 => 64,
             Self::T32x32x32_2x2 => 32,
-            Self::T32x64x32_2x2 => 32,
-            Self::T64x32x32_4x1 => 32,
-            Self::T128x128x32_4x4 => 32,
+            Self::T32x64x256_2x2 => 256,
+            Self::T64x32x256_4x1 => 256,
+            Self::T64x64x256_2x2 => 256,
+            Self::T128x128x256_4x4 => 256,
         }
     }
 
@@ -85,9 +89,10 @@ impl GemmTiling {
             Self::T64x64x32_2x2 => 2,
             Self::T64x64x64_2x2 => 2,
             Self::T32x32x32_2x2 => 2,
-            Self::T32x64x32_2x2 => 2,
-            Self::T64x32x32_4x1 => 4,
-            Self::T128x128x32_4x4 => 4,
+            Self::T32x64x256_2x2 => 2,
+            Self::T64x32x256_4x1 => 4,
+            Self::T64x64x256_2x2 => 2,
+            Self::T128x128x256_4x4 => 4,
         }
     }
 
@@ -99,9 +104,10 @@ impl GemmTiling {
             Self::T64x64x32_2x2 => 2,
             Self::T64x64x64_2x2 => 2,
             Self::T32x32x32_2x2 => 2,
-            Self::T32x64x32_2x2 => 2,
-            Self::T64x32x32_4x1 => 1,
-            Self::T128x128x32_4x4 => 4,
+            Self::T32x64x256_2x2 => 2,
+            Self::T64x32x256_4x1 => 1,
+            Self::T64x64x256_2x2 => 2,
+            Self::T128x128x256_4x4 => 4,
         }
     }
 }

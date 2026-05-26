@@ -1,6 +1,6 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use super::{MXU_THREADGROUP_BLOCK_K, specialization::GemmSpecialization};
+use super::specialization::GemmSpecialization;
 use crate::{
     DataType,
     backends::{
@@ -91,7 +91,7 @@ impl GemmKernel {
                 arguments.b_transpose
                     && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
                     && arguments.b_offset == 0
-                    && arguments.k % super::MXU_THREADGROUP_BLOCK_K == 0
+                    && arguments.k % select_mxu_tiling(arguments.m, arguments.n).block_k() == 0
             },
         };
         let path = if encoder.context().device.supports_mxu()
@@ -181,11 +181,7 @@ impl GemmKernel {
                 } else {
                     select_simdgroup_tiling(m, n, k)
                 };
-                let k_block = if use_mxu {
-                    MXU_THREADGROUP_BLOCK_K
-                } else {
-                    tiling.block_k()
-                };
+                let k_block = tiling.block_k();
 
                 let threadgroups_per_row = n.div_ceil(tiling.block_n());
                 let threadgroups_per_column = m.div_ceil(tiling.block_m());
@@ -283,11 +279,7 @@ impl GemmKernel {
                 } else {
                     select_quant_tiling(m, n)
                 };
-                let k_block = if use_mxu {
-                    MXU_THREADGROUP_BLOCK_K
-                } else {
-                    tiling.block_k()
-                };
+                let k_block = tiling.block_k();
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % k_block == 0);
                 let params = quant_params(m, n, k, tiling, k_block, ab_scale);
@@ -368,13 +360,13 @@ fn select_mxu_tiling(
     n: u32,
 ) -> GemmTiling {
     if m >= 256 && n >= 128 {
-        GemmTiling::T128x128x32_4x4
+        GemmTiling::T128x128x256_4x4
     } else if n < 64 {
-        GemmTiling::T64x32x32_4x1
+        GemmTiling::T64x32x256_4x1
     } else if m < 64 {
-        GemmTiling::T32x64x32_2x2
+        GemmTiling::T32x64x256_2x2
     } else {
-        GemmTiling::T64x64x32_2x2
+        GemmTiling::T64x64x256_2x2
     }
 }
 

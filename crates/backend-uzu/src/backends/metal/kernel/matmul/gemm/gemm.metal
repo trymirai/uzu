@@ -36,9 +36,10 @@ VARIANTS(
     GemmTiling::T64x64x32_2x2,
     GemmTiling::T64x64x64_2x2,
     GemmTiling::T32x32x32_2x2,
-    GemmTiling::T32x64x32_2x2,
-    GemmTiling::T64x32x32_4x1,
-    GemmTiling::T128x128x32_4x4)
+    GemmTiling::T32x64x256_2x2,
+    GemmTiling::T64x32x256_4x1,
+    GemmTiling::T64x64x256_2x2,
+    GemmTiling::T128x128x256_4x4)
 VARIANTS(TRANSPOSE_B, false, true)
 VARIANTS(USE_MXU, false, true)
 VARIANTS(
@@ -49,10 +50,15 @@ VARIANTS(
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
 CONSTRAINT(
-    !USE_MXU || GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
-        GEMM_TILING == GemmTiling::T32x64x32_2x2 ||
-        GEMM_TILING == GemmTiling::T64x32x32_4x1 ||
-        GEMM_TILING == GemmTiling::T128x128x32_4x4)
+    !USE_MXU || GEMM_TILING == GemmTiling::T64x64x256_2x2 ||
+        GEMM_TILING == GemmTiling::T32x64x256_2x2 ||
+        GEMM_TILING == GemmTiling::T64x32x256_4x1 ||
+        GEMM_TILING == GemmTiling::T128x128x256_4x4)
+CONSTRAINT(
+    USE_MXU || (GEMM_TILING != GemmTiling::T64x64x256_2x2 &&
+                GEMM_TILING != GemmTiling::T32x64x256_2x2 &&
+                GEMM_TILING != GemmTiling::T64x32x256_4x1 &&
+                GEMM_TILING != GemmTiling::T128x128x256_4x4))
 CONSTRAINT(
     B_PROLOGUE != GemmBPrologueKind::FullPrecision ||
         (BITS == 0 && GROUP_SIZE == 0))
@@ -67,9 +73,10 @@ CONSTRAINT(
           GEMM_TILING == GemmTiling::T64x32x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x64x64_2x2 ||
-          GEMM_TILING == GemmTiling::T32x64x32_2x2 ||
-          GEMM_TILING == GemmTiling::T64x32x32_4x1 ||
-          GEMM_TILING == GemmTiling::T128x128x32_4x4)))
+          GEMM_TILING == GemmTiling::T32x64x256_2x2 ||
+          GEMM_TILING == GemmTiling::T64x32x256_4x1 ||
+          GEMM_TILING == GemmTiling::T64x64x256_2x2 ||
+          GEMM_TILING == GemmTiling::T128x128x256_4x4)))
 CONSTRAINT(
     GEMM_TILING != GemmTiling::T64x64x64_2x2 ||
         GROUP_SIZE == 64 || GROUP_SIZE == 128)

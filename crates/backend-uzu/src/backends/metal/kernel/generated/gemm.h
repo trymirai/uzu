@@ -36,9 +36,10 @@ enum class GemmTiling : uint32_t {
   T64x64x32_2x2 = 3,
   T64x64x64_2x2 = 4,
   T32x32x32_2x2 = 5,
-  T32x64x32_2x2 = 6,
-  T64x32x32_4x1 = 7,
-  T128x128x32_4x4 = 8,
+  T32x64x256_2x2 = 6,
+  T64x32x256_4x1 = 7,
+  T64x64x256_2x2 = 8,
+  T128x128x256_4x4 = 9,
 };
 
 struct GemmAlignment {

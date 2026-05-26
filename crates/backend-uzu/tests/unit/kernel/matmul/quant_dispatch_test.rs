@@ -16,7 +16,7 @@ use backend_uzu::{
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
             },
         },
-        metal::{GemmDispatchPath, Metal, MetalContext},
+        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
     },
 };
 use half::bf16;
@@ -219,5 +219,38 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
             }
         ),
         "got {matmul:?}"
+    );
+}
+
+#[rstest]
+#[case::gs32_4bit_mlx (128, 256, 64,  32, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_mlx (128, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs128_4bit_mlx(128, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]
+#[case::gs32_4bit_zp  (128, 256, 64,  32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_8bit_zp  (128, 256, 64,  64, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs128_8bit_zp (128, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
+fn mxu_quant_parity_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] gs: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    if !context.device.supports_mxu() {
+        return;
+    }
+    let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
+    let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
+    let reference = run_quant_cpu::<bf16>(&input);
+    assert_parity::<bf16>(
+        &format!(
+            "MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"
+        ),
+        &reference,
+        &actual,
+        0.05,
+        0.4,
     );
 }

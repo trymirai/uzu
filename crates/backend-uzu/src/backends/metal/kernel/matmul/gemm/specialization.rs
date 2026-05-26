@@ -196,7 +196,12 @@ fn mxu_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     if !matches!(data_type, DataType::F16 | DataType::BF16) {
         return &[];
     }
-    &[GemmTiling::T64x64x32_2x2, GemmTiling::T32x64x32_2x2, GemmTiling::T64x32x32_4x1, GemmTiling::T128x128x32_4x4]
+    &[
+        GemmTiling::T64x64x256_2x2,
+        GemmTiling::T32x64x256_2x2,
+        GemmTiling::T64x32x256_4x1,
+        GemmTiling::T128x128x256_4x4,
+    ]
 }
 
 pub(crate) fn quant_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
