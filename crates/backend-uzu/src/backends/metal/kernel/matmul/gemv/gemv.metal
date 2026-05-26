@@ -327,7 +327,7 @@ KERNEL(MatmulGemv)(
           tg_block_start + stripe * METAL_SIMD_SIZE + lane;
       if (global_col < output_dimension) {
         T value = output_row_values[global_col];
-        output_row_values[global_col] = simdgroup_random_hadamard_transform(
+        output_row_values[global_col] = simdgroup_output_random_hadamard_transform(
             lane, value, rht_factors[global_col]
         );
       }

@@ -212,7 +212,7 @@ struct SimdgroupMmaCore {
             size_t(row_local) * size_t(params->leading_dimension_d) +
             size_t(col_local);
         T value = d[d_idx];
-        d[d_idx] = simdgroup_random_hadamard_transform(
+        d[d_idx] = simdgroup_output_random_hadamard_transform(
             simd_lane, value, rht_factors_block[col_local]
         );
       }

@@ -7,7 +7,7 @@ use crate::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
-                GemmParams, HadamardTransformOrder,
+                GemmParams,
                 gemm::{GemmAlignment, GemmDTransform, GemmTiling},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},

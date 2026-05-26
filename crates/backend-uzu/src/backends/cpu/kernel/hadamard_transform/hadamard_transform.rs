@@ -9,18 +9,17 @@ const SIMD_SIZE: usize = 32;
 #[kernel(HadamardTransform)]
 #[variants(T, f32, f16, bf16)]
 pub fn hadamard_transform_mul<T: ArrayElement + Float>(
-    #[allow(unused)] data: *mut T,
-    #[allow(unused)] factors: *const i32,
-    #[allow(unused)] hidden_dim: u32,
-    #[allow(unused)] batch_size: u32,
-    #[allow(unused)]
-    #[specialize]
-    transform_order: HadamardTransformOrder,
+    data: *mut T,
+    factors: *const i32,
+    hidden_dim: u32,
+    batch_size: u32,
+    #[specialize] transform_order: HadamardTransformOrder,
 ) {
     let hidden_dim = hidden_dim as usize;
     let batch_size = batch_size as usize;
     let num_blocks = hidden_dim.div_ceil(SIMD_SIZE);
     let inv_sqrt = 1.0_f32 / (SIMD_SIZE as f32).sqrt();
+    let apply_factor_first = matches!(transform_order, HadamardTransformOrder::Input);
 
     for batch in 0..batch_size {
         let row = batch * hidden_dim;
@@ -30,9 +29,13 @@ pub fn hadamard_transform_mul<T: ArrayElement + Float>(
                 let col = block * SIMD_SIZE + lane;
                 if col < hidden_dim {
                     let element: T = unsafe { *data.add(row + col) };
-                    let factor: i32 = unsafe { *factors.add(col) };
                     let element_f32: f32 = <f32 as NumCast>::from(element).unwrap_or(0.0);
-                    buf[lane] = element_f32 * (factor as f32);
+                    if apply_factor_first {
+                        let factor: i32 = unsafe { *factors.add(col) };
+                        buf[lane] = element_f32 * (factor as f32);
+                    } else {
+                        buf[lane] = element_f32;
+                    }
                 }
             }
             for &stride in &[1usize, 2, 4, 8, 16] {
@@ -52,8 +55,12 @@ pub fn hadamard_transform_mul<T: ArrayElement + Float>(
             for lane in 0..SIMD_SIZE {
                 let col = block * SIMD_SIZE + lane;
                 if col < hidden_dim {
-                    let normalized = buf[lane] * inv_sqrt;
-                    let value: T = <T as NumCast>::from(normalized).unwrap_or(T::zero());
+                    let mut value_f32 = buf[lane] * inv_sqrt;
+                    if !apply_factor_first {
+                        let factor: i32 = unsafe { *factors.add(col) };
+                        value_f32 *= factor as f32;
+                    }
+                    let value: T = <T as NumCast>::from(value_f32).unwrap_or(T::zero());
                     unsafe { *data.add(row + col) = value };
                 }
             }

@@ -266,7 +266,7 @@ struct MxuMmaCore {
             size_t(row_local) * size_t(params->leading_dimension_d) +
             size_t(col_local);
         T value = d_block[d_idx];
-        d_block[d_idx] = simdgroup_random_hadamard_transform(
+        d_block[d_idx] = simdgroup_output_random_hadamard_transform(
             simd_lane, value, rht_factors_block[col_local]
         );
       }
