@@ -61,12 +61,15 @@ CONSTRAINT(
         (BITS != 0 && GROUP_SIZE != 0))
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
-        (!USE_MXU && TRANSPOSE_B &&
+        (TRANSPOSE_B &&
          (GEMM_TILING == GemmTiling::T8x32x32_1x1 ||
           GEMM_TILING == GemmTiling::T32x32x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x32x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
-          GEMM_TILING == GemmTiling::T64x64x64_2x2)))
+          GEMM_TILING == GemmTiling::T64x64x64_2x2 ||
+          GEMM_TILING == GemmTiling::T32x64x32_2x2 ||
+          GEMM_TILING == GemmTiling::T64x32x32_4x1 ||
+          GEMM_TILING == GemmTiling::T128x128x32_4x4)))
 CONSTRAINT(
     GEMM_TILING != GemmTiling::T64x64x64_2x2 ||
         GROUP_SIZE == 64 || GROUP_SIZE == 128)
@@ -105,17 +108,16 @@ KERNEL(Gemm)(
   (void)thread_z;
 
   if constexpr (USE_MXU) {
-    (void)scales;
-    (void)biases;
-    (void)zero_points;
-    const device T* b = reinterpret_cast<const device T*>(b_packed);
-    MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B>::run(
+    MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
         a,
-        b,
+        b_packed,
         d,
         params,
         alignment,
         output_transform,
+        scales,
+        biases,
+        zero_points,
         output_bias,
         rht_factors,
         thread_context

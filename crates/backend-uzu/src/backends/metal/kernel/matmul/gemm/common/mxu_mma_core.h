@@ -10,13 +10,20 @@
 #include "../generated/gemm.h"
 #include "block_geometry.h"
 #include "gemm_tiling.h"
+#include "mxu_quant_loop.h"
 
 using namespace metal;
 
 namespace uzu {
 namespace gemm {
 
-template <typename T, GemmTiling GEMM_TILING, bool TRANSPOSE_B>
+template <
+    typename T,
+    GemmTiling GEMM_TILING,
+    bool TRANSPOSE_B,
+    GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
+    int BITS = 0,
+    int GROUP_SIZE = 0>
 struct MxuMmaCore {
   METAL_CONST ushort THREADGROUP_BLOCK_M = gemm_tiling_block_m(GEMM_TILING);
   METAL_CONST ushort THREADGROUP_BLOCK_N = gemm_tiling_block_n(GEMM_TILING);
@@ -39,11 +46,14 @@ struct MxuMmaCore {
 
   static METAL_FUNC void run(
       const device T* a,
-      const device T* b,
+      const device uint8_t* b_packed,
       device T* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
+      const device T* scales,
+      const device T* biases,
+      const device uint8_t* zero_points,
       const device T* output_bias,
       const device int32_t* rht_factors,
       const thread ThreadContext& thread_context
@@ -60,8 +70,9 @@ struct MxuMmaCore {
     const size_t block_col = size_t(geometry.block_col_start);
 
     const device T* a_block = a + block_row * params->leading_dimension_a;
-    const device T* b_block =
-        b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
+    const device T* b_block_fp =
+        reinterpret_cast<const device T*>(b_packed) +
+        (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M *
@@ -93,10 +104,10 @@ struct MxuMmaCore {
 
     const device T* a_simdgroup =
         a_block + size_t(tile_row_offset) * params->leading_dimension_a;
-    const device T* b_simdgroup =
-        b_block + (TRANSPOSE_B ? size_t(tile_col_offset) *
-                                     int(params->leading_dimension_b)
-                               : size_t(tile_col_offset));
+    const device T* b_simdgroup_fp =
+        b_block_fp + (TRANSPOSE_B ? size_t(tile_col_offset) *
+                                        int(params->leading_dimension_b)
+                                  : size_t(tile_col_offset));
 
     const int aligned_k_iterations = int(params->K) / int(THREADGROUP_BLOCK_K);
 
@@ -120,28 +131,61 @@ struct MxuMmaCore {
                 alignment.contains(GemmAlignment::N) ||
                     (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
-                  auto accumulator_tile = uzu::matmul::gemm_loop<
-                      T,
-                      SIMDGROUP_BLOCK_M,
-                      SIMDGROUP_BLOCK_N,
-                      SIMDGROUP_BLOCK_K,
-                      THREADGROUP_BLOCK_K,
-                      false,
-                      TRANSPOSE_B,
-                      aligned_m.value,
-                      aligned_n.value,
-                      aligned_k.value,
-                      AccumulatorType>(
-                      a_simdgroup,
-                      b_simdgroup,
-                      int(params->leading_dimension_a),
-                      int(params->leading_dimension_b),
-                      int(params->K),
-                      aligned_k_iterations,
-                      simdgroup_limit_m,
-                      simdgroup_limit_n,
-                      thread_context
-                  );
+                  auto accumulator_tile = [&]() {
+                    if constexpr (B_PROLOGUE ==
+                                  GemmBPrologueKind::FullPrecision) {
+                      return uzu::matmul::gemm_loop<
+                          T,
+                          SIMDGROUP_BLOCK_M,
+                          SIMDGROUP_BLOCK_N,
+                          SIMDGROUP_BLOCK_K,
+                          THREADGROUP_BLOCK_K,
+                          false,
+                          TRANSPOSE_B,
+                          aligned_m.value,
+                          aligned_n.value,
+                          aligned_k.value,
+                          AccumulatorType>(
+                          a_simdgroup,
+                          b_simdgroup_fp,
+                          int(params->leading_dimension_a),
+                          int(params->leading_dimension_b),
+                          int(params->K),
+                          aligned_k_iterations,
+                          simdgroup_limit_m,
+                          simdgroup_limit_n,
+                          thread_context
+                      );
+                    } else {
+                      const int n_simdgroup_base =
+                          int(block_col) + int(tile_col_offset);
+                      return mxu_quant_gemm_loop<
+                          T,
+                          SIMDGROUP_BLOCK_M,
+                          SIMDGROUP_BLOCK_N,
+                          SIMDGROUP_BLOCK_K,
+                          THREADGROUP_BLOCK_K,
+                          aligned_m.value,
+                          aligned_n.value,
+                          B_PROLOGUE,
+                          BITS,
+                          GROUP_SIZE,
+                          AccumulatorType>(
+                          a_simdgroup,
+                          b_packed,
+                          scales,
+                          biases,
+                          zero_points,
+                          int(params->leading_dimension_a),
+                          int(params->K),
+                          n_simdgroup_base,
+                          aligned_k_iterations,
+                          simdgroup_limit_m,
+                          simdgroup_limit_n,
+                          thread_context
+                      );
+                    }
+                  }();
 
                   if (apply_scale) {
                     const AccumulatorType scale =
