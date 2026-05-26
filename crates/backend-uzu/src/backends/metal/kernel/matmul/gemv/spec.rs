@@ -66,16 +66,6 @@ impl GemvSpecialization {
                 is_accumulate: false,
                 is_bias: false,
             }],
-            DataType::F32 => &[Self {
-                threadgroup_rows: 8,
-                threadgroup_cols: 1,
-                threads_per_simdgroup_row: 1,
-                threads_per_simdgroup_col: 32,
-                elements_per_thread_row: 4,
-                elements_per_thread_col: 4,
-                is_accumulate: false,
-                is_bias: false,
-            }],
             _ => &[],
         }
     }

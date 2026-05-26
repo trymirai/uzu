@@ -6,126 +6,86 @@ use backend_uzu::{
     ArrayElement,
     backends::{
         common::{Backend, Context, kernel::ManualKernels, kernel::matmul::MatmulKernel},
-        metal::{Metal, MetalContext},
+        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
     },
 };
-use proc_macros::__internal_uzu_test as uzu_test;
 use half::{bf16, f16};
 use num_traits::Float;
+use rstest::rstest;
 
 use crate::common::{
     assert::assert_eq_float,
-    matmul::{Case, Variant, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
+    matmul::{Case, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
 };
+
+fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {
+    let mut paths = vec![GemmDispatchPath::Simdgroup];
+    if context.device.supports_mxu() {
+        paths.push(GemmDispatchPath::Mxu);
+    }
+    paths
+}
 
 fn check_case<T: ArrayElement + Float + Debug + Display>(
     context: &MetalContext,
     kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
-    variant: Variant,
+    path: Option<GemmDispatchPath>,
     case: Case,
     tolerance: f32,
 ) {
     let input = deterministic_input::<T>(case);
     let expected = cpu_reference::<T>(&input);
-    let actual = run_metal::<T>(context, kernel, &input, variant);
+    let actual = run_metal::<T>(context, kernel, &input, path);
     assert_eq_float(
         &expected,
         &actual,
         tolerance,
-        &format!("{:?} dtype={} {:?}", variant, std::any::type_name::<T>(), case),
+        &format!("{path:?} dtype={} {case:?}", std::any::type_name::<T>()),
     );
 }
 
-fn check_all_shapes<T: ArrayElement + Float + Debug + Display>(
-    variant: Variant,
-    ab_scale: f32,
-    accumulate: bool,
+fn run_matrix<T: ArrayElement + Float + Debug + Display>(
+    case_for_shape: impl Fn(crate::common::matmul::Shape) -> Case,
     tolerance: f32,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    if !variant.supported(&context) {
-        eprintln!("Skipping {variant:?}: device does not support MXU");
-        return;
-    }
     let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("MatmulKernel");
-    for shape in all_correctness_shapes() {
-        let case = Case::new(shape).with_ab_scale(ab_scale).with_accumulate(accumulate);
-        check_case::<T>(&context, &mut kernel, variant, case, tolerance);
+    for path in gemm_paths_for_hw(&context) {
+        for shape in all_correctness_shapes() {
+            let case = case_for_shape(shape);
+            check_case::<T>(&context, &mut kernel, Some(path), case, tolerance);
+        }
     }
 }
 
-#[uzu_test]
-fn matches_cpu_reference_bf16_gemm() {
-    check_all_shapes::<bf16>(Variant::Gemm, 1.0, false, 1.0);
-}
-
-#[uzu_test]
-fn matches_cpu_reference_bf16_gemm_mxu() {
-    check_all_shapes::<bf16>(Variant::GemmMxu, 1.0, false, 1.0);
-}
-
-#[uzu_test]
-fn matches_cpu_reference_f16_gemm() {
-    check_all_shapes::<f16>(Variant::Gemm, 1.0, false, 0.5);
-}
-
-#[uzu_test]
-fn matches_cpu_reference_f16_gemm_mxu() {
-    check_all_shapes::<f16>(Variant::GemmMxu, 1.0, false, 0.5);
-}
-
-#[uzu_test]
-fn matches_cpu_reference_f32_gemm() {
-    check_all_shapes::<f32>(Variant::Gemm, 1.0, false, 0.05);
-}
-
-#[uzu_test]
-fn ab_scale_bf16_gemm() {
-    check_all_shapes::<bf16>(Variant::Gemm, 0.5, false, 1.0);
-}
-
-#[uzu_test]
-fn ab_scale_bf16_gemm_mxu() {
-    check_all_shapes::<bf16>(Variant::GemmMxu, 0.5, false, 1.0);
-}
-
-#[uzu_test]
-fn accumulate_bf16_gemm_mxu() {
-    check_all_shapes::<bf16>(Variant::GemmMxu, 1.0, true, 1.0);
-}
-
-#[uzu_test]
-fn scale_and_accumulate_bf16_gemm_mxu() {
-    check_all_shapes::<bf16>(Variant::GemmMxu, 0.5, true, 1.0);
-}
-
-fn check_b_transpose_false<T: ArrayElement + Float + Debug + Display>(
-    variant: Variant,
-    tolerance: f32,
+#[rstest]
+#[case::base(1.0, false)]
+#[case::ab_scale(0.5, false)]
+#[case::accumulate(1.0, true)]
+#[case::scale_and_accumulate(0.5, true)]
+fn matches_cpu_reference_bf16(
+    #[case] ab_scale: f32,
+    #[case] accumulate: bool,
 ) {
-    let context = MetalContext::new().expect("Metal context");
-    if !variant.supported(&context) {
-        eprintln!("Skipping {variant:?}: device does not support MXU");
-        return;
-    }
-    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
-        .expect("MatmulKernel");
-    for shape in all_correctness_shapes() {
-        let case = Case {
+    run_matrix::<bf16>(
+        |shape| Case::new(shape).with_ab_scale(ab_scale).with_accumulate(accumulate),
+        1.0,
+    );
+}
+
+#[test]
+fn matches_cpu_reference_f16() {
+    run_matrix::<f16>(|shape| Case::new(shape), 0.5);
+}
+
+#[test]
+fn b_transpose_false_bf16() {
+    run_matrix::<bf16>(
+        |shape| Case {
             b_transpose: false,
             ..Case::new(shape)
-        };
-        check_case::<T>(&context, &mut kernel, variant, case, tolerance);
-    }
-}
-
-#[uzu_test]
-fn b_transpose_false_bf16_gemm() {
-    check_b_transpose_false::<bf16>(Variant::Gemm, 1.0);
-}
-
-#[uzu_test]
-fn b_transpose_false_bf16_gemm_mxu() {
-    check_b_transpose_false::<bf16>(Variant::GemmMxu, 1.0);
+        },
+        1.0,
+    );
 }

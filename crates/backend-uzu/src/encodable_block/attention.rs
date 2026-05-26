@@ -15,7 +15,7 @@ use crate::{
             AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel, ManualKernels,
             SigmoidGateKernel, SoftmaxKernel,
             attention::{AttentionGemmArguments, AttentionGemmBlock},
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::AttentionConfig,
@@ -287,7 +287,7 @@ impl<B: Backend> Attention<B> {
                     max_sequence_length as u32,
                     encoder,
                 );
-                Ok(values)
+                Ok::<_, B::Error>(values)
             })
             .transpose()?;
 
@@ -595,19 +595,25 @@ impl<B: Backend> Attention<B> {
                 MatmulArguments {
                     a: queries,
                     a_offset: group_index * gqa_factor * suffix_length * head_dim * dt_bytes,
-                    b: keys,
+                    b: MatmulB::FullPrecision {
+                        b: keys,
+                    },
                     b_offset: group_index * k_head_stride as usize * dt_bytes,
                     b_leading_dimension: Some(k_seq_stride),
                     b_transpose: true,
-                    ab_scale: scale,
-                    c: MatmulArgumentC::None,
                     d: &mut group_scores,
-                    batch_dim: (gqa_factor * suffix_length) as u32,
-                    input_dim: head_dim as u32,
-                    output_dim: sequence_length as u32,
+                    d_transform: MatmulDOps {
+                        ab_scale: scale,
+                        accumulate: false,
+                        bias: None,
+                        rht_factors: None,
+                    },
+                    m: (gqa_factor * suffix_length) as u32,
+                    n: sequence_length as u32,
+                    k: head_dim as u32,
                 },
                 encoder,
-            );
+            )?;
             scatter_scores.encode(
                 &group_scores,
                 &mut scores,
@@ -645,19 +651,20 @@ impl<B: Backend> Attention<B> {
                 MatmulArguments {
                     a: &scores,
                     a_offset: group_index * gqa_factor * suffix_length * sequence_length * dt_bytes,
-                    b: values,
+                    b: MatmulB::FullPrecision {
+                        b: values,
+                    },
                     b_offset: group_index * v_head_stride as usize * dt_bytes,
                     b_leading_dimension: Some(v_seq_stride),
                     b_transpose: false,
-                    ab_scale: 1.0,
-                    c: MatmulArgumentC::None,
                     d: &mut group_output,
-                    batch_dim: (gqa_factor * suffix_length) as u32,
-                    input_dim: sequence_length as u32,
-                    output_dim: head_dim as u32,
+                    d_transform: MatmulDOps::none(),
+                    m: (gqa_factor * suffix_length) as u32,
+                    n: head_dim as u32,
+                    k: sequence_length as u32,
                 },
                 encoder,
-            );
+            )?;
             self.fallback_scatter_values_kernel.encode(
                 &group_output,
                 &mut *attention_output,

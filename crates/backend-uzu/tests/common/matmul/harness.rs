@@ -1,5 +1,5 @@
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{Metal, MetalContext};
+use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -7,7 +7,7 @@ use backend_uzu::{
             Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
             kernel::{
                 ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
@@ -17,7 +17,7 @@ use num_traits::Float;
 
 use super::{
     super::helpers::{alloc_allocation_with_data, allocation_to_vec},
-    Shape, Variant,
+    Shape,
 };
 
 #[cfg(metal_backend)]
@@ -109,10 +109,11 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .expect("create d allocation")
     };
 
-    let c_arg = if input.case.accumulate {
-        MatmulArgumentC::Accumulate
-    } else {
-        MatmulArgumentC::None
+    let d_transform = MatmulDOps::<'_, B> {
+        ab_scale: input.case.ab_scale,
+        accumulate: input.case.accumulate,
+        bias: None,
+        rht_factors: None,
     };
 
     let mut encoder = Encoder::new(context).expect("encoder");
@@ -121,16 +122,17 @@ fn run<B: Backend, T: ArrayElement + Float>(
         MatmulArguments::<'_, B> {
             a: &a_allocation,
             a_offset: 0,
-            b: b_array.allocation(),
+            b: MatmulB::FullPrecision {
+                b: b_array.allocation(),
+            },
             b_offset: 0,
             b_leading_dimension: None,
             b_transpose: input.case.b_transpose,
-            ab_scale: input.case.ab_scale,
-            c: c_arg,
             d: &mut d_allocation,
-            batch_dim: m as u32,
-            input_dim: k as u32,
-            output_dim: n as u32,
+            d_transform,
+            m: m as u32,
+            n: n as u32,
+            k: k as u32,
         },
         &mut encoder,
     );
@@ -143,7 +145,7 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let mut kernel = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
         .expect("CPU MatmulKernel");
     run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, encoder| {
-        kernel.encode(args, encoder);
+        kernel.encode(args, encoder).expect("encode failed");
     })
 }
 
@@ -152,10 +154,12 @@ pub fn run_metal<T: ArrayElement + Float>(
     context: &MetalContext,
     kernel: &mut MetalMatmulKernel,
     input: &Input<T>,
-    variant: Variant,
+    path: Option<GemmDispatchPath>,
 ) -> Vec<T> {
-    let path = variant.dispatch_path();
-    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
-        kernel.encode_with_path(args, encoder, path);
+    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| match path {
+        None => kernel.encode(args, encoder).expect("matmul encode failed"),
+        Some(gemm_path) => {
+            kernel.gemm.encode_dispatch_path(args, gemm_path, encoder).expect("gemm encode_dispatch_path failed")
+        },
     })
 }

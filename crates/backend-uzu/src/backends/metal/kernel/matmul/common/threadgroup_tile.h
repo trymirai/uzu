@@ -256,6 +256,56 @@ struct ThreadgroupTile {
       }
     }
   }
+
+  METAL_FUNC void apply_bias(const device U* bias) {
+    const device U* bias_pointer = bias + simdgroup_col_offset;
+
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < TILE_ROWS; i++) {
+      METAL_PRAGMA_UNROLL
+      for (ushort j = 0; j < TILE_COLS; j++) {
+        thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
+        const ushort col_offset =
+            j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+        METAL_PRAGMA_UNROLL
+        for (ushort k = 0;
+             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
+             k++) {
+          block_data[k] +=
+              static_cast<AccumulatorType>(bias_pointer[col_offset + k]);
+        }
+      }
+    }
+  }
+
+  METAL_FUNC void apply_bias_safe(
+      const device U* bias,
+      short2 tile_dimensions
+  ) {
+    const device U* bias_pointer = bias + simdgroup_col_offset;
+    tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
+
+    METAL_PRAGMA_UNROLL
+    for (ushort i = 0; i < TILE_ROWS; i++) {
+      METAL_PRAGMA_UNROLL
+      for (ushort j = 0; j < TILE_COLS; j++) {
+        thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
+        const ushort row_offset = i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
+        const ushort col_offset =
+            j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+        METAL_PRAGMA_UNROLL
+        for (ushort k = 0;
+             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
+             k++) {
+          if (row_offset < tile_dimensions.y &&
+              col_offset + k < tile_dimensions.x) {
+            block_data[k] +=
+                static_cast<AccumulatorType>(bias_pointer[col_offset + k]);
+          }
+        }
+      }
+    }
+  }
 };
 
 } // namespace matmul

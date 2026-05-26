@@ -1,11 +1,9 @@
-mod full_precision;
+mod matmul;
 mod qlora_wrapper;
-mod quantized;
 mod rht_wrapper;
 
-pub use full_precision::{FullPrecisionLinear, FullPrecisionLinearError};
+pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
-pub use quantized::{QuantizedLinear, QuantizedLinearError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
@@ -26,10 +24,8 @@ pub trait Linear<B: Backend> {
 
 #[derive(Debug, Error)]
 pub enum LinearBlockError<B: Backend> {
-    #[error("QuantizedLinear error: {0}")]
-    QuantizedLinearError(#[from] QuantizedLinearError<B>),
-    #[error("FullPrecisionLinear error: {0}")]
-    FullPrecisionLinearError(#[from] FullPrecisionLinearError<B>),
+    #[error("LinearMatmul error: {0}")]
+    LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("QLoRALinearWrapper error: {0}")]
     QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
     #[error("RHTLinearWrapper error: {0}")]
@@ -49,7 +45,7 @@ impl<B: Backend> dyn Linear<B> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
         match config {
             LinearConfig::Quantized(quantization_config) | LinearConfig::ScaleBiasQuantized(quantization_config) => {
-                let block = QuantizedLinear::new(
+                let block = LinearMatmul::quantized(
                     context,
                     quantization_config,
                     input_dimension,
@@ -62,7 +58,7 @@ impl<B: Backend> dyn Linear<B> {
             LinearConfig::FullPrecision {
                 precision,
             } => {
-                let block = FullPrecisionLinear::new(
+                let block = LinearMatmul::full_precision(
                     context,
                     (*precision).into(),
                     input_dimension,
@@ -112,7 +108,7 @@ impl<B: Backend> dyn Linear<B> {
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         match config {
             LinearConfig::Quantized(config) | LinearConfig::ScaleBiasQuantized(config) => Ok(Box::new(
-                QuantizedLinear::new(context, config, input_dim, output_dim, parameter_tree, Some(output_factors))?,
+                LinearMatmul::quantized(context, config, input_dim, output_dim, parameter_tree, Some(output_factors))?,
             )),
             LinearConfig::QLoRA {
                 quantization,

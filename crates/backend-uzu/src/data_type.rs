@@ -3,7 +3,7 @@ use half::{bf16, f16};
 use num_traits::NumCast;
 use proc_macros::uzu_config;
 
-#[derive(Eq, PartialOrd, Ord, Copy)]
+#[derive(Eq, PartialOrd, Ord, Copy, Hash)]
 #[uzu_config]
 pub enum DataType {
     // Floating point

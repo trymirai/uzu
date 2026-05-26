@@ -26,6 +26,10 @@ inputs:
     description: "Install bindings requirements"
     required: false
     default: 'false'
+  linux:
+    description: "Install Linux system dependencies"
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -48,6 +52,10 @@ runs:
     - uses: dtolnay/rust-toolchain@nightly
       with:
         components: ${{ inputs.linters == 'true' && 'rustfmt' || '' }}
+
+    - if: inputs.linux == 'true'
+      run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      shell: bash
 
     - if: inputs.target == 'wasm32-wasip1-threads'
       uses: bytecodealliance/actions/wasmtime/setup@v1

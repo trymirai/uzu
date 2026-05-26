@@ -13,7 +13,6 @@ mod mlp;
 mod moe;
 mod ple_gate_act_mul;
 mod pooling;
-mod quant_matmul;
 mod rms_norm;
 mod rope;
 mod sampling;
