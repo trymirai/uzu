@@ -7,8 +7,6 @@ pub enum GemmSpecializationError {
         threadgroup_k: u32,
         group_size: u32,
     },
-    #[error("quantized B requires the simdgroup path")]
-    QuantizedRequiresSimdgroup,
     #[error("quantized B requires transposed layout")]
     QuantizedRequiresTransposedB,
 }

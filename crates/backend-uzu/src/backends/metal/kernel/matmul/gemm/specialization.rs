@@ -34,9 +34,6 @@ impl GemmSpecialization {
             }
         }
         if self.b_prologue != GemmBPrologueKind::FullPrecision {
-            if self.use_mxu {
-                return Err(GemmSpecializationError::QuantizedRequiresSimdgroup);
-            }
             if !self.transpose_b {
                 return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
             }
@@ -154,6 +151,32 @@ impl GemmSpecialization {
                         bits_per_b: Some(bits),
                         group_size: Some(group_size),
                     });
+                }
+            }
+        }
+        for &tiling in mxu_tiling_set(data_type) {
+            for align_m in [true, false] {
+                for align_n in [true, false] {
+                    for output_transform in [
+                        GemmDTransform::empty(),
+                        GemmDTransform::SCALE,
+                        GemmDTransform::BIAS,
+                        GemmDTransform::RHT,
+                        GemmDTransform::BIAS | GemmDTransform::RHT,
+                        GemmDTransform::BIAS | GemmDTransform::SCALE,
+                    ] {
+                        out.push(Self {
+                            data_type,
+                            tiling,
+                            use_mxu: true,
+                            output_transform,
+                            alignment: GemmAlignment::new(align_m, align_n, true),
+                            transpose_b: true,
+                            b_prologue,
+                            bits_per_b: Some(bits),
+                            group_size: Some(group_size),
+                        });
+                    }
                 }
             }
         }
