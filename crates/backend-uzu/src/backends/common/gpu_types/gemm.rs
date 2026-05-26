@@ -22,92 +22,113 @@ bitflags! {
 
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(non_camel_case_types)]
 pub enum GemmTiling {
-    T8x32x32_1x1,
-    T64x32x32_2x2,
-    T64x64x16_2x2,
-    T64x64x32_2x2,
-    T64x64x64_2x2,
-    T32x32x32_2x2,
-    T32x64x256_2x2,
-    T64x32x256_4x1,
-    T64x64x256_2x2,
-    T128x128x256_4x4,
+    Tile8x32x32_Simdgroups1x1,
+    Tile64x32x32_Simdgroups2x2,
+    Tile64x64x16_Simdgroups2x2,
+    Tile64x64x32_Simdgroups2x2,
+    Tile64x64x64_Simdgroups2x2,
+    Tile32x32x32_Simdgroups2x2,
+    Tile32x64x256_Simdgroups2x2,
+    Tile64x32x256_Simdgroups4x1,
+    Tile64x64x256_Simdgroups2x2,
+    Tile128x128x256_Simdgroups4x4,
 }
+
+const MXU_SIMDGROUP_BLOCK_K: u32 = 32;
 
 impl GemmTiling {
     pub const fn block_m(self) -> u32 {
         match self {
-            Self::T8x32x32_1x1 => 8,
-            Self::T64x32x32_2x2 => 64,
-            Self::T64x64x16_2x2 => 64,
-            Self::T64x64x32_2x2 => 64,
-            Self::T64x64x64_2x2 => 64,
-            Self::T32x32x32_2x2 => 32,
-            Self::T32x64x256_2x2 => 32,
-            Self::T64x32x256_4x1 => 64,
-            Self::T64x64x256_2x2 => 64,
-            Self::T128x128x256_4x4 => 128,
+            Self::Tile8x32x32_Simdgroups1x1 => 8,
+            Self::Tile64x32x32_Simdgroups2x2 => 64,
+            Self::Tile64x64x16_Simdgroups2x2 => 64,
+            Self::Tile64x64x32_Simdgroups2x2 => 64,
+            Self::Tile64x64x64_Simdgroups2x2 => 64,
+            Self::Tile32x32x32_Simdgroups2x2 => 32,
+            Self::Tile32x64x256_Simdgroups2x2 => 32,
+            Self::Tile64x32x256_Simdgroups4x1 => 64,
+            Self::Tile64x64x256_Simdgroups2x2 => 64,
+            Self::Tile128x128x256_Simdgroups4x4 => 128,
         }
     }
 
     pub const fn block_n(self) -> u32 {
         match self {
-            Self::T8x32x32_1x1 => 32,
-            Self::T64x32x32_2x2 => 32,
-            Self::T64x64x16_2x2 => 64,
-            Self::T64x64x32_2x2 => 64,
-            Self::T64x64x64_2x2 => 64,
-            Self::T32x32x32_2x2 => 32,
-            Self::T32x64x256_2x2 => 64,
-            Self::T64x32x256_4x1 => 32,
-            Self::T64x64x256_2x2 => 64,
-            Self::T128x128x256_4x4 => 128,
+            Self::Tile8x32x32_Simdgroups1x1 => 32,
+            Self::Tile64x32x32_Simdgroups2x2 => 32,
+            Self::Tile64x64x16_Simdgroups2x2 => 64,
+            Self::Tile64x64x32_Simdgroups2x2 => 64,
+            Self::Tile64x64x64_Simdgroups2x2 => 64,
+            Self::Tile32x32x32_Simdgroups2x2 => 32,
+            Self::Tile32x64x256_Simdgroups2x2 => 64,
+            Self::Tile64x32x256_Simdgroups4x1 => 32,
+            Self::Tile64x64x256_Simdgroups2x2 => 64,
+            Self::Tile128x128x256_Simdgroups4x4 => 128,
         }
     }
 
     pub const fn block_k(self) -> u32 {
         match self {
-            Self::T8x32x32_1x1 => 32,
-            Self::T64x32x32_2x2 => 32,
-            Self::T64x64x16_2x2 => 16,
-            Self::T64x64x32_2x2 => 32,
-            Self::T64x64x64_2x2 => 64,
-            Self::T32x32x32_2x2 => 32,
-            Self::T32x64x256_2x2 => 256,
-            Self::T64x32x256_4x1 => 256,
-            Self::T64x64x256_2x2 => 256,
-            Self::T128x128x256_4x4 => 256,
+            Self::Tile8x32x32_Simdgroups1x1 => 32,
+            Self::Tile64x32x32_Simdgroups2x2 => 32,
+            Self::Tile64x64x16_Simdgroups2x2 => 16,
+            Self::Tile64x64x32_Simdgroups2x2 => 32,
+            Self::Tile64x64x64_Simdgroups2x2 => 64,
+            Self::Tile32x32x32_Simdgroups2x2 => 32,
+            Self::Tile32x64x256_Simdgroups2x2 => 256,
+            Self::Tile64x32x256_Simdgroups4x1 => 256,
+            Self::Tile64x64x256_Simdgroups2x2 => 256,
+            Self::Tile128x128x256_Simdgroups4x4 => 256,
         }
     }
 
     pub const fn simdgroups_m(self) -> u32 {
         match self {
-            Self::T8x32x32_1x1 => 1,
-            Self::T64x32x32_2x2 => 2,
-            Self::T64x64x16_2x2 => 2,
-            Self::T64x64x32_2x2 => 2,
-            Self::T64x64x64_2x2 => 2,
-            Self::T32x32x32_2x2 => 2,
-            Self::T32x64x256_2x2 => 2,
-            Self::T64x32x256_4x1 => 4,
-            Self::T64x64x256_2x2 => 2,
-            Self::T128x128x256_4x4 => 4,
+            Self::Tile8x32x32_Simdgroups1x1 => 1,
+            Self::Tile64x32x32_Simdgroups2x2 => 2,
+            Self::Tile64x64x16_Simdgroups2x2 => 2,
+            Self::Tile64x64x32_Simdgroups2x2 => 2,
+            Self::Tile64x64x64_Simdgroups2x2 => 2,
+            Self::Tile32x32x32_Simdgroups2x2 => 2,
+            Self::Tile32x64x256_Simdgroups2x2 => 2,
+            Self::Tile64x32x256_Simdgroups4x1 => 4,
+            Self::Tile64x64x256_Simdgroups2x2 => 2,
+            Self::Tile128x128x256_Simdgroups4x4 => 4,
         }
     }
 
     pub const fn simdgroups_n(self) -> u32 {
         match self {
-            Self::T8x32x32_1x1 => 1,
-            Self::T64x32x32_2x2 => 2,
-            Self::T64x64x16_2x2 => 2,
-            Self::T64x64x32_2x2 => 2,
-            Self::T64x64x64_2x2 => 2,
-            Self::T32x32x32_2x2 => 2,
-            Self::T32x64x256_2x2 => 2,
-            Self::T64x32x256_4x1 => 1,
-            Self::T64x64x256_2x2 => 2,
-            Self::T128x128x256_4x4 => 4,
+            Self::Tile8x32x32_Simdgroups1x1 => 1,
+            Self::Tile64x32x32_Simdgroups2x2 => 2,
+            Self::Tile64x64x16_Simdgroups2x2 => 2,
+            Self::Tile64x64x32_Simdgroups2x2 => 2,
+            Self::Tile64x64x64_Simdgroups2x2 => 2,
+            Self::Tile32x32x32_Simdgroups2x2 => 2,
+            Self::Tile32x64x256_Simdgroups2x2 => 2,
+            Self::Tile64x32x256_Simdgroups4x1 => 1,
+            Self::Tile64x64x256_Simdgroups2x2 => 2,
+            Self::Tile128x128x256_Simdgroups4x4 => 4,
+        }
+    }
+
+    pub const fn is_mxu_variant(self) -> bool {
+        matches!(
+            self,
+            Self::Tile32x64x256_Simdgroups2x2
+                | Self::Tile64x32x256_Simdgroups4x1
+                | Self::Tile64x64x256_Simdgroups2x2
+                | Self::Tile128x128x256_Simdgroups4x4
+        )
+    }
+
+    pub const fn simdgroup_block_k(self) -> u32 {
+        if self.is_mxu_variant() {
+            MXU_SIMDGROUP_BLOCK_K
+        } else {
+            self.block_k()
         }
     }
 }

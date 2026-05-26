@@ -25,18 +25,23 @@ pub(crate) struct GemmSpecialization {
 
 impl GemmSpecialization {
     pub(crate) fn validate(&self) -> Result<(), GemmSpecializationError> {
+        if self.use_mxu != self.tiling.is_mxu_variant() {
+            return Err(GemmSpecializationError::TilingUseMxuMismatch {
+                tiling: self.tiling,
+                use_mxu: self.use_mxu,
+            });
+        }
         if let Some(group_size) = self.group_size {
-            if self.tiling.block_k() > group_size {
-                return Err(GemmSpecializationError::ThreadgroupKExceedsGroupSize {
-                    threadgroup_k: self.tiling.block_k(),
+            let simdgroup_block_k = self.tiling.simdgroup_block_k();
+            if simdgroup_block_k > group_size {
+                return Err(GemmSpecializationError::SimdgroupKExceedsGroupSize {
+                    simdgroup_k: simdgroup_block_k,
                     group_size,
                 });
             }
         }
-        if self.b_prologue != GemmBPrologueKind::FullPrecision {
-            if !self.transpose_b {
-                return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
-            }
+        if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
+            return Err(GemmSpecializationError::QuantizedRequiresTransposedB);
         }
         Ok(())
     }
@@ -130,7 +135,7 @@ impl GemmSpecialization {
         };
         let mut out = Vec::new();
         for &tiling in quant_tiling_set(data_type) {
-            if tiling.block_k() > group_size {
+            if tiling.simdgroup_block_k() > group_size {
                 continue;
             }
             for align_n in [true, false] {
@@ -186,8 +191,14 @@ impl GemmSpecialization {
 
 fn simdgroup_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
-        DataType::BF16 => &[GemmTiling::T64x32x32_2x2, GemmTiling::T64x64x16_2x2],
-        DataType::F16 => &[GemmTiling::T64x64x16_2x2, GemmTiling::T64x32x32_2x2],
+        DataType::BF16 => &[
+            GemmTiling::Tile64x32x32_Simdgroups2x2,
+            GemmTiling::Tile64x64x16_Simdgroups2x2,
+        ],
+        DataType::F16 => &[
+            GemmTiling::Tile64x64x16_Simdgroups2x2,
+            GemmTiling::Tile64x32x32_Simdgroups2x2,
+        ],
         _ => &[],
     }
 }
@@ -197,23 +208,26 @@ fn mxu_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
         return &[];
     }
     &[
-        GemmTiling::T64x64x256_2x2,
-        GemmTiling::T32x64x256_2x2,
-        GemmTiling::T64x32x256_4x1,
-        GemmTiling::T128x128x256_4x4,
+        GemmTiling::Tile64x64x256_Simdgroups2x2,
+        GemmTiling::Tile32x64x256_Simdgroups2x2,
+        GemmTiling::Tile64x32x256_Simdgroups4x1,
+        GemmTiling::Tile128x128x256_Simdgroups4x4,
     ]
 }
 
 pub(crate) fn quant_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
         DataType::BF16 => &[
-            GemmTiling::T8x32x32_1x1,
-            GemmTiling::T32x32x32_2x2,
-            GemmTiling::T64x32x32_2x2,
-            GemmTiling::T64x64x32_2x2,
-            GemmTiling::T64x64x64_2x2,
+            GemmTiling::Tile8x32x32_Simdgroups1x1,
+            GemmTiling::Tile32x32x32_Simdgroups2x2,
+            GemmTiling::Tile64x32x32_Simdgroups2x2,
+            GemmTiling::Tile64x64x32_Simdgroups2x2,
+            GemmTiling::Tile64x64x64_Simdgroups2x2,
         ],
-        DataType::F16 => &[GemmTiling::T8x32x32_1x1, GemmTiling::T32x32x32_2x2],
+        DataType::F16 => &[
+            GemmTiling::Tile8x32x32_Simdgroups1x1,
+            GemmTiling::Tile32x32x32_Simdgroups2x2,
+        ],
         _ => &[],
     }
 }

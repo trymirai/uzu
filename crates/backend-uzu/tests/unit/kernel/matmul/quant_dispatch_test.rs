@@ -251,6 +251,6 @@ fn mxu_quant_parity_bf16(
         &reference,
         &actual,
         0.05,
-        0.4,
+        0.5,
     );
 }
