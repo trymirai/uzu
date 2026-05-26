@@ -177,6 +177,8 @@ pub enum Error {
     InvalidTtsRunConfig(#[from] TtsRunConfigError),
     #[error("Unable to load model weights: {0}")]
     UnableToLoadWeights(#[source] Box<dyn std::error::Error>),
+    #[error("Unable to write trace: {0}")]
+    UnableToWriteTrace(#[source] Box<dyn std::error::Error>),
     #[error("Unable to create decoder: {0}")]
     UnableToCreateDecoder(#[source] Box<dyn std::error::Error>),
     #[error("Unable to create classifier layer: {0}")]
