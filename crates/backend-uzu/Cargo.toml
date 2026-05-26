@@ -65,6 +65,7 @@ rstest.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
+tempfile.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true

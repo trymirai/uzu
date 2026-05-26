@@ -1,9 +1,3 @@
-//! Unified trace validation for any model type (LLM or classifier).
-//!
-//! This module provides a single `TraceValidator` that can validate activation
-//! traces for any model type. It automatically detects the model type from the
-//! config and runs the appropriate validation.
-
 use std::{
     cell::RefCell,
     fs::File,
@@ -13,155 +7,38 @@ use std::{
 
 use backend_uzu::{
     _private::{
-        ActivationTrace, ArgmaxSampler, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
-        LanguageModelGeneratorContext, LogitsSampler, ModelConfig, ModelMetadata, ModelType, ParameterTree, Sampling,
-        TokenInputs,
+        ActivationTrace, CacheLayers, Classifier, DecoderDecodeInput, LanguageModelGeneratorContext, ModelConfig,
+        ModelMetadata, ModelType, ParameterTree, Sampling, TokenInputs, TransformerLayerConfig,
     },
-    Array, ArrayElement, DataType, ParameterLoader, allocation_to_vec,
-    backends::common::{Allocation, Backend, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    Array, ArrayElement, DataType, ParameterLoader, SafeTensorData,
+    backends::common::{Backend, Encoder, allocation_as_bytes, kernel::kv_cache_update::KVCacheUpdate},
     read_safetensors_metadata,
     session::{
         config::{DecodingConfig, SpeculatorConfig},
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
         types::Error,
     },
+    write_safetensors,
 };
-use half::{bf16, f16};
-use ndarray::{IxDyn, s};
 use num_traits::NumCast;
 
-use crate::common;
-// ============================================================================
-// Validation Types
-// ============================================================================
-
-/// Metrics from validating a single tensor.
-pub struct TracerValidationMetrics {
-    pub atol: f32,
-    pub rtol: f32,
-    #[allow(unused)]
-    pub fraction_of_allowed_violations: f32,
-    pub reference_shape: Vec<usize>,
-    pub result_shape: Vec<usize>,
-    pub num_violations: usize,
-    pub max_allowed_violations: usize,
-    pub max_err_idx: usize,
-    pub max_err: f32,
-    pub max_err_rel: f32,
-    pub max_err_reference_value: f32,
-    pub rms_diff: f32,
-    pub rms_result: f32,
-    pub rms_reference: f32,
-    pub rel_rms_reference: f32,
-    pub diff_max: f32,
-    pub diff_avg: f32,
-    pub result_nan: bool,
+#[derive(Clone, Copy)]
+enum ExportShape {
+    Native,
+    Batched,
 }
-
-impl TracerValidationMetrics {
-    pub fn is_valid(&self) -> bool {
-        self.num_violations <= self.max_allowed_violations && !self.result_nan
-    }
-
-    pub fn message(&self) -> String {
-        if self.result_nan {
-            return "Result contains NaN values".to_string();
-        }
-
-        let allowed_violation_explainer = if self.max_allowed_violations > 0 {
-            format!(" (Max {} allowed)", self.max_allowed_violations)
-        } else {
-            String::new()
-        };
-
-        let reference_size: usize = self.reference_shape.iter().product();
-
-        format!(
-            "{} violations > {:.1e} + {:.2}% out of total {} elements{}.\n\
-            Worst violation: {:.3} ({:.2}%) at index {} (reference value: {:.3}).\n\
-            Error RMS: {:.3}.\n\
-            RMS of result: {:.3}, RMS of reference: {:.3}.\n\
-            Relative error RMS: {:.2}% of RMS of reference.\n\
-            Shape: {:?}\n\
-            Max diff: {:.3}, Avg diff: {:.3}",
-            self.num_violations,
-            self.atol,
-            self.rtol * 100.0,
-            reference_size,
-            allowed_violation_explainer,
-            self.max_err,
-            self.max_err_rel * 100.0,
-            self.max_err_idx,
-            self.max_err_reference_value,
-            self.rms_diff,
-            self.rms_result,
-            self.rms_reference,
-            self.rel_rms_reference * 100.0,
-            self.result_shape,
-            self.diff_max,
-            self.diff_avg,
-        )
-    }
-}
-
-/// Result of validating a single tensor.
-pub struct TracerValidationResult {
-    pub name: String,
-    pub metrics: TracerValidationMetrics,
-}
-
-/// Results from validating all traces.
-pub struct TracerValidationResults {
-    pub suffix_length: usize,
-    pub results: Vec<TracerValidationResult>,
-    pub tokens_violation_indices: Vec<usize>,
-}
-
-impl TracerValidationResults {
-    pub fn number_of_tokens_violations(&self) -> usize {
-        self.tokens_violation_indices.len()
-    }
-
-    pub fn number_of_allowed_tokens_violations(&self) -> usize {
-        let threshold: f64 = 0.01;
-        (self.suffix_length as f64 * threshold).ceil() as usize
-    }
-}
-
-/// Transform to apply to produced arrays before comparison.
-pub enum ArrayTransform {
-    /// Slice KV cache to match expected shape.
-    KVCacheSlice,
-    /// Transform SSM conv state layout.
-    SsmConvState,
-}
-
-// ============================================================================
-// Model Context (internal)
-// ============================================================================
 
 enum ModelContext<B: Backend> {
     LanguageModelGenerator(LanguageModelGeneratorContext<B>),
     Classifier(Classifier<B>),
 }
 
-// ============================================================================
-// Unified TraceValidator
-// ============================================================================
-
-/// Unified trace validator for any model type.
-///
-/// Automatically detects whether the model is an LLM or classifier and
-/// runs the appropriate validation.
 pub struct TraceValidator<B: Backend> {
     model_path: PathBuf,
     context: ModelContext<B>,
 }
 
 impl<B: Backend> TraceValidator<B> {
-    /// Create a new trace validator for the given model path.
-    ///
-    /// Automatically detects the model type from config.json.
     pub fn new(model_path: &Path) -> Result<Self, Error> {
         let config_path = model_path.join("config.json");
         if !config_path.exists() {
@@ -209,7 +86,7 @@ impl<B: Backend> TraceValidator<B> {
                     model_config,
                     grammar_start_tokens: raw_metadata.grammar_start_tokens,
                 };
-                let prefill_step_size = Self::determine_prefill_step_size(model_path);
+                let prefill_step_size = Self::determine_prefill_step_size(model_path)?;
                 let decoding_config = DecodingConfig::new(
                     ContextMode::default(),
                     ContextLength::default(),
@@ -232,40 +109,60 @@ impl<B: Backend> TraceValidator<B> {
         })
     }
 
-    /// Run trace validation and return results.
-    pub fn run(&mut self) -> Result<TracerValidationResults, Error> {
+    pub fn export_trace(
+        &mut self,
+        output_path: &Path,
+    ) -> Result<(), Error> {
         let traces_path = self.model_path.join("traces.safetensors");
         if !traces_path.exists() {
             return Err(Error::UnableToLoadWeights);
         }
 
         match &mut self.context {
-            ModelContext::LanguageModelGenerator(ctx) => Self::run_llm_validation(ctx, &traces_path),
-            ModelContext::Classifier(classifier) => Self::run_classifier_validation(classifier, &traces_path),
+            ModelContext::LanguageModelGenerator(ctx) => Self::export_llm_trace(ctx, &traces_path, output_path),
+            ModelContext::Classifier(classifier) => {
+                Self::export_classifier_trace(classifier, &traces_path, output_path)
+            },
         }
     }
 
-    // ========================================================================
-    // LLM Validation
-    // ========================================================================
-
-    fn run_llm_validation(
+    fn export_llm_trace(
         ctx: &LanguageModelGeneratorContext<B>,
         traces_path: &Path,
-    ) -> Result<TracerValidationResults, Error> {
+        output_path: &Path,
+    ) -> Result<(), Error> {
         let traces_file = File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_loader =
             ParameterLoader::new(&traces_file, ctx.context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
+        let (token_ids_array, token_positions_array, token_ids, token_positions) =
+            Self::load_trace_inputs(&traces_view)?;
+        let traces = Self::run_llm_trace(ctx, &token_ids, &token_positions)?;
 
-        let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
-        let token_positions = Self::load_array_as_vec::<i32, usize>(&traces_view, "activation_trace.token_positions");
+        let mut tensors = vec![
+            Self::tensor_from_array("activation_trace.token_ids", &token_ids_array),
+            Self::tensor_from_array("activation_trace.token_positions", &token_positions_array),
+        ];
+        Self::push_activation_trace_tensors(
+            &mut tensors,
+            &traces,
+            &ctx.model_config.model_config.transformer_config.layer_configs,
+            ExportShape::Batched,
+        );
+        Self::write_trace_file(output_path, &tensors)
+    }
+
+    fn run_llm_trace(
+        ctx: &LanguageModelGeneratorContext<B>,
+        token_ids: &[u64],
+        token_positions: &[usize],
+    ) -> Result<ActivationTrace<B>, Error> {
         let token_inputs = TokenInputs::new_llm(
             ctx.context.as_ref(),
             &ctx.model_shape,
-            &token_ids,
+            token_ids,
             None,
-            &token_positions,
+            token_positions,
             None,
             None,
             /*sampling_start=*/ 0,
@@ -274,9 +171,10 @@ impl<B: Backend> TraceValidator<B> {
         let mut traces = ActivationTrace::new_llm(ctx.context.as_ref(), &ctx.model_shape, token_ids.len());
 
         let mut encoder =
-            Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
+            Encoder::<B>::new(ctx.context.as_ref()).map_err(|err| Error::UnableToCreateCommandBuffer(err.into()))?;
         {
             let mut cache_layers = ctx.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(ctx.context.as_ref(), token_ids.len());
             let decoder_arguments = token_inputs.decoder_arguments(
                 ctx.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
@@ -293,643 +191,172 @@ impl<B: Backend> TraceValidator<B> {
                     None,
                     &mut encoder,
                 )
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
         }
         let pending = encoder.end_encoding().submit();
-        pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
-
-        let data_type = ctx.model_shape.activation_data_type();
-
-        // Common layer validation
-        let mut results = Self::validate_layer_traces(&traces, &traces_view, data_type);
-
-        // LLM-specific: KV cache validation
-        let cache = ctx.cache_layers.borrow();
-        for (index, layer) in cache.iter_layers() {
-            let Some(kv) = layer.as_transformer() else {
-                continue;
-            };
-
-            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.keys", index)) {
-                let size = kv.shape().iter().product::<usize>() * data_type.size_in_bytes();
-                let keys = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-                    common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.keys, size)
-                } else {
-                    panic!("Wrong keys type")
-                };
-                results.push(TracerValidationResult {
-                    name: format!("updated_kv_cache.{}.keys", index),
-                    metrics: Self::validate_allocation(
-                        data_type,
-                        &expected,
-                        &keys,
-                        &kv.shape(),
-                        Some(ArrayTransform::KVCacheSlice),
-                    ),
-                });
-            }
-
-            if let Ok(expected) = traces_view.leaf_array(&format!("updated_kv_cache.{}.values", index)) {
-                let size = kv.shape().iter().product::<usize>() * data_type.size_in_bytes();
-                let values = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-                    common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.values, size)
-                } else {
-                    panic!("Wrong values type")
-                };
-                results.push(TracerValidationResult {
-                    name: format!("updated_kv_cache.{}.values", index),
-                    metrics: Self::validate_allocation(
-                        data_type,
-                        &expected,
-                        &values,
-                        &kv.shape(),
-                        Some(ArrayTransform::KVCacheSlice),
-                    ),
-                });
-            }
-        }
-
-        // LLM-specific: SSM state validation
-        for (index, layer) in cache.iter_layers() {
-            let Some(ssm) = layer.as_state_space() else {
-                continue;
-            };
-
-            for path in [
-                format!("updated_state.{}.conv_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_optional_allocation(
-                            data_type,
-                            &expected,
-                            ssm.conv_state.as_ref(),
-                            &ssm.conv_shape,
-                            Some(ArrayTransform::SsmConvState),
-                        ),
-                    });
-                }
-            }
-
-            for path in [
-                format!("updated_state.{}.ssm_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_allocation(data_type, &expected, &ssm.ssm_state, &ssm.ssm_shape, None),
-                    });
-                }
-            }
-        }
-
-        // LLM-specific: DeltaNet state validation
-        for (index, layer) in cache.iter_layers() {
-            let Some(delta) = layer.as_delta_net() else {
-                continue;
-            };
-
-            for path in [
-                format!("updated_state.{}.conv_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.conv_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_allocation(
-                            data_type,
-                            &expected,
-                            &delta.conv_state,
-                            &delta.conv_shape,
-                            Some(ArrayTransform::SsmConvState),
-                        ),
-                    });
-                }
-            }
-
-            for path in [
-                format!("updated_state.{}.ssm_state", index),
-                format!("activation_trace.layer_results.{}.updated_state.ssm_state", index),
-            ] {
-                if let Ok(expected) = traces_view.leaf_array(&path) {
-                    results.push(TracerValidationResult {
-                        name: path,
-                        metrics: Self::validate_allocation(
-                            data_type,
-                            &expected,
-                            &delta.ssm_state,
-                            &delta.ssm_shape,
-                            None,
-                        ),
-                    });
-                }
-            }
-        }
-
-        // LLM-specific: Token comparison
-        let tokens_violation_indices = if let Ok(expected_logits) = traces_view.leaf_array("logits") {
-            let expected_tokens = Self::get_tokens_from_logits(&expected_logits);
-            let produced_tokens = Self::get_tokens_from_logits(&traces.logits);
-            expected_tokens
-                .iter()
-                .zip(produced_tokens.iter())
-                .enumerate()
-                .filter_map(|(i, (a, b))| {
-                    if a != b {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        Ok(TracerValidationResults {
-            suffix_length: token_ids.len(),
-            results,
-            tokens_violation_indices,
-        })
+        pending.wait_until_completed().map_err(|err| Error::CommandBufferFailed(Box::new(err)))?;
+        Ok(traces)
     }
 
-    // ========================================================================
-    // Classifier Validation
-    // ========================================================================
-
-    fn run_classifier_validation(
+    fn export_classifier_trace(
         classifier: &mut Classifier<B>,
         traces_path: &Path,
-    ) -> Result<TracerValidationResults, Error> {
+        output_path: &Path,
+    ) -> Result<(), Error> {
         let traces_file = File::open(traces_path).map_err(|_| Error::UnableToLoadWeights)?;
         let context = classifier.context.context.clone();
         let traces_loader =
             ParameterLoader::new(&traces_file, context.as_ref()).map_err(|_| Error::UnableToLoadWeights)?;
         let traces_view = traces_loader.tree();
-
-        let has_token_ids = traces_view.leaf_array("activation_trace.token_ids").is_ok();
-        let has_token_positions = traces_view.leaf_array("activation_trace.token_positions").is_ok();
-
-        if !has_token_ids || !has_token_positions {
-            return Ok(Self::handle_missing_tokens(&traces_view));
-        }
-
-        let token_ids = Self::load_array_as_vec::<i32, u64>(&traces_view, "activation_trace.token_ids");
-        let token_positions = Self::load_array_as_vec::<i32, usize>(&traces_view, "activation_trace.token_positions");
-
-        let suffix_length = token_ids.len();
-
+        let (token_ids_array, token_positions_array, token_ids, token_positions) =
+            Self::load_trace_inputs(&traces_view)?;
         let (_logits, traces) =
             classifier.forward_pass_with_traces(&token_ids, &token_positions).map_err(|_| Error::GenerateFailed)?;
 
-        let data_type = classifier.context.model_shape.activation_data_type();
-
-        // Common layer validation
-        let mut results = Self::validate_layer_traces(&traces, &traces_view, data_type);
-
-        // Classifier-specific: embedding_norm, output_pooling
-        let classifier_results = Self::validate_classifier_traces(&traces, &traces_view, data_type);
-        results.extend(classifier_results);
-
-        Ok(TracerValidationResults {
-            suffix_length,
-            results,
-            tokens_violation_indices: Vec::new(), // Classifiers don't compare tokens
-        })
+        let mut tensors = vec![
+            Self::tensor_from_array("activation_trace.token_ids", &token_ids_array),
+            Self::tensor_from_array("activation_trace.token_positions", &token_positions_array),
+        ];
+        Self::push_activation_trace_tensors(
+            &mut tensors,
+            &traces,
+            &classifier.context.model_config.model_config.transformer_config.layer_configs,
+            ExportShape::Native,
+        );
+        Self::write_trace_file(output_path, &tensors)
     }
 
-    fn handle_missing_tokens(traces_view: &ParameterTree<B::Context>) -> TracerValidationResults {
-        if let Ok(expected_logits) = traces_view.leaf_array("logits") {
-            let reference_shape = expected_logits.shape().to_vec();
-            let metrics = TracerValidationMetrics {
-                atol: 0.0,
-                rtol: 0.0,
-                fraction_of_allowed_violations: 0.0,
-                reference_shape: reference_shape.clone(),
-                result_shape: reference_shape,
-                num_violations: 0,
-                max_allowed_violations: 0,
-                max_err_idx: 0,
-                max_err: 0.0,
-                max_err_rel: 0.0,
-                max_err_reference_value: 0.0,
-                rms_diff: 0.0,
-                rms_result: 0.0,
-                rms_reference: 0.0,
-                rel_rms_reference: 0.0,
-                diff_max: 0.0,
-                diff_avg: 0.0,
-                result_nan: false,
-            };
-            return TracerValidationResults {
-                suffix_length: 1,
-                results: vec![TracerValidationResult {
-                    name: "activation_trace.logits".to_string(),
-                    metrics,
-                }],
-                tokens_violation_indices: Vec::new(),
-            };
-        }
-
-        TracerValidationResults {
-            suffix_length: 1,
-            results: Vec::new(),
-            tokens_violation_indices: Vec::new(),
-        }
+    fn load_trace_inputs(
+        traces_view: &ParameterTree<B::Context>
+    ) -> Result<(Array<B>, Array<B>, Vec<u64>, Vec<usize>), Error> {
+        let token_ids_array =
+            traces_view.leaf_array("activation_trace.token_ids").map_err(|_| Error::UnableToLoadWeights)?;
+        let token_positions_array =
+            traces_view.leaf_array("activation_trace.token_positions").map_err(|_| Error::UnableToLoadWeights)?;
+        Self::validate_trace_input_shape(&token_ids_array, &token_positions_array)?;
+        let token_ids = Self::array_as_vec::<i32, u64>(&token_ids_array)?;
+        let token_positions = Self::array_as_vec::<i32, usize>(&token_positions_array)?;
+        Ok((token_ids_array, token_positions_array, token_ids, token_positions))
     }
 
-    // ========================================================================
-    // Common Validation Helpers
-    // ========================================================================
-
-    fn validate_layer_traces(
-        traces: &ActivationTrace<B>,
-        traces_view: &ParameterTree<B::Context>,
-        data_type: DataType,
-    ) -> Vec<TracerValidationResult> {
-        let mut results = Vec::new();
-
-        let validate = |path: &str, array: &Array<B>| -> Option<TracerValidationResult> {
-            if let Ok(expected) = traces_view.leaf_array(path) {
-                Some(TracerValidationResult {
-                    name: path.to_string(),
-                    metrics: Self::validate_allocation(data_type, &expected, array.allocation(), array.shape(), None),
-                })
-            } else {
-                None
-            }
+    fn validate_trace_input_shape(
+        token_ids: &Array<B>,
+        token_positions: &Array<B>,
+    ) -> Result<(), Error> {
+        let &[batch, suffix_length] = token_ids.shape() else {
+            return Err(Error::UnableToLoadWeights);
         };
+        if batch != 1 || suffix_length == 0 || token_positions.shape() != token_ids.shape() {
+            return Err(Error::UnableToLoadWeights);
+        }
+        Ok(())
+    }
+
+    fn array_as_vec<SourcePrecision: ArrayElement, TargetPrecision: NumCast>(
+        array: &Array<B>
+    ) -> Result<Vec<TargetPrecision>, Error> {
+        let slice = array.as_slice::<SourcePrecision>();
+        slice.iter().map(|value| NumCast::from(*value).ok_or(Error::UnableToLoadWeights)).collect()
+    }
+
+    fn push_array(
+        tensors: &mut Vec<SafeTensorData>,
+        path: impl Into<String>,
+        array: &Array<B>,
+        export_shape: ExportShape,
+    ) {
+        let path = path.into();
+        let tensor = match export_shape {
+            ExportShape::Native => Self::tensor_from_array(path, array),
+            ExportShape::Batched => {
+                let shape = std::iter::once(1).chain(array.shape().iter().copied()).collect::<Vec<_>>();
+                Self::tensor_from_array_with_shape(path, array, shape.into_boxed_slice())
+            },
+        };
+        tensors.push(tensor);
+    }
+
+    fn tensor_from_array(
+        name: impl Into<String>,
+        array: &Array<B>,
+    ) -> SafeTensorData {
+        Self::tensor_from_array_with_shape(name, array, array.shape().into())
+    }
+
+    fn tensor_from_array_with_shape(
+        name: impl Into<String>,
+        array: &Array<B>,
+        shape: Box<[usize]>,
+    ) -> SafeTensorData {
+        SafeTensorData {
+            name: name.into(),
+            shape,
+            data_type: array.data_type(),
+            data: allocation_as_bytes(array.allocation()).into(),
+        }
+    }
+
+    fn push_activation_trace_tensors(
+        tensors: &mut Vec<SafeTensorData>,
+        traces: &ActivationTrace<B>,
+        layer_configs: &[TransformerLayerConfig],
+        export_shape: ExportShape,
+    ) {
+        if let Some(embedding_norm) = &traces.embedding_norm {
+            Self::push_array(tensors, "activation_trace.embedding_norm", embedding_norm, export_shape);
+        }
 
         for (index, layer_traces) in traces.layer_results.iter().enumerate() {
-            let path = |suffix: &str| -> String {
-                format!("activation_trace.layer_results.{}.activation_trace.{}", index, suffix)
-            };
+            let layer_config = &layer_configs[index];
+            let path = |suffix: &str| format!("activation_trace.layer_results.{index}.activation_trace.{suffix}");
 
-            if let Some(r) = validate(&path("inputs"), &layer_traces.inputs) {
-                results.push(r);
+            Self::push_array(tensors, path("inputs"), &layer_traces.inputs, export_shape);
+            Self::push_array(tensors, path("pre_mixer_norm"), &layer_traces.pre_attention_norm, export_shape);
+            Self::push_array(tensors, path("mixer"), &layer_traces.attention, export_shape);
+            if layer_config.post_mixer_norm_config.is_some() {
+                Self::push_array(tensors, path("post_mixer_norm"), &layer_traces.post_attention_norm, export_shape);
             }
-            if let Some(r) = validate(&path("pre_mixer_norm"), &layer_traces.pre_attention_norm) {
-                results.push(r);
+            Self::push_array(tensors, path("mlp_inputs"), &layer_traces.mlp_inputs, export_shape);
+            Self::push_array(tensors, path("pre_mlp_norm"), &layer_traces.pre_mlp_norm, export_shape);
+            Self::push_array(tensors, path("mlp"), &layer_traces.mlp, export_shape);
+            if layer_config.post_mlp_norm_config.is_some() {
+                Self::push_array(tensors, path("post_mlp_norm"), &layer_traces.post_mlp_norm, export_shape);
             }
-            if let Some(r) = validate(&path("mixer"), &layer_traces.attention) {
-                results.push(r);
-            }
-            if let Some(r) = validate(&path("post_mixer_norm"), &layer_traces.post_attention_norm) {
-                results.push(r);
-            }
-            if let Some(r) = validate(&path("mlp_inputs"), &layer_traces.mlp_inputs) {
-                results.push(r);
-            }
-            if let Some(r) = validate(&path("pre_mlp_norm"), &layer_traces.pre_mlp_norm) {
-                results.push(r);
-            }
-            if let Some(r) = validate(&path("mlp"), &layer_traces.mlp) {
-                results.push(r);
-            }
-            if let Some(r) = validate(&path("post_mlp_norm"), &layer_traces.post_mlp_norm) {
-                results.push(r);
-            }
-
-            let outputs_path = format!("activation_trace.layer_results.{}.outputs", index);
-            if let Some(r) = validate(&outputs_path, &layer_traces.outputs) {
-                results.push(r);
-            }
-        }
-
-        // Output norm (common to all models)
-        if let Some(r) = validate("activation_trace.output_norm", &traces.output_norm) {
-            results.push(r);
-        }
-
-        // Logits (common to all models, but path may vary)
-        if let Some(r) = validate("activation_trace.logits", &traces.logits) {
-            results.push(r);
-        } else if let Some(r) = validate("logits", &traces.logits) {
-            results.push(r);
-        }
-
-        results
-    }
-
-    fn validate_classifier_traces(
-        traces: &ActivationTrace<B>,
-        traces_view: &ParameterTree<B::Context>,
-        data_type: DataType,
-    ) -> Vec<TracerValidationResult> {
-        let mut results = Vec::new();
-
-        // Output pooling (classifier-specific)
-        if let Some(output_pooling) = &traces.output_pooling {
-            if let Ok(expected) = traces_view.leaf_array("activation_trace.output_pooling") {
-                results.push(TracerValidationResult {
-                    name: "activation_trace.output_pooling".to_string(),
-                    metrics: Self::validate_allocation(
-                        data_type,
-                        &expected,
-                        output_pooling.allocation(),
-                        output_pooling.shape(),
-                        None,
-                    ),
-                });
-            }
-        }
-
-        results
-    }
-
-    // ========================================================================
-    // Allocation Validation
-    // ========================================================================
-
-    fn validate_allocation(
-        data_type: DataType,
-        expected_array: &Array<B>,
-        produced_allocation: &Allocation<B>,
-        produced_shape: &[usize],
-        transform: Option<ArrayTransform>,
-    ) -> TracerValidationMetrics {
-        match data_type {
-            DataType::F16 => {
-                Self::validate_allocation_of_type::<f16>(expected_array, produced_allocation, produced_shape, transform)
-            },
-            DataType::BF16 => Self::validate_allocation_of_type::<bf16>(
-                expected_array,
-                produced_allocation,
-                produced_shape,
-                transform,
-            ),
-            DataType::F32 => {
-                Self::validate_allocation_of_type::<f32>(expected_array, produced_allocation, produced_shape, transform)
-            },
-            _ => panic!("Unsupported data type: {:?}", data_type),
-        }
-    }
-
-    fn validate_optional_allocation(
-        data_type: DataType,
-        expected_array: &Array<B>,
-        produced_allocation: Option<&Allocation<B>>,
-        produced_shape: &[usize],
-        transform: Option<ArrayTransform>,
-    ) -> TracerValidationMetrics {
-        match produced_allocation {
-            Some(produced_allocation) => {
-                Self::validate_allocation(data_type, expected_array, produced_allocation, produced_shape, transform)
-            },
-            None => match data_type {
-                DataType::F16 => {
-                    Self::validate_allocation_data_of_type::<f16>(expected_array, &[], produced_shape, transform)
-                },
-                DataType::BF16 => {
-                    Self::validate_allocation_data_of_type::<bf16>(expected_array, &[], produced_shape, transform)
-                },
-                DataType::F32 => {
-                    Self::validate_allocation_data_of_type::<f32>(expected_array, &[], produced_shape, transform)
-                },
-                _ => panic!("Unsupported data type: {:?}", data_type),
-            },
-        }
-    }
-
-    fn validate_allocation_of_type<Precision: ArrayElement>(
-        expected_array: &Array<B>,
-        produced_allocation: &Allocation<B>,
-        produced_shape: &[usize],
-        transform: Option<ArrayTransform>,
-    ) -> TracerValidationMetrics {
-        let produced = allocation_to_vec::<B, Precision>(produced_allocation);
-        Self::validate_allocation_data_of_type(expected_array, &produced, produced_shape, transform)
-    }
-
-    fn validate_allocation_data_of_type<Precision: ArrayElement>(
-        expected_array: &Array<B>,
-        produced_slice: &[Precision],
-        produced_shape: &[usize],
-        transform: Option<ArrayTransform>,
-    ) -> TracerValidationMetrics {
-        let expected_view = expected_array.as_view::<Precision>();
-        let produced_view = ndarray::ArrayView::from_shape(IxDyn(produced_shape), produced_slice)
-            .expect("Failed to reshape allocation");
-
-        let (mut expected_data, mut produced_data) = match transform {
-            Some(ArrayTransform::KVCacheSlice) => {
-                let permuted = produced_view.permuted_axes(IxDyn(&[1, 0, 2]));
-                let total_tokens = permuted.shape()[0];
-                let expected_tokens = expected_view.shape()[1];
-                let start = total_tokens.saturating_sub(expected_tokens);
-                let sliced = permuted.slice(s![start.., .., ..]);
-                let reshaped = sliced
-                    .into_owned()
-                    .to_shape(IxDyn(&[1, expected_tokens, permuted.shape()[1], permuted.shape()[2]]))
-                    .expect("Failed to reshape KV cache slice")
-                    .to_owned();
-                (expected_view.to_owned(), reshaped)
-            },
-            Some(ArrayTransform::SsmConvState) => {
-                let produced_shape = produced_view.shape();
-                let history_len = produced_shape[1];
-                let dim = produced_shape[0];
-
-                let permuted = expected_view.permuted_axes(IxDyn(&[0, 2, 1]));
-                let total_time = permuted.shape()[2];
-                let start = total_time.saturating_sub(history_len);
-                let sliced = permuted.slice(s![.., .., start..]);
-
-                let reshaped_expected = sliced
-                    .into_owned()
-                    .to_shape(IxDyn(&[dim, history_len]))
-                    .expect("Failed to reshape SSM conv state slice")
-                    .to_owned();
-
-                (reshaped_expected, produced_view.to_owned())
-            },
-            None => (expected_view.to_owned(), produced_view.to_owned()),
-        };
-
-        let expected_shape = expected_data.shape().to_vec();
-        let produced_shape = produced_data.shape().to_vec();
-
-        if expected_shape != produced_shape {
-            if expected_shape.len() == produced_shape.len() + 1
-                && expected_shape.get(0) == Some(&1)
-                && expected_shape[1..] == produced_shape[..]
-            {
-                expected_data =
-                    expected_data.to_shape(IxDyn(&produced_shape)).expect("Failed to reshape expected data").to_owned();
-            } else if produced_shape.len() == expected_shape.len() + 1
-                && produced_shape.get(0) == Some(&1)
-                && produced_shape[1..] == expected_shape[..]
-            {
-                produced_data =
-                    produced_data.to_shape(IxDyn(&expected_shape)).expect("Failed to reshape produced data").to_owned();
-            }
-        }
-
-        if expected_data.shape() != produced_data.shape() {
-            panic!(
-                "Shape mismatch after alignment: expected {:?}, produced {:?}",
-                expected_data.shape(),
-                produced_data.shape()
+            Self::push_array(
+                tensors,
+                format!("activation_trace.layer_results.{index}.outputs"),
+                &layer_traces.outputs,
+                export_shape,
             );
         }
 
-        let reference: Vec<f32> = expected_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
-        let result: Vec<f32> = produced_data.iter().map(|value| NumCast::from(*value).unwrap_or(0.0)).collect();
-
-        let (atol, rtol, allowed_voilations_tol) = match expected_array.data_type() {
-            DataType::BF16 => (0.04, 0.06, 0.03),
-            _ => (0.01, 0.03, 0.01),
-        };
-
-        Self::compare_arrays(
-            &reference,
-            expected_data.shape().to_vec(),
-            &result,
-            produced_data.shape().to_vec(),
-            atol,
-            rtol,
-            allowed_voilations_tol,
-        )
+        Self::push_array(tensors, "activation_trace.output_norm", &traces.output_norm, export_shape);
+        if let Some(output_pooling) = &traces.output_pooling {
+            Self::push_array(tensors, "activation_trace.output_pooling", output_pooling, export_shape);
+        }
+        Self::push_array(tensors, "logits", &traces.logits, export_shape);
     }
 
-    fn compare_arrays(
-        reference: &[f32],
-        reference_shape: Vec<usize>,
-        result: &[f32],
-        result_shape: Vec<usize>,
-        atol: f32,
-        rtol: f32,
-        fraction_of_allowed_violations: f32,
-    ) -> TracerValidationMetrics {
-        assert_eq!(result.len(), reference.len());
-        if reference.is_empty() {
-            return TracerValidationMetrics {
-                atol,
-                rtol,
-                fraction_of_allowed_violations,
-                reference_shape,
-                result_shape,
-                num_violations: 0,
-                max_allowed_violations: 0,
-                max_err_idx: 0,
-                max_err: 0.0,
-                max_err_rel: 0.0,
-                max_err_reference_value: 0.0,
-                rms_diff: 0.0,
-                rms_result: 0.0,
-                rms_reference: 0.0,
-                rel_rms_reference: 0.0,
-                diff_max: 0.0,
-                diff_avg: 0.0,
-                result_nan: false,
-            };
-        }
-
-        let mut num_violations = 0;
-        let mut max_err = 0.0f32;
-        let mut max_err_idx = 0;
-        let mut max_err_rel = 0.0f32;
-        let mut max_err_reference_value = 0.0f32;
-        let mut sum_sq_diff = 0.0f32;
-        let mut sum_sq_result = 0.0f32;
-        let mut sum_sq_reference = 0.0f32;
-        let mut diff_sum = 0.0f32;
-        let mut diff_max = 0.0f32;
-        let mut result_nan = false;
-
-        for (i, (&exp, &prod)) in reference.iter().zip(result.iter()).enumerate() {
-            if prod.is_nan() {
-                result_nan = true;
-            }
-
-            let abs_diff = (exp - prod).abs();
-            let rel_diff = if exp.abs() > 1e-8 {
-                abs_diff / exp.abs()
-            } else {
-                abs_diff
-            };
-
-            diff_sum += abs_diff;
-            diff_max = diff_max.max(abs_diff);
-            sum_sq_diff += abs_diff * abs_diff;
-            sum_sq_result += prod * prod;
-            sum_sq_reference += exp * exp;
-
-            if abs_diff > atol && rel_diff > rtol {
-                num_violations += 1;
-            }
-
-            if abs_diff > max_err {
-                max_err = abs_diff;
-                max_err_idx = i;
-                max_err_rel = rel_diff;
-                max_err_reference_value = exp;
-            }
-        }
-
-        let n = reference.len() as f32;
-        let rms_diff = (sum_sq_diff / n).sqrt();
-        let rms_result = (sum_sq_result / n).sqrt();
-        let rms_reference = (sum_sq_reference / n).sqrt();
-        let rel_rms_reference = if rms_reference > 1e-8 {
-            rms_diff / rms_reference
-        } else {
-            rms_diff
-        };
-        let diff_avg = diff_sum / n;
-
-        let max_allowed_violations = (fraction_of_allowed_violations * n).ceil() as usize;
-
-        TracerValidationMetrics {
-            atol,
-            rtol,
-            fraction_of_allowed_violations,
-            reference_shape,
-            result_shape,
-            num_violations,
-            max_allowed_violations,
-            max_err_idx,
-            max_err,
-            max_err_rel,
-            max_err_reference_value,
-            rms_diff,
-            rms_result,
-            rms_reference,
-            rel_rms_reference,
-            diff_max,
-            diff_avg,
-            result_nan,
-        }
+    fn write_trace_file(
+        output_path: &Path,
+        tensors: &[SafeTensorData],
+    ) -> Result<(), Error> {
+        let mut file = File::create_new(output_path).map_err(|_| Error::UnableToWriteTrace)?;
+        write_safetensors(&mut file, tensors).map_err(|_| Error::UnableToWriteTrace)
     }
 
-    // ========================================================================
-    // Utility Functions
-    // ========================================================================
-
-    fn load_array_as_vec<SourcePrecision: ArrayElement, TargetPrecision: NumCast>(
-        traces_view: &ParameterTree<B::Context>,
-        name: &str,
-    ) -> Vec<TargetPrecision> {
-        let array = traces_view.leaf_array(name).unwrap();
-        let slice = array.as_slice::<SourcePrecision>();
-        slice.iter().map(|x| NumCast::from(*x).unwrap()).collect()
-    }
-
-    fn determine_prefill_step_size(model_path: &Path) -> usize {
+    fn determine_prefill_step_size(model_path: &Path) -> Result<usize, Error> {
         let traces_path = model_path.join("traces.safetensors");
-        if let Ok(file) = File::open(&traces_path) {
-            if let Ok((_header_len, metadata)) = read_safetensors_metadata(&file) {
-                if let Some(tensor) = metadata.tensors.get("activation_trace.token_ids") {
-                    if let Some(&length) = tensor.shape.first() {
-                        return tensor.shape.iter().copied().max().unwrap_or(length).max(1);
-                    }
-                }
-            }
+        let file = File::open(&traces_path).map_err(|_| Error::UnableToLoadWeights)?;
+        let (_header_len, metadata) = read_safetensors_metadata(&file).map_err(|_| Error::UnableToLoadWeights)?;
+        let tensor = metadata.tensors.get("activation_trace.token_ids").ok_or(Error::UnableToLoadWeights)?;
+        let &[batch, suffix_length] = tensor.shape.as_slice() else {
+            return Err(Error::UnableToLoadWeights);
+        };
+        if batch != 1 || suffix_length == 0 {
+            return Err(Error::UnableToLoadWeights);
         }
-        1
+        Ok(suffix_length)
     }
 
     fn ensure_llm_context_capacity(
@@ -964,20 +391,5 @@ impl<B: Backend> TraceValidator<B> {
 
         context.gpu_sampler =
             Sampling::new(context.context.as_ref(), intermediate_dtype).expect("Failed to create sampling kernel");
-    }
-
-    fn get_tokens_from_logits(logits: &Array<B>) -> Vec<u64> {
-        let data_type = logits.data_type();
-        match data_type {
-            DataType::F16 => Self::get_tokens_from_logits_of_type::<f16>(logits),
-            DataType::BF16 => Self::get_tokens_from_logits_of_type::<bf16>(logits),
-            DataType::F32 => Self::get_tokens_from_logits_of_type::<f32>(logits),
-            _ => panic!("Unsupported data type: {:?}", data_type),
-        }
-    }
-
-    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<B>) -> Vec<u64> {
-        let sampler = ArgmaxSampler {};
-        sampler.sample(logits.as_view::<Precision>())
     }
 }

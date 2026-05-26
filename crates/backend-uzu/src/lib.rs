@@ -26,14 +26,14 @@ pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use backends::common::{AllocationAccessError, allocation_copy_from_slice, allocation_to_vec};
 pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
-pub use parameters::{ParameterLoader, read_safetensors_metadata};
+pub use parameters::{ParameterLoader, SafeTensorData, read_safetensors_metadata, write_safetensors};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(feature = "tracing")]
 pub mod _private {
     pub use crate::{
         classifier::Classifier,
-        config::{ModelConfig, ModelMetadata, ModelType},
+        config::{ModelConfig, ModelMetadata, ModelType, TransformerLayerConfig},
         encodable_block::{DecoderDecodeInput, Sampling},
         forward_pass::{
             cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,

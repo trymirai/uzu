@@ -1,6 +1,10 @@
 // This code is based on the safetensors implementation: https://docs.rs/safetensors/latest/src/safetensors/tensor.rs.html
 
-use std::{collections::HashMap, fs::File};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{self, Write},
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -95,17 +99,21 @@ impl From<Dtype> for DataType {
     }
 }
 
-impl From<DataType> for Dtype {
-    fn from(dtype: DataType) -> Self {
+impl TryFrom<DataType> for Dtype {
+    type Error = DataType;
+
+    fn try_from(dtype: DataType) -> Result<Self, Self::Error> {
         match dtype {
-            DataType::F16 => Dtype::F16,
-            DataType::BF16 => Dtype::BF16,
-            DataType::F32 => Dtype::F32,
-            DataType::I8 => Dtype::I8,
-            DataType::I32 => Dtype::I32,
-            DataType::I64 => Dtype::I64,
-            DataType::U64 => Dtype::U64,
-            _ => panic!("Unsupported dtype: {:?}", dtype),
+            DataType::F16 => Ok(Dtype::F16),
+            DataType::BF16 => Ok(Dtype::BF16),
+            DataType::F32 => Ok(Dtype::F32),
+            DataType::I8 => Ok(Dtype::I8),
+            DataType::U8 => Ok(Dtype::U8),
+            DataType::I32 => Ok(Dtype::I32),
+            DataType::U32 => Ok(Dtype::U32),
+            DataType::I64 => Ok(Dtype::I64),
+            DataType::U64 => Ok(Dtype::U64),
+            DataType::F64 | DataType::I4 | DataType::U4 | DataType::I16 | DataType::U16 => Err(dtype),
         }
     }
 }
@@ -128,4 +136,66 @@ pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoading
     let metadata: HashMetadata =
         serde_json::from_str(string).map_err(|_| HeaderLoadingError::InvalidHeaderDeserialization)?;
     Ok((stop, metadata))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SafeTensorData {
+    pub name: String,
+    pub shape: Box<[usize]>,
+    pub data_type: DataType,
+    pub data: Box<[u8]>,
+}
+
+pub fn write_safetensors<W: Write>(
+    writer: &mut W,
+    tensors: &[SafeTensorData],
+) -> Result<(), io::Error> {
+    let mut sorted_tensors: Vec<&SafeTensorData> = tensors.iter().collect();
+    sorted_tensors.sort_by(|left, right| {
+        right.data_type.size_in_bytes().cmp(&left.data_type.size_in_bytes()).then_with(|| left.name.cmp(&right.name))
+    });
+    let Some(first_tensor) = sorted_tensors.first() else {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "safetensors requires at least one tensor"));
+    };
+
+    let mut header = serde_json::Map::new();
+    let mut offset = 0;
+    for tensor in sorted_tensors.iter() {
+        let dtype = Dtype::try_from(tensor.data_type)
+            .map_err(|dtype| io::Error::new(io::ErrorKind::InvalidInput, format!("unsupported dtype: {dtype:?}")))?;
+        let expected_len = tensor
+            .shape
+            .iter()
+            .try_fold(tensor.data_type.size_in_bytes(), |size, dim| size.checked_mul(*dim))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "safetensors tensor byte size overflows usize")
+            })?;
+        if expected_len != tensor.data.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "safetensors tensor shape does not match data"));
+        }
+        let end = offset + tensor.data.len();
+        header.insert(
+            tensor.name.clone(),
+            serde_json::to_value(TensorInfo {
+                dtype,
+                shape: tensor.shape.to_vec(),
+                data_offsets: (offset, end),
+            })?,
+        );
+        offset = end;
+    }
+
+    let data_alignment = first_tensor.data_type.size_in_bytes().max(8);
+    let mut header_bytes = serde_json::to_vec(&header)?;
+    let padding = (data_alignment - header_bytes.len() % data_alignment) % data_alignment;
+    header_bytes.extend(std::iter::repeat_n(b' ', padding));
+
+    let header_len = u64::try_from(header_bytes.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "safetensors header length does not fit into u64"))?;
+    writer.write_all(&header_len.to_le_bytes())?;
+    writer.write_all(&header_bytes)?;
+    for tensor in sorted_tensors {
+        writer.write_all(&tensor.data)?;
+    }
+    Ok(())
 }

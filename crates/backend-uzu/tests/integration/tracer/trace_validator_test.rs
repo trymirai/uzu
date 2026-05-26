@@ -1,4 +1,6 @@
-use backend_uzu::backends::common::Backend;
+use std::{fs::File, path::PathBuf};
+
+use backend_uzu::{backends::common::Backend, read_safetensors_metadata};
 
 use crate::{
     common::{
@@ -11,24 +13,22 @@ use crate::{
 fn test_tracer_internal<B: Backend>() {
     let model_path = get_test_model_path();
     let mut tracer = TraceValidator::<B>::new(&model_path).expect("Failed to create TraceValidator");
-    let results = tracer.run().expect("Failed to run tracer");
-    for result in results.results.iter() {
-        // this layers contains too many errors
-        if result.name == "activation_trace.output_norm" || result.name == "logits" {
-            continue;
-        }
-        assert!(result.metrics.is_valid(), "{} error:\n{}", result.name, result.metrics.message().as_str());
-    }
+    let (export_path, _temp_file) = match std::env::var_os("UZU_TRACE_EXPORT_PATH") {
+        Some(path) => (PathBuf::from(path), None),
+        None => {
+            let directory = tempfile::TempDir::new().expect("create exported trace directory");
+            (directory.path().join("uzu-traces.safetensors"), Some(directory))
+        },
+    };
+    tracer.export_trace(&export_path).expect("export uzu trace");
 
-    let total_token_violations = results.number_of_tokens_violations();
-    let allowed_token_violations = results.number_of_allowed_tokens_violations();
-    assert!(
-        total_token_violations < allowed_token_violations,
-        "Too much token violations: {} / {}. Indices: {:?}",
-        total_token_violations,
-        allowed_token_violations,
-        results.tokens_violation_indices
-    );
+    let file = File::open(&export_path).expect("open exported trace");
+    let (_offset, metadata) = read_safetensors_metadata(&file).expect("read exported trace metadata");
+    assert!(metadata.tensors.contains_key("activation_trace.token_ids"));
+    assert!(metadata.tensors.contains_key("activation_trace.token_positions"));
+    assert!(metadata.tensors.contains_key("activation_trace.output_norm"));
+    assert!(metadata.tensors.contains_key("logits"));
+    assert!(metadata.tensors.keys().any(|path| path.ends_with(".activation_trace.inputs")));
 }
 
 #[test]

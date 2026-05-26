@@ -178,6 +178,8 @@ pub enum Error {
     InvalidTtsRunConfig(#[from] TtsRunConfigError),
     #[error("Unable to load model weights")]
     UnableToLoadWeights,
+    #[error("Unable to write trace")]
+    UnableToWriteTrace,
     #[error("Unable to load tokenizer")]
     UnableToLoadTokenizer,
     #[error("Model is too large to fit into available RAM")]
