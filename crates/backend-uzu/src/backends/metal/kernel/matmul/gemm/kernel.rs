@@ -85,9 +85,18 @@ impl GemmKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        let mxu_eligible_for_quant = match &arguments.b {
+            MatmulB::FullPrecision { .. } => true,
+            MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. } => {
+                arguments.b_transpose
+                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
+                    && arguments.b_offset == 0
+                    && arguments.k % super::MXU_THREADGROUP_BLOCK_K == 0
+            },
+        };
         let path = if encoder.context().device.supports_mxu()
             && matches!(self.data_type, DataType::F16 | DataType::BF16)
-            && matches!(arguments.b, MatmulB::FullPrecision { .. })
+            && mxu_eligible_for_quant
         {
             GemmDispatchPath::Mxu
         } else {
@@ -112,10 +121,6 @@ impl GemmKernel {
                     matches!(self.data_type, DataType::F16 | DataType::BF16),
                     "GemmDispatchPath::Mxu requires F16 or BF16 data type, got {:?}",
                     self.data_type,
-                );
-                assert!(
-                    matches!(arguments.b, MatmulB::FullPrecision { .. }),
-                    "GemmDispatchPath::Mxu requires FullPrecision B",
                 );
                 true
             },
@@ -273,10 +278,19 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
-                let tiling = select_quant_tiling(m, n);
+                let tiling = if use_mxu {
+                    select_mxu_tiling(m, n)
+                } else {
+                    select_quant_tiling(m, n)
+                };
+                let k_block = if use_mxu {
+                    MXU_THREADGROUP_BLOCK_K
+                } else {
+                    tiling.block_k()
+                };
                 let alignment =
-                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-                let params = quant_params(m, n, k, tiling, ab_scale);
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % k_block == 0);
+                let params = quant_params(m, n, k, tiling, k_block, ab_scale);
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
@@ -319,6 +333,7 @@ fn quant_params(
     n: u32,
     k: u32,
     tiling: GemmTiling,
+    k_block: u32,
     ab_scale: f32,
 ) -> GemmParams {
     GemmParams {
@@ -330,7 +345,7 @@ fn quant_params(
         leading_dimension_d: n,
         threadgroups_per_row: n.div_ceil(tiling.block_n()),
         threadgroups_per_column: m.div_ceil(tiling.block_m()),
-        aligned_inner_iterations: k / tiling.block_k(),
+        aligned_inner_iterations: k / k_block,
         use_morton: false,
         ab_scale,
     }
