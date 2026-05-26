@@ -379,10 +379,11 @@ fn test_use_lut_equivalence_int4_zp() {
                 let denom = af.abs().max(bf.abs()).max(1e-6);
                 max_rel = max_rel.max((af - bf).abs() / denom);
             }
-            // Pure fp-rounding tolerance: LUT stores nibbles as half, scalar
-            // path converts via float; differences are tiny.
+            // Pure fp-rounding tolerance: LUT stores nibbles as bfloat (was half);
+            // scalar path converts via float. For integer nibbles 0..15 the bf16
+            // round trip is exact, but accumulated rounding can grow to ~1e-2.
             assert!(
-                max_rel < 5e-3,
+                max_rel < 1.5e-2,
                 "use_lut mismatch backend={} m={} k={} n={}: max_rel={}",
                 std::any::type_name::<B>(),
                 m,

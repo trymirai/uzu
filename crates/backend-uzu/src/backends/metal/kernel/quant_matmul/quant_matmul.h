@@ -319,6 +319,32 @@ inline float qdot_q4_byte_lut_half(
   return scale * accum + sum * bias;
 }
 
+// bfloat2 variant of qdot_q4_byte_lut_half. The LUT is populated with
+// bfloat2 values; the inner-loop convert to float2 should lower to a pair of
+// 16-bit left shifts (no fp-convert intrinsic), eliminating the
+// air.convert.f.v2f32.f.v2f16 op observed in the half2 version. Only
+// qmv_fast.metal uses this; qmm_transposed retains the half2 path.
+template <int values_per_thread>
+inline float qdot_q4_byte_lut_bfloat(
+    const device uint8_t* w,
+    const thread float* x_thread,
+    const threadgroup bfloat2* lut,
+    float scale,
+    float bias,
+    float sum
+) {
+  using U4 = vec<float, 4>;
+  float accum = 0;
+  const thread U4* x4 = (const thread U4*)x_thread;
+  for (int i = 0; i < (values_per_thread / 4); i++) {
+    const bfloat2 w01 = lut[w[2 * i]];
+    const bfloat2 w23 = lut[w[2 * i + 1]];
+    const U4 w_vec = U4(float2(w01), float2(w23));
+    accum += dot(x4[i], w_vec);
+  }
+  return scale * accum + sum * bias;
+}
+
 template <typename U, int values_per_thread, int bits>
 inline U qdot_safe(
     const device uint8_t* w,

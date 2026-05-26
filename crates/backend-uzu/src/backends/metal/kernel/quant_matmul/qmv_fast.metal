@@ -36,7 +36,7 @@ template <uint BITS, int values_per_thread>
 inline float qdot_qmv_fast_experiment(
     const device uint8_t* w,
     const thread float* x_thread,
-    const threadgroup half2* lut,
+    const threadgroup bfloat2* lut,
     bool use_lut,
     bool use_nf4,
     float scale,
@@ -44,11 +44,24 @@ inline float qdot_qmv_fast_experiment(
     float sum
 ) {
   if (BITS == 4) {
-    if (use_nf4) {
+    if (use_nf4 && use_lut) {
+      // NF4-LUT graft: 256-entry byte-batched LUT populated with NF4
+      // codebook values (see kernel LUT-init). Reuses int4 byte-LUT dequant
+      // helper; bias is 0 on this path (use_zero_points=false), so
+      // `+ sum * bias` collapses to 0.
+      return qdot_q4_byte_lut_bfloat<values_per_thread>(
+          w,
+          x_thread,
+          lut,
+          scale,
+          bias,
+          sum
+      );
+    } else if (use_nf4) {
       // Scale-only NF4 codebook dequant; bias/sum (zero-point term) unused.
       return qdot_nf4_graft<values_per_thread>(w, x_thread, scale);
     } else if (use_lut) {
-      return qdot_q4_byte_lut_half<values_per_thread>(
+      return qdot_q4_byte_lut_bfloat<values_per_thread>(
           w,
           x_thread,
           lut,
@@ -85,7 +98,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     const bool use_lut SPECIALIZE,
     const bool use_nf4 SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
-    threadgroup half2 q4_lut[256],
+    threadgroup bfloat2 q4_lut[256],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
     const uint simd_lane THREADS(32),
@@ -137,10 +150,23 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
 
   if (use_lut) {
     const uint tid = simd_group * METAL_SIMD_SIZE + simd_lane;
-    q4_lut[tid] = half2(
-        static_cast<half>(tid & 0x0f),
-        static_cast<half>((tid >> 4) & 0x0f)
-    );
+    if (use_nf4) {
+      // NF4-LUT graft: 256-entry byte-batched codebook
+      //   q4_lut[b] = bfloat2(nf4_codebook[b & 0x0f],
+      //   nf4_codebook[(b>>4)&0x0f])
+      // tid spans 0..255 (8 simdgroups × 32 lanes) so the cooperative fill
+      // is one entry per lane. bfloat2 storage so the inner-loop convert
+      // lowers to a 16-bit left shift (no fp-convert intrinsic) on M4.
+      q4_lut[tid] = bfloat2(
+          static_cast<bfloat>(nf4_codebook[tid & 0x0fu]),
+          static_cast<bfloat>(nf4_codebook[(tid >> 4) & 0x0fu])
+      );
+    } else {
+      q4_lut[tid] = bfloat2(
+          static_cast<bfloat>(tid & 0x0f),
+          static_cast<bfloat>((tid >> 4) & 0x0f)
+      );
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
@@ -221,6 +247,18 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
           } else {
             zp_nibbles = zp_bytes;
           }
+        } else {
+          // EXPERIMENTAL probe: force NF4 to do the SAME memory work as AWQ
+          // (4 device loads + shift/mask) using `ws` (always bound). The
+          // loaded values feed `zp_nibbles` so the compiler can't DCE.
+          // OUTPUTS WILL BE NUMERICALLY WRONG — perf-only experiment.
+          uchar4 forced = uchar4(
+              ws[0],
+              ws[in_vec_size_w],
+              ws[2 * in_vec_size_w],
+              ws[3 * in_vec_size_w]
+          );
+          zp_nibbles = (forced >> 4) & uchar4(0x0F);
         }
         result[0] += qdot_qmv_fast_experiment<BITS, values_per_thread>(
             wl0,

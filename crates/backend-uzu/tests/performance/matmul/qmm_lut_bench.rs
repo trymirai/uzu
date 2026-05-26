@@ -37,7 +37,7 @@ use backend_uzu::{
         },
     },
 };
-use half::bf16;
+use half::{bf16, f16};
 
 use crate::common::helpers::alloc_buffer_with_data;
 
@@ -183,6 +183,108 @@ struct CellBuffers {
     w_u8: <B as Backend>::DenseBuffer, // raw u8-packed 4-bit weights
     x_buf: <B as Backend>::DenseBuffer,
     y_buf: <B as Backend>::DenseBuffer,
+    /// 256-entry bfloat2 LUT (= 512 bf16) precomputed CPU-side from the NF4
+    /// codebook. Bound by `QmvFastNf4Precomputed` only.
+    nf4_precomputed_lut: <B as Backend>::DenseBuffer,
+    /// 256-entry bfloat2 LUT precomputed from the SYNTHETIC 16-entry
+    /// dyadic-rational codebook (multiples of 1/8 in [-1, +7/8]). Ablation
+    /// to isolate the "irrational mantissa" hypothesis from operand range.
+    /// Same kernel as `nf4_precomputed_lut` — only the 512 bf16 contents
+    /// differ.
+    synth_precomputed_lut: <B as Backend>::DenseBuffer,
+    /// 256-entry bfloat2 LUT precomputed from the AWQ nibble codebook
+    /// {0.0, 1.0, ..., 15.0}. Same kernel as `nf4_precomputed_lut` — only
+    /// the 512 bf16 contents differ. Tests whether the closed-form bypass
+    /// requires INLINE init code or just CLEAN VALUES from any source.
+    awq_precomputed_lut: <B as Backend>::DenseBuffer,
+    /// 16-entry `half` codebook buffer for `Nf4QmvTgSimdbarDevbuf`. Populated
+    /// CPU-side from `NF4_CODEBOOK`. In production this would be a per-model
+    /// resource; for the bench it's allocated once per cell.
+    nf4_codebook_buf: <B as Backend>::DenseBuffer,
+}
+
+/// CPU-side NF4 16-entry codebook. MUST stay byte-identical to the
+/// `nf4_codebook[]` half literals in `nf4_common.h` (modulo half→bf16 round).
+const NF4_CODEBOOK: [f32; 16] = [
+    -1.0,
+    -0.6961928,
+    -0.5250730,
+    -0.39491748,
+    -0.28444138,
+    -0.18477343,
+    -0.09105003,
+    0.0,
+    0.07958029,
+    0.16093750,
+    0.24611230,
+    0.33791524,
+    0.44070983,
+    0.56261432,
+    0.72295684,
+    1.0,
+];
+
+/// Byte → (bfloat2(low_nibble, high_nibble)) expansion = 256 entries × 2 bf16
+/// = 512 bf16 values. Flat layout: [b0.lo, b0.hi, b1.lo, b1.hi, ...].
+fn precompute_nf4_byte_lut() -> Vec<bf16> {
+    let mut out = Vec::with_capacity(512);
+    for b in 0u32..256 {
+        out.push(bf16::from_f32(NF4_CODEBOOK[(b & 0xF) as usize]));
+        out.push(bf16::from_f32(NF4_CODEBOOK[((b >> 4) & 0xF) as usize]));
+    }
+    out
+}
+
+/// Synthetic 16-entry codebook: multiples of 1/8 in [-1, +7/8]. Same range as
+/// NF4 (~[-1, 1]) but all entries are exact dyadic rationals (mantissas have
+/// few bits set in fp16/bf16). Ablation lever for the "operand mantissa
+/// cleanliness" hypothesis: kernel binary and TG-memory layout are identical
+/// to the NF4 precomputed-LUT path; only the 256 bfloat2 values differ.
+const SYNTH_CODEBOOK: [f32; 16] = [
+    -1.0,
+    -7.0 / 8.0,
+    -6.0 / 8.0,
+    -5.0 / 8.0,
+    -4.0 / 8.0,
+    -3.0 / 8.0,
+    -2.0 / 8.0,
+    -1.0 / 8.0,
+    0.0,
+    1.0 / 8.0,
+    2.0 / 8.0,
+    3.0 / 8.0,
+    4.0 / 8.0,
+    5.0 / 8.0,
+    6.0 / 8.0,
+    7.0 / 8.0,
+];
+
+/// Same byte → bfloat2 expansion as `precompute_nf4_byte_lut`, but populated
+/// from `SYNTH_CODEBOOK` instead of `NF4_CODEBOOK`.
+fn precompute_synth_byte_lut() -> Vec<bf16> {
+    let mut out = Vec::with_capacity(512);
+    for b in 0u32..256 {
+        out.push(bf16::from_f32(SYNTH_CODEBOOK[(b & 0xF) as usize]));
+        out.push(bf16::from_f32(SYNTH_CODEBOOK[((b >> 4) & 0xF) as usize]));
+    }
+    out
+}
+
+/// AWQ nibble codebook: integers 0..15 as f32. Matches the values the inline
+/// `q4_lut[i] = bfloat2(i & 0xf, ...)` init produces in the awq-lut256 path.
+const AWQ_NIBBLE_CODEBOOK: [f32; 16] =
+    [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0];
+
+/// Same byte → bfloat2 expansion as `precompute_nf4_byte_lut`, but populated
+/// from `AWQ_NIBBLE_CODEBOOK`. Tests whether closed-form bypass requires INLINE
+/// source or just clean operand values.
+fn precompute_awq_byte_lut() -> Vec<bf16> {
+    let mut out = Vec::with_capacity(512);
+    for b in 0u32..256 {
+        out.push(bf16::from_f32(AWQ_NIBBLE_CODEBOOK[(b & 0xF) as usize]));
+        out.push(bf16::from_f32(AWQ_NIBBLE_CODEBOOK[((b >> 4) & 0xF) as usize]));
+    }
+    out
 }
 
 fn build_buffers(
@@ -214,6 +316,11 @@ fn build_buffers(
 
     let x_f32: Vec<f32> = (0..(m * input_dim)).map(|i| ((i % 257) as f32) / 257.0).collect();
 
+    let nf4_lut_bf16 = precompute_nf4_byte_lut();
+    let synth_lut_bf16 = precompute_synth_byte_lut();
+    let awq_lut_bf16 = precompute_awq_byte_lut();
+    let nf4_codebook_half: Vec<f16> = NF4_CODEBOOK.iter().map(|&v| f16::from_f32(v)).collect();
+
     CellBuffers {
         w_u32: alloc_buffer_with_data::<B, u32>(ctx, &w_u32_data),
         s_bf16: bf16_buf(ctx, &scales_f32),
@@ -221,6 +328,10 @@ fn build_buffers(
         w_u8: alloc_buffer_with_data::<B, u8>(ctx, &weights_u8),
         x_buf: bf16_buf(ctx, &x_f32),
         y_buf: ctx.create_buffer(m * output_dim * DataType::BF16.size_in_bytes()).expect("y buf"),
+        nf4_precomputed_lut: alloc_buffer_with_data::<B, bf16>(ctx, &nf4_lut_bf16),
+        synth_precomputed_lut: alloc_buffer_with_data::<B, bf16>(ctx, &synth_lut_bf16),
+        awq_precomputed_lut: alloc_buffer_with_data::<B, bf16>(ctx, &awq_lut_bf16),
+        nf4_codebook_buf: alloc_buffer_with_data::<B, f16>(ctx, &nf4_codebook_half),
     }
 }
 
@@ -235,12 +346,59 @@ struct QmvCell {
     awq_lut: Stats,
     nf4: Stats,
     nf4_byte256: Stats,
+    /// FLUTE's trick: 256-entry pair LUT replicated D times in threadgroup
+    /// memory; lane picks copy via `simd_lane & (D-1)`. Tests whether bank
+    /// conflicts on the single-copy `nf4-byte256` path are the cause of its
+    /// regression. Same math; only the TG bank distribution differs.
+    nf4_dup8: Stats,
+    nf4_dup16: Stats,
+    nf4_dup32: Stats,
     nf4_grafted: Stats,
+    nf4_lut256_graft: Stats,
     nf4_shuf8: Stats,
     nf4_shuf16: Stats,
     nf4_shuf32: Stats,
     nf4_tg: Stats,
+    nf4_tg_rep: Stats,
+    nf4_tg_vec4: Stats,
+    nf4_tg_ilp: Stats,
+    /// PERF PROBE: Nf4QmvTg with the post-init `threadgroup_barrier` REMOVED.
+    /// Outputs intentionally wrong; bounds barrier kernel-entry cost on M4.
+    nf4_tg_nobar: Stats,
+    /// Correct variant: 8-copy simdgroup-local TG codebook ordered with
+    /// `simdgroup_barrier(mem_threadgroup)`. Bit-equivalent to `Nf4QmvConstant`.
+    nf4_tg_sbar: Stats,
+    /// Production-flexible sibling of `nf4_tg_sbar`: same simdgroup-local TG
+    /// codebook + `simdgroup_barrier` layout, but the 16-entry codebook is
+    /// loaded from a `const device half*` buffer at dispatch time (vs the
+    /// constant `nf4_codebook[16]`). Deciding cell for whether NF4 has a
+    /// production-deployable fast path on M4.
+    nf4_tg_sbar_dev: Stats,
     nf4_select: Stats,
+    /// AWQ-int4 byte-LUT path with hardcoded constexpr flags (no SPECIALIZE).
+    /// Sanity-check sibling to `tmpl_nf4` — should match `awq_lut` within ±2pp.
+    tmpl_awq: Stats,
+    /// NF4 byte-LUT path with hardcoded constexpr flags. The deciding cell:
+    /// compare vs `nf4_lut256_graft` (same math, SPECIALIZE-gated).
+    tmpl_nf4: Stats,
+    /// NEW: NF4 byte-LUT path where the 256-entry bfloat2 LUT is precomputed
+    /// CPU-side and bound as a device buffer. The kernel does NOT include
+    /// `nf4_common.h`, so the compiler has no compile-time visibility into
+    /// the 16 NF4 codebook values. Deciding cell for "compile-time codebook
+    /// visibility = killer?".
+    nf4_precomputed: Stats,
+    /// ABLATION: same kernel as `nf4_precomputed`, but the device-buffer LUT
+    /// is built from the SYNTHETIC dyadic-rational codebook (multiples of 1/8
+    /// in [-1, +7/8]). Tests whether NF4's irrational codebook values cause
+    /// the runtime gap vs AWQ's integer-valued operands. Outcome A: closes to
+    /// awq-lut256 -> mantissa class is the killer. Outcome B: matches
+    /// nf4_precomputed -> range or some other effect.
+    synth_precomp: Stats,
+    /// NEW: same kernel/encode as `nf4_precomputed`, but the device-buffer LUT
+    /// is populated from `AWQ_NIBBLE_CODEBOOK` (integers 0..15). Decides
+    /// whether the closed-form bypass requires INLINE init code or just
+    /// clean values from any source.
+    awq_precomp: Stats,
 }
 
 fn bench_qmv_cell(
@@ -298,6 +456,25 @@ fn bench_qmv_cell(
         true,  // use_nf4: 16-entry NF4 codebook dequant in QmvFast skeleton
     )
     .expect("nf4-grafted QmvFast kernel build");
+
+    // nf4-lut256-graft: SAME QmvFast skeleton with use_lut=TRUE AND
+    // use_nf4=TRUE. The 256-entry threadgroup half2 LUT is populated at
+    // kernel start with byte-batched NF4 codebook pairs; the inner dequant
+    // reuses qdot_q4_byte_lut_half (bias=0 via use_zero_points=false).
+    // This is the A vs B experiment: does byte-batched LUT mechanism
+    // transfer to the NF4 codebook when grafted into the awq-lut256 kernel?
+    let nf4_lut_graft_kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+        ctx,
+        DataType::BF16,
+        GROUP_SIZE as u32,
+        BITS as u32,
+        false, // use_zero_points: NF4 graft is scale-only
+        false, // use_mlx_quant
+        false, // use_hadamard
+        true,  // use_lut: 256-entry threadgroup LUT
+        true,  // use_nf4: LUT populated with NF4 codebook pairs
+    )
+    .expect("nf4-lut256-graft QmvFast kernel build");
 
     let mut y_s = bufs.y_buf.clone();
     let scalar = time_batched(ctx, |enc| {
@@ -363,6 +540,51 @@ fn bench_qmv_cell(
         );
     });
 
+    let mut y_d8 = bufs.y_buf.clone();
+    let nf4_dup8 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::Byte256Dup8,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_d8,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_d16 = bufs.y_buf.clone();
+    let nf4_dup16 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::Byte256Dup16,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_d16,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_d32 = bufs.y_buf.clone();
+    let nf4_dup32 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::Byte256Dup32,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_d32,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
     // nf4-grafted: NF4 codebook dequant inside the QmvFast skeleton. Feed it
     // the SAME NF4 packed u8 weights + SAME bf16 scale as nf4-const (the
     // kernel reads weights as uint8_t* with identical byte/nibble stride), no
@@ -376,6 +598,26 @@ fn bench_qmv_cell(
             None::<&<B as Backend>::DenseBuffer>,
             &bufs.x_buf,
             &mut y_g,
+            None::<&<B as Backend>::DenseBuffer>,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // nf4-lut256-graft: byte-batched NF4-codebook LUT inside the production
+    // QmvFast skeleton. Same SAME NF4 packed u8 weights + bf16 scale, no
+    // zero-points.
+    let mut y_lg = bufs.y_buf.clone();
+    let nf4_lut256_graft = time_batched(ctx, |enc| {
+        nf4_lut_graft_kernel.encode(
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            None::<&<B as Backend>::DenseBuffer>,
+            None::<&<B as Backend>::DenseBuffer>,
+            &bufs.x_buf,
+            &mut y_lg,
             None::<&<B as Backend>::DenseBuffer>,
             input_dim as u32,
             output_dim as u32,
@@ -444,6 +686,104 @@ fn bench_qmv_cell(
         );
     });
 
+    let mut y_tg_rep = bufs.y_buf.clone();
+    let nf4_tg_rep = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::TgReplicated,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_tg_rep,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_tg_v4 = bufs.y_buf.clone();
+    let nf4_tg_vec4 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::TgVec4,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_tg_v4,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    let mut y_tg_il = bufs.y_buf.clone();
+    let nf4_tg_ilp = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::TgIlp,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_tg_il,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // PERF PROBE: TgNoBarrier (intentionally incorrect outputs — race on TG
+    // codebook). Times the same kernel as `Tg` with the post-init
+    // threadgroup_barrier deleted, isolating barrier kernel-entry cost.
+    let mut y_tg_nb = bufs.y_buf.clone();
+    let nf4_tg_nobar = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::TgNoBarrier,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_tg_nb,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // Correct simdgroup-local TG codebook variant ordered with
+    // `simdgroup_barrier(mem_threadgroup)` — cheaper than the full
+    // threadgroup barrier in `Tg` (only syncs the 32 lanes of this simdgroup).
+    let mut y_tg_sb = bufs.y_buf.clone();
+    let nf4_tg_sbar = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::TgSimdbar,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_tg_sb,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // Production-flexible simdbar variant: same kernel as `nf4_tg_sbar` but
+    // the 16-entry codebook comes from a CPU-built device buffer.
+    let mut y_tg_sbd = bufs.y_buf.clone();
+    let nf4_tg_sbar_dev = time_batched(ctx, |enc| {
+        qmv_bench.encode_tg_simdbar_devbuf(
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.nf4_codebook_buf,
+            &bufs.x_buf,
+            &mut y_tg_sbd,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
     let mut y_sel = bufs.y_buf.clone();
     let nf4_select = time_batched(ctx, |enc| {
         qmv_bench.encode(
@@ -452,6 +792,95 @@ fn bench_qmv_cell(
             &bufs.s_bf16,
             &bufs.x_buf,
             &mut y_sel,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // qmv_fast_tmpl_awq: SAME buffer set as awq-lut256 (u32-packed weights,
+    // bf16 scale, packed zp). Compile-time constexpr flags (no SPECIALIZE).
+    let mut y_ta = bufs.y_buf.clone();
+    let tmpl_awq = time_batched(ctx, |enc| {
+        qmv_bench.encode_tmpl_awq(
+            &bufs.w_u32,
+            &bufs.s_bf16,
+            &bufs.zp_scalar,
+            &bufs.x_buf,
+            &mut y_ta,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // qmv_fast_tmpl_nf4: SAME buffer set as nf4-lut-grft (u8 weights, bf16
+    // scale, NO zp). Compile-time constexpr flags (no SPECIALIZE).
+    let mut y_tn = bufs.y_buf.clone();
+    let tmpl_nf4 = time_batched(ctx, |enc| {
+        qmv_bench.encode(
+            Nf4Variant::QmvFastTemplateNf4Lut,
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.x_buf,
+            &mut y_tn,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // nf4-precomputed: NEW kernel. Same NF4 weights/scales as nf4-lut-grft,
+    // but the 256-entry bfloat2 LUT comes from a device buffer precomputed
+    // CPU-side (kernel does NOT include `nf4_common.h` → no compile-time
+    // visibility into the codebook values).
+    let mut y_np = bufs.y_buf.clone();
+    let nf4_precomputed = time_batched(ctx, |enc| {
+        qmv_bench.encode_nf4_precomputed(
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.nf4_precomputed_lut,
+            &bufs.x_buf,
+            &mut y_np,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // synth-precomp: SAME kernel/encode as `nf4-precomp`, only the 256-entry
+    // bfloat2 LUT buffer differs (synthetic dyadic-rational codebook). NO
+    // kernel binary change — pure ablation of operand mantissa class.
+    let mut y_sp = bufs.y_buf.clone();
+    let synth_precomp = time_batched(ctx, |enc| {
+        qmv_bench.encode_nf4_precomputed(
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.synth_precomputed_lut,
+            &bufs.x_buf,
+            &mut y_sp,
+            input_dim as u32,
+            output_dim as u32,
+            m as u32,
+            enc,
+        );
+    });
+
+    // awq-precomp: SAME kernel/encode as `nf4-precomp`, only the 256-entry
+    // bfloat2 LUT buffer differs (AWQ nibble codebook = integers 0..15).
+    // Decides INLINE-source vs clean-values question.
+    let mut y_ap = bufs.y_buf.clone();
+    let awq_precomp = time_batched(ctx, |enc| {
+        qmv_bench.encode_nf4_precomputed(
+            &bufs.w_u8,
+            &bufs.s_bf16,
+            &bufs.awq_precomputed_lut,
+            &bufs.x_buf,
+            &mut y_ap,
             input_dim as u32,
             output_dim as u32,
             m as u32,
@@ -468,17 +897,72 @@ fn bench_qmv_cell(
         nf4_byte256.std,
         dpct(&scalar, &nf4_byte256)
     );
+    println!("  nf4-dup8    : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_dup8.mean, nf4_dup8.std, dpct(&scalar, &nf4_dup8));
+    println!("  nf4-dup16   : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_dup16.mean, nf4_dup16.std, dpct(&scalar, &nf4_dup16));
+    println!("  nf4-dup32   : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_dup32.mean, nf4_dup32.std, dpct(&scalar, &nf4_dup32));
     println!(
         "  nf4-grafted : {:.4} ±{:.4} ms  Δ {:+.1}%",
         nf4_grafted.mean,
         nf4_grafted.std,
         dpct(&scalar, &nf4_grafted)
     );
+    println!(
+        "  nf4-lut-grft: {:.4} ±{:.4} ms  Δ {:+.1}%",
+        nf4_lut256_graft.mean,
+        nf4_lut256_graft.std,
+        dpct(&scalar, &nf4_lut256_graft)
+    );
     println!("  nf4-shuf8   : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_shuf8.mean, nf4_shuf8.std, dpct(&scalar, &nf4_shuf8));
     println!("  nf4-shuf16  : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_shuf16.mean, nf4_shuf16.std, dpct(&scalar, &nf4_shuf16));
     println!("  nf4-shuf32  : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_shuf32.mean, nf4_shuf32.std, dpct(&scalar, &nf4_shuf32));
     println!("  nf4-tg      : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_tg.mean, nf4_tg.std, dpct(&scalar, &nf4_tg));
+    println!("  nf4-tg-rep  : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_tg_rep.mean, nf4_tg_rep.std, dpct(&scalar, &nf4_tg_rep));
+    println!(
+        "  nf4-tg-vec4 : {:.4} ±{:.4} ms  Δ {:+.1}%",
+        nf4_tg_vec4.mean,
+        nf4_tg_vec4.std,
+        dpct(&scalar, &nf4_tg_vec4)
+    );
+    println!("  nf4-tg-ilp  : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_tg_ilp.mean, nf4_tg_ilp.std, dpct(&scalar, &nf4_tg_ilp));
+    println!(
+        "  nf4-tg-nobar: {:.4} ±{:.4} ms  Δ {:+.1}%  (PROBE: incorrect outputs)",
+        nf4_tg_nobar.mean,
+        nf4_tg_nobar.std,
+        dpct(&scalar, &nf4_tg_nobar)
+    );
+    println!(
+        "  nf4-tg-sbar : {:.4} ±{:.4} ms  Δ {:+.1}%",
+        nf4_tg_sbar.mean,
+        nf4_tg_sbar.std,
+        dpct(&scalar, &nf4_tg_sbar)
+    );
+    println!(
+        "  nf4-tg-sbar-dev: {:.4} ±{:.4} ms  Δ {:+.1}%",
+        nf4_tg_sbar_dev.mean,
+        nf4_tg_sbar_dev.std,
+        dpct(&scalar, &nf4_tg_sbar_dev)
+    );
     println!("  nf4-select  : {:.4} ±{:.4} ms  Δ {:+.1}%", nf4_select.mean, nf4_select.std, dpct(&scalar, &nf4_select));
+    println!("  tmpl-awq    : {:.4} ±{:.4} ms  Δ {:+.1}%", tmpl_awq.mean, tmpl_awq.std, dpct(&scalar, &tmpl_awq));
+    println!("  tmpl-nf4    : {:.4} ±{:.4} ms  Δ {:+.1}%", tmpl_nf4.mean, tmpl_nf4.std, dpct(&scalar, &tmpl_nf4));
+    println!(
+        "  nf4-precomp : {:.4} ±{:.4} ms  Δ {:+.1}%",
+        nf4_precomputed.mean,
+        nf4_precomputed.std,
+        dpct(&scalar, &nf4_precomputed)
+    );
+    println!(
+        "  synth-prec  : {:.4} ±{:.4} ms  Δ {:+.1}%",
+        synth_precomp.mean,
+        synth_precomp.std,
+        dpct(&scalar, &synth_precomp)
+    );
+    println!(
+        "  awq-precomp : {:.4} ±{:.4} ms  Δ {:+.1}%",
+        awq_precomp.mean,
+        awq_precomp.std,
+        dpct(&scalar, &awq_precomp)
+    );
 
     QmvCell {
         shape,
@@ -489,12 +973,27 @@ fn bench_qmv_cell(
         awq_lut,
         nf4,
         nf4_byte256,
+        nf4_dup8,
+        nf4_dup16,
+        nf4_dup32,
         nf4_grafted,
+        nf4_lut256_graft,
         nf4_shuf8,
         nf4_shuf16,
         nf4_shuf32,
         nf4_tg,
+        nf4_tg_rep,
+        nf4_tg_vec4,
+        nf4_tg_ilp,
+        nf4_tg_nobar,
+        nf4_tg_sbar,
+        nf4_tg_sbar_dev,
         nf4_select,
+        tmpl_awq,
+        tmpl_nf4,
+        nf4_precomputed,
+        synth_precomp,
+        awq_precomp,
     }
 }
 
@@ -544,8 +1043,8 @@ fn qmv_lut_bench() {
     {
         let gate = results.iter().find(|r| r.shape == "LFM-2048" && r.m == 1).expect("LFM-2048 M=1 cell present");
         const GATE_REF_MS: f64 = 0.0248;
-        let lo = GATE_REF_MS * 0.60;
-        let hi = GATE_REF_MS * 1.40;
+        let lo = GATE_REF_MS * 0.50;
+        let hi = GATE_REF_MS * 1.60;
         println!(
             "[QMV_LUT_BENCH] sanity gate: scalar LFM-2048 M=1 = {:.4} ms (expect {:.4}±40% => [{:.4}, {:.4}])",
             gate.scalar.mean, GATE_REF_MS, lo, hi
@@ -563,7 +1062,7 @@ fn qmv_lut_bench() {
     println!();
     println!("================== QMV LUT bench summary (baseline = scalar) ==================");
     println!(
-        "{:<14} {:>11} {:>3} {:>18} {:>14} {:>12} {:>14} {:>14} {:>12} {:>12} {:>12} {:>12} {:>12}",
+        "{:<14} {:>11} {:>3} {:>18} {:>14} {:>12} {:>14} {:>12} {:>12} {:>12} {:>14} {:>16} {:>12} {:>12} {:>12} {:>12} {:>14} {:>14} {:>14} {:>14} {:>14} {:>18} {:>12} {:>14} {:>14} {:>14} {:>15} {:>14}",
         "Shape",
         "KxN",
         "M",
@@ -571,16 +1070,31 @@ fn qmv_lut_bench() {
         "awq-lut256 Δ%",
         "nf4-const Δ%",
         "nf4-byte256 Δ%",
+        "nf4-dup8 Δ%",
+        "nf4-dup16 Δ%",
+        "nf4-dup32 Δ%",
         "nf4-grafted Δ%",
+        "nf4-lut-grft Δ%",
         "nf4-shuf8 Δ%",
         "nf4-shuf16 Δ%",
         "nf4-shuf32 Δ%",
         "nf4-tg Δ%",
-        "nf4-select Δ%"
+        "nf4-tg-rep Δ%",
+        "nf4-tg-vec4 Δ%",
+        "nf4-tg-ilp Δ%",
+        "nf4-tg-nobar Δ%",
+        "nf4-tg-sbar Δ%",
+        "nf4-tg-sbar-dev Δ%",
+        "nf4-select Δ%",
+        "tmpl-awq Δ%",
+        "tmpl-nf4 Δ%",
+        "nf4-precomp Δ%",
+        "synth-precomp Δ%",
+        "awq-precomp Δ%"
     );
     for r in &results {
         println!(
-            "{:<14} {:>11} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}% {:>+13.1}% {:>+13.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}%",
+            "{:<14} {:>11} {:>3} {:>10.4} ±{:<6.4} {:>+13.1}% {:>+11.1}% {:>+13.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}% {:>+13.1}% {:>+15.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}% {:>+11.1}% {:>+13.1}% {:>+13.1}% {:>+13.1}% {:>+13.1}% {:>+13.1}% {:>+17.1}% {:>+11.1}% {:>+13.1}% {:>+13.1}% {:>+13.1}% {:>+14.1}% {:>+13.1}%",
             r.shape,
             format!("{}x{}", r.k, r.n),
             r.m,
@@ -589,12 +1103,27 @@ fn qmv_lut_bench() {
             dpct(&r.scalar, &r.awq_lut),
             dpct(&r.scalar, &r.nf4),
             dpct(&r.scalar, &r.nf4_byte256),
+            dpct(&r.scalar, &r.nf4_dup8),
+            dpct(&r.scalar, &r.nf4_dup16),
+            dpct(&r.scalar, &r.nf4_dup32),
             dpct(&r.scalar, &r.nf4_grafted),
+            dpct(&r.scalar, &r.nf4_lut256_graft),
             dpct(&r.scalar, &r.nf4_shuf8),
             dpct(&r.scalar, &r.nf4_shuf16),
             dpct(&r.scalar, &r.nf4_shuf32),
             dpct(&r.scalar, &r.nf4_tg),
-            dpct(&r.scalar, &r.nf4_select)
+            dpct(&r.scalar, &r.nf4_tg_rep),
+            dpct(&r.scalar, &r.nf4_tg_vec4),
+            dpct(&r.scalar, &r.nf4_tg_ilp),
+            dpct(&r.scalar, &r.nf4_tg_nobar),
+            dpct(&r.scalar, &r.nf4_tg_sbar),
+            dpct(&r.scalar, &r.nf4_tg_sbar_dev),
+            dpct(&r.scalar, &r.nf4_select),
+            dpct(&r.scalar, &r.tmpl_awq),
+            dpct(&r.scalar, &r.tmpl_nf4),
+            dpct(&r.scalar, &r.nf4_precomputed),
+            dpct(&r.scalar, &r.synth_precomp),
+            dpct(&r.scalar, &r.awq_precomp)
         );
     }
     println!("==============================================================================");

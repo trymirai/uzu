@@ -2,13 +2,22 @@
 #[path = "../../../common/mod.rs"]
 mod common;
 
+mod nf4_byte256_dup_test;
 mod nf4_byte256_test;
 mod nf4_e4m3_test;
 mod nf4_graft_test;
+mod nf4_lut256_graft_test;
+mod nf4_precomputed_test;
 mod nf4_select_test;
 mod nf4_shuffle_test;
+mod nf4_tg_ilp_test;
+mod nf4_tg_replicated_test;
+mod nf4_tg_simdbar_devbuf_test;
+mod nf4_tg_simdbar_test;
+mod nf4_tg_vec4_test;
 mod nf4_zp_test;
 mod qmm_transposed_test;
+mod qmv_fast_template_test;
 mod qmv_fast_test;
 mod qmv_test;
 
