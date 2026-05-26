@@ -231,10 +231,11 @@ fn kernel_wrappers(
         let wrapper_arguments = wrapper_arguments.join(", ");
 
         let shared_definitions = kernel.arguments.iter().filter_map(|a| match &a.argument_type {
-            MetalArgumentType::Shared(Some(len)) => {
-                Some(format!("{} {}[{}]", &a.c_type.replace('*', ""), a.name, len.as_ref(),))
+            MetalArgumentType::Shared(dimensions) => {
+                let element_type = a.c_type.split(['*', '&', '(']).next().unwrap_or_default().trim_end();
+                let dimensions = dimensions.as_deref().map(|d| format!("[{d}]")).unwrap_or_default();
+                Some(format!("{element_type} {}{dimensions}", a.name))
             },
-            MetalArgumentType::Shared(None) => Some(format!("{} {}", &a.c_type.replace('&', ""), a.name)),
             _ => None,
         });
 
