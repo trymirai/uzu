@@ -27,7 +27,7 @@ template <
     GemmWeightPrologueKind WEIGHT_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
-VARIANTS(T, half, bfloat)
+VARIANTS(T, half, bfloat, float)
 VARIANTS(
     GEMM_TILING,
     GemmTiling::T8x32x32_1x1,

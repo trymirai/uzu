@@ -132,12 +132,13 @@ fn simdgroup_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
         DataType::BF16 => &[GemmTiling::T64x32x32_2x2, GemmTiling::T64x64x16_2x2],
         DataType::F16 => &[GemmTiling::T64x64x16_2x2, GemmTiling::T64x32x32_2x2],
+        DataType::F32 => &[GemmTiling::T64x32x32_2x2, GemmTiling::T64x64x16_2x2],
         _ => &[],
     }
 }
 
 fn mxu_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
-    if !matches!(data_type, DataType::F16 | DataType::BF16) {
+    if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
         return &[];
     }
     &[GemmTiling::T64x64x32_2x2, GemmTiling::T32x64x32_2x2, GemmTiling::T64x32x32_4x1, GemmTiling::T128x128x32_4x4]
