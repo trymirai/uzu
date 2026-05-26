@@ -13,6 +13,14 @@ pub fn kernel(
 }
 
 #[proc_macro_attribute]
+pub fn uzu_config_abstract(
+    args: TokenStream,
+    input: TokenStream,
+) -> TokenStream {
+    uzu_config::uzu_config_abstract(args, input)
+}
+
+#[proc_macro_attribute]
 pub fn uzu_config(
     args: TokenStream,
     input: TokenStream,

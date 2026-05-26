@@ -7,15 +7,14 @@ use thiserror::Error;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
-    DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
-    config::DecoderConfig,
+    config::decoder::DecoderConfig,
     encodable_block::{
-        Embedding, LayerArguments, LayerExecutables, PostLayerScalar, QkUnpack, RMSNorm, Rope,
-        embedding::EmbeddingError,
+        Embedding, LayerArguments, LayerExecutables, PostLayerScalar, QkUnpack, RMSNorm, RMSNormError, Rope,
+        embedding::EmbeddingError, layer::LayerExecutablesError,
     },
-    forward_pass::{cache_layers::CacheLayers, state::SharedBuffers},
-    parameters::ParameterTree,
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
@@ -24,6 +23,12 @@ pub enum DecoderError<B: Backend> {
     BackendError(#[source] B::Error),
     #[error("Embedding error: {0}")]
     EmbeddingError(#[from] EmbeddingError<B>),
+    #[error("Parameter loader error: {0}")]
+    ParameterLoaderError(#[from] ParameterLoaderError<B>),
+    #[error("Layer error: {0}")]
+    LayerError(#[from] LayerExecutablesError<B>),
+    #[error("RMSNorm error: {0}")]
+    RMSNormError(#[from] RMSNormError<B>),
 }
 
 /// Full decoder executable with all layers and components.
@@ -56,27 +61,34 @@ impl<B: Backend> Decoder<B> {
     pub fn new(
         context: &B::Context,
         decoder_config: &DecoderConfig,
-        root_weight_loader: &ParameterTree<B::Context>,
-    ) -> Self {
-        let embedding_weight_loader = root_weight_loader.subtree("embedding").expect("Failed to get embedding subtree");
+        root_weight_loader: &ParameterTree<B>,
+        model_shape: &ModelShape,
+    ) -> Result<Self, DecoderError<B>> {
+        let embedding_weight_loader = root_weight_loader.subtree("embedding")?;
 
-        let embed = Embedding::new(
+        let (embed, readout_input_hadamard_factors) = Embedding::new(
             context,
             decoder_config.vocab_size as u32,
             decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &embedding_weight_loader,
-        )
-        .expect("Failed to create embedding");
+            model_shape,
+        )?;
 
-        let (layers, norm) =
-            Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, "transformer");
+        let (layers, norm) = Self::build_transformer_layers_and_norm(
+            context,
+            decoder_config,
+            root_weight_loader,
+            "transformer",
+            readout_input_hadamard_factors,
+            model_shape,
+        )?;
 
-        Self {
+        Ok(Self {
             embed,
             layers,
             norm,
-        }
+        })
     }
 
     /// Used by models whose token lookup weights and logits readout weights
@@ -84,73 +96,90 @@ impl<B: Backend> Decoder<B> {
     pub fn new_with_embedding_and_readout_subtrees(
         context: &B::Context,
         decoder_config: &DecoderConfig,
-        root_weight_loader: &ParameterTree<B::Context>,
+        root_weight_loader: &ParameterTree<B>,
         transformer_subtree: &str,
         embedding_subtree: &str,
         readout_subtree: &str,
-    ) -> Self {
-        let embedding_weight_loader =
-            root_weight_loader.subtree(embedding_subtree).expect("Failed to get embedding subtree");
-        let readout_weight_loader = root_weight_loader.subtree(readout_subtree).expect("Failed to get readout subtree");
+        model_shape: &ModelShape,
+    ) -> Result<Self, DecoderError<B>> {
+        let embedding_weight_loader = root_weight_loader.subtree(embedding_subtree)?;
+        let readout_weight_loader = root_weight_loader.subtree(readout_subtree)?;
 
-        let embed = Embedding::new_with_lookup_and_readout_trees(
+        let (embed, readout_input_hadamard_factors) = Embedding::new_with_lookup_and_readout_trees(
             context,
             decoder_config.vocab_size as u32,
             decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &embedding_weight_loader,
             &readout_weight_loader,
-        )
-        .expect("Failed to create embedding");
+            model_shape,
+        )?;
 
-        let (layers, norm) =
-            Self::build_transformer_layers_and_norm(context, decoder_config, root_weight_loader, transformer_subtree);
+        let (layers, norm) = Self::build_transformer_layers_and_norm(
+            context,
+            decoder_config,
+            root_weight_loader,
+            transformer_subtree,
+            readout_input_hadamard_factors,
+            model_shape,
+        )?;
 
-        Self {
+        Ok(Self {
             embed,
             layers,
             norm,
-        }
+        })
     }
 
     pub(crate) fn build_transformer_layers_and_norm(
         context: &B::Context,
         decoder_config: &DecoderConfig,
-        root_weight_loader: &ParameterTree<B::Context>,
+        root_weight_loader: &ParameterTree<B>,
         transformer_subtree: &str,
-    ) -> (Box<[LayerExecutables<B>]>, RMSNorm<B>) {
-        let decoder_weight_loader =
-            root_weight_loader.subtree(transformer_subtree).expect("transformer subtree not found");
+        output_norm_hadamard_factors: Option<Allocation<B>>,
+        model_shape: &ModelShape,
+    ) -> Result<(Box<[LayerExecutables<B>]>, RMSNorm<B>), DecoderError<B>> {
+        let decoder_weight_loader = root_weight_loader.subtree(transformer_subtree)?;
 
         let tf = &decoder_config.transformer_config;
-        let norm_data_type: DataType = tf.layer_configs[0].mixer_config.activation_precision().into();
-        let rope = Rc::new(Rope::<B>::new(context, norm_data_type).expect("Failed to create Rope"));
-        let qk_unpack = Rc::new(QkUnpack::<B>::new(context, norm_data_type).expect("Failed to create QkUnpack"));
+        let rope = Rc::new(Rope::<B>::new(context, model_shape).map_err(DecoderError::BackendError)?);
+        let qk_unpack =
+            Rc::new(QkUnpack::<B>::new(context, model_shape.data_type).map_err(DecoderError::BackendError)?);
 
         let layers = tf
             .layer_configs
             .iter()
             .enumerate()
             .map(|(layer_index, layer_config)| {
-                let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index)).unwrap();
+                let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index))?;
 
-                LayerExecutables::new(context, tf, layer_config, layer_index, &layer_loader, &rope, &qk_unpack)
+                LayerExecutables::new(
+                    context,
+                    tf,
+                    layer_config,
+                    layer_index,
+                    &layer_loader,
+                    &rope,
+                    &qk_unpack,
+                    model_shape.data_type,
+                )
+                .map_err(DecoderError::LayerError)
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, DecoderError<B>>>()?;
 
         let norm_block = RMSNorm::new(
             context,
-            norm_data_type,
+            model_shape.data_type,
+            model_shape.model_dim(),
             tf.output_norm_config.clone(),
-            &decoder_weight_loader.subtree("output_norm").unwrap(),
-            None,
+            &decoder_weight_loader.subtree("output_norm")?,
+            output_norm_hadamard_factors,
             true,
             true,
             PostLayerScalar::None,
-        )
-        .expect("Failed to create output RMS norm kernel");
+        )?;
 
-        (layers.into_boxed_slice(), norm_block)
+        Ok((layers.into_boxed_slice(), norm_block))
     }
 
     fn run_layers(
@@ -179,7 +208,6 @@ impl<B: Backend> Decoder<B> {
 
         for layer in self.layers.iter() {
             let rope_buffers = shared_buffers.rope_buffers_for_layer(layer.layer_index);
-            let attention_sinks = shared_buffers.attention_sinks(layer.layer_index);
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
 
@@ -192,7 +220,6 @@ impl<B: Backend> Decoder<B> {
                         token_positions,
                         token_parents,
                         token_subtrie_ranges,
-                        attention_sinks,
                         rope_buffers,
                         sampling_start,
                         sampling_length,

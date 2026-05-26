@@ -223,7 +223,7 @@ fn cpu_moe_reference(
                     // GELU or SiLU on up (with clipping)
                     let up_val = acc_up.clamp(up_clip_min, up_clip_max);
                     if gating_code == 0 {
-                        ActivationType::GELU.activate(up_val)
+                        ActivationType::GELUApprox.activate(up_val)
                     } else {
                         activation_silu_alpha(up_val, silu_alpha)
                     }
@@ -243,7 +243,7 @@ fn cpu_moe_reference(
                     let gate_act = if gating_code == 2 {
                         activation_silu_alpha(gate_val, silu_alpha)
                     } else {
-                        ActivationType::GELU.activate(gate_val)
+                        ActivationType::GELUApprox.activate(gate_val)
                     };
                     gate_act * up_val
                 };

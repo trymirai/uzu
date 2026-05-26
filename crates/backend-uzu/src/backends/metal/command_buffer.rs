@@ -130,8 +130,8 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_copy<Src: Buffer<Backend = Metal>, Dst: Buffer<Backend = Metal>>(
         &mut self,
-        src: BufferRangeRef<'_, Src>,
-        dst: BufferRangeMut<'_, Dst>,
+        src: BufferRangeRef<Src>,
+        dst: BufferRangeMut<Dst>,
     ) {
         let src_range = src.range();
         let dst_range = dst.range();
@@ -148,7 +148,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
     fn encode_fill<Dst: Buffer<Backend = Metal>>(
         &mut self,
-        dst: BufferRangeMut<'_, Dst>,
+        dst: BufferRangeMut<Dst>,
         value: u8,
     ) {
         let range = dst.range();

@@ -7,6 +7,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, RopeKernel},
     },
+    forward_pass::model_shape::ModelShape,
 };
 
 pub struct Rope<B: Backend> {
@@ -17,11 +18,15 @@ pub struct Rope<B: Backend> {
 impl<B: Backend> Rope<B> {
     pub fn new(
         context: &B::Context,
-        data_type: DataType,
+        model_shape: &ModelShape,
     ) -> Result<Self, B::Error> {
         Ok(Self {
-            kernel: <B::Kernels as Kernels>::RopeKernel::new(context, data_type)?,
-            data_type,
+            kernel: <B::Kernels as Kernels>::RopeKernel::new(
+                context,
+                model_shape.data_type,
+                model_shape.rope_data_type,
+            )?,
+            data_type: model_shape.data_type,
         })
     }
 

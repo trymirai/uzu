@@ -22,11 +22,14 @@ impl ActivationConfig {
     pub fn act_type(&self) -> ActivationType {
         match self {
             ActivationConfig::SILU {
-                ..
+                alpha: _,
             } => ActivationType::SILU,
             ActivationConfig::GELU {
-                ..
-            } => ActivationType::GELU,
+                approximate: true,
+            } => ActivationType::GELUApprox,
+            ActivationConfig::GELU {
+                approximate: false,
+            } => ActivationType::GELUExact,
             ActivationConfig::IDENTITY => ActivationType::IDENTITY,
         }
     }
@@ -37,7 +40,7 @@ impl ActivationConfig {
                 alpha,
             } => *alpha,
             ActivationConfig::GELU {
-                ..
+                approximate: _,
             } => 1.0,
             ActivationConfig::IDENTITY => 1.0,
         }

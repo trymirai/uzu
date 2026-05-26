@@ -4,33 +4,38 @@ use proc_macros::kernel;
 
 use crate::ArrayElement;
 
-fn get_paired_val<T: ArrayElement + Float>(
-    values: *const T,
+fn get_paired_val<ElementT: ArrayElement + Float>(
+    values: *const ElementT,
     dim_index: usize,
     half_dim: usize,
     token_index: usize,
     total_heads: usize,
     head_dim: usize,
     head_index: usize,
-) -> T {
+) -> f32 {
     if dim_index < half_dim {
         let v =
             unsafe { *values.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index + half_dim) };
-        T::zero() - v
+        -v.to_f32().unwrap()
     } else {
-        unsafe { *values.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index - half_dim) }
+        unsafe {
+            (*values.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index - half_dim))
+                .to_f32()
+                .unwrap()
+        }
     }
 }
 
 #[kernel(Rope)]
-#[variants(T, f32, f16, bf16)]
-pub fn rope<T: ArrayElement + Float>(
-    qkv: *const T,
-    cosines: *const T,
-    sines: *const T,
+#[variants(ElementT, f32, f16, bf16)]
+#[variants(RopeT, f32, f16, bf16)]
+pub fn rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
+    qkv: *const ElementT,
+    cosines: *const RopeT,
+    sines: *const RopeT,
     token_positions: *const i32,
-    rotated_queries: *mut T,
-    rotated_keys: *mut T,
+    rotated_queries: *mut ElementT,
+    rotated_keys: *mut ElementT,
     head_dim: u32,
     rope_dim: u32,
     num_heads: u32,
@@ -66,25 +71,30 @@ pub fn rope<T: ArrayElement + Float>(
 
             // Rotated dimensions: apply RoPE to dims 0..rope_dim
             for dim_index in 0..rope_dim {
-                let cos_val = unsafe { *cosines.add(absolute_position * rope_dim + dim_index) };
-                let sin_val = unsafe { *sines.add(absolute_position * rope_dim + dim_index) };
+                let cos_val = unsafe { (*cosines.add(absolute_position * rope_dim + dim_index)).to_f32().unwrap() };
+                let sin_val = unsafe { (*sines.add(absolute_position * rope_dim + dim_index)).to_f32().unwrap() };
 
                 // Query rotation
-                let q_val =
-                    unsafe { *qkv.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index) };
+                let q_val = unsafe {
+                    (*qkv.add(token_index * total_heads * head_dim + head_index * head_dim + dim_index))
+                        .to_f32()
+                        .unwrap()
+                };
                 let q_paired =
                     get_paired_val(qkv, dim_index, half_rope_dim, token_index, total_heads, head_dim, head_index);
                 let q_result = q_val * cos_val + q_paired * sin_val;
                 unsafe {
                     *rotated_queries.add(head_index * suffix_length * head_dim + token_index * head_dim + dim_index) =
-                        q_result;
+                        ElementT::from(q_result).unwrap();
                 }
 
                 // Key rotation (only first head in each group)
                 if head_index == group_index * heads_per_group {
                     let key_head_index = num_heads + group_index;
                     let k_val = unsafe {
-                        *qkv.add(token_index * total_heads * head_dim + key_head_index * head_dim + dim_index)
+                        (*qkv.add(token_index * total_heads * head_dim + key_head_index * head_dim + dim_index))
+                            .to_f32()
+                            .unwrap()
                     };
                     let k_paired = get_paired_val(
                         qkv,
@@ -99,7 +109,7 @@ pub fn rope<T: ArrayElement + Float>(
                     unsafe {
                         *rotated_keys
                             .add(group_index * suffix_length * head_dim + token_index * head_dim + dim_index) =
-                            k_result;
+                            ElementT::from(k_result).unwrap();
                     }
                 }
             }

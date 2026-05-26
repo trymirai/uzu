@@ -31,8 +31,7 @@ impl<B: Backend> LayerActivationTrace<B> {
         suffix_length: usize,
     ) -> Self {
         let main_shape = model_shape.main_shape(suffix_length);
-        let activation_data_type = model_shape.activation_data_type();
-        let main = || context.create_array_uninitialized(&main_shape, activation_data_type);
+        let main = || context.create_array_uninitialized(&main_shape, model_shape.data_type);
 
         Self {
             inputs: main(),
@@ -62,16 +61,15 @@ impl<B: Backend> ActivationTrace<B> {
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
-        let activation_data_type = model_shape.activation_data_type();
         let main_shape = model_shape.main_shape(suffix_length);
         let layer_results = create_layer_results(context, model_shape, suffix_length);
 
         Self {
             embedding_norm: None,
             layer_results,
-            output_norm: context.create_array_uninitialized(&main_shape, activation_data_type),
+            output_norm: context.create_array_uninitialized(&main_shape, model_shape.data_type),
             output_pooling: None,
-            logits: context.create_array_uninitialized(&model_shape.logits_shape(suffix_length), activation_data_type),
+            logits: context.create_array_uninitialized(&model_shape.logits_shape(suffix_length), model_shape.data_type),
         }
     }
 
@@ -81,17 +79,16 @@ impl<B: Backend> ActivationTrace<B> {
         suffix_length: usize,
         num_labels: usize,
     ) -> Self {
-        let activation_data_type = model_shape.activation_data_type();
         let main_shape = model_shape.main_shape(suffix_length);
         let layer_results = create_layer_results(context, model_shape, suffix_length);
         let model_dim = model_shape.main_shape(1)[1];
 
         Self {
-            embedding_norm: Some(context.create_array_uninitialized(&main_shape, activation_data_type)),
+            embedding_norm: Some(context.create_array_uninitialized(&main_shape, model_shape.data_type)),
             layer_results,
-            output_norm: context.create_array_uninitialized(&main_shape, activation_data_type),
-            output_pooling: Some(context.create_array_uninitialized(&[1, model_dim], activation_data_type)),
-            logits: context.create_array_uninitialized(&[1, num_labels], activation_data_type),
+            output_norm: context.create_array_uninitialized(&main_shape, model_shape.data_type),
+            output_pooling: Some(context.create_array_uninitialized(&[1, model_dim], model_shape.data_type)),
+            logits: context.create_array_uninitialized(&[1, num_labels], model_shape.data_type),
         }
     }
 

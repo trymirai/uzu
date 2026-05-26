@@ -16,7 +16,7 @@ template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(Softmax)(
     device T* values,
-    const device float* sinks OPTIONAL(has_sinks),
+    const device T* sinks OPTIONAL(has_sinks),
     const constant uint& row_length,
     const constant uint& outer_dim,
     const constant uint& batch_dim,

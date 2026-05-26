@@ -2,32 +2,34 @@
 #include "../common/dsl.h"
 #include "../common/tensor_view.h"
 
-template <typename T>
-inline T applyRopeTransform(
-    TensorView3D<const T> qkv_tensor_view,
+template <typename ElementT>
+inline ElementT applyRopeTransform(
+    TensorView3D<const ElementT> qkv_tensor_view,
     uint token_idx,
     uint head_idx,
     uint dim_idx,
     uint half_dim,
-    T cos_val,
-    T sin_val
+    float cos_val,
+    float sin_val
 ) {
-  T inputVal = qkv_tensor_view(token_idx, head_idx, dim_idx);
-  T pairedVal = (dim_idx < half_dim)
-                    ? -qkv_tensor_view(token_idx, head_idx, dim_idx + half_dim)
-                    : qkv_tensor_view(token_idx, head_idx, dim_idx - half_dim);
-  return inputVal * cos_val + pairedVal * sin_val;
+  float inputVal = float(qkv_tensor_view(token_idx, head_idx, dim_idx));
+  float pairedVal =
+      (dim_idx < half_dim)
+          ? -float(qkv_tensor_view(token_idx, head_idx, dim_idx + half_dim))
+          : float(qkv_tensor_view(token_idx, head_idx, dim_idx - half_dim));
+  return static_cast<ElementT>(inputVal * cos_val + pairedVal * sin_val);
 }
 
-template <typename T>
-VARIANTS(T, float, half, bfloat)
+template <typename ElementT, typename RopeT>
+VARIANTS(ElementT, float, half, bfloat)
+VARIANTS(RopeT, float, half, bfloat)
 PUBLIC KERNEL(Rope)(
-    device const T* qkv,                // [suffix_len, (num_heads + 2*num_groups) * head_dim]
-    device const T* cosines,            // [max_seq_len, rope_dim]
-    device const T* sines,              // [max_seq_len, rope_dim]
+    device const ElementT* qkv,         // [suffix_len, (num_heads + 2*num_groups) * head_dim]
+    device const RopeT* cosines,        // [max_seq_len, rope_dim]
+    device const RopeT* sines,          // [max_seq_len, rope_dim]
     device const int* token_positions,  // [suffix_len] - actual token positions
-    device T* rotated_queries,          // [num_heads,   suffix_len,  head_dim]
-    device T* rotated_keys,             // [num_groups,  suffix_len,  head_dim]
+    device ElementT* rotated_queries,   // [num_heads,   suffix_len,  head_dim]
+    device ElementT* rotated_keys,      // [num_groups,  suffix_len,  head_dim]
     constant uint& head_dim,
     constant uint& rope_dim,
     constant uint& num_heads,
@@ -62,26 +64,30 @@ PUBLIC KERNEL(Rope)(
       raw_position > max_sequence_length ? 0 : raw_position;
   const uint half_rope_dim = rope_dim / 2;
 
-  TensorView3D<const T> qkv_tensor_view =
-      TensorView3D<const T>(qkv).shaped(suffix_length, total_heads, head_dim);
-  TensorView2D<const T> cosines_tensor_view =
-      TensorView2D<const T>(cosines).shaped(max_sequence_length, rope_dim);
-  TensorView2D<const T> sines_tensor_view =
-      TensorView2D<const T>(sines).shaped(max_sequence_length, rope_dim);
-  TensorView3D<T> rotated_queries_tensor_view =
-      TensorView3D<T>(rotated_queries)
+  TensorView3D<const ElementT> qkv_tensor_view =
+      TensorView3D<const ElementT>(qkv)
+          .shaped(suffix_length, total_heads, head_dim);
+  TensorView2D<const RopeT> cosines_tensor_view =
+      TensorView2D<const RopeT>(cosines).shaped(max_sequence_length, rope_dim);
+  TensorView2D<const RopeT> sines_tensor_view =
+      TensorView2D<const RopeT>(sines).shaped(max_sequence_length, rope_dim);
+  TensorView3D<ElementT> rotated_queries_tensor_view =
+      TensorView3D<ElementT>(rotated_queries)
           .shaped(num_heads, suffix_length, head_dim);
-  TensorView3D<T> rotated_keys_tensor_view =
-      TensorView3D<T>(rotated_keys).shaped(num_groups, suffix_length, head_dim);
+  TensorView3D<ElementT> rotated_keys_tensor_view =
+      TensorView3D<ElementT>(rotated_keys)
+          .shaped(num_groups, suffix_length, head_dim);
 
   uint first_head_in_group = group_index * (num_heads / num_groups);
 
   /* ---------- QUERIES ---------- */
   if (dimension_index < rope_dim) {
-    const T cos_val = cosines_tensor_view(absolutePosition, dimension_index);
-    const T sin_val = sines_tensor_view(absolutePosition, dimension_index);
+    const float cos_val =
+        float(cosines_tensor_view(absolutePosition, dimension_index));
+    const float sin_val =
+        float(sines_tensor_view(absolutePosition, dimension_index));
 
-    T queryResult = applyRopeTransform(
+    ElementT queryResult = applyRopeTransform(
         qkv_tensor_view,
         token_index,
         head_index,
@@ -97,7 +103,7 @@ PUBLIC KERNEL(Rope)(
     if (head_index == first_head_in_group) {
       uint key_head_index =
           num_heads + group_index; // Keys start after all query heads
-      T keyResult = applyRopeTransform(
+      ElementT keyResult = applyRopeTransform(
           qkv_tensor_view,
           token_index,
           key_head_index,

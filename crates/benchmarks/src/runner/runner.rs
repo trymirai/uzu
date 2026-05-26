@@ -51,16 +51,14 @@ impl Runner {
         }
 
         let mut session = ChatSession::new(PathBuf::from(self.model_path.clone()), decoding_config)?;
-
-        let precision =
-            session.model_metadata.model_config.model_config.transformer_config.output_norm_config.scale_precision;
+        let data_type = session.activation_data_type();
 
         let device = self.get_device_info();
 
         let input = Input::Messages(self.task.messages.clone());
 
         let warmup_config = RunConfig::default().tokens_limit(1);
-        session.run(input.clone(), warmup_config, Some(|_: Output| true))?;
+        session.run(input.clone(), warmup_config, Option::<fn(Output) -> bool>::None)?;
 
         let mut results: Vec<TaskResult> = Vec::new();
         for run_index in 0..self.task.number_of_runs {
@@ -72,13 +70,7 @@ impl Runner {
                     value: SamplingMethod::Greedy,
                 });
             }
-            let output = session.run(
-                input.clone(),
-                run_config,
-                Some(|_: Output| {
-                    return true;
-                }),
-            )?;
+            let output = session.run(input.clone(), run_config, Option::<fn(Output) -> bool>::None)?;
 
             let memory_used = get_memory_usage();
 
@@ -87,7 +79,7 @@ impl Runner {
                 device: device.clone(),
                 engine_version: VERSION.to_string(),
                 timestamp,
-                precision,
+                data_type,
                 memory_used,
                 tokens_count_input: output.stats.total_stats.tokens_count_input,
                 tokens_count_output: output.stats.total_stats.tokens_count_output,

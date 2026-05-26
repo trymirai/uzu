@@ -9,12 +9,13 @@ use super::{
     rng::PRng,
 };
 use crate::{
+    DataType,
     array::{Array, ArrayContextExt},
     backends::common::{
         Allocation, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
         kernel::TokenCopySampledKernel,
     },
-    config::{LanguageModelConfig, ModelMetadata},
+    config::model::language_model::LanguageModelConfig,
     encodable_block::{DecoderDecodeInput, SamplingArguments, SamplingInputs},
     forward_pass::{cache_layers::CacheLayersSlice, kv_cache_layer::INVALID_POSITION, token_inputs::TokenInputs},
     language_model::grammar::CompiledGrammar,
@@ -97,6 +98,7 @@ pub trait LanguageModelGeneratorTrait {
 
     fn reset_state(&mut self);
     fn peak_memory_usage(&self) -> Option<usize>;
+    fn activation_data_type(&self) -> DataType;
 
     fn tokens_len(&self) -> usize;
     fn tokens_push(
@@ -107,7 +109,7 @@ pub trait LanguageModelGeneratorTrait {
     fn async_batch_size(
         &self,
         model_path: &Path,
-    ) -> usize;
+    ) -> Result<usize, Error>;
 
     fn get_slice(
         &self,
@@ -262,7 +264,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let should_capture = self.gpu_capture.should_capture_prefill(step == 0);
 
             if should_capture {
-                let _ = self.gpu_capture.start_capture(&self.context.context, "prefill");
+                self.gpu_capture
+                    .start_capture(&self.context.context, "prefill")
+                    .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
             }
 
             let _ = last_sampling_output.take();
@@ -282,7 +286,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
 
             if should_capture {
-                self.gpu_capture.stop_capture(&self.context.context, "prefill").map_err(|_| Error::CaptureFailed)?;
+                self.gpu_capture
+                    .stop_capture(&self.context.context, "prefill")
+                    .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
             }
 
             // Register the accepted prompt tokens from this step.
@@ -492,7 +498,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let is_first_decode = !is_continuation;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
         if should_capture {
-            let _ = self.gpu_capture.start_capture(&self.context.context, "decode");
+            self.gpu_capture
+                .start_capture(&self.context.context, "decode")
+                .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
         }
 
         let batch_dim = task.active_row_count;
@@ -558,7 +566,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
             drop(resources);
             drop(completed);
-            self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+            self.gpu_capture
+                .stop_capture(&self.context.context, "decode")
+                .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
         } else {
             assert!(self.async_in_flight[slot].is_none(), "async slot {slot} still holds an in-flight state");
             self.async_in_flight[slot] = Some(InFlightForwardPass {
@@ -601,6 +611,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         self.context.context.peak_memory_usage()
     }
 
+    fn activation_data_type(&self) -> DataType {
+        self.context.model_shape.data_type
+    }
+
     fn tokens_len(&self) -> usize {
         self.tokens.len()
     }
@@ -616,8 +630,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
     fn async_batch_size(
         &self,
         model_path: &Path,
-    ) -> usize {
-        self.decoding_config.async_batch_size.resolve::<B>(model_path, self.context.context.as_ref())
+    ) -> Result<usize, Error> {
+        self.decoding_config
+            .async_batch_size
+            .resolve::<B>(model_path, self.context.context.as_ref())
+            .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))
     }
 
     fn get_slice(
@@ -659,11 +676,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
     pub fn new(
         model_path: &Path,
         decoding_config: DecodingConfig,
-        model_metadata: &ModelMetadata<LanguageModelConfig>,
+        model_config: &LanguageModelConfig,
     ) -> Result<Self, Error> {
         let gpu_capture = GpuCaptureManager::new();
 
-        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config, model_metadata)?;
+        let context = LanguageModelGeneratorContext::new(model_path, &decoding_config, model_config)?;
 
         Ok(Self {
             decoding_config,
@@ -696,7 +713,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let token_inputs = self.build_token_inputs(task, None, None);
 
         if should_capture {
-            self.gpu_capture.start_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+            self.gpu_capture
+                .start_capture(&self.context.context, "decode")
+                .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
         }
 
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
@@ -728,7 +747,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let run_time = run_start.elapsed().as_secs_f64();
 
         if should_capture {
-            self.gpu_capture.stop_capture(&self.context.context, "decode").map_err(|_| Error::CaptureFailed)?;
+            self.gpu_capture
+                .stop_capture(&self.context.context, "decode")
+                .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
         }
 
         Ok((sampling_output, run_time))
@@ -791,7 +812,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
                     output: sampling_output.as_mut().expect("Sampling requires output allocation"),
                     sampling_method: sampling_method.expect("Sampling requires method"),
                     batch_size: sampling_length,
-                    vocab_size: context.model_config.model_config.vocab_size,
+                    vocab_size: context.model_config.decoder_config.vocab_size,
                 },
                 encoder,
             );
@@ -809,7 +830,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
     fn build_token_inputs(
         &self,
-        task: Task<'_>,
+        task: Task,
         token_ids_array: Option<Array<B>>,
         token_positions_array: Option<Array<B>>,
     ) -> TokenInputs<B> {

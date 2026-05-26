@@ -271,7 +271,7 @@ fn test_identity_activation<T: ArrayElement + Float + Debug + Display>() {
 }
 
 fn test_gelu_activation<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(4, 8, 4, 2, 1, true, true, ActivationType::GELU);
+    let (input, expected) = get_test_data::<T>(4, 8, 4, 2, 1, true, true, ActivationType::GELUApprox);
     test_internal(&input, &expected, "gelu_activation");
 }
 

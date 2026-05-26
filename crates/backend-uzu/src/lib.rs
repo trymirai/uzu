@@ -33,7 +33,7 @@ pub use utils::{TOOLCHAIN_VERSION, VERSION};
 pub mod _private {
     pub use crate::{
         classifier::Classifier,
-        config::{ModelConfig, ModelMetadata, ModelType},
+        config::model::AnyModelConfig,
         encodable_block::{DecoderDecodeInput, Sampling},
         forward_pass::{
             cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
@@ -42,6 +42,6 @@ pub mod _private {
             language_model_generator_context::LanguageModelGeneratorContext,
             sampler::{ArgmaxSampler, LogitsSampler},
         },
-        parameters::ParameterTree,
+        parameters::{ParameterLoaderError, ParameterTree},
     };
 }

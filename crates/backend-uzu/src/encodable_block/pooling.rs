@@ -7,7 +7,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, PoolingClsKernel, PoolingMeanKernel},
     },
-    config::PoolingType,
+    config::classifier::PoolingType,
 };
 
 enum PoolingKernel<B: Backend> {
@@ -46,7 +46,7 @@ impl<B: Backend> Pooling<B> {
         model_dim: usize,
     ) -> Result<Self, B::Error> {
         let pooling_kernel = match pooling_type {
-            PoolingType::Cls => PoolingKernel::Cls(<B::Kernels as Kernels>::PoolingClsKernel::new(context, data_type)?),
+            PoolingType::CLS => PoolingKernel::Cls(<B::Kernels as Kernels>::PoolingClsKernel::new(context, data_type)?),
             PoolingType::Mean => {
                 PoolingKernel::Mean(<B::Kernels as Kernels>::PoolingMeanKernel::new(context, data_type)?)
             },

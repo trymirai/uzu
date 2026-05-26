@@ -7,86 +7,137 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
+        gpu_types::HadamardTransformOrder,
         kernel::{
-            ManualKernels,
+            HadamardTransformKernel, Kernels, ManualKernels,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
-    config::QuantizationConfig,
+    config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
     encodable_block::{
         Linear,
-        linear::{LinearBlockError, LinearMatmul, LinearMatmulError},
+        linear::{LinearMatmul, LinearMatmulError},
     },
     prelude::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum QLoRALinearWrapperError<B: Backend> {
-    #[error("Inner linear error: {0}")]
-    InnerLinearError(#[from] Box<LinearBlockError<B>>),
-    #[error("Linear matmul error: {0}")]
+    #[error("LinearMatmul error: {0}")]
     LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
+    #[error("Unsupported QLoRA linear configuration: {0}")]
+    UnsupportedConfiguration(String),
 }
 
 pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: LinearMatmul<B>,
+    input_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
+    output_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
     adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
     input_dim: usize,
     output_dim: usize,
     lora_rank: usize,
-    lora_scale: f32,
     data_type: DataType,
 }
 
 impl<B: Backend> QLoRALinearWrapper<B> {
     pub fn new(
         context: &B::Context,
-        quantization: &QuantizationConfig,
-        lora_rank: usize,
-        lora_scale: f32,
+        quantization_spec: AnyWeightMatrixSpec,
+        adapter_spec: LowRankSpec,
+        incoherence_block_size: Option<usize>,
+        incoherence_processing_mode: IncoherenceProcessingMode,
         input_dim: usize,
         output_dim: usize,
-        parameter_tree: &ParameterTree<B::Context>,
-        output_quantized_hadamard_factors: Option<Allocation<B>>,
+        data_type: DataType,
+        weights_tree: &ParameterTree<B>,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
-        let data_type = quantization.activation_precision.into();
+        let use_incoherence_signs = match (incoherence_block_size, incoherence_processing_mode) {
+            (None, _) => false,
+            (Some(32), IncoherenceProcessingMode::InputOutput) => true,
+            (incoherence_block_size, incoherence_processing_mode) => {
+                return Err(QLoRALinearWrapperError::UnsupportedConfiguration(format!(
+                    "incoherence block_size={incoherence_block_size:?}, processing_mode={incoherence_processing_mode:?}"
+                )));
+            },
+        };
 
+        let quantized_tree = weights_tree.subtree("quantized")?;
         let base_linear = LinearMatmul::quantized(
             context,
-            quantization,
+            quantization_spec,
             input_dim,
             output_dim,
-            parameter_tree,
-            output_quantized_hadamard_factors,
+            data_type,
+            &quantized_tree,
+            None,
+            None,
         )?;
+
+        let (input_hadamard, output_hadamard) = if use_incoherence_signs {
+            let input_factors = weights_tree
+                .leaf("incoherence_signs.input_signs")?
+                .validate(&[input_dim], DataType::I32)?
+                .read_allocation()?;
+            let output_factors = weights_tree
+                .leaf("incoherence_signs.output_signs")?
+                .validate(&[output_dim], DataType::I32)?
+                .read_allocation()?;
+            (
+                Some((
+                    <B::Kernels as Kernels>::HadamardTransformKernel::new(
+                        context,
+                        data_type,
+                        HadamardTransformOrder::Input,
+                    )
+                    .map_err(QLoRALinearWrapperError::BackendError)?,
+                    input_factors,
+                )),
+                Some((
+                    <B::Kernels as Kernels>::HadamardTransformKernel::new(
+                        context,
+                        data_type,
+                        HadamardTransformOrder::Output,
+                    )
+                    .map_err(QLoRALinearWrapperError::BackendError)?,
+                    output_factors,
+                )),
+            )
+        } else {
+            (None, None)
+        };
+
         let adapter_kernel = RefCell::new(
             <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)
                 .map_err(QLoRALinearWrapperError::BackendError)?,
         );
 
-        let adapter_down_leaf = parameter_tree.leaf("down_weights")?;
-        adapter_down_leaf.validate_shape(&[lora_rank, input_dim], data_type)?;
-        let adapter_down = adapter_down_leaf.read_allocation()?;
+        let adapter_down = weights_tree
+            .leaf("adapter.down_projection")?
+            .validate(&[adapter_spec.rank, input_dim], data_type)?
+            .read_allocation()?;
 
-        let adapter_up_leaf = parameter_tree.leaf("up_weights")?;
-        adapter_up_leaf.validate_shape(&[output_dim, lora_rank], data_type)?;
-        let adapter_up = adapter_up_leaf.read_allocation()?;
+        let adapter_up = weights_tree
+            .leaf("adapter.up_projection")?
+            .validate(&[output_dim, adapter_spec.rank], data_type)?
+            .read_allocation()?;
 
         Ok(Self {
             base_linear,
+            input_hadamard,
+            output_hadamard,
             adapter_kernel,
             adapter_down,
             adapter_up,
             input_dim,
             output_dim,
-            lora_rank,
-            lora_scale,
+            lora_rank: adapter_spec.rank,
             data_type,
         })
     }
@@ -98,55 +149,86 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         input: Allocation<B>,
         batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, <B as Backend>::Error> {
-        let mut adapter_kernel = self.adapter_kernel.borrow_mut();
+    ) -> Result<Allocation<B>, B::Error> {
         let mut intermediate =
             encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.data_type))?;
 
-        adapter_kernel.encode(
-            MatmulArguments {
-                a: &input,
-                a_offset: 0,
-                b: MatmulB::FullPrecision {
-                    b: &self.adapter_down,
+        {
+            let mut adapter_kernel = self.adapter_kernel.borrow_mut();
+            adapter_kernel.encode(
+                MatmulArguments {
+                    a: &input,
+                    a_offset: 0,
+                    b: MatmulB::FullPrecision {
+                        b: &self.adapter_down,
+                    },
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut intermediate,
+                    d_transform: MatmulDOps::none(),
+                    m: batch_dim as u32,
+                    n: self.lora_rank as u32,
+                    k: self.input_dim as u32,
                 },
-                b_offset: 0,
-                b_leading_dimension: None,
-                b_transpose: true,
-                d: &mut intermediate,
-                d_transform: MatmulDOps::none(),
-                m: batch_dim as u32,
-                n: self.lora_rank as u32,
-                k: self.input_dim as u32,
-            },
-            encoder,
-        )?;
+                encoder,
+            )?;
+        }
 
-        let mut output = self.base_linear.encode(input, batch_dim, encoder)?;
+        let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
+            let mut base_input =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.data_type))?;
+            encoder.encode_copy(&input, .., &mut base_input, ..);
+            input_hadamard_kernel.encode(
+                &mut base_input,
+                input_factors,
+                self.input_dim as u32,
+                batch_dim as u32,
+                encoder,
+            );
+            base_input
+        } else {
+            input
+        };
 
-        adapter_kernel.encode(
-            MatmulArguments {
-                a: &intermediate,
-                a_offset: 0,
-                b: MatmulB::FullPrecision {
-                    b: &self.adapter_up,
+        let mut output = self.base_linear.encode(base_input, batch_dim, encoder)?;
+
+        {
+            let mut adapter_kernel = self.adapter_kernel.borrow_mut();
+            adapter_kernel.encode(
+                MatmulArguments {
+                    a: &intermediate,
+                    a_offset: 0,
+                    b: MatmulB::FullPrecision {
+                        b: &self.adapter_up,
+                    },
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output,
+                    d_transform: MatmulDOps {
+                        ab_scale: 1.0,
+                        accumulate: true,
+                        bias: None,
+                        rht_factors: None,
+                    },
+                    m: batch_dim as u32,
+                    n: self.output_dim as u32,
+                    k: self.lora_rank as u32,
                 },
-                b_offset: 0,
-                b_leading_dimension: None,
-                b_transpose: true,
-                d: &mut output,
-                d_transform: MatmulDOps {
-                    ab_scale: self.lora_scale,
-                    accumulate: true,
-                    bias: None,
-                    rht_factors: None,
-                },
-                m: batch_dim as u32,
-                n: self.output_dim as u32,
-                k: self.lora_rank as u32,
-            },
-            encoder,
-        )?;
+                encoder,
+            )?;
+        }
+
+        if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
+            output_hadamard_kernel.encode(
+                &mut output,
+                output_factors,
+                self.output_dim as u32,
+                batch_dim as u32,
+                encoder,
+            );
+        }
 
         Ok(output)
     }

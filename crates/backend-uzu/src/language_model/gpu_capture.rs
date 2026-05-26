@@ -9,6 +9,16 @@ use crate::{
     utils::env_utils::EnvVar,
 };
 
+#[derive(Debug, thiserror::Error)]
+pub enum GpuCaptureError<B: Backend> {
+    #[error("Unable to resolve capture timestamp: {0}")]
+    Timestamp(#[from] std::time::SystemTimeError),
+    #[error("Unable to get current directory: {0}")]
+    CurrentDirectory(#[from] std::io::Error),
+    #[error("Backend capture failed: {0}")]
+    Backend(#[source] B::Error),
+}
+
 pub struct GpuCaptureManager<B: Backend> {
     capture_prefill_enabled: bool,
     capture_decode_enabled: bool,
@@ -54,15 +64,12 @@ impl<B: Backend> GpuCaptureManager<B> {
         &self,
         context: &B::Context,
         capture_type: &str,
-    ) -> Result<PathBuf, String> {
-        let timestamp =
-            SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| format!("Time error: {}", e))?.as_secs();
+    ) -> Result<PathBuf, GpuCaptureError<B>> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-        let trace_path = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(format!("uzu_first_{}-{}.gputrace", capture_type, timestamp));
+        let trace_path = std::env::current_dir()?.join(format!("uzu_first_{}-{}.gputrace", capture_type, timestamp));
 
-        context.start_capture(&trace_path).map_err(|err| err.to_string())?;
+        context.start_capture(&trace_path).map_err(GpuCaptureError::Backend)?;
 
         println!("GPU capture started for first {}: {:?}", capture_type, trace_path);
 
@@ -73,8 +80,8 @@ impl<B: Backend> GpuCaptureManager<B> {
         &mut self,
         context: &B::Context,
         capture_type: &str,
-    ) -> Result<(), String> {
-        context.stop_capture().map_err(|err| err.to_string())?;
+    ) -> Result<(), GpuCaptureError<B>> {
+        context.stop_capture().map_err(GpuCaptureError::Backend)?;
         println!("GPU capture stopped for {}", capture_type);
 
         match capture_type {

@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, LayerNormKernel},
     },
-    config::{NormalizationConfig, UpcastMode},
+    config::normalization::{NormalizationConfig, UpcastMode},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -18,7 +18,7 @@ pub enum LayerNormError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError<B>),
+    ParameterError(#[from] ParameterLoaderError<B>),
 }
 
 pub struct LayerNorm<B: Backend> {
@@ -34,20 +34,20 @@ impl<B: Backend> LayerNorm<B> {
     pub fn new(
         context: &B::Context,
         intermediate_data_type: DataType,
+        element_count: usize,
         config: NormalizationConfig,
-        parameter_tree: &ParameterTree<B::Context>,
+        parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, LayerNormError<B>> {
-        let scales_leaf = parameter_tree.leaf("scales").map_err(LayerNormError::ParameterError)?;
-        let element_count = scales_leaf.shape()[0];
-        let scales = scales_leaf.read_allocation().map_err(LayerNormError::ParameterError)?;
+        let scale_data_type = super::normalization::NORMALIZATION_SCALE_DATA_TYPE;
+        let scales = parameter_tree.leaf("scales")?.validate(&[element_count], scale_data_type)?.read_allocation()?;
 
-        let accumulation_data_type: DataType = config.accumulation_precision.into();
-        let scale_data_type: DataType = config.scale_precision.into();
+        let accumulation_data_type = super::normalization::NORMALIZATION_ACCUMULATION_DATA_TYPE;
+        let output_data_type = intermediate_data_type;
         let kernel = <B::Kernels as Kernels>::LayerNormKernel::new(
             context,
             intermediate_data_type,
             scale_data_type,
-            scale_data_type,
+            output_data_type,
             accumulation_data_type,
             false,
         )
@@ -59,7 +59,7 @@ impl<B: Backend> LayerNorm<B> {
             scales,
             element_count,
             input_data_type: intermediate_data_type,
-            output_data_type: scale_data_type,
+            output_data_type,
         })
     }
 

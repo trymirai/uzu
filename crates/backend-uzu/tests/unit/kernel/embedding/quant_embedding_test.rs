@@ -6,7 +6,9 @@ use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
-            Backend, Context, Encoder, Kernels, gpu_types::QuantizationMode, kernel::QuantizedEmbeddingLookupKernel,
+            Backend, Context, Encoder, Kernels,
+            gpu_types::{QuantizationMethod, QuantizationMode},
+            kernel::QuantizedEmbeddingLookupKernel,
         },
         cpu::Cpu,
     },
@@ -112,6 +114,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         T::data_type(),
         input.group_size,
         input.quant_mode,
+        QuantizationMethod::ScaleBias,
+        false,
     )
     .expect("Failed to create QuantizedEmbeddingLookupKernel");
 
@@ -132,8 +136,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         token_ids_array.allocation(),
         weights_array.allocation(),
         scales_array.allocation(),
-        biases_array.allocation(),
+        None::<&backend_uzu::backends::common::Allocation<B>>,
+        Some(biases_array.allocation()),
         &mut output,
+        None::<&backend_uzu::backends::common::Allocation<B>>,
         input.batch_size,
         input.vocab_size,
         input.model_dim,

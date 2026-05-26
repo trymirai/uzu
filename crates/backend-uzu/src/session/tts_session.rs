@@ -11,6 +11,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     fs::File,
+    io::BufReader,
     path::{Path, PathBuf},
     rc::Rc,
     time::Instant,
@@ -37,7 +38,7 @@ use crate::{
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
-    config::{ModelMetadata, TtsMessageProcessorConfig, TtsModelConfig},
+    config::{model::tts_model::TTSModelConfig, token_codec::tts_codec::TTSCodecConfig},
     encodable_block::{Decoder, Sampling as GpuSampling},
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,
@@ -85,7 +86,7 @@ pub struct TtsSession<B: Backend> {
     tokenizer: Tokenizer,
     audio: AudioGenerationContext<B>,
     audio_decoder: Box<dyn AudioDecoderBackend>,
-    message_processor_config: TtsMessageProcessorConfig,
+    token_codec_config: TTSCodecConfig,
     text_decoder: Box<dyn SemanticDecoderBackend>,
     last_execution_stats: Option<TtsExecutionStats>,
 }
@@ -212,12 +213,12 @@ impl<B: Backend> PendingAudioChunkBackend for NanoCodecPendingAudioChunk<B> {
         }
 
         let pending = self.inner.take().ok_or(Error::GenerateFailed)?;
-        pending.resolve().map(Some).map_err(Error::from)
+        Ok(Some(pending.resolve()?))
     }
 
     fn resolve(mut self: Box<Self>) -> Result<AudioPcmBatch, Error> {
         let pending = self.inner.take().ok_or(Error::GenerateFailed)?;
-        pending.resolve().map_err(Error::from)
+        Ok(pending.resolve()?)
     }
 }
 

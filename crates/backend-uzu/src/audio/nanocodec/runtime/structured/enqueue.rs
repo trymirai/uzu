@@ -401,18 +401,19 @@ pub(super) fn norm_ncs_enqueue<B: Backend>(
     Ok(unsafe { Array::from_allocation(output, 0, &output_shape, output_data_type) })
 }
 
-pub(super) fn gelu_enqueue<B: Backend>(
+pub(super) fn activation_enqueue<B: Backend>(
     encoder: &mut Encoder<B>,
     input: &Array<B>,
     output: Array<B>,
+    activation_type: ActivationType,
     kernels: &StructuredAudioKernelCache<B>,
 ) -> AudioResult<Array<B>> {
     let n_u32 = u32::try_from(input.num_elements())
-        .map_err(|_| AudioError::Runtime("gelu element count exceeds u32 range".to_string()))?;
+        .map_err(|_| AudioError::Runtime("activation element count exceeds u32 range".to_string()))?;
     let output_shape = output.shape().to_vec();
     let output_data_type = output.data_type();
     let mut output = output.into_allocation();
-    kernels.activation.encode(Some(input.allocation()), &mut output, n_u32, ActivationType::GELU, encoder);
+    kernels.activation.encode(Some(input.allocation()), &mut output, n_u32, activation_type, encoder);
     Ok(unsafe { Array::from_allocation(output, 0, &output_shape, output_data_type) })
 }
 

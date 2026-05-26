@@ -5,7 +5,7 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
-            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
+            gpu_types::{HadamardTransformOrder, QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 HadamardTransformKernel, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel, TensorAddBiasKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
@@ -34,10 +34,12 @@ impl MatmulKernel for MatmulCpuKernel {
         if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
             return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
         }
-        let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
-            .map_err(CpuError::from)?;
-        let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, true)
-            .map_err(CpuError::from)?;
+        let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
+            context,
+            data_type,
+            HadamardTransformOrder::Output,
+        )?;
+        let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, true)?;
         Ok(Self {
             data_type,
             hadamard,
@@ -53,13 +55,13 @@ impl MatmulKernel for MatmulCpuKernel {
         match arguments.b {
             MatmulB::FullPrecision {
                 ..
-            } => self.encode_fp(arguments, encoder).map_err(CpuError::from),
+            } => Ok(self.encode_fp(arguments, encoder)?),
             MatmulB::ScaleBiasDequant {
                 ..
             }
             | MatmulB::ScaleZeroPointDequant {
                 ..
-            } => self.encode_quant(arguments, encoder).map_err(CpuError::from),
+            } => Ok(self.encode_quant(arguments, encoder)?),
         }
     }
 }
@@ -241,6 +243,10 @@ impl MatmulCpuKernel {
         let post_bias = arguments.d_transform.bias;
 
         if arguments.m >= 5 && arguments.n > 1 {
+            assert!(
+                !(post_bias.is_some() && post_rht.is_some()),
+                "MatmulCpuKernel/Quant GEMM with both output bias and output RHT is not supported: bias must be applied after RHT",
+            );
             let MatmulArguments {
                 a,
                 a_offset,

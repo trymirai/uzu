@@ -58,8 +58,7 @@ pub fn build_decoding_config(
         Some(ShojiSpeculationPreset::Classification {
             feature,
         }) => {
-            let tokenizer =
-                Tokenizer::from_file(model_path.join("tokenizer.json")).map_err(|_| Error::UnableToLoadTokenizer)?;
+            let tokenizer = Tokenizer::from_file(model_path.join("tokenizer.json"))?;
             let proposals: Vec<Vec<u64>> = feature
                 .values
                 .iter()

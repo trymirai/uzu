@@ -20,7 +20,7 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
     #[optional(is_kv_cache_ring)] ring_params: Option<crate::backends::common::gpu_types::ring::RingParams>,
     #[optional(is_trie)] trie: Option<*const TrieNode>,
     #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
-    #[optional(has_sinks)] sinks: Option<*const f32>,
+    #[optional(has_sinks)] sinks: Option<*const T>,
     num_heads: u32,
     suffix_length: u32,
     #[specialize] align_q: bool,
@@ -72,7 +72,7 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
 
             // Initialize with attention sinks if present
             if has_sinks {
-                max_score = unsafe { *sinks.unwrap().add(head_idx) };
+                max_score = unsafe { *sinks.unwrap().add(head_idx) }.to_f32().unwrap();
                 sum_exp = 1.0;
             }
 

@@ -1,46 +1,26 @@
 use super::*;
-
-pub(super) fn resolve_descript_audio_codec_vocoder_data_type(
-    top_level_precision: DataType,
-    config: &DescriptAudioCodecConfig,
-) -> AudioResult<DataType> {
-    let resolved_precision = top_level_precision;
-    for (field_name, precision) in [
-        ("tts_config.audio_decoder_config.precision", config.precision),
-        ("tts_config.audio_decoder_config.quantizer_config.precision", config.quantizer_config.precision),
-    ] {
-        if resolved_precision != precision {
-            return Err(AudioError::Runtime(format!(
-                "conflicting DescriptAudioCodec precision in Lalamo export: {field_name}={precision:?} conflicts with {resolved_precision:?}"
-            )));
-        }
-    }
-
-    let data_type: DataType = resolved_precision.into();
-    if !matches!(data_type, DataType::F32 | DataType::F16 | DataType::BF16) {
-        return Err(AudioError::Runtime(format!(
-            "unsupported DescriptAudioCodec vocoder precision in Lalamo export: {resolved_precision:?} (expected float32/float16/bfloat16)"
-        )));
-    }
-    Ok(data_type)
-}
+use crate::{
+    config::{
+        decoder::DecoderConfig,
+        embedding::{AnyEmbeddingConfig, untied_embedding::UntiedEmbeddingConfig},
+    },
+    forward_pass::model_shape::ModelShape,
+};
 
 pub(super) fn load_audio_runtime_from_tts_config(
-    tts_config: &TtsConfig,
+    tts_config: &TTSConfig,
     model_path: &Path,
 ) -> AudioResult<(RuntimeConfigJson, StructuredAudioCodecGraph)> {
-    let cfg = match &tts_config.audio_decoder_config {
-        TtsAudioDecoderConfig::DescriptAudioCodec(config) => config,
+    let AnyTTSAudioDecoderConfig::DescriptAudioCodecConfig(cfg) = &tts_config.audio_decoder_config;
+    let weights_path = model_path.join("model.safetensors");
+    let post_module_decoder_config = DecoderConfig {
+        embedding_config: AnyEmbeddingConfig::UntiedEmbeddingConfig(UntiedEmbeddingConfig::new(None, None)),
+        transformer_config: cfg.quantizer_config.post_module_config.clone(),
+        vocab_size: 1,
+        pard_token: None,
+        ple_model_config: None,
     };
-    let fishaudio_weights = model_path.join("model.safetensors");
-    if !fishaudio_weights.is_file() {
-        return Err(AudioError::Runtime(format!(
-            "missing exported FishAudio decoder weights '{}'",
-            fishaudio_weights.display()
-        )));
-    }
-
-    let vocoder_data_type = resolve_descript_audio_codec_vocoder_data_type(tts_config.activation_precision, cfg)?;
+    let vocoder_data_type = ModelShape::from_decoder_config(&post_module_decoder_config, DataType::F32).data_type;
 
     let total_codebooks = cfg
         .n_codebooks
@@ -67,7 +47,7 @@ pub(super) fn load_audio_runtime_from_tts_config(
     };
     let decoder = StructuredAudioCodecGraph {
         config: cfg.clone(),
-        weights_path: fishaudio_weights.display().to_string(),
+        weights_path: weights_path.display().to_string(),
         codebook_size: cfg.codebook_size,
         semantic_codebook_size: cfg.semantic_codebook_size,
         input_dim: cfg.input_dim,

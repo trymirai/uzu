@@ -30,10 +30,9 @@ impl Context for CpuContext {
 
     fn recommended_async_batch_size(
         &self,
-        model_path: &Path,
-    ) -> usize {
-        let _ = model_path;
-        1
+        _model_path: &Path,
+    ) -> Result<usize, CpuError> {
+        Ok(1)
     }
 
     fn is_high_performance(&self) -> bool {

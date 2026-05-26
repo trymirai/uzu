@@ -10,8 +10,8 @@ pub enum Error {
     Session {
         message: String,
     },
-    #[error("Unable to load tokenizer")]
-    UnableToLoadTokenizer,
+    #[error("Unable to load tokenizer: {0}")]
+    UnableToLoadTokenizer(#[from] tokenizers::Error),
 }
 
 impl From<ChatSessionError> for Error {

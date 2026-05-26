@@ -9,7 +9,7 @@ pub enum CpuError {
     #[error("Not supported")]
     NotSupported,
     #[error("Command buffer execution failed")]
-    CommandBufferExecutionFailed(RecvError),
+    CommandBufferExecutionFailed(#[from] RecvError),
     #[error("Kernel dispatch failed: {0}")]
     KernelDispatchFailed(#[source] Box<dyn StdError + Send + Sync + 'static>),
 }

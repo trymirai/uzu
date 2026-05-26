@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[cfg(metal_backend)]
-use crate::config::TtsMessageProcessorConfig;
+use crate::config::token_codec::tts_codec::TTSCodecConfig;
 use crate::{
-    config::MessageProcessorConfig,
+    config::token_codec::chat_codec::ChatCodecConfig,
     session::{parameter::ConfigResolvableValue, types::Role},
 };
 
@@ -50,10 +50,10 @@ impl Message {
     }
 }
 
-impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>> for Message {
+impl ConfigResolvableValue<ChatCodecConfig, HashMap<String, String>> for Message {
     fn resolve(
         &self,
-        config: &MessageProcessorConfig,
+        config: &ChatCodecConfig,
     ) -> HashMap<String, String> {
         let role = match self.role {
             Role::System => config.system_role_name.clone(),
@@ -70,10 +70,10 @@ impl ConfigResolvableValue<MessageProcessorConfig, HashMap<String, String>> for 
 }
 
 #[cfg(metal_backend)]
-impl ConfigResolvableValue<TtsMessageProcessorConfig, HashMap<String, String>> for Message {
+impl ConfigResolvableValue<TTSCodecConfig, HashMap<String, String>> for Message {
     fn resolve(
         &self,
-        _config: &TtsMessageProcessorConfig,
+        _config: &TTSCodecConfig,
     ) -> HashMap<String, String> {
         HashMap::from([
             (String::from("content"), self.content.clone()),
