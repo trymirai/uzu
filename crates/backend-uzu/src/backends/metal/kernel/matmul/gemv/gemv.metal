@@ -5,8 +5,8 @@
 #include "../../hadamard_transform/hadamard_transform.h"
 #include "../../generated/quantization_method.h"
 #include "../../generated/gemm.h"
-#include "../gemm/common/qdot.h"
-#include "../gemm/common/quant_pack.h"
+#include "../common/qdot.h"
+#include "../common/quant_pack.h"
 
 #include <metal_simdgroup>
 
