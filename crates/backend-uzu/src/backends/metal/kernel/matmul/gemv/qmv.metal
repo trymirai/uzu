@@ -16,7 +16,7 @@ template <
 VARIANTS(WeightT, float, half, bfloat)
 VARIANTS(InputT, float, half, bfloat)
 VARIANTS(OutputT, float, half, bfloat)
-VARIANTS(GROUP_SIZE, 32, 64, 128)
+VARIANTS(GROUP_SIZE, 16, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
 PUBLIC KERNEL(QuantizedMatmulQmv)(
     const device uint32_t* weights,

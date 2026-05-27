@@ -11,7 +11,7 @@ use crate::{
 #[variants(WeightT, f32, f16, bf16)]
 #[variants(InputT, f32, f16, bf16)]
 #[variants(OutputT, f32, f16, bf16)]
-#[variants(GROUP_SIZE, 32, 64, 128)]
+#[variants(GROUP_SIZE, 16, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
 pub fn quantized_matmul_qmv_fast<
     WeightT: ArrayElement + Float,

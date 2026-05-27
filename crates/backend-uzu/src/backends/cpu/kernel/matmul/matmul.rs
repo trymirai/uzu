@@ -214,7 +214,7 @@ impl MatmulCpuKernel {
                 ..
             } => unreachable!(),
         };
-        if !matches!(group_size, 32 | 64 | 128) {
+        if !matches!(group_size, 16 | 32 | 64 | 128) {
             return Err(MatmulError::UnsupportedGroupSize(group_size as usize));
         }
 
