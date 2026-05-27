@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use derive_more::Display;
+
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct GemmParams {
@@ -25,4 +27,84 @@ pub struct GemvParams {
     pub matrix_leading_dimension: u32,
     pub output_rows_per_threadgroup: u32,
     pub ab_scale: f32,
+}
+
+/// Per-threadgroup tile layout for the GEMV kernel, chosen by the host
+/// heuristic (`gemv::spec`) and passed as a function-constant specialization.
+/// Mirrors `GemmTiling` (gpu_types/gemm.rs), but since GEMV is bandwidth-bound
+/// (no MMA fragments) the names describe the selection regime rather than a
+/// fragment geometry. Each variant fixes the six geometry fields the kernel
+/// reads (threadgroup simdgroup rows/cols, per-simdgroup thread rows/cols,
+/// per-thread output rows/cols); the `*Narrow` siblings drop output rows to 1
+/// for tiny output dimensions.
+///
+/// | variant      | tg rows×cols | sg rows×cols | out rows×cols |
+/// |--------------|--------------|--------------|---------------|
+/// | Standard     | 4×1          | 1×32         | 4×4           |
+/// | Wide         | 8×1          | 1×32         | 4×4           |
+/// | SmallInput   | 1×1          | 8×4          | 4×4           |
+/// | SplitInput   | 1×8          | 1×32         | 4×4           |
+///
+/// `Wide` is also the canonical tile for the quantized branch.
+#[repr(C)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GemvTiling {
+    Standard,
+    StandardNarrow,
+    Wide,
+    WideNarrow,
+    SmallInput,
+    SmallInputNarrow,
+    SplitInput,
+    SplitInputNarrow,
+}
+
+impl GemvTiling {
+    pub const fn tg_simd_rows(self) -> u32 {
+        match self {
+            Self::Standard | Self::StandardNarrow => 4,
+            Self::Wide | Self::WideNarrow => 8,
+            Self::SmallInput | Self::SmallInputNarrow => 1,
+            Self::SplitInput | Self::SplitInputNarrow => 1,
+        }
+    }
+
+    pub const fn tg_simd_cols(self) -> u32 {
+        match self {
+            Self::SplitInput | Self::SplitInputNarrow => 8,
+            _ => 1,
+        }
+    }
+
+    pub const fn sg_thread_rows(self) -> u32 {
+        match self {
+            Self::SmallInput | Self::SmallInputNarrow => 8,
+            _ => 1,
+        }
+    }
+
+    pub const fn sg_thread_cols(self) -> u32 {
+        match self {
+            Self::SmallInput | Self::SmallInputNarrow => 4,
+            _ => 32,
+        }
+    }
+
+    pub const fn thread_out_rows(self) -> u32 {
+        match self {
+            Self::StandardNarrow
+            | Self::WideNarrow
+            | Self::SmallInputNarrow
+            | Self::SplitInputNarrow => 1,
+            _ => 4,
+        }
+    }
+
+    pub const fn thread_out_cols(self) -> u32 {
+        4
+    }
+
+    pub const fn output_rows_per_threadgroup(self) -> u32 {
+        self.tg_simd_rows() * self.sg_thread_rows() * self.thread_out_rows()
+    }
 }

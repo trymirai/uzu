@@ -27,4 +27,15 @@ typedef struct {
   uint32_t output_rows_per_threadgroup;
   float ab_scale;
 } GemvParams;
+
+enum class GemvTiling : uint32_t {
+  Standard = 0,
+  StandardNarrow = 1,
+  Wide = 2,
+  WideNarrow = 3,
+  SmallInput = 4,
+  SmallInputNarrow = 5,
+  SplitInput = 6,
+  SplitInputNarrow = 7,
+};
 } // namespace uzu::matmul
