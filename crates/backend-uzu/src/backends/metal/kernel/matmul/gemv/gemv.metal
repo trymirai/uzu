@@ -5,6 +5,7 @@
 #include "../../hadamard_transform/hadamard_transform.h"
 #include "../../generated/quantization_method.h"
 #include "../../generated/gemm.h"
+#include "../../generated/matmul.h"
 #include "../common/qdot.h"
 #include "../common/quant_pack.h"
 
@@ -56,26 +57,21 @@ KERNEL(Gemv)(
         OPTIONAL(BITS != 0 && quant_method == QuantizationMethod::ScaleBias),
     const device T* input,
     device T* output,
-    const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
-    const device T* output_bias OPTIONAL(is_bias),
-    const constant uint& in_vec_size,
-    const constant uint& out_vec_size,
-    const constant uint& batch_size,
-    const constant uint& matrix_leading_dimension,
-    const constant uint& output_rows_per_threadgroup,
-    const constant float& output_scale,
+    const device int32_t* hadamard_factors
+        OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
+    const device T* output_bias
+        OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
+    const constant uzu::matmul::GemvParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const QuantizationMethod quant_method SPECIALIZE,
+    const GemmDTransform output_transform SPECIALIZE,
     const uint tg_simd_rows SPECIALIZE,
     const uint tg_simd_cols SPECIALIZE,
     const uint sg_thread_rows SPECIALIZE,
     const uint sg_thread_cols SPECIALIZE,
     const uint thread_out_rows SPECIALIZE,
     const uint thread_out_cols SPECIALIZE,
-    const bool use_hadamard SPECIALIZE,
-    const bool is_accumulate SPECIALIZE,
-    const bool is_bias SPECIALIZE,
     threadgroup float threadgroup_memory[GEMV_MAX_THREADGROUP_MEMORY],
     threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint group_index_x GROUPS(group_count_x),
@@ -86,6 +82,16 @@ KERNEL(Gemv)(
     const ThreadContext thread_context
 ) {
   (void)thread_index_z;
+
+  const uint in_vec_size = params->in_vec_size;
+  const uint out_vec_size = params->out_vec_size;
+  const uint batch_size = params->batch_size;
+  const uint matrix_leading_dimension = params->matrix_leading_dimension;
+  const uint output_rows_per_threadgroup = params->output_rows_per_threadgroup;
+  const float output_scale = params->ab_scale;
+  const bool is_accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
+  const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
+  const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
   // Compile-time prologue, mirroring gemm's SimdgroupMmaCore dispatch. Full
   // precision is encoded as BITS == 0 (a quantized prologue always carries a

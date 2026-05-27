@@ -15,3 +15,14 @@ pub struct GemmParams {
     pub use_morton: bool,
     pub ab_scale: f32,
 }
+
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct GemvParams {
+    pub in_vec_size: u32,
+    pub out_vec_size: u32,
+    pub batch_size: u32,
+    pub matrix_leading_dimension: u32,
+    pub output_rows_per_threadgroup: u32,
+    pub ab_scale: f32,
+}

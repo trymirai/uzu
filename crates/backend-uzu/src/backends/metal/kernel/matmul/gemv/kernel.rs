@@ -6,7 +6,7 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode},
+            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform, matmul::GemvParams},
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
         metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
@@ -54,15 +54,27 @@ impl GemvTile {
     }
 }
 
+/// Output transforms gemv branches on. Scale is always applied (via
+/// `GemvParams::ab_scale`), so the SCALE bit is intentionally excluded.
+fn output_transform(
+    accumulate: bool,
+    bias: bool,
+    rht: bool,
+) -> GemmDTransform {
+    let mut transform = GemmDTransform::empty();
+    transform.set(GemmDTransform::ACCUMULATE, accumulate);
+    transform.set(GemmDTransform::BIAS, bias);
+    transform.set(GemmDTransform::RHT, rht);
+    transform
+}
+
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct GemvKey {
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
     tile: GemvTile,
-    use_hadamard: bool,
-    is_accumulate: bool,
-    is_bias: bool,
+    output_transform: GemmDTransform,
 }
 
 pub(crate) struct GemvDispatch {
@@ -87,9 +99,7 @@ impl GemvDispatch {
                     bits: 0,
                     quant_method: QuantizationMethod::ScaleBias,
                     tile: GemvTile::from_spec(&config),
-                    use_hadamard: config.is_hadamard,
-                    is_accumulate: config.is_accumulate,
-                    is_bias: config.is_bias,
+                    output_transform: output_transform(config.is_accumulate, config.is_bias, config.is_hadamard),
                 },
             )?;
         }
@@ -110,15 +120,13 @@ impl GemvDispatch {
                     key.group_size,
                     key.bits,
                     key.quant_method,
+                    key.output_transform,
                     key.tile.tg_simd_rows,
                     key.tile.tg_simd_cols,
                     key.tile.sg_thread_rows,
                     key.tile.sg_thread_cols,
                     key.tile.thread_out_rows,
                     key.tile.thread_out_cols,
-                    key.use_hadamard,
-                    key.is_accumulate,
-                    key.is_bias,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -190,9 +198,15 @@ impl GemvDispatch {
             bits: 0,
             quant_method: QuantizationMethod::ScaleBias,
             tile: GemvTile::from_spec(&specialization),
-            use_hadamard: rht_factors.is_some(),
-            is_accumulate,
-            is_bias: output_bias.is_some(),
+            output_transform: output_transform(is_accumulate, output_bias.is_some(), rht_factors.is_some()),
+        };
+        let params = GemvParams {
+            in_vec_size: k,
+            out_vec_size: n,
+            batch_size: m,
+            matrix_leading_dimension: k,
+            output_rows_per_threadgroup,
+            ab_scale,
         };
         let context = encoder.context();
         self.get_or_create(context, key)?.encode(
@@ -204,12 +218,7 @@ impl GemvDispatch {
             &mut *d,
             rht_factors,
             output_bias,
-            k,
-            n,
-            m,
-            k,
-            output_rows_per_threadgroup,
-            ab_scale,
+            std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
             encoder,
@@ -287,9 +296,15 @@ impl GemvDispatch {
             bits,
             quant_method: method,
             tile: GemvTile::QUANT,
-            use_hadamard: hadamard_factors.is_some(),
-            is_accumulate,
-            is_bias: output_bias.is_some(),
+            output_transform: output_transform(is_accumulate, output_bias.is_some(), hadamard_factors.is_some()),
+        };
+        let params = GemvParams {
+            in_vec_size: k,
+            out_vec_size: n,
+            batch_size: m,
+            matrix_leading_dimension: k,
+            output_rows_per_threadgroup: 0,
+            ab_scale,
         };
         let context = encoder.context();
         self.get_or_create(context, key)?.encode(
@@ -301,12 +316,7 @@ impl GemvDispatch {
             &mut *d,
             hadamard_factors,
             output_bias,
-            k,
-            n,
-            m,
-            k,
-            0,
-            ab_scale,
+            std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
             encoder,
