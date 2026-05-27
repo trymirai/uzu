@@ -18,4 +18,13 @@ typedef struct {
   bool use_morton;
   float ab_scale;
 } GemmParams;
+
+typedef struct {
+  uint32_t in_vec_size;
+  uint32_t out_vec_size;
+  uint32_t batch_size;
+  uint32_t matrix_leading_dimension;
+  uint32_t output_rows_per_threadgroup;
+  float ab_scale;
+} GemvParams;
 } // namespace uzu::matmul
