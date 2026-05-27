@@ -124,6 +124,69 @@ fn parity_f16(
     run_parity::<half::f16>(m, k, n, gs, bits, method, 0.01, 0.05);
 }
 
+/// Parity for the quantized GEMV path: a small batch routes through the
+/// top-level dispatch (`None`) to the unified `Gemv` kernel, checked against the
+/// CPU reference matmul.
+fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
+    m: usize,
+    k: usize,
+    n: usize,
+    group_size: u32,
+    bits: u32,
+    quant_method: QuantizationMethod,
+    rel_tol: f64,
+    abs_tol: f64,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 0);
+    let gemv = run_quant_metal::<T>(&context, &input, None);
+    let reference = run_quant_cpu::<T>(&input);
+    assert_parity::<T>(
+        &format!(
+            "gemv m={m} k={k} n={n} gs={group_size} bits={bits} method={quant_method:?} dtype={}",
+            std::any::type_name::<T>()
+        ),
+        &reference,
+        &gemv,
+        rel_tol,
+        abs_tol,
+    );
+}
+
+#[rstest]
+#[case::m1_gs32_4bit_mlx ( 1, 256, 64,  32, 4, QuantizationMethod::ScaleBias)]
+#[case::m1_gs64_4bit_mlx ( 1, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
+#[case::m1_gs128_4bit_mlx( 1, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]
+#[case::m1_gs32_4bit_zp  ( 1, 256, 64,  32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::m1_gs64_8bit_zp  ( 1, 256, 64,  64, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::m1_gs128_8bit_mlx( 1, 256, 64, 128, 8, QuantizationMethod::ScaleBias)]
+#[case::m2_gs32_4bit_mlx ( 2, 256, 64,  32, 4, QuantizationMethod::ScaleBias)]
+#[case::m4_gs32_4bit_zp  ( 4, 256, 64,  32, 4, QuantizationMethod::ScaleZeroPoint)]
+fn parity_gemv_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] gs: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
+}
+
+#[rstest]
+#[case::m1_gs64_4bit_mlx ( 1, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
+#[case::m2_gs128_8bit_zp ( 2, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
+fn parity_gemv_f16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] gs: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    run_parity_gemv::<half::f16>(m, k, n, gs, bits, method, 0.01, 0.05);
+}
+
 #[uzu_test]
 fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let context = MetalContext::new().expect("Metal context");
@@ -161,6 +224,50 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
         }
     }
     assert_parity::<bf16>("with_bias", &reference, &actual, 0.05, 0.4);
+}
+
+/// Drives the quantized GEMV (`qmv_fast`) path through the top-level dispatch (m < 5)
+/// with the fused scale + bias epilogue, and checks it against an independent
+/// host-computed reference (raw dot products scaled and biased on the CPU).
+#[uzu_test]
+fn parity_bf16_gemv_qmv_fused_scale_bias() {
+    let context = MetalContext::new().expect("Metal context");
+    let input = QuantInput::<bf16>::new(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+
+    let scale = 2.0_f32;
+    let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.25 + 0.1 * (j % 7) as f32).collect();
+    let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
+
+    // Independent reference: raw dot products, then scale + bias applied on the host.
+    let raw = run_quant_cpu::<bf16>(&input);
+    let reference: Vec<bf16> = (0..input.m as usize)
+        .flat_map(|i| {
+            (0..input.n as usize).map(move |j| {
+                let idx = i * input.n as usize + j;
+                (idx, j)
+            })
+        })
+        .map(|(idx, j)| bf16::from_f32(scale * raw[idx].to_f32() + bias_f32[j]))
+        .collect();
+
+    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    let bias_buf = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, bf16::data_type())
+        .expect("MatmulMetalKernel");
+
+    let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+    let mut args = quant_arguments(&mut buffers, &input);
+    args.d_transform = MatmulDOps {
+        ab_scale: scale,
+        accumulate: false,
+        bias: Some(&bias_buf),
+        rht_factors: None,
+    };
+    matmul.encode(args, &mut encoder).expect("encode quant gemv with scale+bias");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
+
+    assert_parity::<bf16>("gemv_qmv_scale_bias", &reference, &actual, 0.05, 0.4);
 }
 
 #[uzu_test]
