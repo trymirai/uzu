@@ -1,6 +1,7 @@
 use std::cell::Cell;
 
 use crate::{
+    DataType,
     array::size_for_shape,
     backends::common::{AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     config::token_mixer::AnyTokenMixerConfig,
@@ -219,10 +220,11 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 AnyTokenMixerConfig::DeltaNetConfig(c) => {
+                    let data_type = DataType::F32;
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
                     let ssm_shape = [c.num_heads, c.value_head_dim, c.head_dim];
-                    let conv_bytes = size_for_shape(&conv_shape, model_shape.data_type);
-                    let ssm_bytes = size_for_shape(&ssm_shape, model_shape.data_type);
+                    let conv_bytes = size_for_shape(&conv_shape, data_type);
+                    let ssm_bytes = size_for_shape(&ssm_shape, data_type);
 
                     CacheLayer::DeltaNet(DeltaNetLayer {
                         conv_state: context
@@ -233,7 +235,7 @@ impl<B: Backend> CacheLayers<B> {
                             .create_allocation(ssm_bytes, AllocationType::Global)
                             .expect("Failed to create delta net ssm allocation"),
                         ssm_shape,
-                        data_type: model_shape.data_type,
+                        data_type,
                     })
                 },
             };
