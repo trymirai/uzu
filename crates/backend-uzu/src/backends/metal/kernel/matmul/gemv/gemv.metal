@@ -1,10 +1,12 @@
 #include "../../common/dsl.h"
 #include "common/gemv_core.h"
+#include "common/gemv_tiling.h"
 
 using namespace metal;
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
 using namespace uzu::gemv;
+using namespace uzu::matmul;
 
 // Unified GEMV: a single simdgroup-reduction matrix-vector kernel that handles
 // both full-precision (BITS == 0) and group-quantized weights, selected at
@@ -33,12 +35,7 @@ KERNEL(Gemv)(
     const constant uint& group_count_y,
     const QuantizationMethod quant_method SPECIALIZE,
     const GemmDTransform output_transform SPECIALIZE,
-    const uint tg_simd_rows SPECIALIZE,
-    const uint tg_simd_cols SPECIALIZE,
-    const uint sg_thread_rows SPECIALIZE,
-    const uint sg_thread_cols SPECIALIZE,
-    const uint thread_out_rows SPECIALIZE,
-    const uint thread_out_cols SPECIALIZE,
+    const GemvTiling gemv_tiling SPECIALIZE,
     threadgroup float threadgroup_memory[GEMV_MAX_THREADGROUP_MEMORY],
     threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint group_index_x GROUPS(group_count_x),
@@ -51,12 +48,12 @@ KERNEL(Gemv)(
   (void)thread_index_z;
 
   const GemvTile tile{
-      tg_simd_rows,
-      tg_simd_cols,
-      sg_thread_rows,
-      sg_thread_cols,
-      thread_out_rows,
-      thread_out_cols,
+      gemv_tiling_tg_simd_rows(gemv_tiling),
+      gemv_tiling_tg_simd_cols(gemv_tiling),
+      gemv_tiling_sg_thread_rows(gemv_tiling),
+      gemv_tiling_sg_thread_cols(gemv_tiling),
+      gemv_tiling_thread_out_rows(gemv_tiling),
+      gemv_tiling_thread_out_cols(gemv_tiling),
   };
 
   GemvCore<T, GROUP_SIZE, BITS>::run(
