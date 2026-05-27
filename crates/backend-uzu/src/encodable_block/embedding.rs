@@ -17,9 +17,9 @@ use crate::{
         embedding::AnyEmbeddingConfig,
         weight_matrix::{
             AnyWeightMatrixSpec, Layout,
-            awq_spec::AWQSpec,
             full_precision_spec::FullPrecisionSpec,
             hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+            int_spec::IntSpec,
             mlx_spec::MLXSpec,
         },
     },
@@ -117,29 +117,9 @@ impl<B: Backend> Embedding<B> {
         parameter_tree: &ParameterTree<B>,
         model_shape: &ModelShape,
     ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
-        Self::new_with_lookup_and_readout_trees(
-            context,
-            vocab_size,
-            model_dim,
-            config,
-            parameter_tree,
-            parameter_tree,
-            model_shape,
-        )
-    }
-
-    pub fn new_with_lookup_and_readout_trees(
-        context: &B::Context,
-        vocab_size: u32,
-        model_dim: u32,
-        config: &AnyEmbeddingConfig,
-        lookup_tree: &ParameterTree<B>,
-        readout_tree: &ParameterTree<B>,
-        model_shape: &ModelShape,
-    ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
-                let embedding_tree = lookup_tree.subtree("embedding")?;
+                let embedding_tree = parameter_tree.subtree("embedding")?;
                 let embedding_spec = embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let (ty, readout_input_hadamard_factors) = match embedding_spec {
@@ -176,7 +156,7 @@ impl<B: Backend> Embedding<B> {
                             None,
                         )
                     },
-                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                         let (embedding_quantization_mode, group_size, quantization_method) =
                             input_quantization_from_spec(spec)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
@@ -295,7 +275,7 @@ impl<B: Backend> Embedding<B> {
                 )
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
-                let input_embedding_tree = lookup_tree.subtree("input_embedding")?;
+                let input_embedding_tree = parameter_tree.subtree("input_embedding")?;
                 let input_embedding_spec = input_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let input_ty = match input_embedding_spec {
@@ -319,7 +299,7 @@ impl<B: Backend> Embedding<B> {
                             lookup,
                         }
                     },
-                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                         let (embedding_quantization_mode, group_size, quantization_method) =
                             input_quantization_from_spec(spec)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
@@ -354,7 +334,7 @@ impl<B: Backend> Embedding<B> {
                     spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
                 };
 
-                let output_embedding_tree = readout_tree.subtree("output_embedding")?;
+                let output_embedding_tree = parameter_tree.subtree("output_embedding")?;
                 let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let output_ty = match output_embedding_spec {
@@ -381,7 +361,7 @@ impl<B: Backend> Embedding<B> {
                             readout,
                         }
                     },
-                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                         let (embedding_quantization_mode, group_size, quantization_method) =
                             output_quantization_from_spec(spec)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
@@ -660,14 +640,14 @@ fn input_quantization_from_spec<B: Backend>(
             layout: Layout::InputOutput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
-        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: false,
             layout: Layout::InputOutput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
-        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: true,
@@ -688,14 +668,14 @@ fn output_quantization_from_spec<B: Backend>(
             layout: Layout::OutputInput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
-        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: false,
             layout: Layout::OutputInput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
-        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: true,

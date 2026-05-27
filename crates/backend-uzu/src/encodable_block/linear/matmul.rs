@@ -14,7 +14,7 @@ use crate::{
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulQuantCombo},
         },
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout, awq_spec::AWQSpec, mlx_spec::MLXSpec},
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -114,14 +114,14 @@ impl<B: Backend> LinearMatmul<B> {
                 layout: Layout::OutputInput,
                 ..
             }) => (bits, group_size, QuantizationMethod::ScaleBias),
-            AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+            AnyWeightMatrixSpec::IntSpec(IntSpec {
                 bits,
                 group_size,
                 is_symmetric: false,
                 layout: Layout::OutputInput,
                 ..
             }) => (bits, group_size, QuantizationMethod::ScaleZeroPoint),
-            AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+            AnyWeightMatrixSpec::IntSpec(IntSpec {
                 bits,
                 group_size,
                 is_symmetric: true,

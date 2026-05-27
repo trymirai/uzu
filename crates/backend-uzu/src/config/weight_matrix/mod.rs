@@ -1,8 +1,8 @@
 use proc_macros::{uzu_config, uzu_config_abstract};
 
-pub mod awq_spec;
 pub mod full_precision_spec;
 pub mod hybrid_spec;
+pub mod int_spec;
 pub mod low_rank_spec;
 pub mod mlx_spec;
 
@@ -17,7 +17,7 @@ pub enum Layout {
     full_precision_spec::FullPrecisionSpec,
     low_rank_spec::LowRankSpec,
     hybrid_spec::HybridSpec,
-    awq_spec::AWQSpec,
+    int_spec::IntSpec,
     mlx_spec::MLXSpec
 )]
 pub struct WeightMatrixSpec;

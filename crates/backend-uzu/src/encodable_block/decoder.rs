@@ -91,27 +91,25 @@ impl<B: Backend> Decoder<B> {
         })
     }
 
-    /// Used by models whose token lookup weights and logits readout weights
+    /// Used by TTS models whose token lookup weights live outside the
+    /// standard decoder subtree. The TTS runtime owns its separate readout.
     #[cfg(metal_backend)]
-    pub fn new_with_embedding_and_readout_subtrees(
+    pub fn new_with_embedding_subtree(
         context: &B::Context,
         decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B>,
         transformer_subtree: &str,
         embedding_subtree: &str,
-        readout_subtree: &str,
         model_shape: &ModelShape,
     ) -> Result<Self, DecoderError<B>> {
         let embedding_weight_loader = root_weight_loader.subtree(embedding_subtree)?;
-        let readout_weight_loader = root_weight_loader.subtree(readout_subtree)?;
 
-        let (embed, readout_input_hadamard_factors) = Embedding::new_with_lookup_and_readout_trees(
+        let (embed, readout_input_hadamard_factors) = Embedding::new(
             context,
             decoder_config.vocab_size as u32,
             decoder_config.transformer_config.model_dim as u32,
             &decoder_config.embedding_config,
             &embedding_weight_loader,
-            &readout_weight_loader,
             model_shape,
         )?;
 
