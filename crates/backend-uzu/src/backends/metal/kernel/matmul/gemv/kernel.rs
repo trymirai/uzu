@@ -5,77 +5,120 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
-            kernel::{
-                Kernels, QuantizedMatmulQmvFastKernel, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError},
-            },
+            Allocation, AsBufferRangeRef, Buffer, Encoder,
+            gpu_types::{QuantizationMethod, QuantizationMode},
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{
-            Metal,
-            context::MetalContext,
-            kernel::{MatmulGemvMetalKernel, TensorAddBiasMetalKernel},
-        },
+        metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
     },
 };
 
 const FP_PATH: &str = "FpGemv";
 const QUANT_PATH: &str = "QuantGemv";
 
+type UnifiedKernel = GemvMetalKernel;
+
+/// Per-threadgroup tile layout (function-constant specialization). The quant
+/// branch hardcodes its own layout and ignores these, so quant uses a single
+/// canonical tile; the full-precision branch drives them from the host
+/// heuristic in `GemvSpecialization::select`.
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
-struct QmvKey {
+struct GemvTile {
+    tg_simd_rows: u32,
+    tg_simd_cols: u32,
+    sg_thread_rows: u32,
+    sg_thread_cols: u32,
+    thread_out_rows: u32,
+    thread_out_cols: u32,
+}
+
+impl GemvTile {
+    const QUANT: GemvTile = GemvTile {
+        tg_simd_rows: 8,
+        tg_simd_cols: 1,
+        sg_thread_rows: 1,
+        sg_thread_cols: 32,
+        thread_out_rows: 4,
+        thread_out_cols: 4,
+    };
+
+    fn from_spec(specialization: &GemvSpecialization) -> Self {
+        Self {
+            tg_simd_rows: specialization.threadgroup_rows,
+            tg_simd_cols: specialization.threadgroup_cols,
+            sg_thread_rows: specialization.threads_per_simdgroup_row,
+            sg_thread_cols: specialization.threads_per_simdgroup_col,
+            thread_out_rows: specialization.elements_per_thread_row,
+            thread_out_cols: specialization.elements_per_thread_col,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+struct GemvKey {
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
+    tile: GemvTile,
     use_hadamard: bool,
+    is_accumulate: bool,
+    is_bias: bool,
 }
 
-pub(crate) struct GemvKernel {
+pub(crate) struct GemvDispatch {
     data_type: DataType,
-    fp_pipelines: HashMap<GemvSpecialization, MatmulGemvMetalKernel>,
-    qmv_fast: HashMap<QmvKey, <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel>,
-    bias_add: TensorAddBiasMetalKernel,
+    pipelines: HashMap<GemvKey, UnifiedKernel>,
 }
 
-impl GemvKernel {
+impl GemvDispatch {
     pub(crate) fn new(
         context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MatmulError<Metal>> {
-        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
         let mut kernel = Self {
             data_type,
-            fp_pipelines: HashMap::new(),
-            qmv_fast: HashMap::new(),
-            bias_add,
+            pipelines: HashMap::new(),
         };
         for &config in GemvSpecialization::precompile_configs(data_type) {
-            kernel.fp_get_or_create(context, config)?;
+            kernel.get_or_create(
+                context,
+                GemvKey {
+                    group_size: 0,
+                    bits: 0,
+                    quant_method: QuantizationMethod::ScaleBias,
+                    tile: GemvTile::from_spec(&config),
+                    use_hadamard: config.is_hadamard,
+                    is_accumulate: config.is_accumulate,
+                    is_bias: config.is_bias,
+                },
+            )?;
         }
         Ok(kernel)
     }
 
-    fn fp_get_or_create(
+    fn get_or_create(
         &mut self,
         context: &MetalContext,
-        specialization: GemvSpecialization,
-    ) -> Result<&MatmulGemvMetalKernel, MatmulError<Metal>> {
-        match self.fp_pipelines.entry(specialization) {
+        key: GemvKey,
+    ) -> Result<&UnifiedKernel, MatmulError<Metal>> {
+        match self.pipelines.entry(key) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let kernel = MatmulGemvMetalKernel::new(
+                let kernel = UnifiedKernel::new(
                     context,
                     self.data_type,
-                    specialization.threadgroup_rows,
-                    specialization.threadgroup_cols,
-                    specialization.threads_per_simdgroup_row,
-                    specialization.threads_per_simdgroup_col,
-                    specialization.elements_per_thread_row,
-                    specialization.elements_per_thread_col,
-                    specialization.is_accumulate,
-                    specialization.is_bias,
-                    specialization.is_hadamard,
+                    key.group_size,
+                    key.bits,
+                    key.quant_method,
+                    key.tile.tg_simd_rows,
+                    key.tile.tg_simd_cols,
+                    key.tile.sg_thread_rows,
+                    key.tile.sg_thread_cols,
+                    key.tile.thread_out_rows,
+                    key.tile.thread_out_cols,
+                    key.use_hadamard,
+                    key.is_accumulate,
+                    key.is_bias,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -130,17 +173,7 @@ impl GemvKernel {
             } => w,
             _ => unreachable!(),
         };
-        if !b_transpose {
-            return Err(MatmulError::UnsupportedLayout {
-                path: FP_PATH,
-            });
-        }
-        if b_offset != 0 {
-            return Err(MatmulError::UnsupportedLayout {
-                path: FP_PATH,
-            });
-        }
-        if b_leading_dimension.is_some_and(|ld| ld != k) {
+        if !b_transpose || b_offset != 0 || b_leading_dimension.is_some_and(|ld| ld != k) {
             return Err(MatmulError::UnsupportedLayout {
                 path: FP_PATH,
             });
@@ -148,19 +181,37 @@ impl GemvKernel {
 
         let specialization =
             GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some(), rht_factors.is_some());
+        let output_rows_per_threadgroup = specialization.output_rows_per_threadgroup();
+        let group_count_x = n.div_ceil(output_rows_per_threadgroup);
+        let group_count_y = m;
 
-        self.fp_get_or_create(encoder.context(), specialization)?.encode(
+        let key = GemvKey {
+            group_size: 0,
+            bits: 0,
+            quant_method: QuantizationMethod::ScaleBias,
+            tile: GemvTile::from_spec(&specialization),
+            use_hadamard: rht_factors.is_some(),
+            is_accumulate,
+            is_bias: output_bias.is_some(),
+        };
+        let context = encoder.context();
+        self.get_or_create(context, key)?.encode(
             weights,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
             (a, a_offset),
-            output_bias,
-            rht_factors,
             &mut *d,
+            rht_factors,
+            output_bias,
             k,
             n,
-            k,
-            ab_scale,
             m,
-            specialization.output_rows_per_threadgroup(),
+            k,
+            output_rows_per_threadgroup,
+            ab_scale,
+            group_count_x,
+            group_count_y,
             encoder,
         );
 
@@ -172,27 +223,16 @@ impl GemvKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        let mask = arguments.d_transform.mask();
-        if mask.contains(GemmDTransform::SCALE) {
-            return Err(MatmulError::UnsupportedDOp {
-                bit: GemmDTransform::SCALE,
-                path: QUANT_PATH,
-            });
-        }
-        if mask.contains(GemmDTransform::ACCUMULATE) {
-            return Err(MatmulError::UnsupportedDOp {
-                bit: GemmDTransform::ACCUMULATE,
-                path: QUANT_PATH,
-            });
-        }
         if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
             return Err(MatmulError::UnsupportedLayout {
                 path: QUANT_PATH,
             });
         }
 
+        let ab_scale = arguments.d_transform.ab_scale;
+        let is_accumulate = arguments.d_transform.accumulate;
+        let output_bias = arguments.d_transform.bias;
         let hadamard_factors = arguments.d_transform.rht_factors;
-        let post_bias = arguments.d_transform.bias;
 
         let MatmulArguments {
             a,
@@ -239,33 +279,38 @@ impl GemvKernel {
             QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
         };
 
-        let key = QmvKey {
+        let group_count_x = m;
+        let group_count_y = n.div_ceil(32);
+
+        let key = GemvKey {
             group_size,
             bits,
             quant_method: method,
+            tile: GemvTile::QUANT,
             use_hadamard: hadamard_factors.is_some(),
+            is_accumulate,
+            is_bias: output_bias.is_some(),
         };
         let context = encoder.context();
-        let kernel = match self.qmv_fast.entry(key) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let kernel = <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
-                    context,
-                    self.data_type,
-                    group_size,
-                    bits,
-                    method,
-                    hadamard_factors.is_some(),
-                )
-                .map_err(MatmulError::BackendError)?;
-                entry.insert(kernel)
-            },
-        };
-        kernel.encode(weights, scales, zero_points, biases, (a, a_offset), &mut *d, hadamard_factors, k, n, m, encoder);
-
-        if let Some(bias) = post_bias {
-            self.bias_add.encode(None::<&Allocation<Metal>>, bias, d, n, m * n, encoder);
-        }
+        self.get_or_create(context, key)?.encode(
+            weights,
+            Some(scales),
+            zero_points,
+            biases,
+            (a, a_offset),
+            &mut *d,
+            hadamard_factors,
+            output_bias,
+            k,
+            n,
+            m,
+            k,
+            0,
+            ab_scale,
+            group_count_x,
+            group_count_y,
+            encoder,
+        );
 
         Ok(())
     }

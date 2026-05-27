@@ -4,7 +4,7 @@ pub mod gemv;
 use std::sync::OnceLock;
 
 pub use self::gemm::{GemmDispatchPath, GemmKernel};
-use self::gemv::GemvKernel;
+use self::gemv::GemvDispatch;
 use crate::{
     DataType,
     backends::{
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub struct MatmulMetalKernel {
-    gemv: GemvKernel,
+    gemv: GemvDispatch,
     pub gemm: GemmKernel,
 }
 
@@ -54,7 +54,7 @@ impl MatmulKernel for MatmulMetalKernel {
         }
 
         let gemm = GemmKernel::new(context, data_type)?;
-        let gemv = GemvKernel::new(context, data_type).map_err(MetalError::from)?;
+        let gemv = GemvDispatch::new(context, data_type).map_err(MetalError::from)?;
 
         Ok(Self {
             gemv,

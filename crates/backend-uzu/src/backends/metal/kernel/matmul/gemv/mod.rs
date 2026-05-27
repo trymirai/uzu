@@ -1,4 +1,4 @@
 mod kernel;
 mod spec;
 
-pub(crate) use kernel::GemvKernel;
+pub(crate) use kernel::GemvDispatch;
