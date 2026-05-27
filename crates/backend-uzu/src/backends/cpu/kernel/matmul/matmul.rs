@@ -1,5 +1,3 @@
-use half::{bf16, f16};
-
 use crate::{
     DataType,
     backends::{
@@ -15,11 +13,14 @@ use crate::{
             BufferDowncastExt, Cpu, context::CpuContext, error::CpuError, kernel::matmul::quant::encode_quantized_gemm,
         },
     },
+    dispatch_dtype,
     utils::pointers::{SendPtr, SendPtrMut},
 };
 
 pub struct MatmulCpuKernel {
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     hadamard: <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel,
     bias_add: <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel,
 }
@@ -29,19 +30,30 @@ impl MatmulKernel for MatmulCpuKernel {
 
     fn new(
         context: &CpuContext,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, CpuError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+                return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
+            }
         }
         let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
             context,
-            data_type,
+            output_data_type,
             HadamardTransformOrder::Output,
         )?;
-        let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, true)?;
+        let bias_add = <<Cpu as Backend>::Kernels as Kernels>::TensorAddBiasKernel::new(
+            context,
+            output_data_type,
+            weights_data_type,
+            true,
+        )?;
         Ok(Self {
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             hadamard,
             bias_add,
         })
@@ -114,7 +126,9 @@ impl MatmulCpuKernel {
             n_u
         });
         let ldd = n_u;
-        let data_type = self.data_type;
+        let weights_data_type = self.weights_data_type;
+        let input_data_type = self.input_data_type;
+        let output_data_type = self.output_data_type;
         let a_buffer_range = a.as_buffer_range_ref();
         let b_buffer_range = weights.as_buffer_range_ref();
         let d_buffer_range = d.as_buffer_range_mut();
@@ -134,13 +148,13 @@ impl MatmulCpuKernel {
             SendPtr(unsafe { &*bias_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(bias_range.start))
         });
 
-        command_buffer.push_command(move || match data_type {
-            DataType::F32 => {
-                super::gemm::shaders::steel_gemm::matmul_gemm_impl::<f32>(
-                    a_ptr.as_ptr() as *const f32,
-                    b_ptr.as_ptr() as *const f32,
+        command_buffer.push_command(move || {
+            dispatch_dtype!(|(TW: weights_data_type, TA: input_data_type, TD: output_data_type)| {
+                super::gemm::shaders::steel_gemm::matmul_gemm_impl::<TA, TW, TD>(
+                    a_ptr.as_ptr() as *const TA,
+                    b_ptr.as_ptr() as *const TW,
                     ab_scale,
-                    d_ptr.as_ptr() as *mut f32,
+                    d_ptr.as_ptr() as *mut TD,
                     m_u,
                     n_u,
                     k_u,
@@ -151,48 +165,13 @@ impl MatmulCpuKernel {
                     is_accumulate,
                 );
                 if let Some(bias) = bias_ptr {
-                    apply_bias::<f32>(d_ptr.as_ptr() as *mut f32, bias.as_ptr() as *const f32, m_u, n_u);
+                    assert_eq!(
+                        weights_data_type, output_data_type,
+                        "mixed precision matmul with bias is not supported until bias dtype ownership is settled",
+                    );
+                    apply_bias::<TD>(d_ptr.as_ptr() as *mut TD, bias.as_ptr() as *const TD, m_u, n_u);
                 }
-            },
-            DataType::F16 => {
-                super::gemm::shaders::steel_gemm::matmul_gemm_impl::<f16>(
-                    a_ptr.as_ptr() as *const f16,
-                    b_ptr.as_ptr() as *const f16,
-                    ab_scale,
-                    d_ptr.as_ptr() as *mut f16,
-                    m_u,
-                    n_u,
-                    k_u,
-                    lda,
-                    ldb,
-                    ldd,
-                    b_transpose,
-                    is_accumulate,
-                );
-                if let Some(bias) = bias_ptr {
-                    apply_bias::<f16>(d_ptr.as_ptr() as *mut f16, bias.as_ptr() as *const f16, m_u, n_u);
-                }
-            },
-            DataType::BF16 => {
-                super::gemm::shaders::steel_gemm::matmul_gemm_impl::<bf16>(
-                    a_ptr.as_ptr() as *const bf16,
-                    b_ptr.as_ptr() as *const bf16,
-                    ab_scale,
-                    d_ptr.as_ptr() as *mut bf16,
-                    m_u,
-                    n_u,
-                    k_u,
-                    lda,
-                    ldb,
-                    ldd,
-                    b_transpose,
-                    is_accumulate,
-                );
-                if let Some(bias) = bias_ptr {
-                    apply_bias::<bf16>(d_ptr.as_ptr() as *mut bf16, bias.as_ptr() as *const bf16, m_u, n_u);
-                }
-            },
-            _ => unreachable!(),
+            })
         });
 
         Ok(())
@@ -243,6 +222,14 @@ impl MatmulCpuKernel {
         let post_bias = arguments.d_transform.bias;
 
         if arguments.m >= 5 && arguments.n > 1 {
+            assert_eq!(
+                self.input_data_type, self.weights_data_type,
+                "mixed precision quantized GEMM input dtype is not supported yet",
+            );
+            assert_eq!(
+                self.output_data_type, self.weights_data_type,
+                "mixed precision quantized GEMM output dtype is not supported yet",
+            );
             assert!(
                 !(post_bias.is_some() && post_rht.is_some()),
                 "MatmulCpuKernel/Quant GEMM with both output bias and output RHT is not supported: bias must be applied after RHT",
@@ -276,7 +263,7 @@ impl MatmulCpuKernel {
                     n,
                     k,
                 },
-                self.data_type,
+                self.weights_data_type,
             );
             if let Some(bias) = post_bias {
                 self.bias_add.encode(None::<&Allocation<Cpu>>, bias, &mut *d, n, m * n, encoder);
@@ -334,7 +321,9 @@ impl MatmulCpuKernel {
             let kernel =
                 <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
                     context,
-                    self.data_type,
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
                     group_size,
                     bits,
                     method,
@@ -364,7 +353,9 @@ impl MatmulCpuKernel {
             let kernel =
                 <<Cpu as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
                     context,
-                    self.data_type,
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
                     group_size,
                     bits,
                     method,

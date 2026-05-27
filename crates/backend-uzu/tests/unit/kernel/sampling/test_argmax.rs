@@ -5,7 +5,7 @@ use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    ArrayContextExt, ArrayElement, DataType, dispatch_dtype,
     backends::common::{
         AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
@@ -15,7 +15,7 @@ use backend_uzu::{
 
 use crate::{
     common::{
-        dispatch_dtype, for_each_context,
+        for_each_context,
         proptest::{ComparableTestResults, TestContextes, kernel_data_type},
     },
     uzu_test,
@@ -113,4 +113,3 @@ fn test_argmax_prop() {
         });
     });
 }
-

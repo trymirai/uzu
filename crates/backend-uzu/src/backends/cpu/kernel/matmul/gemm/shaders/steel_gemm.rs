@@ -6,11 +6,11 @@ use crate::{
 };
 
 #[inline(always)]
-unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
-    a: SendPtr<T>,
-    b: SendPtr<T>,
+unsafe fn matmul_gemm_compute_row<TA: ArrayElement + Float, TB: ArrayElement + Float, TD: ArrayElement + Float>(
+    a: SendPtr<TA>,
+    b: SendPtr<TB>,
     ab_scale: f32,
-    d: SendPtrMut<T>,
+    d: SendPtrMut<TD>,
     row: usize,
     n: usize,
     k: usize,
@@ -37,16 +37,16 @@ unsafe fn matmul_gemm_compute_row<T: ArrayElement + Float>(
             if is_accumulate {
                 acc += (*d_element).to_f32().unwrap();
             }
-            *d_element = T::from(acc).unwrap();
+            *d_element = TD::from(acc).unwrap();
         }
     }
 }
 
-pub fn matmul_gemm_impl<T: ArrayElement + Float>(
-    a: *const T,
-    b: *const T,
+pub fn matmul_gemm_impl<TA: ArrayElement + Float, TB: ArrayElement + Float, TD: ArrayElement + Float>(
+    a: *const TA,
+    b: *const TB,
     ab_scale: f32,
-    d: *mut T,
+    d: *mut TD,
     m: usize,
     n: usize,
     k: usize,

@@ -26,7 +26,9 @@ struct QmvKey {
 }
 
 pub(crate) struct QuantGemvKernel {
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     qmv: HashMap<QmvKey, <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel>,
     qmv_fast: HashMap<
         QmvKey,
@@ -37,10 +39,14 @@ pub(crate) struct QuantGemvKernel {
 impl QuantGemvKernel {
     pub(crate) fn new(
         _context: &MetalContext,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Self {
         Self {
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             qmv: HashMap::new(),
             qmv_fast: HashMap::new(),
         }
@@ -126,7 +132,9 @@ impl QuantGemvKernel {
                 Entry::Vacant(entry) => {
                     let kernel = <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
                         context,
-                        self.data_type,
+                        self.weights_data_type,
+                        self.input_data_type,
+                        self.output_data_type,
                         group_size,
                         bits,
                         method,
@@ -156,7 +164,9 @@ impl QuantGemvKernel {
                 Entry::Vacant(entry) => {
                     let kernel = <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
                         context,
-                        self.data_type,
+                        self.weights_data_type,
+                        self.input_data_type,
+                        self.output_data_type,
                         group_size,
                         bits,
                         method,

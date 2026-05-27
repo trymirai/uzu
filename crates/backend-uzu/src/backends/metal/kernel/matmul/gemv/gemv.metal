@@ -13,13 +13,15 @@ using namespace metal;
 // → 16 * (16 + 4) = 320. Unused when tg_simd_cols == 1.
 #define GEMV_MAX_THREADGROUP_MEMORY 320
 
-template <typename T>
-VARIANTS(T, half, bfloat, float)
+template <typename WeightT, typename InputT, typename OutputT>
+VARIANTS(WeightT, half, bfloat, float)
+VARIANTS(InputT, half, bfloat, float)
+VARIANTS(OutputT, half, bfloat, float)
 KERNEL(MatmulGemv)(
-    const device T* matrix,
-    const device T* input_vector,
-    const device T* output_bias OPTIONAL(is_bias),
-    device T* output_vector,
+    const device WeightT* matrix,
+    const device InputT* input_vector,
+    const device WeightT* output_bias OPTIONAL(is_bias),
+    device OutputT* output_vector,
     const constant uint& input_dimension,
     const constant uint& output_dimension,
     const constant uint& matrix_leading_dimension,
@@ -63,7 +65,7 @@ KERNEL(MatmulGemv)(
 
   // Thread local accumulation results
   thread float accumulated_values[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-  thread T matrix_values[4];
+  thread WeightT matrix_values[4];
   thread float vector_coefficients[4];
 
   const uint thread_row_in_simdgroup =
@@ -112,7 +114,7 @@ KERNEL(MatmulGemv)(
           ? output_row_start
           : output_dimension - uint(thread_out_rows);
 
-  const device T* thread_matrix =
+  const device WeightT* thread_matrix =
       matrix + output_row_start * matrix_leading_dimension;
 
   const uniform<uint> input_block_stride =
@@ -128,7 +130,7 @@ KERNEL(MatmulGemv)(
        ++input_block_index) {
     // Load vector coefficients (unchecked)
     {
-      const device T* input_vector_row =
+      const device InputT* input_vector_row =
           input_vector + batch_row * input_dimension;
       METAL_PRAGMA_UNROLL
       for (uint input_col_offset = 0; input_col_offset < thread_out_cols;
@@ -170,7 +172,7 @@ KERNEL(MatmulGemv)(
   if (remaining_input_columns > 0) {
     // Load vector coefficients (checked)
     {
-      const device T* input_vector_row =
+      const device InputT* input_vector_row =
           input_vector + batch_row * input_dimension;
       if (input_block_col_offset + uint(thread_out_cols) <=
           input_vector_length) {
@@ -221,7 +223,7 @@ KERNEL(MatmulGemv)(
                   ? thread_matrix
                         [output_row_offset * matrix_leading_dimension +
                          input_block_col_offset + input_col_offset]
-                  : T(0);
+                  : WeightT(0);
         }
       }
 
@@ -292,20 +294,25 @@ KERNEL(MatmulGemv)(
 
   // Write outputs
   if (simdgroup_col_thread_base == 0 && thread_col_in_simdgroup == 0) {
-    device T* output_row_values = output_vector + batch_row * output_dimension;
+    device OutputT* output_row_values =
+        output_vector + batch_row * output_dimension;
     METAL_PRAGMA_UNROLL
     for (uint output_row_offset = 0; output_row_offset < thread_out_rows;
          output_row_offset++) {
-      T accumulated_c = static_cast<T>(output_scale) *
-                        static_cast<T>(accumulated_values[output_row_offset]);
+      float accumulated_c =
+          output_scale * accumulated_values[output_row_offset];
       if (is_accumulate) {
-        accumulated_c +=
-            output_row_values[output_row_start + output_row_offset];
+        accumulated_c += static_cast<float>(
+            output_row_values[output_row_start + output_row_offset]
+        );
       }
       if (is_bias) {
-        accumulated_c += output_bias[output_row_start + output_row_offset];
+        accumulated_c += static_cast<float>(
+            output_bias[output_row_start + output_row_offset]
+        );
       }
-      output_row_values[output_row_start + output_row_offset] = accumulated_c;
+      output_row_values[output_row_start + output_row_offset] =
+          static_cast<OutputT>(accumulated_c);
     }
   }
 }

@@ -10,7 +10,8 @@ namespace uzu {
 namespace matmul {
 
 template <
-    typename T,
+    typename AT,
+    typename BT,
     ushort SIMDGROUP_BLOCK_M,
     ushort SIMDGROUP_BLOCK_N,
     ushort SIMDGROUP_BLOCK_K,
@@ -22,8 +23,8 @@ template <
     bool aligned_k,
     typename AccumulatorType = float>
 METAL_FUNC auto gemm_loop(
-    const device T* left_ptr,
-    const device T* right_ptr,
+    const device AT* left_ptr,
+    const device BT* right_ptr,
     int leading_dimension_a,
     int leading_dimension_b,
     int K,
@@ -53,10 +54,10 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < BLOCK_K; inner_k += SIMDGROUP_BLOCK_K) {
-      Fragment<T, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(
+      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(
           thread_context
       );
-      Fragment<T, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(
+      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(
           thread_context
       );
 
@@ -115,10 +116,10 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < remaining_k; inner_k += SIMDGROUP_BLOCK_K) {
-      Fragment<T, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(
+      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(
           thread_context
       );
-      Fragment<T, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(
+      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(
           thread_context
       );
 

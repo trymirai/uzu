@@ -34,6 +34,8 @@ fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
         let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
             context,
             T::data_type(),
+            T::data_type(),
+            T::data_type(),
             group_size,
             bits,
             quant_method,

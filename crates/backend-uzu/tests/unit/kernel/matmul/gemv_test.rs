@@ -63,7 +63,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
 
-    let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
+    let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(
+        &context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
         .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

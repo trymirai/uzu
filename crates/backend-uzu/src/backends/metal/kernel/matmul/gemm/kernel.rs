@@ -32,7 +32,9 @@ pub enum GemmDispatchPath {
 }
 
 pub struct GemmKernel {
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
     pub bias_add: TensorAddBiasMetalKernel,
     pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
@@ -41,21 +43,25 @@ pub struct GemmKernel {
 impl GemmKernel {
     pub(crate) fn new(
         context: &MetalContext,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, MetalError> {
-        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true)?;
+        let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true)?;
         let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
             context,
-            data_type,
+            output_data_type,
             HadamardTransformOrder::Output,
         )?;
         let mut kernel = Self {
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             kernels: HashMap::new(),
             bias_add,
             hadamard,
         };
-        for specialization in GemmSpecialization::precompile_configs(data_type) {
+        for specialization in GemmSpecialization::precompile_configs(weights_data_type) {
             kernel.get_or_create(context, specialization)?;
         }
         Ok(kernel)
@@ -66,7 +72,7 @@ impl GemmKernel {
         context: &MetalContext,
         combo: MatmulQuantCombo,
     ) -> Result<(), MetalError> {
-        for specialization in GemmSpecialization::quant_combo_specs(self.data_type, combo) {
+        for specialization in GemmSpecialization::quant_combo_specs(self.weights_data_type, combo) {
             self.get_or_create(context, specialization)?;
         }
         Ok(())
@@ -82,7 +88,9 @@ impl GemmKernel {
             Entry::Vacant(entry) => {
                 let kernel = GemmMetalKernel::new(
                     context,
-                    specialization.data_type,
+                    self.input_data_type,
+                    self.weights_data_type,
+                    self.output_data_type,
                     specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
@@ -103,7 +111,9 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         let path = if encoder.context().device.supports_mxu()
-            && matches!(self.data_type, DataType::F16 | DataType::BF16 | DataType::F32)
+            && [self.weights_data_type, self.input_data_type, self.output_data_type]
+                .into_iter()
+                .all(|data_type| matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32))
             && matches!(arguments.b, MatmulB::FullPrecision { .. })
         {
             GemmDispatchPath::Mxu
@@ -126,9 +136,13 @@ impl GemmKernel {
                     "GemmDispatchPath::Mxu requested on hardware without MXU support",
                 );
                 assert!(
-                    matches!(self.data_type, DataType::F16 | DataType::BF16 | DataType::F32),
-                    "GemmDispatchPath::Mxu requires F16, BF16, or F32 data type, got {:?}",
-                    self.data_type,
+                    [self.weights_data_type, self.input_data_type, self.output_data_type]
+                        .into_iter()
+                        .all(|data_type| matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)),
+                    "GemmDispatchPath::Mxu requires F16, BF16, or F32 data types, got weights {:?}, input {:?}, output {:?}",
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
                 );
                 assert!(
                     matches!(arguments.b, MatmulB::FullPrecision { .. }),
@@ -254,7 +268,7 @@ impl GemmKernel {
                 };
 
                 let specialization = GemmSpecialization {
-                    data_type: self.data_type,
+                    weights_data_type: self.weights_data_type,
                     tiling,
                     use_mxu,
                     output_transform,
@@ -310,7 +324,7 @@ impl GemmKernel {
                 let group_count_y = m.div_ceil(tiling.block_m());
 
                 let specialization = GemmSpecialization {
-                    data_type: self.data_type,
+                    weights_data_type: self.weights_data_type,
                     tiling,
                     use_mxu,
                     output_transform,

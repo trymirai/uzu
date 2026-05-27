@@ -13,21 +13,25 @@ using namespace uzu::gemm;
 #define GEMM_TGA_ELEMENTS                                                      \
   (USE_MXU ? 1                                                                 \
            : (gemm_tiling_block_m(GEMM_TILING) *                               \
-              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
+              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                      \
   (USE_MXU ? 1                                                                 \
            : (gemm_tiling_block_n(GEMM_TILING) *                               \
-              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
+              (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
-    typename T,
+    typename AT,
+    typename BT,
+    typename DT,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     bool USE_MXU,
     GemmWeightPrologueKind WEIGHT_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
-VARIANTS(T, half, bfloat, float)
+VARIANTS(AT, half, bfloat, float)
+VARIANTS(BT, half, bfloat, float)
+VARIANTS(DT, half, bfloat, float)
 VARIANTS(
     GEMM_TILING,
     GemmTiling::T8x32x32_1x1,
@@ -71,24 +75,24 @@ CONSTRAINT(
     GEMM_TILING != GemmTiling::T64x64x64_2x2 ||
         GROUP_SIZE == 64 || GROUP_SIZE == 128)
 KERNEL(Gemm)(
-    const device T* a,
+    const device AT* a,
     const device uint8_t* b_packed,
-    device T* d,
-    const device T* scales
+    device DT* d,
+    const device BT* scales
         OPTIONAL(WEIGHT_PROLOGUE != GemmWeightPrologueKind::FullPrecision),
-    const device T* biases
+    const device BT* biases
         OPTIONAL(WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant),
     const device uint8_t* zero_points
         OPTIONAL(WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant),
-    const device T* output_bias
+    const device BT* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
-    threadgroup T a_shared[GEMM_TGA_ELEMENTS],
-    threadgroup T b_shared[GEMM_TGB_ELEMENTS],
+    threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
+    threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
@@ -106,8 +110,8 @@ KERNEL(Gemm)(
     (void)scales;
     (void)biases;
     (void)zero_points;
-    const device T* b = reinterpret_cast<const device T*>(b_packed);
-    MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B>::run(
+    const device BT* b = reinterpret_cast<const device BT*>(b_packed);
+    MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B>::run(
         a,
         b,
         d,
@@ -119,7 +123,9 @@ KERNEL(Gemm)(
     );
   } else {
     SimdgroupMmaCore<
-        T,
+        AT,
+        BT,
+        DT,
         GEMM_TILING,
         TRANSPOSE_B,
         WEIGHT_PROLOGUE,
