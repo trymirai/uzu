@@ -1,11 +1,11 @@
+use crate::backends::common::gpu_types::{gemm::GemmDTransform, matmul::GemvTiling};
+
+/// Host-side GEMV configuration: the tile layout (`GemvTiling`) plus the output
+/// transforms the pipeline is specialized for. Scale is always applied via
+/// `GemvParams::ab_scale`, so it is not part of the transform flags here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GemvSpecialization {
-    pub threadgroup_rows: u32,
-    pub threadgroup_cols: u32,
-    pub threads_per_simdgroup_row: u32,
-    pub threads_per_simdgroup_col: u32,
-    pub elements_per_thread_row: u32,
-    pub elements_per_thread_col: u32,
+    pub tiling: GemvTiling,
     pub is_accumulate: bool,
     pub is_bias: bool,
     pub is_hadamard: bool,
@@ -17,67 +17,37 @@ impl GemvSpecialization {
         match data_type {
             DataType::BF16 => &[
                 Self {
-                    threadgroup_rows: 4,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Standard,
                     is_accumulate: false,
                     is_bias: false,
                     is_hadamard: false,
                 },
                 Self {
-                    threadgroup_rows: 4,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Standard,
                     is_accumulate: false,
                     is_bias: true,
                     is_hadamard: false,
                 },
                 Self {
-                    threadgroup_rows: 8,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Wide,
                     is_accumulate: false,
                     is_bias: false,
                     is_hadamard: false,
                 },
                 Self {
-                    threadgroup_rows: 8,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Wide,
                     is_accumulate: false,
                     is_bias: true,
                     is_hadamard: false,
                 },
                 Self {
-                    threadgroup_rows: 8,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Wide,
                     is_accumulate: false,
                     is_bias: false,
                     is_hadamard: true,
                 },
                 Self {
-                    threadgroup_rows: 8,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Wide,
                     is_accumulate: false,
                     is_bias: true,
                     is_hadamard: true,
@@ -85,23 +55,13 @@ impl GemvSpecialization {
             ],
             DataType::F16 => &[
                 Self {
-                    threadgroup_rows: 8,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Wide,
                     is_accumulate: false,
                     is_bias: false,
                     is_hadamard: false,
                 },
                 Self {
-                    threadgroup_rows: 8,
-                    threadgroup_cols: 1,
-                    threads_per_simdgroup_row: 1,
-                    threads_per_simdgroup_col: 32,
-                    elements_per_thread_row: 4,
-                    elements_per_thread_col: 4,
+                    tiling: GemvTiling::Wide,
                     is_accumulate: false,
                     is_bias: false,
                     is_hadamard: true,
@@ -111,8 +71,12 @@ impl GemvSpecialization {
         }
     }
 
-    pub fn output_rows_per_threadgroup(&self) -> u32 {
-        self.threadgroup_rows * self.threads_per_simdgroup_row * self.elements_per_thread_row
+    pub fn output_transform(&self) -> GemmDTransform {
+        let mut transform = GemmDTransform::empty();
+        transform.set(GemmDTransform::ACCUMULATE, self.is_accumulate);
+        transform.set(GemmDTransform::BIAS, self.is_bias);
+        transform.set(GemmDTransform::RHT, self.is_hadamard);
+        transform
     }
 
     pub fn select(
@@ -122,50 +86,39 @@ impl GemvSpecialization {
         is_bias: bool,
         is_hadamard: bool,
     ) -> Self {
-        let (threadgroup_rows, threadgroup_cols);
-        let (threads_per_simdgroup_row, threads_per_simdgroup_col);
-        let (elements_per_thread_row, elements_per_thread_col);
-
-        let threadgroup_simd_rows;
-        let mut simdgroup_thread_rows = 1;
-        let mut simdgroup_thread_cols = 32;
-        let mut threadgroup_simd_cols = 1;
-
-        if is_hadamard {
-            threadgroup_simd_rows = 8;
+        let narrow = output_dimension < 4;
+        let tiling = if is_hadamard {
+            if narrow {
+                GemvTiling::WideNarrow
+            } else {
+                GemvTiling::Wide
+            }
         } else if input_dimension <= 64 {
-            threadgroup_simd_rows = 1;
-            simdgroup_thread_rows = 8;
-            simdgroup_thread_cols = 4;
+            if narrow {
+                GemvTiling::SmallInputNarrow
+            } else {
+                GemvTiling::SmallInput
+            }
         } else if input_dimension >= 16 * output_dimension {
-            threadgroup_simd_rows = 1;
-            threadgroup_simd_cols = 8;
+            if narrow {
+                GemvTiling::SplitInputNarrow
+            } else {
+                GemvTiling::SplitInput
+            }
         } else if output_dimension >= 4096 {
-            threadgroup_simd_rows = 8;
+            if narrow {
+                GemvTiling::WideNarrow
+            } else {
+                GemvTiling::Wide
+            }
+        } else if narrow {
+            GemvTiling::StandardNarrow
         } else {
-            threadgroup_simd_rows = 4;
-        }
-
-        let thread_output_rows = if output_dimension < 4 {
-            1
-        } else {
-            4
+            GemvTiling::Standard
         };
 
-        threadgroup_rows = threadgroup_simd_rows;
-        threadgroup_cols = threadgroup_simd_cols;
-        threads_per_simdgroup_row = simdgroup_thread_rows;
-        threads_per_simdgroup_col = simdgroup_thread_cols;
-        elements_per_thread_row = thread_output_rows;
-        elements_per_thread_col = 4;
-
         Self {
-            threadgroup_rows,
-            threadgroup_cols,
-            threads_per_simdgroup_row,
-            threads_per_simdgroup_col,
-            elements_per_thread_row,
-            elements_per_thread_col,
+            tiling,
             is_accumulate,
             is_bias,
             is_hadamard,

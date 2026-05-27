@@ -6,7 +6,11 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform, matmul::GemvParams},
+            gpu_types::{
+                QuantizationMethod, QuantizationMode,
+                gemm::GemmDTransform,
+                matmul::{GemvParams, GemvTiling},
+            },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
         metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
@@ -17,42 +21,6 @@ const FP_PATH: &str = "FpGemv";
 const QUANT_PATH: &str = "QuantGemv";
 
 type UnifiedKernel = GemvMetalKernel;
-
-/// Per-threadgroup tile layout (function-constant specialization). The quant
-/// branch hardcodes its own layout and ignores these, so quant uses a single
-/// canonical tile; the full-precision branch drives them from the host
-/// heuristic in `GemvSpecialization::select`.
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-struct GemvTile {
-    tg_simd_rows: u32,
-    tg_simd_cols: u32,
-    sg_thread_rows: u32,
-    sg_thread_cols: u32,
-    thread_out_rows: u32,
-    thread_out_cols: u32,
-}
-
-impl GemvTile {
-    const QUANT: GemvTile = GemvTile {
-        tg_simd_rows: 8,
-        tg_simd_cols: 1,
-        sg_thread_rows: 1,
-        sg_thread_cols: 32,
-        thread_out_rows: 4,
-        thread_out_cols: 4,
-    };
-
-    fn from_spec(specialization: &GemvSpecialization) -> Self {
-        Self {
-            tg_simd_rows: specialization.threadgroup_rows,
-            tg_simd_cols: specialization.threadgroup_cols,
-            sg_thread_rows: specialization.threads_per_simdgroup_row,
-            sg_thread_cols: specialization.threads_per_simdgroup_col,
-            thread_out_rows: specialization.elements_per_thread_row,
-            thread_out_cols: specialization.elements_per_thread_col,
-        }
-    }
-}
 
 /// Output transforms gemv branches on. Scale is always applied (via
 /// `GemvParams::ab_scale`), so the SCALE bit is intentionally excluded.
@@ -73,7 +41,7 @@ struct GemvKey {
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
-    tile: GemvTile,
+    tiling: GemvTiling,
     output_transform: GemmDTransform,
 }
 
@@ -91,15 +59,15 @@ impl GemvDispatch {
             data_type,
             pipelines: HashMap::new(),
         };
-        for &config in GemvSpecialization::precompile_configs(data_type) {
+        for config in GemvSpecialization::precompile_configs(data_type) {
             kernel.get_or_create(
                 context,
                 GemvKey {
                     group_size: 0,
                     bits: 0,
                     quant_method: QuantizationMethod::ScaleBias,
-                    tile: GemvTile::from_spec(&config),
-                    output_transform: output_transform(config.is_accumulate, config.is_bias, config.is_hadamard),
+                    tiling: config.tiling,
+                    output_transform: config.output_transform(),
                 },
             )?;
         }
@@ -121,12 +89,7 @@ impl GemvDispatch {
                     key.bits,
                     key.quant_method,
                     key.output_transform,
-                    key.tile.tg_simd_rows,
-                    key.tile.tg_simd_cols,
-                    key.tile.sg_thread_rows,
-                    key.tile.sg_thread_cols,
-                    key.tile.thread_out_rows,
-                    key.tile.thread_out_cols,
+                    key.tiling,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -189,7 +152,7 @@ impl GemvDispatch {
 
         let specialization =
             GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some(), rht_factors.is_some());
-        let output_rows_per_threadgroup = specialization.output_rows_per_threadgroup();
+        let output_rows_per_threadgroup = specialization.tiling.output_rows_per_threadgroup();
         let group_count_x = n.div_ceil(output_rows_per_threadgroup);
         let group_count_y = m;
 
@@ -197,8 +160,8 @@ impl GemvDispatch {
             group_size: 0,
             bits: 0,
             quant_method: QuantizationMethod::ScaleBias,
-            tile: GemvTile::from_spec(&specialization),
-            output_transform: output_transform(is_accumulate, output_bias.is_some(), rht_factors.is_some()),
+            tiling: specialization.tiling,
+            output_transform: specialization.output_transform(),
         };
         let params = GemvParams {
             in_vec_size: k,
@@ -295,7 +258,7 @@ impl GemvDispatch {
             group_size,
             bits,
             quant_method: method,
-            tile: GemvTile::QUANT,
+            tiling: GemvTiling::Wide,
             output_transform: output_transform(is_accumulate, output_bias.is_some(), hadamard_factors.is_some()),
         };
         let params = GemvParams {
