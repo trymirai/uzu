@@ -72,7 +72,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
     const device WeightT* biases_row_base = nullptr;
     if (quant_method == QuantizationMethod::ScaleBias) {
       biases_row_base = biases + out_row * in_vec_size_g;
-    } else {
+    } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
       zps_row_base = zero_points + out_row * zp_stride;
     }
 
@@ -97,7 +97,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
           U b = static_cast<U>(bl[g]);
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, b, sum);
-        } else {
+        } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
           const device uint8_t* zl = zps_row_base + row * zp_stride;
           U zp;
           if (BITS == 4) {
@@ -108,6 +108,15 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
           }
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
+        } else {
+          constexpr U midpoint = U(1u << (BITS - 1));
+          result[row] += qdot<U, values_per_thread, BITS>(
+              wl,
+              x_thread,
+              s,
+              -s * midpoint,
+              sum
+          );
         }
       }
 
@@ -141,7 +150,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
           U b = static_cast<U>(bl[g]);
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, b, sum);
-        } else {
+        } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
           const device uint8_t* zl = zps_row_base + row * zp_stride;
           U zp;
           if (BITS == 4) {
@@ -152,6 +161,15 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
           }
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
+        } else {
+          constexpr U midpoint = U(1u << (BITS - 1));
+          result[row] += qdot<U, values_per_thread, BITS>(
+              wl,
+              x_thread,
+              s,
+              -s * midpoint,
+              sum
+          );
         }
       }
     }
@@ -175,7 +193,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
     const device WeightT* biases_row_base = nullptr;
     if (quant_method == QuantizationMethod::ScaleBias) {
       biases_row_base = biases + used_out_row * in_vec_size_g;
-    } else {
+    } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
       zps_row_base = zero_points + used_out_row * zp_stride;
     }
 
@@ -198,7 +216,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
           U b = static_cast<U>(bl[g]);
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, b, sum);
-        } else {
+        } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
           const device uint8_t* zl = zps_row_base + row * zp_stride;
           U zp;
           if (BITS == 4) {
@@ -209,6 +227,15 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
           }
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
+        } else {
+          constexpr U midpoint = U(1u << (BITS - 1));
+          result[row] += qdot<U, values_per_thread, BITS>(
+              wl,
+              x_thread,
+              s,
+              -s * midpoint,
+              sum
+          );
         }
       }
 
@@ -247,7 +274,7 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
               sum,
               remaining
           );
-        } else {
+        } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
           const device uint8_t* zl = zps_row_base + row * zp_stride;
           U zp;
           if (BITS == 4) {
@@ -258,6 +285,16 @@ PUBLIC KERNEL(QuantizedMatmulQmv)(
           }
           result[row] +=
               qdot<U, values_per_thread, BITS>(wl, x_thread, s, -s * zp, sum);
+        } else {
+          constexpr U midpoint = U(1u << (BITS - 1));
+          result[row] += qdot_safe<U, values_per_thread, BITS>(
+              wl,
+              x_thread,
+              s,
+              -s * midpoint,
+              sum,
+              remaining
+          );
         }
       }
     }

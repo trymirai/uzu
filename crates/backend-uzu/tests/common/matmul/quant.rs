@@ -65,13 +65,14 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             num_groups_k
         };
         let (zero_points, biases) = match quant_method {
-            QuantizationMethod::ScaleZeroPoint => {
-                (Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
-            },
             QuantizationMethod::ScaleBias => (
                 None,
                 Some((0..n * num_groups_k).map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap()).collect()),
             ),
+            QuantizationMethod::ScaleZeroPoint => {
+                (Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
+            },
+            QuantizationMethod::ScaleSymmetric => (None, None),
         };
 
         Self {
@@ -122,6 +123,13 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     input: &QuantInput<T>,
 ) -> MatmulArguments<'a, B> {
     let b_variant = match input.quant_method {
+        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            b: &buffers.w,
+            scales: &buffers.scales,
+            biases: buffers.bias.as_ref().expect("bias buffer"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
         QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
             b: &buffers.w,
             scales: &buffers.scales,
@@ -129,10 +137,9 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             mode: input.mode,
             group_size: input.group_size,
         },
-        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
             b: &buffers.w,
             scales: &buffers.scales,
-            biases: buffers.bias.as_ref().expect("bias buffer"),
             mode: input.mode,
             group_size: input.group_size,
         },

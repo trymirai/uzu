@@ -102,6 +102,7 @@ impl GemmSpecialization {
         let weight_prologue = match combo.method {
             QuantizationMethod::ScaleBias => GemmWeightPrologueKind::ScaleBiasDequant,
             QuantizationMethod::ScaleZeroPoint => GemmWeightPrologueKind::ScaleZeroPointDequant,
+            QuantizationMethod::ScaleSymmetric => GemmWeightPrologueKind::ScaleSymmetricDequant,
         };
         let mut out = Vec::new();
         for &tiling in quant_tiling_set(weights_data_type) {

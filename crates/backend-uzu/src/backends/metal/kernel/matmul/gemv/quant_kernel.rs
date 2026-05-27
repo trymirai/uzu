@@ -95,14 +95,20 @@ impl QuantGemvKernel {
                 biases,
                 mode,
                 group_size,
-            } => (w, scales, biases, QuantizationMethod::ScaleBias, mode, group_size),
+            } => (w, scales, Some(biases), QuantizationMethod::ScaleBias, mode, group_size),
             MatmulB::ScaleZeroPointDequant {
                 b: w,
                 scales,
                 zero_points,
                 mode,
                 group_size,
-            } => (w, scales, zero_points, QuantizationMethod::ScaleZeroPoint, mode, group_size),
+            } => (w, scales, Some(zero_points), QuantizationMethod::ScaleZeroPoint, mode, group_size),
+            MatmulB::ScaleSymmetricDequant {
+                b: w,
+                scales,
+                mode,
+                group_size,
+            } => (w, scales, None, QuantizationMethod::ScaleSymmetric, mode, group_size),
             MatmulB::FullPrecision {
                 ..
             } => panic!("QuantGemvKernel requires quantized B"),
@@ -115,8 +121,13 @@ impl QuantGemvKernel {
         let use_fast = n % 8 == 0 && k % 512 == 0;
 
         let (zero_points, biases) = match method {
-            QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
-            QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
+            QuantizationMethod::ScaleBias => {
+                (None, Some(zp_or_bias.expect("ScaleBias quantized matmul requires biases")))
+            },
+            QuantizationMethod::ScaleZeroPoint => {
+                (Some(zp_or_bias.expect("ScaleZeroPoint quantized matmul requires zero_points")), None)
+            },
+            QuantizationMethod::ScaleSymmetric => (None, None),
         };
 
         if use_fast {

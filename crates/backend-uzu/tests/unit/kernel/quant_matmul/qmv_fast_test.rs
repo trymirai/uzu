@@ -4,8 +4,8 @@ use backend_uzu::{
     ArrayElement, DataType,
     backends::{
         common::{
-            Allocation, Backend, Context, Encoder, Kernels, gpu_types::QuantizationMethod,
-
+            Allocation, Backend, Context, Encoder, Kernels,
+            gpu_types::QuantizationMethod,
             kernel::{QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel},
         },
         cpu::Cpu,
@@ -139,6 +139,16 @@ fn get_test_data<T: ArrayElement + Float>(
     };
 
     let (zero_points, biases) = match quant_method {
+        QuantizationMethod::ScaleBias => {
+            let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
+            for j in 0..n {
+                for g in 0..num_groups_k {
+                    biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
+                }
+            }
+            let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
+            (None, Some(biases))
+        },
         QuantizationMethod::ScaleZeroPoint => {
             let mut zp_raw: Vec<u8> = Vec::with_capacity(n * num_groups_k);
             for j in 0..n {
@@ -157,16 +167,7 @@ fn get_test_data<T: ArrayElement + Float>(
             }
             (Some(zp_packed), None)
         },
-        QuantizationMethod::ScaleBias => {
-            let mut biases_f32: Vec<f32> = Vec::with_capacity(n * num_groups_k);
-            for j in 0..n {
-                for g in 0..num_groups_k {
-                    biases_f32.push(0.01 * ((j + g * 2) % 7) as f32);
-                }
-            }
-            let biases: Vec<T> = biases_f32.iter().map(|&v| T::from(v).unwrap()).collect();
-            (None, Some(biases))
-        },
+        QuantizationMethod::ScaleSymmetric => (None, None),
     };
 
     let mut x_f32: Vec<f32> = Vec::with_capacity(m * k);
@@ -281,14 +282,6 @@ macro_rules! qmv_fast_test {
     };
 }
 
-qmv_fast_test!(test_gs16_4bit_zp, gs = 16, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
-qmv_fast_test!(test_gs32_4bit_zp, gs = 32, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
-qmv_fast_test!(test_gs64_4bit_zp, gs = 64, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
-qmv_fast_test!(test_gs128_4bit_zp, gs = 128, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
-qmv_fast_test!(test_gs16_8bit_zp, gs = 16, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
-qmv_fast_test!(test_gs32_8bit_zp, gs = 32, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
-qmv_fast_test!(test_gs64_8bit_zp, gs = 64, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
-qmv_fast_test!(test_gs128_8bit_zp, gs = 128, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
 qmv_fast_test!(test_gs16_4bit_mlx, gs = 16, bits = 4, format = QuantizationMethod::ScaleBias);
 qmv_fast_test!(test_gs32_4bit_mlx, gs = 32, bits = 4, format = QuantizationMethod::ScaleBias);
 qmv_fast_test!(test_gs64_4bit_mlx, gs = 64, bits = 4, format = QuantizationMethod::ScaleBias);
@@ -297,3 +290,12 @@ qmv_fast_test!(test_gs16_8bit_mlx, gs = 16, bits = 8, format = QuantizationMetho
 qmv_fast_test!(test_gs32_8bit_mlx, gs = 32, bits = 8, format = QuantizationMethod::ScaleBias);
 qmv_fast_test!(test_gs64_8bit_mlx, gs = 64, bits = 8, format = QuantizationMethod::ScaleBias);
 qmv_fast_test!(test_gs128_8bit_mlx, gs = 128, bits = 8, format = QuantizationMethod::ScaleBias);
+qmv_fast_test!(test_gs16_4bit_zp, gs = 16, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs32_4bit_zp, gs = 32, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs64_4bit_zp, gs = 64, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs128_4bit_zp, gs = 128, bits = 4, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs16_8bit_zp, gs = 16, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs32_8bit_zp, gs = 32, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs64_8bit_zp, gs = 64, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs128_8bit_zp, gs = 128, bits = 8, format = QuantizationMethod::ScaleZeroPoint);
+qmv_fast_test!(test_gs32_8bit_symmetric, gs = 32, bits = 8, format = QuantizationMethod::ScaleSymmetric);

@@ -49,7 +49,8 @@ VARIANTS(
     WEIGHT_PROLOGUE,
     GemmWeightPrologueKind::FullPrecision,
     GemmWeightPrologueKind::ScaleBiasDequant,
-    GemmWeightPrologueKind::ScaleZeroPointDequant)
+    GemmWeightPrologueKind::ScaleZeroPointDequant,
+    GemmWeightPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 CONSTRAINT(

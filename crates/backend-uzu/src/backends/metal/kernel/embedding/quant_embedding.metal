@@ -76,7 +76,7 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
   float bias = 0.0f;
   if (quantization_method == QuantizationMethod::ScaleBias) {
     bias = float(biases[token_id * num_groups + group_idx]);
-  } else {
+  } else if (quantization_method == QuantizationMethod::ScaleZeroPoint) {
     uint zero_point = 0;
     if (quantization_mode == QuantizationMode::U4) {
       const uint8_t packed = zero_points[token_id * zp_stride + group_idx / 2];
@@ -86,6 +86,9 @@ PUBLIC KERNEL(QuantizedEmbeddingLookup) (
       zero_point = zero_points[token_id * zp_stride + group_idx];
     }
     bias = -float(scale) * float(zero_point);
+  } else {
+    const uint midpoint = quantization_mode == QuantizationMode::U4 ? 8 : 128;
+    bias = -float(scale) * float(midpoint);
   }
 
   float out_f = float(scale) * float(quantized_value) + bias;

@@ -65,6 +65,10 @@ pub fn qmv<WeightT: ArrayElement + Float, InputT: ArrayElement + Float, OutputT:
                     let scale = (*scales.add(j * num_groups_k + group_idx)).to_f32().unwrap();
 
                     let bias = match quant_method {
+                        QuantizationMethod::ScaleBias => {
+                            // Biases are [N, num_groups_k]
+                            (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap()
+                        },
                         QuantizationMethod::ScaleZeroPoint => {
                             let zp = zero_points.unwrap();
                             // Zero points are [N, zp_stride_k]
@@ -81,9 +85,9 @@ pub fn qmv<WeightT: ArrayElement + Float, InputT: ArrayElement + Float, OutputT:
                             };
                             -scale * zp_val
                         },
-                        QuantizationMethod::ScaleBias => {
-                            // Biases are [N, num_groups_k]
-                            (*biases.unwrap().add(j * num_groups_k + group_idx)).to_f32().unwrap()
+                        QuantizationMethod::ScaleSymmetric => {
+                            let midpoint = 1 << (bits - 1);
+                            -scale * midpoint as f32
                         },
                     };
 

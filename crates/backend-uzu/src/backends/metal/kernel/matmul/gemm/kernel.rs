@@ -153,7 +153,7 @@ impl GemmKernel {
             GemmDispatchPath::Simdgroup => false,
         };
 
-        let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+        let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });
         if is_quant {
             let d_mask = arguments.d_transform.mask();
             if d_mask.contains(GemmDTransform::ACCUMULATE) {
@@ -299,6 +299,9 @@ impl GemmKernel {
             }
             | MatmulB::ScaleZeroPointDequant {
                 ..
+            }
+            | MatmulB::ScaleSymmetricDequant {
+                ..
             }) => {
                 let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
@@ -313,6 +316,11 @@ impl GemmKernel {
                         zero_points,
                         ..
                     } => (w, Some(scales), None, Some(zero_points)),
+                    MatmulB::ScaleSymmetricDequant {
+                        b: w,
+                        scales,
+                        ..
+                    } => (w, Some(scales), None, None),
                     _ => unreachable!(),
                 };
 
