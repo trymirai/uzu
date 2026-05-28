@@ -5,7 +5,7 @@ use crate::{
     DataType,
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Buffer, Encoder,
+            AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
                 QuantizationMode,
                 gemm::{GemmBPrologueKind, GemmDTransform},
@@ -74,9 +74,6 @@ impl GemvDispatch {
                 let kernel = GemvMetalKernel::new(
                     context,
                     self.data_type,
-                    GemmBPrologueKind::FullPrecision,
-                    0,
-                    0,
                     key.output_transform,
                     key.tiling,
                 )
@@ -186,9 +183,6 @@ impl GemvDispatch {
             (a, a_offset),
             weights,
             &mut *d,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
             output_bias,
             rht_factors,
             std::slice::from_ref(&params),
