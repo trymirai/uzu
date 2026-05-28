@@ -1,6 +1,5 @@
 #include "../../common/dsl.h"
 #include "common/gemv_core.h"
-#include "common/gemv_tiling.h"
 
 using namespace metal;
 using namespace uzu::quantization_method;
@@ -43,15 +42,6 @@ KERNEL(Gemv)(
 ) {
   (void)thread_index_z;
 
-  const GemvTile tile{
-      gemv_tiling_tg_simd_rows(gemv_tiling),
-      gemv_tiling_tg_simd_cols(gemv_tiling),
-      gemv_tiling_sg_thread_rows(gemv_tiling),
-      gemv_tiling_sg_thread_cols(gemv_tiling),
-      gemv_tiling_thread_out_rows(gemv_tiling),
-      gemv_tiling_thread_out_cols(gemv_tiling),
-  };
-
   // Derive prologue from BITS so the kernel's VARIANTS(...) set stays
   // (T, GROUP_SIZE, BITS); the gemv `CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))`
   // already enforces that BITS == 0 ↔ FullPrecision. The ScaleBias vs
@@ -72,7 +62,7 @@ KERNEL(Gemv)(
       params,
       quant_method,
       output_transform,
-      tile,
+      gemv_tiling,
       group_index_x,
       group_index_y,
       thread_index_x,

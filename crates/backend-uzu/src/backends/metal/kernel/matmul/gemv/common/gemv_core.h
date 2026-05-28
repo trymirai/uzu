@@ -11,10 +11,12 @@
 #include "../../../generated/matmul.h"
 #include "../../common/qdot.h"
 #include "../../common/quant_pack.h"
+#include "gemv_tiling.h"
 
 using namespace metal;
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
+using namespace uzu::matmul;
 
 // Upper bound for the full-precision threadgroup reduction scratch (in floats).
 // Max config: tg_simd_cols=16, output_rows_per_tg=16, thread_out_rows=4
@@ -43,15 +45,6 @@ inline constexpr uint qmv_bytes_per_pack() {
 namespace uzu {
 namespace gemv {
 
-struct GemvTile {
-  uint tg_simd_rows;
-  uint tg_simd_cols;
-  uint sg_thread_rows;
-  uint sg_thread_cols;
-  uint thread_out_rows;
-  uint thread_out_cols;
-};
-
 // Template signature mirrors gemm's `SimdgroupMmaCore`; `B_PROLOGUE` selects
 // the dense vs quantized body (the quantized sub-kind, ScaleBias vs
 // ScaleZeroPoint, is still picked at runtime from `quant_method`).
@@ -73,7 +66,7 @@ struct GemvCore {
       const constant uzu::matmul::GemvParams* params,
       QuantizationMethod quant_method,
       GemmDTransform output_transform,
-      GemvTile tile,
+      GemvTiling gemv_tiling,
       uint group_index_x,
       uint group_index_y,
       uint thread_index_x,
@@ -100,12 +93,12 @@ struct GemvCore {
           output_bias,
           params,
           output_transform,
-          tile,
+          gemv_tiling,
           threadgroup_memory,
           thread_context
       );
     } else {
-      (void)tile;
+      (void)gemv_tiling;
       (void)threadgroup_memory;
       (void)thread_context;
       run_quantized(
@@ -137,7 +130,7 @@ struct GemvCore {
       const device T* output_bias,
       const constant uzu::matmul::GemvParams* params,
       GemmDTransform output_transform,
-      GemvTile tile,
+      GemvTiling gemv_tiling,
       threadgroup float* threadgroup_memory,
       const thread ThreadContext& thread_context
   );
