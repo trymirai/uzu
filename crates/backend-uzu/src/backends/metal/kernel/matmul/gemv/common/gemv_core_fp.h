@@ -54,44 +54,44 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
 
   const uint thread_row_in_simdgroup =
       gemv_tiling_sg_thread_cols(gemv_tiling) != 32
-          ? uint(thread_context.simd_lane_id) /
-              uint(gemv_tiling_sg_thread_cols(gemv_tiling))
+          ? static_cast<uint>(thread_context.simd_lane_id) /
+              static_cast<uint>(gemv_tiling_sg_thread_cols(gemv_tiling))
           : 0;
   const int thread_col_in_simdgroup =
       gemv_tiling_sg_thread_cols(gemv_tiling) != 32
-          ? uint(thread_context.simd_lane_id) %
-              uint(gemv_tiling_sg_thread_cols(gemv_tiling))
-          : uint(thread_context.simd_lane_id);
+          ? static_cast<uint>(thread_context.simd_lane_id) %
+              static_cast<uint>(gemv_tiling_sg_thread_cols(gemv_tiling))
+          : static_cast<uint>(thread_context.simd_lane_id);
 
   const int simdgroup_column_index =
       gemv_tiling_tg_simd_cols(gemv_tiling) != 1
-          ? uint(thread_context.simdgroup_index %
+          ? static_cast<uint>(thread_context.simdgroup_index %
                  gemv_tiling_tg_simd_cols(gemv_tiling))
           : 0;
 
   const uint simdgroup_row_thread_base =
       gemv_tiling_tg_simd_cols(gemv_tiling) != 1
-          ? uint(gemv_tiling_sg_thread_rows(gemv_tiling)) *
-              uint(thread_context.simdgroup_index /
+          ? static_cast<uint>(gemv_tiling_sg_thread_rows(gemv_tiling)) *
+              static_cast<uint>(thread_context.simdgroup_index /
                    gemv_tiling_tg_simd_cols(gemv_tiling))
-          : uint(gemv_tiling_sg_thread_rows(gemv_tiling)) *
-              uint(thread_context.simdgroup_index);
+          : static_cast<uint>(gemv_tiling_sg_thread_rows(gemv_tiling)) *
+              static_cast<uint>(thread_context.simdgroup_index);
   const uint simdgroup_col_thread_base =
       gemv_tiling_tg_simd_cols(gemv_tiling) != 1
-          ? uint(gemv_tiling_sg_thread_cols(gemv_tiling)) *
-              uint(thread_context.simdgroup_index %
+          ? static_cast<uint>(gemv_tiling_sg_thread_cols(gemv_tiling)) *
+              static_cast<uint>(thread_context.simdgroup_index %
                    gemv_tiling_tg_simd_cols(gemv_tiling))
           : 0;
 
   uint output_block_row_offset =
       (simdgroup_row_thread_base + thread_row_in_simdgroup) *
-      uint(gemv_tiling_thread_out_rows(gemv_tiling));
+      static_cast<uint>(gemv_tiling_thread_out_rows(gemv_tiling));
   uint input_block_col_offset =
       (simdgroup_col_thread_base + thread_col_in_simdgroup) *
-      uint(gemv_tiling_thread_out_cols(gemv_tiling));
+      static_cast<uint>(gemv_tiling_thread_out_cols(gemv_tiling));
 
   uint output_row_start = thread_context.threadgroup_position.x *
-          uint(params->output_rows_per_threadgroup) +
+          static_cast<uint>(params->output_rows_per_threadgroup) +
       output_block_row_offset;
 
   if (output_row_start >= params->out_vec_size) {
@@ -99,16 +99,16 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
   }
 
   output_row_start = output_row_start +
-              uint(gemv_tiling_thread_out_rows(gemv_tiling)) <=
+              static_cast<uint>(gemv_tiling_thread_out_rows(gemv_tiling)) <=
           params->out_vec_size
       ? output_row_start
-      : params->out_vec_size - uint(gemv_tiling_thread_out_rows(gemv_tiling));
+      : params->out_vec_size - static_cast<uint>(gemv_tiling_thread_out_rows(gemv_tiling));
 
   const device T* thread_matrix =
       matrix + output_row_start * params->matrix_leading_dimension;
 
   const uniform<uint> input_block_stride =
-      make_uniform(uint(input_columns_per_threadgroup));
+      make_uniform(static_cast<uint>(input_columns_per_threadgroup));
   const uniform<uint> input_vector_length = make_uniform(params->in_vec_size);
   const uniform<uint> full_input_blocks =
       input_vector_length / input_block_stride;
@@ -160,7 +160,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
   if (remaining_input_columns > 0) {
     {
       const device T* input_vector_row = a + batch_row * params->in_vec_size;
-      if (input_block_col_offset + uint(gemv_tiling_thread_out_cols(gemv_tiling)) <=
+      if (input_block_col_offset + static_cast<uint>(gemv_tiling_thread_out_cols(gemv_tiling)) <=
           input_vector_length) {
         METAL_PRAGMA_UNROLL
         for (uint input_col_offset = 0;
@@ -176,7 +176,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
              input_col_offset < gemv_tiling_thread_out_cols(gemv_tiling);
              input_col_offset++) {
           vector_coefficients[input_col_offset] =
-              input_block_col_offset + uint(input_col_offset) <
+              input_block_col_offset + static_cast<uint>(input_col_offset) <
                       input_vector_length
                   ? static_cast<float>(
                         input_vector_row
@@ -191,7 +191,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
     for (uint output_row_offset = 0;
          output_row_offset < gemv_tiling_thread_out_rows(gemv_tiling);
          output_row_offset++) {
-      if (input_block_col_offset + uint(gemv_tiling_thread_out_cols(gemv_tiling)) <=
+      if (input_block_col_offset + static_cast<uint>(gemv_tiling_thread_out_cols(gemv_tiling)) <=
           input_vector_length) {
         METAL_PRAGMA_UNROLL
         for (uint input_col_offset = 0;
@@ -207,12 +207,12 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
              input_col_offset < gemv_tiling_thread_out_cols(gemv_tiling);
              input_col_offset++) {
           matrix_values[input_col_offset] =
-              input_block_col_offset + uint(input_col_offset) <
+              input_block_col_offset + static_cast<uint>(input_col_offset) <
                       input_vector_length
                   ? thread_matrix
                         [output_row_offset * params->matrix_leading_dimension +
                          input_block_col_offset + input_col_offset]
-                  : T(0);
+                  : static_cast<T>(0);
         }
       }
 
@@ -247,15 +247,15 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
   // Threadgroup reduction (only when tg_simd_cols > 1).
   if (gemv_tiling_tg_simd_cols(gemv_tiling) > 1) {
     const uint computed_output_rows_per_tg =
-        uint(gemv_tiling_tg_simd_rows(gemv_tiling)) *
-        uint(gemv_tiling_sg_thread_rows(gemv_tiling)) *
-        uint(gemv_tiling_thread_out_rows(gemv_tiling));
+        static_cast<uint>(gemv_tiling_tg_simd_rows(gemv_tiling)) *
+        static_cast<uint>(gemv_tiling_sg_thread_rows(gemv_tiling)) *
+        static_cast<uint>(gemv_tiling_thread_out_rows(gemv_tiling));
 
     if (thread_col_in_simdgroup == 0) {
       threadgroup float* threadgroup_partial_accumulations = partial_shared +
           simdgroup_column_index *
               (computed_output_rows_per_tg +
-               uint(gemv_tiling_thread_out_rows(gemv_tiling))) +
+               static_cast<uint>(gemv_tiling_thread_out_rows(gemv_tiling))) +
           output_block_row_offset;
       METAL_PRAGMA_UNROLL
       for (uint output_row_offset = 0;
@@ -280,7 +280,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
             accumulated_values[output_row_offset] += base_partial
                 [reduction_simdgroup_col *
                      (computed_output_rows_per_tg +
-                      uint(gemv_tiling_thread_out_rows(gemv_tiling))) +
+                      static_cast<uint>(gemv_tiling_thread_out_rows(gemv_tiling))) +
                  output_row_offset];
           }
         }

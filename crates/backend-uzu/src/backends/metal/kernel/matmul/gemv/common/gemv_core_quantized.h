@@ -83,10 +83,10 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     U sum = load_vector<T, U, values_per_thread, BITS>(a, x_thread);
 
     {
-      auto wl0 = (const device uint8_t*)(ws);
-      auto wl1 = (const device uint8_t*)(ws + in_vec_size_w);
-      auto wl2 = (const device uint8_t*)(ws + 2 * in_vec_size_w);
-      auto wl3 = (const device uint8_t*)(ws + 3 * in_vec_size_w);
+      auto wl0 = static_cast<const device uint8_t*>(ws);
+      auto wl1 = static_cast<const device uint8_t*>(ws + in_vec_size_w);
+      auto wl2 = static_cast<const device uint8_t*>(ws + 2 * in_vec_size_w);
+      auto wl3 = static_cast<const device uint8_t*>(ws + 3 * in_vec_size_w);
 
       U s0 = static_cast<U>(scales[0]);
       U s1 = static_cast<U>(scales[in_vec_size_g]);
@@ -167,8 +167,8 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
 
   const uint thread_offset = simd_lane * values_per_thread;
   const int remaining = (k + thread_offset < params->in_vec_size)
-      ? min(int(params->in_vec_size - k - thread_offset),
-            int(values_per_thread))
+      ? min(static_cast<int>(params->in_vec_size - k - thread_offset),
+            static_cast<int>(values_per_thread))
       : 0;
   if (remaining > 0) {
     U sum = load_vector_safe<T, U, values_per_thread, BITS>(
@@ -177,10 +177,10 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
         remaining
     );
 
-    auto wl0 = (const device uint8_t*)(ws);
-    auto wl1 = (const device uint8_t*)(ws + in_vec_size_w);
-    auto wl2 = (const device uint8_t*)(ws + 2 * in_vec_size_w);
-    auto wl3 = (const device uint8_t*)(ws + 3 * in_vec_size_w);
+    auto wl0 = static_cast<const device uint8_t*>(ws);
+    auto wl1 = static_cast<const device uint8_t*>(ws + in_vec_size_w);
+    auto wl2 = static_cast<const device uint8_t*>(ws + 2 * in_vec_size_w);
+    auto wl3 = static_cast<const device uint8_t*>(ws + 3 * in_vec_size_w);
 
     U s0 = static_cast<U>(scales[0]);
     U s1 = static_cast<U>(scales[in_vec_size_g]);
@@ -309,7 +309,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
       if (global_out_idx < params->out_vec_size) {
         d[simd_lane] = simdgroup_output_random_hadamard_transform(
             static_cast<ushort>(simd_lane),
-            T(result_shared[simd_lane]),
+            static_cast<T>(result_shared[simd_lane]),
             rht_factors[global_out_idx]
         );
       }
