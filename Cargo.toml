@@ -107,7 +107,6 @@ proc-macro2 = "1.0"
 syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
 rhai = "1.24.0"
-mach2 = "0.6"
 cbindgen = "0.29"
 ctrlc = "3.5"
 indicatif = "0.18"
