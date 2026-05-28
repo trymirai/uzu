@@ -21,7 +21,7 @@ CONSTRAINT(
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 KERNEL(Gemv)(
     const device T* a,
-    const device uint32_t* b_packed,
+    const device uint8_t* b_packed,
     device T* d,
     const device T* scales
         OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),

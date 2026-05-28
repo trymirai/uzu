@@ -9,7 +9,7 @@ namespace gemv {
 
 template <typename T, GemmBPrologueKind B_PROLOGUE, int BITS, int GROUP_SIZE>
 METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
-    const device uint32_t* b_packed,
+    const device uint8_t* b_packed,
     const device T* scales,
     const device T* biases,
     const device uint8_t* zero_points,
@@ -41,7 +41,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   constexpr uint values_per_thread = pack_factor * packs_per_thread;
   constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
   constexpr uint scale_step_per_thread = GROUP_SIZE / values_per_thread;
-  const device uint8_t* ws = (const device uint8_t*)b_packed;
+  const device uint8_t* ws = b_packed;
   typedef float U;
   thread U x_thread[values_per_thread];
   thread U result[results_per_simdgroup] = {0};

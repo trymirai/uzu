@@ -56,7 +56,7 @@ template <
 struct GemvCore {
   static METAL_FUNC void run(
       const device T* a,
-      const device uint32_t* b_packed,
+      const device uint8_t* b_packed,
       device T* d,
       const device T* scales,
       const device T* biases,
@@ -76,7 +76,7 @@ struct GemvCore {
       (void)zero_points;
       (void)result_shared;
       run_fp(
-          reinterpret_cast<const device T*>(b_packed),
+          b_packed,
           a,
           d,
           output_bias,
@@ -108,7 +108,7 @@ struct GemvCore {
   }
 
   static METAL_FUNC void run_fp(
-      const device T* matrix,
+      const device uint8_t* b_packed,
       const device T* a,
       device T* d,
       const device T* output_bias,
@@ -121,7 +121,7 @@ struct GemvCore {
   );
 
   static METAL_FUNC void run_quantized(
-      const device uint32_t* b_packed,
+      const device uint8_t* b_packed,
       const device T* scales,
       const device T* biases,
       const device uint8_t* zero_points,

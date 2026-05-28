@@ -7,7 +7,7 @@ namespace gemv {
 
 template <typename T, GemmBPrologueKind B_PROLOGUE, int BITS, int GROUP_SIZE>
 METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
-    const device T* matrix,
+    const device uint8_t* b_packed,
     const device T* a,
     device T* d,
     const device T* output_bias,
@@ -18,6 +18,8 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
     threadgroup float* partial_shared,
     const thread ThreadContext& thread_context
 ) {
+  const device T* matrix = reinterpret_cast<const device T*>(b_packed);
+
   const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
   const bool is_accumulate =
       output_transform.contains(GemmDTransform::ACCUMULATE);
