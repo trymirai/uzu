@@ -58,6 +58,45 @@ jobs:
             echo "No previous tags; ${VERSION} is the first release"
           fi
 
+      - name: "Release: Validate npm publish access"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          : "${NODE_AUTH_TOKEN:?NPM_TOKEN secret is required}"
+
+          npm_package_name="@trymirai/uzu"
+          npm_username=$(npm whoami --registry=https://registry.npmjs.org)
+          npm_package_access_json=$(npm access list packages "$npm_username" --json --registry=https://registry.npmjs.org)
+          npm_package_versions_json=$(npm view "$npm_package_name" versions --json --registry=https://registry.npmjs.org)
+
+          NPM_PACKAGE_NAME="$npm_package_name" \
+          NPM_PACKAGE_ACCESS_JSON="$npm_package_access_json" \
+          NPM_PACKAGE_VERSIONS_JSON="$npm_package_versions_json" \
+          NPM_USERNAME="$npm_username" \
+            node --input-type=module <<'NODE'
+          const packageName = process.env.NPM_PACKAGE_NAME;
+          const packageAccess = JSON.parse(process.env.NPM_PACKAGE_ACCESS_JSON ?? "{}");
+          const packageVersionsValue = JSON.parse(process.env.NPM_PACKAGE_VERSIONS_JSON ?? "[]");
+          const packageVersions = Array.isArray(packageVersionsValue) ? packageVersionsValue : [packageVersionsValue];
+          const accessLevel = packageName ? packageAccess[packageName] : undefined;
+
+          if (accessLevel !== "read-write") {
+            console.error(
+              `NPM user ${process.env.NPM_USERNAME} has ${accessLevel ?? "no"} access to ${packageName}; read-write access is required to publish.`,
+            );
+            process.exit(1);
+          }
+
+          if (packageVersions.includes(process.env.VERSION)) {
+            console.error(`${packageName}@${process.env.VERSION} already exists on npm.`);
+            process.exit(1);
+          }
+
+          console.log(`NPM user ${process.env.NPM_USERNAME} has read-write access to ${packageName}.`);
+          NODE
+
       - name: "Binaries: Import developer identity certificate"
         shell: bash
         env:
