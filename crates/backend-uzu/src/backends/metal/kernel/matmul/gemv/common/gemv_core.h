@@ -90,6 +90,8 @@ struct GemvCore {
       (void)thread_index_x;
       (void)thread_index_y;
       (void)shared_results;
+      (void)group_index_x;
+      (void)group_index_y;
       run_fp(
           reinterpret_cast<const device T*>(weights),
           input,
@@ -99,8 +101,6 @@ struct GemvCore {
           params,
           output_transform,
           tile,
-          group_index_x,
-          group_index_y,
           threadgroup_memory,
           thread_context
       );
@@ -138,8 +138,6 @@ struct GemvCore {
       const constant uzu::matmul::GemvParams* params,
       GemmDTransform output_transform,
       GemvTile tile,
-      uint threadgroup_index_x,
-      uint threadgroup_index_y,
       threadgroup float* threadgroup_memory,
       const thread ThreadContext& thread_context
   );

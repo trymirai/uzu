@@ -15,8 +15,6 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
     const constant uzu::matmul::GemvParams* params,
     GemmDTransform output_transform,
     GemvTile tile,
-    uint threadgroup_index_x,
-    uint threadgroup_index_y,
     threadgroup float* threadgroup_memory,
     const thread ThreadContext& thread_context
 ) {
@@ -39,7 +37,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
   const uint input_columns_per_threadgroup =
       threads_per_threadgroup_col * tile.thread_out_cols;
 
-  const uint batch_row = static_cast<uint>(threadgroup_index_y);
+  const uint batch_row = thread_context.threadgroup_position.y;
   if (batch_row >= params->batch_size) {
     return;
   }
@@ -80,8 +78,8 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
       (simdgroup_col_thread_base + thread_col_in_simdgroup) *
       uint(tile.thread_out_cols);
 
-  uint output_row_start =
-      uint(threadgroup_index_x) * uint(params->output_rows_per_threadgroup) +
+  uint output_row_start = thread_context.threadgroup_position.x *
+          uint(params->output_rows_per_threadgroup) +
       output_block_row_offset;
 
   if (output_row_start >= params->out_vec_size) {
@@ -290,8 +288,8 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
     const uint sg_count = tile.tg_simd_rows * tile.tg_simd_cols;
     const uint sg_id = thread_context.simdgroup_index;
     const ushort lane = thread_context.simd_lane_id;
-    const uint tg_block_start =
-        threadgroup_index_x * params->output_rows_per_threadgroup;
+    const uint tg_block_start = thread_context.threadgroup_position.x *
+        params->output_rows_per_threadgroup;
     const uint stripes_per_tg =
         params->output_rows_per_threadgroup / METAL_SIMD_SIZE;
     device T* output_row_values = output + batch_row * params->out_vec_size;
