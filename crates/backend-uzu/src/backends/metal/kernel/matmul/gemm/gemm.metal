@@ -51,7 +51,7 @@ VARIANTS(
     GemmWeightPrologueKind::ScaleBiasDequant,
     GemmWeightPrologueKind::ScaleZeroPointDequant)
 VARIANTS(BITS, 0, 4, 8)
-VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
+VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 CONSTRAINT(
     !USE_MXU || GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
         GEMM_TILING == GemmTiling::T32x64x32_2x2 ||
@@ -67,10 +67,14 @@ CONSTRAINT(
     WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
         (!USE_MXU && TRANSPOSE_B &&
          (GEMM_TILING == GemmTiling::T8x32x32_1x1 ||
+          GEMM_TILING == GemmTiling::T64x64x16_2x2 ||
           GEMM_TILING == GemmTiling::T32x32x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x32x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x64x64_2x2)))
+CONSTRAINT(
+    WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
+        GROUP_SIZE != 16 || GEMM_TILING == GemmTiling::T64x64x16_2x2)
 CONSTRAINT(
     GEMM_TILING != GemmTiling::T64x64x64_2x2 ||
         GROUP_SIZE == 64 || GROUP_SIZE == 128)

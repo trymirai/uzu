@@ -316,7 +316,7 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
-                let tiling = select_quant_tiling(m, n);
+                let tiling = select_quant_tiling(m, n, group_size.unwrap());
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
                 let params = quant_params(m, n, k, tiling, ab_scale);
@@ -414,8 +414,11 @@ fn select_mxu_tiling(
 fn select_quant_tiling(
     m: u32,
     n: u32,
+    group_size: u32,
 ) -> GemmTiling {
-    if m < 32 {
+    if group_size < 32 {
+        GemmTiling::T64x64x16_2x2
+    } else if m < 32 {
         GemmTiling::T8x32x32_1x1
     } else if m >= 64 && n <= 2048 {
         GemmTiling::T64x32x32_2x2

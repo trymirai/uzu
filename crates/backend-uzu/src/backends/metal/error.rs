@@ -29,8 +29,8 @@ pub enum MetalError {
     CommandBufferExecutionFailed(String),
     #[error("Cannot create event")]
     CannotCreateEvent,
-    #[error("Cannot create function")]
-    CannotCreateFunction,
+    #[error("Cannot create function: {0}")]
+    CannotCreateFunction(String),
     #[error("Cannot create pipeline state: {0}")]
     CannotCreatePipelineState(String),
     #[error("Can not allocate buffer with size={0}")]

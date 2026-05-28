@@ -26,7 +26,7 @@ impl LibraryPipelineExtensions for ProtocolObject<dyn MTLLibrary> {
             },
             None => self.new_function_with_name(function_name),
         }
-        .ok_or(MetalError::CannotCreateFunction)?;
+        .ok_or_else(|| MetalError::CannotCreateFunction(function_name.to_owned()))?;
 
         let device = self.device();
 

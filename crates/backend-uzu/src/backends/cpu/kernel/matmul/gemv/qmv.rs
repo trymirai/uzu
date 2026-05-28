@@ -100,7 +100,7 @@ pub fn qmv<WeightT: ArrayElement + Float, InputT: ArrayElement + Float, OutputT:
 #[variants(WeightT, f32, f16, bf16)]
 #[variants(InputT, f32, f16, bf16)]
 #[variants(OutputT, f32, f16, bf16)]
-#[variants(GROUP_SIZE, 32, 64, 128)]
+#[variants(GROUP_SIZE, 16, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
 pub fn quantized_matmul_qmv<
     WeightT: ArrayElement + Float,
