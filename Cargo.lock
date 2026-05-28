@@ -668,7 +668,6 @@ name = "benchmarks"
 version = "0.4.9"
 dependencies = [
  "backend-uzu",
- "mach2 0.6.0",
  "serde",
  "sysinfo",
 ]
@@ -1394,7 +1393,7 @@ dependencies = [
  "jni 0.21.1",
  "js-sys",
  "libc",
- "mach2 0.5.0",
+ "mach2",
  "ndk",
  "ndk-context",
  "num-derive",
@@ -3582,12 +3581,6 @@ checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "mach2"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "macro_rules_attribute"

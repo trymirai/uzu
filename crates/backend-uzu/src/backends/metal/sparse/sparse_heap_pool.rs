@@ -53,6 +53,7 @@ impl MetalSparseHeapPool {
         let new_heaps_count = (pages_to_alloc * self.page_size.in_bytes()).div_ceil(self.heap_capacity);
         for _ in 0..new_heaps_count {
             let heap = MetalSparseHeap::new(context, self.heap_capacity, self.page_size)?;
+            context.update_peak_memory_usage();
             self.heaps.push(Rc::new(RefCell::new(heap)));
         }
 
