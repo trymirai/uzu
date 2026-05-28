@@ -20,11 +20,8 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     const constant uzu::matmul::GemvParams* params,
     QuantizationMethod quant_method,
     GemmDTransform output_transform,
-    uint group_index_x,
-    uint group_index_y,
-    uint thread_index_x,
-    uint thread_index_y,
-    threadgroup float* shared_results
+    threadgroup float* shared_results,
+    const thread ThreadContext& thread_context
 ) {
   const uint in_vec_size = params->in_vec_size;
   const uint out_vec_size = params->out_vec_size;
@@ -35,10 +32,10 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
   const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
-  const uint simd_lane = thread_index_x;
-  const uint simd_group = thread_index_y;
-  const uint batch_idx = group_index_x;
-  const uint out_block_idx = group_index_y;
+  const uint simd_lane = thread_context.simd_lane_id;
+  const uint simd_group = thread_context.simdgroup_index;
+  const uint batch_idx = thread_context.threadgroup_position.x;
+  const uint out_block_idx = thread_context.threadgroup_position.y;
 
   constexpr uint packs_per_thread = BITS == 2 ? 1 : 2;
   constexpr uint num_simdgroups = 8;

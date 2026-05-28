@@ -67,10 +67,6 @@ struct GemvCore {
       QuantizationMethod quant_method,
       GemmDTransform output_transform,
       GemvTiling gemv_tiling,
-      uint group_index_x,
-      uint group_index_y,
-      uint thread_index_x,
-      uint thread_index_y,
       threadgroup float* threadgroup_memory,
       threadgroup float* shared_results,
       const thread ThreadContext& thread_context
@@ -80,11 +76,7 @@ struct GemvCore {
       (void)zero_points;
       (void)biases;
       (void)quant_method;
-      (void)thread_index_x;
-      (void)thread_index_y;
       (void)shared_results;
-      (void)group_index_x;
-      (void)group_index_y;
       run_fp(
           reinterpret_cast<const device T*>(weights),
           input,
@@ -100,7 +92,6 @@ struct GemvCore {
     } else {
       (void)gemv_tiling;
       (void)threadgroup_memory;
-      (void)thread_context;
       run_quantized(
           weights,
           scales,
@@ -113,11 +104,8 @@ struct GemvCore {
           params,
           quant_method,
           output_transform,
-          group_index_x,
-          group_index_y,
-          thread_index_x,
-          thread_index_y,
-          shared_results
+          shared_results,
+          thread_context
       );
     }
   }
@@ -147,11 +135,8 @@ struct GemvCore {
       const constant uzu::matmul::GemvParams* params,
       QuantizationMethod quant_method,
       GemmDTransform output_transform,
-      uint group_index_x,
-      uint group_index_y,
-      uint thread_index_x,
-      uint thread_index_y,
-      threadgroup float* shared_results
+      threadgroup float* shared_results,
+      const thread ThreadContext& thread_context
   );
 };
 

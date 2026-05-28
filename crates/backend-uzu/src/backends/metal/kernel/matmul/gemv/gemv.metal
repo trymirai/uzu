@@ -50,6 +50,11 @@ KERNEL(Gemv)(
       ? GemmBPrologueKind::FullPrecision
       : GemmBPrologueKind::ScaleBiasDequant;
 
+  (void)group_index_x;
+  (void)group_index_y;
+  (void)thread_index_x;
+  (void)thread_index_y;
+
   GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run(
       weights,
       scales,
@@ -63,10 +68,6 @@ KERNEL(Gemv)(
       quant_method,
       output_transform,
       gemv_tiling,
-      group_index_x,
-      group_index_y,
-      thread_index_x,
-      thread_index_y,
       threadgroup_memory,
       shared_results,
       thread_context
