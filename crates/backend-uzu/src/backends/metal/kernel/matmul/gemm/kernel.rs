@@ -144,7 +144,7 @@ impl GemmKernel {
                     && arguments.b_offset == 0
                     && arguments.k.is_multiple_of(select_mxu_tiling(arguments.m, arguments.n).block_k())
             },
-            MatmulB::CodebookDequant {
+            MatmulB::LloydMaxDequant {
                 ..
             } => false,
         };
@@ -167,10 +167,10 @@ impl GemmKernel {
         path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        if matches!(arguments.b, MatmulB::CodebookDequant { .. }) {
+        if matches!(arguments.b, MatmulB::LloydMaxDequant { .. }) {
             return Err(MatmulError::UnsupportedFeature {
-                feature: "codebook GEMM",
-                reason: "codebook GEMM is not implemented",
+                feature: "Lloyd-Max GEMM",
+                reason: "Lloyd-Max GEMM is not implemented",
             }
             .into());
         }
@@ -451,12 +451,12 @@ impl GemmKernel {
                     encoder,
                 );
             },
-            MatmulB::CodebookDequant {
+            MatmulB::LloydMaxDequant {
                 ..
             } => {
                 return Err(MatmulError::UnsupportedFeature {
-                    feature: "codebook GEMM",
-                    reason: "codebook GEMM is not implemented",
+                    feature: "Lloyd-Max GEMM",
+                    reason: "Lloyd-Max GEMM is not implemented",
                 }
                 .into());
             },

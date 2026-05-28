@@ -166,9 +166,9 @@ impl<B: Backend> LinearMatmul<B> {
                 )
             },
             QuantizationMethod::ScaleSymmetric => None,
-            QuantizationMethod::Codebook => {
+            QuantizationMethod::LloydMax => {
                 return Err(LinearMatmulError::UnsupportedConfiguration(
-                    "codebook linear matmul loading is not implemented".to_string(),
+                    "Lloyd-Max linear matmul loading is not implemented".to_string(),
                 ));
             },
             QuantizationMethod::ScaleSymmetric => None,
@@ -269,7 +269,7 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                     mode: *mode,
                     group_size: *group_size,
                 },
-                QuantizationMethod::Codebook => unreachable!("codebook linear matmul loading is not implemented"),
+                QuantizationMethod::LloydMax => unreachable!("Lloyd-Max linear matmul loading is not implemented"),
             },
         };
 

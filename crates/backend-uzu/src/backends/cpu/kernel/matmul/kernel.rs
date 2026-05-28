@@ -148,6 +148,8 @@ impl MatmulKernel for MatmulCpuKernel {
                                     zero_points,
                                     biases,
                                     codebook,
+                                    bias_indices,
+                                    bias_codebook,
                                     bits,
                                     group_size,
                                 } => {
@@ -169,7 +171,17 @@ impl MatmulKernel for MatmulCpuKernel {
                                         read_f32(scales.as_ptr(), weights_data_type, col * num_groups_k + group_index);
                                     let b_value = if let Some(codebook) = codebook {
                                         let codebook_value = (*(codebook.as_ptr() as *const f16).add(quantized_value as usize)).to_f32();
-                                        scale * codebook_value
+                                        let bias_indices = bias_indices.expect("Lloyd-Max bias indices");
+                                        let bias_codebook = bias_codebook.expect("Lloyd-Max bias codebook");
+                                        let bias_byte_index = col * zero_point_stride + (group_index >> 1);
+                                        let bias_byte = *bias_indices.as_ptr().add(bias_byte_index);
+                                        let bias_code = if (group_index & 1) == 0 {
+                                            (bias_byte & 0x0F) as usize
+                                        } else {
+                                            ((bias_byte >> 4) & 0x0F) as usize
+                                        };
+                                        let bias_value = (*(bias_codebook.as_ptr() as *const f16).add(bias_code)).to_f32();
+                                        scale * (codebook_value - bias_value)
                                     } else if let Some(zp) = zero_points {
                                         let zero_point = if *bits == 4 {
                                             let byte_index = col * zero_point_stride + (group_index >> 1);

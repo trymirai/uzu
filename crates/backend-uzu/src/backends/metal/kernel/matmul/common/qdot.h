@@ -105,31 +105,53 @@ METAL_FUNC U qdot(
   return scale * accumulator + sum * bias;
 }
 
+// Lloyd-Max dequant: weight = (codebook[w_code] - bias) * scale.
+// Algebraic identity: sum_i x_i * (codebook[c_i] - bias) * scale
+//                   = scale * (dot(x, codebook[c]) - bias * sum_i x_i).
+// Folding the bias subtraction out of the per-weight critical path keeps the
+// dot as a tight FMA chain.
 template <typename U, int VALUES_PER_THREAD, int BITS>
-METAL_FUNC U qdot_codebook(
+METAL_FUNC U qdot_lloyd_max(
     const device uint8_t* w,
     const thread U* x_thread,
     const threadgroup half* codebook,
-    U scale
+    U scale,
+    U bias
 ) {
-  static_assert(BITS == 4, "Only int4 codebook QMV is supported");
+  static_assert(BITS == 4, "Only int4 Lloyd-Max QMV is supported");
 
   using U4 = vec<U, 4>;
-  U accumulator = 0;
+  U codebook_acc = 0;
+  U sum_x = 0;
   const device ushort* weight_words = reinterpret_cast<const device ushort*>(w);
   const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
 
   for (int value_idx = 0; value_idx < (VALUES_PER_THREAD / 4); value_idx++) {
     uint weight_word = weight_words[value_idx];
-    U4 weight_vec4 =
+    U4 codebook_vec4 =
         U4(static_cast<U>(codebook[weight_word & 0x0fu]),
            static_cast<U>(codebook[(weight_word >> 4) & 0x0fu]),
            static_cast<U>(codebook[(weight_word >> 8) & 0x0fu]),
            static_cast<U>(codebook[(weight_word >> 12) & 0x0fu]));
-    accumulator += dot(x_vec4[value_idx], weight_vec4);
+    U4 xv = x_vec4[value_idx];
+    codebook_acc += dot(xv, codebook_vec4);
+    sum_x += xv[0] + xv[1] + xv[2] + xv[3];
   }
 
-  return scale * accumulator;
+  return scale * (codebook_acc - bias * sum_x);
+}
+
+template <typename T, typename U, int RESULTS_PER_SIMDGROUP>
+inline void qmv_write_direct_results(
+    const thread U* result,
+    device T* output,
+    uint simd_lane
+) {
+  if (simd_lane == 0) {
+    for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+      output[row] = static_cast<T>(result[row]);
+    }
+  }
 }
 
 template <typename U, int VALUES_PER_THREAD, int BITS>

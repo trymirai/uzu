@@ -24,7 +24,9 @@ struct BSource {
       const device BT* scales,
       const device uint8_t* zero_points,
       const device BT* biases,
+      const device uint8_t* bias_indices,
       const threadgroup half* codebook,
+      const threadgroup half* bias_codebook,
       const device AT* a,
       uint in_vec_size,
       uint out_row,
@@ -110,6 +112,9 @@ struct BSource {
       prep.group_stride = in_vec_size_g;
       const uint g_offset = simd_lane / scale_step_per_thread;
       prep.scales = scales + out_row * in_vec_size_g + g_offset;
+      const uint bias_stride = (in_vec_size_g + 1) / 2;
+      const device uint8_t* bias_codes = nullptr;
+      bool bias_high_nibble = false;
       if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
         prep.biases = biases + out_row * in_vec_size_g + g_offset;
       } else if constexpr (
@@ -123,6 +128,9 @@ struct BSource {
           prep.zp_stride = in_vec_size_g;
           prep.zps = zero_points + out_row * prep.zp_stride + g_offset;
         }
+      } else if constexpr (B_PROLOGUE == GemmBPrologueKind::LloydMaxDequant) {
+        bias_codes = bias_indices + out_row * bias_stride + g_offset / 2;
+        bias_high_nibble = (g_offset & 1);
       }
 
       const device AT* in =
@@ -131,7 +139,7 @@ struct BSource {
       uint k = 0;
       for (; k + block_size <= in_vec_size; k += block_size) {
         U sum = 0;
-        if constexpr (B_PROLOGUE == GemmBPrologueKind::CodebookDequant) {
+        if constexpr (B_PROLOGUE == GemmBPrologueKind::LloydMaxDequant) {
           load_vector_unscaled<AT, U, values_per_thread>(in, x_thread);
         } else {
           sum = load_vector<AT, U, values_per_thread, BITS>(in, x_thread);
@@ -145,11 +153,27 @@ struct BSource {
         U scale[4];
         U offset[4];
         prep.load(scale, offset);
-        if constexpr (B_PROLOGUE == GemmBPrologueKind::CodebookDequant) {
-          result[0] += qdot_codebook<U, values_per_thread, BITS>(wl0, x_thread, codebook, scale[0]);
-          result[1] += qdot_codebook<U, values_per_thread, BITS>(wl1, x_thread, codebook, scale[1]);
-          result[2] += qdot_codebook<U, values_per_thread, BITS>(wl2, x_thread, codebook, scale[2]);
-          result[3] += qdot_codebook<U, values_per_thread, BITS>(wl3, x_thread, codebook, scale[3]);
+        if constexpr (B_PROLOGUE == GemmBPrologueKind::LloydMaxDequant) {
+          uchar4 bias_bytes = uchar4(
+              bias_codes[0],
+              bias_codes[bias_stride],
+              bias_codes[2 * bias_stride],
+              bias_codes[3 * bias_stride]
+          );
+          const uint8_t shift = bias_high_nibble ? 4u : 0u;
+          uchar4 codes = (bias_bytes >> shift) & uchar4(0x0F);
+          result[0] += qdot_lloyd_max<U, values_per_thread, BITS>(
+              wl0, x_thread, codebook, scale[0], static_cast<U>(bias_codebook[codes.x])
+          );
+          result[1] += qdot_lloyd_max<U, values_per_thread, BITS>(
+              wl1, x_thread, codebook, scale[1], static_cast<U>(bias_codebook[codes.y])
+          );
+          result[2] += qdot_lloyd_max<U, values_per_thread, BITS>(
+              wl2, x_thread, codebook, scale[2], static_cast<U>(bias_codebook[codes.z])
+          );
+          result[3] += qdot_lloyd_max<U, values_per_thread, BITS>(
+              wl3, x_thread, codebook, scale[3], static_cast<U>(bias_codebook[codes.w])
+          );
         } else {
           result[0] += qdot<U, values_per_thread, BITS>(wl0, x_thread, scale[0], offset[0], sum);
           result[1] += qdot<U, values_per_thread, BITS>(wl1, x_thread, scale[1], offset[1], sum);
@@ -159,6 +183,9 @@ struct BSource {
 
         ws += block_size * bytes_per_pack / pack_factor;
         prep.advance(block_size / GROUP_SIZE);
+        if constexpr (B_PROLOGUE == GemmBPrologueKind::LloydMaxDequant) {
+          bias_codes += (block_size / GROUP_SIZE) / 2;
+        }
         in += block_size;
       }
 

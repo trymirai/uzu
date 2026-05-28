@@ -10,7 +10,7 @@ pub use harness::{Case, cpu_reference, deterministic_input};
 #[cfg(metal_backend)]
 pub use quant::run_quant_metal;
 pub use quant::{
-    CodebookQuantBuffers, CodebookQuantInput, QuantBuffers, QuantInput, codebook_quant_arguments, quant_arguments,
+    LloydMaxQuantBuffers, LloydMaxQuantInput, QuantBuffers, QuantInput, lloyd_max_quant_arguments, quant_arguments,
     run_quant_cpu,
 };
 pub use shape::{
