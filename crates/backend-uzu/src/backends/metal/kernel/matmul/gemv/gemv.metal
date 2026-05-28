@@ -52,7 +52,15 @@ KERNEL(Gemv)(
       gemv_tiling_thread_out_cols(gemv_tiling),
   };
 
-  GemvCore<T, GROUP_SIZE, BITS>::run(
+  // Derive prologue from BITS so the kernel's VARIANTS(...) set stays
+  // (T, GROUP_SIZE, BITS); the gemv `CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))`
+  // already enforces that BITS == 0 ↔ FullPrecision. The ScaleBias vs
+  // ScaleZeroPoint sub-kind is still picked at runtime via `quant_method`.
+  constexpr GemmBPrologueKind B_PROLOGUE = (BITS == 0)
+      ? GemmBPrologueKind::FullPrecision
+      : GemmBPrologueKind::ScaleBiasDequant;
+
+  GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run(
       weights,
       scales,
       zero_points,

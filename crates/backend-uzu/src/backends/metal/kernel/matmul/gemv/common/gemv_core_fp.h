@@ -5,8 +5,8 @@
 namespace uzu {
 namespace gemv {
 
-template <typename T, uint GROUP_SIZE, uint BITS>
-METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_fp(
+template <typename T, GemmBPrologueKind B_PROLOGUE, int BITS, int GROUP_SIZE>
+METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
     const device T* matrix,
     const device T* input,
     device T* output,

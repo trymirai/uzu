@@ -52,10 +52,14 @@ struct GemvTile {
   uint thread_out_cols;
 };
 
-// BITS == 0 is the in-band marker for the dense path (the CPU reference kernel
-// can't take an enum const generic on stable Rust). The quantized sub-kind
-// (scale+bias vs scale+zero-point) is picked at runtime from `quant_method`.
-template <typename T, uint GROUP_SIZE, uint BITS>
+// Template signature mirrors gemm's `SimdgroupMmaCore`; `B_PROLOGUE` selects
+// the dense vs quantized body (the quantized sub-kind, ScaleBias vs
+// ScaleZeroPoint, is still picked at runtime from `quant_method`).
+template <
+    typename T,
+    GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
+    int BITS = 0,
+    int GROUP_SIZE = 0>
 struct GemvCore {
   static METAL_FUNC void run(
       const device uint32_t* weights,
@@ -78,7 +82,7 @@ struct GemvCore {
       threadgroup float* shared_results,
       const thread ThreadContext& thread_context
   ) {
-    if constexpr (BITS == 0) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       (void)scales;
       (void)zero_points;
       (void)biases;
