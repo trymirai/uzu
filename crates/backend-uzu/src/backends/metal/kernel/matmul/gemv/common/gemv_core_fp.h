@@ -32,6 +32,7 @@ METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_fp(
   const uint matrix_leading_dimension = params->matrix_leading_dimension;
   const uint output_rows_per_threadgroup = params->output_rows_per_threadgroup;
   const float output_scale = params->ab_scale;
+  const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
   const bool is_accumulate =
       output_transform.contains(GemmDTransform::ACCUMULATE);
   const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
@@ -285,8 +286,11 @@ METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_fp(
     METAL_PRAGMA_UNROLL
     for (uint output_row_offset = 0; output_row_offset < thread_out_rows;
          output_row_offset++) {
-      T accumulated_c = static_cast<T>(output_scale) *
+      T accumulated_c =
           static_cast<T>(accumulated_values[output_row_offset]);
+      if (is_scale) {
+        accumulated_c = static_cast<T>(output_scale) * accumulated_c;
+      }
       if (is_accumulate) {
         accumulated_c +=
             output_row_values[output_row_start + output_row_offset];

@@ -35,6 +35,7 @@ METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_quantized(
   const uint in_vec_size = params->in_vec_size;
   const uint out_vec_size = params->out_vec_size;
   const float output_scale = params->ab_scale;
+  const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
   const bool is_accumulate =
       output_transform.contains(GemmDTransform::ACCUMULATE);
   const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
@@ -288,10 +289,13 @@ METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_quantized(
     result[row] = simd_sum(result[row]);
   }
 
-  // Fused output epilogue: scale, then optional accumulate / bias.
+  // Fused output epilogue: optional scale, then optional accumulate / bias.
   if (simd_lane == 0) {
     for (uint row = 0; row < results_per_simdgroup; row++) {
-      U value = static_cast<U>(output_scale) * result[row];
+      U value = result[row];
+      if (is_scale) {
+        value = static_cast<U>(output_scale) * value;
+      }
       const uint global_row = out_row + row;
       if (is_accumulate && global_row < out_vec_size) {
         value += static_cast<U>(output[row]);

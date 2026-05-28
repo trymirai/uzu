@@ -22,20 +22,6 @@ const QUANT_PATH: &str = "QuantGemv";
 
 type UnifiedKernel = GemvMetalKernel;
 
-/// Output transforms gemv branches on. Scale is always applied (via
-/// `GemvParams::ab_scale`), so the SCALE bit is intentionally excluded.
-fn output_transform(
-    accumulate: bool,
-    bias: bool,
-    rht: bool,
-) -> GemmDTransform {
-    let mut transform = GemmDTransform::empty();
-    transform.set(GemmDTransform::ACCUMULATE, accumulate);
-    transform.set(GemmDTransform::BIAS, bias);
-    transform.set(GemmDTransform::RHT, rht);
-    transform
-}
-
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct GemvKey {
     group_size: u32,
@@ -120,6 +106,7 @@ impl GemvDispatch {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
+        let output_mask = arguments.d_transform.mask();
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let is_accumulate = arguments.d_transform.accumulate;
@@ -161,7 +148,7 @@ impl GemvDispatch {
             bits: 0,
             quant_method: QuantizationMethod::ScaleBias,
             tiling: specialization.tiling,
-            output_transform: specialization.output_transform(),
+            output_transform: output_mask,
         };
         let params = GemvParams {
             in_vec_size: k,
@@ -201,8 +188,8 @@ impl GemvDispatch {
             });
         }
 
+        let output_mask = arguments.d_transform.mask();
         let ab_scale = arguments.d_transform.ab_scale;
-        let is_accumulate = arguments.d_transform.accumulate;
         let output_bias = arguments.d_transform.bias;
         let hadamard_factors = arguments.d_transform.rht_factors;
 
@@ -259,7 +246,7 @@ impl GemvDispatch {
             bits,
             quant_method: method,
             tiling: GemvTiling::Wide,
-            output_transform: output_transform(is_accumulate, output_bias.is_some(), hadamard_factors.is_some()),
+            output_transform: output_mask,
         };
         let params = GemvParams {
             in_vec_size: k,
