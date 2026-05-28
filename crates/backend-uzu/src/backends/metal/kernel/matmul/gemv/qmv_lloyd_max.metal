@@ -119,16 +119,32 @@ PUBLIC KERNEL(QuantizedMatmulQmvLloydMax)(
     U b3 = static_cast<U>(bias_codebook_sg[bias_codes.w]);
 
     result[0] += qdot_lloyd_max<U, values_per_thread, BITS>(
-        wl0, x_thread, codebook_sg, s0, b0
+        wl0,
+        x_thread,
+        codebook_sg,
+        s0,
+        b0
     );
     result[1] += qdot_lloyd_max<U, values_per_thread, BITS>(
-        wl1, x_thread, codebook_sg, s1, b1
+        wl1,
+        x_thread,
+        codebook_sg,
+        s1,
+        b1
     );
     result[2] += qdot_lloyd_max<U, values_per_thread, BITS>(
-        wl2, x_thread, codebook_sg, s2, b2
+        wl2,
+        x_thread,
+        codebook_sg,
+        s2,
+        b2
     );
     result[3] += qdot_lloyd_max<U, values_per_thread, BITS>(
-        wl3, x_thread, codebook_sg, s3, b3
+        wl3,
+        x_thread,
+        codebook_sg,
+        s3,
+        b3
     );
 
     ws += block_size * bytes_per_pack / pack_factor;
