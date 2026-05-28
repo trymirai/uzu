@@ -55,53 +55,53 @@ template <
     int GROUP_SIZE = 0>
 struct GemvCore {
   static METAL_FUNC void run(
-      const device uint32_t* weights,
+      const device T* a,
+      const device uint32_t* b_packed,
+      device T* d,
       const device T* scales,
-      const device uint8_t* zero_points,
       const device T* biases,
-      const device T* input,
-      device T* output,
-      const device int32_t* hadamard_factors,
+      const device uint8_t* zero_points,
       const device T* output_bias,
+      const device int32_t* rht_factors,
       const constant uzu::matmul::GemvParams* params,
       GemmDTransform output_transform,
       GemvTiling gemv_tiling,
-      threadgroup float* threadgroup_memory,
-      threadgroup float* shared_results,
+      threadgroup float* partial_shared,
+      threadgroup float* result_shared,
       const thread ThreadContext& thread_context
   ) {
     if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       (void)scales;
-      (void)zero_points;
       (void)biases;
-      (void)shared_results;
+      (void)zero_points;
+      (void)result_shared;
       run_fp(
-          reinterpret_cast<const device T*>(weights),
-          input,
-          output,
-          hadamard_factors,
+          reinterpret_cast<const device T*>(b_packed),
+          a,
+          d,
           output_bias,
+          rht_factors,
           params,
           output_transform,
           gemv_tiling,
-          threadgroup_memory,
+          partial_shared,
           thread_context
       );
     } else {
       (void)gemv_tiling;
-      (void)threadgroup_memory;
+      (void)partial_shared;
       run_quantized(
-          weights,
+          b_packed,
           scales,
-          zero_points,
           biases,
-          input,
-          output,
-          hadamard_factors,
+          zero_points,
+          a,
+          d,
           output_bias,
+          rht_factors,
           params,
           output_transform,
-          shared_results,
+          result_shared,
           thread_context
       );
     }
@@ -109,29 +109,29 @@ struct GemvCore {
 
   static METAL_FUNC void run_fp(
       const device T* matrix,
-      const device T* input,
-      device T* output,
-      const device int32_t* hadamard_factors,
+      const device T* a,
+      device T* d,
       const device T* output_bias,
+      const device int32_t* rht_factors,
       const constant uzu::matmul::GemvParams* params,
       GemmDTransform output_transform,
       GemvTiling gemv_tiling,
-      threadgroup float* threadgroup_memory,
+      threadgroup float* partial_shared,
       const thread ThreadContext& thread_context
   );
 
   static METAL_FUNC void run_quantized(
-      const device uint32_t* weights,
+      const device uint32_t* b_packed,
       const device T* scales,
-      const device uint8_t* zero_points,
       const device T* biases,
-      const device T* input,
-      device T* output,
-      const device int32_t* hadamard_factors,
+      const device uint8_t* zero_points,
+      const device T* a,
+      device T* d,
       const device T* output_bias,
+      const device int32_t* rht_factors,
       const constant uzu::matmul::GemvParams* params,
       GemmDTransform output_transform,
-      threadgroup float* shared_results,
+      threadgroup float* result_shared,
       const thread ThreadContext& thread_context
   );
 };

@@ -8,14 +8,14 @@ namespace gemv {
 template <typename T, GemmBPrologueKind B_PROLOGUE, int BITS, int GROUP_SIZE>
 METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
     const device T* matrix,
-    const device T* input,
-    device T* output,
-    const device int32_t* hadamard_factors,
+    const device T* a,
+    device T* d,
     const device T* output_bias,
+    const device int32_t* rht_factors,
     const constant uzu::matmul::GemvParams* params,
     GemmDTransform output_transform,
     GemvTiling gemv_tiling,
-    threadgroup float* threadgroup_memory,
+    threadgroup float* partial_shared,
     const thread ThreadContext& thread_context
 ) {
   const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
@@ -116,7 +116,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
   for (uint input_block_index = 0; input_block_index < full_input_blocks;
        ++input_block_index) {
     {
-      const device T* input_vector_row = input + batch_row * params->in_vec_size;
+      const device T* input_vector_row = a + batch_row * params->in_vec_size;
       METAL_PRAGMA_UNROLL
       for (uint input_col_offset = 0;
            input_col_offset < gemv_tiling_thread_out_cols(gemv_tiling);
@@ -157,7 +157,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
 
   if (remaining_input_columns > 0) {
     {
-      const device T* input_vector_row = input + batch_row * params->in_vec_size;
+      const device T* input_vector_row = a + batch_row * params->in_vec_size;
       if (input_block_col_offset + uint(gemv_tiling_thread_out_cols(gemv_tiling)) <=
           input_vector_length) {
         METAL_PRAGMA_UNROLL
@@ -250,8 +250,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
         uint(gemv_tiling_thread_out_rows(gemv_tiling));
 
     if (thread_col_in_simdgroup == 0) {
-      threadgroup float* threadgroup_partial_accumulations =
-          threadgroup_memory +
+      threadgroup float* threadgroup_partial_accumulations = partial_shared +
           simdgroup_column_index *
               (computed_output_rows_per_tg +
                uint(gemv_tiling_thread_out_rows(gemv_tiling))) +
@@ -268,7 +267,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
 
       if (simdgroup_column_index == 0) {
         threadgroup float* base_partial =
-            threadgroup_memory + output_block_row_offset;
+            partial_shared + output_block_row_offset;
         for (uint reduction_simdgroup_col = 1;
              reduction_simdgroup_col < gemv_tiling_tg_simd_cols(gemv_tiling);
              reduction_simdgroup_col++) {
@@ -289,7 +288,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
 
   // Write outputs (scale / accumulate / bias).
   if (simdgroup_col_thread_base == 0 && thread_col_in_simdgroup == 0) {
-    device T* output_row_values = output + batch_row * params->out_vec_size;
+    device T* output_row_values = d + batch_row * params->out_vec_size;
     METAL_PRAGMA_UNROLL
     for (uint output_row_offset = 0;
          output_row_offset < gemv_tiling_thread_out_rows(gemv_tiling);
@@ -320,7 +319,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
         params->output_rows_per_threadgroup;
     const uint stripes_per_tg =
         params->output_rows_per_threadgroup / METAL_SIMD_SIZE;
-    device T* output_row_values = output + batch_row * params->out_vec_size;
+    device T* output_row_values = d + batch_row * params->out_vec_size;
     for (uint stripe = sg_id; stripe < stripes_per_tg; stripe += sg_count) {
       const uint global_col =
           tg_block_start + stripe * METAL_SIMD_SIZE + lane;
@@ -330,7 +329,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
             simdgroup_output_random_hadamard_transform(
                 lane,
                 value,
-                hadamard_factors[global_col]
+                rht_factors[global_col]
             );
       }
     }

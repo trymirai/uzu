@@ -9,22 +9,19 @@ namespace gemv {
 
 template <typename T, GemmBPrologueKind B_PROLOGUE, int BITS, int GROUP_SIZE>
 METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
-    const device uint32_t* weights,
+    const device uint32_t* b_packed,
     const device T* scales,
-    const device uint8_t* zero_points,
     const device T* biases,
-    const device T* input,
-    device T* output,
-    const device int32_t* hadamard_factors,
+    const device uint8_t* zero_points,
+    const device T* a,
+    device T* d,
     const device T* output_bias,
+    const device int32_t* rht_factors,
     const constant uzu::matmul::GemvParams* params,
     GemmDTransform output_transform,
-    threadgroup float* shared_results,
+    threadgroup float* result_shared,
     const thread ThreadContext& thread_context
 ) {
-  const uint in_vec_size = params->in_vec_size;
-  const uint out_vec_size = params->out_vec_size;
-  const float output_scale = params->ab_scale;
   const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
   const bool is_accumulate =
       output_transform.contains(GemmDTransform::ACCUMULATE);
@@ -44,13 +41,14 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   constexpr uint values_per_thread = pack_factor * packs_per_thread;
   constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
   constexpr uint scale_step_per_thread = GROUP_SIZE / values_per_thread;
-  const device uint8_t* ws = (const device uint8_t*)weights;
+  const device uint8_t* ws = (const device uint8_t*)b_packed;
   typedef float U;
   thread U x_thread[values_per_thread];
   thread U result[results_per_simdgroup] = {0};
 
-  const uint in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
-  const uint in_vec_size_g = in_vec_size / GROUP_SIZE;
+  const uint in_vec_size_w =
+      params->in_vec_size * bytes_per_pack / pack_factor;
+  const uint in_vec_size_g = params->in_vec_size / GROUP_SIZE;
   const uint out_row =
       out_block_idx * (num_simdgroups * results_per_simdgroup) +
       simd_group * results_per_simdgroup;
@@ -77,12 +75,12 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     }
   }
 
-  input += batch_idx * in_vec_size + simd_lane * values_per_thread;
-  output += batch_idx * out_vec_size + out_row;
+  a += batch_idx * params->in_vec_size + simd_lane * values_per_thread;
+  d += batch_idx * params->out_vec_size + out_row;
 
   uint k = 0;
-  for (; k + block_size <= in_vec_size; k += block_size) {
-    U sum = load_vector<T, U, values_per_thread, BITS>(input, x_thread);
+  for (; k + block_size <= params->in_vec_size; k += block_size) {
+    U sum = load_vector<T, U, values_per_thread, BITS>(a, x_thread);
 
     {
       auto wl0 = (const device uint8_t*)(ws);
@@ -164,17 +162,17 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
         zps += block_size / GROUP_SIZE;
       }
     }
-    input += block_size;
+    a += block_size;
   }
 
   const uint thread_offset = simd_lane * values_per_thread;
-  const int remaining =
-      (k + thread_offset < in_vec_size)
-          ? min(int(in_vec_size - k - thread_offset), int(values_per_thread))
-          : 0;
+  const int remaining = (k + thread_offset < params->in_vec_size)
+      ? min(int(params->in_vec_size - k - thread_offset),
+            int(values_per_thread))
+      : 0;
   if (remaining > 0) {
     U sum = load_vector_safe<T, U, values_per_thread, BITS>(
-        input,
+        a,
         x_thread,
         remaining
     );
@@ -284,13 +282,13 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     for (uint row = 0; row < results_per_simdgroup; row++) {
       U value = result[row];
       if (is_scale) {
-        value = static_cast<U>(output_scale) * value;
+        value = static_cast<U>(params->ab_scale) * value;
       }
       const uint global_row = out_row + row;
-      if (is_accumulate && global_row < out_vec_size) {
-        value += static_cast<U>(output[row]);
+      if (is_accumulate && global_row < params->out_vec_size) {
+        value += static_cast<U>(d[row]);
       }
-      if (is_bias && global_row < out_vec_size) {
+      if (is_bias && global_row < params->out_vec_size) {
         value += static_cast<U>(output_bias[global_row]);
       }
       result[row] = value;
@@ -300,7 +298,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   if (use_hadamard) {
     if (simd_lane == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
-        shared_results[simd_group * results_per_simdgroup + row] = result[row];
+        result_shared[simd_group * results_per_simdgroup + row] = result[row];
       }
     }
 
@@ -308,18 +306,18 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
 
     if (simd_group == 0) {
       uint global_out_idx = out_block_idx * 32 + simd_lane;
-      if (global_out_idx < out_vec_size) {
-        output[simd_lane] = simdgroup_output_random_hadamard_transform(
+      if (global_out_idx < params->out_vec_size) {
+        d[simd_lane] = simdgroup_output_random_hadamard_transform(
             static_cast<ushort>(simd_lane),
-            T(shared_results[simd_lane]),
-            hadamard_factors[global_out_idx]
+            T(result_shared[simd_lane]),
+            rht_factors[global_out_idx]
         );
       }
     }
   } else {
     if (simd_lane == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
-        output[row] = static_cast<T>(result[row]);
+        d[row] = static_cast<T>(result[row]);
       }
     }
   }

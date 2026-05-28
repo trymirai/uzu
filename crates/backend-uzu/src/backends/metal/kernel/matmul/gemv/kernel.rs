@@ -160,14 +160,14 @@ impl GemvDispatch {
         };
         let context = encoder.context();
         self.get_or_create(context, key)?.encode(
-            weights,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
             (a, a_offset),
+            weights,
             &mut *d,
-            rht_factors,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
             output_bias,
+            rht_factors,
             std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
@@ -259,14 +259,14 @@ impl GemvDispatch {
         };
         let context = encoder.context();
         self.get_or_create(context, key)?.encode(
-            weights,
-            Some(scales),
-            zero_points,
-            biases,
             (a, a_offset),
+            weights,
             &mut *d,
-            hadamard_factors,
+            Some(scales),
+            biases,
+            zero_points,
             output_bias,
+            hadamard_factors,
             std::slice::from_ref(&params),
             group_count_x,
             group_count_y,
