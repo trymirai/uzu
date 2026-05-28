@@ -130,6 +130,38 @@ pub struct MetalArgument {
     pub source: Box<str>,
 }
 
+pub fn shared_element_type(c_type: &str) -> &str {
+    c_type.split(['*', '&', '(']).next().unwrap_or_default().trim_end()
+}
+
+pub fn shared_element_byte_size(c_type: &str) -> anyhow::Result<usize> {
+    let element_type = shared_element_type(c_type).rsplit(' ').next().unwrap_or_default();
+
+    // Split the lane digit off vectors: "float4" -> "float", 4.
+    let (scalar_name, lanes) = match element_type.chars().last() {
+        Some(lane_digit @ '2'..='4') => {
+            (element_type.strip_suffix(lane_digit).unwrap(), lane_digit.to_digit(10).unwrap() as usize)
+        },
+        _ => (element_type, 1),
+    };
+
+    let scalar_size = match scalar_name {
+        "bool" | "char" | "uchar" => 1,
+        "short" | "ushort" | "half" | "bfloat" => 2,
+        "int" | "uint" | "float" => 4,
+        "long" | "ulong" => 8,
+        other => bail!("unsupported OPTIONAL threadgroup element type `{other}`"),
+    };
+
+    // MSL pads 3-component vectors to 4 lanes, so `float3` is 16 bytes, not 12.
+    let padded_lanes = if lanes == 3 {
+        4
+    } else {
+        lanes
+    };
+    Ok(scalar_size * padded_lanes)
+}
+
 impl MetalArgument {
     fn scalar_type_to_rust(c_type: &str) -> anyhow::Result<Box<str>> {
         let mut tokens: Vec<_> = c_type.split_whitespace().collect();
@@ -203,6 +235,10 @@ impl MetalArgument {
             _ => None,
         }
     }
+
+    pub fn is_optional_shared(&self) -> bool {
+        matches!(self.argument_type, MetalArgumentType::Shared(_)) && self.condition.is_some()
+    }
 }
 
 fn parse_argument_annotation(
@@ -217,8 +253,11 @@ fn parse_argument_annotation(
             bail!("dsl.optional takes 1 argument, found {}", annotation.len() - 1);
         }
         let argument_type = parse_argument_type(c_type, source, None)?;
-        if !matches!(argument_type, MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)) {
-            bail!("Only a buffer or a constant can be optional");
+        if !matches!(
+            argument_type,
+            MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_) | MetalArgumentType::Shared(_)
+        ) {
+            bail!("Only a buffer, a constant or a threadgroup argument can be optional");
         }
         return Ok((argument_type, Some(annotation[1].clone())));
     }

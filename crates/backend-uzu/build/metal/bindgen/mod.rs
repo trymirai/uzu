@@ -23,12 +23,12 @@ pub fn bindgen(
     let struct_name = format_ident!("{}MetalKernel", kernel_name);
 
     let variant_binds = variants::parse(kernel)?;
-    let argument_emissions = arguments::parse(kernel, enum_paths)?;
+    let mut variant_path_rewriter = VariantPathRewriter::new(&variant_binds, kernel_name);
+    let argument_emissions = arguments::parse(kernel, enum_paths, &mut variant_path_rewriter)?;
     let specialize_emission =
         specialize::parse(kernel, specialize_indices.get(&kernel.name).copied(), kernel_name, enum_paths)?;
     let trait_wiring = trait_wiring::build(kernel, &trait_name, &struct_name);
 
-    let mut variant_path_rewriter = VariantPathRewriter::new(&variant_binds, kernel_name);
     let dispatch_emission = dispatch::parse(kernel, &mut variant_path_rewriter)?;
     let referenced_parameter_names = variant_path_rewriter.finish();
 
@@ -37,7 +37,7 @@ pub fn bindgen(
     let conditional_buffer_initializers: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.struct_initializer()).collect();
     let mut encode_argument_definitions: Vec<TokenStream> =
-        argument_emissions.iter().map(|argument| argument.encode_argument_definition()).collect();
+        argument_emissions.iter().filter_map(|argument| argument.encode_argument_definition()).collect();
     let mut encode_lifetimes: Vec<TokenStream> =
         argument_emissions.iter().filter_map(|argument| argument.encode_lifetime()).collect();
     let encode_deconstructs: Vec<TokenStream> =
