@@ -15,8 +15,8 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
     const constant uzu::matmul::GemvParams* params,
     GemmDTransform output_transform,
     GemvTile tile,
-    uint group_index_x,
-    uint group_index_y,
+    uint threadgroup_index_x,
+    uint threadgroup_index_y,
     threadgroup float* threadgroup_memory,
     const thread ThreadContext& thread_context
 ) {
@@ -37,9 +37,6 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_fp(
   const uint sg_thread_cols = tile.sg_thread_cols;
   const uint thread_out_rows = tile.thread_out_rows;
   const uint thread_out_cols = tile.thread_out_cols;
-
-  const uint threadgroup_index_x = group_index_x;
-  const uint threadgroup_index_y = group_index_y;
 
   if (output_rows_per_threadgroup <= 0) {
     return;

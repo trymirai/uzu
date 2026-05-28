@@ -138,8 +138,8 @@ struct GemvCore {
       const constant uzu::matmul::GemvParams* params,
       GemmDTransform output_transform,
       GemvTile tile,
-      uint group_index_x,
-      uint group_index_y,
+      uint threadgroup_index_x,
+      uint threadgroup_index_y,
       threadgroup float* threadgroup_memory,
       const thread ThreadContext& thread_context
   );
