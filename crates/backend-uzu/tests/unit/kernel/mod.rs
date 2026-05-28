@@ -2,18 +2,17 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
-mod activation_mul_test;
 mod activation_test;
 mod attention;
 mod audio;
 mod delta_net_test;
 mod embedding;
+mod gated_act_mul_test;
 mod hadamard_transform_test;
 mod kv_cache_update_test;
 mod layer_norm_test;
 mod matmul;
 mod moe;
-mod ple_gate_act_mul_test;
 mod pooling;
 mod qk_unpack_test;
 mod quant_matmul;

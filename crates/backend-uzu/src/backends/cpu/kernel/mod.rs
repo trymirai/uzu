@@ -4,14 +4,13 @@ mod attention;
 mod audio;
 mod delta_net;
 mod embedding;
+mod gated_act_mul;
 mod hadamard_transform;
 mod kv_cache_update;
 mod layer_norm;
 
 mod matmul;
-mod mlp;
 mod moe;
-mod ple_gate_act_mul;
 mod pooling;
 mod rms_norm;
 mod rope;
