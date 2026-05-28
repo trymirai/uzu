@@ -6,7 +6,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, Kernels, PleGateActMulKernel, TensorAddBiasKernel, TensorAddScaleKernel,
+            FullPrecisionEmbeddingLookupKernel, GatedActMulKernel, Kernels, TensorAddBiasKernel, TensorAddScaleKernel,
         },
     },
     config::{
@@ -157,7 +157,7 @@ pub struct PerLayerEmbeddingProjection<B: Backend> {
     gate: Box<dyn Linear<B>>,
     projection: Box<dyn Linear<B>>,
     norm: RMSNorm<B>,
-    gate_act_mul: <B::Kernels as Kernels>::PleGateActMulKernel,
+    gate_act_mul: <B::Kernels as Kernels>::GatedActMulKernel,
     residual_finalize: <B::Kernels as Kernels>::TensorAddBiasKernel,
     residual_combine: <B::Kernels as Kernels>::TensorAddScaleKernel,
     model_dim: usize,
@@ -206,7 +206,7 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             PostLayerScalar::None,
         )?;
 
-        let gate_act_mul = <B::Kernels as Kernels>::PleGateActMulKernel::new(context, data_type)
+        let gate_act_mul = <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, false, false)
             .map_err(PerLayerEmbeddingError::BackendError)?;
         let residual_finalize = <B::Kernels as Kernels>::TensorAddBiasKernel::new(context, data_type, data_type, true)
             .map_err(PerLayerEmbeddingError::BackendError)?;
@@ -256,12 +256,13 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
         let mut activated = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.ple_dim], self.data_type))?;
         self.gate_act_mul.encode(
             &gate_out,
-            per_layer_input,
+            Some(per_layer_input),
             &mut activated,
+            None::<&Allocation<B>>,
             self.ple_dim as i32,
             batch_dim as i32,
-            self.num_layers as i32,
             (layer_index * self.ple_dim) as i32,
+            (self.num_layers * self.ple_dim) as i32,
             self.activation.act_type(),
             encoder,
         );
