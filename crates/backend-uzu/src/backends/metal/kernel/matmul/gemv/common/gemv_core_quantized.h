@@ -28,11 +28,6 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
   const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
-  const uint simd_lane = thread_context.simd_lane_id;
-  const uint simd_group = thread_context.simdgroup_index;
-  const uint batch_idx = thread_context.threadgroup_position.x;
-  const uint out_block_idx = thread_context.threadgroup_position.y;
-
   constexpr uint packs_per_thread = BITS == 2 ? 1 : 2;
   constexpr uint num_simdgroups = 8;
   constexpr uint results_per_simdgroup = 4;
@@ -50,33 +45,33 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
       params->in_vec_size * bytes_per_pack / pack_factor;
   const uint in_vec_size_g = params->in_vec_size / GROUP_SIZE;
   const uint out_row =
-      out_block_idx * (num_simdgroups * results_per_simdgroup) +
-      simd_group * results_per_simdgroup;
-  ws += out_row * in_vec_size_w + simd_lane * packs_per_thread * bytes_per_pack;
-  scales += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
+      thread_context.threadgroup_position.y * (num_simdgroups * results_per_simdgroup) +
+      thread_context.simdgroup_index * results_per_simdgroup;
+  ws += out_row * in_vec_size_w + thread_context.simd_lane_id * packs_per_thread * bytes_per_pack;
+  scales += out_row * in_vec_size_g + thread_context.simd_lane_id / scale_step_per_thread;
 
   uint zp_stride = 0;
   const device uint8_t* zps = nullptr;
   bool high_nibble = false;
 
   if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-    biases += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
+    biases += out_row * in_vec_size_g + thread_context.simd_lane_id / scale_step_per_thread;
   } else {
     if (BITS == 4) {
       zp_stride = (in_vec_size_g + 1) / 2;
       zps = zero_points + out_row * zp_stride;
-      uint g_offset = simd_lane / scale_step_per_thread;
+      uint g_offset = thread_context.simd_lane_id / scale_step_per_thread;
       zps += g_offset / 2;
       high_nibble = (g_offset & 1);
     } else {
       zp_stride = in_vec_size_g;
       zps = zero_points + out_row * zp_stride;
-      zps += simd_lane / scale_step_per_thread;
+      zps += thread_context.simd_lane_id / scale_step_per_thread;
     }
   }
 
-  a += batch_idx * params->in_vec_size + simd_lane * values_per_thread;
-  d += batch_idx * params->out_vec_size + out_row;
+  a += thread_context.threadgroup_position.x * params->in_vec_size + thread_context.simd_lane_id * values_per_thread;
+  d += thread_context.threadgroup_position.x * params->out_vec_size + out_row;
 
   uint k = 0;
   for (; k + block_size <= params->in_vec_size; k += block_size) {
@@ -165,7 +160,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     a += block_size;
   }
 
-  const uint thread_offset = simd_lane * values_per_thread;
+  const uint thread_offset = thread_context.simd_lane_id * values_per_thread;
   const int remaining = (k + thread_offset < params->in_vec_size)
       ? min(static_cast<int>(params->in_vec_size - k - thread_offset),
             static_cast<int>(values_per_thread))
@@ -278,7 +273,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   }
 
   // Fused output epilogue: optional scale, then optional accumulate / bias.
-  if (simd_lane == 0) {
+  if (thread_context.simd_lane_id == 0) {
     for (uint row = 0; row < results_per_simdgroup; row++) {
       U value = result[row];
       if (is_scale) {
@@ -296,26 +291,26 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   }
 
   if (use_hadamard) {
-    if (simd_lane == 0) {
+    if (thread_context.simd_lane_id == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
-        result_shared[simd_group * results_per_simdgroup + row] = result[row];
+        result_shared[thread_context.simdgroup_index * results_per_simdgroup + row] = result[row];
       }
     }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    if (simd_group == 0) {
-      uint global_out_idx = out_block_idx * 32 + simd_lane;
+    if (thread_context.simdgroup_index == 0) {
+      uint global_out_idx = thread_context.threadgroup_position.y * 32 + thread_context.simd_lane_id;
       if (global_out_idx < params->out_vec_size) {
-        d[simd_lane] = simdgroup_output_random_hadamard_transform(
-            static_cast<ushort>(simd_lane),
-            static_cast<T>(result_shared[simd_lane]),
+        d[thread_context.simd_lane_id] = simdgroup_output_random_hadamard_transform(
+            static_cast<ushort>(thread_context.simd_lane_id),
+            static_cast<T>(result_shared[thread_context.simd_lane_id]),
             rht_factors[global_out_idx]
         );
       }
     }
   } else {
-    if (simd_lane == 0) {
+    if (thread_context.simd_lane_id == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
         d[row] = static_cast<T>(result[row]);
       }
