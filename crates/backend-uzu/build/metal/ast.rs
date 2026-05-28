@@ -135,12 +135,31 @@ pub fn shared_element_type(c_type: &str) -> &str {
 }
 
 pub fn shared_element_byte_size(c_type: &str) -> anyhow::Result<usize> {
-    let scalar = shared_element_type(c_type).rsplit(' ').next().unwrap_or_default();
-    match scalar {
-        "half" | "bfloat" => Ok(2),
-        "float" => Ok(4),
-        other => bail!("unsupported OPTIONAL threadgroup element type `{other}` (expected half, bfloat or float)"),
-    }
+    let element_type = shared_element_type(c_type).rsplit(' ').next().unwrap_or_default();
+
+    // Split the lane digit off vectors: "float4" -> "float", 4.
+    let (scalar_name, lanes) = match element_type.chars().last() {
+        Some(lane_digit @ '2'..='4') => {
+            (element_type.strip_suffix(lane_digit).unwrap(), lane_digit.to_digit(10).unwrap() as usize)
+        },
+        _ => (element_type, 1),
+    };
+
+    let scalar_size = match scalar_name {
+        "bool" | "char" | "uchar" => 1,
+        "short" | "ushort" | "half" | "bfloat" => 2,
+        "int" | "uint" | "float" => 4,
+        "long" | "ulong" => 8,
+        other => bail!("unsupported OPTIONAL threadgroup element type `{other}`"),
+    };
+
+    // MSL pads 3-component vectors to 4 lanes, so `float3` is 16 bytes, not 12.
+    let padded_lanes = if lanes == 3 {
+        4
+    } else {
+        lanes
+    };
+    Ok(scalar_size * padded_lanes)
 }
 
 impl MetalArgument {
