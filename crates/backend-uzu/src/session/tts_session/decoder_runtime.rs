@@ -222,7 +222,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let context: Rc<B::Context> = Rc::clone(ctx.context());
         let model_dim = ctx.decoder_config.transformer_config.model_dim;
         let tensor_add_scale =
-            <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), ctx.model_shape.data_type)
+            <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), ctx.model_shape.data_type, false)
                 .map_err(unable_to_create_context)?;
         let single_hidden_capture =
             context.create_array_zeros(&[1, model_dim], ctx.model_shape.data_type).into_allocation();
@@ -1099,7 +1099,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let mut output =
             encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(unable_to_create_context)?;
         self.tensor_add_scale.encode(
-            &*main,
+            Some(&*main),
             &self.single_override_embedding,
             &mut output,
             model_dim_u32,
