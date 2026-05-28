@@ -18,7 +18,6 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     const device int32_t* hadamard_factors,
     const device T* output_bias,
     const constant uzu::matmul::GemvParams* params,
-    QuantizationMethod quant_method,
     GemmDTransform output_transform,
     threadgroup float* shared_results,
     const thread ThreadContext& thread_context
@@ -62,7 +61,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
   const device uint8_t* zps = nullptr;
   bool high_nibble = false;
 
-  if (quant_method == QuantizationMethod::ScaleBias) {
+  if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
     biases += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
   } else {
     if (BITS == 4) {
@@ -96,7 +95,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
       U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
       U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
 
-      if (quant_method == QuantizationMethod::ScaleBias) {
+      if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
         U b0 = static_cast<U>(biases[0]);
         U b1 = static_cast<U>(biases[in_vec_size_g]);
         U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
@@ -156,7 +155,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
 
     ws += block_size * bytes_per_pack / pack_factor;
     scales += block_size / GROUP_SIZE;
-    if (quant_method == QuantizationMethod::ScaleBias) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       biases += block_size / GROUP_SIZE;
     } else {
       if (BITS == 4) {
@@ -190,7 +189,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
     U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
 
-    if (quant_method == QuantizationMethod::ScaleBias) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       U b0 = static_cast<U>(biases[0]);
       U b1 = static_cast<U>(biases[in_vec_size_g]);
       U b2 = static_cast<U>(biases[2 * in_vec_size_g]);

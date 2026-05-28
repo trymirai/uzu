@@ -46,8 +46,8 @@ namespace uzu {
 namespace gemv {
 
 // Template signature mirrors gemm's `SimdgroupMmaCore`; `B_PROLOGUE` selects
-// the dense vs quantized body (the quantized sub-kind, ScaleBias vs
-// ScaleZeroPoint, is still picked at runtime from `quant_method`).
+// the dense vs quantized body, and within quantized the ScaleBias vs
+// ScaleZeroPoint sub-kind — all at compile time (kernel VARIANTS).
 template <
     typename T,
     GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
@@ -64,7 +64,6 @@ struct GemvCore {
       const device int32_t* hadamard_factors,
       const device T* output_bias,
       const constant uzu::matmul::GemvParams* params,
-      QuantizationMethod quant_method,
       GemmDTransform output_transform,
       GemvTiling gemv_tiling,
       threadgroup float* threadgroup_memory,
@@ -75,7 +74,6 @@ struct GemvCore {
       (void)scales;
       (void)zero_points;
       (void)biases;
-      (void)quant_method;
       (void)shared_results;
       run_fp(
           reinterpret_cast<const device T*>(weights),
@@ -102,7 +100,6 @@ struct GemvCore {
           hadamard_factors,
           output_bias,
           params,
-          quant_method,
           output_transform,
           shared_results,
           thread_context
@@ -133,7 +130,6 @@ struct GemvCore {
       const device int32_t* hadamard_factors,
       const device T* output_bias,
       const constant uzu::matmul::GemvParams* params,
-      QuantizationMethod quant_method,
       GemmDTransform output_transform,
       threadgroup float* shared_results,
       const thread ThreadContext& thread_context

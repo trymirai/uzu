@@ -7,8 +7,8 @@ use crate::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
-                QuantizationMethod, QuantizationMode,
-                gemm::GemmDTransform,
+                QuantizationMode,
+                gemm::{GemmBPrologueKind, GemmDTransform},
                 matmul::{GemvParams, GemvTiling},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
@@ -24,9 +24,9 @@ type UnifiedKernel = GemvMetalKernel;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct GemvKey {
+    b_prologue: GemmBPrologueKind,
     group_size: u32,
     bits: u32,
-    quant_method: QuantizationMethod,
     tiling: GemvTiling,
     output_transform: GemmDTransform,
 }
@@ -49,9 +49,9 @@ impl GemvDispatch {
             kernel.get_or_create(
                 context,
                 GemvKey {
+                    b_prologue: GemmBPrologueKind::FullPrecision,
                     group_size: 0,
                     bits: 0,
-                    quant_method: QuantizationMethod::ScaleBias,
                     tiling: config.tiling,
                     output_transform: config.output_transform(),
                 },
@@ -71,9 +71,9 @@ impl GemvDispatch {
                 let kernel = UnifiedKernel::new(
                     context,
                     self.data_type,
+                    key.b_prologue,
                     key.group_size,
                     key.bits,
-                    key.quant_method,
                     key.output_transform,
                     key.tiling,
                 )
@@ -144,9 +144,9 @@ impl GemvDispatch {
         let group_count_y = m;
 
         let key = GemvKey {
+            b_prologue: GemmBPrologueKind::FullPrecision,
             group_size: 0,
             bits: 0,
-            quant_method: QuantizationMethod::ScaleBias,
             tiling: specialization.tiling,
             output_transform: output_mask,
         };
@@ -203,21 +203,21 @@ impl GemvDispatch {
             k,
             ..
         } = arguments;
-        let (weights, scales, zp_or_bias, method, mode, group_size) = match b {
+        let (weights, scales, zp_or_bias, b_prologue, mode, group_size) = match b {
             MatmulB::ScaleBiasDequant {
                 b: w,
                 scales,
                 biases,
                 mode,
                 group_size,
-            } => (w, scales, biases, QuantizationMethod::ScaleBias, mode, group_size),
+            } => (w, scales, biases, GemmBPrologueKind::ScaleBiasDequant, mode, group_size),
             MatmulB::ScaleZeroPointDequant {
                 b: w,
                 scales,
                 zero_points,
                 mode,
                 group_size,
-            } => (w, scales, zero_points, QuantizationMethod::ScaleZeroPoint, mode, group_size),
+            } => (w, scales, zero_points, GemmBPrologueKind::ScaleZeroPointDequant, mode, group_size),
             MatmulB::FullPrecision {
                 ..
             } => unreachable!(),
@@ -233,18 +233,19 @@ impl GemvDispatch {
             });
         }
 
-        let (zero_points, biases) = match method {
-            QuantizationMethod::ScaleZeroPoint => (Some(zp_or_bias), None),
-            QuantizationMethod::ScaleBias => (None, Some(zp_or_bias)),
+        let (zero_points, biases) = match b_prologue {
+            GemmBPrologueKind::ScaleZeroPointDequant => (Some(zp_or_bias), None),
+            GemmBPrologueKind::ScaleBiasDequant => (None, Some(zp_or_bias)),
+            GemmBPrologueKind::FullPrecision => unreachable!(),
         };
 
         let group_count_x = m;
         let group_count_y = n.div_ceil(32);
 
         let key = GemvKey {
+            b_prologue,
             group_size,
             bits,
-            quant_method: method,
             tiling: GemvTiling::Wide,
             output_transform: output_mask,
         };

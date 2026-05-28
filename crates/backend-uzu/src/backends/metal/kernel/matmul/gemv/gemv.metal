@@ -7,18 +7,26 @@ using namespace uzu::gemm;
 using namespace uzu::gemv;
 using namespace uzu::matmul;
 
-template <typename T, uint GROUP_SIZE, uint BITS>
+template <typename T, GemmBPrologueKind B_PROLOGUE, uint GROUP_SIZE, uint BITS>
 VARIANTS(T, float, half, bfloat)
+VARIANTS(
+    B_PROLOGUE,
+    GemmBPrologueKind::FullPrecision,
+    GemmBPrologueKind::ScaleBiasDequant,
+    GemmBPrologueKind::ScaleZeroPointDequant)
 VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
+CONSTRAINT(
+    (B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 KERNEL(Gemv)(
     const device uint32_t* weights,
-    const device T* scales OPTIONAL(BITS != 0),
+    const device T* scales
+        OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
     const device uint8_t* zero_points
-        OPTIONAL(BITS != 0 && quant_method == QuantizationMethod::ScaleZeroPoint),
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
     const device T* biases
-        OPTIONAL(BITS != 0 && quant_method == QuantizationMethod::ScaleBias),
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
     const device T* input,
     device T* output,
     const device int32_t* hadamard_factors
@@ -28,7 +36,6 @@ KERNEL(Gemv)(
     const constant uzu::matmul::GemvParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
-    const QuantizationMethod quant_method SPECIALIZE,
     const GemmDTransform output_transform SPECIALIZE,
     const GemvTiling gemv_tiling SPECIALIZE,
     threadgroup float threadgroup_memory[GEMV_MAX_THREADGROUP_MEMORY],
@@ -41,15 +48,6 @@ KERNEL(Gemv)(
     const ThreadContext thread_context
 ) {
   (void)thread_index_z;
-
-  // Derive prologue from BITS so the kernel's VARIANTS(...) set stays
-  // (T, GROUP_SIZE, BITS); the gemv `CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))`
-  // already enforces that BITS == 0 ↔ FullPrecision. The ScaleBias vs
-  // ScaleZeroPoint sub-kind is still picked at runtime via `quant_method`.
-  constexpr GemmBPrologueKind B_PROLOGUE = (BITS == 0)
-      ? GemmBPrologueKind::FullPrecision
-      : GemmBPrologueKind::ScaleBiasDequant;
-
   (void)group_index_x;
   (void)group_index_y;
   (void)thread_index_x;
@@ -65,7 +63,6 @@ KERNEL(Gemv)(
       hadamard_factors,
       output_bias,
       params,
-      quant_method,
       output_transform,
       gemv_tiling,
       threadgroup_memory,
