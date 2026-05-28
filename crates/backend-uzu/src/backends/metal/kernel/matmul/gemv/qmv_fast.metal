@@ -46,6 +46,7 @@ KERNEL(QmvFast)(
     const constant uint& batch_size,
     const constant float& ab_scale,
     const GemmDTransform output_transform SPECIALIZE,
+    const bool input_aligned SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(out_vec_size.div_ceil(32)),
@@ -189,8 +190,13 @@ KERNEL(QmvFast)(
     input += block_size;
   }
 
+  // Tail block for K not a multiple of block_size. Gated on the
+  // `input_aligned` function constant so the common aligned case (all
+  // production K are multiples of block_size) compiles to a pipeline with this
+  // whole path dead-code-eliminated — matching the original `qmv_fast` codegen
+  // and its register pressure / occupancy.
   const uint thread_offset = simd_lane * values_per_thread;
-  const int remaining = (k + thread_offset < in_vec_size)
+  const int remaining = (!input_aligned && k + thread_offset < in_vec_size)
       ? min(static_cast<int>(in_vec_size - k - thread_offset),
             static_cast<int>(values_per_thread))
       : 0;

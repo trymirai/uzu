@@ -32,6 +32,7 @@ struct QmvFastKey {
     group_size: u32,
     bits: u32,
     output_transform: GemmDTransform,
+    input_aligned: bool,
 }
 
 pub(crate) struct GemvDispatch {
@@ -100,6 +101,7 @@ impl GemvDispatch {
                     key.group_size,
                     key.bits,
                     key.output_transform,
+                    key.input_aligned,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -260,11 +262,17 @@ impl GemvDispatch {
             GemmBPrologueKind::FullPrecision => unreachable!(),
         };
 
+        // block_size = values_per_thread * 32; values_per_thread = 2 packs ×
+        // pack_factor (8 at 4-bit, 4 at 8-bit). Aligned K skips the tail block.
+        let block_size = if bits == 4 { 512 } else { 256 };
+        let input_aligned = k % block_size == 0;
+
         let key = QmvFastKey {
             b_prologue,
             group_size,
             bits,
             output_transform: output_mask,
+            input_aligned,
         };
         let context = encoder.context();
         self.get_or_create_quant(context, key)?.encode(
