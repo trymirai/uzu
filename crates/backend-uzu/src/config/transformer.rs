@@ -8,5 +8,15 @@ pub struct TransformerConfig {
     pub output_norm_config: NormalizationConfig,
     pub model_dim: usize,
     pub hidden_dim: usize,
-    pub context_length: usize,
+}
+
+impl TransformerConfig {
+    pub fn max_sequence_length(&self) -> Option<usize> {
+        self.layer_configs
+            .iter()
+            .filter_map(|layer_config| {
+                layer_config.rope_config.as_ref().map(|rope_config| *rope_config.max_sequence_length())
+            })
+            .max()
+    }
 }

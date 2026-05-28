@@ -86,7 +86,8 @@ pub(super) fn read_pointwise_conv_layer<B: Backend>(
     expected_out_dim: usize,
     expected_in_dim: usize,
 ) -> AudioResult<StructuredAudioPointwiseConv<B>> {
-    let weight = tree.leaf("weights")?.validate(&[expected_out_dim, expected_in_dim], data_type)?.read_array()?;
+    let weight =
+        tree.leaf("weights.weights")?.validate(&[expected_out_dim, expected_in_dim], data_type)?.read_array()?;
     let bias = tree.leaf("biases")?.validate(&[expected_out_dim], data_type)?.read_array()?;
     Ok(StructuredAudioPointwiseConv {
         weight,
@@ -128,7 +129,7 @@ pub(super) fn read_convnext_layer<B: Backend>(
     dim: usize,
 ) -> AudioResult<StructuredAudioConvNeXt<B>> {
     let hidden_dim = dim.checked_mul(4).ok_or(AudioError::Runtime("ConvNeXt hidden dimension overflow".to_string()))?;
-    let depthwise_conv = read_conv1d_layer::<B>(&tree.subtree("dwconv")?, data_type, dim, dim, 7, 1, dim)?;
+    let depthwise_conv = read_conv1d_layer::<B>(&tree.subtree("depthwise_conv")?, data_type, dim, dim, 7, 1, dim)?;
     let norm = read_norm_layer::<B>(
         context,
         &tree.subtree("norm")?,
@@ -138,8 +139,8 @@ pub(super) fn read_convnext_layer<B: Backend>(
         norm_config.subtract_mean,
         norm_config.has_biases,
     )?;
-    let pwconv1 = read_pointwise_conv_layer::<B>(&tree.subtree("pwconv1")?, data_type, hidden_dim, dim)?;
-    let pwconv2 = read_pointwise_conv_layer::<B>(&tree.subtree("pwconv2")?, data_type, dim, hidden_dim)?;
+    let pwconv1 = read_pointwise_conv_layer::<B>(&tree.subtree("pointwise_conv_step1")?, data_type, hidden_dim, dim)?;
+    let pwconv2 = read_pointwise_conv_layer::<B>(&tree.subtree("pointwise_conv_step2")?, data_type, dim, hidden_dim)?;
     Ok(StructuredAudioConvNeXt {
         activation_type,
         depthwise_conv,

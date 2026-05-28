@@ -125,7 +125,7 @@ impl<B: Backend> dyn Linear<B> {
                     &weights_tree,
                 )?))
             },
-            spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+            spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                 let block = LinearMatmul::quantized(
                     context,
                     spec,
@@ -178,7 +178,7 @@ impl<B: Backend> dyn Linear<B> {
         let weights_tree = parameter_tree.subtree("weights")?.subtree("quantized")?;
         let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
         match spec {
-            spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+            spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                 Ok(Box::new(LinearMatmul::quantized(
                     context,
                     spec,

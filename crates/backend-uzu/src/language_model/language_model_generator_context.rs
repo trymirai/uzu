@@ -198,7 +198,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         decoder_config: &DecoderConfig,
         decoding_config: &DecodingConfig,
     ) -> usize {
-        let model_length = decoder_config.transformer_config.context_length;
+        let model_length = decoder_config.transformer_config.max_sequence_length().unwrap_or(65536);
         let proposed_value = match decoding_config.context_length {
             ContextLength::Default => {
                 if context.sparse_buffers_supported() {
