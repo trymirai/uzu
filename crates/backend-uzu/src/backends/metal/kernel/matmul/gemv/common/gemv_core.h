@@ -49,9 +49,13 @@ namespace gemv {
 // the same `run()` body and are selected at compile time via `B_PROLOGUE`.
 //
 // Both paths agree on:
-//   - grid axes: `threadgroup_position.x` = output block on N,
-//                `threadgroup_position.y` = batch row on M.
 //   - threadgroup geometry: 32 lanes × 8 simdgroups × 1 (set in gemv.metal).
+//
+// Grid axes differ between the paths — FP uses `.x` for N (output block) and
+// `.y` for M (batch); quant uses `.x` for M (batch) and `.y` for N (output
+// block). The quant orientation matches the original `qmv_fast` kernel: with
+// weights dominating bandwidth, putting M on the fast-changing `.x` axis lets
+// consecutive threadgroups share the same weight rows for better cache reuse.
 //   - epilogue ordering: optional scale → optional accumulate → optional bias.
 //
 // They diverge inside the K loop: the FP path streams typed loads through
@@ -452,7 +456,7 @@ struct GemvCore {
           params->in_vec_size * bytes_per_pack / pack_factor;
       const uint in_vec_size_g = params->in_vec_size / GROUP_SIZE;
       const uint out_row =
-          thread_context.threadgroup_position.x *
+          thread_context.threadgroup_position.y *
               (num_simdgroups * results_per_simdgroup) +
           thread_context.simdgroup_index * results_per_simdgroup;
       ws += out_row * in_vec_size_w +
@@ -482,9 +486,9 @@ struct GemvCore {
         }
       }
 
-      a += thread_context.threadgroup_position.y * params->in_vec_size +
+      a += thread_context.threadgroup_position.x * params->in_vec_size +
           thread_context.simd_lane_id * values_per_thread;
-      d += thread_context.threadgroup_position.y * params->out_vec_size +
+      d += thread_context.threadgroup_position.x * params->out_vec_size +
           out_row;
 
       uint k = 0;
@@ -688,7 +692,7 @@ struct GemvCore {
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         if (thread_context.simdgroup_index == 0) {
-          uint global_out_idx = thread_context.threadgroup_position.x * 32 +
+          uint global_out_idx = thread_context.threadgroup_position.y * 32 +
               thread_context.simd_lane_id;
           if (global_out_idx < params->out_vec_size) {
             d[thread_context.simd_lane_id] =

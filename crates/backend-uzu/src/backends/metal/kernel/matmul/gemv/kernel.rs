@@ -239,8 +239,8 @@ impl GemvDispatch {
             GemmBPrologueKind::FullPrecision => unreachable!(),
         };
 
-        let group_count_x = n.div_ceil(32);
-        let group_count_y = m;
+        let group_count_x = m;
+        let group_count_y = n.div_ceil(32);
 
         let key = GemvKey {
             b_prologue,
