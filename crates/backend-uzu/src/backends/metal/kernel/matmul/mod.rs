@@ -145,7 +145,7 @@ impl MatmulKernel for MatmulMetalKernel {
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
-            if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) {
                 return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
             }
         }

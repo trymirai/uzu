@@ -13,9 +13,9 @@ template <
     typename OutputT,
     uint GROUP_SIZE,
     uint BITS>
-VARIANTS(WeightT, float, half, bfloat)
-VARIANTS(InputT, float, half, bfloat)
-VARIANTS(OutputT, float, half, bfloat)
+VARIANTS(WeightT, float, bfloat)
+VARIANTS(InputT, float, bfloat)
+VARIANTS(OutputT, float, bfloat)
 VARIANTS(GROUP_SIZE, 16, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
 PUBLIC KERNEL(QuantizedMatmulQmv)(

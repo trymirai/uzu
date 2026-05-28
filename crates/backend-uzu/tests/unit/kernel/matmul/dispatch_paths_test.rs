@@ -9,7 +9,7 @@ use backend_uzu::{
         metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
     },
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use rstest::rstest;
 
@@ -77,11 +77,6 @@ fn matches_cpu_reference_bf16(
         |shape| Case::new(shape).with_ab_scale(ab_scale).with_accumulate(accumulate),
         1.0,
     );
-}
-
-#[test]
-fn matches_cpu_reference_f16() {
-    run_matrix::<f16>(|shape| Case::new(shape), 0.5);
 }
 
 #[test]

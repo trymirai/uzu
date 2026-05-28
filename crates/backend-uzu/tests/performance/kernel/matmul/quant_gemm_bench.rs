@@ -12,7 +12,7 @@ use backend_uzu::{
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::{
@@ -70,5 +70,4 @@ fn bench_unified_quantized_gemm(c: &mut Criterion) {
     bench_unified_quant_typed::<bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
     bench_unified_quant_typed::<bf16>(c, &context, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
     bench_unified_quant_typed::<bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
-    bench_unified_quant_typed::<f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
 }

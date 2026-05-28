@@ -29,16 +29,16 @@ template <
     GemmWeightPrologueKind WEIGHT_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
-VARIANTS(AT, half, bfloat, float)
-VARIANTS(BT, half, bfloat, float)
-VARIANTS(DT, half, bfloat, float)
+VARIANTS(AT, bfloat, float)
+VARIANTS(BT, bfloat, float)
+VARIANTS(DT, bfloat, float)
+CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 VARIANTS(
     GEMM_TILING,
     GemmTiling::T8x32x32_1x1,
     GemmTiling::T64x32x32_2x2,
     GemmTiling::T64x64x16_2x2,
     GemmTiling::T64x64x32_2x2,
-    GemmTiling::T64x64x64_2x2,
     GemmTiling::T32x32x32_2x2,
     GemmTiling::T32x64x32_2x2,
     GemmTiling::T64x32x32_4x1,
@@ -59,11 +59,22 @@ CONSTRAINT(
         GEMM_TILING == GemmTiling::T64x32x32_4x1 ||
         GEMM_TILING == GemmTiling::T128x128x32_4x4)
 CONSTRAINT(
-    WEIGHT_PROLOGUE != GemmWeightPrologueKind::FullPrecision ||
-        (BITS == 0 && GROUP_SIZE == 0))
+    WEIGHT_PROLOGUE != GemmWeightPrologueKind::FullPrecision || USE_MXU ||
+        GEMM_TILING == GemmTiling::T64x64x16_2x2 ||
+        GEMM_TILING == GemmTiling::T64x32x32_2x2)
 CONSTRAINT(
-    WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
-        (BITS != 0 && GROUP_SIZE != 0))
+    TRANSPOSE_B ||
+        (WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision &&
+         ((!USE_MXU &&
+           (GEMM_TILING == GemmTiling::T64x64x16_2x2 ||
+            GEMM_TILING == GemmTiling::T64x32x32_2x2)) ||
+          (USE_MXU &&
+           (GEMM_TILING == GemmTiling::T32x64x32_2x2 ||
+            GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
+            GEMM_TILING == GemmTiling::T128x128x32_4x4)))))
+CONSTRAINT((WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision) == (BITS == 0))
+CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(
     WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
         (!USE_MXU && TRANSPOSE_B &&
@@ -71,14 +82,10 @@ CONSTRAINT(
           GEMM_TILING == GemmTiling::T64x64x16_2x2 ||
           GEMM_TILING == GemmTiling::T32x32x32_2x2 ||
           GEMM_TILING == GemmTiling::T64x32x32_2x2 ||
-          GEMM_TILING == GemmTiling::T64x64x32_2x2 ||
-          GEMM_TILING == GemmTiling::T64x64x64_2x2)))
+          GEMM_TILING == GemmTiling::T64x64x32_2x2)))
 CONSTRAINT(
     WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision ||
         GROUP_SIZE != 16 || GEMM_TILING == GemmTiling::T64x64x16_2x2)
-CONSTRAINT(
-    GEMM_TILING != GemmTiling::T64x64x64_2x2 ||
-        GROUP_SIZE == 64 || GROUP_SIZE == 128)
 KERNEL(Gemm)(
     const device AT* a,
     const device uint8_t* b_packed,
