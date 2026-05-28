@@ -130,6 +130,19 @@ pub struct MetalArgument {
     pub source: Box<str>,
 }
 
+pub fn shared_element_type(c_type: &str) -> &str {
+    c_type.split(['*', '&', '(']).next().unwrap_or_default().trim_end()
+}
+
+pub fn shared_element_byte_size(c_type: &str) -> anyhow::Result<usize> {
+    let scalar = shared_element_type(c_type).rsplit(' ').next().unwrap_or_default();
+    match scalar {
+        "half" | "bfloat" => Ok(2),
+        "float" => Ok(4),
+        other => bail!("unsupported OPTIONAL threadgroup element type `{other}` (expected half, bfloat or float)"),
+    }
+}
+
 impl MetalArgument {
     fn scalar_type_to_rust(c_type: &str) -> anyhow::Result<Box<str>> {
         let mut tokens: Vec<_> = c_type.split_whitespace().collect();
@@ -203,6 +216,10 @@ impl MetalArgument {
             _ => None,
         }
     }
+
+    pub fn is_optional_shared(&self) -> bool {
+        matches!(self.argument_type, MetalArgumentType::Shared(_)) && self.condition.is_some()
+    }
 }
 
 fn parse_argument_annotation(
@@ -217,8 +234,11 @@ fn parse_argument_annotation(
             bail!("dsl.optional takes 1 argument, found {}", annotation.len() - 1);
         }
         let argument_type = parse_argument_type(c_type, source, None)?;
-        if !matches!(argument_type, MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_)) {
-            bail!("Only a buffer or a constant can be optional");
+        if !matches!(
+            argument_type,
+            MetalArgumentType::Buffer(_) | MetalArgumentType::Constant(_) | MetalArgumentType::Shared(_)
+        ) {
+            bail!("Only a buffer, a constant or a threadgroup argument can be optional");
         }
         return Ok((argument_type, Some(annotation[1].clone())));
     }

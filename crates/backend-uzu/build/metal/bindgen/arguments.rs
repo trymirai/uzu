@@ -3,15 +3,22 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Expr, Ident, Lifetime, Type};
 
-use super::super::{
-    ast::{MetalArgument, MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, MetalKernelInfo},
-    enum_path_rewrite::rewrite_for_rust,
+use super::{
+    super::{
+        ast::{
+            MetalArgument, MetalArgumentType, MetalBufferAccess, MetalConstantType, MetalGroupsType, MetalKernelInfo,
+            shared_element_byte_size,
+        },
+        enum_path_rewrite::rewrite_for_rust,
+    },
+    variant_path_rewriter::VariantPathRewriter,
 };
 use crate::common::{enum_paths::EnumPaths, utils::get_generic_name_stream};
 
 pub enum ArgumentEmission {
     Buffer(BufferArgument),
     Constant(ConstantArgument),
+    Shared(SharedArgument),
     IndirectDispatch(IndirectDispatchArgument),
 }
 
@@ -44,14 +51,22 @@ struct ArgumentCondition {
     rust_expression: TokenStream,
 }
 
+pub struct SharedArgument {
+    condition: ArgumentCondition,
+    threadgroup_index: usize,
+    length_expression: TokenStream,
+}
+
 pub struct IndirectDispatchArgument;
 
 pub fn parse(
     kernel: &MetalKernelInfo,
     enum_paths: &EnumPaths,
+    variant_path_rewriter: &mut VariantPathRewriter,
 ) -> Result<Vec<ArgumentEmission>> {
     let mut emissions = Vec::new();
     let mut next_buffer_index = 0usize;
+    let mut next_threadgroup_index = 0usize;
     let mut indirect_dispatch_emitted = false;
 
     for argument in kernel.arguments.iter() {
@@ -67,6 +82,17 @@ pub fn parse(
                 emissions.push(ArgumentEmission::Constant(constant));
                 next_buffer_index += 1;
             },
+            MetalArgumentType::Shared(dimensions) if argument.condition.is_some() => {
+                let shared = parse_shared_argument(
+                    argument,
+                    dimensions.as_deref(),
+                    next_threadgroup_index,
+                    enum_paths,
+                    variant_path_rewriter,
+                )?;
+                emissions.push(ArgumentEmission::Shared(shared));
+                next_threadgroup_index += 1;
+            },
             MetalArgumentType::Groups(MetalGroupsType::Indirect) if !indirect_dispatch_emitted => {
                 emissions.push(ArgumentEmission::IndirectDispatch(IndirectDispatchArgument));
                 indirect_dispatch_emitted = true;
@@ -76,6 +102,33 @@ pub fn parse(
     }
 
     Ok(emissions)
+}
+
+fn parse_shared_argument(
+    argument: &MetalArgument,
+    dimensions: Option<&str>,
+    threadgroup_index: usize,
+    enum_paths: &EnumPaths,
+    variant_path_rewriter: &mut VariantPathRewriter,
+) -> Result<SharedArgument> {
+    let condition = parse_argument_condition(argument, enum_paths)?
+        .context("optional threadgroup argument must carry a condition")?;
+    let dimensions = dimensions.context("optional threadgroup argument must have explicit array dimensions")?;
+    let element_size = shared_element_byte_size(&argument.c_type)?;
+    let dimension_factors = dimensions
+        .split("][")
+        .map(|dimension| variant_path_rewriter.rewrite(dimension))
+        .collect::<Result<Vec<TokenStream>>>()?;
+    let element_count = dimension_factors
+        .into_iter()
+        .reduce(|left, right| quote! { (#left) * (#right) })
+        .expect("split always yields at least one dimension");
+    let length_expression = quote! { (((#element_count) as usize) * #element_size).div_ceil(16) * 16 };
+    Ok(SharedArgument {
+        condition,
+        threadgroup_index,
+        length_expression,
+    })
 }
 
 fn parse_buffer_argument(
@@ -160,15 +213,16 @@ impl ArgumentEmission {
         Some(quote! { #field_name: #rust_expression })
     }
 
-    pub fn encode_argument_definition(&self) -> TokenStream {
+    pub fn encode_argument_definition(&self) -> Option<TokenStream> {
         match self {
-            ArgumentEmission::Buffer(buffer) => emit_buffer_argument_definition(buffer),
-            ArgumentEmission::Constant(constant) => emit_constant_argument_definition(constant),
-            ArgumentEmission::IndirectDispatch(_) => quote! {
+            ArgumentEmission::Buffer(buffer) => Some(emit_buffer_argument_definition(buffer)),
+            ArgumentEmission::Constant(constant) => Some(emit_constant_argument_definition(constant)),
+            ArgumentEmission::Shared(_) => None,
+            ArgumentEmission::IndirectDispatch(_) => Some(quote! {
                 __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<
                     '__dsl_indirect_dispatch_buffer, TDslIndirectDispatchBuffer
                 >
-            },
+            }),
         }
     }
 
@@ -179,7 +233,7 @@ impl ArgumentEmission {
                 Some(quote! { #lifetime })
             },
             ArgumentEmission::IndirectDispatch(_) => Some(quote! { '__dsl_indirect_dispatch_buffer }),
-            ArgumentEmission::Constant(_) => None,
+            ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
         }
     }
 
@@ -196,7 +250,7 @@ impl ArgumentEmission {
             ArgumentEmission::IndirectDispatch(_) => Some(quote! {
                 let __dsl_indirect_dispatch_buffer = __dsl_indirect_dispatch_buffer.into_parts();
             }),
-            ArgumentEmission::Constant(_) => None,
+            ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
         }
     }
 
@@ -211,7 +265,7 @@ impl ArgumentEmission {
                     flags: crate::backends::common::AccessFlags::compute_read(),
                 })
             }),
-            ArgumentEmission::Constant(_) => None,
+            ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
         }
     }
 
@@ -219,6 +273,7 @@ impl ArgumentEmission {
         match self {
             ArgumentEmission::Buffer(buffer) => emit_buffer_set(buffer),
             ArgumentEmission::Constant(constant) => emit_constant_set(constant),
+            ArgumentEmission::Shared(shared) => emit_shared_set(shared),
             ArgumentEmission::IndirectDispatch(_) => quote! {},
         }
     }
@@ -229,7 +284,7 @@ impl ArgumentEmission {
                 let buffer_type = get_generic_name_stream(buffer_arg.name.to_string().as_ref());
                 Some(quote! { #buffer_type })
             },
-            ArgumentEmission::Constant(_) => None,
+            ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
             ArgumentEmission::IndirectDispatch(_) => Some(quote! { TDslIndirectDispatchBuffer }),
         }
     }
@@ -240,7 +295,7 @@ impl ArgumentEmission {
                 let buffer_type = get_generic_name_stream(buffer_arg.name.to_string().as_ref());
                 Some(quote! { #buffer_type: crate::backends::common::Buffer<Backend = crate::backends::metal::Metal> })
             },
-            ArgumentEmission::Constant(_) => None,
+            ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
             ArgumentEmission::IndirectDispatch(_) => Some(
                 quote! { TDslIndirectDispatchBuffer: crate::backends::common::Buffer<Backend = crate::backends::metal::Metal> },
             ),
@@ -251,6 +306,7 @@ impl ArgumentEmission {
         match self {
             ArgumentEmission::Buffer(buffer) => buffer.condition.as_ref(),
             ArgumentEmission::Constant(constant) => constant.condition.as_ref(),
+            ArgumentEmission::Shared(shared) => Some(&shared.condition),
             ArgumentEmission::IndirectDispatch(_) => None,
         }
     }
@@ -353,6 +409,17 @@ fn emit_constant_set(constant: &ConstantArgument) -> TokenStream {
             }
         },
         None => unconditional_set,
+    }
+}
+
+fn emit_shared_set(shared: &SharedArgument) -> TokenStream {
+    let field_name = &shared.condition.field_name;
+    let threadgroup_index = shared.threadgroup_index;
+    let length_expression = &shared.length_expression;
+    quote! {
+        if self.#field_name {
+            compute_encoder.set_threadgroup_memory_length(#length_expression, #threadgroup_index);
+        }
     }
 }
 
