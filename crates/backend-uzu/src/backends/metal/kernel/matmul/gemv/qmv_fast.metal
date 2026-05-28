@@ -65,7 +65,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
 
   if (quant_method == QuantizationMethod::ScaleBias) {
     biases += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
-  } else {
+  } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
     if (BITS == 4) {
       zp_stride = (in_vec_size_g + 1) / 2;
       zps = zero_points + out_row * zp_stride;
@@ -109,7 +109,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, b2, sum);
         result[3] +=
             qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum);
-      } else {
+      } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
         uchar4 zp_bytes = uchar4(
             zps[0],
             zps[zp_stride],
@@ -151,6 +151,36 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
             -s3 * static_cast<U>(zp_nibbles.w),
             sum
         );
+      } else {
+        constexpr U midpoint = U(1u << (BITS - 1));
+        result[0] += qdot<U, values_per_thread, BITS>(
+            wl0,
+            x_thread,
+            s0,
+            -s0 * midpoint,
+            sum
+        );
+        result[1] += qdot<U, values_per_thread, BITS>(
+            wl1,
+            x_thread,
+            s1,
+            -s1 * midpoint,
+            sum
+        );
+        result[2] += qdot<U, values_per_thread, BITS>(
+            wl2,
+            x_thread,
+            s2,
+            -s2 * midpoint,
+            sum
+        );
+        result[3] += qdot<U, values_per_thread, BITS>(
+            wl3,
+            x_thread,
+            s3,
+            -s3 * midpoint,
+            sum
+        );
       }
     }
 
@@ -158,7 +188,7 @@ PUBLIC KERNEL(QuantizedMatmulQmvFast)(
     scales += block_size / GROUP_SIZE;
     if (quant_method == QuantizationMethod::ScaleBias) {
       biases += block_size / GROUP_SIZE;
-    } else {
+    } else if (quant_method == QuantizationMethod::ScaleZeroPoint) {
       if (BITS == 4) {
         zps += (block_size / GROUP_SIZE) / 2;
       } else {

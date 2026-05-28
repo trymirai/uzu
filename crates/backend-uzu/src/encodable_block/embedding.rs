@@ -52,7 +52,7 @@ enum TiedEmbeddingType<B: Backend> {
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         quantization_method: QuantizationMethod,
         output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
@@ -69,7 +69,7 @@ enum UntiedEmbeddingLookupType<B: Backend> {
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         quantization_method: QuantizationMethod,
         output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
@@ -84,7 +84,7 @@ enum UntiedEmbeddingReadoutType<B: Backend> {
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
         readout_config: ReadoutQuantConfig,
     },
@@ -502,8 +502,9 @@ impl<B: Backend> Embedding<B> {
                 output_ty: _,
             } => {
                 let (zero_points, biases) = match quantization_method {
-                    QuantizationMethod::ScaleZeroPoint => (Some(zero_points_or_biases), None),
-                    QuantizationMethod::ScaleBias => (None, Some(zero_points_or_biases)),
+                    QuantizationMethod::ScaleBias => (None, zero_points_or_biases.as_ref()),
+                    QuantizationMethod::ScaleZeroPoint => (zero_points_or_biases.as_ref(), None),
+                    QuantizationMethod::ScaleSymmetric => (None, None),
                 };
                 lookup.encode(
                     token_ids,
@@ -603,14 +604,22 @@ impl<B: Backend> Embedding<B> {
                     QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
                         b: weights,
                         scales,
-                        biases: zero_points_or_biases,
+                        biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
                         mode: readout_config.mode,
                         group_size: readout_config.group_size,
                     },
                     QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
                         b: weights,
                         scales,
-                        zero_points: zero_points_or_biases,
+                        zero_points: zero_points_or_biases
+                            .as_ref()
+                            .expect("ScaleZeroPoint quantization requires zero_points"),
+                        mode: readout_config.mode,
+                        group_size: readout_config.group_size,
+                    },
+                    QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+                        b: weights,
+                        scales,
                         mode: readout_config.mode,
                         group_size: readout_config.group_size,
                     },
@@ -658,6 +667,13 @@ fn input_quantization_from_spec<B: Backend>(
             layout: Layout::InputOutput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+            bits,
+            group_size,
+            is_symmetric: true,
+            layout: Layout::InputOutput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
         spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
     }
 }
@@ -679,6 +695,13 @@ fn output_quantization_from_spec<B: Backend>(
             layout: Layout::OutputInput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+            bits,
+            group_size,
+            is_symmetric: true,
+            layout: Layout::OutputInput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
         spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
     }
 }
@@ -708,7 +731,7 @@ fn load_quantized_embedding_parts<B: Backend>(
     quantization_mode: QuantizationMode,
     quantization_method: QuantizationMethod,
     group_size: usize,
-) -> Result<(Allocation<B>, Allocation<B>, Allocation<B>), EmbeddingError<B>> {
+) -> Result<(Allocation<B>, Allocation<B>, Option<Allocation<B>>), EmbeddingError<B>> {
     let packing_divisor = quantization_mode.packing_divisor();
     let storage_data_type = quantization_mode.storage_type();
     let num_groups = model_dim.div_ceil(group_size);
@@ -720,14 +743,17 @@ fn load_quantized_embedding_parts<B: Backend>(
     let scales = tree.leaf("scales")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?;
     let zero_points_or_biases = match quantization_method {
         QuantizationMethod::ScaleBias => {
-            tree.leaf("biases")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?
+            Some(tree.leaf("biases")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?)
         },
         QuantizationMethod::ScaleZeroPoint => {
             let expected_zero_points_entries = num_groups.div_ceil(packing_divisor);
-            tree.leaf("zero_points")?
-                .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
-                .read_allocation()?
+            Some(
+                tree.leaf("zero_points")?
+                    .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
+                    .read_allocation()?,
+            )
         },
+        QuantizationMethod::ScaleSymmetric => None,
     };
 
     Ok((weights, scales, zero_points_or_biases))

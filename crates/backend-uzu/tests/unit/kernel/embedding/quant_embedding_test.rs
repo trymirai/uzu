@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -119,6 +117,43 @@ fn get_test_data_zero_point_group16<T: ArrayElement + Float>() -> (Input<T>, Vec
     (input, expected)
 }
 
+fn get_test_data_symmetric_u8<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
+    let batch_size = 3u32;
+    let vocab_size = 8u32;
+    let model_dim = 64u32;
+    let group_size = 32u32;
+    let input_scale = 1.5f32;
+    let quant_mode = QuantizationMode::U8;
+
+    let token_ids: Box<[u64]> = Box::new([2, 5, 0]);
+
+    let weights: Vec<u8> =
+        (0..vocab_size as usize * model_dim as usize).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+
+    let num_groups = (model_dim + group_size - 1) / group_size;
+    let scales: Vec<T> = (0..vocab_size as usize * num_groups as usize)
+        .map(|i| T::from(0.5 + (i as f32 * 0.1).sin() * 0.3).unwrap())
+        .collect();
+
+    let input = Input {
+        token_ids,
+        weights: weights.into_boxed_slice(),
+        scales: scales.into_boxed_slice(),
+        zero_points: None,
+        biases: None,
+        batch_size,
+        vocab_size,
+        model_dim,
+        input_scale,
+        group_size,
+        quant_mode,
+        quant_method: QuantizationMethod::ScaleSymmetric,
+    };
+
+    let expected = get_output::<T, Cpu>(&input);
+    (input, expected)
+}
+
 fn get_test_data_oob<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let batch_size = 2u32;
     let vocab_size = 4u32;
@@ -184,10 +219,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .zero_points
         .as_ref()
         .map(|zero_points| context.create_array_from(&[input.vocab_size as usize, zero_point_stride], zero_points));
-    let biases_array = input
-        .biases
-        .as_ref()
-        .map(|biases| context.create_array_from(&[input.vocab_size as usize, num_groups], biases));
+    let biases_array =
+        input.biases.as_ref().map(|biases| context.create_array_from(&[input.vocab_size as usize, num_groups], biases));
     let mut output = context
         .create_array_uninitialized(&[input.batch_size as usize, input.model_dim as usize], T::data_type())
         .into_allocation();
@@ -229,6 +262,24 @@ fn test_zero_point_group16<T: ArrayElement + Float + Debug + Display>() {
                 "QuantizedEmbeddingLookup ScaleZeroPoint group16 test failed for backend {}",
                 std::any::type_name::<B>()
             ),
+        );
+    });
+}
+
+fn test_symmetric_u8<T: ArrayElement + Float + Debug + Display>() {
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.5f32
+    } else {
+        1e-4
+    };
+    let (input, expected) = get_test_data_symmetric_u8::<T>();
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<T, B>(&input);
+        assert_eq_float::<T>(
+            &expected,
+            &output,
+            eps,
+            &format!("QuantizedEmbeddingLookup ScaleSymmetric test failed for backend {}", std::any::type_name::<B>()),
         );
     });
 }
@@ -342,6 +393,11 @@ fn test_uint8_f16() {
 #[uzu_test]
 fn test_uint8_bf16() {
     test_quant_mode::<bf16>(QuantizationMode::U8);
+}
+
+#[uzu_test]
+fn test_uint8_symmetric_bf16() {
+    test_symmetric_u8::<bf16>();
 }
 
 // OOB tests

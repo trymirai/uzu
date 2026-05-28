@@ -47,6 +47,10 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                     let scale_t = *scales.add(j * num_groups_k + group_idx);
 
                     let w_dequant_f32 = match quant_method {
+                        QuantizationMethod::ScaleBias => {
+                            let bias_t = *biases.unwrap().add(j * num_groups_k + group_idx);
+                            scale_t.to_f32().unwrap() * val_q + bias_t.to_f32().unwrap()
+                        },
                         QuantizationMethod::ScaleZeroPoint => {
                             let zp = zero_points.unwrap();
                             let zp_val = if bits == 4 {
@@ -62,9 +66,9 @@ pub fn qmm_transposed<T: ArrayElement + Float>(
                             };
                             scale_t.to_f32().unwrap() * (val_q - zp_val)
                         },
-                        QuantizationMethod::ScaleBias => {
-                            let bias_t = *biases.unwrap().add(j * num_groups_k + group_idx);
-                            scale_t.to_f32().unwrap() * val_q + bias_t.to_f32().unwrap()
+                        QuantizationMethod::ScaleSymmetric => {
+                            let midpoint = (1 << (bits - 1)) as f32;
+                            scale_t.to_f32().unwrap() * (val_q - midpoint)
                         },
                     };
 

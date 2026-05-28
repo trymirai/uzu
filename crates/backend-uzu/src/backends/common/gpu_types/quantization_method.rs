@@ -1,14 +1,11 @@
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum QuantizationMethod {
-    #[serde(rename = "mlx")]
     ScaleBias,
-    #[serde(rename = "awq")]
     ScaleZeroPoint,
+    ScaleSymmetric,
 }
 
 impl fmt::Display for QuantizationMethod {

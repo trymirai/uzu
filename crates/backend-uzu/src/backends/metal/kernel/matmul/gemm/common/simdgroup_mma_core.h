@@ -76,6 +76,16 @@ struct SimdgroupMmaCore {
       THREADGROUP_THREADS,
       GROUP_SIZE,
       BITS>;
+  using BLoaderScaleSymmetric = QuantizedBlockLoaderScaleZeroPoint<
+      BT,
+      THREADGROUP_BLOCK_N,
+      THREADGROUP_BLOCK_K,
+      SHARED_STRIDE_B,
+      1,
+      THREADGROUP_THREADS,
+      GROUP_SIZE,
+      BITS,
+      true>;
   using TileAccumulator = uzu::matmul::ThreadgroupTile<
       AT,
       BT,
@@ -389,6 +399,56 @@ struct SimdgroupMmaCore {
       dispatch_kernel([&](auto gemm_alignment_mask) {
         constexpr uint mask = gemm_alignment_mask.value;
         k_loop<mask, BLoaderScaleZeroPoint>(
+            a_shared,
+            b_shared,
+            params->aligned_inner_iterations,
+            loader_a,
+            loader_b,
+            accumulator,
+            tile_block_rows,
+            tile_block_cols,
+            leftover_block_depth
+        );
+        finalize<mask>(
+            accumulator,
+            d,
+            params,
+            tile_block_rows,
+            tile_block_cols,
+            needs_epilogue,
+            epilogue,
+            bias_block,
+            needs_bias
+        );
+      });
+      return;
+    }
+
+    if constexpr (
+        WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleSymmetricDequant
+    ) {
+      constexpr int pack_factor = get_pack_factor<BITS, 8>();
+      constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
+      const int k_elements = int(params->K);
+      const int weights_row_stride_bytes =
+          k_elements * bytes_per_pack / pack_factor;
+      const int groups_per_row = (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
+      const device uint8_t* weights_block =
+          b_packed + block_col * weights_row_stride_bytes;
+      const device BT* scales_offset = scales + block_col * groups_per_row;
+      thread BLoaderScaleSymmetric loader_b(
+          weights_block,
+          scales_offset,
+          nullptr,
+          k_elements,
+          groups_per_row,
+          b_shared,
+          thread_context.simdgroup_index,
+          thread_context.simd_lane_id
+      );
+      dispatch_kernel([&](auto gemm_alignment_mask) {
+        constexpr uint mask = gemm_alignment_mask.value;
+        k_loop<mask, BLoaderScaleSymmetric>(
             a_shared,
             b_shared,
             params->aligned_inner_iterations,

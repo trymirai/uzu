@@ -37,7 +37,7 @@ enum Mode<B: Backend> {
         mode: QuantizationMode,
         group_size: u32,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         output_hadamard_factors: Option<Allocation<B>>,
     },
 }
@@ -121,6 +121,13 @@ impl<B: Backend> LinearMatmul<B> {
                 layout: Layout::OutputInput,
                 ..
             }) => (bits, group_size, QuantizationMethod::ScaleZeroPoint),
+            AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+                bits,
+                group_size,
+                is_symmetric: true,
+                layout: Layout::OutputInput,
+                ..
+            }) => (bits, group_size, QuantizationMethod::ScaleSymmetric),
             spec => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
         };
 
@@ -151,15 +158,18 @@ impl<B: Backend> LinearMatmul<B> {
         let scales = weights_tree.leaf("scales")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?;
         let zero_points_or_biases = match quantization_method {
             QuantizationMethod::ScaleBias => {
-                weights_tree.leaf("biases")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?
+                Some(weights_tree.leaf("biases")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?)
             },
             QuantizationMethod::ScaleZeroPoint => {
                 let expected_zero_points_entries = k_g.div_ceil(packing_divisor);
-                weights_tree
-                    .leaf("zero_points")?
-                    .validate(&[output_dim, expected_zero_points_entries], storage_type)?
-                    .read_allocation()?
+                Some(
+                    weights_tree
+                        .leaf("zero_points")?
+                        .validate(&[output_dim, expected_zero_points_entries], storage_type)?
+                        .read_allocation()?,
+                )
             },
+            QuantizationMethod::ScaleSymmetric => None,
         };
 
         let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
@@ -242,14 +252,22 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
                     b: &self.weights,
                     scales,
-                    biases: zero_points_or_biases,
+                    biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
                     mode: *mode,
                     group_size: *group_size,
                 },
                 QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
                     b: &self.weights,
                     scales,
-                    zero_points: zero_points_or_biases,
+                    zero_points: zero_points_or_biases
+                        .as_ref()
+                        .expect("ScaleZeroPoint quantization requires zero_points"),
+                    mode: *mode,
+                    group_size: *group_size,
+                },
+                QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+                    b: &self.weights,
+                    scales,
                     mode: *mode,
                     group_size: *group_size,
                 },

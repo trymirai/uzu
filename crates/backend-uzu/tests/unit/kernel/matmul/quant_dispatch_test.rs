@@ -97,6 +97,8 @@ fn run_parity<T: ArrayElement + Float + Debug + Display>(
 #[case::gs32_8bit_mlx_prefill ( 64, 256,  64,  32, 8, QuantizationMethod::ScaleBias)]
 #[case::gs64_8bit_zp_prefill  ( 64, 256,  64,  64, 8, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs128_8bit_zp_prefill ( 64, 256,  64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs32_4bit_symmetric_prefill(64, 256, 64, 32, 4, QuantizationMethod::ScaleSymmetric)]
+#[case::gs64_8bit_symmetric_prefill(64, 256, 64, 64, 8, QuantizationMethod::ScaleSymmetric)]
 #[case::gs32_4bit_mlx_decode  (  8, 256,  64,  32, 4, QuantizationMethod::ScaleBias)]
 #[case::gs16_4bit_zp_decode   (  8, 256,  64,  16, 4, QuantizationMethod::ScaleZeroPoint)]
 #[case::gs64_4bit_zp_decode   (  8, 256,  64,  64, 4, QuantizationMethod::ScaleZeroPoint)]

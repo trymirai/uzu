@@ -166,7 +166,7 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+        let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });
         let gemv_eligible = if is_quant {
             arguments.m < 5 || arguments.n == 1
         } else {
