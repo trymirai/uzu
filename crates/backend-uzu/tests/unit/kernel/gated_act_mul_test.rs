@@ -18,8 +18,6 @@ use crate::{
     uzu_test,
 };
 
-// ---- interleaved path (MLP): out = activate(gate) * up over fused_up[m, 2h] ----
-
 struct InterleavedInput<T: ArrayElement + Float> {
     fused_up: Box<[T]>,
     h: i32,
@@ -111,8 +109,6 @@ fn test_gated_act_mul_interleaved_gelu_bf16() {
 fn test_gated_act_mul_interleaved_gelu_exact_f32() {
     interleaved_test::<f32>(ActivationType::GELUExact);
 }
-
-// ---- separate path (PLE): out = activate(gate_out) * per_layer_input[layer slice] ----
 
 struct SeparateInput<T: ArrayElement + Float> {
     gate_out: Box<[T]>,
