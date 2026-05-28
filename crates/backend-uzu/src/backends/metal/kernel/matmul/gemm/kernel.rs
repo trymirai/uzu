@@ -113,7 +113,7 @@ impl GemmKernel {
         let path = if encoder.context().device.supports_mxu()
             && [self.weights_data_type, self.input_data_type, self.output_data_type]
                 .into_iter()
-                .all(|data_type| matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32))
+                .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
             && matches!(arguments.b, MatmulB::FullPrecision { .. })
         {
             GemmDispatchPath::Mxu
@@ -138,8 +138,8 @@ impl GemmKernel {
                 assert!(
                     [self.weights_data_type, self.input_data_type, self.output_data_type]
                         .into_iter()
-                        .all(|data_type| matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32)),
-                    "GemmDispatchPath::Mxu requires F16, BF16, or F32 data types, got weights {:?}, input {:?}, output {:?}",
+                        .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32)),
+                    "GemmDispatchPath::Mxu requires BF16 or F32 data types, got weights {:?}, input {:?}, output {:?}",
                     self.weights_data_type,
                     self.input_data_type,
                     self.output_data_type,

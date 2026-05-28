@@ -114,20 +114,6 @@ fn parity_bf16(
     run_parity::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
 }
 
-#[rstest]
-#[case::gs64_4bit_mlx (32, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
-#[case::gs128_8bit_zp (32, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
-fn parity_f16(
-    #[case] m: usize,
-    #[case] k: usize,
-    #[case] n: usize,
-    #[case] gs: u32,
-    #[case] bits: u32,
-    #[case] method: QuantizationMethod,
-) {
-    run_parity::<half::f16>(m, k, n, gs, bits, method, 0.01, 0.05);
-}
-
 #[uzu_test]
 fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let context = MetalContext::new().expect("Metal context");

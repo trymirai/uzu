@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::{
@@ -86,19 +86,6 @@ pub(crate) fn encode_quantized_gemm<TB: AsBufferRangeRef<Buffer: Buffer<Backend 
     let command_buffer = encoder.as_command_buffer_mut();
     command_buffer.push_command(move || match data_type {
         DataType::F32 => run::<f32>(
-            a_ptr,
-            b_ptr,
-            scales_ptr,
-            zp_ptr,
-            d_ptr,
-            in_vec_size,
-            out_vec_size,
-            batch_size,
-            method,
-            group_size,
-            bits,
-        ),
-        DataType::F16 => run::<f16>(
             a_ptr,
             b_ptr,
             scales_ptr,
