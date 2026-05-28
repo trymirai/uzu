@@ -1,16 +1,10 @@
 #pragma once
 
-// Out-of-class definition of GemvCore::run_fp, the dense reduction body.
-// Designed to be included via gemv_core.h (which declares GemvCore and pulls
-// in the shared includes / using-namespace directives); not intended to be
-// included standalone.
+// Out-of-class definition for GemvCore::run_fp. Include via gemv_core.h.
 
 namespace uzu {
 namespace gemv {
 
-// Dense GEMV reduction. Called from GemvCore::run when BITS == 0. The tunable
-// tile (tg/sg/thread counts) comes from the host heuristic via SPECIALIZE.
-// Weights are laid out as [out_vec_size, in_vec_size].
 template <typename T, uint GROUP_SIZE, uint BITS>
 METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_fp(
     const device T* matrix,

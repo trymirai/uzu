@@ -8,10 +8,6 @@ using namespace uzu::gemm;
 using namespace uzu::gemv;
 using namespace uzu::matmul;
 
-// Unified GEMV: a single simdgroup-reduction matrix-vector kernel that handles
-// both full-precision (BITS == 0) and group-quantized weights, selected at
-// compile time. The body lives in GemvCore (gemv/common/gemv_core.h); this entry
-// point is a thin dispatch, mirroring KERNEL(Gemm) over its *MmaCore structs.
 template <typename T, uint GROUP_SIZE, uint BITS>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(GROUP_SIZE, 0, 32, 64, 128)

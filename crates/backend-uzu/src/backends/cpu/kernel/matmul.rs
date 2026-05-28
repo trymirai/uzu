@@ -78,7 +78,6 @@ impl MatmulKernel for MatmulCpuKernel {
         let leading_dimension_d = n_u;
         let data_type = self.data_type;
 
-        // Shared A / D / bias pointers.
         let a_buffer_range = a.as_buffer_range_ref();
         let a_byte_off = a_buffer_range.range().start + a_offset * data_type.size_in_bytes();
         let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));

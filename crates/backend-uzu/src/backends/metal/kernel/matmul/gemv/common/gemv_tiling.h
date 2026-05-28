@@ -2,11 +2,10 @@
 
 #include "../../../generated/matmul.h"
 
-// Device-side geometry accessors for GemvTiling, mirroring gemm/common/
-// gemm_tiling.h. GemvTiling arrives as a function-constant specialization
-// (not a template parameter), so these resolve at runtime rather than being
-// constant-folded; the kernel only uses them to populate a GemvTile, never to
-// size threadgroup arrays, so runtime evaluation is fine.
+// Device-side geometry accessors for GemvTiling. The kernel passes the tiling
+// as a function-constant specialization (not a template parameter), so these
+// resolve at pipeline-creation time, never at C++ compile time — fine, since
+// nothing here sizes a threadgroup array.
 namespace uzu {
 namespace matmul {
 

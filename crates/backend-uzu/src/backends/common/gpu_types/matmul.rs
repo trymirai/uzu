@@ -29,14 +29,9 @@ pub struct GemvParams {
     pub ab_scale: f32,
 }
 
-/// Per-threadgroup tile layout for the GEMV kernel, chosen by the host
-/// heuristic (`gemv::spec`) and passed as a function-constant specialization.
-/// Mirrors `GemmTiling` (gpu_types/gemm.rs), but since GEMV is bandwidth-bound
-/// (no MMA fragments) the names describe the selection regime rather than a
-/// fragment geometry. Each variant fixes the six geometry fields the kernel
-/// reads (threadgroup simdgroup rows/cols, per-simdgroup thread rows/cols,
-/// per-thread output rows/cols); the `*Narrow` siblings drop output rows to 1
-/// for tiny output dimensions.
+/// Per-threadgroup tile layout for the GEMV kernel. `*Narrow` siblings drop
+/// `thread_out_rows` to 1 for tiny output dimensions; `Wide` doubles as the
+/// canonical quantized tile.
 ///
 /// | variant      | tg rows×cols | sg rows×cols | out rows×cols |
 /// |--------------|--------------|--------------|---------------|
@@ -44,8 +39,6 @@ pub struct GemvParams {
 /// | Wide         | 8×1          | 1×32         | 4×4           |
 /// | SmallInput   | 1×1          | 8×4          | 4×4           |
 /// | SplitInput   | 1×8          | 1×32         | 4×4           |
-///
-/// `Wide` is also the canonical tile for the quantized branch.
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GemvTiling {

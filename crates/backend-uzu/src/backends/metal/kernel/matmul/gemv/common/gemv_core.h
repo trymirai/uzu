@@ -21,9 +21,8 @@ using namespace uzu::gemm;
 // → 16 * (16 + 4) = 320. Unused when tg_simd_cols == 1.
 #define GEMV_MAX_THREADGROUP_MEMORY 320
 
-// 0-safe wrappers: BITS == 0 denotes the full-precision (quant-off) path, so we
-// must not instantiate the quant pack helpers with a zero bit-width. The
-// quantized member reads these.
+// 0-safe wrappers: BITS == 0 is the in-band marker for the full-precision path,
+// so we must not instantiate the quant pack helpers with a zero bit-width.
 template <uint B>
 inline constexpr uint qmv_pack_factor() {
   if constexpr (B == 0) {
@@ -44,8 +43,6 @@ inline constexpr uint qmv_bytes_per_pack() {
 namespace uzu {
 namespace gemv {
 
-// Per-threadgroup tile, forwarded from the kernel's function constants into the
-// core (gemv's analogue of gemm's GemmTiling, but runtime-specialized).
 struct GemvTile {
   uint tg_simd_rows;
   uint tg_simd_cols;
@@ -55,14 +52,8 @@ struct GemvTile {
   uint thread_out_cols;
 };
 
-// Unified GEMV core: a single matrix-vector entry point that handles both
-// full-precision (BITS == 0) and group-quantized weights, selected at compile
-// time. Mirrors gemm's *MmaCore structs — KERNEL(Gemv) is a thin dispatch over
-// this. `run` is the dispatcher; the per-path bodies are defined out-of-class
-// in gemv_core_fp.h (`run_fp`) and gemv_core_quantized.h (`run_quantized`).
-//
 // BITS == 0 is the in-band marker for the dense path (the CPU reference kernel
-// can't take an enum const generic on stable Rust); the quantized sub-kind
+// can't take an enum const generic on stable Rust). The quantized sub-kind
 // (scale+bias vs scale+zero-point) is picked at runtime from `quant_method`.
 template <typename T, uint GROUP_SIZE, uint BITS>
 struct GemvCore {
@@ -88,8 +79,6 @@ struct GemvCore {
       const thread ThreadContext& thread_context
   ) {
     if constexpr (BITS == 0) {
-      // Quant-only inputs are unused on the dense path — `OPTIONAL(...)` on the
-      // kernel side leaves them unbound.
       (void)scales;
       (void)zero_points;
       (void)biases;
@@ -112,7 +101,6 @@ struct GemvCore {
           thread_context
       );
     } else {
-      // FP-only inputs are unused on the quant path.
       (void)tile;
       (void)threadgroup_memory;
       (void)thread_context;
@@ -137,7 +125,6 @@ struct GemvCore {
     }
   }
 
-  // Dense GEMV body. Defined out-of-class in gemv_core_fp.h.
   static METAL_FUNC void run_fp(
       const device T* matrix,
       const device T* input,
@@ -153,7 +140,6 @@ struct GemvCore {
       const thread ThreadContext& thread_context
   );
 
-  // Group-quantized GEMV body. Defined out-of-class in gemv_core_quantized.h.
   static METAL_FUNC void run_quantized(
       const device uint32_t* weights,
       const device T* scales,
@@ -177,7 +163,7 @@ struct GemvCore {
 } // namespace gemv
 } // namespace uzu
 
-// Out-of-class member definitions for the two paths. Pulled in here so the
-// bodies are visible to GemvCore::run at template-instantiation time.
+// Included after the class definition so the out-of-class member bodies see a
+// complete GemvCore.
 #include "gemv_core_fp.h"
 #include "gemv_core_quantized.h"

@@ -1,10 +1,9 @@
 use crate::backends::common::gpu_types::{gemm::GemmDTransform, matmul::GemvTiling};
 
-/// Host-side GEMV configuration: the tile layout (`GemvTiling`) plus the output
-/// transforms the pipeline is specialized for. SCALE is not enumerated here —
-/// precompile entries cover the common `ab_scale == 1.0` (SCALE off) case;
-/// pipelines for explicit scaling are created on demand at encode time when
-/// `MatmulDOps::mask()` flips the SCALE bit.
+/// Host-side GEMV configuration: the tile layout plus the output transforms
+/// the pipeline is specialized for. SCALE is intentionally omitted —
+/// `precompile_configs` only covers the common `ab_scale == 1.0` case; scaled
+/// pipelines are created on demand at encode time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GemvSpecialization {
     pub tiling: GemvTiling,
