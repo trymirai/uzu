@@ -45,7 +45,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
       params->in_vec_size * bytes_per_pack / pack_factor;
   const uint in_vec_size_g = params->in_vec_size / GROUP_SIZE;
   const uint out_row =
-      thread_context.threadgroup_position.y * (num_simdgroups * results_per_simdgroup) +
+      thread_context.threadgroup_position.x * (num_simdgroups * results_per_simdgroup) +
       thread_context.simdgroup_index * results_per_simdgroup;
   ws += out_row * in_vec_size_w + thread_context.simd_lane_id * packs_per_thread * bytes_per_pack;
   scales += out_row * in_vec_size_g + thread_context.simd_lane_id / scale_step_per_thread;
@@ -70,8 +70,8 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     }
   }
 
-  a += thread_context.threadgroup_position.x * params->in_vec_size + thread_context.simd_lane_id * values_per_thread;
-  d += thread_context.threadgroup_position.x * params->out_vec_size + out_row;
+  a += thread_context.threadgroup_position.y * params->in_vec_size + thread_context.simd_lane_id * values_per_thread;
+  d += thread_context.threadgroup_position.y * params->out_vec_size + out_row;
 
   uint k = 0;
   for (; k + block_size <= params->in_vec_size; k += block_size) {
@@ -300,7 +300,7 @@ METAL_FUNC void GemvCore<T, B_PROLOGUE, BITS, GROUP_SIZE>::run_quantized(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (thread_context.simdgroup_index == 0) {
-      uint global_out_idx = thread_context.threadgroup_position.y * 32 + thread_context.simd_lane_id;
+      uint global_out_idx = thread_context.threadgroup_position.x * 32 + thread_context.simd_lane_id;
       if (global_out_idx < params->out_vec_size) {
         d[thread_context.simd_lane_id] = simdgroup_output_random_hadamard_transform(
             static_cast<ushort>(thread_context.simd_lane_id),
