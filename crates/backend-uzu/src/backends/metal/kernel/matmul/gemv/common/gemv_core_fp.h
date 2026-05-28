@@ -1,18 +1,18 @@
 #pragma once
 
-// Full-precision body for the unified GEMV core. Designed to be included via
-// gemv_core.h (relies on its shared includes, `GemvTile`, and the kernel-side
-// using-namespace directives); not intended to be included standalone.
+// Out-of-class definition of GemvCore::run_fp, the dense reduction body.
+// Designed to be included via gemv_core.h (which declares GemvCore and pulls
+// in the shared includes / using-namespace directives); not intended to be
+// included standalone.
 
 namespace uzu {
 namespace gemv {
-namespace fp {
 
 // Dense GEMV reduction. Called from GemvCore::run when BITS == 0. The tunable
 // tile (tg/sg/thread counts) comes from the host heuristic via SPECIALIZE.
 // Weights are laid out as [out_vec_size, in_vec_size].
-template <typename T>
-METAL_FUNC void run(
+template <typename T, uint GROUP_SIZE, uint BITS>
+METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_fp(
     const device T* matrix,
     const device T* input,
     device T* output,
@@ -323,6 +323,5 @@ METAL_FUNC void run(
   }
 }
 
-} // namespace fp
 } // namespace gemv
 } // namespace uzu

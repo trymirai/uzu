@@ -23,7 +23,7 @@ using namespace uzu::gemm;
 
 // 0-safe wrappers: BITS == 0 denotes the full-precision (quant-off) path, so we
 // must not instantiate the quant pack helpers with a zero bit-width. The
-// quantized run helper reads these.
+// quantized member reads these.
 template <uint B>
 inline constexpr uint qmv_pack_factor() {
   if constexpr (B == 0) {
@@ -55,23 +55,11 @@ struct GemvTile {
   uint thread_out_cols;
 };
 
-} // namespace gemv
-} // namespace uzu
-
-// Bodies of the FP and quantized run helpers. Kept in dedicated files so each
-// path can be read in isolation; both are pulled in here so GemvCore::run
-// resolves them at template-instantiation time.
-#include "gemv_core_fp.h"
-#include "gemv_core_quantized.h"
-
-namespace uzu {
-namespace gemv {
-
 // Unified GEMV core: a single matrix-vector entry point that handles both
 // full-precision (BITS == 0) and group-quantized weights, selected at compile
 // time. Mirrors gemm's *MmaCore structs — KERNEL(Gemv) is a thin dispatch over
-// this. The two paths' bodies live in `fp::run` (gemv_core_fp.h) and
-// `quantized::run` (gemv_core_quantized.h); this struct is just the dispatcher.
+// this. `run` is the dispatcher; the per-path bodies are defined out-of-class
+// in gemv_core_fp.h (`run_fp`) and gemv_core_quantized.h (`run_quantized`).
 //
 // BITS == 0 is the in-band marker for the dense path (the CPU reference kernel
 // can't take an enum const generic on stable Rust); the quantized sub-kind
@@ -100,9 +88,8 @@ struct GemvCore {
       const thread ThreadContext& thread_context
   ) {
     if constexpr (BITS == 0) {
-      // Quant-only inputs (scales/zero_points/biases/quant_method, the quant
-      // shared_results scratch, and the per-thread indices) are unused on the
-      // dense path — `OPTIONAL(...)` on the kernel side leaves them unbound.
+      // Quant-only inputs are unused on the dense path — `OPTIONAL(...)` on the
+      // kernel side leaves them unbound.
       (void)scales;
       (void)zero_points;
       (void)biases;
@@ -110,7 +97,7 @@ struct GemvCore {
       (void)thread_index_x;
       (void)thread_index_y;
       (void)shared_results;
-      fp::run<T>(
+      run_fp(
           reinterpret_cast<const device T*>(weights),
           input,
           output,
@@ -129,7 +116,7 @@ struct GemvCore {
       (void)tile;
       (void)threadgroup_memory;
       (void)thread_context;
-      quantized::run<T, GROUP_SIZE, BITS>(
+      run_quantized(
           weights,
           scales,
           zero_points,
@@ -149,7 +136,48 @@ struct GemvCore {
       );
     }
   }
+
+  // Dense GEMV body. Defined out-of-class in gemv_core_fp.h.
+  static METAL_FUNC void run_fp(
+      const device T* matrix,
+      const device T* input,
+      device T* output,
+      const device int32_t* hadamard_factors,
+      const device T* output_bias,
+      const constant uzu::matmul::GemvParams* params,
+      GemmDTransform output_transform,
+      GemvTile tile,
+      uint group_index_x,
+      uint group_index_y,
+      threadgroup float* threadgroup_memory,
+      const thread ThreadContext& thread_context
+  );
+
+  // Group-quantized GEMV body. Defined out-of-class in gemv_core_quantized.h.
+  static METAL_FUNC void run_quantized(
+      const device uint32_t* weights,
+      const device T* scales,
+      const device uint8_t* zero_points,
+      const device T* biases,
+      const device T* input,
+      device T* output,
+      const device int32_t* hadamard_factors,
+      const device T* output_bias,
+      const constant uzu::matmul::GemvParams* params,
+      QuantizationMethod quant_method,
+      GemmDTransform output_transform,
+      uint group_index_x,
+      uint group_index_y,
+      uint thread_index_x,
+      uint thread_index_y,
+      threadgroup float* shared_results
+  );
 };
 
 } // namespace gemv
 } // namespace uzu
+
+// Out-of-class member definitions for the two paths. Pulled in here so the
+// bodies are visible to GemvCore::run at template-instantiation time.
+#include "gemv_core_fp.h"
+#include "gemv_core_quantized.h"

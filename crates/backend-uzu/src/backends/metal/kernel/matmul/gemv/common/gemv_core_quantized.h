@@ -1,13 +1,12 @@
 #pragma once
 
-// Group-quantized body for the unified GEMV core. Designed to be included via
-// gemv_core.h (relies on its shared includes, the `qmv_*` helpers, and the
-// kernel-side using-namespace directives); not intended to be included
-// standalone.
+// Out-of-class definition of GemvCore::run_quantized, the group-quantized
+// reduction body. Designed to be included via gemv_core.h (which declares
+// GemvCore, the `qmv_*` helpers, and the shared using-namespace directives);
+// not intended to be included standalone.
 
 namespace uzu {
 namespace gemv {
-namespace quantized {
 
 // Quantized GEMV reduction. Called from GemvCore::run when BITS != 0. Layout is
 // hardcoded (8 simdgroups × 4 results) — the host pins the canonical tile so
@@ -15,7 +14,7 @@ namespace quantized {
 // sub-kinds (ScaleBias vs ScaleZeroPoint) branch on the runtime `quant_method`
 // function constant.
 template <typename T, uint GROUP_SIZE, uint BITS>
-METAL_FUNC void run(
+METAL_FUNC void GemvCore<T, GROUP_SIZE, BITS>::run_quantized(
     const device uint32_t* weights,
     const device T* scales,
     const device uint8_t* zero_points,
@@ -332,6 +331,5 @@ METAL_FUNC void run(
   }
 }
 
-} // namespace quantized
 } // namespace gemv
 } // namespace uzu
