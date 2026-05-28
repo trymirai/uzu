@@ -6,6 +6,7 @@ pub mod linear;
 pub mod mlp;
 pub mod model;
 pub mod normalization;
+pub mod per_layer_embedding;
 pub mod rope;
 pub mod token_codec;
 pub mod token_mixer;

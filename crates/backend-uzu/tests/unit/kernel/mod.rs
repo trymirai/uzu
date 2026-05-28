@@ -13,6 +13,7 @@ mod kv_cache_update_test;
 mod layer_norm_test;
 mod matmul;
 mod moe;
+mod ple_gate_act_mul_test;
 mod pooling;
 mod qk_unpack_test;
 mod quant_matmul;

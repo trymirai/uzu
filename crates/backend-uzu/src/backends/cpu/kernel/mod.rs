@@ -11,6 +11,7 @@ mod layer_norm;
 mod matmul;
 mod mlp;
 mod moe;
+mod ple_gate_act_mul;
 mod pooling;
 mod rms_norm;
 mod rope;
