@@ -31,6 +31,10 @@ jobs:
         with:
           linters: true
 
+      - name: Check backend-uzu rustfmt discovery
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: RUSTUP_TOOLCHAIN=nightly ./scripts/check-rustfmt-discovery.sh
+
       - name: Check Rust formatting
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: cargo +nightly fmt --check

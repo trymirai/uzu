@@ -6,7 +6,7 @@ use std::{
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{Allocation, Context, Encoder, Kernels, kernel::RMSNormKernel, Backend},
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
 };
@@ -139,14 +139,13 @@ fn get_output<
     .expect("Failed to create RMSNormKernel");
 
     let input_size = input.input.len();
-    let input_buffer = (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input).into_allocation());
+    let input_buffer =
+        (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input).into_allocation());
 
     let scales_array = context.create_array_from(&[input.scales.len()], &input.scales);
     let mut output = match input.in_place {
         true => context.create_array_from(&[input_size], &input.output).into_allocation(),
-        false => context
-            .create_array_uninitialized(&[input_size], OutputT::data_type())
-            .into_allocation(),
+        false => context.create_array_uninitialized(&[input_size], OutputT::data_type()).into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -169,11 +168,7 @@ fn get_output<
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
     let gpu_elapsed_ms = completed.gpu_execution_time();
 
-    (
-        crate::common::helpers::allocation_to_vec(&output),
-        host_elapsed_ms,
-        gpu_elapsed_ms,
-    )
+    (crate::common::helpers::allocation_to_vec(&output), host_elapsed_ms, gpu_elapsed_ms)
 }
 
 fn test_internal<
@@ -393,7 +388,11 @@ fn test_edge_f16_f16_f16_f16() {
     test_edge::<f16, f16, f16, f16>();
 }
 
-fn run_scaled_rms<B: Backend>(with_shortcut: bool, scale_residual_sum: bool, scale_output: bool) -> (Vec<f32>, Vec<f32>) {
+fn run_scaled_rms<B: Backend>(
+    with_shortcut: bool,
+    scale_residual_sum: bool,
+    scale_output: bool,
+) -> (Vec<f32>, Vec<f32>) {
     let (batch, dim) = (2usize, 64usize);
     let total = batch * dim;
     let mut rng = SmallRng::seed_from_u64(99);

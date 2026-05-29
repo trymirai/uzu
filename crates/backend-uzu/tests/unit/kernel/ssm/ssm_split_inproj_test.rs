@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -65,8 +63,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let input_array = context.create_array_from(&[input.input.len()], &input.input);
     let z_bias_array = context.create_array_from(&[input.z_bias.len()], &input.z_bias);
 
-    let mut conv_out =
-        context.create_array_uninitialized(&[conv_out_size], T::data_type()).into_allocation();
+    let mut conv_out = context.create_array_uninitialized(&[conv_out_size], T::data_type()).into_allocation();
     let mut z_out = context.create_array_uninitialized(&[z_out_size], T::data_type()).into_allocation();
     let mut dt_out = context.create_array_uninitialized(&[dt_out_size], T::data_type()).into_allocation();
 

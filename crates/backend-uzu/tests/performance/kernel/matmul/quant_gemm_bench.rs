@@ -35,14 +35,13 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
         let mut buffers = QuantBuffers::<Metal, T>::allocate(context, &input);
-        let mut matmul =
-            <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
-                context,
-                T::data_type(),
-                T::data_type(),
-                T::data_type(),
-            )
-            .unwrap();
+        let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+            context,
+            T::data_type(),
+            T::data_type(),
+            T::data_type(),
+        )
+        .unwrap();
 
         let mut group =
             c.benchmark_group(format!("{}/Kernel/UnifiedQuantizedGemm/{}", type_short_name::<Metal>(), label));
@@ -51,11 +50,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
             iter_encode_loop::<Metal, _>(context, b, |encoder| {
                 matmul
                     .gemm
-                    .encode_dispatch_path(
-                        quant_arguments(&mut buffers, &input),
-                        GemmDispatchPath::Simdgroup,
-                        encoder,
-                    )
+                    .encode_dispatch_path(quant_arguments(&mut buffers, &input), GemmDispatchPath::Simdgroup, encoder)
                     .expect("encode unified quant matmul");
             });
         });

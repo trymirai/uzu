@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -39,14 +37,10 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let mut out = context
-        .create_array_uninitialized(&[out_size], T::data_type())
-        .into_allocation();
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
 
     let state_out_size = input.model_dim as usize * input.state_stride as usize;
-    let mut state_out = context
-        .create_array_uninitialized(&[state_out_size], T::data_type())
-        .into_allocation();
+    let mut state_out = context.create_array_uninitialized(&[state_out_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -65,10 +59,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        crate::common::helpers::allocation_to_vec(&out),
-        crate::common::helpers::allocation_to_vec(&state_out),
-    )
+    (crate::common::helpers::allocation_to_vec(&out), crate::common::helpers::allocation_to_vec(&state_out))
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(

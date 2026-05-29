@@ -3,9 +3,6 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
@@ -17,6 +14,9 @@ use backend_uzu::{
     },
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
+use half::{bf16, f16};
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use crate::{
     common::helpers::{alloc_allocation_with_data, allocation_to_vec},
@@ -73,14 +73,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        logits_buffer.as_ref(),
-        &mut output,
-        input.batch_size,
-        input.vocab_size,
-        input.top_p,
-        &mut encoder,
-    );
+    kernel.encode(logits_buffer.as_ref(), &mut output, input.batch_size, input.vocab_size, input.top_p, &mut encoder);
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
@@ -357,8 +350,7 @@ fn test_topp_sampling_statistical_large() {
 
         let context = <B as Backend>::Context::new().expect("Failed to create Context");
 
-        let kernel =
-            SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+        let kernel = SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
         let mut rng = StdRng::seed_from_u64(42);
         let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -445,8 +437,7 @@ fn perf_topp_128k_vocab() {
 
         let context = <B as Backend>::Context::new().expect("Failed to create Context");
 
-        let kernel =
-            SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+        let kernel = SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
 
         let mut rng = StdRng::seed_from_u64(123);
         let mut logits = vec![0.0f32; BATCH * VOCAB];
