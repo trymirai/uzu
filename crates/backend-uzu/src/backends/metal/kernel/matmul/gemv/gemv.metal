@@ -322,7 +322,7 @@ KERNEL(Gemv)(
     result[row] = simd_sum(result[row]);
   }
 
-  if (k_split > 1) {
+  if constexpr (K_SPLIT > 1) {
     if (simd_lane == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
         shared_results[simd_group * results_per_simdgroup + row] = result[row];
