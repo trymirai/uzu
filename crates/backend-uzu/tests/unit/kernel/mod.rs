@@ -7,6 +7,7 @@ mod embedding;
 mod hadamard_transform_test;
 mod kv_cache_update_test;
 mod layer_norm_test;
+mod logit_soft_cap_test;
 mod matmul;
 mod moe;
 mod pooling;
