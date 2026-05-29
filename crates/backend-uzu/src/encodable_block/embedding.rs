@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
+            FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulQuantCombo},
         },
     },
@@ -104,8 +104,14 @@ pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
     data_type: DataType,
+    logit_soft_cap: Option<LogitSoftCap<B>>,
     vocab_size: u32,
     model_dim: u32,
+}
+
+struct LogitSoftCap<B: Backend> {
+    value: f32,
+    kernel: <B::Kernels as Kernels>::LogitSoftCapKernel,
 }
 
 impl<B: Backend> Embedding<B> {
@@ -403,15 +409,23 @@ impl<B: Backend> Embedding<B> {
         };
 
         let input_scale = config.input_scale().unwrap_or(1.0);
-        if let Some(logit_soft_cap) = config.logit_soft_cap() {
-            return Err(EmbeddingError::UnsupportedConfiguration(format!("logit_soft_cap={logit_soft_cap:?}")));
-        }
+        let logit_soft_cap = if let Some(value) = *config.logit_soft_cap() {
+            let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(context, model_shape.data_type)
+                .map_err(EmbeddingError::BackendError)?;
+            Some(LogitSoftCap {
+                value,
+                kernel,
+            })
+        } else {
+            None
+        };
 
         Ok((
             Self {
                 tying,
                 input_scale,
                 data_type: model_shape.data_type,
+                logit_soft_cap,
                 vocab_size,
                 model_dim,
             },
@@ -625,6 +639,15 @@ impl<B: Backend> Embedding<B> {
                     .map_err(EmbeddingError::BackendError)?;
             },
         };
+
+        if let Some(logit_soft_cap) = &self.logit_soft_cap {
+            logit_soft_cap.kernel.encode(
+                &mut output_allocation,
+                (batch_dim * self.vocab_size as usize) as u32,
+                logit_soft_cap.value,
+                encoder,
+            );
+        }
 
         Ok(output_allocation)
     }
