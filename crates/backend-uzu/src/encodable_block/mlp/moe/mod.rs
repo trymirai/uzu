@@ -1,5 +1,12 @@
 //! MoE (Mixture of Experts) block encodable.
 
+mod experts_two_pass_decode;
+mod experts_two_pass_prefill;
+mod gather;
+
+use experts_two_pass_decode::MoeExpertsTwoPassDecodeBlock;
+use experts_two_pass_prefill::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock};
+use gather::MoeGather;
 use thiserror::Error;
 
 use crate::{
@@ -11,10 +18,6 @@ use crate::{
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
-            moe::{
-                MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
-                MoeGatherKernel,
-            },
         },
     },
     config::{
@@ -30,7 +33,7 @@ pub struct MoeBlock<B: Backend> {
     counts_offsets_kernel: <B::Kernels as Kernels>::MoeCountsOffsetsFusedKernel,
     scatter_bases_kernel: <B::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel,
     scatter_map_kernel: <B::Kernels as Kernels>::MoeScatterBucketsMapKernel,
-    gather_kernel: MoeGatherKernel<B>,
+    gather: MoeGather<B>,
     experts_two_pass_decode_block: MoeExpertsTwoPassDecodeBlock<B>,
     experts_two_pass_prefill_block: MoeExpertsTwoPassPrefillBlock<B>,
     finalize_kernel: <B::Kernels as Kernels>::MoeFinalizeKernel,
@@ -164,7 +167,7 @@ impl<B: Backend> MoeBlock<B> {
         let scatter_map_kernel = <B::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(context, data_type)
             .map_err(MoeBlockError::BackendError)?;
 
-        let gather_kernels = MoeGatherKernel::new(context, data_type).map_err(MoeBlockError::BackendError)?;
+        let gather = MoeGather::new(context, data_type).map_err(MoeBlockError::BackendError)?;
         let experts_two_pass_decode_block =
             MoeExpertsTwoPassDecodeBlock::new(context, data_type, gating_code).map_err(MoeBlockError::BackendError)?;
         let experts_two_pass_prefill_block =
@@ -180,7 +183,7 @@ impl<B: Backend> MoeBlock<B> {
             counts_offsets_kernel,
             scatter_bases_kernel,
             scatter_map_kernel,
-            gather_kernel: gather_kernels,
+            gather,
             experts_two_pass_decode_block,
             experts_two_pass_prefill_block,
             finalize_kernel,
@@ -287,7 +290,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
             encoder,
         );
 
-        let x_perm = self.gather_kernel.encode(
+        let x_perm = self.gather.encode(
             &input,
             &bucketed_ids,
             &sumk,
@@ -338,5 +341,5 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/encodable_block/moe/mod.rs"]
+#[path = "../../../../tests/unit/encodable_block/moe/mod.rs"]
 mod tests;

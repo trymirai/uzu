@@ -61,7 +61,7 @@ pub struct LayerExecutables<B: Backend> {
     #[cfg(feature = "tracing")]
     pub tensor_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     pub pre_mixer_norm: RMSNorm<B>,
-    pub(crate) mixer: MixerExecutables<B>,
+    mixer: MixerExecutables<B>,
     pub post_mixer_norm: Option<RMSNorm<B>>,
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,

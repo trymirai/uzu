@@ -3,10 +3,8 @@ use std::{any::Any, ops::Range};
 use crate::{
     DataType,
     array::{Array, ArrayContextExt, size_for_shape},
-    backends::common::{
-        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder, SparseBuffer,
-        kernel::kv_cache_update::{KVCacheUpdate, KVLayerData},
-    },
+    backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder, SparseBuffer},
+    encodable_block::{KVCacheUpdate, KVLayerData},
 };
 
 pub enum KVSlice<B: Backend> {

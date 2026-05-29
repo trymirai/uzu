@@ -1,19 +1,20 @@
-//! Sampling kernel encodable.
+//! Sampling encodable.
 
+mod block;
+
+use block::SamplingBlock;
+pub use block::SamplingError;
 use ndarray::ArrayView2;
 
 use crate::{
     DataType,
     array::{Array, ArrayContextExt},
-    backends::common::{
-        Allocation, Backend, Encoder,
-        kernel::sampling::{SamplingError, SamplingKernel},
-    },
+    backends::common::{Allocation, Backend, Encoder},
     session::parameter::SamplingMethod,
 };
 
 pub struct Sampling<B: Backend> {
-    kernel: SamplingKernel<B>,
+    block: SamplingBlock<B>,
 }
 
 pub struct SamplingArguments<'a, B: Backend> {
@@ -26,13 +27,13 @@ pub struct SamplingArguments<'a, B: Backend> {
     pub vocab_size: usize,
 }
 
-pub(crate) struct SamplingInputs<B: Backend> {
+pub struct SamplingInputs<B: Backend> {
     pub seeds: Array<B>,
     pub bitmask: Option<Array<B>>,
 }
 
 impl<B: Backend> SamplingInputs<B> {
-    pub(crate) fn bitmask_array_from_slice(
+    pub fn bitmask_array_from_slice(
         context: &B::Context,
         row_count: usize,
         token_bitmask: &[u32],
@@ -45,7 +46,7 @@ impl<B: Backend> SamplingInputs<B> {
         array
     }
 
-    pub(crate) fn from_slices(
+    pub fn from_slices(
         context: &B::Context,
         token_seeds: &[u64],
         token_bitmask: Option<&[u32]>,
@@ -73,9 +74,9 @@ impl<B: Backend> Sampling<B> {
         context: &B::Context,
         data_type: DataType,
     ) -> Result<Self, SamplingError<B>> {
-        let kernel = SamplingKernel::new(context, data_type)?;
+        let block = SamplingBlock::new(context, data_type)?;
         Ok(Self {
-            kernel,
+            block,
         })
     }
 
@@ -84,7 +85,7 @@ impl<B: Backend> Sampling<B> {
         args: SamplingArguments<B>,
         encoder: &mut Encoder<B>,
     ) -> Result<(), SamplingError<B>> {
-        self.kernel.encode(
+        self.block.encode(
             args.logits,
             args.seeds,
             args.bitmask,
@@ -98,5 +99,5 @@ impl<B: Backend> Sampling<B> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/encodable_block/sampling_test.rs"]
+#[path = "../../../tests/unit/encodable_block/sampling_test.rs"]
 mod tests;

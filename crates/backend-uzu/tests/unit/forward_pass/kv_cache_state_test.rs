@@ -5,9 +5,10 @@ use backend_uzu::forward_pass::kv_cache_layer::KVCacheLayerTrait;
 use crate::{
     DataType,
     backends::{
-        common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+        common::{Backend, Context, Encoder},
         metal::Metal,
     },
+    encodable_block::KVCacheUpdate,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
 

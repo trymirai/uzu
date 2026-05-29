@@ -28,7 +28,7 @@ pub enum DeltaNetMixerError<B: Backend> {
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
 }
 
-pub(crate) struct DeltaNetMixer<B: Backend> {
+pub struct DeltaNetMixer<B: Backend> {
     kernel_size: usize,
     num_heads: usize,
     num_groups: usize,
@@ -58,13 +58,13 @@ pub(crate) struct DeltaNetMixer<B: Backend> {
     inner_data_type: DataType,
 }
 
-pub(crate) struct DeltaNetArguments<'a, B: Backend> {
+pub struct DeltaNetArguments<'a, B: Backend> {
     pub active_row_count: usize,
     pub layer: &'a mut DeltaNetLayer<B>,
 }
 
 impl<B: Backend> DeltaNetMixer<B> {
-    pub(crate) fn new(
+    pub fn new(
         context: &B::Context,
         config: &DeltaNetConfig,
         model_dim: usize,
@@ -347,7 +347,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         Ok(out)
     }
 
-    pub(crate) fn encode(
+    pub fn encode(
         &self,
         args: DeltaNetArguments<B>,
         input: Allocation<B>,

@@ -16,10 +16,10 @@ use std::{
 use backend_uzu::{
     _private::{
         ActivationTrace, AnyModelConfig, ArgmaxSampler, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
-        LanguageModelGeneratorContext, LogitsSampler, ParameterLoaderError, ParameterTree, Sampling, TokenInputs,
+        LanguageModelGeneratorContext, LogitsSampler, ParameterLoaderError, ParameterTree, TokenInputs,
     },
     Array, ArrayElement, DataType, ParameterLoader,
-    backends::common::{Allocation, AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+    backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
     read_safetensors_metadata,
     session::{
         config::{DecodingConfig, SpeculatorConfig},
@@ -1001,14 +1001,6 @@ impl<B: Backend> TraceValidator<B> {
             resolved_prefix_length,
             desired_suffix_length,
         )));
-
-        context.kv_cache_update = Box::new(
-            KVCacheUpdate::new(context.context.as_ref(), context.model_shape.data_type, resolved_prefix_length)
-                .expect("Failed to create KV cache update kernel"),
-        );
-
-        context.gpu_sampler = Sampling::new(context.context.as_ref(), context.model_shape.data_type)
-            .expect("Failed to create sampling kernel");
     }
 
     fn get_tokens_from_logits(logits: &Array<B>) -> Vec<u64> {

@@ -1,3 +1,4 @@
+use super::MoeExpertsTwoPassArguments;
 use crate::{
     DataType,
     array::size_for_shape,
@@ -6,7 +7,7 @@ use crate::{
         kernel::{
             Kernels, MoeExpertsDecodeDownFused2DKernel, MoeExpertsDecodePassAKernel, MoePassABuildRowMapKernel,
             MoePassABuildTileMapKernel, MoePassATileCountsKernel, MoePassATileScanKernel,
-            MoePassAWriteDispatchArgsKernel, moe::MoeExpertsTwoPassArguments,
+            MoePassAWriteDispatchArgsKernel,
         },
     },
 };

@@ -1,14 +1,16 @@
 mod dense;
+mod gate_act_mul;
 mod moe;
 
 pub use dense::DenseMlp;
+use gate_act_mul::MlpGateActMulEncodable;
 pub use moe::{MoeBlock, MoeBlockError};
 use thiserror::Error;
 
 use super::linear::{Linear, LinearBlockError};
 use crate::{
     DataType,
-    backends::common::{Allocation, Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable},
+    backends::common::{Allocation, Backend, Encoder},
     config::mlp::AnyMLPConfig,
     parameters::{ParameterLoaderError, ParameterTree},
 };

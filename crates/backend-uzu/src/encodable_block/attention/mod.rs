@@ -1,7 +1,10 @@
 //! Attention kernel encodable.
 
+mod gemm;
+
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use gemm::{AttentionGemmArguments, AttentionGemmBlock};
 use itertools::iproduct;
 use thiserror::Error;
 
@@ -16,7 +19,6 @@ use crate::{
             AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
             AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel, ManualKernels,
             SigmoidGateKernel, SoftmaxKernel,
-            attention::{AttentionGemmArguments, AttentionGemmBlock},
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
@@ -514,7 +516,6 @@ impl<B: Backend> Attention<B> {
                     self.num_groups,
                     suffix_length,
                     segment_prefix_length,
-                    max_sequence_length,
                     self.head_dim,
                     encoder,
                 )?
@@ -610,7 +611,6 @@ impl<B: Backend> Attention<B> {
         num_groups: usize,
         suffix_length: usize,
         segment_prefix_length: usize,
-        max_sequence_length: usize,
         head_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
@@ -630,7 +630,6 @@ impl<B: Backend> Attention<B> {
                     suffix_length,
                     sequence_length,
                     segment_prefix_length,
-                    max_sequence_length,
                     ring_params,
                     head_dim,
                     is_causal: self.is_causal,
@@ -879,5 +878,5 @@ struct KernelKey {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/encodable_block/attention_test.rs"]
+#[path = "../../../tests/unit/encodable_block/attention_test.rs"]
 mod tests;
