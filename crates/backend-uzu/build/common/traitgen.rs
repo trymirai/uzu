@@ -126,10 +126,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -
     }
 
     let kernel_traits = quote! {
-        use crate::backends::common::{
-            Buffer,
-            buffer_range::{AsBufferRangeMut, AsBufferRangeRef},
-        };
+        use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Buffer};
 
         pub trait BufferArg<'a, B: Buffer> {
             fn into_parts(self) -> (&'a B, usize, usize);

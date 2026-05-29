@@ -5,12 +5,11 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use super::{RangeAllocationType, RangeAllocator};
 use crate::{
     ArrayElement,
     backends::common::{
-        Backend, Buffer, Context, DenseBuffer,
-        buffer_range::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef},
+        AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef, Context, DenseBuffer,
+        allocator::{RangeAllocationType, RangeAllocator},
     },
 };
 

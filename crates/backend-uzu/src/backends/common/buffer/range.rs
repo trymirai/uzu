@@ -13,7 +13,7 @@ pub struct BufferRangeRef<'a, B: Buffer> {
 }
 
 impl<'a, B: Buffer> BufferRangeRef<'a, B> {
-    pub(super) fn new(
+    pub fn new(
         buffer: &'a B,
         range: Range<usize>,
     ) -> Self {
@@ -31,7 +31,7 @@ impl<'a, B: Buffer> BufferRangeRef<'a, B> {
         self.range.clone()
     }
 
-    pub(crate) fn subrange(
+    pub fn subrange(
         self,
         range: Range<usize>,
     ) -> Self {
@@ -54,7 +54,7 @@ pub struct BufferRangeMut<'a, B: Buffer> {
 }
 
 impl<'a, B: Buffer> BufferRangeMut<'a, B> {
-    pub(super) fn new_exclusive(
+    pub fn new_exclusive(
         buffer: &'a mut B,
         range: Range<usize>,
     ) -> Self {
@@ -64,7 +64,7 @@ impl<'a, B: Buffer> BufferRangeMut<'a, B> {
         }
     }
 
-    pub(super) unsafe fn new_shared(
+    pub unsafe fn new_shared(
         buffer: &'a B,
         range: Range<usize>,
     ) -> Self {
@@ -82,7 +82,7 @@ impl<'a, B: Buffer> BufferRangeMut<'a, B> {
         self.range.clone()
     }
 
-    pub(crate) fn subrange(
+    pub fn subrange(
         self,
         range: Range<usize>,
     ) -> Self {
