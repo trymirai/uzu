@@ -315,21 +315,25 @@ enum ReferenceWeights {
 
 #[inline]
 unsafe fn read_f32(base: *const u8, data_type: DataType, index: usize) -> f32 {
-    match data_type {
-        DataType::F32 => *(base as *const f32).add(index),
-        DataType::F16 => (*(base as *const f16).add(index)).to_f32(),
-        DataType::BF16 => (*(base as *const bf16).add(index)).to_f32(),
-        _ => unreachable!(),
+    unsafe {
+        match data_type {
+            DataType::F32 => *(base as *const f32).add(index),
+            DataType::F16 => (*(base as *const f16).add(index)).to_f32(),
+            DataType::BF16 => (*(base as *const bf16).add(index)).to_f32(),
+            _ => unreachable!(),
+        }
     }
 }
 
 #[inline]
 unsafe fn write_f32(base: *mut u8, data_type: DataType, index: usize, value: f32) {
-    match data_type {
-        DataType::F32 => *(base as *mut f32).add(index) = value,
-        DataType::F16 => *(base as *mut f16).add(index) = f16::from_f32(value),
-        DataType::BF16 => *(base as *mut bf16).add(index) = bf16::from_f32(value),
-        _ => unreachable!(),
+    unsafe {
+        match data_type {
+            DataType::F32 => *(base as *mut f32).add(index) = value,
+            DataType::F16 => *(base as *mut f16).add(index) = f16::from_f32(value),
+            DataType::BF16 => *(base as *mut bf16).add(index) = bf16::from_f32(value),
+            _ => unreachable!(),
+        }
     }
 }
 

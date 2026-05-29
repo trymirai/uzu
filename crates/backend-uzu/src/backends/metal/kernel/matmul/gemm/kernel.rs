@@ -308,6 +308,8 @@ impl GemmKernel {
                 } else {
                     select_quant_tiling(m, n, group_size.unwrap_or(0))
                 };
+                // A/B HARNESS (revert before merge): force a quant tile for the tile-sweep investigation
+                let tiling = gemm_force_quant_tile(tiling);
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
                 let params = quant_params(m, n, k, tiling, ab_scale);
@@ -411,6 +413,19 @@ fn select_mxu_quant_tiling(
         GemmTiling::Tile32x64x256_Simdgroups2x2
     } else {
         GemmTiling::Tile64x64x256_Simdgroups2x2
+    }
+}
+
+// A/B HARNESS (revert before merge): UZU_GEMM_FORCE_QUANT_TILE overrides the simdgroup quant tile.
+fn gemm_force_quant_tile(default: GemmTiling) -> GemmTiling {
+    match std::env::var("UZU_GEMM_FORCE_QUANT_TILE").ok().as_deref() {
+        Some("8x32x32") => GemmTiling::Tile8x32x32_Simdgroups1x1,
+        Some("32x32x32") => GemmTiling::Tile32x32x32_Simdgroups2x2,
+        Some("64x32x32") => GemmTiling::Tile64x32x32_Simdgroups2x2,
+        Some("64x64x32") => GemmTiling::Tile64x64x32_Simdgroups2x2,
+        Some("64x64x64") => GemmTiling::Tile64x64x64_Simdgroups2x2,
+        Some("64x64x16") => GemmTiling::Tile64x64x16_Simdgroups2x2,
+        _ => default,
     }
 }
 

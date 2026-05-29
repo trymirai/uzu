@@ -6,12 +6,12 @@ use crate::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
-                QuantizationMode,
+                QuantizationMethod, QuantizationMode,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
+        metal::{Metal, context::MetalContext, kernel::{GemvMetalKernel, QmvFastRefMetalKernel}},
     },
 };
 
@@ -55,11 +55,23 @@ fn fp_k_split(
     }
 }
 
+// --- A/B HARNESS (revert before merge): standalone qmv_fast reference ---
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+struct QmvFastRefKey {
+    group_size: u32,
+    bits: u32,
+    quant_method: QuantizationMethod,
+    use_hadamard: bool,
+}
+// --- end A/B HARNESS ---
+
 pub(crate) struct GemvDispatch {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
     pipelines: HashMap<GemvKey, GemvMetalKernel>,
+    // A/B HARNESS (revert before merge): standalone qmv_fast reference pipelines
+    qmv_fast_ref: HashMap<QmvFastRefKey, QmvFastRefMetalKernel>,
 }
 
 impl GemvDispatch {
@@ -74,8 +86,57 @@ impl GemvDispatch {
             input_data_type,
             output_data_type,
             pipelines: HashMap::new(),
+            qmv_fast_ref: HashMap::new(),
         })
     }
+
+    // --- A/B HARNESS (revert before merge): encode via standalone qmv_fast reference ---
+    fn encode_quant_ref(
+        &mut self,
+        weights: &Allocation<Metal>,
+        scales: &Allocation<Metal>,
+        zero_points: Option<&Allocation<Metal>>,
+        biases: Option<&Allocation<Metal>>,
+        quant_method: QuantizationMethod,
+        group_size: u32,
+        bits: u32,
+        a: &Allocation<Metal>,
+        a_offset: usize,
+        d: &mut Allocation<Metal>,
+        hadamard_factors: Option<&Allocation<Metal>>,
+        k: u32,
+        n: u32,
+        m: u32,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MatmulError<Metal>> {
+        let key = QmvFastRefKey {
+            group_size,
+            bits,
+            quant_method,
+            use_hadamard: hadamard_factors.is_some(),
+        };
+        let context = encoder.context();
+        let kernel = match self.qmv_fast_ref.entry(key) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let kernel = QmvFastRefMetalKernel::new(
+                    context,
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
+                    group_size,
+                    bits,
+                    quant_method,
+                    hadamard_factors.is_some(),
+                )
+                .map_err(MatmulError::BackendError)?;
+                e.insert(kernel)
+            },
+        };
+        kernel.encode(weights, scales, zero_points, biases, (a, a_offset), d, hadamard_factors, k, n, m, encoder);
+        Ok(())
+    }
+    // --- end A/B HARNESS ---
 
     fn get_or_create(
         &mut self,
@@ -259,6 +320,21 @@ impl GemvDispatch {
             QuantizationMode::U4 => 4u32,
             QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
         };
+
+        // A/B HARNESS (revert before merge): route quant gemv through the standalone qmv_fast reference
+        if std::env::var_os("UZU_GEMV_STANDALONE").is_some() {
+            let quant_method = match b_prologue {
+                GemmBPrologueKind::ScaleBiasDequant => QuantizationMethod::ScaleBias,
+                GemmBPrologueKind::ScaleZeroPointDequant => QuantizationMethod::ScaleZeroPoint,
+                GemmBPrologueKind::ScaleSymmetricDequant => QuantizationMethod::ScaleSymmetric,
+                GemmBPrologueKind::FullPrecision => unreachable!(),
+            };
+            return self.encode_quant_ref(
+                weights, scales, zero_points, biases, quant_method, group_size, bits, a, a_offset, &mut *d,
+                hadamard_factors, k, n, m, encoder,
+            );
+        }
+
         if n % 8 != 0 {
             return Err(MatmulError::UnsupportedLayout {
                 path: QUANT_PATH,
