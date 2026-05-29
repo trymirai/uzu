@@ -66,7 +66,7 @@ impl<B: Backend> dyn Mlp<B> {
                 let gate = MlpGateActMulEncodable::new(
                     context,
                     data_type,
-                    dense_config.activation.clone().into(),
+                    dense_config.activation.clone(),
                     hidden_dimension,
                     down_input_hadamard_factors,
                 )

@@ -1,8 +1,11 @@
 use std::{mem::size_of, rc::Rc};
 
 use backend_uzu::{
-    ArrayElement, allocation_copy_from_slice,
-    backends::common::{Allocation, AllocationType, Backend, Buffer, Context, Encoder, SparseBuffer, SparseBufferExt},
+    ArrayElement,
+    backends::common::{
+        Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer,
+        SparseBufferExt,
+    },
 };
 
 pub fn allocation_size_bytes<T>(elements_count: usize) -> usize {
@@ -25,12 +28,12 @@ pub fn alloc_allocation_with_data<B: Backend, T: ArrayElement>(
     let mut allocation = context
         .create_allocation(allocation_size_bytes::<T>(data.len()), AllocationType::Global)
         .expect("Failed to create allocation");
-    allocation_copy_from_slice(&mut allocation, data).expect("Failed to initialize allocation");
+    write_allocation(&mut allocation, data);
     allocation
 }
 
 pub fn allocation_to_vec<B: Backend, T: ArrayElement>(allocation: &Allocation<B>) -> Vec<T> {
-    backend_uzu::allocation_to_vec(allocation)
+    allocation.copyout()
 }
 
 pub fn allocation_prefix_to_vec<B: Backend, T: ArrayElement>(
@@ -46,7 +49,17 @@ pub fn write_allocation<B: Backend, T: ArrayElement>(
     allocation: &mut Allocation<B>,
     data: &[T],
 ) {
-    allocation_copy_from_slice(allocation, data).expect("Failed to write allocation")
+    let bytes = bytemuck::cast_slice(data);
+    let buffer_range = allocation.as_buffer_range_mut();
+    let range = buffer_range.range();
+    assert!(bytes.len() <= range.len(), "source data is larger than destination allocation");
+    let destination = unsafe {
+        std::slice::from_raw_parts_mut(
+            (buffer_range.buffer().cpu_ptr().as_ptr() as *mut u8).add(range.start),
+            range.len(),
+        )
+    };
+    destination[..bytes.len()].copy_from_slice(bytes);
 }
 
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {

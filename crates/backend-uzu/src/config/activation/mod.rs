@@ -1,6 +1,6 @@
 use proc_macros::uzu_config_abstract;
 
-use crate::backends::common::{ActivationConfig, gpu_types::ActivationType};
+use crate::backends::common::gpu_types::ActivationType;
 
 pub mod gelu;
 pub mod identity;
@@ -29,20 +29,6 @@ impl AnyActivation {
         match self {
             AnyActivation::SiLU(config) => config.alpha,
             AnyActivation::GELU(_) | AnyActivation::Identity(_) => 1.0,
-        }
-    }
-}
-
-impl From<AnyActivation> for ActivationConfig {
-    fn from(value: AnyActivation) -> Self {
-        match value {
-            AnyActivation::SiLU(config) => ActivationConfig::SILU {
-                alpha: config.alpha,
-            },
-            AnyActivation::GELU(config) => ActivationConfig::GELU {
-                approximate: config.approximate,
-            },
-            AnyActivation::Identity(_) => ActivationConfig::IDENTITY,
         }
     }
 }

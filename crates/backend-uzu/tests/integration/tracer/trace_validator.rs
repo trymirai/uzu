@@ -18,7 +18,7 @@ use backend_uzu::{
         ActivationTrace, AnyModelConfig, ArgmaxSampler, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
         LanguageModelGeneratorContext, LogitsSampler, ParameterLoaderError, ParameterTree, Sampling, TokenInputs,
     },
-    Array, ArrayElement, DataType, ParameterLoader, allocation_to_vec,
+    Array, ArrayElement, DataType, ParameterLoader,
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
     read_safetensors_metadata,
     session::{
@@ -698,7 +698,7 @@ impl<B: Backend> TraceValidator<B> {
         produced_shape: &[usize],
         transform: Option<ArrayTransform>,
     ) -> TracerValidationMetrics {
-        let produced = allocation_to_vec::<B, Precision>(produced_allocation);
+        let produced = produced_allocation.copyout::<Precision>();
         Self::validate_allocation_data_of_type(expected_array, &produced, produced_shape, transform)
     }
 

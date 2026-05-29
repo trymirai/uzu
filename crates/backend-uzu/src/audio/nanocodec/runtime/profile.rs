@@ -1,7 +1,7 @@
 use std::sync::mpsc::Receiver;
 
 use super::*;
-use crate::{allocation_to_vec, array::Array, backends::common::Allocation};
+use crate::{array::Array, backends::common::Allocation};
 
 pub enum SubmittedDecodedPaddedAudio<B: Backend> {
     Ready(DecodedPaddedAudio),
@@ -51,12 +51,10 @@ impl<B: Backend> SubmittedDecodedPaddedAudio<B> {
                 })?;
                 drop(retained_inputs);
                 let samples_result: AudioResult<Vec<f32>> = match data_type {
-                    DataType::F32 => Ok(allocation_to_vec::<B, f32>(&output)),
-                    DataType::F16 => {
-                        Ok(allocation_to_vec::<B, half::f16>(&output).iter().map(|&value| f32::from(value)).collect())
-                    },
+                    DataType::F32 => Ok(output.copyout::<f32>()),
+                    DataType::F16 => Ok(output.copyout::<half::f16>().iter().map(|&value| f32::from(value)).collect()),
                     DataType::BF16 => {
-                        Ok(allocation_to_vec::<B, half::bf16>(&output).iter().map(|&value| f32::from(value)).collect())
+                        Ok(output.copyout::<half::bf16>().iter().map(|&value| f32::from(value)).collect())
                     },
                     dt => Err(AudioError::Runtime(format!("unsupported vocoder output dtype: {dt:?}"))),
                 };

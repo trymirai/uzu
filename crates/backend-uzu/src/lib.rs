@@ -23,7 +23,6 @@ pub mod session;
 pub use array::{Array, ArrayContextExt};
 #[cfg(metal_backend)]
 pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
-pub use backends::common::{AllocationAccessError, allocation_copy_from_slice, allocation_to_vec};
 pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use parameters::{ParameterLoader, read_safetensors_metadata};

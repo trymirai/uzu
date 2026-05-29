@@ -1,5 +1,3 @@
-mod activation_config;
-mod allocation_access;
 mod allocator;
 mod backend;
 mod buffer;
@@ -13,10 +11,6 @@ mod hazard_tracker;
 pub mod kernel;
 mod sparse_buffer;
 
-pub use activation_config::ActivationConfig;
-pub use allocation_access::{
-    AllocationAccessError, allocation_as_bytes, allocation_as_bytes_mut, allocation_copy_from_slice, allocation_to_vec,
-};
 pub use allocator::{Allocation, AllocationPool, AllocationType, Allocator};
 pub use backend::Backend;
 pub use buffer::{Buffer, BufferGpuAddressRangeExt};

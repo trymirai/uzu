@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use backend_uzu::{
-    ArrayContextExt, DataType, allocation_to_vec,
+    ArrayContextExt, DataType,
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -17,13 +17,16 @@ use backend_uzu::{
 };
 
 use crate::{
-    common::audio::{
-        fsq_reference::{fsq_decode_reference, fsq_encode_reference},
-        ops_reference::{
-            CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
-            causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
-            conv1d_reference, half_snake_reference,
+    common::{
+        audio::{
+            fsq_reference::{fsq_decode_reference, fsq_encode_reference},
+            ops_reference::{
+                CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
+                causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference,
+                causal_conv1d_reference, conv1d_reference, half_snake_reference,
+            },
         },
+        helpers::allocation_to_vec,
     },
     uzu_test,
 };
