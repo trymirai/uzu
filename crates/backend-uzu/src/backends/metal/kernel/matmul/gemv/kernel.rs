@@ -1,44 +1,61 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use super::spec::GemvSpecialization;
 use crate::{
     DataType,
     backends::{
         common::{
-            AsBufferRangeRef, Buffer, Encoder,
+            Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
                 QuantizationMode,
                 gemm::{GemmBPrologueKind, GemmDTransform},
-                matmul::{GemvParams, GemvTiling},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{Metal, context::MetalContext, kernel::{GemvMetalKernel, QmvFastMetalKernel}},
+        metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
     },
 };
 
 const FP_PATH: &str = "FpGemv";
 const QUANT_PATH: &str = "QuantGemv";
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-struct GemvFpKey {
-    tiling: GemvTiling,
-    output_transform: GemmDTransform,
-}
+const FP_BLOCK: u32 = 128;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
-struct QmvFastKey {
+struct GemvKey {
     b_prologue: GemmBPrologueKind,
     group_size: u32,
     bits: u32,
     output_transform: GemmDTransform,
     input_aligned: bool,
+    k_split: u32,
+}
+
+const QMV_SIMDGROUPS: u32 = 8;
+const QMV_RESULTS_PER_SIMDGROUP: u32 = 4;
+
+fn rows_per_threadgroup(k_split: u32) -> u32 {
+    (QMV_SIMDGROUPS / k_split) * QMV_RESULTS_PER_SIMDGROUP
+}
+
+fn fp_k_split(
+    n: u32,
+    k: u32,
+    input_aligned: bool,
+) -> u32 {
+    if !input_aligned || n >= 4096 {
+        1
+    } else if k >= 16 * n || n <= 512 {
+        8
+    } else if n <= 1024 {
+        4
+    } else {
+        2
+    }
 }
 
 pub(crate) struct GemvDispatch {
     data_type: DataType,
-    fp_pipelines: HashMap<GemvFpKey, GemvMetalKernel>,
-    quant_pipelines: HashMap<QmvFastKey, QmvFastMetalKernel>,
+    pipelines: HashMap<GemvKey, GemvMetalKernel>,
 }
 
 impl GemvDispatch {
@@ -46,52 +63,22 @@ impl GemvDispatch {
         context: &MetalContext,
         data_type: DataType,
     ) -> Result<Self, MatmulError<Metal>> {
-        let mut kernel = Self {
+        let _ = context;
+        Ok(Self {
             data_type,
-            fp_pipelines: HashMap::new(),
-            quant_pipelines: HashMap::new(),
-        };
-        for config in GemvSpecialization::precompile_configs(data_type) {
-            kernel.get_or_create_fp(
-                context,
-                GemvFpKey {
-                    tiling: config.tiling,
-                    output_transform: config.output_transform(),
-                },
-            )?;
-        }
-        Ok(kernel)
+            pipelines: HashMap::new(),
+        })
     }
 
-    fn get_or_create_fp(
+    fn get_or_create(
         &mut self,
         context: &MetalContext,
-        key: GemvFpKey,
+        key: GemvKey,
     ) -> Result<&GemvMetalKernel, MatmulError<Metal>> {
-        match self.fp_pipelines.entry(key) {
+        match self.pipelines.entry(key) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 let kernel = GemvMetalKernel::new(
-                    context,
-                    self.data_type,
-                    key.output_transform,
-                    key.tiling,
-                )
-                .map_err(MatmulError::BackendError)?;
-                Ok(entry.insert(kernel))
-            },
-        }
-    }
-
-    fn get_or_create_quant(
-        &mut self,
-        context: &MetalContext,
-        key: QmvFastKey,
-    ) -> Result<&QmvFastMetalKernel, MatmulError<Metal>> {
-        match self.quant_pipelines.entry(key) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                let kernel = QmvFastMetalKernel::new(
                     context,
                     self.data_type,
                     key.b_prologue,
@@ -99,6 +86,7 @@ impl GemvDispatch {
                     key.bits,
                     key.output_transform,
                     key.input_aligned,
+                    key.k_split,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -132,7 +120,6 @@ impl GemvDispatch {
         let output_mask = arguments.d_transform.mask();
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
-        let is_accumulate = arguments.d_transform.accumulate;
         let rht_factors = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
@@ -160,34 +147,36 @@ impl GemvDispatch {
             });
         }
 
-        let specialization =
-            GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some(), rht_factors.is_some());
-        let output_rows_per_threadgroup = specialization.tiling.output_rows_per_threadgroup();
-        let group_count_x = n.div_ceil(output_rows_per_threadgroup);
-        let group_count_y = m;
-
-        let key = GemvFpKey {
-            tiling: specialization.tiling,
-            output_transform: output_mask,
+        let input_aligned = k % FP_BLOCK == 0;
+        let k_split = if rht_factors.is_some() {
+            1
+        } else {
+            fp_k_split(n, k, input_aligned)
         };
-        let params = GemvParams {
-            in_vec_size: k,
-            out_vec_size: n,
-            batch_size: m,
-            matrix_leading_dimension: k,
-            output_rows_per_threadgroup,
-            ab_scale,
+        let group_count_x = n.div_ceil(rows_per_threadgroup(k_split));
+        let key = GemvKey {
+            b_prologue: GemmBPrologueKind::FullPrecision,
+            group_size: 0,
+            bits: 0,
+            output_transform: output_mask,
+            input_aligned,
+            k_split,
         };
         let context = encoder.context();
-        self.get_or_create_fp(context, key)?.encode(
-            (a, a_offset),
+        self.get_or_create(context, key)?.encode(
             weights,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
+            None::<&Allocation<Metal>>,
+            (a, a_offset),
             &mut *d,
             output_bias,
             rht_factors,
-            std::slice::from_ref(&params),
+            k,
+            n,
+            m,
+            ab_scale,
             group_count_x,
-            group_count_y,
             encoder,
         );
 
@@ -256,22 +245,22 @@ impl GemvDispatch {
             GemmBPrologueKind::FullPrecision => unreachable!(),
         };
 
-        // block_size = values_per_thread * 32; values_per_thread = 2 packs ×
-        // pack_factor (8 at 4-bit, 4 at 8-bit). Aligned K skips the tail block.
         let block_size = if bits == 4 { 512 } else { 256 };
         let input_aligned = k % block_size == 0;
 
-        let key = QmvFastKey {
+        let group_count_x = n.div_ceil(rows_per_threadgroup(1));
+        let key = GemvKey {
             b_prologue,
             group_size,
             bits,
             output_transform: output_mask,
             input_aligned,
+            k_split: 1,
         };
         let context = encoder.context();
-        self.get_or_create_quant(context, key)?.encode(
+        self.get_or_create(context, key)?.encode(
             weights,
-            scales,
+            Some(scales),
             zero_points,
             biases,
             (a, a_offset),
@@ -282,6 +271,7 @@ impl GemvDispatch {
             n,
             m,
             ab_scale,
+            group_count_x,
             encoder,
         );
 
