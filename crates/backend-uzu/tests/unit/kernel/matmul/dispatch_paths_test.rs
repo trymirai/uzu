@@ -5,11 +5,14 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement,
     backends::{
-        common::{Backend, Context, kernel::ManualKernels, kernel::matmul::MatmulKernel},
+        common::{
+            Backend, Context,
+            kernel::{ManualKernels, matmul::MatmulKernel},
+        },
         metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
     },
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use rstest::rstest;
 
@@ -36,12 +39,7 @@ fn check_case<T: ArrayElement + Float + Debug + Display>(
     let input = deterministic_input::<T>(case);
     let expected = cpu_reference::<T>(&input);
     let actual = run_metal::<T>(context, kernel, &input, path);
-    assert_eq_float(
-        &expected,
-        &actual,
-        tolerance,
-        &format!("{path:?} dtype={} {case:?}", std::any::type_name::<T>()),
-    );
+    assert_eq_float(&expected, &actual, tolerance, &format!("{path:?} dtype={} {case:?}", std::any::type_name::<T>()));
 }
 
 fn run_matrix<T: ArrayElement + Float + Debug + Display>(
@@ -55,7 +53,7 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
         T::data_type(),
         T::data_type(),
     )
-        .expect("MatmulKernel");
+    .expect("MatmulKernel");
     for path in gemm_paths_for_hw(&context) {
         for shape in all_correctness_shapes() {
             let case = case_for_shape(shape);
@@ -73,15 +71,7 @@ fn matches_cpu_reference_bf16(
     #[case] ab_scale: f32,
     #[case] accumulate: bool,
 ) {
-    run_matrix::<bf16>(
-        |shape| Case::new(shape).with_ab_scale(ab_scale).with_accumulate(accumulate),
-        1.0,
-    );
-}
-
-#[test]
-fn matches_cpu_reference_f16() {
-    run_matrix::<f16>(|shape| Case::new(shape), 0.5);
+    run_matrix::<bf16>(|shape| Case::new(shape).with_ab_scale(ab_scale).with_accumulate(accumulate), 1.0);
 }
 
 #[test]

@@ -29,18 +29,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         .expect("Failed to create SigmoidGateKernel");
 
     let gate_array = context.create_array_from(&[size], &gate_data.to_vec().into_boxed_slice());
-    let mut output = context
-        .create_array_from(&[size], &output_data.to_vec().into_boxed_slice())
-        .into_allocation();
+    let mut output = context.create_array_from(&[size], &output_data.to_vec().into_boxed_slice()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let total_elements = config.suffix_length * config.num_heads * config.head_dim;
-    kernel.encode(
-        gate_array.allocation(),
-        &mut output,
-        total_elements,
-        &mut encoder,
-    );
+    kernel.encode(gate_array.allocation(), &mut output, total_elements, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     crate::common::helpers::allocation_to_vec(&output)

@@ -4,7 +4,7 @@ use std::{collections::HashMap, path::Path, time::Instant};
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
-    DataType, allocation_to_vec,
+    DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::model::classifier_model::ClassifierModelConfig,
     encodable_block::LayerArguments,
@@ -211,13 +211,9 @@ impl<B: Backend> Classifier<B> {
         logits: &Allocation<B>,
     ) -> Result<Box<[f32]>, Error> {
         match self.context.logits_data_type {
-            DataType::F32 => Ok(allocation_to_vec::<B, f32>(logits).into()),
-            DataType::F16 => {
-                Ok(allocation_to_vec::<B, half::f16>(logits).into_iter().map(|x| x.to_f32()).collect::<Box<[_]>>())
-            },
-            DataType::BF16 => {
-                Ok(allocation_to_vec::<B, half::bf16>(logits).into_iter().map(|x| x.to_f32()).collect::<Box<[_]>>())
-            },
+            DataType::F32 => Ok(logits.copyout::<f32>().into()),
+            DataType::F16 => Ok(logits.copyout::<half::f16>().into_iter().map(|x| x.to_f32()).collect::<Box<[_]>>()),
+            DataType::BF16 => Ok(logits.copyout::<half::bf16>().into_iter().map(|x| x.to_f32()).collect::<Box<[_]>>()),
             data_type => {
                 Err(Error::InvalidModelConfig(format!("unsupported classifier logits data type {data_type:?}")))
             },

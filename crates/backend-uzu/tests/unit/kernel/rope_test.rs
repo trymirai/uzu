@@ -76,13 +76,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
 
     let element_data_type = T::data_type();
     let rope_data_type = DataType::F32;
-    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(
-        &context,
-        element_data_type,
-        rope_data_type,
-        query_only,
-    )
-    .expect("Failed to create RopeKernel");
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, element_data_type, rope_data_type, query_only)
+            .expect("Failed to create RopeKernel");
 
     let total_heads = (input.num_heads + 2 * input.num_groups) as usize;
     let qkv_len = input.suffix_length as usize * total_heads * input.head_dim as usize;
@@ -198,7 +194,11 @@ fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
 }
 
 fn test_query_only<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
-    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) { 0.02f32 } else { 1e-5 };
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.02f32
+    } else {
+        1e-5
+    };
     let (expected, _) = get_output::<T, Cpu>(input, true);
     for_each_non_cpu_backend!(|B| {
         let (actual, _) = get_output::<T, B>(input, true);

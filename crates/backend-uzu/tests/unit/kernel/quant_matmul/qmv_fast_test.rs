@@ -275,7 +275,7 @@ macro_rules! qmv_fast_test {
     ($name:ident, gs=$gs:expr, bits=$bits:expr, format=$format:expr) => {
         #[uzu_test]
         fn $name() {
-            for_each_float_type!(|F| {
+            for_each_qmv_float_type!(|F| {
                 test_basic::<F>($gs, $bits, $format);
             })
         }

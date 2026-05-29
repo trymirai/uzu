@@ -1,7 +1,5 @@
 use std::fmt::{Debug, Display};
 
-use half::{bf16, f16};
-use num_traits::Float;
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
@@ -9,6 +7,8 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::{
     common::{

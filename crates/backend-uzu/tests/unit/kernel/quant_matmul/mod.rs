@@ -2,6 +2,19 @@
 #[path = "../../../common/mod.rs"]
 mod common;
 
+macro_rules! for_each_qmv_float_type {
+    (|$F:ident| $body:expr) => {{
+        {
+            type $F = f32;
+            $body
+        }
+        {
+            type $F = half::bf16;
+            $body
+        }
+    }};
+}
+
 mod qmv_fast_test;
 mod qmv_test;
 

@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
@@ -59,10 +57,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        crate::common::helpers::allocation_to_vec(&keys),
-        crate::common::helpers::allocation_to_vec(&values),
-    )
+    (crate::common::helpers::allocation_to_vec(&keys), crate::common::helpers::allocation_to_vec(&values))
 }
 
 /// Single swap between two different positions.

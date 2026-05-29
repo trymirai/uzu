@@ -1,17 +1,18 @@
 use std::mem::{MaybeUninit, size_of};
 
-use num_traits::{Float, NumCast};
-use proptest::prelude::*;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-use rand_distr::Normal;
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType, dispatch_dtype,
+    ArrayContextExt, ArrayElement, DataType,
     backends::common::{
         AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
+    dispatch_dtype,
 };
+use num_traits::{Float, NumCast};
+use proptest::prelude::*;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use rand_distr::Normal;
 
 use crate::{
     common::{
@@ -43,10 +44,7 @@ fn do_argmax_backend<B: Backend, T: ArrayElement + Float>(
 ) -> Result<ArgmaxTestResults, TestCaseError> {
     let logits_buffer = context.create_array_from(&[logits.len()], logits).into_allocation();
     let mut twopass_partial_results_buffer = context
-        .create_allocation(
-            batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(),
-            AllocationType::Global,
-        )
+        .create_allocation(batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(), AllocationType::Global)
         .unwrap();
     let mut single_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32).into_allocation();
     let mut twopass_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32).into_allocation();

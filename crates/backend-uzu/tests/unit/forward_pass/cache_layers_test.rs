@@ -4,7 +4,7 @@ use std::{mem::size_of, ops::Range};
 
 use super::{CacheEntryIndex, CacheLayer, CacheLayers, LayerCacheBinding};
 use crate::{
-    DataType, allocation_copy_from_slice, allocation_to_vec,
+    ArrayContextExt, DataType,
     backends::{
         common::{Allocation, AllocationType, Backend, Context, Encoder, SparseBuffer},
         metal::Metal,
@@ -20,10 +20,7 @@ fn allocation_from_slice(
     context: &<Metal as Backend>::Context,
     data: &[f32],
 ) -> Allocation<Metal> {
-    let mut allocation =
-        context.create_allocation(size_of_val(data), AllocationType::Global).expect("Failed to create allocation");
-    allocation_copy_from_slice(&mut allocation, data).expect("Failed to write allocation");
-    allocation
+    context.create_array_from(&[data.len()], data).into_allocation()
 }
 
 fn copy_allocation_to_sparse_row(
@@ -50,7 +47,7 @@ fn read_sparse_row(
     let mut encoder = Encoder::<Metal>::new(context).expect("Failed to create encoder");
     encoder.encode_copy(buffer, row_byte_range(row_size, row_index), &mut allocation, 0..row_size);
     submit_encoder(encoder);
-    allocation_to_vec(&allocation)
+    allocation.copyout()
 }
 
 fn row_byte_range(

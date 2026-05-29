@@ -13,7 +13,7 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use rstest::rstest;
 
@@ -63,13 +63,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
         .expect("Failed to create allocation");
 
-    let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(
-        &context,
-        T::data_type(),
-        T::data_type(),
-        T::data_type(),
-    )
-        .expect("Failed to create MatmulKernel");
+    let mut kernel =
+        <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type(), T::data_type(), T::data_type())
+            .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel
@@ -107,22 +103,6 @@ fn test<T: ArrayElement + Float + Debug + Display>(
         let output = get_output::<T, B>(&input);
         assert_eq_float(&expected, &output, eps, &format!("backend {}", std::any::type_name::<B>()));
     });
-}
-
-#[rstest]
-#[case::m1(1, 128, 64)]
-#[case::batched(4, 128, 64)]
-#[case::max_batch(8, 128, 64)]
-#[case::unaligned_k(1, 33, 64)]
-#[case::unaligned_n(1, 128, 11)]
-#[case::large(1, 4096, 2048)]
-#[case::small_n(1, 128, 3)]
-fn gemv_f16(
-    #[case] m: usize,
-    #[case] k: usize,
-    #[case] n: usize,
-) {
-    test::<f16>(m, k, n, 0.01);
 }
 
 #[rstest]

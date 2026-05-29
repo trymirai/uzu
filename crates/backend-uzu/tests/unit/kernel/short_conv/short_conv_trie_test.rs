@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -31,9 +29,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let context = B::Context::new().expect("Failed to create Context");
 
     let has_bias = input.b.is_some();
-    let kernel =
-        <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
-            .expect("Failed to create ShortConvTrieKernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
+        .expect("Failed to create ShortConvTrieKernel");
 
     let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
     let w_array = context.create_array_from(&[input.w.len()], &input.w);
@@ -48,21 +45,15 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
 
     let base_state_size = model_dim * state_stride;
     let base_state_allocation_size = base_state_size.max(1);
-    let base_state_data: Vec<T> = input
-        .base_state
-        .iter()
-        .copied()
-        .chain(std::iter::repeat(T::zero()))
-        .take(base_state_allocation_size)
-        .collect();
+    let base_state_data: Vec<T> =
+        input.base_state.iter().copied().chain(std::iter::repeat(T::zero())).take(base_state_allocation_size).collect();
     let base_state_array = context.create_array_from(&[base_state_allocation_size], &base_state_data);
 
     let parents_array = context.create_array_from(&[input.parents.len()], &input.parents);
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
-    let mut suffix_state = context
-        .create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type())
-        .into_allocation();
+    let mut suffix_state =
+        context.create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -82,10 +73,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        crate::common::helpers::allocation_to_vec(&out),
-        crate::common::helpers::allocation_to_vec(&suffix_state),
-    )
+    (crate::common::helpers::allocation_to_vec(&out), crate::common::helpers::allocation_to_vec(&suffix_state))
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.
