@@ -155,8 +155,8 @@ impl GemvDispatch {
                     key.group_size,
                     key.bits,
                     key.k_split,
-                    key.output_transform,
                     key.input_aligned,
+                    key.output_transform,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
