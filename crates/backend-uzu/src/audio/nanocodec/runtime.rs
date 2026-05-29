@@ -9,7 +9,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    DataType, allocation_to_vec,
+    DataType,
     array::{ArrayContextExt, size_for_shape},
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     backends::common::{
@@ -361,7 +361,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ decode command buffer: {err}")))?;
 
         Ok(DecodedPaddedAudio {
-            samples: allocation_to_vec::<B, f32>(&output),
+            samples: output.copyout::<f32>(),
             channels: self.config.channels(),
             frames,
             lengths: lengths_usize,
@@ -435,7 +435,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
             .wait_until_completed()
             .map_err(|err| AudioError::Runtime(format!("failed to wait for FSQ encode command buffer: {err}")))?;
 
-        let encoded_tokens = allocation_to_vec::<B, i32>(&tokens);
+        let encoded_tokens = tokens.copyout::<i32>();
         let mut tokens_u32 = vec![0_u32; encoded_tokens.len()];
         for (index, &token) in encoded_tokens.iter().enumerate() {
             if token < 0 {
