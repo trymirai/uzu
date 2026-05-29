@@ -22,7 +22,9 @@ namespace gemm {
 // MXU MMA core: FP streams A/B from device; quantized B dequantizes into
 // b_shared (MLX-style) and reads MMA B-fragments from threadgroup memory.
 template <
-    typename T,
+    typename AT,
+    typename BT,
+    typename DT,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
@@ -54,7 +56,7 @@ struct MxuMmaCore {
 
   METAL_CONST ushort QUANT_BK =
       (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? 0 : GROUP_SIZE;
-  METAL_CONST ushort PADDING_B = 16 / sizeof(T);
+  METAL_CONST ushort PADDING_B = 16 / sizeof(BT);
   METAL_CONST ushort SHARED_STRIDE_B =
       (QUANT_BK > 0) ? (QUANT_BK + PADDING_B) : 1;
   METAL_CONST ushort THREADGROUP_THREADS =
@@ -73,7 +75,7 @@ struct MxuMmaCore {
   using AccumulatorType = float;
 
   using BLoaderScaleBias = QuantizedBlockLoaderScaleBias<
-      T,
+      BT,
       THREADGROUP_BLOCK_N,
       (QUANT_BK > 0) ? QUANT_BK : 1,
       SHARED_STRIDE_B,
@@ -82,7 +84,7 @@ struct MxuMmaCore {
       (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
       (BITS > 0) ? BITS : 4>;
   using BLoaderScaleZeroPoint = QuantizedBlockLoaderScaleZeroPoint<
-      T,
+      BT,
       THREADGROUP_BLOCK_N,
       (QUANT_BK > 0) ? QUANT_BK : 1,
       SHARED_STRIDE_B,
@@ -90,14 +92,24 @@ struct MxuMmaCore {
       THREADGROUP_THREADS,
       (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
       (BITS > 0) ? BITS : 4>;
+  using BLoaderScaleSymmetric = QuantizedBlockLoaderScaleZeroPoint<
+      BT,
+      THREADGROUP_BLOCK_N,
+      (QUANT_BK > 0) ? QUANT_BK : 1,
+      SHARED_STRIDE_B,
+      1,
+      THREADGROUP_THREADS,
+      (GROUP_SIZE > 0) ? GROUP_SIZE : 1,
+      (BITS > 0) ? BITS : 4,
+      true>;
 
   using AccumFragment = uzu::matmul::
       Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
 
   template <typename Loader, bool ALIGNED_M, bool ALIGNED_N>
   static METAL_FUNC AccumFragment quant_k_loop(
-      const device T* a_simdgroup,
-      threadgroup T* b_shared,
+      const device AT* a_simdgroup,
+      threadgroup BT* b_shared,
       const int leading_dimension_a,
       const int aligned_k_iterations,
       const short simdgroup_limit_m,
@@ -110,7 +122,7 @@ struct MxuMmaCore {
     AccumFragment accumulator(thread_context);
     accumulator.clear();
 
-    threadgroup T* b_shared_simdgroup =
+    threadgroup BT* b_shared_simdgroup =
         b_shared + tile_col_offset * SHARED_STRIDE_B;
     const short2 tile_dimensions_b = short2(QUANT_BK, tile_block_cols);
 
@@ -126,9 +138,9 @@ struct MxuMmaCore {
 
       METAL_PRAGMA_NO_UNROLL
       for (int inner_k = 0; inner_k < QUANT_BK; inner_k += SIMDGROUP_BLOCK_K) {
-        uzu::matmul::Fragment<T, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps>
+        uzu::matmul::Fragment<AT, TILES_M, TILES_K, uzu::matmul::MxuFragmentOps>
             left_tile(thread_context);
-        uzu::matmul::Fragment<T, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps>
+        uzu::matmul::Fragment<BT, TILES_N, TILES_K, uzu::matmul::MxuFragmentOps>
             right_tile(thread_context);
 
         const int left_offset = inner_k;
@@ -159,18 +171,18 @@ struct MxuMmaCore {
   }
 
   static METAL_FUNC void run(
-      const device T* a,
+      const device AT* a,
       const device uint8_t* b_packed,
-      device T* d,
+      device DT* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
       GemmDTransform output_transform,
-      const device T* scales,
-      const device T* biases,
+      const device BT* scales,
+      const device BT* biases,
       const device uint8_t* zero_points,
-      const device T* output_bias,
+      const device BT* output_bias,
       const device int32_t* rht_factors,
-      threadgroup T* b_shared,
+      threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
     const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
@@ -184,9 +196,9 @@ struct MxuMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    const device T* a_block = a + block_row * params->leading_dimension_a;
-    const device T* b_block_fp =
-        reinterpret_cast<const device T*>(b_packed) +
+    const device AT* a_block = a + block_row * params->leading_dimension_a;
+    const device BT* b_block_fp =
+        reinterpret_cast<const device BT*>(b_packed) +
         (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
     const ushort tile_row_offset =
@@ -196,7 +208,7 @@ struct MxuMmaCore {
         SIMDGROUP_BLOCK_N *
         (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
-    device T* d_simdgroup =
+    device DT* d_simdgroup =
         d + block_row * params->leading_dimension_d + block_col +
         tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
@@ -217,9 +229,9 @@ struct MxuMmaCore {
                           int(geometry.block_col_start + tile_col_offset))
               );
 
-    const device T* a_simdgroup =
+    const device AT* a_simdgroup =
         a_block + size_t(tile_row_offset) * params->leading_dimension_a;
-    const device T* b_simdgroup_fp =
+    const device BT* b_simdgroup_fp =
         b_block_fp + (TRANSPOSE_B ? size_t(tile_col_offset) *
                                         int(params->leading_dimension_b)
                                   : size_t(tile_col_offset));
@@ -234,10 +246,10 @@ struct MxuMmaCore {
         output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool apply_bias = output_transform.contains(GemmDTransform::BIAS);
 
-    const device T* bias_simdgroup =
+    const device BT* bias_simdgroup =
         output_bias + size_t(block_col) + size_t(tile_col_offset);
     using FragType =
-        uzu::matmul::Fragment<T, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
+        uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
     const short2 thread_position = FragType::get_position(thread_context);
 
     auto dispatch_aligned_k = [&](auto body) {
@@ -263,7 +275,8 @@ struct MxuMmaCore {
                       const int aligned_k_iterations_fp =
                           int(params->K) / int(THREADGROUP_BLOCK_K_FP);
                       return uzu::matmul::gemm_loop<
-                          T,
+                          AT,
+                          BT,
                           SIMDGROUP_BLOCK_M,
                           SIMDGROUP_BLOCK_N,
                           SIMDGROUP_BLOCK_K,
@@ -296,12 +309,12 @@ struct MxuMmaCore {
                           (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
                       const device uint8_t* weights_block =
                           b_packed + block_col * weights_row_stride_bytes;
-                      const device T* scales_offset =
+                      const device BT* scales_offset =
                           scales + block_col * groups_per_row;
                       if constexpr (
                           B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
                       ) {
-                        const device T* biases_offset =
+                        const device BT* biases_offset =
                             biases + block_col * groups_per_row;
                         thread BLoaderScaleBias loader_b(
                             weights_block,
@@ -327,7 +340,9 @@ struct MxuMmaCore {
                             loader_b,
                             thread_context
                         );
-                      } else {
+                      } else if constexpr (
+                          B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
+                      ) {
                         const int zero_point_stride_per_row =
                             (BITS == 4) ? ((groups_per_row + 1) / 2)
                                         : groups_per_row;
@@ -358,6 +373,32 @@ struct MxuMmaCore {
                             loader_b,
                             thread_context
                         );
+                      } else {
+                        thread BLoaderScaleSymmetric loader_b(
+                            weights_block,
+                            scales_offset,
+                            nullptr,
+                            k_elements,
+                            groups_per_row,
+                            b_shared,
+                            thread_context.simdgroup_index,
+                            thread_context.simd_lane_id
+                        );
+                        return quant_k_loop<
+                            BLoaderScaleSymmetric,
+                            aligned_m.value,
+                            aligned_n.value>(
+                            a_simdgroup,
+                            b_shared,
+                            int(params->leading_dimension_a),
+                            aligned_k_iterations_q,
+                            simdgroup_limit_m,
+                            simdgroup_limit_n,
+                            tile_col_offset,
+                            tile_block_cols,
+                            loader_b,
+                            thread_context
+                        );
                       }
                     }
                   }();
@@ -374,7 +415,7 @@ struct MxuMmaCore {
 
                   if (apply_accumulate) {
                     uzu::matmul::Fragment<
-                        T,
+                        DT,
                         TILES_M,
                         TILES_N,
                         uzu::matmul::MxuFragmentOps>
@@ -462,7 +503,7 @@ struct MxuMmaCore {
 
     if (output_transform.contains(GemmDTransform::RHT)) {
       threadgroup_barrier(mem_flags::mem_device);
-      device T* d_block =
+      device DT* d_block =
           d + block_row * params->leading_dimension_d + block_col;
       const device int32_t* rht_factors_block = rht_factors + block_col;
       const ushort tile_block_rows = ushort(
@@ -484,7 +525,7 @@ struct MxuMmaCore {
         const size_t d_idx =
             size_t(row_local) * size_t(params->leading_dimension_d) +
             size_t(col_local);
-        T value = d_block[d_idx];
+        DT value = d_block[d_idx];
         d_block[d_idx] = simdgroup_output_random_hadamard_transform(
             simd_lane,
             value,

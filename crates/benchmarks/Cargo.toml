@@ -13,9 +13,6 @@ backend-uzu.workspace = true
 serde.workspace = true
 sysinfo.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-mach2.workspace = true
-
 [features]
 default = ["metal"]
 

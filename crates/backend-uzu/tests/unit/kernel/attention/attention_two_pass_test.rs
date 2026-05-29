@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -108,15 +106,9 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     let sums_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
     let maxs_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
 
-    let mut partials = context
-        .create_array_uninitialized(&[partials_size], DataType::F32)
-        .into_allocation();
-    let mut sums = context
-        .create_array_uninitialized(&[sums_size], DataType::F32)
-        .into_allocation();
-    let mut maxs = context
-        .create_array_uninitialized(&[maxs_size], DataType::F32)
-        .into_allocation();
+    let mut partials = context.create_array_uninitialized(&[partials_size], DataType::F32).into_allocation();
+    let mut sums = context.create_array_uninitialized(&[sums_size], DataType::F32).into_allocation();
+    let mut maxs = context.create_array_uninitialized(&[maxs_size], DataType::F32).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -209,9 +201,7 @@ fn get_second_pass_output<T: ArrayElement + Float, B: Backend>(input: &SecondPas
     let maxs_array = context.create_array_from(&[input.maxs.len()], &input.maxs);
 
     let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
-    let mut output = context
-        .create_array_uninitialized(&[output_size], T::data_type())
-        .into_allocation();
+    let mut output = context.create_array_uninitialized(&[output_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

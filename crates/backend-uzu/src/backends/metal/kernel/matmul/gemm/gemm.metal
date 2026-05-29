@@ -15,23 +15,28 @@ using namespace uzu::gemm;
 #define GEMM_TGA_ELEMENTS                                                      \
   ((USE_MXU) ? 1                                                               \
              : (gemm_tiling_block_m(GEMM_TILING) *                             \
-                (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
+                (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(AT)))))
 #define GEMM_TGB_ELEMENTS                                                      \
   ((USE_MXU) ? (GEMM_MXU_QUANT ? (gemm_tiling_block_n(GEMM_TILING) *           \
-                                  (int(GROUP_SIZE) + 16 / int(sizeof(T))))     \
+                                  (int(GROUP_SIZE) + 16 / int(sizeof(BT))))    \
                                : 1)                                            \
              : (gemm_tiling_block_n(GEMM_TILING) *                             \
-                (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(T)))))
+                (gemm_tiling_block_k(GEMM_TILING) + 16 / int(sizeof(BT)))))
 
 template <
-    typename T,
+    typename AT,
+    typename BT,
+    typename DT,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
     bool USE_MXU,
     GemmBPrologueKind B_PROLOGUE,
     uint BITS,
     uint GROUP_SIZE>
-VARIANTS(T, half, bfloat)
+VARIANTS(AT, bfloat, float)
+VARIANTS(BT, bfloat, float)
+VARIANTS(DT, bfloat, float)
+CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 VARIANTS(
     GEMM_TILING,
     GemmTiling::Tile8x32x32_Simdgroups1x1,
@@ -50,9 +55,10 @@ VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
     GemmBPrologueKind::ScaleBiasDequant,
-    GemmBPrologueKind::ScaleZeroPointDequant)
+    GemmBPrologueKind::ScaleZeroPointDequant,
+    GemmBPrologueKind::ScaleSymmetricDequant)
 VARIANTS(BITS, 0, 4, 8)
-VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
+VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 CONSTRAINT(
     USE_MXU ==
     (GEMM_TILING == GemmTiling::Tile32x64x256_Simdgroups2x2 ||
@@ -61,9 +67,15 @@ CONSTRAINT(
      GEMM_TILING == GemmTiling::Tile128x128x256_Simdgroups4x4))
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
+CONSTRAINT(
+    GROUP_SIZE != 16 ||
+    GEMM_TILING == GemmTiling::Tile64x64x16_Simdgroups2x2)
 CONSTRAINT(
     B_PROLOGUE == GemmBPrologueKind::FullPrecision ||
-    (TRANSPOSE_B && GEMM_TILING != GemmTiling::Tile64x64x16_Simdgroups2x2))
+    (TRANSPOSE_B &&
+     (GEMM_TILING != GemmTiling::Tile64x64x16_Simdgroups2x2 ||
+      GROUP_SIZE == 16)))
 CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile64x64x64_Simdgroups2x2 || GROUP_SIZE >= 64)
 CONSTRAINT(
@@ -71,16 +83,16 @@ CONSTRAINT(
     GEMM_TILING != GemmTiling::Tile128x128x256_Simdgroups4x4 ||
     GROUP_SIZE <= 64)
 KERNEL(Gemm)(
-    const device T* a,
+    const device AT* a,
     const device uint8_t* b_packed,
-    device T* d,
-    const device T* scales
+    device DT* d,
+    const device BT* scales
         OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
-    const device T* biases
+    const device BT* biases
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
-    const device T* output_bias
+    const device BT* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* rht_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
@@ -89,8 +101,8 @@ KERNEL(Gemm)(
     const constant uint& group_count_y,
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
-    threadgroup T a_shared[GEMM_TGA_ELEMENTS],
-    threadgroup T b_shared[GEMM_TGB_ELEMENTS],
+    threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
+    threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
@@ -105,7 +117,7 @@ KERNEL(Gemm)(
   (void)thread_z;
 
   if constexpr (USE_MXU) {
-    MxuMmaCore<T, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
+    MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
         a,
         b_packed,
         d,
@@ -122,7 +134,9 @@ KERNEL(Gemm)(
     );
   } else {
     SimdgroupMmaCore<
-        T,
+        AT,
+        BT,
+        DT,
         GEMM_TILING,
         TRANSPOSE_B,
         B_PROLOGUE,

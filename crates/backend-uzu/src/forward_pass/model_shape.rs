@@ -10,7 +10,6 @@ pub struct ModelShape {
 
     vocabulary_size: usize,
     model_dim: usize,
-    context_length: usize,
 
     num_groups: usize,
     pub num_layers: usize,
@@ -42,7 +41,6 @@ impl ModelShape {
             rope_data_type: DataType::F32,
             vocabulary_size: decoder_config.vocab_size,
             model_dim: tf.model_dim,
-            context_length: tf.context_length,
             num_groups,
             num_layers,
             layer_mixers,
@@ -93,9 +91,5 @@ impl ModelShape {
         suffix_length: usize,
     ) -> [usize; 2] {
         [suffix_length, self.vocabulary_size]
-    }
-
-    pub fn context_length(&self) -> usize {
-        self.context_length
     }
 }

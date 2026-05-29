@@ -1,11 +1,12 @@
 #include <metal_stdlib>
 #include "../common/dsl.h"
 
-template <typename T>
+template <typename T, typename BiasT>
 VARIANTS(T, float, half, bfloat)
+VARIANTS(BiasT, float, half, bfloat)
 PUBLIC KERNEL(TensorAddBias)(
     const device T* input OPTIONAL(!in_place),
-    const device T* bias,
+    const device BiasT* bias,
     device T* output,
     constant uint& num_cols,
     constant uint& length,
@@ -17,5 +18,7 @@ PUBLIC KERNEL(TensorAddBias)(
   }
 
   uint col = position % num_cols;
-  output[position] = input[position] + bias[col];
+  output[position] = static_cast<T>(
+      static_cast<float>(input[position]) + static_cast<float>(bias[col])
+  );
 }

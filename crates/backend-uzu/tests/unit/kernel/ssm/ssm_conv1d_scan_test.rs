@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -96,8 +94,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let mut x_out = context.create_array_uninitialized(&[x_out_size], T::data_type()).into_allocation();
     let mut b_out = context.create_array_uninitialized(&[b_out_size], T::data_type()).into_allocation();
     let mut c_out = context.create_array_uninitialized(&[c_out_size], T::data_type()).into_allocation();
-    let mut state_out =
-        context.create_array_uninitialized(&[state_size], T::data_type()).into_allocation();
+    let mut state_out = context.create_array_uninitialized(&[state_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

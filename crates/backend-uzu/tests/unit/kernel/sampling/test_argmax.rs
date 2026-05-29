@@ -1,9 +1,5 @@
 use std::mem::{MaybeUninit, size_of};
 
-use num_traits::{Float, NumCast};
-use proptest::prelude::*;
-use rand::{RngExt, SeedableRng, rngs::SmallRng};
-use rand_distr::Normal;
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::common::{
@@ -11,11 +7,16 @@ use backend_uzu::{
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
+    dispatch_dtype,
 };
+use num_traits::{Float, NumCast};
+use proptest::prelude::*;
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use rand_distr::Normal;
 
 use crate::{
     common::{
-        dispatch_dtype, for_each_context,
+        for_each_context,
         proptest::{ComparableTestResults, TestContextes, kernel_data_type},
     },
     uzu_test,
@@ -43,10 +44,7 @@ fn do_argmax_backend<B: Backend, T: ArrayElement + Float>(
 ) -> Result<ArgmaxTestResults, TestCaseError> {
     let logits_buffer = context.create_array_from(&[logits.len()], logits).into_allocation();
     let mut twopass_partial_results_buffer = context
-        .create_allocation(
-            batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(),
-            AllocationType::Global,
-        )
+        .create_allocation(batch_size * vocab_size.div_ceil(4096) * size_of::<ArgmaxPair>(), AllocationType::Global)
         .unwrap();
     let mut single_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32).into_allocation();
     let mut twopass_output_buffer = context.create_array_uninitialized(&[batch_size], DataType::U32).into_allocation();
@@ -113,4 +111,3 @@ fn test_argmax_prop() {
         });
     });
 }
-

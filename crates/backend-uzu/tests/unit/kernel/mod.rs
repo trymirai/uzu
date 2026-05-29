@@ -1,7 +1,3 @@
-#[macro_use]
-#[path = "../../common/mod.rs"]
-mod common;
-
 mod activation_mul_test;
 mod activation_test;
 mod attention;

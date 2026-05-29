@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -40,18 +38,12 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
 
     let cache_size = input.num_groups as usize * input.max_sequence_length as usize * input.head_dim as usize;
 
-    let rotated_keys = input
-        .rotated_keys
-        .as_ref()
-        .map(|rk| context.create_array_from(&[rk.len()], rk).into_allocation());
+    let rotated_keys =
+        input.rotated_keys.as_ref().map(|rk| context.create_array_from(&[rk.len()], rk).into_allocation());
 
     let qkv_array = context.create_array_from(&[input.qkv.len()], &input.qkv);
-    let mut key_cache = context
-        .create_array_from(&[cache_size], &input.key_cache)
-        .into_allocation();
-    let mut value_cache = context
-        .create_array_from(&[cache_size], &input.value_cache)
-        .into_allocation();
+    let mut key_cache = context.create_array_from(&[cache_size], &input.key_cache).into_allocation();
+    let mut value_cache = context.create_array_from(&[cache_size], &input.value_cache).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
@@ -69,10 +61,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        crate::common::helpers::allocation_to_vec(&key_cache),
-        crate::common::helpers::allocation_to_vec(&value_cache),
-    )
+    (crate::common::helpers::allocation_to_vec(&key_cache), crate::common::helpers::allocation_to_vec(&value_cache))
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(keys_in_place: bool) -> Input<T> {

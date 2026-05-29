@@ -25,20 +25,26 @@ pub enum GemmDispatchPath {
 }
 
 pub struct GemmKernel {
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
 }
 
 impl GemmKernel {
     pub(crate) fn new(
         context: &MetalContext,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, MetalError> {
         let mut kernel = Self {
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             kernels: HashMap::new(),
         };
-        for specialization in GemmSpecialization::precompile_configs(data_type) {
+        for specialization in GemmSpecialization::precompile_configs(weights_data_type) {
             kernel.get_or_create(context, specialization)?;
         }
         Ok(kernel)
@@ -49,7 +55,7 @@ impl GemmKernel {
         context: &MetalContext,
         combo: MatmulQuantCombo,
     ) -> Result<(), MetalError> {
-        for specialization in GemmSpecialization::quant_combo_specs(self.data_type, combo) {
+        for specialization in GemmSpecialization::quant_combo_specs(self.weights_data_type, combo) {
             self.get_or_create(context, specialization)?;
         }
         Ok(())
@@ -65,7 +71,9 @@ impl GemmKernel {
             Entry::Vacant(entry) => {
                 let kernel = GemmMetalKernel::new(
                     context,
-                    specialization.data_type,
+                    self.input_data_type,
+                    self.weights_data_type,
+                    self.output_data_type,
                     specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
@@ -94,6 +102,9 @@ impl GemmKernel {
             }
             | MatmulB::ScaleZeroPointDequant {
                 ..
+            }
+            | MatmulB::ScaleSymmetricDequant {
+                ..
             } => {
                 arguments.b_transpose
                     && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
@@ -102,7 +113,9 @@ impl GemmKernel {
             },
         };
         let path = if encoder.context().device.supports_mxu()
-            && matches!(self.data_type, DataType::F16 | DataType::BF16)
+            && [self.weights_data_type, self.input_data_type, self.output_data_type]
+                .into_iter()
+                .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
             && mxu_eligible_for_quant
         {
             GemmDispatchPath::Mxu
@@ -124,13 +137,17 @@ impl GemmKernel {
                 "GemmDispatchPath::Mxu requested on hardware without MXU support",
             );
             assert!(
-                matches!(self.data_type, DataType::F16 | DataType::BF16),
-                "GemmDispatchPath::Mxu requires F16 or BF16 data type, got {:?}",
-                self.data_type,
+                [self.weights_data_type, self.input_data_type, self.output_data_type]
+                    .into_iter()
+                    .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32)),
+                "GemmDispatchPath::Mxu requires BF16 or F32 data types, got weights {:?}, input {:?}, output {:?}",
+                self.weights_data_type,
+                self.input_data_type,
+                self.output_data_type,
             );
         }
 
-        let is_quant = matches!(arguments.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+        let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });
         if is_quant {
             let d_mask = arguments.d_transform.mask();
             if d_mask.contains(GemmDTransform::ACCUMULATE) {
@@ -229,7 +246,7 @@ impl GemmKernel {
                 };
 
                 let specialization = GemmSpecialization {
-                    data_type: self.data_type,
+                    weights_data_type: self.weights_data_type,
                     tiling,
                     use_mxu,
                     output_transform,
@@ -261,6 +278,9 @@ impl GemmKernel {
             }
             | MatmulB::ScaleZeroPointDequant {
                 ..
+            }
+            | MatmulB::ScaleSymmetricDequant {
+                ..
             }) => {
                 let (weights, scales, biases, zero_points) = match quant_b {
                     MatmulB::ScaleBiasDequant {
@@ -275,13 +295,18 @@ impl GemmKernel {
                         zero_points,
                         ..
                     } => (w, Some(scales), None, Some(zero_points)),
+                    MatmulB::ScaleSymmetricDequant {
+                        b: w,
+                        scales,
+                        ..
+                    } => (w, Some(scales), None, None),
                     _ => unreachable!(),
                 };
 
                 let tiling = if use_mxu {
                     select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
                 } else {
-                    select_quant_tiling(m, n)
+                    select_quant_tiling(m, n, group_size.unwrap_or(0))
                 };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
@@ -290,7 +315,7 @@ impl GemmKernel {
                 let group_count_y = m.div_ceil(tiling.block_m());
 
                 let specialization = GemmSpecialization {
-                    data_type: self.data_type,
+                    weights_data_type: self.weights_data_type,
                     tiling,
                     use_mxu,
                     output_transform,
@@ -392,8 +417,11 @@ fn select_mxu_quant_tiling(
 fn select_quant_tiling(
     m: u32,
     n: u32,
+    group_size: u32,
 ) -> GemmTiling {
-    if m < 32 {
+    if group_size < 32 {
+        GemmTiling::Tile64x64x16_Simdgroups2x2
+    } else if m < 32 {
         GemmTiling::Tile8x32x32_Simdgroups1x1
     } else if m >= 64 && n <= 2048 {
         GemmTiling::Tile64x32x32_Simdgroups2x2

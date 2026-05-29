@@ -3,7 +3,7 @@ use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    ArrayElement, DataType,
     backends::common::gpu_types::{QuantizationMethod, QuantizationMode},
 };
 
@@ -89,6 +89,12 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                 };
 
                 let bias = match quantization_method {
+                    QuantizationMethod::ScaleBias => biases
+                        .expect("ScaleBias quantized embedding requires biases")
+                        .add((token_id as u32 * num_groups + group_idx) as usize)
+                        .read()
+                        .to_f32()
+                        .unwrap(),
                     QuantizationMethod::ScaleZeroPoint => {
                         let zero_points = zero_points.expect("ScaleZeroPoint quantized embedding requires zero_points");
                         let zero_point = match quantization_mode {
@@ -107,12 +113,10 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                         };
                         -scale.to_f32().unwrap() * zero_point as f32
                     },
-                    QuantizationMethod::ScaleBias => biases
-                        .expect("ScaleBias quantized embedding requires biases")
-                        .add((token_id as u32 * num_groups + group_idx) as usize)
-                        .read()
-                        .to_f32()
-                        .unwrap(),
+                    QuantizationMethod::ScaleSymmetric => {
+                        let midpoint = 1 << (DataType::from(quantization_mode).size_in_bits() - 1);
+                        -scale.to_f32().unwrap() * midpoint as f32
+                    },
                 };
 
                 let out_f = scale.to_f32().unwrap() * quantized_value as f32 + bias;

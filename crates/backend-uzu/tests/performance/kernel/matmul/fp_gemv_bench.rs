@@ -49,8 +49,13 @@ fn bench_fp_gemv_typed<T: ArrayElement + Float>(
     context: &MetalContext,
     label: &str,
 ) {
-    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
-        .expect("MatmulKernel");
+    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulKernel");
 
     let mut group = c.benchmark_group(format!("{}/Kernel/GemvFp/{}", type_short_name::<Metal>(), label));
 

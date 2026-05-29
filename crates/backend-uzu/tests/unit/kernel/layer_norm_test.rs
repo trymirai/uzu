@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -127,14 +125,13 @@ fn get_output<
     .expect("Failed to create LayerNormKernel");
 
     let input_size = input.input.len();
-    let input_buffer = (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input).into_allocation());
+    let input_buffer =
+        (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input).into_allocation());
 
     let scales_array = context.create_array_from(&[input.scales.len()], &input.scales);
     let mut output = match input.in_place {
         true => context.create_array_from(&[input_size], &input.output).into_allocation(),
-        false => context
-            .create_array_uninitialized(&[input_size], OUT::data_type())
-            .into_allocation(),
+        false => context.create_array_uninitialized(&[input_size], OUT::data_type()).into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

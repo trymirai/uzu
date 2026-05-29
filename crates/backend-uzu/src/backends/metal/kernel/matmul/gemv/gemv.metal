@@ -11,34 +11,41 @@ using namespace uzu::quantization_method;
 using namespace uzu::gemm;
 
 template <
-    typename T,
+    typename WeightT,
+    typename InputT,
+    typename OutputT,
     GemmBPrologueKind B_PROLOGUE,
     uint GROUP_SIZE,
     uint BITS,
     uint K_SPLIT>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(WeightT, bfloat, float)
+VARIANTS(InputT, bfloat, float)
+VARIANTS(OutputT, bfloat, float)
+CONSTRAINT(WeightT != "float" || (InputT == "float" && OutputT == "float"))
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
     GemmBPrologueKind::ScaleBiasDequant,
-    GemmBPrologueKind::ScaleZeroPointDequant)
-VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
+    GemmBPrologueKind::ScaleZeroPointDequant,
+    GemmBPrologueKind::ScaleSymmetricDequant)
+VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || WeightT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
 KERNEL(Gemv)(
     const device uint32_t* weights,
-    const device T* scales
+    const device WeightT* scales
         OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
-    const device T* biases
+    const device WeightT* biases
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
-    const device T* input,
-    device T* output,
-    const device T* output_bias
+    const device InputT* input,
+    device OutputT* output,
+    const device WeightT* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* hadamard_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
@@ -77,30 +84,31 @@ KERNEL(Gemv)(
   if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
     constexpr uint values_per_thread = 4;
     constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
-    typedef vec<T, 4> T4;
+    typedef vec<WeightT, 4> W4;
+    typedef vec<InputT, 4> I4;
     const uint k_stride = k_split * block_size;
     const uint k_start = k_slice * block_size;
-    const device T* w = reinterpret_cast<const device T*>(weights);
+    const device WeightT* w = reinterpret_cast<const device WeightT*>(weights);
     w += out_row * in_vec_size + simd_lane * values_per_thread + k_start;
-    const device T* in = input + batch_idx * in_vec_size +
+    const device InputT* in = input + batch_idx * in_vec_size +
         simd_lane * values_per_thread + k_start;
 
     uint k = k_start;
     for (; k + block_size <= in_vec_size; k += k_stride) {
-      float4 xv = static_cast<float4>(*reinterpret_cast<const device T4*>(in));
+      float4 xv = static_cast<float4>(*reinterpret_cast<const device I4*>(in));
       result[0] += dot(
-          static_cast<float4>(*reinterpret_cast<const device T4*>(w)), xv);
+          static_cast<float4>(*reinterpret_cast<const device W4*>(w)), xv);
       result[1] += dot(
           static_cast<float4>(
-              *reinterpret_cast<const device T4*>(w + in_vec_size)),
+              *reinterpret_cast<const device W4*>(w + in_vec_size)),
           xv);
       result[2] += dot(
           static_cast<float4>(
-              *reinterpret_cast<const device T4*>(w + 2 * in_vec_size)),
+              *reinterpret_cast<const device W4*>(w + 2 * in_vec_size)),
           xv);
       result[3] += dot(
           static_cast<float4>(
-              *reinterpret_cast<const device T4*>(w + 3 * in_vec_size)),
+              *reinterpret_cast<const device W4*>(w + 3 * in_vec_size)),
           xv);
       w += k_stride;
       in += k_stride;
@@ -113,10 +121,10 @@ KERNEL(Gemv)(
               static_cast<int>(values_per_thread))
         : 0;
     if (remaining > 0) {
-      const device T* w0 = w;
-      const device T* w1 = w + in_vec_size;
-      const device T* w2 = w + 2 * in_vec_size;
-      const device T* w3 = w + 3 * in_vec_size;
+      const device WeightT* w0 = w;
+      const device WeightT* w1 = w + in_vec_size;
+      const device WeightT* w2 = w + 2 * in_vec_size;
+      const device WeightT* w3 = w + 3 * in_vec_size;
       for (int j = 0; j < remaining; j++) {
         U x = static_cast<U>(in[j]);
         result[0] += static_cast<U>(w0[j]) * x;
@@ -147,7 +155,7 @@ KERNEL(Gemv)(
 
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       biases += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
-    } else {
+    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
       if (BITS == 4) {
         zp_stride = (in_vec_size_g + 1) / 2;
         zps = zero_points + out_row * zp_stride;
@@ -161,12 +169,12 @@ KERNEL(Gemv)(
       }
     }
 
-    const device T* in =
+    const device InputT* in =
         input + batch_idx * in_vec_size + simd_lane * values_per_thread;
 
     uint k = 0;
     for (; k + block_size <= in_vec_size; k += block_size) {
-      U sum = load_vector<T, U, values_per_thread, BITS>(in, x_thread);
+      U sum = load_vector<InputT, U, values_per_thread, BITS>(in, x_thread);
 
       {
         auto wl0 = (const device uint8_t*)(ws);
@@ -192,7 +200,7 @@ KERNEL(Gemv)(
               qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, b2, sum);
           result[3] +=
               qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum);
-        } else {
+        } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
           uchar4 zp_bytes = uchar4(
               zps[0],
               zps[zp_stride],
@@ -214,6 +222,16 @@ KERNEL(Gemv)(
               wl2, x_thread, s2, -s2 * static_cast<U>(zp_nibbles.z), sum);
           result[3] += qdot<U, values_per_thread, BITS>(
               wl3, x_thread, s3, -s3 * static_cast<U>(zp_nibbles.w), sum);
+        } else {
+          constexpr U midpoint = U(1u << (BITS - 1));
+          result[0] += qdot<U, values_per_thread, BITS>(
+              wl0, x_thread, s0, -s0 * midpoint, sum);
+          result[1] += qdot<U, values_per_thread, BITS>(
+              wl1, x_thread, s1, -s1 * midpoint, sum);
+          result[2] += qdot<U, values_per_thread, BITS>(
+              wl2, x_thread, s2, -s2 * midpoint, sum);
+          result[3] += qdot<U, values_per_thread, BITS>(
+              wl3, x_thread, s3, -s3 * midpoint, sum);
         }
       }
 
@@ -221,7 +239,7 @@ KERNEL(Gemv)(
       scales += block_size / GROUP_SIZE;
       if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
         biases += block_size / GROUP_SIZE;
-      } else {
+      } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
         if (BITS == 4) {
           zps += (block_size / GROUP_SIZE) / 2;
         } else {
@@ -238,7 +256,7 @@ KERNEL(Gemv)(
         : 0;
     if (remaining > 0) {
       U sum =
-          load_vector_safe<T, U, values_per_thread, BITS>(in, x_thread, remaining);
+          load_vector_safe<InputT, U, values_per_thread, BITS>(in, x_thread, remaining);
 
       auto wl0 = (const device uint8_t*)(ws);
       auto wl1 = (const device uint8_t*)(ws + in_vec_size_w);
@@ -263,7 +281,7 @@ KERNEL(Gemv)(
             wl2, x_thread, s2, b2, sum, remaining);
         result[3] += qdot_safe<U, values_per_thread, BITS>(
             wl3, x_thread, s3, b3, sum, remaining);
-      } else {
+      } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
         uchar4 zp_bytes = uchar4(
             zps[0], zps[zp_stride], zps[2 * zp_stride], zps[3 * zp_stride]);
         uchar4 zp_nibbles;
@@ -281,6 +299,16 @@ KERNEL(Gemv)(
             wl2, x_thread, s2, -s2 * static_cast<U>(zp_nibbles.z), sum, remaining);
         result[3] += qdot_safe<U, values_per_thread, BITS>(
             wl3, x_thread, s3, -s3 * static_cast<U>(zp_nibbles.w), sum, remaining);
+      } else {
+        constexpr U midpoint = U(1u << (BITS - 1));
+        result[0] += qdot_safe<U, values_per_thread, BITS>(
+            wl0, x_thread, s0, -s0 * midpoint, sum, remaining);
+        result[1] += qdot_safe<U, values_per_thread, BITS>(
+            wl1, x_thread, s1, -s1 * midpoint, sum, remaining);
+        result[2] += qdot_safe<U, values_per_thread, BITS>(
+            wl2, x_thread, s2, -s2 * midpoint, sum, remaining);
+        result[3] += qdot_safe<U, values_per_thread, BITS>(
+            wl3, x_thread, s3, -s3 * midpoint, sum, remaining);
       }
     }
   }
@@ -341,7 +369,7 @@ KERNEL(Gemv)(
       if (global_out_idx < out_vec_size) {
         output[simd_lane] = simdgroup_output_random_hadamard_transform(
             static_cast<ushort>(simd_lane),
-            static_cast<T>(shared_results[simd_lane]),
+            static_cast<OutputT>(shared_results[simd_lane]),
             hadamard_factors[global_out_idx]
         );
       }
@@ -350,7 +378,7 @@ KERNEL(Gemv)(
     if (writer && simd_lane == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
         if (out_row + row < out_vec_size) {
-          output[row] = static_cast<T>(result[row]);
+          output[row] = static_cast<OutputT>(result[row]);
         }
       }
     }

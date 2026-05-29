@@ -1,4 +1,3 @@
-
 use backend_uzu::{
     DataType,
     backends::{
@@ -44,10 +43,22 @@ fn make_inputs() -> (Box<[bf16]>, Box<[bf16]>, Box<[bf16]>) {
 }
 
 // Ground truth: fused single-pass attention on the CPU backend.
-fn reference(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -> Vec<bf16> {
+fn reference(
+    q: &[bf16],
+    k: &[bf16],
+    v: &[bf16],
+    scale: f32,
+) -> Vec<bf16> {
     let ctx = <Cpu as Backend>::Context::new().unwrap();
     let kernel = <<Cpu as Backend>::Kernels as Kernels>::AttentionSinglePassKernel::new(
-        &ctx, DataType::BF16, HEAD_DIM, false, false, true, false, false,
+        &ctx,
+        DataType::BF16,
+        HEAD_DIM,
+        false,
+        false,
+        true,
+        false,
+        false,
     )
     .unwrap();
     let qa = alloc_allocation_with_data::<Cpu, bf16>(&ctx, q);
@@ -56,8 +67,24 @@ fn reference(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -> Vec<bf16> {
     let mut out = alloc_allocation::<Cpu, bf16>(&ctx, (NUM_HEADS * SUFFIX * HEAD_DIM) as usize);
     let mut enc = Encoder::new(ctx.as_ref()).unwrap();
     kernel.encode(
-        &qa, &ka, &va, &mut out, GQA, SEQ, SEQ * HEAD_DIM, HEAD_DIM, SEQ * HEAD_DIM, HEAD_DIM, None,
-        scale, None::<&Allocation<Cpu>>, None, None::<&Allocation<Cpu>>, NUM_HEADS, SUFFIX, &mut enc,
+        &qa,
+        &ka,
+        &va,
+        &mut out,
+        GQA,
+        SEQ,
+        SEQ * HEAD_DIM,
+        HEAD_DIM,
+        SEQ * HEAD_DIM,
+        HEAD_DIM,
+        None,
+        scale,
+        None::<&Allocation<Cpu>>,
+        None,
+        None::<&Allocation<Cpu>>,
+        NUM_HEADS,
+        SUFFIX,
+        &mut enc,
     );
     enc.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<Cpu, bf16>(&out)
@@ -65,17 +92,32 @@ fn reference(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -> Vec<bf16> {
 
 // Production fallback pipeline (matmul → scatter → softmax → matmul → scatter)
 // driven directly via the kernel-cache traits, for backends other than CPU.
-fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -> Vec<bf16> {
+fn pipeline_output<B: Backend>(
+    q: &[bf16],
+    k: &[bf16],
+    v: &[bf16],
+    scale: f32,
+) -> Vec<bf16> {
     let ctx = B::Context::new().unwrap();
     let softmax = <<B as Backend>::Kernels as Kernels>::SoftmaxKernel::new(&ctx, DataType::BF16, false).unwrap();
-    let scatter_scores =
-        <<B as Backend>::Kernels as Kernels>::AttentionFallbackScatterScoresKernel::new(
-            &ctx, DataType::BF16, false, true, false, false,
-        )
-        .unwrap();
+    let scatter_scores = <<B as Backend>::Kernels as Kernels>::AttentionFallbackScatterScoresKernel::new(
+        &ctx,
+        DataType::BF16,
+        false,
+        true,
+        false,
+        false,
+    )
+    .unwrap();
     let scatter_values =
         <<B as Backend>::Kernels as Kernels>::AttentionFallbackScatterValuesKernel::new(&ctx, DataType::BF16).unwrap();
-    let mut matmul = <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&ctx, DataType::BF16).unwrap();
+    let mut matmul = <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        &ctx,
+        DataType::BF16,
+        DataType::BF16,
+        DataType::BF16,
+    )
+    .unwrap();
 
     let qa = alloc_allocation_with_data::<B, bf16>(&ctx, q);
     let ka = alloc_allocation_with_data::<B, bf16>(&ctx, k);
@@ -118,8 +160,17 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
             )
             .expect("encode failed");
         scatter_scores.encode(
-            &grp_s, &mut scores, None, None::<&Allocation<B>>, None,
-            g, GQA, SEQ, SUFFIX, GQA * SUFFIX * SEQ, &mut enc,
+            &grp_s,
+            &mut scores,
+            None,
+            None::<&Allocation<B>>,
+            None,
+            g,
+            GQA,
+            SEQ,
+            SUFFIX,
+            GQA * SUFFIX * SEQ,
+            &mut enc,
         );
     }
     softmax.encode(&mut scores, None::<&Allocation<B>>, SEQ, NUM_HEADS, SUFFIX, &mut enc);
@@ -144,10 +195,7 @@ fn pipeline_output<B: Backend>(q: &[bf16], k: &[bf16], v: &[bf16], scale: f32) -
                 &mut enc,
             )
             .expect("encode failed");
-        scatter_values.encode(
-            &grp_o, &mut out, g, GQA, SUFFIX, NUM_HEADS, HEAD_DIM,
-            GQA * SUFFIX * HEAD_DIM, &mut enc,
-        );
+        scatter_values.encode(&grp_o, &mut out, g, GQA, SUFFIX, NUM_HEADS, HEAD_DIM, GQA * SUFFIX * HEAD_DIM, &mut enc);
     }
     enc.end_encoding().submit().wait_until_completed().unwrap();
     allocation_to_vec::<B, bf16>(&out)

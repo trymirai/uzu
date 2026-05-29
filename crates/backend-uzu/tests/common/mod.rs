@@ -8,7 +8,7 @@ pub mod path;
 pub mod perf;
 pub mod proptest;
 
-pub(crate) use proptest::{dispatch_dtype, for_each_context};
+pub(crate) use proptest::for_each_context;
 
 pub fn type_short_name<T>() -> &'static str {
     std::any::type_name::<T>().rsplit("::").next().unwrap()
@@ -46,21 +46,3 @@ macro_rules! for_each_non_cpu_backend {
     }};
 }
 pub(crate) use for_each_non_cpu_backend;
-
-macro_rules! for_each_float_type {
-    (|$F:ident| $body:expr) => {{
-        {
-            type $F = f32;
-            $body
-        }
-        {
-            type $F = half::f16;
-            $body
-        }
-        {
-            type $F = half::bf16;
-            $body
-        }
-    }};
-}
-pub(crate) use for_each_float_type;

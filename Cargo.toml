@@ -23,7 +23,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-version = "0.4.9"
+version = "0.5.3"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"
@@ -107,7 +107,6 @@ proc-macro2 = "1.0"
 syn = { version = "2.0", features = ["full", "fold"] }
 prettyplease = "0.2"
 rhai = "1.24.0"
-mach2 = "0.6"
 cbindgen = "0.29"
 ctrlc = "3.5"
 indicatif = "0.18"

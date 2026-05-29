@@ -56,18 +56,23 @@ fn fp_k_split(
 }
 
 pub(crate) struct GemvDispatch {
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     pipelines: HashMap<GemvKey, GemvMetalKernel>,
 }
 
 impl GemvDispatch {
     pub(crate) fn new(
-        context: &MetalContext,
-        data_type: DataType,
+        _context: &MetalContext,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, MatmulError<Metal>> {
-        let _ = context;
         Ok(Self {
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             pipelines: HashMap::new(),
         })
     }
@@ -82,7 +87,9 @@ impl GemvDispatch {
             Entry::Vacant(entry) => {
                 let kernel = GemvMetalKernel::new(
                     context,
-                    self.data_type,
+                    self.weights_data_type,
+                    self.input_data_type,
+                    self.output_data_type,
                     key.b_prologue,
                     key.group_size,
                     key.bits,
@@ -109,6 +116,9 @@ impl GemvDispatch {
                 ..
             }
             | MatmulB::ScaleZeroPointDequant {
+                ..
+            }
+            | MatmulB::ScaleSymmetricDequant {
                 ..
             } => self.encode_quant(arguments, encoder),
         }
@@ -211,21 +221,35 @@ impl GemvDispatch {
             k,
             ..
         } = arguments;
-        let (weights, scales, zp_or_bias, b_prologue, mode, group_size) = match b {
+        let (weights, scales, zero_points, biases, b_prologue, mode, group_size) = match b {
             MatmulB::ScaleBiasDequant {
                 b: w,
                 scales,
                 biases,
                 mode,
                 group_size,
-            } => (w, scales, biases, GemmBPrologueKind::ScaleBiasDequant, mode, group_size),
+            } => (w, scales, None, Some(biases), GemmBPrologueKind::ScaleBiasDequant, mode, group_size),
             MatmulB::ScaleZeroPointDequant {
                 b: w,
                 scales,
                 zero_points,
                 mode,
                 group_size,
-            } => (w, scales, zero_points, GemmBPrologueKind::ScaleZeroPointDequant, mode, group_size),
+            } => (
+                w,
+                scales,
+                Some(zero_points),
+                None,
+                GemmBPrologueKind::ScaleZeroPointDequant,
+                mode,
+                group_size,
+            ),
+            MatmulB::ScaleSymmetricDequant {
+                b: w,
+                scales,
+                mode,
+                group_size,
+            } => (w, scales, None, None, GemmBPrologueKind::ScaleSymmetricDequant, mode, group_size),
             MatmulB::FullPrecision {
                 ..
             } => unreachable!(),
@@ -240,12 +264,6 @@ impl GemvDispatch {
                 path: QUANT_PATH,
             });
         }
-
-        let (zero_points, biases) = match b_prologue {
-            GemmBPrologueKind::ScaleZeroPointDequant => (Some(zp_or_bias), None),
-            GemmBPrologueKind::ScaleBiasDequant => (None, Some(zp_or_bias)),
-            GemmBPrologueKind::FullPrecision => unreachable!(),
-        };
 
         let block_size = if bits == 4 { 512 } else { 256 };
         let input_aligned = k % block_size == 0;

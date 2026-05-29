@@ -7,7 +7,7 @@ use backend_uzu::{
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::{
@@ -32,8 +32,13 @@ fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
         let mut buffers = QuantBuffers::<B, T>::allocate(context, &input);
-        let mut matmul =
-            <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type()).unwrap();
+        let mut matmul = <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+            context,
+            T::data_type(),
+            T::data_type(),
+            T::data_type(),
+        )
+        .unwrap();
 
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
@@ -55,7 +60,6 @@ fn bench_gemv(c: &mut Criterion) {
         bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
         bench_gemv_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
         bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_gemv_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
         bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleZeroPoint);
     });
 }

@@ -40,7 +40,9 @@ impl<B: Backend> RHTLinearWrapper<B> {
         input_dimension: usize,
         output_dimension: usize,
         has_biases: bool,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
         let weights_tree = parameter_tree.subtree("weights")?;
@@ -63,17 +65,22 @@ impl<B: Backend> RHTLinearWrapper<B> {
             .leaf("incoherence_signs.output_signs")?
             .validate(&[output_dimension], DataType::I32)?
             .read_allocation()?;
-        let input_hadamard_kernel =
-            <B::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type, HadamardTransformOrder::Input)
-                .map_err(RHTLinearWrapperError::BackendError)?;
-        let inner_linear = <dyn Linear<B>>::new_with_output_hadamard(
+        let input_hadamard_kernel = <B::Kernels as Kernels>::HadamardTransformKernel::new(
+            context,
+            input_data_type,
+            HadamardTransformOrder::Input,
+        )
+        .map_err(RHTLinearWrapperError::BackendError)?;
+        let inner_linear = <dyn Linear<B>>::new_with_output_hadamard_mixed_precision(
             context,
             parameter_tree,
             output_factors,
             input_dimension,
             output_dimension,
             has_biases,
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
         )?;
 
         Ok(Self {

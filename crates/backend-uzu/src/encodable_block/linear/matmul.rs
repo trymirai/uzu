@@ -14,7 +14,7 @@ use crate::{
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulQuantCombo},
         },
     },
-    config::weight_matrix::{AnyWeightMatrixSpec, Layout, awq_spec::AWQSpec, mlx_spec::MLXSpec},
+    config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -37,7 +37,7 @@ enum Mode<B: Backend> {
         mode: QuantizationMode,
         group_size: u32,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         output_hadamard_factors: Option<Allocation<B>>,
     },
 }
@@ -48,7 +48,7 @@ pub struct LinearMatmul<B: Backend> {
     biases: Option<Allocation<B>>,
     input_dim: usize,
     output_dim: usize,
-    data_type: DataType,
+    output_data_type: DataType,
     mode: Mode<B>,
 }
 
@@ -58,19 +58,31 @@ impl<B: Backend> LinearMatmul<B> {
         input_dim: usize,
         output_dim: usize,
         has_biases: bool,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, LinearMatmulError<B>> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(LinearMatmulError::UnsupportedDataType(data_type));
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+                return Err(LinearMatmulError::UnsupportedDataType(data_type));
+            }
         }
 
-        let weights =
-            parameter_tree.leaf("weights.weights")?.validate(&[output_dim, input_dim], data_type)?.read_allocation()?;
-        let biases = load_biases(data_type, output_dim, has_biases.then_some(parameter_tree))?;
+        let weights = parameter_tree
+            .leaf("weights.weights")?
+            .validate(&[output_dim, input_dim], weights_data_type)?
+            .read_allocation()?;
+        let biases =
+            load_biases(weights_data_type, output_data_type, output_dim, has_biases.then_some(parameter_tree))?;
 
-        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
-            .map_err(LinearMatmulError::BackendError)?;
+        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(
+            context,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+        )
+        .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
@@ -78,7 +90,7 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
-            data_type,
+            output_data_type,
             mode: Mode::FullPrecision,
         })
     }
@@ -88,7 +100,9 @@ impl<B: Backend> LinearMatmul<B> {
         spec: AnyWeightMatrixSpec,
         input_dim: usize,
         output_dim: usize,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
         weights_tree: &ParameterTree<B>,
         bias_tree: Option<&ParameterTree<B>>,
         output_hadamard_factors: Option<Allocation<B>>,
@@ -100,13 +114,20 @@ impl<B: Backend> LinearMatmul<B> {
                 layout: Layout::OutputInput,
                 ..
             }) => (bits, group_size, QuantizationMethod::ScaleBias),
-            AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+            AnyWeightMatrixSpec::IntSpec(IntSpec {
                 bits,
                 group_size,
                 is_symmetric: false,
                 layout: Layout::OutputInput,
                 ..
             }) => (bits, group_size, QuantizationMethod::ScaleZeroPoint),
+            AnyWeightMatrixSpec::IntSpec(IntSpec {
+                bits,
+                group_size,
+                is_symmetric: true,
+                layout: Layout::OutputInput,
+                ..
+            }) => (bits, group_size, QuantizationMethod::ScaleSymmetric),
             spec => return Err(LinearMatmulError::UnsupportedConfiguration(format!("{spec:?}"))),
         };
 
@@ -120,8 +141,10 @@ impl<B: Backend> LinearMatmul<B> {
             },
         };
 
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(LinearMatmulError::UnsupportedDataType(data_type));
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+                return Err(LinearMatmulError::UnsupportedDataType(data_type));
+            }
         }
 
         let packing_divisor = weight_quantization_mode.packing_divisor();
@@ -132,24 +155,32 @@ impl<B: Backend> LinearMatmul<B> {
             .leaf("weights")?
             .validate(&[output_dim, input_dim / packing_divisor], storage_type)?
             .read_allocation()?;
-        let scales = weights_tree.leaf("scales")?.validate(&[output_dim, k_g], data_type)?.read_allocation()?;
+        let scales = weights_tree.leaf("scales")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?;
         let zero_points_or_biases = match quantization_method {
             QuantizationMethod::ScaleBias => {
-                weights_tree.leaf("biases")?.validate(&[output_dim, k_g], data_type)?.read_allocation()?
+                Some(weights_tree.leaf("biases")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?)
             },
             QuantizationMethod::ScaleZeroPoint => {
                 let expected_zero_points_entries = k_g.div_ceil(packing_divisor);
-                weights_tree
-                    .leaf("zero_points")?
-                    .validate(&[output_dim, expected_zero_points_entries], storage_type)?
-                    .read_allocation()?
+                Some(
+                    weights_tree
+                        .leaf("zero_points")?
+                        .validate(&[output_dim, expected_zero_points_entries], storage_type)?
+                        .read_allocation()?,
+                )
             },
+            QuantizationMethod::ScaleSymmetric => None,
         };
 
-        let biases = load_biases(data_type, output_dim, bias_tree)?;
+        let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
 
-        let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)
-            .map_err(LinearMatmulError::BackendError)?;
+        let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(
+            context,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+        )
+        .map_err(LinearMatmulError::BackendError)?;
         kernel
             .preheat_quant_combo(
                 context,
@@ -167,7 +198,7 @@ impl<B: Backend> LinearMatmul<B> {
             biases,
             input_dim,
             output_dim,
-            data_type,
+            output_data_type,
             mode: Mode::Quantized {
                 method: quantization_method,
                 mode: weight_quantization_mode,
@@ -181,12 +212,18 @@ impl<B: Backend> LinearMatmul<B> {
 }
 
 fn load_biases<B: Backend>(
-    data_type: DataType,
+    weights_data_type: DataType,
+    output_data_type: DataType,
     output_dim: usize,
     parameter_tree: Option<&ParameterTree<B>>,
 ) -> Result<Option<Allocation<B>>, LinearMatmulError<B>> {
+    if parameter_tree.is_some() && weights_data_type != output_data_type {
+        return Err(LinearMatmulError::UnsupportedConfiguration(format!(
+            "mixed precision linear with biases is not supported: weights={weights_data_type:?}, output={output_data_type:?}",
+        )));
+    }
     Ok(parameter_tree
-        .map(|tree| tree.leaf("biases")?.validate(&[output_dim], data_type)?.read_allocation())
+        .map(|tree| tree.leaf("biases")?.validate(&[output_dim], weights_data_type)?.read_allocation())
         .transpose()?)
 }
 
@@ -197,7 +234,8 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut output = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.data_type))?;
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         let b = match &self.mode {
             Mode::FullPrecision => MatmulB::FullPrecision {
@@ -214,14 +252,22 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
                     b: &self.weights,
                     scales,
-                    biases: zero_points_or_biases,
+                    biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
                     mode: *mode,
                     group_size: *group_size,
                 },
                 QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
                     b: &self.weights,
                     scales,
-                    zero_points: zero_points_or_biases,
+                    zero_points: zero_points_or_biases
+                        .as_ref()
+                        .expect("ScaleZeroPoint quantization requires zero_points"),
+                    mode: *mode,
+                    group_size: *group_size,
+                },
+                QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+                    b: &self.weights,
+                    scales,
                     mode: *mode,
                     group_size: *group_size,
                 },

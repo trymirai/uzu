@@ -1,9 +1,9 @@
 use super::{decoder_support::*, *};
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Allocation, AsBufferRangeRef, DenseBuffer},
+    backends::common::{Allocation, AsBufferRangeRef},
     config::decoder::DecoderConfig,
-    encodable_block::{DecoderArguments, DecoderDecodeInput, SamplingInputs},
+    encodable_block::{DecoderArguments, DecoderDecodeInput, LayerArguments, Linear, SamplingInputs},
     forward_pass::token_inputs::TokenInputs,
     session::types::TtsModelConfigError,
 };
@@ -11,6 +11,7 @@ use crate::{
 struct TokenDecoderLoadedModel<B: Backend> {
     shared_buffers: Rc<SharedBuffers<B>>,
     executables: Decoder<B>,
+    readout: Box<dyn Linear<B>>,
     sampler: GpuSampling<B>,
     token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
 }
@@ -32,14 +33,24 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
             root_loader_view,
             transformer_subtree,
         )?;
-        let executables = Decoder::new_with_embedding_and_readout_subtrees(
+        let executables = Decoder::new_with_embedding_subtree(
             context.as_ref(),
             &decoder_config,
             root_loader_view,
             transformer_subtree,
             embedding_subtree,
-            readout_subtree,
             model_shape,
+        )
+        .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
+        let readout_tree =
+            root_loader_view.subtree(readout_subtree).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+        let readout = <dyn Linear<B>>::new(
+            decoder_config.transformer_config.model_dim,
+            [decoder_config.vocab_size],
+            false,
+            context.as_ref(),
+            model_shape.data_type,
+            &readout_tree,
         )
         .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
         let sampler = GpuSampling::new(context.as_ref(), model_shape.data_type).map_err(unable_to_create_context)?;
@@ -49,6 +60,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         Ok(Self {
             shared_buffers,
             executables,
+            readout,
             sampler,
             token_copy_sampled,
         })
@@ -63,6 +75,7 @@ struct TokenDecoderContext<B: Backend> {
     decoder_config: Rc<DecoderConfig>,
     runtime_config: TextDecoderRuntimeConfig,
     executables: Decoder<B>,
+    readout: Box<dyn Linear<B>>,
     sampler: GpuSampling<B>,
     kv_cache_update: KVCacheUpdate<B>,
     token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
@@ -94,8 +107,11 @@ impl<B: Backend> TokenDecoderContext<B> {
         let root_loader_view = loader.tree();
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config, DataType::F32);
-        let max_suffix_length =
-            text_decoder_prefill_step_size(runtime_config, decoder_config.transformer_config.context_length).max(32);
+        let max_suffix_length = text_decoder_prefill_step_size(
+            runtime_config,
+            decoder_config.transformer_config.max_sequence_length().unwrap_or(usize::MAX),
+        )
+        .max(32);
         let max_prefix_length = max_suffix_length;
         let loaded_model = TokenDecoderLoadedModel::<B>::load(
             &context,
@@ -126,6 +142,7 @@ impl<B: Backend> TokenDecoderContext<B> {
             decoder_config,
             runtime_config: runtime_config.clone(),
             executables: loaded_model.executables,
+            readout: loaded_model.readout,
             sampler: loaded_model.sampler,
             kv_cache_update,
             token_copy_sampled: loaded_model.token_copy_sampled,
@@ -205,7 +222,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let context: Rc<B::Context> = Rc::clone(ctx.context());
         let model_dim = ctx.decoder_config.transformer_config.model_dim;
         let tensor_add_scale =
-            <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), ctx.model_shape.data_type)
+            <B::Kernels as Kernels>::TensorAddScaleKernel::new(context.as_ref(), ctx.model_shape.data_type, false)
                 .map_err(unable_to_create_context)?;
         let single_hidden_capture =
             context.create_array_zeros(&[1, model_dim], ctx.model_shape.data_type).into_allocation();
@@ -331,7 +348,12 @@ impl<B: Backend> TokenDecoderRunner<B> {
         &mut self,
         max_prefix_length: usize,
     ) -> Result<(), Error> {
-        let max_prefix_length = max_prefix_length.max(1).min(self.ctx.decoder_config.transformer_config.context_length);
+        let max_prefix_length = self
+            .ctx
+            .decoder_config
+            .transformer_config
+            .max_sequence_length()
+            .map_or(max_prefix_length.max(1), |model_length| max_prefix_length.max(1).min(model_length));
         let max_suffix_length = text_decoder_prefill_step_size(&self.ctx.runtime_config, max_prefix_length).max(32);
         if self.ctx.current_max_prefix_length == max_prefix_length {
             return Ok(());
@@ -554,7 +576,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         pending_sampling_inputs: &mut Vec<SamplingInputs<B>>,
         pending_sampling_outputs: &mut Vec<Allocation<B>>,
     ) -> Result<(), Error> {
-        let cache_layers_rc = self.ctx.cache_layers.clone();
         let token_bitmask =
             vocab_mask_limit.and_then(|limit| self.get_single_token_vocab_mask(limit)).map(Box::<[u32]>::from);
         let mut next_token_ids = first_token_ids;
@@ -570,19 +591,15 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let token_inputs = pending_token_inputs.last().expect("token inputs must be pending");
 
             {
-                let mut logits = {
-                    let mut cache_layers = cache_layers_rc.borrow_mut();
-                    cache_layers.prepare_for_forward_pass(&self.ctx.context, 1);
-                    self.ctx
-                        .executables
-                        .encode_decode(
-                            self.decoder_arguments(&token_inputs, 1, 0, 1, &mut *cache_layers),
-                            DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
-                            None,
-                            encoder,
-                        )
-                        .map_err(|err| Error::EncodeFailed(Box::new(err)))?
-                };
+                let mut logits = self.encode_decode_with_fishaudio_readout_on(
+                    encoder,
+                    DecoderDecodeInput::TokenIds(token_inputs.token_ids()),
+                    token_inputs,
+                    1,
+                    0,
+                    1,
+                    false,
+                )?;
                 let mut sampling_output = self.create_sampling_output(1);
                 self.encode_sampling_on(
                     encoder,
@@ -690,6 +707,75 @@ impl<B: Backend> TokenDecoderRunner<B> {
         self.ctx.context.create_array_uninitialized(&[sampling_length], crate::DataType::U32).into_allocation()
     }
 
+    fn encode_decode_with_fishaudio_readout_on<'input>(
+        &mut self,
+        encoder: &mut Encoder<B>,
+        input: DecoderDecodeInput<'input, B>,
+        token_inputs: &TokenInputs<B>,
+        batch_dim: usize,
+        sampling_start: usize,
+        sampling_length: usize,
+        capture_hidden: bool,
+    ) -> Result<Allocation<B>, Error> {
+        let mut main = match input {
+            DecoderDecodeInput::TokenIds(token_ids) => self
+                .ctx
+                .executables
+                .embed
+                .encode_lookup(token_ids, batch_dim, encoder)
+                .map_err(|err| Error::EncodeFailed(Box::new(err)))?,
+            DecoderDecodeInput::Embeddings(main) => main,
+        };
+        let mut shortcut = encoder
+            .allocate_scratch(main.as_buffer_range_ref().range().len())
+            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+
+        {
+            let mut cache_layers = self.ctx.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(&self.ctx.context, batch_dim);
+            for layer in self.ctx.executables.layers.iter() {
+                main = layer
+                    .encode(
+                        LayerArguments {
+                            batch_dim,
+                            token_positions: token_inputs.token_positions(),
+                            token_parents: token_inputs.token_parents(),
+                            token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
+                            rope_buffers: self.ctx.shared_buffers.rope_buffers_for_layer(layer.layer_index),
+                            sampling_start,
+                            sampling_length,
+                            cache_access: Some(cache_layers.cache_for_layer(layer.layer_index)),
+                            #[cfg(feature = "tracing")]
+                            trace: None,
+                        },
+                        main,
+                        &mut shortcut,
+                        encoder,
+                    )
+                    .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+            }
+        }
+
+        let output_norm = self
+            .ctx
+            .executables
+            .norm
+            .encode(&main, sampling_start, sampling_length, Some(&mut shortcut), encoder)
+            .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
+        if capture_hidden {
+            let row_size_bytes = shortcut.as_buffer_range_ref().range().len() / batch_dim;
+            let input_offset = (batch_dim - 1) * row_size_bytes;
+            encoder.encode_copy(
+                &shortcut,
+                input_offset..input_offset + row_size_bytes,
+                &mut self.single_hidden_capture,
+                ..,
+            );
+        }
+
+        self.ctx.readout.encode(output_norm, sampling_length, encoder).map_err(|err| Error::EncodeFailed(Box::new(err)))
+    }
+
     fn encode_single_forward_pass_on(
         &mut self,
         encoder: &mut Encoder<B>,
@@ -793,27 +879,15 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 self.encode_override_first_row_from_device_on(encoder, &mut main, &self.single_override_embedding)?;
             },
         }
-        let mut logits = {
-            let mut cache_layers = self.ctx.cache_layers.borrow_mut();
-            cache_layers.prepare_for_forward_pass(&self.ctx.context, token_count);
-            let decoder_arguments = DecoderArguments {
-                token_positions: token_inputs.token_positions(),
-                token_parents: token_inputs.token_parents(),
-                token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
-                shared_buffers: self.ctx.shared_buffers.as_ref(),
-                cache_layers: Some(&mut *cache_layers),
-                batch_dim: token_count,
-                sampling_start,
-                sampling_length,
-                #[cfg(feature = "tracing")]
-                trace: None,
-            };
-            let hidden_capture = capture_hidden.then_some(&mut self.single_hidden_capture);
-            self.ctx
-                .executables
-                .encode_decode(decoder_arguments, DecoderDecodeInput::Embeddings(main), hidden_capture, encoder)
-                .map_err(|err| Error::EncodeFailed(Box::new(err)))?
-        };
+        let mut logits = self.encode_decode_with_fishaudio_readout_on(
+            encoder,
+            DecoderDecodeInput::Embeddings(main),
+            token_inputs,
+            token_count,
+            sampling_start,
+            sampling_length,
+            capture_hidden,
+        )?;
         let mut sampling_output = self.create_sampling_output(sampling_length);
         self.encode_sampling_on(
             encoder,
@@ -1025,7 +1099,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let mut output =
             encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(unable_to_create_context)?;
         self.tensor_add_scale.encode(
-            &*main,
+            Some(&*main),
             &self.single_override_embedding,
             &mut output,
             model_dim_u32,
@@ -1136,12 +1210,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
             .into());
         }
-        let buffer_range = self.ctx.async_chain_results.as_buffer_range_ref();
-        let range = buffer_range.range();
-        Ok(unsafe {
-            *((buffer_range.buffer().cpu_ptr().as_ptr() as *const u8)
-                .add(range.start + slot * std::mem::size_of::<u32>()) as *const u32)
-        })
+        Ok(self.ctx.async_chain_results.copyout::<u32>()[slot])
     }
 
     pub(super) fn take_instrumentation(&mut self) -> RunnerInstrumentation {
@@ -1154,8 +1223,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
 }
 
 fn read_sampled_token_from_sampling_output<B: Backend>(sampling_output: &Allocation<B>) -> Result<u64, Error> {
-    let buffer_range = sampling_output.as_buffer_range_ref();
-    let range = buffer_range.range();
-    let token = unsafe { *((buffer_range.buffer().cpu_ptr().as_ptr() as *const u8).add(range.start) as *const u32) };
+    let token = sampling_output.copyout::<u32>()[0];
     Ok(u64::from(token))
 }

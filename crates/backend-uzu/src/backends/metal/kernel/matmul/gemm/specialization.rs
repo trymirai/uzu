@@ -12,7 +12,7 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemmSpecialization {
-    pub(crate) data_type: DataType,
+    pub(crate) weights_data_type: DataType,
     pub(crate) tiling: GemmTiling,
     pub(crate) use_mxu: bool,
     pub(crate) output_transform: GemmDTransform,
@@ -61,9 +61,9 @@ impl GemmSpecialization {
         Ok(())
     }
 
-    pub(crate) fn precompile_configs(data_type: DataType) -> Vec<Self> {
+    pub(crate) fn precompile_configs(weights_data_type: DataType) -> Vec<Self> {
         let mut out = Vec::new();
-        for &tiling in simdgroup_tiling_set(data_type) {
+        for &tiling in simdgroup_tiling_set(weights_data_type) {
             for align_mn in [true, false] {
                 for output_transform in [
                     GemmDTransform::empty(),
@@ -72,7 +72,7 @@ impl GemmSpecialization {
                     GemmDTransform::BIAS | GemmDTransform::RHT,
                 ] {
                     out.push(Self {
-                        data_type,
+                        weights_data_type,
                         tiling,
                         use_mxu: false,
                         output_transform,
@@ -86,7 +86,7 @@ impl GemmSpecialization {
             }
         }
 
-        for &tiling in mxu_tiling_set(data_type) {
+        for &tiling in mxu_tiling_set(weights_data_type) {
             for align_m in [true, false] {
                 for align_n in [true, false] {
                     for align_k in [true, false] {
@@ -112,7 +112,7 @@ impl GemmSpecialization {
                                 | GemmDTransform::ACCUMULATE,
                         ] {
                             out.push(Self {
-                                data_type,
+                                weights_data_type,
                                 tiling,
                                 use_mxu: true,
                                 output_transform,
@@ -131,7 +131,7 @@ impl GemmSpecialization {
     }
 
     pub(crate) fn quant_combo_specs(
-        data_type: DataType,
+        weights_data_type: DataType,
         combo: MatmulQuantCombo,
     ) -> Vec<Self> {
         let bits = DataType::from(combo.mode).size_in_bits() as u32;
@@ -139,9 +139,10 @@ impl GemmSpecialization {
         let b_prologue = match combo.method {
             QuantizationMethod::ScaleBias => GemmBPrologueKind::ScaleBiasDequant,
             QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
+            QuantizationMethod::ScaleSymmetric => GemmBPrologueKind::ScaleSymmetricDequant,
         };
         let mut out = Vec::new();
-        for &tiling in quant_tiling_set(data_type) {
+        for &tiling in quant_tiling_set(weights_data_type) {
             if tiling.simdgroup_block_k() > group_size {
                 continue;
             }
@@ -153,7 +154,7 @@ impl GemmSpecialization {
                     GemmDTransform::BIAS | GemmDTransform::RHT,
                 ] {
                     out.push(Self {
-                        data_type,
+                        weights_data_type,
                         tiling,
                         use_mxu: false,
                         output_transform,
@@ -166,7 +167,10 @@ impl GemmSpecialization {
                 }
             }
         }
-        for &tiling in mxu_tiling_set(data_type) {
+        for &tiling in mxu_tiling_set(weights_data_type) {
+            if group_size % 32 != 0 {
+                continue;
+            }
             if matches!(tiling, GemmTiling::Tile128x128x256_Simdgroups4x4) && group_size > 64 {
                 continue;
             }
@@ -181,7 +185,7 @@ impl GemmSpecialization {
                         GemmDTransform::BIAS | GemmDTransform::SCALE,
                     ] {
                         out.push(Self {
-                            data_type,
+                            weights_data_type,
                             tiling,
                             use_mxu: true,
                             output_transform,
@@ -201,14 +205,15 @@ impl GemmSpecialization {
 
 fn simdgroup_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
     match data_type {
-        DataType::BF16 => &[GemmTiling::Tile64x32x32_Simdgroups2x2, GemmTiling::Tile64x64x16_Simdgroups2x2],
-        DataType::F16 => &[GemmTiling::Tile64x64x16_Simdgroups2x2, GemmTiling::Tile64x32x32_Simdgroups2x2],
+        DataType::BF16 | DataType::F32 => {
+            &[GemmTiling::Tile64x32x32_Simdgroups2x2, GemmTiling::Tile64x64x16_Simdgroups2x2]
+        },
         _ => &[],
     }
 }
 
 fn mxu_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
-    if !matches!(data_type, DataType::F16 | DataType::BF16) {
+    if !matches!(data_type, DataType::BF16 | DataType::F32) {
         return &[];
     }
     &[
@@ -228,7 +233,6 @@ pub(crate) fn quant_tiling_set(data_type: DataType) -> &'static [GemmTiling] {
             GemmTiling::Tile64x64x32_Simdgroups2x2,
             GemmTiling::Tile64x64x64_Simdgroups2x2,
         ],
-        DataType::F16 => &[GemmTiling::Tile8x32x32_Simdgroups1x1, GemmTiling::Tile32x32x32_Simdgroups2x2],
         _ => &[],
     }
 }

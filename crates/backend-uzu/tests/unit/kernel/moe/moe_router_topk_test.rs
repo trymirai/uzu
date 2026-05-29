@@ -1,6 +1,4 @@
-use std::{
-    fmt::Debug,
-};
+use std::fmt::Debug;
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -50,10 +48,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        crate::common::helpers::allocation_to_vec(&ids),
-        crate::common::helpers::allocation_to_vec(&probs),
-    )
+    (crate::common::helpers::allocation_to_vec(&ids), crate::common::helpers::allocation_to_vec(&probs))
 }
 
 fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(

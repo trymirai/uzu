@@ -6,9 +6,12 @@ use std::{
 };
 
 use super::{RangeAllocationType, RangeAllocator};
-use crate::backends::common::{
-    Backend, Buffer, Context,
-    buffer_range::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef},
+use crate::{
+    ArrayElement,
+    backends::common::{
+        Backend, Buffer, Context, DenseBuffer,
+        buffer_range::{AsBufferRangeMut, AsBufferRangeRef, BufferRangeMut, BufferRangeRef},
+    },
 };
 
 pub struct Allocation<B: Backend> {
@@ -16,6 +19,17 @@ pub struct Allocation<B: Backend> {
     buffer: *const B::DenseBuffer,
     range: Range<usize>,
     allocation_type: RangeAllocationType,
+}
+
+impl<B: Backend> Allocation<B> {
+    pub fn copyout<T: ArrayElement>(&self) -> Vec<T> {
+        let buffer_range = self.as_buffer_range_ref();
+        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
+        let bytes = unsafe {
+            std::slice::from_raw_parts((buffer.cpu_ptr().as_ptr() as *const u8).add(range.start), range.len())
+        };
+        bytemuck::cast_slice(bytes).to_vec()
+    }
 }
 
 impl<B: Backend> AsBufferRangeRef for Allocation<B> {

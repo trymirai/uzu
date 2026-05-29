@@ -65,13 +65,14 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             num_groups_k
         };
         let (zero_points, biases) = match quant_method {
-            QuantizationMethod::ScaleZeroPoint => {
-                (Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
-            },
             QuantizationMethod::ScaleBias => (
                 None,
                 Some((0..n * num_groups_k).map(|_| T::from(rng.random_range(-0.03f32..0.03f32)).unwrap()).collect()),
             ),
+            QuantizationMethod::ScaleZeroPoint => {
+                (Some((0..n * zp_stride).map(|_| rng.random_range(0u8..u8::MAX)).collect()), None)
+            },
+            QuantizationMethod::ScaleSymmetric => (None, None),
         };
 
         Self {
@@ -122,6 +123,13 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     input: &QuantInput<T>,
 ) -> MatmulArguments<'a, B> {
     let b_variant = match input.quant_method {
+        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            b: &buffers.w,
+            scales: &buffers.scales,
+            biases: buffers.bias.as_ref().expect("bias buffer"),
+            mode: input.mode,
+            group_size: input.group_size,
+        },
         QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
             b: &buffers.w,
             scales: &buffers.scales,
@@ -129,10 +137,9 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             mode: input.mode,
             group_size: input.group_size,
         },
-        QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+        QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
             b: &buffers.w,
             scales: &buffers.scales,
-            biases: buffers.bias.as_ref().expect("bias buffer"),
             mode: input.mode,
             group_size: input.group_size,
         },
@@ -155,8 +162,13 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
 pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
-    let mut matmul = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
-        .expect("MatmulCpuKernel");
+    let mut matmul = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        &context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulCpuKernel");
     let mut encoder = Encoder::<Cpu>::new(&context).expect("encoder");
     matmul.encode(quant_arguments(&mut buffers, input), &mut encoder).expect("encode cpu quant");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -170,8 +182,13 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     path: Option<GemmDispatchPath>,
 ) -> Vec<T> {
     let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
-    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, T::data_type())
-        .expect("MatmulMetalKernel");
+    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulMetalKernel");
     let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
     let args = quant_arguments(&mut buffers, input);
     match path {

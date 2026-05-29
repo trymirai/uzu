@@ -1,5 +1,5 @@
 use crate::{
-    DataType, allocation_to_vec,
+    DataType,
     backends::common::{
         Allocation, Backend, Context, Encoder, Kernels,
         gpu_types::ActivationType,
@@ -13,6 +13,8 @@ use crate::{
 #[macro_use]
 #[path = "../../../../common/mod.rs"]
 mod common;
+
+use common::helpers::allocation_to_vec;
 
 fn allocation_from_slice<B: Backend, T: crate::ArrayElement>(
     context: &B::Context,

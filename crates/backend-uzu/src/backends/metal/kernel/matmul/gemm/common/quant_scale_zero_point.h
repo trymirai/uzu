@@ -20,7 +20,8 @@ template <
     short REDUCTION_DIMENSION,
     short THREADGROUP_SIZE,
     short GROUP_SIZE,
-    short BITS>
+    short BITS,
+    bool SCALE_SYMMETRIC = false>
 struct QuantizedBlockLoaderScaleZeroPoint {
   static_assert(
       THREADGROUP_TILE_COLS <= GROUP_SIZE,
@@ -103,11 +104,14 @@ struct QuantizedBlockLoaderScaleZeroPoint {
                 : scales_
         ),
         zero_points_row_start(
-            REDUCTION_DIMENSION == 1
-                ? (zero_points_row_start_ +
-                   tile_row_index * (BITS == 4 ? ((groups_per_row_ + 1) / 2)
-                                               : groups_per_row_))
-                : zero_points_row_start_
+            SCALE_SYMMETRIC
+                ? nullptr
+                : (REDUCTION_DIMENSION == 1
+                       ? (zero_points_row_start_ +
+                          tile_row_index * (BITS == 4
+                                                ? ((groups_per_row_ + 1) / 2)
+                                                : groups_per_row_))
+                       : zero_points_row_start_)
         ) {}
 
   inline void current_scale_bias(
@@ -124,7 +128,9 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       group_index = static_cast<int>(scales - scales_row_start);
       scale_value = *scales;
     }
-    if constexpr (BITS == 4) {
+    if constexpr (SCALE_SYMMETRIC) {
+      zero_point_value = 1u << (BITS - 1);
+    } else if constexpr (BITS == 4) {
       const device uint8_t* zero_point_ptr =
           zero_points_row_start + (group_index >> 1);
       uint8_t zero_point_byte = *zero_point_ptr;

@@ -53,7 +53,7 @@ pub(crate) struct MambaMixer<B: Backend> {
     gate_bias: Allocation<B>,
     skip_connection_weight: Allocation<B>,
     prefill_mode: SSDPrefillMode,
-    data_type: DataType,
+    inner_data_type: DataType,
 }
 
 pub(crate) struct MambaArguments<'a, B: Backend> {
@@ -90,59 +90,71 @@ impl<B: Backend> MambaMixer<B> {
         mamba_config: &Mamba2Config,
         model_dim: usize,
         parameter_tree: &ParameterTree<B>,
-        data_type: DataType,
+        outer_data_type: DataType,
     ) -> Result<(Self, Option<Allocation<B>>), MambaMixerError<B>> {
+        let inner_data_type = DataType::F32;
+
         let conv_tree = parameter_tree.subtree("conv")?;
         let conv_dim = mamba_config.conv_dim();
         let inner_dim = mamba_config.inner_dim();
 
-        let (in_projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_extracting_input_hadamard(
-            model_dim,
-            [conv_dim, inner_dim, mamba_config.num_heads],
-            mamba_config.has_in_biases,
-            context,
-            data_type,
-            &parameter_tree.subtree("in_projection")?,
-        )?;
+        let (in_projection, in_projection_input_hadamard_factors) =
+            <dyn Linear<B>>::new_extracting_input_hadamard_mixed_precision(
+                model_dim,
+                [conv_dim, inner_dim, mamba_config.num_heads],
+                mamba_config.has_in_biases,
+                context,
+                outer_data_type,
+                outer_data_type,
+                inner_data_type,
+                &parameter_tree.subtree("in_projection")?,
+            )?;
 
-        let out_projection = <dyn Linear<B>>::new(
+        let out_projection = <dyn Linear<B>>::new_mixed_precision(
             inner_dim,
             [model_dim],
             mamba_config.has_out_biases,
             context,
-            data_type,
+            outer_data_type,
+            inner_data_type,
+            outer_data_type,
             &parameter_tree.subtree("out_projection")?,
         )?;
 
-        let conv_weight =
-            conv_tree.leaf("weights")?.validate(&[conv_dim, mamba_config.kernel_size], data_type)?.read_allocation()?;
+        let conv_weight = conv_tree
+            .leaf("weights")?
+            .validate(&[conv_dim, mamba_config.kernel_size], inner_data_type)?
+            .read_allocation()?;
         let conv_bias = if mamba_config.conv_config.has_biases {
-            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], data_type)?.read_allocation()?)
+            Some(conv_tree.leaf("biases")?.validate(&[conv_dim], inner_data_type)?.read_allocation()?)
         } else {
             None
         };
-        let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], data_type)?.read_allocation()?;
+        let gate_bias = parameter_tree.leaf("gate_bias")?.validate(&[inner_dim], inner_data_type)?.read_allocation()?;
         let skip_connection_weight = parameter_tree
             .leaf("skip_connection_weight")?
-            .validate(&[mamba_config.num_heads], data_type)?
+            .validate(&[mamba_config.num_heads], inner_data_type)?
             .read_allocation()?;
 
-        let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, data_type)
+        let split_inproj = <B::Kernels as Kernels>::SplitInProjKernel::new(context, inner_data_type)
             .map_err(MambaMixerError::BackendError)?;
-        let conv_scan =
-            <B::Kernels as Kernels>::Conv1dScanKernel::new(context, data_type, mamba_config.conv_config.has_biases)
-                .map_err(MambaMixerError::BackendError)?;
+        let conv_scan = <B::Kernels as Kernels>::Conv1dScanKernel::new(
+            context,
+            inner_data_type,
+            mamba_config.conv_config.has_biases,
+        )
+        .map_err(MambaMixerError::BackendError)?;
         let conv_decode = <B::Kernels as Kernels>::Conv1dDecodeKernel::new(
             context,
-            data_type,
+            inner_data_type,
             mamba_config.conv_config.has_biases,
             true,
         )
         .map_err(MambaMixerError::BackendError)?;
-        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, data_type)
+        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, inner_data_type)
             .map_err(MambaMixerError::BackendError)?;
-        let ssd_prefill = SSDPrefillKernels::new(context, data_type).map_err(MambaMixerError::BackendError)?;
-        let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, data_type, true)
+        let ssd_prefill = SSDPrefillKernels::new(context, inner_data_type).map_err(MambaMixerError::BackendError)?;
+        let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, inner_data_type, true)
             .map_err(MambaMixerError::BackendError)?;
         let prefill_mode = resolve_prefill_mode_from_env();
 
@@ -169,7 +181,7 @@ impl<B: Backend> MambaMixer<B> {
                 gate_bias,
                 skip_connection_weight,
                 prefill_mode,
-                data_type,
+                inner_data_type,
             },
             in_projection_input_hadamard_factors,
         ))
@@ -185,10 +197,12 @@ impl<B: Backend> MambaMixer<B> {
         let inner_dim = self.inner_dim;
         let num_heads = self.num_heads;
         let total_dim = conv_dim + inner_dim + num_heads;
-        let mut conv_inputs = encoder.allocate_scratch(size_for_shape(&[suffix_length, conv_dim], self.data_type))?;
-        let mut gate =
-            encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads, self.head_dim], self.data_type))?;
-        let mut time_step = encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads], self.data_type))?;
+        let mut conv_inputs =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, conv_dim], self.inner_data_type))?;
+        let mut gate = encoder
+            .allocate_scratch(size_for_shape(&[suffix_length, num_heads, self.head_dim], self.inner_data_type))?;
+        let mut time_step =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, num_heads], self.inner_data_type))?;
         self.split_inproj.encode(
             in_proj,
             &mut conv_inputs,
@@ -221,10 +235,10 @@ impl<B: Backend> MambaMixer<B> {
         let proj_dim = self.num_groups * self.state_dim;
         let state_stride = self.kernel_size.saturating_sub(1);
         let mut conv_x = encoder
-            .allocate_scratch(size_for_shape(&[suffix_length, self.num_heads, self.head_dim], self.data_type))?;
+            .allocate_scratch(size_for_shape(&[suffix_length, self.num_heads, self.head_dim], self.inner_data_type))?;
         let state_shape = [suffix_length, self.num_groups, self.state_dim];
-        let mut state_b = encoder.allocate_scratch(size_for_shape(&state_shape, self.data_type))?;
-        let mut state_c = encoder.allocate_scratch(size_for_shape(&state_shape, self.data_type))?;
+        let mut state_b = encoder.allocate_scratch(size_for_shape(&state_shape, self.inner_data_type))?;
+        let mut state_c = encoder.allocate_scratch(size_for_shape(&state_shape, self.inner_data_type))?;
 
         if suffix_length == 1 {
             if conv_dim > 0 && self.kernel_size > 0 {
@@ -252,7 +266,10 @@ impl<B: Backend> MambaMixer<B> {
         } else {
             let mut padded = (conv_dim > 0 && state_stride > 0)
                 .then(|| {
-                    encoder.allocate_scratch(size_for_shape(&[suffix_length + state_stride, conv_dim], self.data_type))
+                    encoder.allocate_scratch(size_for_shape(
+                        &[suffix_length + state_stride, conv_dim],
+                        self.inner_data_type,
+                    ))
                 })
                 .transpose()?;
             if let Some(padded) = padded.as_mut() {
@@ -348,7 +365,8 @@ impl<B: Backend> MambaMixer<B> {
         encoder: &mut Encoder<B>,
         suffix_length: usize,
     ) -> Result<Allocation<B>, B::Error> {
-        let mut out = encoder.allocate_scratch(size_for_shape(&[suffix_length, self.inner_dim], self.data_type))?;
+        let mut out =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.inner_dim], self.inner_data_type))?;
         let h = self.num_heads as u32;
         let g = self.num_groups as u32;
         let dh = self.head_dim as u32;

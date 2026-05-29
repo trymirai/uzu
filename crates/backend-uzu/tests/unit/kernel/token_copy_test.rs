@@ -1,8 +1,6 @@
-use backend_uzu::{
-    backends::common::{
-        Backend, Context, Encoder, Kernels,
-        kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
-    },
+use backend_uzu::backends::common::{
+    Backend, Context, Encoder, Kernels,
+    kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
 };
 
 use crate::{

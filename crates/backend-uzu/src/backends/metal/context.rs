@@ -52,6 +52,11 @@ pub struct MetalContext {
 }
 
 impl MetalContext {
+    pub(super) fn update_peak_memory_usage(&self) {
+        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
+        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+    }
+
     pub fn device_generation(&self) -> DeviceGeneration {
         self.device_capabilities.generation
     }
@@ -187,8 +192,7 @@ impl Context for MetalContext {
             .new_buffer(size, MTLResourceOptions::STORAGE_MODE_SHARED)
             .ok_or(MetalError::CannotCreateBuffer)?;
 
-        let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
-        *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
+        self.update_peak_memory_usage();
 
         Ok(buffer)
     }

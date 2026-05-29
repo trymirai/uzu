@@ -14,10 +14,7 @@ use backend_uzu::{
 };
 use sysinfo::System;
 
-use crate::runner::{
-    helpers::get_memory_usage,
-    types::{Device, Result as TaskResult, Task},
-};
+use crate::runner::types::{Device, Result as TaskResult, Task};
 
 pub struct Runner {
     pub task: Task,
@@ -72,7 +69,7 @@ impl Runner {
             }
             let output = session.run(input.clone(), run_config, Option::<fn(Output) -> bool>::None)?;
 
-            let memory_used = get_memory_usage();
+            let memory_used = session.peak_memory_usage();
 
             let result = TaskResult {
                 task: self.task.clone(),

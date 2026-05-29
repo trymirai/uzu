@@ -1,10 +1,7 @@
 use backend_uzu::{
     ArrayElement,
     backends::{
-        common::{
-            Backend, Encoder,
-            kernel::moe::MoeGatherKernel,
-        },
+        common::{Backend, Encoder, kernel::moe::MoeGatherKernel},
         cpu::Cpu,
     },
 };

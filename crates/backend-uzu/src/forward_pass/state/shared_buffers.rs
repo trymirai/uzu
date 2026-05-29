@@ -31,13 +31,13 @@ impl<B: Backend> SharedBuffers<B> {
             .layer_configs
             .iter()
             .map(|layer_config| {
-                let Some(attention_config) = layer_config.mixer_config.as_attention() else {
+                if layer_config.mixer_config.as_attention().is_none() {
                     return LayerRopeKind::NoKernel;
-                };
+                }
                 let Some(rope_config) = &layer_config.rope_config else {
                     return LayerRopeKind::NoKernel;
                 };
-                let head_dim = rope_config.head_dim().unwrap_or(attention_config.head_dim);
+                let head_dim = *rope_config.head_dim();
                 let index = configs
                     .iter()
                     .position(|(existing_config, existing_head_dim)| {

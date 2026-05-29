@@ -1,3 +1,4 @@
+use monostate::MustBe;
 use proc_macros::uzu_config;
 
 use crate::config::{
@@ -51,7 +52,7 @@ pub struct DownsampleResidualVectorQuantizeConfig {
 pub struct ResidualUnitConfig {
     pub snake_config: Snake1dConfig,
     pub conv_config: CausalConv1dConfig,
-    pub causal: bool,
+    pub causal: MustBe!(true),
 }
 
 #[uzu_config]
@@ -59,7 +60,7 @@ pub struct DACDecoderBlockConfig {
     pub snake_config: Snake1dConfig,
     pub trans_conv_config: CausalTransposeConv1dConfig,
     pub res_unit_config: ResidualUnitConfig,
-    pub causal: bool,
+    pub causal: MustBe!(true),
 }
 
 #[uzu_config]
@@ -67,5 +68,5 @@ pub struct DACDecoderConfig {
     pub conv_config: CausalConv1dConfig,
     pub snake_config: Snake1dConfig,
     pub decoder_block_config: DACDecoderBlockConfig,
-    pub causal: bool,
+    pub causal: MustBe!(true),
 }

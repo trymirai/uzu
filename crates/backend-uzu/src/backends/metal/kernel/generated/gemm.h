@@ -9,6 +9,7 @@ enum class GemmBPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,
   ScaleZeroPointDequant = 2,
+  ScaleSymmetricDequant = 3,
 };
 
 struct GemmDTransform {

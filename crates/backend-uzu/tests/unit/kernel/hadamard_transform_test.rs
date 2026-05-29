@@ -1,13 +1,9 @@
-use std::{
-    fmt::Debug,
-};
+use std::fmt::Debug;
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::common::{
-        Backend, Context, Encoder, Kernels,
-        gpu_types::HadamardTransformOrder,
-        kernel::HadamardTransformKernel,
+        Backend, Context, Encoder, Kernels, gpu_types::HadamardTransformOrder, kernel::HadamardTransformKernel,
     },
 };
 use half::{bf16, f16};
@@ -112,9 +108,7 @@ fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<
     .expect("Failed to create HadamardTransformKernel");
 
     let total_elements = input.batch_count * input.channel_count;
-    let mut data = context
-        .create_array_from(&[total_elements], &input.data)
-        .into_allocation();
+    let mut data = context.create_array_from(&[total_elements], &input.data).into_allocation();
     let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

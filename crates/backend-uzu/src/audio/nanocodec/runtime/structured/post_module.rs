@@ -106,7 +106,8 @@ impl StructuredAudioCodecGraph {
         let root_loader_view = loader.tree();
         let transformer_subtree_name = "audio_decoder.quantizer.post_module";
 
-        let max_sequence_length = decoder_config.transformer_config.context_length.max(required_sequence_length.max(1));
+        let max_sequence_length =
+            decoder_config.transformer_config.max_sequence_length().unwrap_or(0).max(required_sequence_length.max(1));
         let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
         {
             let transformer_tree = root_loader_view
@@ -177,11 +178,11 @@ impl StructuredAudioCodecGraph {
         let semantic_tree = quantizer_tree.subtree("semantic_quantizer")?.subtree("quantizers")?.subtree("0")?;
         let codebook_dim = self.config.codebook_dim;
         let semantic_codebook = semantic_tree
-            .leaf("codebook.weights")?
+            .leaf("codebook.embedding.weights")?
             .validate(&[self.semantic_codebook_size, codebook_dim], data_type)?
             .read_array()?;
         let semantic_out_proj = semantic_tree
-            .leaf("out_proj.weights")?
+            .leaf("out_proj.weights.weights")?
             .validate(&[self.input_dim, codebook_dim], data_type)?
             .read_array()?;
         let semantic_out_bias =
@@ -200,11 +201,11 @@ impl StructuredAudioCodecGraph {
         for index in 0..residual_quantizers {
             let quantizer_tree = residual_root.subtree(&index.to_string())?;
             let codebook = quantizer_tree
-                .leaf("codebook.weights")?
+                .leaf("codebook.embedding.weights")?
                 .validate(&[self.codebook_size, codebook_dim], data_type)?
                 .read_array()?;
             let out_proj = quantizer_tree
-                .leaf("out_proj.weights")?
+                .leaf("out_proj.weights.weights")?
                 .validate(&[self.input_dim, codebook_dim], data_type)?
                 .read_array()?;
             let out_bias =

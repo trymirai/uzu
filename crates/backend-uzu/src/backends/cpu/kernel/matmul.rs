@@ -1,11 +1,10 @@
 use half::{bf16, f16};
-use num_traits::Float;
 
 use crate::{
-    ArrayElement, DataType,
+    DataType,
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
+            Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
             gpu_types::{HadamardTransformOrder, QuantizationMode},
             kernel::{
                 HadamardTransformKernel, ManualKernels,
@@ -22,7 +21,9 @@ impl ManualKernels for CpuKernels {
 }
 
 pub struct MatmulCpuKernel {
-    data_type: DataType,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
     hadamard: <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel,
 }
 
@@ -31,18 +32,24 @@ impl MatmulKernel for MatmulCpuKernel {
 
     fn new(
         context: &CpuContext,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, CpuError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
+                return Err(MatmulError::<Cpu>::UnsupportedDataType(data_type).into());
+            }
         }
         let hadamard = <<Cpu as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
             context,
-            data_type,
+            output_data_type,
             HadamardTransformOrder::Output,
         )?;
         Ok(Self {
-            data_type,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
             hadamard,
         })
     }
@@ -76,10 +83,12 @@ impl MatmulKernel for MatmulCpuKernel {
         let k_u = k as usize;
         let leading_dimension_a = k_u;
         let leading_dimension_d = n_u;
-        let data_type = self.data_type;
+        let weights_data_type = self.weights_data_type;
+        let input_data_type = self.input_data_type;
+        let output_data_type = self.output_data_type;
 
         let a_buffer_range = a.as_buffer_range_ref();
-        let a_byte_off = a_buffer_range.range().start + a_offset * data_type.size_in_bytes();
+        let a_byte_off = a_buffer_range.range().start + a_offset * input_data_type.size_in_bytes();
         let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
         let bias_ptr = bias_alloc.map(|bias| {
             let bias_buffer_range = bias.as_buffer_range_ref();
@@ -104,40 +113,34 @@ impl MatmulKernel for MatmulCpuKernel {
                     n_u
                 });
                 let b_buffer_range = weights.as_buffer_range_ref();
-                let b_byte_off = b_buffer_range.range().start + b_offset * data_type.size_in_bytes();
+                let b_byte_off = b_buffer_range.range().start + b_offset * weights_data_type.size_in_bytes();
                 let b_ptr = SendPtr(
                     unsafe { &*b_buffer_range.buffer().downcast().get() }.as_ptr().wrapping_byte_add(b_byte_off),
                 );
 
                 let command_buffer = encoder.as_command_buffer_mut();
                 command_buffer.push_command(move || {
-                    macro_rules! run {
-                        ($ty:ty) => {
-                            reference_matmul::<$ty>(
-                                a_ptr.as_ptr() as *const $ty,
-                                ReferenceWeights::FullPrecision {
-                                    weights: b_ptr.as_ptr() as *const $ty,
-                                    leading_dimension: leading_dimension_b,
-                                    transpose: b_transpose,
-                                },
-                                d_ptr.as_ptr() as *mut $ty,
-                                m_u,
-                                n_u,
-                                k_u,
-                                leading_dimension_a,
-                                leading_dimension_d,
-                                output_scale,
-                                accumulate,
-                                bias_ptr.map(|p| p.as_ptr() as *const $ty),
-                            )
-                        };
-                    }
-                    match data_type {
-                        DataType::F32 => run!(f32),
-                        DataType::F16 => run!(f16),
-                        DataType::BF16 => run!(bf16),
-                        _ => unreachable!(),
-                    }
+                    reference_matmul(
+                        a_ptr.as_ptr(),
+                        input_data_type,
+                        ReferenceWeights::FullPrecision {
+                            weights: b_ptr.as_ptr(),
+                            data_type: weights_data_type,
+                            leading_dimension: leading_dimension_b,
+                            transpose: b_transpose,
+                        },
+                        d_ptr.as_ptr(),
+                        output_data_type,
+                        m_u,
+                        n_u,
+                        k_u,
+                        leading_dimension_a,
+                        leading_dimension_d,
+                        output_scale,
+                        accumulate,
+                        bias_ptr.map(|p| p.as_ptr()),
+                        weights_data_type,
+                    )
                 });
             },
             MatmulB::ScaleBiasDequant {
@@ -154,62 +157,28 @@ impl MatmulKernel for MatmulCpuKernel {
                 mode,
                 group_size,
             } => {
-                let bits = match mode {
-                    QuantizationMode::U4 => 4usize,
-                    QuantizationMode::I8 | QuantizationMode::U8 => 8usize,
+                let dequant = if use_zero_point {
+                    DequantKind::ZeroPoint
+                } else {
+                    DequantKind::Bias
                 };
-                let group_size = group_size as usize;
-
-                let b_buffer_range = weights.as_buffer_range_ref();
-                let weights_ptr = SendPtr(
-                    unsafe { &*b_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(b_buffer_range.range().start),
+                self.encode_quant(
+                    encoder, weights, scales, Some(second), dequant, mode, group_size, a_ptr, input_data_type,
+                    d_ptr, output_data_type, m_u, n_u, k_u, leading_dimension_a, leading_dimension_d, output_scale,
+                    accumulate, bias_ptr, weights_data_type,
                 );
-                let scales_buffer_range = scales.as_buffer_range_ref();
-                let scales_ptr = SendPtr(
-                    unsafe { &*scales_buffer_range.buffer().get() }
-                        .as_ptr()
-                        .wrapping_byte_add(scales_buffer_range.range().start),
+            },
+            MatmulB::ScaleSymmetricDequant {
+                b: weights,
+                scales,
+                mode,
+                group_size,
+            } => {
+                self.encode_quant(
+                    encoder, weights, scales, None, DequantKind::Symmetric, mode, group_size, a_ptr,
+                    input_data_type, d_ptr, output_data_type, m_u, n_u, k_u, leading_dimension_a,
+                    leading_dimension_d, output_scale, accumulate, bias_ptr, weights_data_type,
                 );
-                let second_buffer_range = second.as_buffer_range_ref();
-                let second_ptr = SendPtr(
-                    unsafe { &*second_buffer_range.buffer().get() }
-                        .as_ptr()
-                        .wrapping_byte_add(second_buffer_range.range().start),
-                );
-
-                let command_buffer = encoder.as_command_buffer_mut();
-                command_buffer.push_command(move || {
-                    macro_rules! run {
-                        ($ty:ty) => {
-                            reference_matmul::<$ty>(
-                                a_ptr.as_ptr() as *const $ty,
-                                ReferenceWeights::Quantized(ReferenceQuantWeights {
-                                    weights: weights_ptr.as_ptr() as *const u32,
-                                    scales: scales_ptr.as_ptr() as *const $ty,
-                                    zero_points: use_zero_point.then(|| second_ptr.as_ptr()),
-                                    biases: (!use_zero_point).then(|| second_ptr.as_ptr() as *const $ty),
-                                    bits,
-                                    group_size,
-                                }),
-                                d_ptr.as_ptr() as *mut $ty,
-                                m_u,
-                                n_u,
-                                k_u,
-                                leading_dimension_a,
-                                leading_dimension_d,
-                                output_scale,
-                                accumulate,
-                                bias_ptr.map(|p| p.as_ptr() as *const $ty),
-                            )
-                        };
-                    }
-                    match data_type {
-                        DataType::F32 => run!(f32),
-                        DataType::F16 => run!(f16),
-                        DataType::BF16 => run!(bf16),
-                        _ => unreachable!(),
-                    }
-                });
             },
         }
 
@@ -221,33 +190,153 @@ impl MatmulKernel for MatmulCpuKernel {
     }
 }
 
+impl MatmulCpuKernel {
+    #[allow(clippy::too_many_arguments)]
+    fn encode_quant(
+        &self,
+        encoder: &mut Encoder<Cpu>,
+        weights: &Allocation<Cpu>,
+        scales: &Allocation<Cpu>,
+        second: Option<&Allocation<Cpu>>,
+        dequant: DequantKind,
+        mode: QuantizationMode,
+        group_size: u32,
+        a_ptr: SendPtr<u8>,
+        input_data_type: DataType,
+        d_ptr: SendPtrMut<u8>,
+        output_data_type: DataType,
+        m_u: usize,
+        n_u: usize,
+        k_u: usize,
+        leading_dimension_a: usize,
+        leading_dimension_d: usize,
+        output_scale: f32,
+        accumulate: bool,
+        bias_ptr: Option<SendPtr<u8>>,
+        weights_data_type: DataType,
+    ) {
+        let bits = match mode {
+            QuantizationMode::U4 => 4usize,
+            QuantizationMode::I8 | QuantizationMode::U8 => 8usize,
+        };
+        let group_size = group_size as usize;
+
+        let b_buffer_range = weights.as_buffer_range_ref();
+        let weights_ptr = SendPtr(
+            unsafe { &*b_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(b_buffer_range.range().start),
+        );
+        let scales_buffer_range = scales.as_buffer_range_ref();
+        let scales_ptr = SendPtr(
+            unsafe { &*scales_buffer_range.buffer().get() }
+                .as_ptr()
+                .wrapping_byte_add(scales_buffer_range.range().start),
+        );
+        let second_ptr = second.map(|second| {
+            let second_buffer_range = second.as_buffer_range_ref();
+            SendPtr(
+                unsafe { &*second_buffer_range.buffer().get() }
+                    .as_ptr()
+                    .wrapping_byte_add(second_buffer_range.range().start),
+            )
+        });
+
+        let command_buffer = encoder.as_command_buffer_mut();
+        command_buffer.push_command(move || {
+            reference_matmul(
+                a_ptr.as_ptr(),
+                input_data_type,
+                ReferenceWeights::Quantized(ReferenceQuantWeights {
+                    weights: weights_ptr.as_ptr() as *const u32,
+                    scales: scales_ptr.as_ptr(),
+                    scales_data_type: weights_data_type,
+                    zero_points: match dequant {
+                        DequantKind::ZeroPoint => second_ptr.map(|p| p.as_ptr()),
+                        _ => None,
+                    },
+                    biases: match dequant {
+                        DequantKind::Bias => second_ptr.map(|p| p.as_ptr()),
+                        _ => None,
+                    },
+                    symmetric: matches!(dequant, DequantKind::Symmetric),
+                    bits,
+                    group_size,
+                }),
+                d_ptr.as_ptr(),
+                output_data_type,
+                m_u,
+                n_u,
+                k_u,
+                leading_dimension_a,
+                leading_dimension_d,
+                output_scale,
+                accumulate,
+                bias_ptr.map(|p| p.as_ptr()),
+                weights_data_type,
+            )
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DequantKind {
+    ZeroPoint,
+    Bias,
+    Symmetric,
+}
+
 /// Group-quantized weight operand (weights laid out transposed as [N, K]).
-struct ReferenceQuantWeights<T> {
+struct ReferenceQuantWeights {
     weights: *const u32,
-    scales: *const T,
-    /// Exactly one of `zero_points` / `biases` is set, selecting the
-    /// scale+zero-point vs scale+bias dequantization.
+    scales: *const u8,
+    scales_data_type: DataType,
+    /// At most one of `zero_points` / `biases` is set, selecting the
+    /// scale+zero-point vs scale+bias dequantization. When `symmetric` is set,
+    /// neither is present and the offset is the implicit midpoint.
     zero_points: Option<*const u8>,
-    biases: Option<*const T>,
+    biases: Option<*const u8>,
+    symmetric: bool,
     bits: usize,
     group_size: usize,
 }
 
 /// Weight operand for the reference matmul: either full precision or quantized.
-enum ReferenceWeights<T> {
+enum ReferenceWeights {
     FullPrecision {
-        weights: *const T,
+        weights: *const u8,
+        data_type: DataType,
         /// Leading dimension (row/col stride) of the weight matrix.
         leading_dimension: usize,
         /// `true` when weights are [N, K] (the GEMV / quantized layout),
         /// `false` when they are [K, N].
         transpose: bool,
     },
-    Quantized(ReferenceQuantWeights<T>),
+    Quantized(ReferenceQuantWeights),
+}
+
+#[inline]
+unsafe fn read_f32(base: *const u8, data_type: DataType, index: usize) -> f32 {
+    match data_type {
+        DataType::F32 => *(base as *const f32).add(index),
+        DataType::F16 => (*(base as *const f16).add(index)).to_f32(),
+        DataType::BF16 => (*(base as *const bf16).add(index)).to_f32(),
+        _ => unreachable!(),
+    }
+}
+
+#[inline]
+unsafe fn write_f32(base: *mut u8, data_type: DataType, index: usize, value: f32) {
+    match data_type {
+        DataType::F32 => *(base as *mut f32).add(index) = value,
+        DataType::F16 => *(base as *mut f16).add(index) = f16::from_f32(value),
+        DataType::BF16 => *(base as *mut bf16).add(index) = bf16::from_f32(value),
+        _ => unreachable!(),
+    }
 }
 
 /// Single fully-featured CPU reference matmul, used purely for unit-test
-/// correctness (performance is irrelevant). For every (i, j) it computes:
+/// correctness (performance is irrelevant). Each operand is read with its own
+/// data type and accumulated in f32, so it covers mixed-precision combos. For
+/// every (i, j) it computes:
 ///
 ///   D[i, j] = output_scale * sum_l A[i, l] * Bval[j, l]
 ///             + (accumulate ? D[i, j] : 0)
@@ -257,10 +346,12 @@ enum ReferenceWeights<T> {
 /// weight. Output transforms beyond scale/accumulate/bias (e.g. RHT) are
 /// applied by the caller as a separate pass.
 #[allow(clippy::too_many_arguments)]
-fn reference_matmul<T: ArrayElement + Float>(
-    a: *const T,
-    weights: ReferenceWeights<T>,
-    output: *mut T,
+fn reference_matmul(
+    a: *const u8,
+    a_data_type: DataType,
+    weights: ReferenceWeights,
+    output: *mut u8,
+    output_data_type: DataType,
     m: usize,
     n: usize,
     k: usize,
@@ -268,7 +359,8 @@ fn reference_matmul<T: ArrayElement + Float>(
     leading_dimension_d: usize,
     output_scale: f32,
     accumulate: bool,
-    bias: Option<*const T>,
+    bias: Option<*const u8>,
+    bias_data_type: DataType,
 ) {
     let quant_layout = match &weights {
         ReferenceWeights::Quantized(q) => {
@@ -286,10 +378,11 @@ fn reference_matmul<T: ArrayElement + Float>(
             for col in 0..n {
                 let mut accumulator = 0.0f32;
                 for inner in 0..k {
-                    let a_value = (*a.add(row * leading_dimension_a + inner)).to_f32().unwrap();
+                    let a_value = read_f32(a, a_data_type, row * leading_dimension_a + inner);
                     let b_value = match &weights {
                         ReferenceWeights::FullPrecision {
                             weights,
+                            data_type,
                             leading_dimension,
                             transpose,
                         } => {
@@ -298,7 +391,7 @@ fn reference_matmul<T: ArrayElement + Float>(
                             } else {
                                 inner * leading_dimension + col
                             };
-                            (*weights.add(index)).to_f32().unwrap()
+                            read_f32(*weights, *data_type, index)
                         },
                         ReferenceWeights::Quantized(q) => {
                             let (num_groups_k, zero_point_stride, pack_factor) = quant_layout.unwrap();
@@ -313,7 +406,8 @@ fn reference_matmul<T: ArrayElement + Float>(
                                 ((q.weights.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as f32
                             };
                             let group_index = inner / q.group_size;
-                            let scale = (*q.scales.add(col * num_groups_k + group_index)).to_f32().unwrap();
+                            let scale =
+                                read_f32(q.scales, q.scales_data_type, col * num_groups_k + group_index);
                             let bias_term = if let Some(zero_points) = q.zero_points {
                                 let zero_point = if q.bits == 4 {
                                     let byte_index = col * zero_point_stride + (group_index >> 1);
@@ -327,8 +421,15 @@ fn reference_matmul<T: ArrayElement + Float>(
                                     *zero_points.add(col * zero_point_stride + group_index) as f32
                                 };
                                 -scale * zero_point
+                            } else if q.symmetric {
+                                let midpoint = (1u32 << (q.bits - 1)) as f32;
+                                -scale * midpoint
                             } else {
-                                (*q.biases.unwrap().add(col * num_groups_k + group_index)).to_f32().unwrap()
+                                read_f32(
+                                    q.biases.unwrap(),
+                                    q.scales_data_type,
+                                    col * num_groups_k + group_index,
+                                )
                             };
                             scale * quantized_value + bias_term
                         },
@@ -339,12 +440,12 @@ fn reference_matmul<T: ArrayElement + Float>(
                 let output_index = row * leading_dimension_d + col;
                 let mut value = output_scale * accumulator;
                 if accumulate {
-                    value += (*output.add(output_index)).to_f32().unwrap();
+                    value += read_f32(output, output_data_type, output_index);
                 }
                 if let Some(bias) = bias {
-                    value += (*bias.add(col)).to_f32().unwrap();
+                    value += read_f32(bias, bias_data_type, col);
                 }
-                *output.add(output_index) = T::from(value).unwrap();
+                write_f32(output, output_data_type, output_index, value);
             }
         }
     }

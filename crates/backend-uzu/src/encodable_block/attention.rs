@@ -235,7 +235,9 @@ impl<B: Backend> Attention<B> {
             <B::Kernels as Kernels>::AttentionFallbackScatterValuesKernel::new(context, data_type)
                 .map_err(AttentionError::BackendError)?;
         let matmul_kernel =
-            <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).ok().map(RefCell::new);
+            <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+                .ok()
+                .map(RefCell::new);
         let update_kv_cache_kernel =
             <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel::new(context, data_type, false)
                 .map_err(AttentionError::BackendError)?;

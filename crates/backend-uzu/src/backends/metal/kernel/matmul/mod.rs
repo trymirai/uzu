@@ -31,7 +31,7 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 fn gemv_eligible<TB: AsBufferRangeRef>(args: &MatmulArguments<Metal, TB>) -> bool {
-    let is_quant = matches!(args.b, MatmulB::ScaleBiasDequant { .. } | MatmulB::ScaleZeroPointDequant { .. });
+    let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
     if is_quant {
         args.m < 5 || args.n == 1
     } else {
@@ -47,14 +47,19 @@ impl MatmulKernel for MatmulMetalKernel {
 
     fn new(
         context: &MetalContext,
-        data_type: DataType,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
     ) -> Result<Self, MetalError> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16) {
-            return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+                return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
+            }
         }
 
-        let gemm = GemmKernel::new(context, data_type)?;
-        let gemv = GemvDispatch::new(context, data_type).map_err(MetalError::from)?;
+        let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
+        let gemv = GemvDispatch::new(context, weights_data_type, input_data_type, output_data_type)
+            .map_err(MetalError::from)?;
 
         Ok(Self {
             gemv,

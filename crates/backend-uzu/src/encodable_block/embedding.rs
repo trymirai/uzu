@@ -17,9 +17,9 @@ use crate::{
         embedding::AnyEmbeddingConfig,
         weight_matrix::{
             AnyWeightMatrixSpec, Layout,
-            awq_spec::AWQSpec,
             full_precision_spec::FullPrecisionSpec,
             hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+            int_spec::IntSpec,
             mlx_spec::MLXSpec,
         },
     },
@@ -52,7 +52,7 @@ enum TiedEmbeddingType<B: Backend> {
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         quantization_method: QuantizationMethod,
         output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
@@ -69,7 +69,7 @@ enum UntiedEmbeddingLookupType<B: Backend> {
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         quantization_method: QuantizationMethod,
         output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
@@ -84,7 +84,7 @@ enum UntiedEmbeddingReadoutType<B: Backend> {
     Quantized {
         weights: Allocation<B>,
         scales: Allocation<B>,
-        zero_points_or_biases: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
         readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
         readout_config: ReadoutQuantConfig,
     },
@@ -117,29 +117,9 @@ impl<B: Backend> Embedding<B> {
         parameter_tree: &ParameterTree<B>,
         model_shape: &ModelShape,
     ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
-        Self::new_with_lookup_and_readout_trees(
-            context,
-            vocab_size,
-            model_dim,
-            config,
-            parameter_tree,
-            parameter_tree,
-            model_shape,
-        )
-    }
-
-    pub fn new_with_lookup_and_readout_trees(
-        context: &B::Context,
-        vocab_size: u32,
-        model_dim: u32,
-        config: &AnyEmbeddingConfig,
-        lookup_tree: &ParameterTree<B>,
-        readout_tree: &ParameterTree<B>,
-        model_shape: &ModelShape,
-    ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
-                let embedding_tree = lookup_tree.subtree("embedding")?;
+                let embedding_tree = parameter_tree.subtree("embedding")?;
                 let embedding_spec = embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let (ty, readout_input_hadamard_factors) = match embedding_spec {
@@ -158,8 +138,13 @@ impl<B: Backend> Embedding<B> {
                         )
                         .map_err(EmbeddingError::BackendError)?;
                         let readout = RefCell::new(
-                            <B::Kernels as ManualKernels>::MatmulKernel::new(context, model_shape.data_type)
-                                .map_err(EmbeddingError::BackendError)?,
+                            <B::Kernels as ManualKernels>::MatmulKernel::new(
+                                context,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                            )
+                            .map_err(EmbeddingError::BackendError)?,
                         );
 
                         (
@@ -171,7 +156,7 @@ impl<B: Backend> Embedding<B> {
                             None,
                         )
                     },
-                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                         let (embedding_quantization_mode, group_size, quantization_method) =
                             input_quantization_from_spec(spec)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
@@ -290,7 +275,7 @@ impl<B: Backend> Embedding<B> {
                 )
             },
             AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
-                let input_embedding_tree = lookup_tree.subtree("input_embedding")?;
+                let input_embedding_tree = parameter_tree.subtree("input_embedding")?;
                 let input_embedding_spec = input_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let input_ty = match input_embedding_spec {
@@ -314,7 +299,7 @@ impl<B: Backend> Embedding<B> {
                             lookup,
                         }
                     },
-                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                         let (embedding_quantization_mode, group_size, quantization_method) =
                             input_quantization_from_spec(spec)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
@@ -349,7 +334,7 @@ impl<B: Backend> Embedding<B> {
                     spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
                 };
 
-                let output_embedding_tree = readout_tree.subtree("output_embedding")?;
+                let output_embedding_tree = parameter_tree.subtree("output_embedding")?;
                 let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
                 let output_ty = match output_embedding_spec {
@@ -362,8 +347,13 @@ impl<B: Backend> Embedding<B> {
                             .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
                             .read_allocation()?;
                         let readout = RefCell::new(
-                            <B::Kernels as ManualKernels>::MatmulKernel::new(context, model_shape.data_type)
-                                .map_err(EmbeddingError::BackendError)?,
+                            <B::Kernels as ManualKernels>::MatmulKernel::new(
+                                context,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                                model_shape.data_type,
+                            )
+                            .map_err(EmbeddingError::BackendError)?,
                         );
 
                         UntiedEmbeddingReadoutType::FullPrecision {
@@ -371,7 +361,7 @@ impl<B: Backend> Embedding<B> {
                             readout,
                         }
                     },
-                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::AWQSpec(_)) => {
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
                         let (embedding_quantization_mode, group_size, quantization_method) =
                             output_quantization_from_spec(spec)?;
                         let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
@@ -492,8 +482,9 @@ impl<B: Backend> Embedding<B> {
                 output_ty: _,
             } => {
                 let (zero_points, biases) = match quantization_method {
-                    QuantizationMethod::ScaleZeroPoint => (Some(zero_points_or_biases), None),
-                    QuantizationMethod::ScaleBias => (None, Some(zero_points_or_biases)),
+                    QuantizationMethod::ScaleBias => (None, zero_points_or_biases.as_ref()),
+                    QuantizationMethod::ScaleZeroPoint => (zero_points_or_biases.as_ref(), None),
+                    QuantizationMethod::ScaleSymmetric => (None, None),
                 };
                 lookup.encode(
                     token_ids,
@@ -593,14 +584,22 @@ impl<B: Backend> Embedding<B> {
                     QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
                         b: weights,
                         scales,
-                        biases: zero_points_or_biases,
+                        biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
                         mode: readout_config.mode,
                         group_size: readout_config.group_size,
                     },
                     QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
                         b: weights,
                         scales,
-                        zero_points: zero_points_or_biases,
+                        zero_points: zero_points_or_biases
+                            .as_ref()
+                            .expect("ScaleZeroPoint quantization requires zero_points"),
+                        mode: readout_config.mode,
+                        group_size: readout_config.group_size,
+                    },
+                    QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+                        b: weights,
+                        scales,
                         mode: readout_config.mode,
                         group_size: readout_config.group_size,
                     },
@@ -641,13 +640,20 @@ fn input_quantization_from_spec<B: Backend>(
             layout: Layout::InputOutput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
-        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: false,
             layout: Layout::InputOutput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            bits,
+            group_size,
+            is_symmetric: true,
+            layout: Layout::InputOutput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
         spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
     }
 }
@@ -662,13 +668,20 @@ fn output_quantization_from_spec<B: Backend>(
             layout: Layout::OutputInput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
-        AnyWeightMatrixSpec::AWQSpec(AWQSpec {
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
             bits,
             group_size,
             is_symmetric: false,
             layout: Layout::OutputInput,
             ..
         }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            bits,
+            group_size,
+            is_symmetric: true,
+            layout: Layout::OutputInput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
         spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
     }
 }
@@ -698,7 +711,7 @@ fn load_quantized_embedding_parts<B: Backend>(
     quantization_mode: QuantizationMode,
     quantization_method: QuantizationMethod,
     group_size: usize,
-) -> Result<(Allocation<B>, Allocation<B>, Allocation<B>), EmbeddingError<B>> {
+) -> Result<(Allocation<B>, Allocation<B>, Option<Allocation<B>>), EmbeddingError<B>> {
     let packing_divisor = quantization_mode.packing_divisor();
     let storage_data_type = quantization_mode.storage_type();
     let num_groups = model_dim.div_ceil(group_size);
@@ -710,14 +723,17 @@ fn load_quantized_embedding_parts<B: Backend>(
     let scales = tree.leaf("scales")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?;
     let zero_points_or_biases = match quantization_method {
         QuantizationMethod::ScaleBias => {
-            tree.leaf("biases")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?
+            Some(tree.leaf("biases")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?)
         },
         QuantizationMethod::ScaleZeroPoint => {
             let expected_zero_points_entries = num_groups.div_ceil(packing_divisor);
-            tree.leaf("zero_points")?
-                .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
-                .read_allocation()?
+            Some(
+                tree.leaf("zero_points")?
+                    .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
+                    .read_allocation()?,
+            )
         },
+        QuantizationMethod::ScaleSymmetric => None,
     };
 
     Ok((weights, scales, zero_points_or_biases))
@@ -730,8 +746,8 @@ fn quantized_readout<B: Backend>(
     method: QuantizationMethod,
     group_size: usize,
 ) -> Result<(RefCell<<B::Kernels as ManualKernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
-    let mut readout =
-        <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type).map_err(EmbeddingError::BackendError)?;
+    let mut readout = <B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+        .map_err(EmbeddingError::BackendError)?;
     readout
         .preheat_quant_combo(
             context,

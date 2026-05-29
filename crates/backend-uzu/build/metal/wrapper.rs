@@ -4,7 +4,7 @@ use anyhow::bail;
 use itertools::Itertools;
 
 use super::{
-    ast::{MetalArgument, MetalArgumentType, MetalKernelInfo},
+    ast::{MetalArgument, MetalArgumentType, MetalKernelInfo, shared_element_type},
     enum_path_rewrite::is_enum_c_type,
 };
 use crate::common::{enum_paths::EnumPaths, identifiers::KernelName, mangling::static_mangle};
@@ -205,6 +205,11 @@ fn kernel_wrappers(
             })
             .unzip();
 
+        for (threadgroup_index, argument) in optional_shared_arguments(kernel).enumerate() {
+            let element_type = shared_element_type(&argument.c_type);
+            wrapper_arguments.push(format!("{element_type}* {} [[threadgroup({threadgroup_index})]]", argument.name));
+        }
+
         if kernel.has_axis() {
             if kernel.has_groups() || kernel.has_threads() {
                 bail!("mixing groups/threads and axis is not supported");
@@ -231,10 +236,11 @@ fn kernel_wrappers(
         let wrapper_arguments = wrapper_arguments.join(", ");
 
         let shared_definitions = kernel.arguments.iter().filter_map(|a| match &a.argument_type {
-            MetalArgumentType::Shared(Some(len)) => {
-                Some(format!("{} {}[{}]", &a.c_type.replace('*', ""), a.name, len.as_ref(),))
+            MetalArgumentType::Shared(dimensions) if a.condition.is_none() => {
+                let element_type = shared_element_type(&a.c_type);
+                let dimensions = dimensions.as_deref().map(|d| format!("[{d}]")).unwrap_or_default();
+                Some(format!("{element_type} {}{dimensions}", a.name))
             },
-            MetalArgumentType::Shared(None) => Some(format!("{} {}", &a.c_type.replace('&', ""), a.name)),
             _ => None,
         });
 
@@ -246,6 +252,9 @@ fn kernel_wrappers(
                 .arguments
                 .iter()
                 .map(|a| match &a.argument_type {
+                    MetalArgumentType::Shared(_) if a.condition.is_some() => {
+                        format!("({}){}", a.c_type, a.name)
+                    },
                     MetalArgumentType::Buffer(_)
                     | MetalArgumentType::Constant(_)
                     | MetalArgumentType::Shared(_)
@@ -293,4 +302,8 @@ fn kernel_wrappers(
     }
 
     Ok(kernel_wrappers.into())
+}
+
+fn optional_shared_arguments(kernel: &MetalKernelInfo) -> impl Iterator<Item = &MetalArgument> {
+    kernel.arguments.iter().filter(|argument| argument.is_optional_shared())
 }
