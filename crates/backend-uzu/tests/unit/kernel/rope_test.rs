@@ -68,13 +68,21 @@ fn get_test_data<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
+fn get_output<T: ArrayElement + Float, B: Backend>(
+    input: &Input<T>,
+    query_only: bool,
+) -> (Vec<T>, Option<Vec<T>>) {
     let context = B::Context::new().expect("Failed to create Context");
 
     let element_data_type = T::data_type();
     let rope_data_type = DataType::F32;
-    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, element_data_type, rope_data_type)
-        .expect("Failed to create RopeKernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(
+        &context,
+        element_data_type,
+        rope_data_type,
+        query_only,
+    )
+    .expect("Failed to create RopeKernel");
 
     let total_heads = (input.num_heads + 2 * input.num_groups) as usize;
     let qkv_len = input.suffix_length as usize * total_heads * input.head_dim as usize;
@@ -82,7 +90,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let queries_len = input.num_heads as usize * input.suffix_length as usize * input.head_dim as usize;
     let keys_len = input.num_groups as usize * input.suffix_length as usize * input.head_dim as usize;
 
-    let qkv_array = context.create_array_from(&[qkv_len], &input.qkv);
+    let qkv_array = if query_only {
+        context.create_array_from(&[queries_len], &input.qkv[..queries_len])
+    } else {
+        context.create_array_from(&[qkv_len], &input.qkv)
+    };
     let cosines_array = context.create_array_from(&[cos_sin_len], &input.cosines);
     let sines_array = context.create_array_from(&[cos_sin_len], &input.sines);
     let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions);
@@ -96,21 +108,32 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
         sines_array.allocation(),
         token_positions_array.allocation(),
         &mut rotated_queries,
-        &mut rotated_keys,
+        if query_only {
+            None::<&mut backend_uzu::backends::common::Allocation<B>>
+        } else {
+            Some(&mut rotated_keys)
+        },
         input.head_dim,
         input.rope_dim,
         input.num_heads,
-        input.num_groups,
+        if query_only {
+            None
+        } else {
+            Some(input.num_groups)
+        },
         input.suffix_length,
         input.max_sequence_length,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        crate::common::helpers::allocation_to_vec(&rotated_queries),
-        crate::common::helpers::allocation_to_vec(&rotated_keys),
-    )
+    let queries = crate::common::helpers::allocation_to_vec(&rotated_queries);
+    let keys = if query_only {
+        None
+    } else {
+        Some(crate::common::helpers::allocation_to_vec(&rotated_keys))
+    };
+    (queries, keys)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
@@ -120,10 +143,12 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
         1e-5
     };
 
-    let (expected_queries, expected_keys) = get_output::<T, Cpu>(input);
+    let (expected_queries, expected_keys) = get_output::<T, Cpu>(input, false);
+    let expected_keys = expected_keys.expect("full rope returns keys");
 
     for_each_non_cpu_backend!(|B| {
-        let (queries, keys) = get_output::<T, B>(input);
+        let (queries, keys) = get_output::<T, B>(input, false);
+        let keys = keys.expect("full rope returns keys");
         let msg = format!("Rope queries test failed with backend={}", std::any::type_name::<B>(),);
         assert_eq_float::<T>(&expected_queries, &queries, eps, &msg);
 
@@ -172,6 +197,16 @@ fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input);
 }
 
+fn test_query_only<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) { 0.02f32 } else { 1e-5 };
+    let (expected, _) = get_output::<T, Cpu>(input, true);
+    for_each_non_cpu_backend!(|B| {
+        let (actual, _) = get_output::<T, B>(input, true);
+        let msg = format!("Rope query-only test failed with backend={}", std::any::type_name::<B>());
+        assert_eq_float::<T>(&expected, &actual, eps, &msg);
+    });
+}
+
 // f32 tests
 #[uzu_test]
 fn test_basic_f32() {
@@ -196,6 +231,21 @@ fn test_small_f32() {
 #[uzu_test]
 fn test_nonzero_positions_f32() {
     test_nonzero_positions::<f32>();
+}
+
+#[uzu_test]
+fn test_query_only_f32() {
+    test_query_only::<f32>(&get_test_data::<f32>(8, 2, 64, 64, 4, 512));
+}
+
+#[uzu_test]
+fn test_query_only_partial_f32() {
+    test_query_only::<f32>(&get_test_data::<f32>(8, 2, 256, 128, 4, 512));
+}
+
+#[uzu_test]
+fn test_query_only_bf16() {
+    test_query_only::<bf16>(&get_test_data::<bf16>(8, 2, 64, 64, 4, 512));
 }
 
 // f16 tests
