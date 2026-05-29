@@ -17,7 +17,8 @@ template <
     GemmBPrologueKind B_PROLOGUE,
     uint GROUP_SIZE,
     uint BITS,
-    uint K_SPLIT>
+    uint K_SPLIT,
+    bool INPUT_ALIGNED>
 VARIANTS(WeightT, bfloat, float)
 VARIANTS(InputT, bfloat, float)
 VARIANTS(OutputT, bfloat, float)
@@ -31,6 +32,7 @@ VARIANTS(
 VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
+VARIANTS(INPUT_ALIGNED, false, true)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || WeightT != "float")
@@ -55,7 +57,6 @@ KERNEL(Gemv)(
     const constant float& ab_scale,
     const constant uint& group_count_x,
     const GemmDTransform output_transform SPECIALIZE,
-    const bool input_aligned SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
@@ -114,23 +115,25 @@ KERNEL(Gemv)(
       in += k_stride;
     }
 
-    const uint thread_offset = simd_lane * values_per_thread;
-    const int remaining =
-        (k_split == 1 && !input_aligned && k + thread_offset < in_vec_size)
-        ? min(static_cast<int>(in_vec_size - k - thread_offset),
-              static_cast<int>(values_per_thread))
-        : 0;
-    if (remaining > 0) {
-      const device WeightT* w0 = w;
-      const device WeightT* w1 = w + in_vec_size;
-      const device WeightT* w2 = w + 2 * in_vec_size;
-      const device WeightT* w3 = w + 3 * in_vec_size;
-      for (int j = 0; j < remaining; j++) {
-        U x = static_cast<U>(in[j]);
-        result[0] += static_cast<U>(w0[j]) * x;
-        result[1] += static_cast<U>(w1[j]) * x;
-        result[2] += static_cast<U>(w2[j]) * x;
-        result[3] += static_cast<U>(w3[j]) * x;
+    if constexpr (K_SPLIT == 1 && !INPUT_ALIGNED) {
+      const uint thread_offset = simd_lane * values_per_thread;
+      const int remaining =
+          (k + thread_offset < in_vec_size)
+          ? min(static_cast<int>(in_vec_size - k - thread_offset),
+                static_cast<int>(values_per_thread))
+          : 0;
+      if (remaining > 0) {
+        const device WeightT* w0 = w;
+        const device WeightT* w1 = w + in_vec_size;
+        const device WeightT* w2 = w + 2 * in_vec_size;
+        const device WeightT* w3 = w + 3 * in_vec_size;
+        for (int j = 0; j < remaining; j++) {
+          U x = static_cast<U>(in[j]);
+          result[0] += static_cast<U>(w0[j]) * x;
+          result[1] += static_cast<U>(w1[j]) * x;
+          result[2] += static_cast<U>(w2[j]) * x;
+          result[3] += static_cast<U>(w3[j]) * x;
+        }
       }
     }
   } else {
@@ -249,8 +252,9 @@ KERNEL(Gemv)(
       in += block_size;
     }
 
+    if constexpr (!INPUT_ALIGNED) {
     const uint thread_offset = simd_lane * values_per_thread;
-    const int remaining = (!input_aligned && k + thread_offset < in_vec_size)
+    const int remaining = (k + thread_offset < in_vec_size)
         ? min(static_cast<int>(in_vec_size - k - thread_offset),
               static_cast<int>(values_per_thread))
         : 0;
@@ -311,13 +315,14 @@ KERNEL(Gemv)(
             wl3, x_thread, s3, -s3 * midpoint, sum, remaining);
       }
     }
+    }
   }
 
   for (uint row = 0; row < results_per_simdgroup; row++) {
     result[row] = simd_sum(result[row]);
   }
 
-  if (k_split > 1) {
+  if constexpr (K_SPLIT > 1) {
     if (simd_lane == 0) {
       for (uint row = 0; row < results_per_simdgroup; row++) {
         shared_results[simd_group * results_per_simdgroup + row] = result[row];
