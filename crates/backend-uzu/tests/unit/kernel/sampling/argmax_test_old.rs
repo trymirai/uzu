@@ -1,7 +1,4 @@
-use std::{
-    fmt::Display,
-    mem::size_of,
-};
+use std::{fmt::Display, mem::size_of};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -72,13 +69,7 @@ fn get_output_single<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> V
     let mut output = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        logits_array.allocation(),
-        &mut output,
-        input.batch_size,
-        input.vocab_size,
-        &mut encoder,
-    );
+    kernel.encode(logits_array.allocation(), &mut output, input.batch_size, input.vocab_size, &mut encoder);
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
@@ -114,13 +105,7 @@ fn get_output_two_pass<T: ArrayElement + Float, B: Backend>(input: &Input<T>) ->
         input.vocab_size,
         &mut encoder,
     );
-    final_kernel.encode(
-        &partial_results,
-        &mut output,
-        input.batch_size,
-        input.vocab_size,
-        &mut encoder,
-    );
+    final_kernel.encode(&partial_results, &mut output, input.batch_size, input.vocab_size, &mut encoder);
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 

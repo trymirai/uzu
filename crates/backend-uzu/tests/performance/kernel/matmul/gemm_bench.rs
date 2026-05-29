@@ -27,14 +27,13 @@ use crate::{
 #[uzu_bench]
 fn bench_gemm(c: &mut Criterion) {
     let context = MetalContext::new().expect("Metal context");
-    let mut kernel =
-        <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
-            &context,
-            bf16::data_type(),
-            bf16::data_type(),
-            bf16::data_type(),
-        )
-            .expect("MatmulKernel");
+    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
 
     let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/GEMM", type_short_name::<Metal>()));
 

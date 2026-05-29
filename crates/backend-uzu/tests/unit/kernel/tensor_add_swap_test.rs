@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 
-use half::{bf16, f16};
-use num_traits::Float;
 use backend_uzu::{
     ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddSwapKernel},
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::{
     common::helpers::{alloc_allocation_with_data, allocation_to_vec},
@@ -54,10 +54,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     kernel.encode(&mut skip_allocation, &mut main_allocation, input.length, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (
-        allocation_to_vec::<B, T>(&skip_allocation),
-        allocation_to_vec::<B, T>(&main_allocation),
-    )
+    (allocation_to_vec::<B, T>(&skip_allocation), allocation_to_vec::<B, T>(&main_allocation))
 }
 
 fn test<T: ArrayElement + Float + Debug>() {

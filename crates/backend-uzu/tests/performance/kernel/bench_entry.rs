@@ -19,4 +19,9 @@ fn bench_runner(benches: &[&dyn Fn()]) {
 
 use proc_macros::__internal_uzu_bench as uzu_bench;
 
-include!("mod.rs");
+#[macro_use]
+#[path = "../../common/mod.rs"]
+mod common;
+
+#[path = "mod.rs"]
+mod kernel;
