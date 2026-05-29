@@ -2,6 +2,10 @@ use std::{any::Any, fmt::Debug, ops::Range};
 
 use crate::backends::common::Backend;
 
+pub mod dense;
+pub mod range;
+pub mod sparse;
+
 pub trait Buffer: Any + Debug {
     type Backend: Backend;
 
