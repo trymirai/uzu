@@ -85,10 +85,7 @@ impl GemvTiling {
 
     pub const fn thread_out_rows(self) -> u32 {
         match self {
-            Self::StandardNarrow
-            | Self::WideNarrow
-            | Self::SmallInputNarrow
-            | Self::SplitInputNarrow => 1,
+            Self::StandardNarrow | Self::WideNarrow | Self::SmallInputNarrow | Self::SplitInputNarrow => 1,
             _ => 4,
         }
     }

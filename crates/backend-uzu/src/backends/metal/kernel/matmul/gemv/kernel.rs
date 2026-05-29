@@ -235,15 +235,7 @@ impl GemvDispatch {
                 zero_points,
                 mode,
                 group_size,
-            } => (
-                w,
-                scales,
-                Some(zero_points),
-                None,
-                GemmBPrologueKind::ScaleZeroPointDequant,
-                mode,
-                group_size,
-            ),
+            } => (w, scales, Some(zero_points), None, GemmBPrologueKind::ScaleZeroPointDequant, mode, group_size),
             MatmulB::ScaleSymmetricDequant {
                 b: w,
                 scales,
@@ -265,7 +257,11 @@ impl GemvDispatch {
             });
         }
 
-        let block_size = if bits == 4 { 512 } else { 256 };
+        let block_size = if bits == 4 {
+            512
+        } else {
+            256
+        };
         let input_aligned = k % block_size == 0;
 
         let group_count_x = n.div_ceil(rows_per_threadgroup(1));

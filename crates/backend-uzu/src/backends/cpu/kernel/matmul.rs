@@ -163,9 +163,26 @@ impl MatmulKernel for MatmulCpuKernel {
                     DequantKind::Bias
                 };
                 self.encode_quant(
-                    encoder, weights, scales, Some(second), dequant, mode, group_size, a_ptr, input_data_type,
-                    d_ptr, output_data_type, m_u, n_u, k_u, leading_dimension_a, leading_dimension_d, output_scale,
-                    accumulate, bias_ptr, weights_data_type,
+                    encoder,
+                    weights,
+                    scales,
+                    Some(second),
+                    dequant,
+                    mode,
+                    group_size,
+                    a_ptr,
+                    input_data_type,
+                    d_ptr,
+                    output_data_type,
+                    m_u,
+                    n_u,
+                    k_u,
+                    leading_dimension_a,
+                    leading_dimension_d,
+                    output_scale,
+                    accumulate,
+                    bias_ptr,
+                    weights_data_type,
                 );
             },
             MatmulB::ScaleSymmetricDequant {
@@ -175,9 +192,26 @@ impl MatmulKernel for MatmulCpuKernel {
                 group_size,
             } => {
                 self.encode_quant(
-                    encoder, weights, scales, None, DequantKind::Symmetric, mode, group_size, a_ptr,
-                    input_data_type, d_ptr, output_data_type, m_u, n_u, k_u, leading_dimension_a,
-                    leading_dimension_d, output_scale, accumulate, bias_ptr, weights_data_type,
+                    encoder,
+                    weights,
+                    scales,
+                    None,
+                    DequantKind::Symmetric,
+                    mode,
+                    group_size,
+                    a_ptr,
+                    input_data_type,
+                    d_ptr,
+                    output_data_type,
+                    m_u,
+                    n_u,
+                    k_u,
+                    leading_dimension_a,
+                    leading_dimension_d,
+                    output_scale,
+                    accumulate,
+                    bias_ptr,
+                    weights_data_type,
                 );
             },
         }
@@ -314,7 +348,11 @@ enum ReferenceWeights {
 }
 
 #[inline]
-unsafe fn read_f32(base: *const u8, data_type: DataType, index: usize) -> f32 {
+unsafe fn read_f32(
+    base: *const u8,
+    data_type: DataType,
+    index: usize,
+) -> f32 {
     unsafe {
         match data_type {
             DataType::F32 => *(base as *const f32).add(index),
@@ -326,7 +364,12 @@ unsafe fn read_f32(base: *const u8, data_type: DataType, index: usize) -> f32 {
 }
 
 #[inline]
-unsafe fn write_f32(base: *mut u8, data_type: DataType, index: usize, value: f32) {
+unsafe fn write_f32(
+    base: *mut u8,
+    data_type: DataType,
+    index: usize,
+    value: f32,
+) {
     unsafe {
         match data_type {
             DataType::F32 => *(base as *mut f32).add(index) = value,
@@ -369,12 +412,21 @@ fn reference_matmul(
     let quant_layout = match &weights {
         ReferenceWeights::Quantized(q) => {
             let num_groups_k = k.div_ceil(q.group_size);
-            let zero_point_stride =
-                if q.bits == 4 { num_groups_k.div_ceil(2) } else { num_groups_k };
-            let pack_factor = if q.bits == 4 { 8 } else { 4 };
+            let zero_point_stride = if q.bits == 4 {
+                num_groups_k.div_ceil(2)
+            } else {
+                num_groups_k
+            };
+            let pack_factor = if q.bits == 4 {
+                8
+            } else {
+                4
+            };
             Some((num_groups_k, zero_point_stride, pack_factor))
         },
-        ReferenceWeights::FullPrecision { .. } => None,
+        ReferenceWeights::FullPrecision {
+            ..
+        } => None,
     };
 
     unsafe {
@@ -410,8 +462,7 @@ fn reference_matmul(
                                 ((q.weights.add(word_index).read_unaligned() >> bit_offset) & 0xFF) as f32
                             };
                             let group_index = inner / q.group_size;
-                            let scale =
-                                read_f32(q.scales, q.scales_data_type, col * num_groups_k + group_index);
+                            let scale = read_f32(q.scales, q.scales_data_type, col * num_groups_k + group_index);
                             let bias_term = if let Some(zero_points) = q.zero_points {
                                 let zero_point = if q.bits == 4 {
                                     let byte_index = col * zero_point_stride + (group_index >> 1);
@@ -429,11 +480,7 @@ fn reference_matmul(
                                 let midpoint = (1u32 << (q.bits - 1)) as f32;
                                 -scale * midpoint
                             } else {
-                                read_f32(
-                                    q.biases.unwrap(),
-                                    q.scales_data_type,
-                                    col * num_groups_k + group_index,
-                                )
+                                read_f32(q.biases.unwrap(), q.scales_data_type, col * num_groups_k + group_index)
                             };
                             scale * quantized_value + bias_term
                         },
