@@ -6,41 +6,43 @@
 using namespace uzu::activation_type;
 
 template <typename T>
-VARIANTS(T, float, half, bfloat)
+VARIANTS(T, float, bfloat)
 PUBLIC KERNEL(GatedActMul) (
     const device T* act_operand,
     const device T* value_operand OPTIONAL(!interleaved),
     device T* output,
     const device int32_t* hadamard_factors OPTIONAL(use_hadamard),
-    const constant int& inner_dim,
-    const constant int& outer_dim,
-    const constant int& value_offset,
-    const constant int& value_row_stride,
+    const constant uint& gated_dim,
+    const constant uint& batch_dim,
+    const constant uint& value_offset,
+    const constant uint& value_row_stride,
     const constant ActivationType& act_type,
     const bool interleaved SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
-    uint col AXIS(inner_dim, 64),
-    uint row AXIS(outer_dim, 1)
+    uint gated_idx AXIS(gated_dim, 64),
+    uint batch_idx AXIS(batch_dim, 1)
 ) {
   T activated;
   T value;
   if (interleaved) {
-    int base = row * (2 * inner_dim);
-    value = act_operand[base + col];
-    activated = activate(act_operand[base + inner_dim + col], act_type);
+    uint base = batch_idx * (2 * gated_dim);
+    value = act_operand[base + gated_idx];
+    activated = activate(act_operand[base + gated_dim + gated_idx], act_type);
   } else {
-    activated = activate(act_operand[row * inner_dim + col], act_type);
-    value = value_operand[row * value_row_stride + value_offset + col];
+    activated =
+        activate(act_operand[batch_idx * gated_dim + gated_idx], act_type);
+    value =
+        value_operand[batch_idx * value_row_stride + value_offset + gated_idx];
   }
-  T result = T(float(value) * float(activated));
+  T result = value * activated;
 
   if (use_hadamard) {
     result = simdgroup_input_random_hadamard_transform(
-        static_cast<ushort>(col % METAL_SIMD_SIZE),
+        static_cast<ushort>(gated_idx % METAL_SIMD_SIZE),
         result,
-        hadamard_factors[col]
+        hadamard_factors[gated_idx]
     );
   }
 
-  output[row * inner_dim + col] = result;
+  output[batch_idx * gated_dim + gated_idx] = result;
 }

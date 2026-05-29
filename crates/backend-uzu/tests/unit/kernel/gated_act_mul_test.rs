@@ -7,7 +7,7 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::{
@@ -20,20 +20,20 @@ use crate::{
 
 struct InterleavedInput<T: ArrayElement + Float> {
     fused_up: Box<[T]>,
-    h: i32,
-    m: i32,
+    gated_dim: u32,
+    batch_dim: u32,
     act_type: ActivationType,
 }
 
 fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> InterleavedInput<T> {
-    let h = 64i32;
-    let m = 4i32;
-    let fused_length = (m * 2 * h) as usize;
+    let gated_dim = 64u32;
+    let batch_dim = 4u32;
+    let fused_length = (batch_dim * 2 * gated_dim) as usize;
     let mut fused_up: Vec<T> = vec![T::zero(); fused_length];
     for index in 0..fused_length {
         fused_up[index] = T::from((index as f32 * 0.1).sin() * 2.0f32).unwrap();
     }
-    InterleavedInput { fused_up: fused_up.into_boxed_slice(), h, m, act_type }
+    InterleavedInput { fused_up: fused_up.into_boxed_slice(), gated_dim, batch_dim, act_type }
 }
 
 fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput<T>) -> Vec<T> {
@@ -41,8 +41,8 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput
     let kernel = <<B as Backend>::Kernels as Kernels>::GatedActMulKernel::new(&context, T::data_type(), true, false)
         .expect("create GatedActMulKernel");
 
-    let fused_length = (input.m * 2 * input.h) as usize;
-    let output_length = (input.m * input.h) as usize;
+    let fused_length = (input.batch_dim * 2 * input.gated_dim) as usize;
+    let output_length = (input.batch_dim * input.gated_dim) as usize;
     let fused_up = alloc_allocation_with_data::<B, T>(&context, &input.fused_up[..fused_length]);
     let mut output = alloc_allocation::<B, T>(&context, output_length);
 
@@ -52,8 +52,8 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput
         None::<&Allocation<B>>,
         &mut output,
         None::<&Allocation<B>>,
-        input.h,
-        input.m,
+        input.gated_dim,
+        input.batch_dim,
         0,
         0,
         input.act_type,
@@ -65,7 +65,7 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput
 }
 
 fn interleaved_test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
-    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) { 0.02f32 } else { 1e-5 };
+    let eps = if matches!(T::data_type(), DataType::BF16) { 0.02f32 } else { 1e-5 };
     let input = interleaved_input::<T>(act_type);
     let expected = run_interleaved::<T, Cpu>(&input);
     for_each_non_cpu_backend!(|B| {
@@ -81,11 +81,6 @@ fn test_gated_act_mul_interleaved_silu_f32() {
 }
 
 #[uzu_test]
-fn test_gated_act_mul_interleaved_silu_f16() {
-    interleaved_test::<f16>(ActivationType::SILU);
-}
-
-#[uzu_test]
 fn test_gated_act_mul_interleaved_silu_bf16() {
     interleaved_test::<bf16>(ActivationType::SILU);
 }
@@ -93,11 +88,6 @@ fn test_gated_act_mul_interleaved_silu_bf16() {
 #[uzu_test]
 fn test_gated_act_mul_interleaved_gelu_f32() {
     interleaved_test::<f32>(ActivationType::GELUApprox);
-}
-
-#[uzu_test]
-fn test_gated_act_mul_interleaved_gelu_f16() {
-    interleaved_test::<f16>(ActivationType::GELUApprox);
 }
 
 #[uzu_test]
@@ -113,10 +103,10 @@ fn test_gated_act_mul_interleaved_gelu_exact_f32() {
 struct SeparateInput<T: ArrayElement + Float> {
     gate_out: Box<[T]>,
     per_layer_input: Box<[T]>,
-    inner_dim: i32,
-    outer_dim: i32,
-    value_offset: i32,
-    value_row_stride: i32,
+    gated_dim: u32,
+    batch_dim: u32,
+    value_offset: u32,
+    value_row_stride: u32,
     act_type: ActivationType,
 }
 
@@ -134,8 +124,8 @@ fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
         SeparateInput {
             gate_out: gate_out.into_boxed_slice(),
             per_layer_input: per_layer_input.into_boxed_slice(),
-            inner_dim: 2,
-            outer_dim: 2,
+            gated_dim: 2,
+            batch_dim: 2,
             value_offset: 2,
             value_row_stride: 6,
             act_type: ActivationType::IDENTITY,
@@ -151,7 +141,7 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
 
     let gate_out = alloc_allocation_with_data::<B, T>(&context, &input.gate_out);
     let per_layer_input = alloc_allocation_with_data::<B, T>(&context, &input.per_layer_input);
-    let mut output = alloc_allocation::<B, T>(&context, (input.outer_dim * input.inner_dim) as usize);
+    let mut output = alloc_allocation::<B, T>(&context, (input.batch_dim * input.gated_dim) as usize);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("create encoder");
     kernel.encode(
@@ -159,8 +149,8 @@ fn run_separate<T: ArrayElement + Float, B: Backend>(input: &SeparateInput<T>) -
         Some(&per_layer_input),
         &mut output,
         None::<&Allocation<B>>,
-        input.inner_dim,
-        input.outer_dim,
+        input.gated_dim,
+        input.batch_dim,
         input.value_offset,
         input.value_row_stride,
         input.act_type,
@@ -182,11 +172,6 @@ fn separate_test<T: ArrayElement + Float + Debug>() {
 #[uzu_test]
 fn test_gated_act_mul_separate_f32() {
     separate_test::<f32>();
-}
-
-#[uzu_test]
-fn test_gated_act_mul_separate_f16() {
-    separate_test::<f16>();
 }
 
 #[uzu_test]
