@@ -14,7 +14,8 @@ template <
     typename T,
     GemmBPrologueKind B_PROLOGUE,
     uint GROUP_SIZE,
-    uint BITS>
+    uint BITS,
+    uint K_SPLIT>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(
     B_PROLOGUE,
@@ -23,8 +24,10 @@ VARIANTS(
     GemmBPrologueKind::ScaleZeroPointDequant)
 VARIANTS(GROUP_SIZE, 0, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
+VARIANTS(K_SPLIT, 1, 2, 4, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
+CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
 KERNEL(Gemv)(
     const device uint32_t* weights,
     const device T* scales
@@ -46,7 +49,6 @@ KERNEL(Gemv)(
     const constant uint& group_count_x,
     const GemmDTransform output_transform SPECIALIZE,
     const bool input_aligned SPECIALIZE,
-    const uint k_split SPECIALIZE,
     threadgroup float shared_results[METAL_SIMD_SIZE],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
@@ -64,9 +66,10 @@ KERNEL(Gemv)(
   typedef float U;
   thread U result[results_per_simdgroup] = {0};
 
+  constexpr uint k_split = K_SPLIT;
   const uint row_group = simd_group / k_split;
   const uint k_slice = simd_group % k_split;
-  const uint rows_per_threadgroup = (num_simdgroups / k_split) * results_per_simdgroup;
+  constexpr uint rows_per_threadgroup = (num_simdgroups / k_split) * results_per_simdgroup;
   const uint out_row =
       out_block_idx * rows_per_threadgroup + row_group * results_per_simdgroup;
   output += batch_idx * out_vec_size + out_row;

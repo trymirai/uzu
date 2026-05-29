@@ -1,5 +1,6 @@
 use std::collections::{HashMap, hash_map::Entry};
 
+use super::spec::GemvSpecialization;
 use crate::{
     DataType,
     backends::{
@@ -8,10 +9,11 @@ use crate::{
             gpu_types::{
                 QuantizationMode,
                 gemm::{GemmBPrologueKind, GemmDTransform},
+                matmul::{GemvParams, GemvTiling},
             },
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
+        metal::{Metal, context::MetalContext, kernel::{GemvFpStandaloneMetalKernel, GemvMetalKernel}},
     },
 };
 
@@ -19,6 +21,13 @@ const FP_PATH: &str = "FpGemv";
 const QUANT_PATH: &str = "QuantGemv";
 
 const FP_BLOCK: u32 = 128;
+
+/// Autoresearch A/B switch: when set, the FP path uses the restored standalone
+/// tile-driven `GemvFpStandalone` kernel (the "old" baseline to beat). Unset =
+/// the unified candidate kernel.
+fn use_standalone() -> bool {
+    std::env::var_os("UZU_GEMV_STANDALONE").is_some()
+}
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct GemvKey {
@@ -28,6 +37,13 @@ struct GemvKey {
     output_transform: GemmDTransform,
     input_aligned: bool,
     k_split: u32,
+}
+
+/// Key for the standalone tile-driven FP reference kernel.
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+struct GemvFpKey {
+    tiling: GemvTiling,
+    output_transform: GemmDTransform,
 }
 
 const QMV_SIMDGROUPS: u32 = 8;
@@ -48,6 +64,8 @@ fn fp_k_split(
         8
     } else if n <= 1024 {
         4
+    } else if k >= 3072 {
+        4
     } else {
         2
     }
@@ -56,6 +74,7 @@ fn fp_k_split(
 pub(crate) struct GemvDispatch {
     data_type: DataType,
     pipelines: HashMap<GemvKey, GemvMetalKernel>,
+    fp_standalone_pipelines: HashMap<GemvFpKey, GemvFpStandaloneMetalKernel>,
 }
 
 impl GemvDispatch {
@@ -67,6 +86,7 @@ impl GemvDispatch {
         Ok(Self {
             data_type,
             pipelines: HashMap::new(),
+            fp_standalone_pipelines: HashMap::new(),
         })
     }
 
@@ -84,9 +104,29 @@ impl GemvDispatch {
                     key.b_prologue,
                     key.group_size,
                     key.bits,
+                    key.k_split,
                     key.output_transform,
                     key.input_aligned,
-                    key.k_split,
+                )
+                .map_err(MatmulError::BackendError)?;
+                Ok(entry.insert(kernel))
+            },
+        }
+    }
+
+    fn get_or_create_fp_standalone(
+        &mut self,
+        context: &MetalContext,
+        key: GemvFpKey,
+    ) -> Result<&GemvFpStandaloneMetalKernel, MatmulError<Metal>> {
+        match self.fp_standalone_pipelines.entry(key) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let kernel = GemvFpStandaloneMetalKernel::new(
+                    context,
+                    self.data_type,
+                    key.output_transform,
+                    key.tiling,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -120,6 +160,7 @@ impl GemvDispatch {
         let output_mask = arguments.d_transform.mask();
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
+        let is_accumulate = arguments.d_transform.accumulate;
         let rht_factors = arguments.d_transform.rht_factors;
 
         let MatmulArguments {
@@ -146,6 +187,40 @@ impl GemvDispatch {
                 path: FP_PATH,
             });
         }
+        let context = encoder.context();
+
+        // A/B baseline: the standalone tile-driven FP kernel (the "old" impl).
+        if use_standalone() {
+            let specialization =
+                GemvSpecialization::select(k, n, is_accumulate, output_bias.is_some(), rht_factors.is_some());
+            let output_rows_per_threadgroup = specialization.tiling.output_rows_per_threadgroup();
+            let group_count_x = n.div_ceil(output_rows_per_threadgroup);
+            let group_count_y = m;
+            let params = GemvParams {
+                in_vec_size: k,
+                out_vec_size: n,
+                batch_size: m,
+                matrix_leading_dimension: k,
+                output_rows_per_threadgroup,
+                ab_scale,
+            };
+            let key = GemvFpKey {
+                tiling: specialization.tiling,
+                output_transform: output_mask,
+            };
+            self.get_or_create_fp_standalone(context, key)?.encode(
+                (a, a_offset),
+                weights,
+                &mut *d,
+                output_bias,
+                rht_factors,
+                std::slice::from_ref(&params),
+                group_count_x,
+                group_count_y,
+                encoder,
+            );
+            return Ok(());
+        }
 
         let input_aligned = k % FP_BLOCK == 0;
         let k_split = if rht_factors.is_some() {
@@ -162,7 +237,6 @@ impl GemvDispatch {
             input_aligned,
             k_split,
         };
-        let context = encoder.context();
         self.get_or_create(context, key)?.encode(
             weights,
             None::<&Allocation<Metal>>,
