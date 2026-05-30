@@ -16,11 +16,10 @@ use metal::{
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
-    DeviceExt, Metal,
-    device_capabilities::MetalDeviceCapabilities,
+    Metal,
     error::MetalError,
     kernel,
-    metal_extensions::{DeviceGeneration, LibraryPipelineExtensions},
+    metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
 use crate::{
     backends::{
@@ -42,7 +41,7 @@ pub struct MetalContext {
     timeline_value: AtomicU64,
     allocator: Rc<Allocator<Metal>>,
     peak_memory_usage: RefCell<usize>,
-    device_capabilities: MetalDeviceCapabilities,
+    gpu_core_count: u32,
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
@@ -52,13 +51,13 @@ pub struct MetalContext {
 }
 
 impl MetalContext {
+    pub fn supports_mxu(&self) -> bool {
+        self.device.supports_mxu()
+    }
+
     pub(super) fn update_peak_memory_usage(&self) {
         let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
         *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());
-    }
-
-    pub fn device_generation(&self) -> DeviceGeneration {
-        self.device_capabilities.generation
     }
 
     pub fn compute_pipeline_state(
@@ -131,7 +130,7 @@ impl Context for MetalContext {
             .new_library_with_data(kernel::MTLB)
             .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
 
-        let device_capabilities = MetalDeviceCapabilities::from_device(&device);
+        let gpu_core_count = device.gpu_core_count();
 
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = 64 * 4 * page_size.in_bytes();
@@ -148,7 +147,7 @@ impl Context for MetalContext {
             timeline_value: AtomicU64::new(0),
             allocator: Allocator::new(weak_self.clone()),
             peak_memory_usage: RefCell::new(0),
-            device_capabilities,
+            gpu_core_count,
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
             sparse_heap_pool: RefCell::new(sparse_pool),
@@ -158,15 +157,11 @@ impl Context for MetalContext {
         }))
     }
 
-    fn is_high_performance(&self) -> bool {
-        self.device_capabilities.is_high_performance()
-    }
-
     fn recommended_async_batch_size(
         &self,
         model_path: &Path,
     ) -> Result<usize, MetalError> {
-        let cores = self.device_capabilities.gpu_core_count;
+        let cores = self.gpu_core_count;
         let model_size = ModelSize::from_path(model_path)?;
         Ok(match (model_size, cores) {
             (ModelSize::Large, c) if c > 20 => 32,
@@ -176,11 +171,6 @@ impl Context for MetalContext {
             (ModelSize::Small, c) if c > 10 => 128,
             (ModelSize::Small, _) => 64,
         })
-    }
-
-    fn debug_active(&self) -> bool {
-        let upper = std::env::var("METAL_DEVICE_WRAPPER_TYPE").unwrap_or_default().to_ascii_uppercase();
-        matches!(upper.as_str(), "1" | "YES" | "TRUE")
     }
 
     fn create_buffer(

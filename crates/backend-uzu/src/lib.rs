@@ -37,10 +37,7 @@ pub mod _private {
         forward_pass::{
             cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
         },
-        language_model::{
-            language_model_generator_context::LanguageModelGeneratorContext,
-            sampler::{ArgmaxSampler, LogitsSampler},
-        },
+        language_model::language_model_generator_context::LanguageModelGeneratorContext,
         parameters::{ParameterLoaderError, ParameterTree},
     };
 }

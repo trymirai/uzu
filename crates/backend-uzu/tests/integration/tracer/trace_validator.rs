@@ -15,8 +15,8 @@ use std::{
 
 use backend_uzu::{
     _private::{
-        ActivationTrace, AnyModelConfig, ArgmaxSampler, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
-        LanguageModelGeneratorContext, LogitsSampler, ParameterLoaderError, ParameterTree, TokenInputs,
+        ActivationTrace, AnyModelConfig, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
+        LanguageModelGeneratorContext, ParameterLoaderError, ParameterTree, TokenInputs,
     },
     Array, ArrayElement, DataType, ParameterLoader,
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
@@ -28,10 +28,39 @@ use backend_uzu::{
     },
 };
 use half::{bf16, f16};
-use ndarray::{IxDyn, s};
+use ndarray::{ArrayView, IxDyn, s};
 use num_traits::NumCast;
 
 use crate::common;
+
+fn argmax<T: ArrayElement>(input: &[T]) -> usize {
+    input
+        .iter()
+        .enumerate()
+        .fold((0, f32::NEG_INFINITY), |(best_index, best_value), (index, &value)| {
+            let value_f32 = NumCast::from(value).unwrap_or(f32::NEG_INFINITY);
+            if value_f32 > best_value || (value_f32 == best_value && index < best_index) {
+                (index, value_f32)
+            } else {
+                (best_index, best_value)
+            }
+        })
+        .0
+}
+
+fn sample_argmax<T: ArrayElement>(logits: ArrayView<T, IxDyn>) -> Vec<u64> {
+    let mut result = Vec::with_capacity(logits.shape()[0]);
+    for row in logits.rows() {
+        let max_index = if let Some(slice) = row.as_slice_memory_order() {
+            argmax(slice)
+        } else {
+            let data: Vec<T> = row.iter().copied().collect();
+            argmax(&data)
+        };
+        result.push(max_index as u64);
+    }
+    result
+}
 // ============================================================================
 // Validation Types
 // ============================================================================
@@ -1006,15 +1035,10 @@ impl<B: Backend> TraceValidator<B> {
     fn get_tokens_from_logits(logits: &Array<B>) -> Vec<u64> {
         let data_type = logits.data_type();
         match data_type {
-            DataType::F16 => Self::get_tokens_from_logits_of_type::<f16>(logits),
-            DataType::BF16 => Self::get_tokens_from_logits_of_type::<bf16>(logits),
-            DataType::F32 => Self::get_tokens_from_logits_of_type::<f32>(logits),
+            DataType::F16 => sample_argmax(logits.as_view::<f16>()),
+            DataType::BF16 => sample_argmax(logits.as_view::<bf16>()),
+            DataType::F32 => sample_argmax(logits.as_view::<f32>()),
             _ => panic!("Unsupported data type: {:?}", data_type),
         }
-    }
-
-    fn get_tokens_from_logits_of_type<Precision: ArrayElement>(logits: &Array<B>) -> Vec<u64> {
-        let sampler = ArgmaxSampler {};
-        sampler.sample(logits.as_view::<Precision>())
     }
 }

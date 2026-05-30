@@ -9,7 +9,7 @@ use backend_uzu::{
             Backend, Context,
             kernel::{Kernels, matmul::MatmulKernel},
         },
-        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal, MetalContext},
     },
 };
 use half::bf16;
@@ -23,7 +23,7 @@ use crate::common::{
 
 fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {
     let mut paths = vec![GemmDispatchPath::Simdgroup];
-    if context.device.supports_mxu() {
+    if context.supports_mxu() {
         paths.push(GemmDispatchPath::Mxu);
     }
     paths

@@ -10,7 +10,8 @@ use crate::{
             },
         },
         cpu::{
-            BufferDowncastExt, Cpu, context::CpuContext, error::CpuError, kernel::matmul::quant::encode_quantized_gemm,
+            Cpu, buffer::BufferDowncastExt, context::CpuContext, error::CpuError,
+            kernel::matmul::quant::encode_quantized_gemm,
         },
     },
     dispatch_dtype,

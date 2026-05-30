@@ -35,14 +35,6 @@ impl Context for CpuContext {
         Ok(1)
     }
 
-    fn is_high_performance(&self) -> bool {
-        false
-    }
-
-    fn debug_active(&self) -> bool {
-        false
-    }
-
     fn create_buffer(
         &self,
         size: usize,
