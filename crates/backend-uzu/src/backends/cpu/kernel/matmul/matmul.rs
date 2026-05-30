@@ -1,5 +1,4 @@
 use crate::{
-    DataType,
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
@@ -14,6 +13,7 @@ use crate::{
             kernel::matmul::quant::encode_quantized_gemm,
         },
     },
+    data_type::DataType,
     dispatch_dtype,
     utils::pointers::{SendPtr, SendPtrMut},
 };

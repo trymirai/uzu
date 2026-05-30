@@ -1,13 +1,13 @@
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{ShortConvDecodeKernel, ShortConvPackKernel, ShortConvPrefillKernel, ShortConvTrieKernel},
     },
     config::token_mixer::short_conv::ShortConvConfig,
+    data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::short_conv_layer::ShortConvLayer,
     parameters::{ParameterLoaderError, ParameterTree},

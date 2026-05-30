@@ -8,13 +8,13 @@ pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::common::{Allocation, Backend, Encoder},
     config::weight_matrix::{
         AnyWeightMatrixSpec, Layout,
         full_precision_spec::FullPrecisionSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

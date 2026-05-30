@@ -3,7 +3,7 @@ use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
 };
 

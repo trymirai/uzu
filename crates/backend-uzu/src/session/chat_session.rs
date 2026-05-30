@@ -14,11 +14,11 @@ use std::{
 use tokenizers::Tokenizer;
 
 use crate::{
-    DataType,
     backends::{common::Backend, select_backend},
     config::{
         model::language_model::LanguageModelConfig, token_codec::AnyTokenCodecConfig, token_mixer::AnyTokenMixerConfig,
     },
+    data_type::DataType,
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
         grammar::{CompiledGrammar, create_compiled_grammar},

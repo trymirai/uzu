@@ -3,9 +3,9 @@ use ndarray::ArrayView2;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
-    DataType,
     array::{Array, ArrayContextExt},
     backends::common::{Allocation, Backend},
+    data_type::DataType,
     encodable_block::DecoderArguments,
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
 };

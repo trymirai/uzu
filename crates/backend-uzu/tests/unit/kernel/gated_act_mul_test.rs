@@ -1,13 +1,14 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel,
         },
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::bf16;
 use num_traits::Float;

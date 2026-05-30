@@ -1,7 +1,7 @@
 use derive_more::Display;
 use proc_macros::uzu_config;
 
-use crate::DataType;
+use crate::data_type::DataType;
 
 #[repr(C)]
 #[derive(Display, Copy, Eq, Hash)]

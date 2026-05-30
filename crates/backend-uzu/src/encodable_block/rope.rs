@@ -1,12 +1,12 @@
 //! Rope (Rotary Position Embedding) encodable.
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, RopeKernel},
     },
+    data_type::DataType,
     forward_pass::model_shape::ModelShape,
 };
 

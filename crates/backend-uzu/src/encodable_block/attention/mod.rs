@@ -10,7 +10,6 @@ use thiserror::Error;
 
 use super::{Linear, QKVNorm, QkUnpack, Rope, linear::LinearBlockError, qkv_norm::QKVNormError};
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
@@ -23,6 +22,7 @@ use crate::{
         },
     },
     config::token_mixer::attention::AttentionConfig,
+    data_type::DataType,
     forward_pass::{
         cache_layers::LayerCacheAccess,
         kv_cache_layer::{KVCacheLayer, KVCacheLayerState},

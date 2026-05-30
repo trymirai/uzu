@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
+use crate::{array::ArrayElement, backends::common::gpu_types::QuantizationMethod};
 
 /// CPU reference implementation of quantized matrix-vector multiply.
 ///

@@ -1,12 +1,13 @@
 use std::mem::{MaybeUninit, size_of};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::common::{
         AllocationType, Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
+    data_type::DataType,
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use num_traits::{Float, NumCast};

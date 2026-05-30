@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
@@ -10,6 +10,7 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use num_traits::Float;
 

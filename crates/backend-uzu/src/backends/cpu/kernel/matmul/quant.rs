@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 
 use crate::{
-    ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Buffer, Encoder,
@@ -11,6 +11,7 @@ use crate::{
         },
         cpu::{Cpu, kernel::matmul::gemm::qmm_transposed::qmm_transposed},
     },
+    data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
 };
 

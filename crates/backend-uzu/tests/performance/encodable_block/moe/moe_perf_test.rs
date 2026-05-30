@@ -3,7 +3,6 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGather};
 use crate::{
-    DataType,
     backends::common::{
         Backend, Encoder, Kernels,
         kernel::{
@@ -11,6 +10,7 @@ use crate::{
             MoeScatterBucketsMapKernel,
         },
     },
+    data_type::DataType,
 };
 
 #[macro_use]

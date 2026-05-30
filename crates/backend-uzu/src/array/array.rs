@@ -1,11 +1,11 @@
 use std::fmt;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef,
     },
+    data_type::DataType,
 };
 
 pub struct Array<B: Backend, BufferRange: AsBufferRangeMut<Buffer: Buffer<Backend = B>> = Allocation<B>> {

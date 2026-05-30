@@ -3,8 +3,9 @@ use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::{
-    ArrayElement, DataType,
+    array::ArrayElement,
     backends::common::gpu_types::{QuantizationMethod, QuantizationMode},
+    data_type::DataType,
 };
 
 #[kernel(QuantizedEmbeddingLookup)]

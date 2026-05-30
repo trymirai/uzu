@@ -8,9 +8,9 @@ use thiserror::Error;
 
 use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
 use crate::{
-    Array, ArrayElement, DataType,
-    array::size_for_shape,
+    array::{Array, ArrayElement, size_for_shape},
     backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
+    data_type::DataType,
     utils::{fs::file_read_exact_at, strict_serde::DeserializeStrictOwned},
 };
 

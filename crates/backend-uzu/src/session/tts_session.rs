@@ -25,7 +25,6 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tokenizers::Tokenizer;
 
 use crate::{
-    DataType,
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState},
@@ -38,6 +37,7 @@ use crate::{
         },
     },
     config::{model::tts_model::TTSModelConfig, token_codec::tts_codec::TTSCodecConfig},
+    data_type::DataType,
     encodable_block::{Decoder, KVCacheUpdate, Sampling as GpuSampling},
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,

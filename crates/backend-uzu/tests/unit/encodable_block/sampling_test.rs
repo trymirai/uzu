@@ -5,7 +5,6 @@ use rand::seq::SliceRandom;
 // for Vec::shuffle
 use super::block::SamplingBlock;
 use crate::{
-    DataType,
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -13,6 +12,7 @@ use crate::{
         },
         metal::Metal,
     },
+    data_type::DataType,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 

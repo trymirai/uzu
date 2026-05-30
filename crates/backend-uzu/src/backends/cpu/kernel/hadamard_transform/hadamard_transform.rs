@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::HadamardTransformOrder};
+use crate::{array::ArrayElement, backends::common::gpu_types::HadamardTransformOrder};
 
 #[kernel(HadamardTransform)]
 #[variants(T, f32, f16, bf16)]

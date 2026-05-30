@@ -20,7 +20,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     let params = kernel.parameters.iter().map(|p| {
         let name = format_ident!("{}", p.name.as_ref());
         let ty = match &p.ty {
-            KernelParameterType::Type => quote! { crate::DataType },
+            KernelParameterType::Type => quote! { crate::data_type::DataType },
             KernelParameterType::Value(ty) => {
                 let ty: Type = syn::parse_str(ty.as_ref()).unwrap();
                 quote! { #ty }

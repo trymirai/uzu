@@ -1,5 +1,4 @@
 use backend_uzu::{
-    DataType,
     backends::common::{
         Backend, Encoder, Kernels,
         gpu_types::{ActivationType, activation_silu_alpha},
@@ -8,6 +7,7 @@ use backend_uzu::{
             MoeScatterBucketsMapKernel,
         },
     },
+    data_type::DataType,
 };
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};

@@ -1,7 +1,6 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
-    DataType,
     backends::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
@@ -13,6 +12,7 @@ use crate::{
         },
         metal::{Metal, context::MetalContext},
     },
+    data_type::DataType,
 };
 
 const PATH: &str = "QuantGemv";

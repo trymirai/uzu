@@ -39,7 +39,7 @@ impl VariantBind {
     pub fn constructor_argument(&self) -> TokenStream {
         let parameter_name = &self.parameter_name;
         match &self.parsed_type {
-            None => quote! { #[allow(non_snake_case)] #parameter_name: crate::DataType },
+            None => quote! { #[allow(non_snake_case)] #parameter_name: crate::data_type::DataType },
             Some(parsed_type) => {
                 quote! { #[allow(non_snake_case)] #parameter_name: #parsed_type }
             },

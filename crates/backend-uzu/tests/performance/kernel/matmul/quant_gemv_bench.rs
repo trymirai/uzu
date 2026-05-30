@@ -1,5 +1,5 @@
 use backend_uzu::{
-    ArrayElement,
+    array::ArrayElement,
     backends::common::{
         Allocation, Backend, Context, Kernels, gpu_types::QuantizationMethod, kernel::QuantizedMatmulQmvFastKernel,
     },

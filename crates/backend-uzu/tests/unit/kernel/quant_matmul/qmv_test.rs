@@ -1,11 +1,12 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, gpu_types::QuantizationMethod, kernel::QuantizedMatmulQmvKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use num_traits::Float;
 

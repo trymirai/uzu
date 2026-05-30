@@ -3,13 +3,13 @@
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, LayerNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

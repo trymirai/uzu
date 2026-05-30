@@ -1,4 +1,4 @@
-use crate::DataType;
+use crate::data_type::DataType;
 
 pub fn size_for_shape(
     shape: &[usize],
