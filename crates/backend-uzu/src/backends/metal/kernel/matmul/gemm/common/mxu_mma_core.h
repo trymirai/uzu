@@ -104,7 +104,7 @@ struct MxuMmaCore {
   using AccumFragment = uzu::matmul::
       Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
 
-  template <typename Loader, bool ALIGNED_M, bool ALIGNED_N>
+  template <bool ALIGNED_M, bool ALIGNED_N, typename Loader>
   static METAL_FUNC AccumFragment quant_k_loop(
       const device AT* a_simdgroup,
       threadgroup BT* b_shared,
@@ -309,95 +309,68 @@ struct MxuMmaCore {
                           block_col * weights_row_stride_bytes;
                       const device BT* scales_offset =
                           scales + block_col * groups_per_row;
-                      if constexpr (
-                          B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
-                      ) {
-                        const device BT* biases_offset =
-                            biases + block_col * groups_per_row;
-                        thread BLoaderScaleBias loader_b(
-                            weights_block,
-                            scales_offset,
-                            biases_offset,
-                            k_elements,
-                            b_shared,
-                            thread_context.simdgroup_index,
-                            thread_context.simd_lane_id
-                        );
-                        return quant_k_loop<
-                            BLoaderScaleBias,
-                            aligned_m.value,
-                            aligned_n.value>(
-                            a_simdgroup,
-                            b_shared,
-                            int(params->leading_dimension_a),
-                            aligned_k_iterations_q,
-                            simdgroup_limit_m,
-                            simdgroup_limit_n,
-                            tile_col_offset,
-                            tile_block_cols,
-                            loader_b,
-                            thread_context
-                        );
-                      } else if constexpr (
-                          B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-                      ) {
-                        const int zero_point_stride_per_row =
-                            (BITS == 4) ? ((groups_per_row + 1) / 2)
-                                        : groups_per_row;
-                        const device uint8_t* zero_points_row_start =
-                            zero_points + block_col * zero_point_stride_per_row;
-                        thread BLoaderScaleZeroPoint loader_b(
-                            weights_block,
-                            scales_offset,
-                            zero_points_row_start,
-                            k_elements,
-                            groups_per_row,
-                            b_shared,
-                            thread_context.simdgroup_index,
-                            thread_context.simd_lane_id
-                        );
-                        return quant_k_loop<
-                            BLoaderScaleZeroPoint,
-                            aligned_m.value,
-                            aligned_n.value>(
-                            a_simdgroup,
-                            b_shared,
-                            int(params->leading_dimension_a),
-                            aligned_k_iterations_q,
-                            simdgroup_limit_m,
-                            simdgroup_limit_n,
-                            tile_col_offset,
-                            tile_block_cols,
-                            loader_b,
-                            thread_context
-                        );
-                      } else {
-                        thread BLoaderScaleSymmetric loader_b(
-                            weights_block,
-                            scales_offset,
-                            nullptr,
-                            k_elements,
-                            groups_per_row,
-                            b_shared,
-                            thread_context.simdgroup_index,
-                            thread_context.simd_lane_id
-                        );
-                        return quant_k_loop<
-                            BLoaderScaleSymmetric,
-                            aligned_m.value,
-                            aligned_n.value>(
-                            a_simdgroup,
-                            b_shared,
-                            int(params->leading_dimension_a),
-                            aligned_k_iterations_q,
-                            simdgroup_limit_m,
-                            simdgroup_limit_n,
-                            tile_col_offset,
-                            tile_block_cols,
-                            loader_b,
-                            thread_context
-                        );
-                      }
+
+                      auto loader_b = [&]() {
+                        if constexpr (
+                            B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
+                        ) {
+                          const device BT* biases_offset =
+                              biases + block_col * groups_per_row;
+                          return BLoaderScaleBias(
+                              weights_block,
+                              scales_offset,
+                              biases_offset,
+                              k_elements,
+                              b_shared,
+                              thread_context.simdgroup_index,
+                              thread_context.simd_lane_id
+                          );
+                        } else if constexpr (
+                            B_PROLOGUE ==
+                            GemmBPrologueKind::ScaleZeroPointDequant
+                        ) {
+                          const int zero_point_stride_per_row =
+                              (BITS == 4) ? ((groups_per_row + 1) / 2)
+                                          : groups_per_row;
+                          const device uint8_t* zero_points_row_start =
+                              zero_points +
+                              block_col * zero_point_stride_per_row;
+                          return BLoaderScaleZeroPoint(
+                              weights_block,
+                              scales_offset,
+                              zero_points_row_start,
+                              k_elements,
+                              groups_per_row,
+                              b_shared,
+                              thread_context.simdgroup_index,
+                              thread_context.simd_lane_id
+                          );
+                        } else {
+                          return BLoaderScaleSymmetric(
+                              weights_block,
+                              scales_offset,
+                              nullptr,
+                              k_elements,
+                              groups_per_row,
+                              b_shared,
+                              thread_context.simdgroup_index,
+                              thread_context.simd_lane_id
+                          );
+                        }
+                      }();
+
+                      return quant_k_loop<aligned_m.value, aligned_n.value>(
+                          a_simdgroup,
+                          b_shared,
+                          int(params->leading_dimension_a),
+                          aligned_k_iterations_q,
+                          simdgroup_limit_m,
+                          simdgroup_limit_n,
+                          tile_col_offset,
+                          tile_block_cols,
+                          loader_b,
+                          thread_context
+                      );
                     }
                   }();
 

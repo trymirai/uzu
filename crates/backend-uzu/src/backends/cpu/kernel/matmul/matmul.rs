@@ -128,17 +128,16 @@ impl MatmulCpuKernel {
         let output_data_type = self.output_data_type;
         let a_buffer_range = a.as_buffer_range_ref();
         let b_buffer_range = weights.as_buffer_range_ref();
+        let d_buffer_range = d.as_buffer_range_mut();
         let a_byte_off = a_buffer_range.range().start + a_offset;
         let b_byte_off = b_buffer_range.range().start + b_offset;
+        let d_byte_off = d_buffer_range.range().start;
 
         let a_ptr = SendPtr(unsafe { &*a_buffer_range.buffer().get() }.as_ptr().wrapping_byte_add(a_byte_off));
         let b_ptr =
             SendPtr(unsafe { &*b_buffer_range.buffer().downcast().get() }.as_ptr().wrapping_byte_add(b_byte_off));
-        let d_ptr = {
-            let d_buffer_range = d.as_buffer_range_mut();
-            let d_byte_off = d_buffer_range.range().start;
-            SendPtrMut(unsafe { (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8 })
-        };
+        let d_ptr =
+            SendPtrMut(unsafe { (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_byte_off) as *mut u8 });
 
         let bias_ptr = bias_alloc.map(|bias| {
             let bias_buffer_range = bias.as_buffer_range_ref();
