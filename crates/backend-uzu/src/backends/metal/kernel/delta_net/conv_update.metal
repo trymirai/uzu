@@ -8,8 +8,8 @@ using namespace metal;
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(DeltaNetConvUpdate)(
-    device const T* conv_weight,
-    device const T* bias OPTIONAL(has_bias),
+    device const float* conv_weight,
+    device const float* bias OPTIONAL(has_bias),
     device T* in_out,
     device T* state,
     constant const uint& kernel_size,
@@ -20,7 +20,7 @@ PUBLIC KERNEL(DeltaNetConvUpdate)(
 ) {
   const uint tap_count = kernel_size - 1;
   const uint state_offset = channel_idx * state_stride;
-  const device T* weight_row = conv_weight + channel_idx * kernel_size;
+  const device float* weight_row = conv_weight + channel_idx * kernel_size;
 
   float x = float(in_out[channel_idx]);
 

@@ -23,7 +23,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     device const float* beta_buf,
     device const float* decay_buf,
     device const T* in_proj,
-    device T* state,
+    device float* state,
     device T* out,
     constant const uint& num_v_heads,
     constant const uint& num_k_heads,
@@ -61,7 +61,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   device const T* v_ptr = in_proj + 2 * key_dim + hv_idx * head_v_dim + dv_idx;
 
   // State layout: [Hv, Dv, Dk] — contiguous along Dk
-  device T* state_ptr =
+  device float* state_ptr =
       state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
   device T* out_ptr = out + hv_idx * head_v_dim + dv_idx;
 
@@ -120,6 +120,6 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   if (active) {
     METAL_PRAGMA_UNROLL
     for (uint i = 0; i < elems_per_thread; ++i)
-      state_ptr[i] = static_cast<T>(s[i]);
+      state_ptr[i] = s[i];
   }
 }

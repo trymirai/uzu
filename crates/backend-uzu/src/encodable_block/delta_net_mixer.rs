@@ -55,7 +55,9 @@ pub struct DeltaNetMixer<B: Backend> {
     a_log: Allocation<B>,
     dt_bias: Allocation<B>,
     norm_weight: Allocation<B>,
-    inner_data_type: DataType,
+    // Activation/scratch dtype (model dtype, e.g. bf16). The recurrent ssm_state
+    // and small weights (a_log/dt_bias/norm/conv) stay f32 inside the kernels.
+    outer_data_type: DataType,
 }
 
 pub struct DeltaNetArguments<'a, B: Backend> {
@@ -109,7 +111,7 @@ impl<B: Backend> DeltaNetMixer<B> {
                 context,
                 outer_data_type,
                 outer_data_type,
-                inner_data_type,
+                outer_data_type,
                 &parameter_tree.subtree("in_proj")?,
             )?;
 
@@ -119,7 +121,7 @@ impl<B: Backend> DeltaNetMixer<B> {
             false,
             context,
             outer_data_type,
-            inner_data_type,
+            outer_data_type,
             outer_data_type,
             &parameter_tree.subtree("out_proj")?,
         )?;
@@ -141,22 +143,22 @@ impl<B: Backend> DeltaNetMixer<B> {
             .read_allocation()?;
 
         // Create kernels
-        let conv_update = <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, inner_data_type, has_bias)
+        let conv_update = <B::Kernels as Kernels>::DeltaNetConvUpdateKernel::new(context, outer_data_type, has_bias)
             .map_err(DeltaNetMixerError::BackendError)?;
         let delta_net_update =
-            <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, inner_data_type, config.head_dim as u32)
+            <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, outer_data_type, config.head_dim as u32)
                 .map_err(DeltaNetMixerError::BackendError)?;
-        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, inner_data_type)
+        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, outer_data_type)
             .map_err(DeltaNetMixerError::BackendError)?;
-        let conv_scan = <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, inner_data_type, has_bias)
+        let conv_scan = <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, outer_data_type, has_bias)
             .map_err(DeltaNetMixerError::BackendError)?;
         let prefill_prep =
-            <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(context, inner_data_type, config.head_dim as u32)
+            <B::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(context, outer_data_type, config.head_dim as u32)
                 .map_err(DeltaNetMixerError::BackendError)?;
         let delta_net_prefill =
-            <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, inner_data_type, config.head_dim as u32)
+            <B::Kernels as Kernels>::DeltaNetPrefillKernel::new(context, outer_data_type, config.head_dim as u32)
                 .map_err(DeltaNetMixerError::BackendError)?;
-        let norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, inner_data_type)
+        let norm_gate = <B::Kernels as Kernels>::DeltaNetNormGateKernel::new(context, outer_data_type)
             .map_err(DeltaNetMixerError::BackendError)?;
 
         Ok((
@@ -184,7 +186,7 @@ impl<B: Backend> DeltaNetMixer<B> {
                 a_log,
                 dt_bias,
                 norm_weight,
-                inner_data_type,
+                outer_data_type,
             },
             in_projection_input_hadamard_factors,
         ))
@@ -221,7 +223,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         let conv_dim = self.conv_dim;
         let total_proj_dim = self.total_proj_dim;
         let mut padded = encoder
-            .allocate_scratch(size_for_shape(&[suffix_length + state_stride, total_proj_dim], self.inner_data_type))?;
+            .allocate_scratch(size_for_shape(&[suffix_length + state_stride, total_proj_dim], self.outer_data_type))?;
 
         self.conv_pack.encode(
             &layer.conv_state,
@@ -259,7 +261,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         let mut out =
-            encoder.allocate_scratch(size_for_shape(&[active_row_count, self.value_dim], self.inner_data_type))?;
+            encoder.allocate_scratch(size_for_shape(&[active_row_count, self.value_dim], self.outer_data_type))?;
         self.delta_net_update.encode(
             in_proj,
             &self.a_log,
@@ -312,7 +314,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         );
 
         let mut out =
-            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.value_dim], self.inner_data_type))?;
+            encoder.allocate_scratch(size_for_shape(&[suffix_length, self.value_dim], self.outer_data_type))?;
         self.delta_net_prefill.encode(
             &prep_q_norm,
             &prep_k_norm,

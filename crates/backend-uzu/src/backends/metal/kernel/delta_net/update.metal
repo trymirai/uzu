@@ -20,10 +20,10 @@ VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(DeltaNetUpdate)(
     device const T* in_proj,
-    device const T* a_log,
-    device const T* dt_bias,
-    device const T* norm_weight,
-    device T* state,
+    device const float* a_log,
+    device const float* dt_bias,
+    device const float* norm_weight,
+    device float* state,
     device T* out,
     constant const uint& num_v_heads,
     constant const uint& num_k_heads,
@@ -110,12 +110,14 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   float sk_partial = 0.0f;
   const uint state_row_offset =
       hv_idx * head_v_dim * HEAD_K_DIM + vi * HEAD_K_DIM;
-  const uint k_base = ki_part * bk;
+  // Interleaved k-ownership (Task 2): lane `ki_part` owns k = ki_part,
+  // ki_part+SPLIT, ... -> 4 contiguous floats per quad iteration (coalesced).
   if (active) {
     for (uint j = 0; j < bk; ++j) {
-      float s = float(state[state_row_offset + k_base + j]);
-      sq_partial += s * shared_q[k_base + j];
-      sk_partial += s * shared_k[k_base + j];
+      const uint kk = ki_part + UPDATE_K_SPLIT * j;
+      float s = float(state[state_row_offset + kk]);
+      sq_partial += s * shared_q[kk];
+      sk_partial += s * shared_k[kk];
     }
   }
 
@@ -130,9 +132,10 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   // State update — each thread updates its k-part
   if (active) {
     for (uint j = 0; j < bk; ++j) {
-      uint idx = state_row_offset + k_base + j;
+      const uint kk = ki_part + UPDATE_K_SPLIT * j;
+      uint idx = state_row_offset + kk;
       float s = float(state[idx]);
-      state[idx] = static_cast<T>(decay * s + shared_k[k_base + j] * delta_i);
+      state[idx] = decay * s + shared_k[kk] * delta_i;
     }
   }
 
