@@ -3,7 +3,7 @@ use std::{os::raw::c_void, ptr::NonNull};
 use ndarray::{ArrayView, Dimension, IxDyn};
 
 use crate::{
-    Array, ArrayElement,
+    array::{Array, ArrayElement},
     backends::common::{AsBufferRangeMut, Backend, DenseBuffer},
 };
 

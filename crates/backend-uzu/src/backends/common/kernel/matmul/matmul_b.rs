@@ -1,9 +1,9 @@
 use crate::{
-    DataType,
     backends::common::{
         Allocation, AsBufferRangeRef, Backend,
         gpu_types::{QuantizationMode, gemm::GemmWeightPrologueKind},
     },
+    data_type::DataType,
 };
 
 pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {

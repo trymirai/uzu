@@ -3,7 +3,7 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{
         common::{
             Backend, Context,

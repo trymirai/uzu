@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
@@ -11,6 +10,7 @@ use crate::{
         },
     },
     config::token_mixer::delta_net::DeltaNetConfig,
+    data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::delta_net_layer::DeltaNetLayer,
     parameters::{ParameterLoaderError, ParameterTree},

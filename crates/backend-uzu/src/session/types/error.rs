@@ -1,4 +1,4 @@
-use crate::{DataType, classifier::ClassifierError, session::config::TtsRunConfigError};
+use crate::{classifier::ClassifierError, data_type::DataType, session::config::TtsRunConfigError};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TtsModelConfigError {

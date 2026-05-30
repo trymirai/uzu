@@ -3,9 +3,9 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
     config::{transformer::TransformerConfig, transformer_layer::TransformerLayerConfig},
+    data_type::DataType,
     encodable_block::{
         Attention, AttentionError, LayerArguments, Mlp, MlpBlockError, Normalization, NormalizationError, QkUnpack,
         Rope,

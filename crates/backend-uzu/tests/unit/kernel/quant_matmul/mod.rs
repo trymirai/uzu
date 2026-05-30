@@ -18,7 +18,7 @@ macro_rules! for_each_qmv_float_type {
 mod qmv_fast_test;
 mod qmv_test;
 
-use backend_uzu::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
+use backend_uzu::{array::ArrayElement, backends::common::gpu_types::QuantizationMethod};
 use num_traits::Float;
 
 pub(super) struct Input<T: ArrayElement + Float> {

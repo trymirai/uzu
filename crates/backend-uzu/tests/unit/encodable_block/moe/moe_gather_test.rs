@@ -1,5 +1,5 @@
 use backend_uzu::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{
         common::{Backend, Encoder},
         cpu::Cpu,

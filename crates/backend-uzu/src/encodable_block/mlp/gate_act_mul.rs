@@ -1,8 +1,8 @@
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel},
     config::activation::AnyActivation,
+    data_type::DataType,
 };
 
 pub struct MlpGateActMulEncodable<B: Backend> {

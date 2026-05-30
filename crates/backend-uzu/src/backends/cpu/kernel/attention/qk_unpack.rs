@@ -1,7 +1,7 @@
 use half::{bf16, f16};
 use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(QkUnpack)]
 #[variants(T, f32, f16, bf16)]

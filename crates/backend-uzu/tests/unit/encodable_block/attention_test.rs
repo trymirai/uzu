@@ -5,7 +5,6 @@ use test_tag::tag;
 
 use super::{AttentionGemmArguments, AttentionGemmBlock};
 use crate::{
-    DataType,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
@@ -13,6 +12,7 @@ use crate::{
         },
         metal::Metal,
     },
+    data_type::DataType,
 };
 
 #[path = "../../common/mod.rs"]

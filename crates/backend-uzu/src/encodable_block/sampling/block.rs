@@ -3,7 +3,6 @@ use std::mem::size_of;
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::ArgmaxPair,
@@ -12,6 +11,7 @@ use crate::{
             TopKKernel, TopPKernel,
         },
     },
+    data_type::DataType,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 

@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 
 // Single-token delta net update: decay state, apply delta rule, RMSNorm + SiLU gate.
 // Steps per v-head:

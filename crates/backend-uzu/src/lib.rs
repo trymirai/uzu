@@ -2,15 +2,15 @@
 #[cfg(test)]
 extern crate self as backend_uzu;
 
-mod array;
+pub mod array;
 mod audio;
 mod classifier;
 mod config;
-mod data_type;
+pub mod data_type;
 mod encodable_block;
 mod forward_pass;
 mod language_model;
-mod parameters;
+pub mod parameters;
 mod speculators;
 mod trie;
 mod utils;
@@ -20,12 +20,9 @@ pub mod inference;
 pub mod prelude;
 pub mod session;
 
-pub use array::{Array, ArrayContextExt};
 #[cfg(metal_backend)]
 pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
-pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
-pub use parameters::{ParameterLoader, read_safetensors_metadata};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
 #[cfg(feature = "tracing")]
@@ -38,6 +35,5 @@ pub mod _private {
             cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
         },
         language_model::language_model_generator_context::LanguageModelGeneratorContext,
-        parameters::{ParameterLoaderError, ParameterTree},
     };
 }

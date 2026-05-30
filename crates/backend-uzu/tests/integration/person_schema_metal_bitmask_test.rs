@@ -3,11 +3,12 @@
 use std::path::PathBuf;
 
 use backend_uzu::{
-    Array, DataType,
+    array::Array,
     backends::{
         common::{AllocationType, Backend, Context},
         metal::Metal,
     },
+    data_type::DataType,
 };
 use metal::MTLDevice;
 use schemars::JsonSchema;

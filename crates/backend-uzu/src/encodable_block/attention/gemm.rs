@@ -4,12 +4,12 @@ use std::{
 };
 
 use crate::{
-    DataType,
     backends::common::{
         Allocation, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
         gpu_types::{AttnParams, ring::RingParams},
         kernel::AttentionGemmKernel,
     },
+    data_type::DataType,
 };
 
 const BQ: usize = 32;

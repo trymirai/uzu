@@ -3,7 +3,7 @@ use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{common::gpu_types::QuantizationMethod, cpu::kernel::matmul::gemv::qmv::qmv},
 };
 

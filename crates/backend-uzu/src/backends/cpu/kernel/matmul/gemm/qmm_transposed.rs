@@ -1,6 +1,6 @@
 use num_traits::Float;
 
-use crate::{ArrayElement, backends::common::gpu_types::QuantizationMethod};
+use crate::{array::ArrayElement, backends::common::gpu_types::QuantizationMethod};
 
 pub fn qmm_transposed<T: ArrayElement + Float>(
     weights: *const u32,

@@ -3,11 +3,11 @@
 use backend_uzu::forward_pass::kv_cache_layer::KVCacheLayerTrait;
 
 use crate::{
-    DataType,
     backends::{
         common::{Backend, Context, Encoder},
         metal::Metal,
     },
+    data_type::DataType,
     encodable_block::KVCacheUpdate,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };

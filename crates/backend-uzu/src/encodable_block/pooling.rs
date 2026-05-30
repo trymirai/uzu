@@ -1,13 +1,13 @@
 //! Pooling encodable for sequence-level aggregation.
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, PoolingClsKernel, PoolingMeanKernel},
     },
     config::classifier::PoolingType,
+    data_type::DataType,
 };
 
 enum PoolingKernel<B: Backend> {

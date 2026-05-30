@@ -1,7 +1,7 @@
 use num_traits::Float;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     utils::pointers::{SendPtr, SendPtrMut},
 };
 

@@ -1,11 +1,12 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TensorAddScaleKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;

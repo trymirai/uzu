@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use backend_uzu::{
-    ArrayElement,
+    array::ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddSwapKernel},
 };
 use half::{bf16, f16};

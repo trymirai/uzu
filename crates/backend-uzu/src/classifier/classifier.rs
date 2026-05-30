@@ -4,9 +4,9 @@ use std::{collections::HashMap, path::Path, time::Instant};
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
-    DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::model::classifier_model::ClassifierModelConfig,
+    data_type::DataType,
     encodable_block::LayerArguments,
     forward_pass::token_inputs::TokenInputs,
     session::types::Error,

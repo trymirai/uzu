@@ -2,7 +2,6 @@ use thiserror::Error;
 
 use super::{Linear, OutputHadamardLinearError};
 use crate::{
-    DataType,
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::HadamardTransformOrder,
@@ -12,6 +11,7 @@ use crate::{
         AnyWeightMatrixSpec,
         hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
     },
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

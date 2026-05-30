@@ -1,7 +1,7 @@
 use std::{mem::size_of, rc::Rc};
 
 use backend_uzu::{
-    ArrayElement,
+    array::ArrayElement,
     backends::common::{
         Allocation, AllocationType, AsBufferRangeMut, Backend, Context, DenseBuffer, Encoder, SparseBuffer,
         SparseBufferExt,

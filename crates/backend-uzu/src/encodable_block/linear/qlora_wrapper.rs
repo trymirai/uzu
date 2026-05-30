@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
@@ -14,6 +13,7 @@ use crate::{
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
+    data_type::DataType,
     encodable_block::{
         Linear,
         linear::{LinearMatmul, LinearMatmulError},

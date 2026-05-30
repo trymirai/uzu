@@ -7,11 +7,11 @@
 //! - Numerical correctness against CPU reference
 
 use backend_uzu::{
-    DataType,
     backends::common::{
         Encoder,
         gpu_types::{ActivationType, activation_silu_alpha},
     },
+    data_type::DataType,
 };
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};

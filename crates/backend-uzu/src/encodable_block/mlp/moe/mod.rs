@@ -10,7 +10,6 @@ use gather::MoeGather;
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
@@ -24,6 +23,7 @@ use crate::{
         mlp::{mixture_of_experts::MixtureOfExpertsConfig, routing_function::AnyRoutingFunction},
         weight_matrix::{AnyWeightMatrixSpec, Layout, full_precision_spec::FullPrecisionSpec},
     },
+    data_type::DataType,
     encodable_block::mlp::Mlp,
     parameters::{ParameterLoaderError, ParameterTree},
 };

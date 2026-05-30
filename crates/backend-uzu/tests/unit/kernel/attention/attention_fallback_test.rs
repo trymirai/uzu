@@ -1,5 +1,4 @@
 use backend_uzu::{
-    DataType,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
@@ -11,6 +10,7 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::bf16;
 
