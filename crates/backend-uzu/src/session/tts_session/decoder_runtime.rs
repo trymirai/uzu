@@ -742,6 +742,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                             token_parents: token_inputs.token_parents(),
                             token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
                             rope_buffers: self.ctx.shared_buffers.rope_buffers_for_layer(layer.layer_index),
+                            per_layer_inputs: None,
                             sampling_start,
                             sampling_length,
                             cache_access: Some(cache_layers.cache_for_layer(layer.layer_index)),

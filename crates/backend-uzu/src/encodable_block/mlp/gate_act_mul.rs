@@ -1,12 +1,12 @@
 use crate::{
     DataType,
     array::size_for_shape,
-    backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::MlpGateActMulKernel},
+    backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel},
     config::activation::AnyActivation,
 };
 
 pub struct MlpGateActMulEncodable<B: Backend> {
-    kernel: <B::Kernels as Kernels>::MlpGateActMulKernel,
+    kernel: <B::Kernels as Kernels>::GatedActMulKernel,
     activation: AnyActivation,
     hidden_dim: usize,
     data_type: DataType,
@@ -21,7 +21,8 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         hidden_dim: usize,
         hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, B::Error> {
-        let kernel = <B::Kernels as Kernels>::MlpGateActMulKernel::new(context, data_type, hadamard_factors.is_some())?;
+        let kernel =
+            <B::Kernels as Kernels>::GatedActMulKernel::new(context, data_type, true, hadamard_factors.is_some())?;
         Ok(Self {
             kernel,
             activation,
@@ -43,10 +44,13 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         let mut hidden = encoder.allocate_scratch(size_for_shape(&[batch_dim, self.hidden_dim], self.data_type))?;
         self.kernel.encode(
             fused_up,
+            None::<&Allocation<B>>,
             &mut hidden,
             self.hadamard_factors.as_ref(),
-            self.hidden_dim as i32,
-            batch_dim as i32,
+            self.hidden_dim as u32,
+            batch_dim as u32,
+            0,
+            0,
             self.activation.act_type(),
             encoder,
         );
