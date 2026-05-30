@@ -87,6 +87,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         pub trait #trait_name: Sized {
             type Backend: crate::backends::common::Backend<Kernels: Kernels<#trait_name = Self>>;
 
+            #[allow(non_snake_case)]
             fn new(context: &<Self::Backend as crate::backends::common::Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as crate::backends::common::Backend>::Error>;
 
             fn encode<#(#encode_generics),*>(&self, #(#args),*)#maybe_where_block;
