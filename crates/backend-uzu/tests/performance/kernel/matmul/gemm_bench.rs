@@ -10,7 +10,7 @@ use backend_uzu::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
-        metal::{GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -26,7 +26,7 @@ use crate::{
 
 #[uzu_bench]
 fn bench_gemm(c: &mut Criterion) {
-    let context = MetalContext::new().expect("Metal context");
+    let context = crate::common::shared_metal_context();
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -35,8 +35,6 @@ fn bench_gemm(c: &mut Criterion) {
     )
     .expect("MatmulKernel");
 
-    // GEMM = simdgroup path (every Metal GPU); GEMM_MXU = MXU path, only on
-    // hardware that supports it (skipped elsewhere instead of panicking).
     let paths: &[(&str, GemmDispatchPath)] = if context.supports_mxu() {
         &[("GEMM", GemmDispatchPath::Simdgroup), ("GEMM_MXU", GemmDispatchPath::Mxu)]
     } else {

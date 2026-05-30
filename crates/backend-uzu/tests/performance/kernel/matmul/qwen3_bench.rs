@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayElement,
     backends::{
         common::{
-            Backend, Context,
+            Backend,
             gpu_types::QuantizationMethod,
             kernel::{Kernels, matmul::MatmulKernel},
         },
@@ -55,7 +55,7 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
 
 #[uzu_bench]
 fn bench_qwen3_layers(c: &mut Criterion) {
-    let context = MetalContext::new().expect("Metal context");
+    let context = crate::common::shared_metal_context();
     bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleBias);
     bench_qwen3_layers_typed::<bf16>(c, &context, "ZP_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleZeroPoint);
 }

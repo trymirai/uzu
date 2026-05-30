@@ -4,7 +4,7 @@ use backend_uzu::{
     ArrayElement,
     backends::{
         common::{
-            Backend, Context,
+            Backend,
             gpu_types::QuantizationMethod,
             kernel::{Kernels, matmul::MatmulKernel},
         },
@@ -56,7 +56,7 @@ fn bench_quant_gemv_typed<T: ArrayElement + Float>(
 
 #[uzu_bench]
 fn bench_quant_gemv(c: &mut Criterion) {
-    let context = MetalContext::new().expect("Metal context");
+    let context = crate::common::shared_metal_context();
     bench_quant_gemv_typed::<bf16>(&context, c, "ScaleBias_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
     bench_quant_gemv_typed::<bf16>(&context, c, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
     bench_quant_gemv_typed::<bf16>(&context, c, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
