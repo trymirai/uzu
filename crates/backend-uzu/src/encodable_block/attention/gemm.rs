@@ -66,8 +66,8 @@ impl<B: Backend> AttentionGemmBlock<B> {
             16
         };
         let head_dim = args.head_dim;
-        let align_q = (args.suffix_length % BQ) == 0;
-        let align_k = (args.sequence_length % bk) == 0;
+        let align_q = args.suffix_length.is_multiple_of(BQ);
+        let align_k = args.sequence_length.is_multiple_of(bk);
         let is_kv_cache_ring = args.ring_params.is_some();
         let is_causal = args.is_causal;
         let is_trie = args.trie.is_some();
@@ -113,7 +113,7 @@ impl<B: Backend> AttentionGemmBlock<B> {
         let o_head_stride = head_dim as u64;
         let o_seq_stride = (args.num_heads * head_dim) as u64;
 
-        let nk = (args.sequence_length + bk - 1) / bk;
+        let nk = args.sequence_length.div_ceil(bk);
         let nq_aligned = args.suffix_length / BQ;
         let nk_aligned = args.sequence_length / bk;
 

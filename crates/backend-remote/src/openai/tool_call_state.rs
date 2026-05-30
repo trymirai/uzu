@@ -32,16 +32,14 @@ impl ToolCallState {
         &self,
         finalize: bool,
     ) -> OutputToolCallState {
-        if finalize {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&self.arguments) {
-                return OutputToolCallState::Finished(ToolCall {
-                    identifier: Some(self.id.clone()),
-                    name: self.name.clone(),
-                    arguments: Value {
-                        json: parsed.to_string(),
-                    },
-                });
-            }
+        if finalize && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&self.arguments) {
+            return OutputToolCallState::Finished(ToolCall {
+                identifier: Some(self.id.clone()),
+                name: self.name.clone(),
+                arguments: Value {
+                    json: parsed.to_string(),
+                },
+            });
         }
         OutputToolCallState::Candidate(self.arguments.clone())
     }

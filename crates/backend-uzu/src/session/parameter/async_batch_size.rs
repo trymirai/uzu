@@ -2,16 +2,11 @@ use std::path::Path;
 
 use crate::backends::common::{Backend, Context};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum AsyncBatchSize {
+    #[default]
     Default,
     Custom(usize),
-}
-
-impl Default for AsyncBatchSize {
-    fn default() -> Self {
-        AsyncBatchSize::Default
-    }
 }
 
 impl AsyncBatchSize {

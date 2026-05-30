@@ -162,7 +162,9 @@ pub async fn run_session(
     {
         let mut state = state.write();
         if let Some(text_to_speech_state) = text_to_speech_state_mut(&mut state) {
-            text_to_speech_state.runtime.as_ref().map(|runtime| runtime.player.stop());
+            if let Some(runtime) = text_to_speech_state.runtime.as_ref() {
+                runtime.player.stop();
+            }
             text_to_speech_state.pending_stats = None;
             text_to_speech_state.cancel_token = None;
             text_to_speech_state.status = TextToSpeechSessionStatus::Synthesizing;

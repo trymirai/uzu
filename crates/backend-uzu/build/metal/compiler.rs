@@ -121,8 +121,7 @@ impl MetalCompiler {
         source_path: PathBuf,
         enum_paths: &EnumPaths,
     ) -> anyhow::Result<ObjectInfo> {
-        let buildsystem_hash =
-            caching::build_system_hash().context("cannot get build system cache")?.as_bytes().clone();
+        let buildsystem_hash = *caching::build_system_hash().context("cannot get build system cache")?.as_bytes();
 
         let source_path_pretty = source_path.file_name().unwrap().to_str().unwrap();
         debug_log!("compile start: {source_path_pretty}");

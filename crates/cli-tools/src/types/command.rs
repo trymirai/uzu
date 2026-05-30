@@ -1,6 +1,6 @@
 use std::{
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
     thread,
 };
@@ -30,10 +30,10 @@ impl Command {
 
     pub fn with_current_path(
         &self,
-        path: &PathBuf,
+        path: &Path,
     ) -> Self {
         Self {
-            current_path: Some(path.clone()),
+            current_path: Some(path.to_path_buf()),
             ..self.clone()
         }
     }

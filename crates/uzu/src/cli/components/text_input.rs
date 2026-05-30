@@ -70,7 +70,7 @@ pub fn TextInput(
         handlers.on_submit = props.on_submit.take();
     }
 
-    let mut state = hooks.use_state(|| RenderedText::new());
+    let mut state = hooks.use_state(RenderedText::new);
     let mut pending_enter_identifier = hooks.use_state(|| None::<u64>);
     let mut enter_identifier = hooks.use_state(|| 0u64);
     let (enter_timeout_sender, mut enter_timeout_receiver) = hooks.use_memo(|| watch::channel(None::<u64>), ());

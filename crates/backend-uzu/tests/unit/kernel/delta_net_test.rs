@@ -304,7 +304,7 @@ fn run_prefill_with_norm_gate(
     let value_dim = num_v_heads * head_v_dim;
     let conv_dim = 2 * key_dim + value_dim;
     let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-    let num_dv_groups = (head_v_dim as u32 + 7) / 8;
+    let num_dv_groups = (head_v_dim as u32).div_ceil(8);
 
     let context = <Metal as Backend>::Context::new().expect("context");
     let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
@@ -586,7 +586,7 @@ fn bench_delta_net_prefill() {
     let mut beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
 
-    let num_dv_groups = (head_v_dim as u32 + 7) / 8;
+    let num_dv_groups = (head_v_dim as u32).div_ceil(8);
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,

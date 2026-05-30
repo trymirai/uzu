@@ -12,14 +12,10 @@ use crate::{
         },
         metal::Metal,
     },
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     data_type::DataType,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
-
-#[path = "../../common/mod.rs"]
-mod common;
-
-use common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
 
 // Constant seed for reproducible test results
 const TEST_SAMPLING_SEED: u64 = 42;
@@ -316,7 +312,7 @@ fn test_categorical_sampling_statistical() {
     }
 
     // Compute expected probabilities (softmax)
-    let mut expected_probs = vec![0.0f32; BATCH * VOCAB];
+    let mut expected_probs = [0.0f32; BATCH * VOCAB];
     for batch_idx in 0..BATCH {
         let batch_logits = &logits[batch_idx * VOCAB..(batch_idx + 1) * VOCAB];
         let max_logit = batch_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
@@ -336,7 +332,7 @@ fn test_categorical_sampling_statistical() {
 
     let mut output_buffer = alloc_allocation::<Metal, u32>(context.as_ref(), BATCH);
 
-    let mut counts = vec![0; BATCH * VOCAB];
+    let mut counts = [0; BATCH * VOCAB];
 
     // Sample many times
     for sample_idx in 0..NUM_SAMPLES {

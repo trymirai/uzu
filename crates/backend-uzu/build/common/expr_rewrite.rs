@@ -30,10 +30,9 @@ impl<F: FnMut(&Path) -> Option<Expr>> VisitMut for Walker<F> {
             path,
             ..
         }) = expr
+            && let Some(replacement) = (self.rewriter)(path)
         {
-            if let Some(replacement) = (self.rewriter)(path) {
-                *expr = replacement;
-            }
+            *expr = replacement;
         }
     }
 }

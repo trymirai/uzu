@@ -30,6 +30,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           linters: true
+          metal: true
 
       - name: Check backend-uzu rustfmt discovery
         if: ${{ always() && steps.setup.outcome == 'success' }}
@@ -43,6 +44,10 @@ jobs:
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: ./scripts/clang-format.sh --check
 
+      - name: Lint with clippy
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: cargo +nightly clippy --workspace --all-targets --features tracing -- -D warnings
+
       - name: Check that Cargo.lock is consistent with Cargo.toml
         if: ${{ always() && steps.setup.outcome == 'success' }}
         run: |
@@ -51,7 +56,7 @@ jobs:
 
       - name: Check with cargo-deny
         if: ${{ always() && steps.setup.outcome == 'success' }}
-        run: cargo deny check
+        run: cargo deny check -D warnings
 
       - name: Check sync
         if: ${{ always() && steps.setup.outcome == 'success' }}

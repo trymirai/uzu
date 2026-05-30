@@ -90,7 +90,7 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        if pages.len() == 0 {
+        if pages.is_empty() {
             return Ok(());
         }
 
@@ -102,14 +102,9 @@ impl SparseBuffer for MetalSparseBuffer {
 
         for gap in gaps.iter() {
             let mut pool = context.sparse_heap_pool_mut();
-            let result = pool.create_map_operations(context, &self.buffer, gap);
-            match result {
-                Ok(batches) => {
-                    pool.apply_map_operations(&batches);
-                    all_batches.extend(batches);
-                },
-                Err(err) => return Err(err),
-            };
+            let operations = pool.create_map_operations(context, &self.buffer, gap)?;
+            pool.apply_map_operations(&operations);
+            all_batches.extend(operations);
         }
 
         // execute operations
@@ -126,7 +121,7 @@ impl SparseBuffer for MetalSparseBuffer {
         context: &<Self::Backend as Backend>::Context,
         pages: &Range<usize>,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
-        if pages.len() == 0 {
+        if pages.is_empty() {
             return Ok(());
         }
 

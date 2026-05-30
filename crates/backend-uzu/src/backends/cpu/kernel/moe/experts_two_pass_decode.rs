@@ -32,6 +32,7 @@ pub fn moe_experts_decode_pass_a<T: ArrayElement + Float>(
 #[kernel(MoeExpertsDecodeDownFused2D)]
 #[variants(T, f32, f16, bf16)]
 #[variants(AccumT, f32)]
+#[allow(clippy::extra_unused_type_parameters)]
 pub fn moe_experts_decode_down_fused2_d<T: ArrayElement + Float, AccumT: ArrayElement + Float>(
     hidden: *const f32,
     row_expert_map: *const u32,

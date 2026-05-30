@@ -126,7 +126,7 @@ impl RenderedText {
 
         let previous_grapheme_byte_index = self.original_text[..position_byte_index]
             .grapheme_indices(true)
-            .last()
+            .next_back()
             .map(|(byte_index, _)| byte_index)
             .unwrap_or(0);
 
@@ -185,7 +185,7 @@ fn graphemes_length(text: &str) -> usize {
 }
 
 pub fn grapheme_at_visual_position(
-    text: &String,
+    text: &str,
     target_row: usize,
     target_col: usize,
     maximal_width: usize,
@@ -225,7 +225,7 @@ pub fn grapheme_at_visual_position(
 }
 
 pub fn grapheme_visual_position(
-    text: &String,
+    text: &str,
     position: usize,
     maximal_width: usize,
 ) -> (usize, usize) {

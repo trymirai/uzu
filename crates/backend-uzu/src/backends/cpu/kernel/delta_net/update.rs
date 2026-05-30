@@ -31,7 +31,7 @@ pub fn delta_net_update<T: ArrayElement + Float, const HEAD_K_DIM: u32>(
 
     let num_v_heads = num_v_heads as usize;
     let num_k_heads = num_k_heads as usize;
-    debug_assert!(num_v_heads % num_k_heads == 0, "num_v_heads must be a multiple of num_k_heads");
+    debug_assert!(num_v_heads.is_multiple_of(num_k_heads), "num_v_heads must be a multiple of num_k_heads");
     let head_k_dim = HEAD_K_DIM as usize;
     let head_v_dim = head_v_dim as usize;
     let key_dim = key_dim as usize;

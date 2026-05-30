@@ -54,9 +54,8 @@ async fn main() -> anyhow::Result<()> {
 
     let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
-    let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
-
-    compilers.push(Box::new(cpu::CpuCompiler::new()?));
+    #[allow(unused_mut)]
+    let mut compilers: Vec<Box<dyn Compiler>> = vec![Box::new(cpu::CpuCompiler::new()?)];
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if metal_backend {

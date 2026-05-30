@@ -10,7 +10,7 @@ pub async fn is_endpoint_reachable(endpoint: &str) -> bool {
     let Some(host) = url.host_str().map(|host| host.to_string()) else {
         return false;
     };
-    let Some(port) = url.port_or_known_default().map(|port| port) else {
+    let Some(port) = url.port_or_known_default() else {
         return false;
     };
 

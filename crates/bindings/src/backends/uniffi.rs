@@ -181,14 +181,13 @@ impl syn::fold::Fold for SelfReplacer {
         &mut self,
         ty: syn::Type,
     ) -> syn::Type {
-        if let syn::Type::Path(path) = &ty {
-            if path.qself.is_none()
-                && path.path.segments.len() == 1
-                && path.path.segments[0].ident == "Self"
-                && path.path.segments[0].arguments.is_empty()
-            {
-                return self.self_type.clone();
-            }
+        if let syn::Type::Path(path) = &ty
+            && path.qself.is_none()
+            && path.path.segments.len() == 1
+            && path.path.segments[0].ident == "Self"
+            && path.path.segments[0].arguments.is_empty()
+        {
+            return self.self_type.clone();
         }
         syn::fold::fold_type(self, ty)
     }

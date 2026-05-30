@@ -14,7 +14,7 @@ pub fn qk_unpack<T: ArrayElement>(
     num_groups: u32,
     suffix_length: u32,
 ) {
-    if num_groups == 0 || num_heads % num_groups != 0 {
+    if num_groups == 0 || !num_heads.is_multiple_of(num_groups) {
         return;
     }
 

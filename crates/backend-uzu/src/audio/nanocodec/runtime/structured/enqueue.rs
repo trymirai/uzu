@@ -62,7 +62,7 @@ fn validate_grouped_conv_params<B: Backend>(
             actual_lengths: lengths.len(),
         });
     }
-    if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
+    if layer.groups == 0 || !layer.cin.is_multiple_of(layer.groups) || !layer.cout.is_multiple_of(layer.groups) {
         return Err(AudioError::InvalidTokenCardinality);
     }
     let expected_weight_shape = [layer.cout, layer.cin / layer.groups, layer.kernel_size];
@@ -227,7 +227,7 @@ pub(super) fn causal_conv_transpose1d_causal_pad_enqueue<B: Backend>(
             actual_tokens: input.size(),
         });
     }
-    if layer.groups == 0 || layer.cin % layer.groups != 0 || layer.cout % layer.groups != 0 {
+    if layer.groups == 0 || !layer.cin.is_multiple_of(layer.groups) || !layer.cout.is_multiple_of(layer.groups) {
         return Err(AudioError::InvalidTokenCardinality);
     }
     let expected_weight_shape = [layer.cout, layer.cin / layer.groups, layer.kernel_size];

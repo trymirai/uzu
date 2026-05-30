@@ -12,13 +12,9 @@ use crate::{
         },
         metal::Metal,
     },
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder},
     data_type::DataType,
 };
-
-#[path = "../../common/mod.rs"]
-mod common;
-
-use common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, submit_encoder};
 
 fn reference_attention(
     queries: &Array4<f32>,
@@ -246,7 +242,7 @@ fn run_single_pass_attention(
         scale,
         None::<&Allocation<Metal>>,
         None,
-        sinks_buffer.as_ref().map(|b| b),
+        sinks_buffer.as_ref(),
         num_heads as u32,
         seq_len as u32,
         &mut encoder,
@@ -592,7 +588,7 @@ fn run_two_pass_attention(
         seq_len as u32,
         None::<&Allocation<Metal>>,
         None,
-        sinks_buffer.as_ref().map(|b| b),
+        sinks_buffer.as_ref(),
         &mut encoder,
     );
     kernel_pass2.encode(
@@ -680,7 +676,7 @@ fn perf_two_pass_attention() {
     let (queries, keys, values) = create_test_data(batch_size, num_heads, num_kv_heads, seq_len, head_dim, 123);
     let (kernel_pass1, kernel_pass2) = create_two_pass_kernels(&context, head_dim, is_causal);
 
-    let suffix_start = (seq_len - suffix_length) as usize;
+    let suffix_start = seq_len - suffix_length;
     let queries_suffix = queries.slice(s![.., .., suffix_start.., ..]).to_owned();
     let queries_buffer = create_query_allocation(&queries_suffix, &context);
     let keys_buffer = create_attention_cache_allocation(&keys, seq_len, &context);
@@ -717,7 +713,7 @@ fn perf_two_pass_attention() {
         suffix_length as u32,
         None::<&Allocation<Metal>>,
         None,
-        sinks_allocation.as_ref().map(|b| b),
+        sinks_allocation.as_ref(),
         &mut encoder,
     );
     kernel_pass2.encode(

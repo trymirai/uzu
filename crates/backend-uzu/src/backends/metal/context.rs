@@ -215,7 +215,7 @@ impl Context for MetalContext {
     ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
         let sparse_page_size = self.sparse_heap_pool.borrow().page_size();
         let context = self.weak_self.upgrade().ok_or(MetalError::CannotCreateBuffer)?;
-        Ok(MetalSparseBuffer::new(context, capacity, sparse_page_size)?)
+        MetalSparseBuffer::new(context, capacity, sparse_page_size)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {

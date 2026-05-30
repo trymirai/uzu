@@ -31,25 +31,25 @@ impl GemmSpecialization {
                 use_mxu: self.use_mxu,
             });
         }
-        if self.use_mxu && self.b_prologue != GemmBPrologueKind::FullPrecision {
-            if let Some(group_size) = self.group_size {
-                if !self.tiling.fits_quant_group_size(group_size) {
-                    return Err(GemmSpecializationError::MxuQuantTileTooLarge {
-                        tiling: self.tiling,
-                        group_size,
-                    });
-                }
-            }
+        if self.use_mxu
+            && self.b_prologue != GemmBPrologueKind::FullPrecision
+            && let Some(group_size) = self.group_size
+            && !self.tiling.fits_quant_group_size(group_size)
+        {
+            return Err(GemmSpecializationError::MxuQuantTileTooLarge {
+                tiling: self.tiling,
+                group_size,
+            });
         }
-        if !self.use_mxu {
-            if let Some(group_size) = self.group_size {
-                let simdgroup_block_k = self.tiling.simdgroup_block_k();
-                if simdgroup_block_k > group_size {
-                    return Err(GemmSpecializationError::SimdgroupKExceedsGroupSize {
-                        simdgroup_k: simdgroup_block_k,
-                        group_size,
-                    });
-                }
+        if !self.use_mxu
+            && let Some(group_size) = self.group_size
+        {
+            let simdgroup_block_k = self.tiling.simdgroup_block_k();
+            if simdgroup_block_k > group_size {
+                return Err(GemmSpecializationError::SimdgroupKExceedsGroupSize {
+                    simdgroup_k: simdgroup_block_k,
+                    group_size,
+                });
             }
         }
         if self.b_prologue != GemmBPrologueKind::FullPrecision && !self.transpose_b {
@@ -165,7 +165,7 @@ impl GemmSpecialization {
             }
         }
         for &tiling in mxu_tiling_set(weights_data_type) {
-            if group_size % 32 != 0 {
+            if !group_size.is_multiple_of(32) {
                 continue;
             }
             if !tiling.fits_quant_group_size(group_size) {

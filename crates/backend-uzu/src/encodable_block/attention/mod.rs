@@ -90,7 +90,6 @@ pub enum AttentionError<B: Backend> {
 }
 
 impl<B: Backend> Attention<B> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: &B::Context,
         model_dim: usize,
@@ -323,7 +322,6 @@ impl<B: Backend> Attention<B> {
         KernelVariant::SinglePass
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &self,
         token_positions: &Allocation<B>,
@@ -589,7 +587,6 @@ impl<B: Backend> Attention<B> {
         Ok(attention_output)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn encode_attention_variant<KVBuf: AsBufferRangeRef<Buffer: Buffer<Backend = B>>>(
         &self,
         variant: KernelVariant,
@@ -734,7 +731,6 @@ impl<B: Backend> Attention<B> {
         Ok(attention_output)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn encode_fallback<
         Keys: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
         Values: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,

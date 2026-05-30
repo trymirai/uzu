@@ -426,7 +426,7 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
                         }
 
                         let expanded_time = expanded_time as usize;
-                        if expanded_time % stride != 0 {
+                        if !expanded_time.is_multiple_of(stride) {
                             continue;
                         }
 

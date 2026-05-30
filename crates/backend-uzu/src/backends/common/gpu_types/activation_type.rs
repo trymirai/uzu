@@ -1,7 +1,7 @@
 use num_traits::Float;
 
 const GELU_K0: f32 = 0.044715;
-const GELU_K1: f32 = 0.7978845608; // sqrt(2/pi)
+const GELU_K1: f32 = 0.7978846; // sqrt(2/pi)
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq)]

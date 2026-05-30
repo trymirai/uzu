@@ -82,7 +82,7 @@ impl ModelShape {
         &self,
         suffix_length: usize,
     ) -> [usize; 2] {
-        let bitmask_size = (self.vocabulary_size + 31) / 32;
+        let bitmask_size = self.vocabulary_size.div_ceil(32);
         [suffix_length, bitmask_size]
     }
 

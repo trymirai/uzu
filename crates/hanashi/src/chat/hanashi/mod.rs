@@ -149,33 +149,26 @@ impl Encoding {
                         continue;
                     }
 
-                    match &field.config {
-                        FieldConfig::Unique {
-                            block,
-                            allowed_values: Some(allowed_values),
-                            ..
-                        } => {
-                            if !allowed_values.len() == 1 {
-                                continue;
-                            }
-                            if let Some(expected_value) =
-                                allowed_values.first().cloned().and_then(|value| value.as_str().map(|s| s.to_string()))
-                            {
-                                if !modified_message
-                                    .content
-                                    .iter()
-                                    .any(|message_block| message_block.get_type() == *block)
-                                {
-                                    modified_message.content.insert(
-                                        0,
-                                        ChatContentBlock::Text {
-                                            value: expected_value,
-                                        },
-                                    );
-                                }
-                            }
-                        },
-                        _ => {},
+                    if let FieldConfig::Unique {
+                        block,
+                        allowed_values: Some(allowed_values),
+                        ..
+                    } = &field.config
+                    {
+                        if !allowed_values.len() == 1 {
+                            continue;
+                        }
+                        if let Some(expected_value) =
+                            allowed_values.first().cloned().and_then(|value| value.as_str().map(|s| s.to_string()))
+                            && !modified_message.content.iter().any(|message_block| message_block.get_type() == *block)
+                        {
+                            modified_message.content.insert(
+                                0,
+                                ChatContentBlock::Text {
+                                    value: expected_value,
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -199,12 +192,9 @@ impl Encoding {
             .collect();
 
         let result = self.state.synchronize_messages(&streamed_messages)?;
-        match result {
-            SynchronizationResult::Inserted => {
-                let last_message = self.state.messages.last().ok_or(SynchronizationError::Desynchronization)?;
-                self.validator.validate_next(&last_message.role)?;
-            },
-            _ => {},
+        if result == SynchronizationResult::Inserted {
+            let last_message = self.state.messages.last().ok_or(SynchronizationError::Desynchronization)?;
+            self.validator.validate_next(&last_message.role)?;
         }
 
         Ok(())

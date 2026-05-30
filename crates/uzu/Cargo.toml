@@ -138,3 +138,6 @@ path = "tests/unit/test_entry.rs"
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
 pyo3-build-config = { workspace = true, optional = true }
+
+[lints]
+workspace = true

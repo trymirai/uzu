@@ -335,7 +335,8 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {
-    for keys_in_place in [false] {
+    {
+        let keys_in_place = false;
         let input = get_test_data_basic::<T>(keys_in_place);
         let (expected_key_cache, expected_value_cache) = get_output::<T, Cpu>(&input);
         test_internal(&input, &expected_key_cache, &expected_value_cache);

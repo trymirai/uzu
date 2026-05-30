@@ -36,7 +36,7 @@ fn about_text() -> String {
 #[component]
 pub fn Logo(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let state = hooks.use_context::<State<ApplicationState>>();
-    let about = hooks.use_const(|| about_text());
+    let about = hooks.use_const(about_text);
 
     element! {
         View(

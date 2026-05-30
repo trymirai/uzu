@@ -55,7 +55,7 @@ pub fn build(
         input: InputParam::Items(input_items),
         model: Some(model.to_string()),
         stream: Some(true),
-        max_output_tokens: config.token_limit.map(|value| value as u32),
+        max_output_tokens: config.token_limit,
         temperature,
         top_p,
         reasoning,

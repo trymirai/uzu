@@ -153,7 +153,7 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
     ) {
         let range = dst.range();
         assert!(range.end > range.start);
-        assert!(range.start % 4 == 0 && range.end % 4 == 0);
+        assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
 
         self.ensure_blit().fill_buffer_range_value(dst.buffer().downcast(), range, value);
     }

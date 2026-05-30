@@ -88,7 +88,7 @@ impl<B: Backend> MoeBlock<B> {
         data_type: DataType,
         parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, MoeBlockError<B>> {
-        if model_dim % 4 != 0 {
+        if !model_dim.is_multiple_of(4) {
             return Err(MoeBlockError::InvalidModelDim);
         }
         if moe_config.num_active_routed_experts == 0 || moe_config.num_active_routed_experts > 128 {

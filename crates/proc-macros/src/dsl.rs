@@ -6,7 +6,7 @@ pub fn kernel(
     args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
-    let file = format!("/cpu/{}.rs", args.to_string());
+    let file = format!("/cpu/{}.rs", args);
 
     let mut func = parse_macro_input!(input as ItemFn);
 

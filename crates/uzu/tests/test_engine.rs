@@ -31,7 +31,7 @@ async fn test_engine_chat() {
         let quantization_vendor_identifier =
             model.quantization.as_ref().map(|quantization| quantization.vendor.identifier.clone());
         let quantization_identifier = model.quantization.as_ref().map(|quantization| quantization.identifier.clone());
-        let download_phase = engine.downloader(&model).state().await.map_or(None, |state| Some(state.phase));
+        let download_phase = engine.downloader(&model).state().await.map(|state| state.phase);
         println!("identifier: {}", identifier);
         println!("name: {}", name);
         println!("repo_ids: {:?}", repo_ids);

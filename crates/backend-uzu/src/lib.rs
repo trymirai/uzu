@@ -2,6 +2,11 @@
 #[cfg(test)]
 extern crate self as backend_uzu;
 
+#[cfg(test)]
+#[macro_use]
+#[path = "../tests/common/mod.rs"]
+mod common;
+
 pub mod array;
 mod audio;
 mod classifier;

@@ -86,16 +86,13 @@ pub fn HistoryCell(
         .into(),
         Some(HistoryCellType::ChatReply {
             reply,
-        }) => {
-            chat_reply_component(reply, theme.subtitle_color, theme.overlay_color(), theme.padding())
-                .into()
-        },
+        }) => chat_reply_component(reply, theme.subtitle_color, theme.overlay_color(), theme.padding()),
         Some(HistoryCellType::ClassificationOutput {
             output,
-        }) => classification_output_component(output, theme.subtitle_color, theme.padding()).into(),
+        }) => classification_output_component(output, theme.subtitle_color, theme.padding()),
         Some(HistoryCellType::TextToSpeechOutput {
             stats,
-        }) => text_to_speech_output_component(stats, theme.subtitle_color, theme.padding()).into(),
+        }) => text_to_speech_output_component(stats, theme.subtitle_color, theme.padding()),
         None => element! { View }.into(),
     };
     view

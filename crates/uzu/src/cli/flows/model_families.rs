@@ -79,7 +79,7 @@ fn ModelFamilies(
             color: None,
         })
         .collect();
-    let height = (items.len() as u16).min(5).max(1);
+    let height = (items.len() as u16).clamp(1, 5);
 
     element! {
         Loading(loaded: loaded) {

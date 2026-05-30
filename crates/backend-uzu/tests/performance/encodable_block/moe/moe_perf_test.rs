@@ -10,16 +10,11 @@ use crate::{
             MoeScatterBucketsMapKernel,
         },
     },
+    common::{
+        helpers::{alloc_allocation, alloc_allocation_with_data, create_context},
+        perf::run_perf_with_warmup,
+    },
     data_type::DataType,
-};
-
-#[macro_use]
-#[path = "../../../common/mod.rs"]
-mod common;
-
-use common::{
-    helpers::{alloc_allocation, alloc_allocation_with_data, create_context},
-    perf::run_perf_with_warmup,
 };
 
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)
@@ -161,8 +156,8 @@ fn test_moe_pipeline_breakdown_decode() {
         let router_b_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &router_b);
         let mut topk_ids_buf = alloc_allocation::<B, i32>(&ctx, t * k);
         let mut topk_probs_buf = alloc_allocation::<B, bf16>(&ctx, t * k);
-        let num_blocks = ((t + 255) / 256).max(1);
-        let num_tiles = ((e + 512 - 1) / 512).max(1);
+        let num_blocks = t.div_ceil(256).max(1);
+        let num_tiles = e.div_ceil(512).max(1);
         let mut partials_buf = alloc_allocation::<B, i32>(&ctx, num_blocks * num_tiles * e);
         let mut offsets_buf = alloc_allocation::<B, u32>(&ctx, e + 1);
         let mut sumk_buf = alloc_allocation::<B, u32>(&ctx, 1);

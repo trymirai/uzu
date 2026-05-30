@@ -48,7 +48,7 @@ async fn gpu_type_gen_file(
     let new_contents = format!(include_str!("template.ht"), module_name = module_name, generated = generated);
 
     // Avoid advancing mtime if the contents are the same
-    if !tokio::fs::read(&file_path).await.is_ok_and(|old_contents| &old_contents == new_contents.as_bytes()) {
+    if !tokio::fs::read(&file_path).await.is_ok_and(|old_contents| old_contents == new_contents.as_bytes()) {
         tokio::fs::write(&file_path, new_contents).await.context("cannot write output")?;
     }
 

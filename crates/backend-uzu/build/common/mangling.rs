@@ -16,7 +16,7 @@ pub fn static_mangle(
 ) -> String {
     format!(
         "_D{}{}{}",
-        &function_name.as_ref().len().to_string(),
+        function_name.as_ref().len(),
         function_name.as_ref(),
         variant
             .into_iter()
@@ -36,7 +36,7 @@ pub fn dynamic_mangle(
 
     let format_string = format!(
         "_D{}{}{}",
-        &function_name.as_ref().len().to_string(),
+        function_name.as_ref().len(),
         function_name.as_ref(),
         repeat_n("S{}V{}", variant.len()).join("")
     );

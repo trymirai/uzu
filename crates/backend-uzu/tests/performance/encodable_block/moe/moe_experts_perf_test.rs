@@ -6,14 +6,9 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock};
 use crate::{
     backends::common::{Backend, Encoder},
+    common::helpers::{alloc_allocation_with_data, create_context},
     data_type::DataType,
 };
-
-#[macro_use]
-#[path = "../../../common/mod.rs"]
-mod common;
-
-use common::helpers::{alloc_allocation_with_data, create_context};
 
 fn build_offsets(
     e: usize,
@@ -75,12 +70,12 @@ fn run_decode_case<B: Backend>(
 
     let experts_kernel = MoeExpertsTwoPassDecodeBlock::<B>::new(ctx, DataType::BF16, 2).expect("experts decode kernel");
 
-    let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x_perm);
-    let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
-    let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
-    let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
-    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
-    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
+    let x_perm_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x_perm);
+    let offsets_buf = alloc_allocation_with_data::<B, u32>(ctx, &offsets);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
 
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
@@ -196,12 +191,12 @@ fn run_two_pass_prefill_case<B: Backend>(
     let experts_kernel =
         MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, 2).expect("experts prefill kernel");
 
-    let x_perm_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &x_perm);
-    let offsets_buf = alloc_allocation_with_data::<B, u32>(&ctx, &offsets);
-    let w13_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w13);
-    let w2_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &w2);
-    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &up_biases);
-    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(&ctx, &down_biases);
+    let x_perm_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x_perm);
+    let offsets_buf = alloc_allocation_with_data::<B, u32>(ctx, &offsets);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
 
     for _ in 0..warmup {
         let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
