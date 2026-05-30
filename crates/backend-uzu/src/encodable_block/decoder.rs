@@ -224,10 +224,13 @@ impl<B: Backend> Decoder<B> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Option<Allocation<B>>, DecoderError<B>> {
-        self.per_layer_embedding
-            .as_ref()
-            .map(|ple| ple.encode(token_ids, inner_features, batch_dim, encoder).map_err(DecoderError::BackendError))
-            .transpose()
+        if let Some(ple) = &self.per_layer_embedding {
+            let output =
+                ple.encode(token_ids, inner_features, batch_dim, encoder).map_err(DecoderError::BackendError)?;
+            Ok(Some(output))
+        } else {
+            Ok(None)
+        }
     }
 
     fn run_layers(
