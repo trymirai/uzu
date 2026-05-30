@@ -1,4 +1,4 @@
-use std::{env, path::Path, rc::Rc};
+use std::{path::Path, rc::Rc};
 
 use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
 
@@ -11,10 +11,6 @@ pub trait Context: Sized {
         &self,
         model_path: &Path,
     ) -> Result<usize, <Self::Backend as Backend>::Error>;
-
-    fn is_high_performance(&self) -> bool;
-
-    fn debug_active(&self) -> bool;
 
     fn create_command_buffer(
         &self
@@ -53,8 +49,4 @@ pub trait Context: Sized {
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
     fn sparse_buffers_supported(&self) -> bool;
-
-    fn tf32_enabled() -> bool {
-        env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
-    }
 }
