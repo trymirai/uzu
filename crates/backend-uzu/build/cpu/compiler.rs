@@ -667,12 +667,10 @@ impl CpuCompiler {
         });
 
         let tokens = quote! {
-            pub struct CpuKernels;
-
-            impl crate::backends::common::kernel::Kernels for CpuKernels {
-                type Backend = crate::backends::cpu::Cpu;
-
-                #(#associated_types)*
+            macro_rules! autogen_kernels {
+                () => {
+                    #(#associated_types)*
+                }
             }
         };
 

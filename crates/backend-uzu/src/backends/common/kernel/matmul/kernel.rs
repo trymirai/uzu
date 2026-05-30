@@ -1,11 +1,13 @@
-use super::{arguments::MatmulArguments, quant_combo::MatmulQuantCombo};
 use crate::{
     DataType,
-    backends::common::{AsBufferRangeRef, Backend, Buffer, Encoder, kernel::ManualKernels},
+    backends::common::{
+        AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
+        kernel::matmul::{arguments::MatmulArguments, quant_combo::MatmulQuantCombo},
+    },
 };
 
 pub trait MatmulKernel: Sized {
-    type Backend: Backend<Kernels: ManualKernels<MatmulKernel = Self>>;
+    type Backend: Backend<Kernels: Kernels<MatmulKernel = Self>>;
 
     fn new(
         context: &<Self::Backend as Backend>::Context,

@@ -6,7 +6,7 @@ use backend_uzu::{
         common::{
             AllocationType, Backend, Context, Encoder,
             kernel::{
-                ManualKernels,
+                Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
@@ -64,7 +64,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .expect("Failed to create allocation");
 
     let mut kernel =
-        <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type(), T::data_type(), T::data_type())
+        <B::Kernels as Kernels>::MatmulKernel::new(&context, T::data_type(), T::data_type(), T::data_type())
             .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");

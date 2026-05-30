@@ -6,7 +6,7 @@ use backend_uzu::{
         common::{
             Backend, Context,
             gpu_types::QuantizationMethod,
-            kernel::{ManualKernels, matmul::MatmulKernel},
+            kernel::{Kernels, matmul::MatmulKernel},
         },
         metal::{Metal, MetalContext},
     },
@@ -36,7 +36,7 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
         let mut buffers = QuantBuffers::<Metal, T>::allocate(context, &input);
-        let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+        let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
             context,
             T::data_type(),
             T::data_type(),

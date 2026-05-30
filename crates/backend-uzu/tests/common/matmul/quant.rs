@@ -7,7 +7,7 @@ use backend_uzu::{
             Allocation, Backend, Context, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode},
             kernel::{
-                ManualKernels,
+                Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
@@ -162,7 +162,7 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
 pub fn run_quant_cpu<T: ArrayElement + Float>(input: &QuantInput<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut buffers = QuantBuffers::<Cpu, T>::allocate(&context, input);
-    let mut matmul = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+    let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         T::data_type(),
         T::data_type(),
@@ -182,7 +182,7 @@ pub fn run_quant_metal<T: ArrayElement + Float>(
     path: Option<GemmDispatchPath>,
 ) -> Vec<T> {
     let mut buffers = QuantBuffers::<Metal, T>::allocate(context, input);
-    let mut matmul = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         context,
         T::data_type(),
         T::data_type(),

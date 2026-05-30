@@ -6,7 +6,7 @@ use backend_uzu::{
         common::{
             AllocationType, Backend, Context,
             kernel::{
-                ManualKernels,
+                Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
@@ -27,7 +27,7 @@ use crate::{
 #[uzu_bench]
 fn bench_gemm(c: &mut Criterion) {
     let context = MetalContext::new().expect("Metal context");
-    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
         bf16::data_type(),
