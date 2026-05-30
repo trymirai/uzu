@@ -28,13 +28,13 @@ struct GemvKey {
     output_transform: GemmDTransform,
     input_aligned: bool,
     k_split: u32,
+    num_simdgroups: u32,
 }
 
-const QMV_SIMDGROUPS: u32 = 8;
 const QMV_RESULTS_PER_SIMDGROUP: u32 = 4;
 
-fn rows_per_threadgroup(k_split: u32) -> u32 {
-    (QMV_SIMDGROUPS / k_split) * QMV_RESULTS_PER_SIMDGROUP
+fn rows_per_threadgroup(k_split: u32, num_simdgroups: u32) -> u32 {
+    (num_simdgroups / k_split) * QMV_RESULTS_PER_SIMDGROUP
 }
 
 fn fp_k_split(
@@ -95,6 +95,7 @@ impl GemvDispatch {
                     key.bits,
                     key.k_split,
                     key.input_aligned,
+                    key.num_simdgroups,
                     key.output_transform,
                 )
                 .map_err(MatmulError::BackendError)?;
@@ -166,7 +167,8 @@ impl GemvDispatch {
         } else {
             fp_k_split(n, k, input_aligned)
         };
-        let group_count_x = n.div_ceil(rows_per_threadgroup(k_split));
+        let num_simdgroups = 8u32;
+        let group_count_x = n.div_ceil(rows_per_threadgroup(k_split, num_simdgroups));
         let key = GemvKey {
             b_prologue: GemmBPrologueKind::FullPrecision,
             group_size: 0,
@@ -174,6 +176,7 @@ impl GemvDispatch {
             output_transform: output_mask,
             input_aligned,
             k_split,
+            num_simdgroups,
         };
         self.get_or_create(context, key)?.encode(
             weights,
@@ -235,7 +238,15 @@ impl GemvDispatch {
                 zero_points,
                 mode,
                 group_size,
-            } => (w, scales, Some(zero_points), None, GemmBPrologueKind::ScaleZeroPointDequant, mode, group_size),
+            } => (
+                w,
+                scales,
+                Some(zero_points),
+                None,
+                GemmBPrologueKind::ScaleZeroPointDequant,
+                mode,
+                group_size,
+            ),
             MatmulB::ScaleSymmetricDequant {
                 b: w,
                 scales,
@@ -257,14 +268,10 @@ impl GemvDispatch {
             });
         }
 
-        let block_size = if bits == 4 {
-            512
-        } else {
-            256
-        };
+        let block_size = if bits == 4 { 512 } else { 256 };
         let input_aligned = k % block_size == 0;
-
-        let group_count_x = n.div_ceil(rows_per_threadgroup(1));
+        let num_simdgroups = 2u32;
+        let group_count_x = n.div_ceil(rows_per_threadgroup(1, num_simdgroups));
         let key = GemvKey {
             b_prologue,
             group_size,
@@ -272,6 +279,7 @@ impl GemvDispatch {
             output_transform: output_mask,
             input_aligned,
             k_split: 1,
+            num_simdgroups,
         };
         let context = encoder.context();
         self.get_or_create(context, key)?.encode(

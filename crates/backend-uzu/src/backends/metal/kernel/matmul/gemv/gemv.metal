@@ -18,7 +18,8 @@ template <
     uint GROUP_SIZE,
     uint BITS,
     uint K_SPLIT,
-    bool INPUT_ALIGNED>
+    bool INPUT_ALIGNED,
+    uint NUM_SIMDGROUPS>
 VARIANTS(WeightT, bfloat, float)
 VARIANTS(InputT, bfloat, float)
 VARIANTS(OutputT, bfloat, float)
@@ -33,10 +34,13 @@ VARIANTS(GROUP_SIZE, 0, 16, 32, 64, 128)
 VARIANTS(BITS, 0, 4, 8)
 VARIANTS(K_SPLIT, 1, 2, 4, 8)
 VARIANTS(INPUT_ALIGNED, false, true)
+VARIANTS(NUM_SIMDGROUPS, 2, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || WeightT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
+CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || NUM_SIMDGROUPS == 2)
+CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::FullPrecision || NUM_SIMDGROUPS == 8)
 KERNEL(Gemv)(
     const device uint32_t* weights,
     const device WeightT* scales
@@ -57,11 +61,11 @@ KERNEL(Gemv)(
     const constant float& ab_scale,
     const constant uint& group_count_x,
     const GemmDTransform output_transform SPECIALIZE,
-    threadgroup float shared_results[METAL_SIMD_SIZE],
+    threadgroup float shared_results[NUM_SIMDGROUPS * 4],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
     const uint simd_lane THREADS(32),
-    const uint simd_group THREADS(8)
+    const uint simd_group THREADS(NUM_SIMDGROUPS)
 ) {
   const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
   const bool is_accumulate =
@@ -69,7 +73,7 @@ KERNEL(Gemv)(
   const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
   const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
-  constexpr uint num_simdgroups = 8;
+  constexpr uint num_simdgroups = NUM_SIMDGROUPS;
   constexpr uint results_per_simdgroup = 4;
   typedef float U;
   thread U result[results_per_simdgroup] = {0};

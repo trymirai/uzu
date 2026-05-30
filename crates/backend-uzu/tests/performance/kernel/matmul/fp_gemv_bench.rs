@@ -61,11 +61,13 @@ fn bench_fp_gemv_typed<T: ArrayElement + Float>(
 
     for &(name, k, n) in ALL_SHAPES {
         let m = 1usize;
-        let a =
-            context.create_allocation(m * k * std::mem::size_of::<T>(), AllocationType::Global).expect("a allocation");
+        let a = context
+            .create_allocation(m * k * std::mem::size_of::<T>(), AllocationType::Global)
+            .expect("a allocation");
         let b_array = context.create_array_uninitialized(&[n, k], T::data_type());
-        let mut d =
-            context.create_allocation(m * n * std::mem::size_of::<T>(), AllocationType::Global).expect("d allocation");
+        let mut d = context
+            .create_allocation(m * n * std::mem::size_of::<T>(), AllocationType::Global)
+            .expect("d allocation");
 
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(format!("{name}_K{k}N{n}")), |b| {
