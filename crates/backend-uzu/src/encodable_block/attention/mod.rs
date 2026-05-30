@@ -17,8 +17,8 @@ use crate::{
         gpu_types::ring::RingParams,
         kernel::{
             AttentionFallbackScatterScoresKernel, AttentionFallbackScatterValuesKernel, AttentionSinglePassKernel,
-            AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel, ManualKernels,
-            SigmoidGateKernel, SoftmaxKernel,
+            AttentionTwoPass1Kernel, AttentionTwoPass2Kernel, AttentionUpdateKVCacheKernel, SigmoidGateKernel,
+            SoftmaxKernel,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
@@ -62,7 +62,7 @@ pub struct Attention<B: Backend> {
     softmax_sinks_kernel: Option<<B::Kernels as Kernels>::SoftmaxKernel>,
     fallback_scatter_scores_kernels: HashMap<bool, <B::Kernels as Kernels>::AttentionFallbackScatterScoresKernel>,
     fallback_scatter_values_kernel: <B::Kernels as Kernels>::AttentionFallbackScatterValuesKernel,
-    matmul_kernel: Option<RefCell<<B::Kernels as ManualKernels>::MatmulKernel>>,
+    matmul_kernel: Option<RefCell<<B::Kernels as Kernels>::MatmulKernel>>,
     update_kv_cache_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
     update_kv_cache_inplace_kernel: <B::Kernels as Kernels>::AttentionUpdateKVCacheKernel,
     gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
@@ -237,7 +237,7 @@ impl<B: Backend> Attention<B> {
             <B::Kernels as Kernels>::AttentionFallbackScatterValuesKernel::new(context, data_type)
                 .map_err(AttentionError::BackendError)?;
         let matmul_kernel =
-            <<B as Backend>::Kernels as ManualKernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+            <<B as Backend>::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
                 .ok()
                 .map(RefCell::new);
         let update_kv_cache_kernel =

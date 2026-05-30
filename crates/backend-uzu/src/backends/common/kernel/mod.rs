@@ -1,9 +1,14 @@
 #![allow(non_snake_case)]
 
-include!(concat!(env!("OUT_DIR"), "/traits.rs"));
-
-pub trait ManualKernels: Kernels {
-    type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
-}
+use crate::backends::common::Backend;
 
 pub mod matmul;
+
+include!(concat!(env!("OUT_DIR"), "/traits.rs"));
+
+pub trait Kernels: Sized {
+    type Backend: Backend<Kernels = Self>;
+
+    autogen_kernels!();
+    type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
+}

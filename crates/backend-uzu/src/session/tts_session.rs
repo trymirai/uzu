@@ -33,7 +33,7 @@ use crate::{
     backends::common::{
         Backend, Context as BackendContext, Encoder, Kernels,
         kernel::{
-            EmbeddingRowsSumKernel, ManualKernels, TensorAddScaleKernel, TokenCopySampledKernel,
+            EmbeddingRowsSumKernel, TensorAddScaleKernel, TokenCopySampledKernel,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },

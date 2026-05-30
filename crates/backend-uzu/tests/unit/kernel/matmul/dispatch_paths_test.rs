@@ -7,7 +7,7 @@ use backend_uzu::{
     backends::{
         common::{
             Backend, Context,
-            kernel::{ManualKernels, matmul::MatmulKernel},
+            kernel::{Kernels, matmul::MatmulKernel},
         },
         metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
     },
@@ -31,7 +31,7 @@ fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {
 
 fn check_case<T: ArrayElement + Float + Debug + Display>(
     context: &MetalContext,
-    kernel: &mut <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel,
+    kernel: &mut <<Metal as Backend>::Kernels as Kernels>::MatmulKernel,
     path: Option<GemmDispatchPath>,
     case: Case,
     tolerance: f32,
@@ -47,7 +47,7 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
     tolerance: f32,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         T::data_type(),
         T::data_type(),

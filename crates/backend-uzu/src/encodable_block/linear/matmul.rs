@@ -10,7 +10,7 @@ use crate::{
         Allocation, Backend, Encoder,
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
-            ManualKernels,
+            Kernels,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulQuantCombo},
         },
     },
@@ -43,7 +43,7 @@ enum Mode<B: Backend> {
 }
 
 pub struct LinearMatmul<B: Backend> {
-    kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+    kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
     weights: Allocation<B>,
     biases: Option<Allocation<B>>,
     input_dim: usize,
@@ -76,13 +76,9 @@ impl<B: Backend> LinearMatmul<B> {
         let biases =
             load_biases(weights_data_type, output_data_type, output_dim, has_biases.then_some(parameter_tree))?;
 
-        let kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(
-            context,
-            weights_data_type,
-            input_data_type,
-            output_data_type,
-        )
-        .map_err(LinearMatmulError::BackendError)?;
+        let kernel =
+            <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)
+                .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
@@ -174,13 +170,9 @@ impl<B: Backend> LinearMatmul<B> {
 
         let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
 
-        let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(
-            context,
-            weights_data_type,
-            input_data_type,
-            output_data_type,
-        )
-        .map_err(LinearMatmulError::BackendError)?;
+        let mut kernel =
+            <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)
+                .map_err(LinearMatmulError::BackendError)?;
         kernel
             .preheat_quant_combo(
                 context,

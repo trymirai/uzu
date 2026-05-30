@@ -6,10 +6,10 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Lifetime, Type};
 
-use super::{identifiers::KernelPath, kernel::Kernel};
 use crate::common::{
     codegen::write_tokens,
-    kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
+    identifiers::KernelPath,
+    kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
     utils::get_generic_name_stream,
 };
 
@@ -170,10 +170,10 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -
 
         #(#kernel_traits)*
 
-        pub trait Kernels: Sized {
-            type Backend: crate::backends::common::Backend<Kernels = Self>;
-
-            #(#kernel_types)*
+        macro_rules! autogen_kernels {
+            () => {
+                #(#kernel_types)*
+            }
         }
     };
 
