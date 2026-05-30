@@ -64,7 +64,9 @@ static METAL_FUNC void apply_output_random_hadamard_transform(
     const size_t output_index =
         size_t(row_local) * size_t(leading_dimension_d) + size_t(col_local);
     output_block[output_index] = simdgroup_output_random_hadamard_transform(
-        simd_lane, output_block[output_index], rht_factors_block[col_local]
+        simd_lane,
+        output_block[output_index],
+        rht_factors_block[col_local]
     );
   }
 }

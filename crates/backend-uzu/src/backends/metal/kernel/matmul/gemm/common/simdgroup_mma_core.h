@@ -310,9 +310,14 @@ struct SimdgroupMmaCore {
 
     if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       const device BT* b_block_fp =
-          b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
+          b +
+          (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
       thread BLoaderFp loader_b(
-          b_block_fp, params->leading_dimension_b, b_shared, thread_context);
+          b_block_fp,
+          params->leading_dimension_b,
+          b_shared,
+          thread_context
+      );
       dispatch_kernel([&](auto gemm_alignment_mask) {
         constexpr uint mask = gemm_alignment_mask.value;
         k_loop<mask, BLoaderFp>(
