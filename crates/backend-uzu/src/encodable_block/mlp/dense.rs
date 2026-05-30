@@ -1,7 +1,7 @@
 //! MLP block encodable.
 
-use super::{super::linear::Linear, Mlp};
-use crate::backends::common::{Allocation, Backend, Encoder, kernel::mlp_gate_act_mul::MlpGateActMulEncodable};
+use super::{super::linear::Linear, Mlp, gate_act_mul::MlpGateActMulEncodable};
+use crate::backends::common::{Allocation, Backend, Encoder};
 
 pub struct DenseMlp<B: Backend> {
     up: Box<dyn Linear<B>>,

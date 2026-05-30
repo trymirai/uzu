@@ -1,7 +1,7 @@
 use backend_uzu::{
     ArrayElement,
     backends::{
-        common::{Backend, Encoder, kernel::moe::MoeGatherKernel},
+        common::{Backend, Encoder},
         cpu::Cpu,
     },
 };
@@ -9,12 +9,15 @@ use half::bf16;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::{
-    common::{
-        assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
-    },
-    uzu_test,
+use super::MoeGather;
+
+#[macro_use]
+#[path = "../../../common/mod.rs"]
+mod common;
+
+use common::{
+    assert::assert_eq_float,
+    helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -32,7 +35,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let x_allocation = alloc_allocation_with_data::<B, T>(&context, &input.x);
     let ids_allocation = alloc_allocation_with_data::<B, i32>(&context, &input.bucket_ids);
     let sumk_allocation = alloc_allocation_with_data::<B, u32>(&context, &sumk_data);
-    let gather = MoeGatherKernel::<B>::new(&context, T::data_type()).expect("MoeGatherKernel::new");
+    let gather = MoeGather::<B>::new(&context, T::data_type()).expect("MoeGather::new");
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let x_perm_allocation = gather
         .encode(
@@ -77,22 +80,22 @@ fn test_gather_internal(
     })
 }
 
-#[uzu_test]
+#[test]
 fn test_gather_single_token() {
     test_gather_internal(1, 2, 64);
 }
 
-#[uzu_test]
+#[test]
 fn test_gather_small_batch() {
     test_gather_internal(4, 8, 128);
 }
 
-#[uzu_test]
+#[test]
 fn test_gather_medium_batch() {
     test_gather_internal(16, 32, 256)
 }
 
-#[uzu_test]
+#[test]
 fn test_gather_large_batch() {
     test_gather_internal(64, 128, 512)
 }

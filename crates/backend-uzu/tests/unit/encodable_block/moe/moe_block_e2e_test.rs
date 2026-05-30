@@ -6,15 +6,17 @@ use backend_uzu::{
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherKernel},
         },
     },
 };
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::encodable_block::mlp::moe::tests::common::helpers::{
-    alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
+use super::{
+    MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather,
+    common::helpers::{
+        alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
+    },
 };
 
 fn moe_cpu_reference(
@@ -373,7 +375,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         &mut encoder,
     );
 
-    let gather = MoeGatherKernel::<B>::new(&ctx, DataType::BF16).expect("gather");
+    let gather = MoeGather::<B>::new(&ctx, DataType::BF16).expect("gather");
     let x_perm_buf = gather.encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder).expect("gather");
 
     let total_rows = t * k;

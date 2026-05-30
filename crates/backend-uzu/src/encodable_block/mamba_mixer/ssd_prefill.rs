@@ -32,14 +32,14 @@ pub struct SSDPrefillArguments<'a, B: Backend> {
     pub head_dim: usize,
 }
 
-pub struct SSDPrefillKernels<B: Backend> {
+pub struct SSDPrefillBlock<B: Backend> {
     single: <B::Kernels as Kernels>::SSDPrefillKernel,
     single_64: <B::Kernels as Kernels>::SSDPrefill64Kernel,
     sequential: <B::Kernels as Kernels>::SSDPrefillSequentialKernel,
     data_type: DataType,
 }
 
-impl<B: Backend> SSDPrefillKernels<B> {
+impl<B: Backend> SSDPrefillBlock<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
@@ -139,5 +139,5 @@ impl<B: Backend> SSDPrefillKernels<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/backends/common/kernel/ssd_prefill_test.rs"]
+#[path = "../../../tests/unit/encodable_block/mamba_mixer/ssd_prefill_test.rs"]
 mod tests;

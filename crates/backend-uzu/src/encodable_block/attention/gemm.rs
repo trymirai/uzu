@@ -26,7 +26,6 @@ pub struct AttentionGemmArguments<'a, B: Backend, KVBuf: AsBufferRangeRef> {
     pub suffix_length: usize,         // qL
     pub sequence_length: usize,       // kL (prefix + suffix)
     pub segment_prefix_length: usize, // qL_off
-    pub max_sequence_length: usize,   // stride for K/V cache
     pub ring_params: Option<RingParams>,
     pub head_dim: usize,
     pub sliding_window_size: Option<usize>,
@@ -166,3 +165,7 @@ struct KernelKey {
     is_sliding_window: bool,
     has_sinks: bool,
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/encodable_block/attention_gemm_test.rs"]
+mod tests;

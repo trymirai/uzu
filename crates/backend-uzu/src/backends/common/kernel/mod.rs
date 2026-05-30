@@ -6,10 +6,4 @@ pub trait ManualKernels: Kernels {
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
 }
 
-pub mod attention;
-pub mod kv_cache_update;
 pub mod matmul;
-pub mod mlp_gate_act_mul;
-pub mod moe;
-pub mod sampling;
-pub mod ssd_prefill;
