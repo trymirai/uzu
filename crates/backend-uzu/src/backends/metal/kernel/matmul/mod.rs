@@ -3,9 +3,11 @@ pub mod gemv;
 
 use std::sync::OnceLock;
 
-pub use self::gemm::{GemmDispatchPath, GemmKernel};
-pub use self::gemv::QuantGemvKernel;
 use self::gemv::GemvKernel;
+pub use self::{
+    gemm::{GemmDispatchPath, GemmKernel},
+    gemv::QuantGemvKernel,
+};
 use crate::{
     DataType,
     backends::{
