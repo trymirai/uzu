@@ -34,6 +34,9 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
     #[specialize] is_trie: bool,
     #[specialize] is_sliding_window: bool,
 ) {
+    assert_eq!(ring_params.is_some(), is_kv_cache_ring);
+    assert_eq!(sliding_window_size.is_some(), is_sliding_window);
+
     let value_dim = HEAD_DIM;
 
     let prefix_length = sequence_length - suffix_length;

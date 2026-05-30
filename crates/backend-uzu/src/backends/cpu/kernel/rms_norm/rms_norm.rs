@@ -1,5 +1,5 @@
 use half::{bf16, f16};
-use num_traits::{Float, ToPrimitive};
+use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::ArrayElement;
@@ -33,6 +33,8 @@ pub fn rms_norm<
     #[specialize] scale_residual_sum: bool,
     #[specialize] scale_output: bool,
 ) {
+    assert_eq!(hadamard_factors.is_some(), use_hadamard);
+
     if use_hadamard {
         unimplemented!("not supported yet");
     }
@@ -43,8 +45,6 @@ pub fn rms_norm<
     };
 
     let element_count = element_count as usize;
-    let input_size = (batch_size as usize) * element_count;
-    let scales_size = input_size;
     let epsilon = AccumT::from(epsilon).unwrap();
     let scale_offset = AccumT::from(scale_offset).unwrap();
     let element_count_accum = AccumT::from(element_count).unwrap();

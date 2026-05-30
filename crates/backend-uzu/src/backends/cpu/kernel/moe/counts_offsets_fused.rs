@@ -1,7 +1,4 @@
-use num_traits::Float;
 use proc_macros::kernel;
-
-use crate::ArrayElement;
 
 #[kernel(MoeCountsOffsetsFused)]
 pub fn moe_counts_offsets_fused(

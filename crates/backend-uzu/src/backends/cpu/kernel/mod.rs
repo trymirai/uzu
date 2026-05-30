@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use crate::backends::{common::Kernels, cpu::Cpu};
 
 mod activation;

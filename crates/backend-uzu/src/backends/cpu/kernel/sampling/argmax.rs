@@ -84,6 +84,7 @@ pub fn argmax_final(
     for batch_idx in 0..batch_size as usize {
         unsafe {
             let pair = *partial_results.add(batch_idx);
+            assert!(pair.index < vocab_size);
             *final_tokens.add(batch_idx) = pair.index;
         }
     }

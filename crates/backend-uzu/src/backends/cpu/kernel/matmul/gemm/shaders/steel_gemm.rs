@@ -61,42 +61,40 @@ pub fn matmul_gemm_impl<TA: ArrayElement + Float, TB: ArrayElement + Float, TD: 
     let b = SendPtr(b);
     let d = SendPtrMut(d);
 
-    unsafe {
-        std::thread::scope(|s| {
-            let rows_per_thread = m / num_threads;
-            let rows_per_thread_remainder = m % num_threads;
-            let mut start = 0;
+    std::thread::scope(|s| {
+        let rows_per_thread = m / num_threads;
+        let rows_per_thread_remainder = m % num_threads;
+        let mut start = 0;
 
-            for t in 0..num_threads {
-                let chunk_add = if t < rows_per_thread_remainder {
-                    1
-                } else {
-                    0
-                };
-                let chunk = rows_per_thread + chunk_add;
-                let end = start + chunk;
+        for t in 0..num_threads {
+            let chunk_add = if t < rows_per_thread_remainder {
+                1
+            } else {
+                0
+            };
+            let chunk = rows_per_thread + chunk_add;
+            let end = start + chunk;
 
-                s.spawn(move || unsafe {
-                    for row in start..end {
-                        matmul_gemm_compute_row(
-                            a,
-                            b,
-                            ab_scale,
-                            d,
-                            row,
-                            n,
-                            k,
-                            leading_dimension_a,
-                            leading_dimension_b,
-                            leading_dimension_d,
-                            b_transpose,
-                            is_accumulate,
-                        );
-                    }
-                });
+            s.spawn(move || unsafe {
+                for row in start..end {
+                    matmul_gemm_compute_row(
+                        a,
+                        b,
+                        ab_scale,
+                        d,
+                        row,
+                        n,
+                        k,
+                        leading_dimension_a,
+                        leading_dimension_b,
+                        leading_dimension_d,
+                        b_transpose,
+                        is_accumulate,
+                    );
+                }
+            });
 
-                start = end;
-            }
-        });
-    }
+            start = end;
+        }
+    });
 }
