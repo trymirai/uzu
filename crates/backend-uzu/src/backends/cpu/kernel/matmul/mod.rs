@@ -1,6 +1,4 @@
-pub mod gemm;
-pub mod gemv;
-mod matmul;
-pub(crate) mod quant;
+mod kernel;
+mod reference;
 
-pub use matmul::MatmulCpuKernel;
+pub use kernel::MatmulCpuKernel;

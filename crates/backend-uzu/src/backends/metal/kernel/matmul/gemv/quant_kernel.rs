@@ -6,12 +6,13 @@ use crate::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
-            kernel::{
-                Kernels, QuantizedMatmulQmvFastKernel, QuantizedMatmulQmvKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError},
-            },
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{Metal, context::MetalContext},
+        metal::{
+            Metal,
+            context::MetalContext,
+            kernel::{QuantizedMatmulQmvFastMetalKernel, QuantizedMatmulQmvMetalKernel},
+        },
     },
 };
 
@@ -29,11 +30,8 @@ pub(crate) struct QuantGemvKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
-    qmv: HashMap<QmvKey, <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel>,
-    qmv_fast: HashMap<
-        QmvKey,
-        <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel,
-    >,
+    qmv: HashMap<QmvKey, QuantizedMatmulQmvMetalKernel>,
+    qmv_fast: HashMap<QmvKey, QuantizedMatmulQmvFastMetalKernel>,
 }
 
 impl QuantGemvKernel {
@@ -141,7 +139,7 @@ impl QuantGemvKernel {
             let kernel = match self.qmv_fast.entry(key) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let kernel = <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+                    let kernel = QuantizedMatmulQmvFastMetalKernel::new(
                         context,
                         self.weights_data_type,
                         self.input_data_type,
@@ -173,7 +171,7 @@ impl QuantGemvKernel {
             let kernel = match self.qmv.entry(key) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let kernel = <<Metal as crate::backends::common::Backend>::Kernels as Kernels>::QuantizedMatmulQmvKernel::new(
+                    let kernel = QuantizedMatmulQmvMetalKernel::new(
                         context,
                         self.weights_data_type,
                         self.input_data_type,
