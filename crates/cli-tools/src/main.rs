@@ -69,6 +69,7 @@ fn run_setup(include_platform_specific: bool) -> Result<()> {
         if cfg!(target_vendor = "apple") {
             Command::xcodebuild_first_launch().run()?;
             Command::xcodebuild_download_metal_toolchain().run()?;
+            Command::cmake_setup().run()?;
         }
     }
 
