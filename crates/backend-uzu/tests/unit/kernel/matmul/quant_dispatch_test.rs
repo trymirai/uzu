@@ -144,16 +144,16 @@ fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
-#[case::m1_gs32_4bit_mlx ( 1, 256, 64,  32, 4, QuantizationMethod::ScaleBias)]
-#[case::m1_gs64_4bit_mlx ( 1, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
-#[case::m1_gs128_4bit_mlx( 1, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]
-#[case::m1_gs32_4bit_zp  ( 1, 256, 64,  32, 4, QuantizationMethod::ScaleZeroPoint)]
-#[case::m1_gs64_8bit_zp  ( 1, 256, 64,  64, 8, QuantizationMethod::ScaleZeroPoint)]
-#[case::m1_gs128_8bit_mlx( 1, 256, 64, 128, 8, QuantizationMethod::ScaleBias)]
-#[case::m1_gs32_4bit_sym ( 1, 256, 64,  32, 4, QuantizationMethod::ScaleSymmetric)]
-#[case::m1_gs64_8bit_sym ( 1, 256, 64,  64, 8, QuantizationMethod::ScaleSymmetric)]
-#[case::m2_gs32_4bit_mlx ( 2, 256, 64,  32, 4, QuantizationMethod::ScaleBias)]
-#[case::m4_gs32_4bit_zp  ( 4, 256, 64,  32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::m1_gs32_4bit_mlx(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::m1_gs64_4bit_mlx(1, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
+#[case::m1_gs128_4bit_mlx(1, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]
+#[case::m1_gs32_4bit_zp(1, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::m1_gs64_8bit_zp(1, 256, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::m1_gs128_8bit_mlx(1, 256, 64, 128, 8, QuantizationMethod::ScaleBias)]
+#[case::m1_gs32_4bit_sym(1, 256, 64, 32, 4, QuantizationMethod::ScaleSymmetric)]
+#[case::m1_gs64_8bit_sym(1, 256, 64, 64, 8, QuantizationMethod::ScaleSymmetric)]
+#[case::m2_gs32_4bit_mlx(2, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::m4_gs32_4bit_zp(4, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
 fn parity_gemv_bf16(
     #[case] m: usize,
     #[case] k: usize,
@@ -231,8 +231,13 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
     let bias_buf = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
-    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(&context, bf16::data_type(), bf16::data_type(), bf16::data_type())
-        .expect("MatmulMetalKernel");
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulMetalKernel");
 
     let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
     let mut args = quant_arguments(&mut buffers, &input);
@@ -324,12 +329,12 @@ fn quant_gemm_accumulate_returns_unsupported_dop() {
 }
 
 #[rstest]
-#[case::gs32_4bit_mlx (128, 256, 64,  32, 4, QuantizationMethod::ScaleBias)]
-#[case::gs64_4bit_mlx (128, 256, 64,  64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs32_4bit_mlx(128, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_mlx(128, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
 #[case::gs128_4bit_mlx(128, 256, 64, 128, 4, QuantizationMethod::ScaleBias)]
-#[case::gs32_4bit_zp  (128, 256, 64,  32, 4, QuantizationMethod::ScaleZeroPoint)]
-#[case::gs64_8bit_zp  (128, 256, 64,  64, 8, QuantizationMethod::ScaleZeroPoint)]
-#[case::gs128_8bit_zp (128, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs32_4bit_zp(128, 256, 64, 32, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs64_8bit_zp(128, 256, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs128_8bit_zp(128, 256, 64, 128, 8, QuantizationMethod::ScaleZeroPoint)]
 fn mxu_quant_parity_bf16(
     #[case] m: usize,
     #[case] k: usize,
@@ -349,13 +354,10 @@ fn mxu_quant_parity_bf16(
     // reference path, so bf16 reductions over k=256 can drift one element
     // above the 0.4 absolute tolerance the simdgroup path uses.
     assert_parity::<bf16>(
-        &format!(
-            "MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"
-        ),
+        &format!("MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"),
         &reference,
         &actual,
         0.05,
         0.5,
     );
 }
-

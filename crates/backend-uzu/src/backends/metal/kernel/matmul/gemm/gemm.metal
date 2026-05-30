@@ -117,21 +117,28 @@ KERNEL(Gemm)(
   (void)thread_z;
 
   if constexpr (USE_MXU) {
-    MxuMmaCore<AT, BT, DT, GEMM_TILING, TRANSPOSE_B, B_PROLOGUE, BITS, GROUP_SIZE>::run(
-        a,
-        b_packed,
-        d,
-        params,
-        alignment,
-        output_transform,
-        scales,
-        biases,
-        zero_points,
-        output_bias,
-        rht_factors,
-        b_shared,
-        thread_context
-    );
+    MxuMmaCore<
+        AT,
+        BT,
+        DT,
+        GEMM_TILING,
+        TRANSPOSE_B,
+        B_PROLOGUE,
+        BITS,
+        GROUP_SIZE>::
+        run(a,
+            b_packed,
+            d,
+            params,
+            alignment,
+            output_transform,
+            scales,
+            biases,
+            zero_points,
+            output_bias,
+            rht_factors,
+            b_shared,
+            thread_context);
   } else {
     SimdgroupMmaCore<
         AT,

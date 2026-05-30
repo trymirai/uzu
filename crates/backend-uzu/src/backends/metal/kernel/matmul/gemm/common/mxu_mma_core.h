@@ -248,8 +248,8 @@ struct MxuMmaCore {
 
     const device BT* bias_simdgroup =
         output_bias + size_t(block_col) + size_t(tile_col_offset);
-    using FragType =
-        uzu::matmul::Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
+    using FragType = uzu::matmul::
+        Fragment<DT, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
     const short2 thread_position = FragType::get_position(thread_context);
 
     auto dispatch_aligned_k = [&](auto body) {

@@ -92,20 +92,19 @@ fn b_transpose_false_bf16() {
 
 fn rht_shapes() -> impl Iterator<Item = crate::common::matmul::Shape> {
     use crate::common::matmul::Shape;
-    [
-        Shape::new(8, 128, 64),
-        Shape::new(64, 128, 128),
-        Shape::new(128, 2048, 256),
-        Shape::new(33, 128, 64),
-    ]
-    .into_iter()
+    [Shape::new(8, 128, 64), Shape::new(64, 128, 128), Shape::new(128, 2048, 256), Shape::new(33, 128, 64)].into_iter()
 }
 
 #[test]
 fn rht_parity_bf16() {
     let context = MetalContext::new().expect("Metal context");
-    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(&context, bf16::data_type(), bf16::data_type(), bf16::data_type())
-        .expect("MatmulKernel");
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
     for path in gemm_paths_for_hw(&context) {
         for shape in rht_shapes() {
             let case = Case::new(shape).with_rht(true);
@@ -118,8 +117,13 @@ fn rht_parity_bf16() {
 fn bias_parity_bf16() {
     use crate::common::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
-    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(&context, bf16::data_type(), bf16::data_type(), bf16::data_type())
-        .expect("MatmulKernel");
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
     let shapes = [Shape::new(64, 128, 64), Shape::new(128, 2048, 128), Shape::new(33, 128, 64)];
     for path in gemm_paths_for_hw(&context) {
         for shape in shapes {
