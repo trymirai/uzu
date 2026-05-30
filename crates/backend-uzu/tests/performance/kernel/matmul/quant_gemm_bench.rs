@@ -8,7 +8,7 @@ use backend_uzu::{
             gpu_types::QuantizationMethod,
             kernel::{Kernels, matmul::MatmulKernel},
         },
-        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal, MetalContext},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -31,7 +31,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    let supports_mxu = context.device.supports_mxu();
+    let supports_mxu = context.supports_mxu();
     let paths: &[(&str, GemmDispatchPath)] = if supports_mxu {
         &[("Simdgroup", GemmDispatchPath::Simdgroup), ("Mxu", GemmDispatchPath::Mxu)]
     } else {

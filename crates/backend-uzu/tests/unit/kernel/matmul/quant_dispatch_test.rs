@@ -16,7 +16,7 @@ use backend_uzu::{
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
             },
         },
-        metal::{DeviceExt, GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal, MetalContext},
     },
 };
 use half::bf16;
@@ -344,7 +344,7 @@ fn mxu_quant_parity_bf16(
     #[case] method: QuantizationMethod,
 ) {
     let context = MetalContext::new().expect("Metal context");
-    if !context.device.supports_mxu() {
+    if !context.supports_mxu() {
         return;
     }
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
