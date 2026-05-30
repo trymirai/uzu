@@ -48,7 +48,7 @@ fn bench_quant_gemv_typed<T: ArrayElement + Float>(
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
             iter_encode_loop::<Metal, _>(context, b, |encoder| {
-                matmul.encode(quant_arguments(&mut buffers, &input), encoder).expect("encode quant gemv");
+                matmul.quant_gemv.encode(encoder, quant_arguments(&mut buffers, &input)).expect("encode quant gemv");
             });
         });
     }

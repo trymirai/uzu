@@ -4,7 +4,8 @@ pub mod gemv;
 use std::sync::OnceLock;
 
 pub use self::gemm::{GemmDispatchPath, GemmKernel};
-use self::gemv::{GemvKernel, QuantGemvKernel};
+pub use self::gemv::QuantGemvKernel;
+use self::gemv::GemvKernel;
 use crate::{
     DataType,
     backends::{
@@ -22,7 +23,7 @@ use crate::{
 
 pub struct MatmulMetalKernel {
     gemv: GemvKernel,
-    quant_gemv: QuantGemvKernel,
+    pub quant_gemv: QuantGemvKernel,
     pub gemm: GemmKernel,
 }
 

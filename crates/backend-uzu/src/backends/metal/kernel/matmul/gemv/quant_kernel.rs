@@ -26,7 +26,7 @@ struct QmvKey {
     use_hadamard: bool,
 }
 
-pub(crate) struct QuantGemvKernel {
+pub struct QuantGemvKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
@@ -35,7 +35,7 @@ pub(crate) struct QuantGemvKernel {
 }
 
 impl QuantGemvKernel {
-    pub(crate) fn new(
+    pub fn new(
         _context: &MetalContext,
         weights_data_type: DataType,
         input_data_type: DataType,
@@ -50,7 +50,7 @@ impl QuantGemvKernel {
         }
     }
 
-    pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         encoder: &mut Encoder<Metal>,
         arguments: MatmulArguments<'a, Metal, TB>,
