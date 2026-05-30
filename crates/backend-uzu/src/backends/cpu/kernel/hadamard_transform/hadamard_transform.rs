@@ -1,5 +1,5 @@
-use half::{bf16, f16};
-use num_traits::NumCast;
+use half::bf16;
+use num_traits::{Float, NumCast};
 use proc_macros::kernel;
 
 use crate::{ArrayElement, backends::common::gpu_types::HadamardTransformOrder};
@@ -26,8 +26,8 @@ fn hadamard_transform(values: &mut [f32; SIMD_SIZE]) {
 }
 
 #[kernel(HadamardTransform)]
-#[variants(T, f32, f16, bf16)]
-pub fn hadamard_transform_mul<T: ArrayElement>(
+#[variants(T, f32, bf16)]
+pub fn hadamard_transform_mul<T: ArrayElement + Float>(
     data: *mut T,
     factors: *const i32,
     hidden_dim: u32,
