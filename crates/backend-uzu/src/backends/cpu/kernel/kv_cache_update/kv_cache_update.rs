@@ -27,11 +27,11 @@ pub fn kv_cache_update<T: ArrayElement + Float>(
                 let dest_idx = (swaps[i].destination as usize) * num_heads * head_dim + head_offset + channel_idx;
                 unsafe {
                     let keys_src_ptr = in_place_keys.add(source_idx);
-                    let mut keys_dst_ptr = in_place_keys.add(dest_idx);
+                    let keys_dst_ptr = in_place_keys.add(dest_idx);
                     keys_src_ptr.swap(keys_dst_ptr);
 
                     let values_src_ptr = in_place_values.add(source_idx);
-                    let mut values_dst_ptr = in_place_values.add(dest_idx);
+                    let values_dst_ptr = in_place_values.add(dest_idx);
                     values_src_ptr.swap(values_dst_ptr);
                 }
             }

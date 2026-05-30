@@ -6,7 +6,7 @@ use backend_uzu::{
         common::{
             Backend, Context,
             gpu_types::QuantizationMethod,
-            kernel::{ManualKernels, matmul::MatmulKernel},
+            kernel::{Kernels, matmul::MatmulKernel},
         },
         metal::{Metal, MetalContext},
     },
@@ -31,20 +31,18 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    let mut group =
-        c.benchmark_group(format!("{}/Kernel/Qwen3Layers/{}", type_short_name::<Metal>(), label));
+    let mut group = c.benchmark_group(format!("{}/Kernel/Qwen3Layers/{}", type_short_name::<Metal>(), label));
     for (layer, shape) in qwen3_layer_shapes(bits) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
         let mut buffers = QuantBuffers::<Metal, T>::allocate(context, &input);
-        let mut matmul =
-            <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
-                context,
-                T::data_type(),
-                T::data_type(),
-                T::data_type(),
-            )
-            .unwrap();
+        let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+            context,
+            T::data_type(),
+            T::data_type(),
+            T::data_type(),
+        )
+        .unwrap();
 
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(format!("{layer}_{shape}")), |b| {

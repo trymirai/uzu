@@ -1,4 +1,3 @@
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 use backend_uzu::{
     ArrayContextExt, ArrayElement,
     backends::{
@@ -6,6 +5,7 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::uzu_test;
 
@@ -45,8 +45,7 @@ fn get_output<B: Backend>(
     let mut offsets = context.create_array_uninitialized(&[e + 1], u32::data_type()).into_allocation();
     let mut sum_k = context.create_array_uninitialized(&[1], u32::data_type()).into_allocation();
     let num_tiles = e.div_ceil(512).max(1);
-    let mut partials =
-        context.create_array_uninitialized(&[num_tiles * 512], u32::data_type()).into_allocation();
+    let mut partials = context.create_array_uninitialized(&[num_tiles * 512], u32::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

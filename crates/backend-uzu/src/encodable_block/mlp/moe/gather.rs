@@ -7,26 +7,26 @@ use crate::{
     },
 };
 
-enum MoeGatherKernelType<B: Backend> {
+enum MoeGatherVariant<B: Backend> {
     OneD(<B::Kernels as Kernels>::MoeGatherXPerm1DKernel),
     TwoD(<B::Kernels as Kernels>::MoeGatherXPerm2DKernel),
 }
 
-pub struct MoeGatherKernel<B: Backend> {
-    kernel: MoeGatherKernelType<B>,
+pub struct MoeGather<B: Backend> {
+    variant: MoeGatherVariant<B>,
     data_type: DataType,
 }
 
-impl<B: Backend> MoeGatherKernel<B> {
+impl<B: Backend> MoeGather<B> {
     pub fn new(
         ctx: &B::Context,
         data_type: DataType,
     ) -> Result<Self, B::Error> {
         Ok(Self {
-            kernel: if data_type == DataType::BF16 {
-                MoeGatherKernelType::TwoD(<B::Kernels as Kernels>::MoeGatherXPerm2DKernel::new(ctx, data_type)?)
+            variant: if data_type == DataType::BF16 {
+                MoeGatherVariant::TwoD(<B::Kernels as Kernels>::MoeGatherXPerm2DKernel::new(ctx, data_type)?)
             } else {
-                MoeGatherKernelType::OneD(<B::Kernels as Kernels>::MoeGatherXPerm1DKernel::new(ctx, data_type)?)
+                MoeGatherVariant::OneD(<B::Kernels as Kernels>::MoeGatherXPerm1DKernel::new(ctx, data_type)?)
             },
             data_type,
         })
@@ -46,8 +46,8 @@ impl<B: Backend> MoeGatherKernel<B> {
             encoder.allocate_scratch(size_for_shape(&[batch_dim * num_active_experts, d_model], self.data_type))?;
         encoder.encode_fill(&mut x_perm, 0);
 
-        match &self.kernel {
-            MoeGatherKernelType::OneD(kernel) => kernel.encode(
+        match &self.variant {
+            MoeGatherVariant::OneD(kernel) => kernel.encode(
                 input,
                 bucketed_ids,
                 &mut x_perm,
@@ -57,7 +57,7 @@ impl<B: Backend> MoeGatherKernel<B> {
                 num_active_experts as u32,
                 encoder,
             ),
-            MoeGatherKernelType::TwoD(kernel) => kernel.encode(
+            MoeGatherVariant::TwoD(kernel) => kernel.encode(
                 input,
                 bucketed_ids,
                 &mut x_perm,
@@ -72,3 +72,7 @@ impl<B: Backend> MoeGatherKernel<B> {
         Ok(x_perm)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/encodable_block/moe/moe_gather_test.rs"]
+mod tests;

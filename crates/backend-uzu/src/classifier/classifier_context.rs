@@ -193,7 +193,7 @@ impl<B: Backend> ClassifierContext<B> {
         let prediction_head = ClassifierPredictionHead::new(
             context.as_ref(),
             prediction_head_dense,
-            prediction_head_config.activation.clone().into(),
+            prediction_head_config.activation.clone(),
             model_shape.data_type,
             prediction_head_norm,
             prediction_head_final_linear,

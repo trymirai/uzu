@@ -1,7 +1,7 @@
 use super::{decoder_support::*, *};
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Allocation, AsBufferRangeRef, DenseBuffer},
+    backends::common::{Allocation, AsBufferRangeRef},
     config::decoder::DecoderConfig,
     encodable_block::{DecoderArguments, DecoderDecodeInput, LayerArguments, Linear, SamplingInputs},
     forward_pass::token_inputs::TokenInputs,
@@ -1211,12 +1211,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             }
             .into());
         }
-        let buffer_range = self.ctx.async_chain_results.as_buffer_range_ref();
-        let range = buffer_range.range();
-        Ok(unsafe {
-            *((buffer_range.buffer().cpu_ptr().as_ptr() as *const u8)
-                .add(range.start + slot * std::mem::size_of::<u32>()) as *const u32)
-        })
+        Ok(self.ctx.async_chain_results.copyout::<u32>()[slot])
     }
 
     pub(super) fn take_instrumentation(&mut self) -> RunnerInstrumentation {
@@ -1229,8 +1224,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
 }
 
 fn read_sampled_token_from_sampling_output<B: Backend>(sampling_output: &Allocation<B>) -> Result<u64, Error> {
-    let buffer_range = sampling_output.as_buffer_range_ref();
-    let range = buffer_range.range();
-    let token = unsafe { *((buffer_range.buffer().cpu_ptr().as_ptr() as *const u8).add(range.start) as *const u32) };
+    let token = sampling_output.copyout::<u32>()[0];
     Ok(u64::from(token))
 }

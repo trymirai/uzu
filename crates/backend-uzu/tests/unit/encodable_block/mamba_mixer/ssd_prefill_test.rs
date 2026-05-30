@@ -1,18 +1,16 @@
+use super::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use crate::{
-    DataType, allocation_to_vec,
+    DataType,
     backends::common::{
-        Allocation, Backend, Context, Encoder, Kernels,
-        gpu_types::ActivationType,
-        kernel::{
-            Conv1dScanKernel,
-            ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
-        },
+        Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel,
     },
 };
 
 #[macro_use]
-#[path = "../../../../common/mod.rs"]
+#[path = "../../../common/mod.rs"]
 mod common;
+
+use common::helpers::allocation_to_vec;
 
 fn allocation_from_slice<B: Backend, T: crate::ArrayElement>(
     context: &B::Context,
@@ -148,7 +146,7 @@ impl SSDPrefillFixture {
 
 fn run_prefill_kernel_mode<B: Backend>(
     ctx: &B::Context,
-    kernel: &SSDPrefillKernels<B>,
+    block: &SSDPrefillBlock<B>,
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
@@ -180,7 +178,7 @@ fn run_prefill_kernel_mode<B: Backend>(
     };
 
     let mut encoder = Encoder::new(ctx).unwrap();
-    let y_buf = kernel.encode(&mut encoder, args, mode).expect("Failed to encode SSD prefill");
+    let y_buf = block.encode(&mut encoder, args, mode).expect("Failed to encode SSD prefill");
     let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let y_vec = allocation_to_vec::<B, f32>(&y_buf);
@@ -271,11 +269,11 @@ fn assert_deterministic_for_mode<B: Backend>(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill determinism test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::<B>::new(&ctx, DataType::F32).unwrap();
+    let block = SSDPrefillBlock::<B>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
-    let (y_a, state_a, _) = run_prefill_kernel_mode::<B>(&ctx, &kernel, &fixture, mode);
-    let (y_b, state_b, _) = run_prefill_kernel_mode::<B>(&ctx, &kernel, &fixture, mode);
+    let (y_a, state_a, _) = run_prefill_kernel_mode::<B>(&ctx, &block, &fixture, mode);
+    let (y_b, state_b, _) = run_prefill_kernel_mode::<B>(&ctx, &block, &fixture, mode);
 
     assert_eq!(y_a, y_b, "Prefill outputs differ in {:?} mode", mode);
     assert_eq!(state_a, state_b, "Prefill states differ in {:?} mode", mode);
@@ -286,7 +284,7 @@ fn assert_matches_cpu_reference<B: Backend>(mode: SSDPrefillMode) {
         eprintln!("Skipping SSD prefill reference test: no Metal device");
         return;
     };
-    let kernel = SSDPrefillKernels::<B>::new(&ctx, DataType::F32).unwrap();
+    let block = SSDPrefillBlock::<B>::new(&ctx, DataType::F32).unwrap();
     let fixture = SSDPrefillFixture::new();
 
     let (y_ref, state_ref) = ssd_prefill_cpu_reference(
@@ -308,7 +306,7 @@ fn assert_matches_cpu_reference<B: Backend>(mode: SSDPrefillMode) {
         fixture.state_strides,
     );
 
-    let (y_gpu, state_gpu, _) = run_prefill_kernel_mode::<B>(&ctx, &kernel, &fixture, mode);
+    let (y_gpu, state_gpu, _) = run_prefill_kernel_mode::<B>(&ctx, &block, &fixture, mode);
 
     let tolerance = 5e-5f32;
     let mut max_y_diff = 0.0f32;

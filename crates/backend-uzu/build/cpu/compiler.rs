@@ -611,7 +611,7 @@ impl CpuCompiler {
             impl crate::backends::common::kernel::#trait_ident for #struct_ident {
                 type Backend = crate::backends::cpu::Cpu;
 
-                fn new(context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
+                fn new(#[allow(unused)] context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
                     Ok(Self {
                         #(#struct_fields_sets ,)*
                     })
@@ -667,12 +667,10 @@ impl CpuCompiler {
         });
 
         let tokens = quote! {
-            pub struct CpuKernels;
-
-            impl crate::backends::common::kernel::Kernels for CpuKernels {
-                type Backend = crate::backends::cpu::Cpu;
-
-                #(#associated_types)*
+            macro_rules! autogen_kernels {
+                () => {
+                    #(#associated_types)*
+                }
             }
         };
 

@@ -5,7 +5,7 @@ use backend_uzu::{
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::{
@@ -74,7 +74,6 @@ fn bench_qmv_fast(c: &mut Criterion) {
         bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
         bench_qmv_fast_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
         bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_qmv_fast_typed::<B, f16>(c, &context, "ZP_F16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
         bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleZeroPoint);
     });
 }

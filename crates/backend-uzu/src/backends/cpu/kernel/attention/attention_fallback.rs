@@ -19,12 +19,20 @@ pub fn attention_fallback_scatter_scores<T: ArrayElement + Float>(
     gqa_factor: u32,
     sequence_length: u32,
     suffix_length: u32,
-    #[allow(unused)] total_elements: u32,
+    total_elements: u32,
     #[specialize] is_kv_cache_ring: bool,
     #[specialize] is_causal: bool,
     #[specialize] is_trie: bool,
     #[specialize] is_sliding_window: bool,
 ) {
+    assert_eq!(ring_params.is_some(), is_kv_cache_ring);
+    assert_eq!(sliding_window_size.is_some(), is_sliding_window);
+    let expected_total_elements = gqa_factor
+        .checked_mul(suffix_length)
+        .and_then(|elements| elements.checked_mul(sequence_length))
+        .expect("scatter scores element count overflow");
+    assert_eq!(total_elements, expected_total_elements);
+
     let prefix_length = sequence_length - suffix_length;
     let suffix_position = ring_params.map(|params| params.ring_length).unwrap_or(prefix_length);
 
@@ -76,8 +84,14 @@ pub fn attention_fallback_scatter_values<T: ArrayElement + Float>(
     suffix_length: u32,
     num_heads: u32,
     head_dim: u32,
-    #[allow(unused)] total_elements: u32,
+    total_elements: u32,
 ) {
+    let expected_total_elements = gqa_factor
+        .checked_mul(suffix_length)
+        .and_then(|elements| elements.checked_mul(head_dim))
+        .expect("scatter values element count overflow");
+    assert_eq!(total_elements, expected_total_elements);
+
     for head_in_group in 0..gqa_factor as usize {
         for query_index in 0..suffix_length as usize {
             for dim_index in 0..head_dim as usize {

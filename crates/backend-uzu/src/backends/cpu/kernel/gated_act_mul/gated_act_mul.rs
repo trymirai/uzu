@@ -19,6 +19,8 @@ pub fn gated_act_mul<T: ArrayElement + Float>(
     #[specialize] interleaved: bool,
     #[specialize] use_hadamard: bool,
 ) {
+    assert_eq!(hadamard_factors.is_some(), use_hadamard);
+
     if use_hadamard {
         unimplemented!("not supported yet");
     }

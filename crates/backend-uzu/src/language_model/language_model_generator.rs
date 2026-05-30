@@ -870,15 +870,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_output: &Allocation<B>,
         batch_size: usize,
     ) -> Result<Vec<u64>, Error> {
-        let buffer_range = sampling_output.as_buffer_range_ref();
-        let range = buffer_range.range();
-        let values = unsafe {
-            std::slice::from_raw_parts(
-                (buffer_range.buffer().cpu_ptr().as_ptr() as *const u32).add(range.start / std::mem::size_of::<u32>()),
-                batch_size,
-            )
-        };
-        Ok(values.iter().map(|value| *value as u64).collect())
+        let values = sampling_output.copyout::<u32>();
+        Ok(values[..batch_size].iter().map(|value| u64::from(*value)).collect())
     }
 
     fn update_cache_layers(

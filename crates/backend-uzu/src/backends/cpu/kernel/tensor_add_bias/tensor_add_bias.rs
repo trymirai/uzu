@@ -15,12 +15,12 @@ pub fn tensor_add_bias<T: ArrayElement + Float, BiasT: ArrayElement + Float>(
     #[allow(unused)] output: *mut T,
     #[allow(unused)] num_cols: u32,
     #[allow(unused)] length: u32,
-    #[allow(unused)]
-    #[specialize]
-    in_place: bool,
+    #[specialize] in_place: bool,
 ) {
+    assert_eq!(input.is_none(), in_place);
+
     for i in 0usize..(length as usize) {
-        let bias_position = (i % num_cols as usize);
+        let bias_position = i % num_cols as usize;
         unsafe {
             let value: f32 = if let Some(in_data) = input {
                 num_traits::cast(*in_data.add(i)).unwrap()

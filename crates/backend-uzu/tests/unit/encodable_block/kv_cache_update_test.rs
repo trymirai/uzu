@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 #[macro_use]
-#[path = "../../../../common/mod.rs"]
+#[path = "../../common/mod.rs"]
 mod common;
 
 use ndarray::{Array, Array3, s};

@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 
-use half::{bf16, f16};
-use num_traits::Float;
 use backend_uzu::{
     ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorCopyKernel},
 };
+use half::{bf16, f16};
+use num_traits::Float;
 
 use crate::{
     common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},

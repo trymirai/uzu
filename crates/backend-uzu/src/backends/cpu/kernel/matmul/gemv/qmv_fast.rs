@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
@@ -8,9 +8,9 @@ use crate::{
 };
 
 #[kernel(QuantizedMatmulQmvFast)]
-#[variants(WeightT, f32, f16, bf16)]
-#[variants(InputT, f32, f16, bf16)]
-#[variants(OutputT, f32, f16, bf16)]
+#[variants(WeightT, f32, bf16)]
+#[variants(InputT, f32, bf16)]
+#[variants(OutputT, f32, bf16)]
 #[variants(GROUP_SIZE, 16, 32, 64, 128)]
 #[variants(BITS, 4, 8)]
 pub fn quantized_matmul_qmv_fast<
@@ -33,6 +33,8 @@ pub fn quantized_matmul_qmv_fast<
     #[specialize] quant_method: QuantizationMethod,
     #[specialize] use_hadamard: bool,
 ) {
+    assert_eq!(hadamard_factors.is_some(), use_hadamard);
+
     if use_hadamard {
         unimplemented!("not supported yet");
     }

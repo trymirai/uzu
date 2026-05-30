@@ -62,11 +62,6 @@ pub fn short_conv_prefill<T: ArrayElement + Float>(
     let in_proj_stride = in_proj_stride as usize;
     let state_stride = state_stride as usize;
     let model_dim = model_dim as usize;
-    let tap_count = if kernel_size > 0 {
-        kernel_size - 1
-    } else {
-        0
-    };
 
     unsafe {
         for token_idx in 0..suffix_len + kernel_size.saturating_sub(1) {

@@ -3,22 +3,22 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{
-            Allocation, Backend, Context, Encoder,
-            kernel::attention::{AttentionGemmArguments, AttentionGemmBlock},
-        },
+        common::{Allocation, Backend, Context, Encoder},
         cpu::Cpu,
     },
 };
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{
-    common::{
-        assert::assert_eq_float,
-        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
-    },
-    uzu_test,
+use super::{AttentionGemmArguments, AttentionGemmBlock};
+
+#[macro_use]
+#[path = "../../common/mod.rs"]
+mod common;
+
+use common::{
+    assert::assert_eq_float,
+    helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -108,7 +108,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         suffix_length: input.suffix_length,
         sequence_length: input.sequence_length,
         segment_prefix_length,
-        max_sequence_length: input.sequence_length,
         ring_params: None,
         head_dim: input.head_dim,
         sliding_window_size: None,
@@ -199,81 +198,81 @@ fn test_unaligned<T: ArrayElement + Float + Debug + Display>() {
 }
 
 // Basic tests
-#[uzu_test]
+#[test]
 fn test_basic_f32() {
     test_basic::<f32>();
 }
 
-#[uzu_test]
+#[test]
 fn test_basic_f16() {
     test_basic::<f16>();
 }
 
-#[uzu_test]
+#[test]
 fn test_basic_bf16() {
     test_basic::<bf16>();
 }
 
 // Causal tests
-#[uzu_test]
+#[test]
 fn test_causal_f32() {
     test_causal::<f32>();
 }
 
-#[uzu_test]
+#[test]
 fn test_causal_f16() {
     test_causal::<f16>();
 }
 
-#[uzu_test]
+#[test]
 fn test_causal_bf16() {
     test_causal::<bf16>();
 }
 
 // GQA tests
-#[uzu_test]
+#[test]
 fn test_gqa_f32() {
     test_gqa::<f32>();
 }
 
-#[uzu_test]
+#[test]
 fn test_gqa_f16() {
     test_gqa::<f16>();
 }
 
-#[uzu_test]
+#[test]
 fn test_gqa_bf16() {
     test_gqa::<bf16>();
 }
 
 // Head dim 128
-#[uzu_test]
+#[test]
 fn test_head_dim_128_f32() {
     test_head_dim::<f32>(128);
 }
 
-#[uzu_test]
+#[test]
 fn test_head_dim_128_f16() {
     test_head_dim::<f16>(128);
 }
 
-#[uzu_test]
+#[test]
 fn test_head_dim_128_bf16() {
     test_head_dim::<bf16>(128);
 }
 
 // Unaligned tests
-#[uzu_test]
+#[test]
 fn test_unaligned_f32() {
     test_unaligned::<f32>();
 }
 
-#[uzu_test]
+#[test]
 fn test_unaligned_f16() {
     test_unaligned::<f16>();
 }
 
-#[uzu_test]
+#[test]
 fn test_unaligned_bf16() {
     test_unaligned::<bf16>();
 }

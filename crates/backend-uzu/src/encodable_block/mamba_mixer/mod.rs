@@ -1,7 +1,10 @@
 //! Mamba2 SSM mixer encodable.
 
+mod ssd_prefill;
+
 use std::env;
 
+use ssd_prefill::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use thiserror::Error;
 
 use crate::{
@@ -10,10 +13,7 @@ use crate::{
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         gpu_types::ActivationType,
-        kernel::{
-            Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel,
-            ssd_prefill::{SSDPrefillArguments, SSDPrefillKernels, SSDPrefillMode},
-        },
+        kernel::{Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel},
     },
     config::token_mixer::mamba2::Mamba2Config,
     encodable_block::linear::{Linear, LinearBlockError},
@@ -31,7 +31,7 @@ pub enum MambaMixerError<B: Backend> {
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
 }
 
-pub(crate) struct MambaMixer<B: Backend> {
+pub struct MambaMixer<B: Backend> {
     conv_dim: usize,
     inner_dim: usize,
     num_heads: usize,
@@ -46,7 +46,7 @@ pub(crate) struct MambaMixer<B: Backend> {
     conv_decode: <B::Kernels as Kernels>::Conv1dDecodeKernel,
     conv_pack: <B::Kernels as Kernels>::Conv1dPackKernel,
     conv_scan: <B::Kernels as Kernels>::Conv1dScanKernel,
-    ssd_prefill: SSDPrefillKernels<B>,
+    ssd_prefill: SSDPrefillBlock<B>,
     ssd_update: <B::Kernels as Kernels>::SSDUpdateKernel,
     conv_weight: Allocation<B>,
     conv_bias: Option<Allocation<B>>,
@@ -56,7 +56,7 @@ pub(crate) struct MambaMixer<B: Backend> {
     inner_data_type: DataType,
 }
 
-pub(crate) struct MambaArguments<'a, B: Backend> {
+pub struct MambaArguments<'a, B: Backend> {
     pub active_row_count: usize,
     pub layer: &'a mut SSMLayer<B>,
 }
@@ -85,7 +85,7 @@ fn resolve_prefill_mode_from_env() -> SSDPrefillMode {
 }
 
 impl<B: Backend> MambaMixer<B> {
-    pub(crate) fn new(
+    pub fn new(
         context: &B::Context,
         mamba_config: &Mamba2Config,
         model_dim: usize,
@@ -153,7 +153,7 @@ impl<B: Backend> MambaMixer<B> {
         .map_err(MambaMixerError::BackendError)?;
         let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, inner_data_type)
             .map_err(MambaMixerError::BackendError)?;
-        let ssd_prefill = SSDPrefillKernels::new(context, inner_data_type).map_err(MambaMixerError::BackendError)?;
+        let ssd_prefill = SSDPrefillBlock::new(context, inner_data_type).map_err(MambaMixerError::BackendError)?;
         let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, inner_data_type, true)
             .map_err(MambaMixerError::BackendError)?;
         let prefill_mode = resolve_prefill_mode_from_env();
@@ -403,7 +403,7 @@ impl<B: Backend> MambaMixer<B> {
         Ok(out)
     }
 
-    pub(crate) fn encode(
+    pub fn encode(
         &self,
         args: MambaArguments<B>,
         input: Allocation<B>,

@@ -3,15 +3,13 @@
 use rand::seq::SliceRandom;
 
 // for Vec::shuffle
+use super::block::SamplingBlock;
 use crate::{
     DataType,
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
-            kernel::{
-                MinPKernel, TemperatureKernel,
-                sampling::{ArgmaxStrategy, SamplingKernel},
-            },
+            kernel::{MinPKernel, TemperatureKernel},
         },
         metal::Metal,
     },
@@ -45,7 +43,8 @@ fn cpu_reference_min_p(
         .collect()
 }
 
-fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
+#[test]
+fn test_argmax_sampling() {
     let context = match <Metal as Backend>::Context::new() {
         Ok(ctx) => ctx,
         Err(e) => {
@@ -57,8 +56,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let batch_size = 2;
     let vocab_size = 4;
 
-    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, strategy)
-        .expect("Failed to create argmax kernel");
+    let block = SamplingBlock::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
     // Create test data: batch_size=2, vocab_size=4
     // First batch: [1.0, 3.0, 2.0, 0.5] -> should select index 1
@@ -73,7 +71,7 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     let mut output_buffer = alloc_allocation::<Metal, u32>(context.as_ref(), batch_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel
+    block
         .encode(
             &mut logits_buffer,
             &seeds_buffer,
@@ -93,26 +91,12 @@ fn test_argmax_sampling_with_strategy(strategy: ArgmaxStrategy) {
     assert_eq!(results[0], 1, "First batch should select token 1 (highest logit: 3.0)");
     assert_eq!(results[1], 2, "Second batch should select token 2 (highest logit: 2.5)");
 
-    println!("✓ Argmax sampling test passed with {:?} strategy - selected tokens: {:?}", strategy, results);
+    println!("✓ Argmax sampling test passed - selected tokens: {:?}", results);
 }
 
 #[test]
-fn test_argmax_sampling_single_pass() {
-    test_argmax_sampling_with_strategy(ArgmaxStrategy::SinglePass);
-}
-
-#[test]
-fn test_argmax_sampling_two_pass() {
-    test_argmax_sampling_with_strategy(ArgmaxStrategy::TwoPass);
-}
-
-#[test]
-fn test_argmax_sampling() {
-    // Keep the original test for backward compatibility - defaults to single-pass
-    test_argmax_sampling_with_strategy(ArgmaxStrategy::SinglePass);
-}
-
-fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
+#[ignore = "performance-only check"]
+fn perf_argmax_128k_vocab() {
     use std::time::Instant;
 
     use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -131,8 +115,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     const VOCAB: usize = 128000; // 128K
 
     // ---- Kernel ----
-    let kernel = SamplingKernel::<Metal>::new_with_strategy(&context, DataType::F32, strategy)
-        .expect("Failed to create Argmax kernel");
+    let block = SamplingBlock::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
     // ---- Build random logits ----
     let mut rng = StdRng::seed_from_u64(123);
@@ -151,7 +134,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
     // ---- Launch once and time ----
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-    kernel
+    block
         .encode(
             &mut logits_buf,
             &seeds_buf,
@@ -171,8 +154,8 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
 
     let gpu_time_ms = completed.gpu_execution_time().as_secs_f64() * 1e3;
     println!(
-        "Argmax sampling perf (batch={}, vocab={}, strategy={:?}): GPU={:.2} ms, Host-side={:.2} ms",
-        BATCH, VOCAB, strategy, gpu_time_ms, host_elapsed_ms
+        "Argmax sampling perf (batch={}, vocab={}): GPU={:.2} ms, Host-side={:.2} ms",
+        BATCH, VOCAB, gpu_time_ms, host_elapsed_ms
     );
 
     // Ensure the kernel produced *some* output (sanity).
@@ -200,19 +183,7 @@ fn perf_argmax_128k_vocab_with_strategy(strategy: ArgmaxStrategy) {
         );
     }
 
-    println!("✓ Argmax correctness verified with {:?} strategy", strategy);
-}
-
-#[test]
-#[ignore = "performance-only check"]
-fn perf_argmax_128k_vocab_single_pass() {
-    perf_argmax_128k_vocab_with_strategy(ArgmaxStrategy::SinglePass);
-}
-
-#[test]
-#[ignore = "performance-only check"]
-fn perf_argmax_128k_vocab_two_pass() {
-    perf_argmax_128k_vocab_with_strategy(ArgmaxStrategy::TwoPass);
+    println!("✓ Argmax correctness verified");
 }
 
 #[test]
@@ -228,7 +199,7 @@ fn test_categorical_sampling() {
     let batch_size = 2;
     let vocab_size = 4;
 
-    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+    let block = SamplingBlock::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
     // Create test data with different probability distributions
     // First batch: [1.0, 2.0, 1.5, 0.5] -> softmax: [0.134, 0.366, 0.201, 0.082]
@@ -253,7 +224,7 @@ fn test_categorical_sampling() {
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-        kernel
+        block
             .encode(
                 &mut logits_buffer,
                 &seeds_buffer,
@@ -335,7 +306,7 @@ fn test_categorical_sampling_statistical() {
     const NUM_SAMPLES: usize = 5000;
     const TOLERANCE: f32 = 0.05; // 5% tolerance
 
-    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+    let block = SamplingBlock::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
     // Generate random logits
     let mut rng = StdRng::seed_from_u64(42);
@@ -377,7 +348,7 @@ fn test_categorical_sampling_statistical() {
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-        kernel
+        block
             .encode(
                 &mut logits_buffer,
                 &seeds_buffer,
@@ -447,7 +418,7 @@ fn perf_categorical_128k_vocab() {
     const BATCH: usize = 8;
     const VOCAB: usize = 128000; // 128K
 
-    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+    let block = SamplingBlock::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
     // Build random logits
     let mut rng = StdRng::seed_from_u64(123);
@@ -466,7 +437,7 @@ fn perf_categorical_128k_vocab() {
     // Launch and time
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-    kernel
+    block
         .encode(
             &mut logits_buf,
             &seeds_buf,
@@ -615,7 +586,7 @@ fn test_minp_sampling_exact_match(
         },
     };
 
-    let kernel = SamplingKernel::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+    let block = SamplingBlock::<Metal>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
     // Build logits where some tokens have high probability and others have low
     // For min_p filtering, tokens with probability < min_p * max_prob are masked
@@ -653,7 +624,7 @@ fn test_minp_sampling_exact_match(
         let seeds_buf = alloc_allocation_with_data::<Metal, _>(context.as_ref(), &seeds);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-        kernel
+        block
             .encode(
                 &mut logits_buf,
                 &seeds_buf,

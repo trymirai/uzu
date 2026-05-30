@@ -25,16 +25,10 @@ pub enum KVCacheUpdateError<B: Backend> {
     IndicesCountMismatch,
     #[error("Shape mismatch between key and value tensors")]
     ShapeMismatch,
-    #[error("Unsupported data type")]
-    UnsupportedDataType,
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Swap count exceeds maximum sequence length")]
     MaxSequenceLengthExceeded,
-    #[error("Buffer creation failed")]
-    BufferCreationFailed,
-    #[error("Function not found: {0}")]
-    FunctionNotFound(String),
 }
 
 impl<B: Backend> KVCacheUpdate<B> {
@@ -118,5 +112,5 @@ pub fn create_swaps_direct(
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/backends/common/kernel/kv_cache_update_test.rs"]
+#[path = "../../tests/unit/encodable_block/kv_cache_update_test.rs"]
 mod tests;

@@ -1,7 +1,4 @@
-use num_traits::Float;
 use proc_macros::kernel;
-
-use crate::ArrayElement;
 
 #[kernel(TokenCopySampled)]
 pub fn token_copy_sampled(

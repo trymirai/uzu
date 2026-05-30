@@ -3,7 +3,9 @@ use std::fmt::{Debug, Display};
 use backend_uzu::{
     ArrayElement, DataType,
     backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel},
+        common::{
+            Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel,
+        },
         cpu::Cpu,
     },
 };
@@ -33,7 +35,12 @@ fn interleaved_input<T: ArrayElement + Float>(act_type: ActivationType) -> Inter
     for index in 0..fused_length {
         fused_up[index] = T::from((index as f32 * 0.1).sin() * 2.0f32).unwrap();
     }
-    InterleavedInput { fused_up: fused_up.into_boxed_slice(), gated_dim, batch_dim, act_type }
+    InterleavedInput {
+        fused_up: fused_up.into_boxed_slice(),
+        gated_dim,
+        batch_dim,
+        act_type,
+    }
 }
 
 fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput<T>) -> Vec<T> {
@@ -65,7 +72,11 @@ fn run_interleaved<T: ArrayElement + Float, B: Backend>(input: &InterleavedInput
 }
 
 fn interleaved_test<T: ArrayElement + Float + Debug + Display>(act_type: ActivationType) {
-    let eps = if matches!(T::data_type(), DataType::BF16) { 0.02f32 } else { 1e-5 };
+    let eps = if matches!(T::data_type(), DataType::BF16) {
+        0.02f32
+    } else {
+        1e-5
+    };
     let input = interleaved_input::<T>(act_type);
     let expected = run_interleaved::<T, Cpu>(&input);
     for_each_non_cpu_backend!(|B| {
@@ -116,8 +127,7 @@ fn separate_input<T: ArrayElement + Float>() -> (SeparateInput<T>, Vec<T>) {
         .into_iter()
         .map(|value| T::from(value).unwrap())
         .collect::<Vec<_>>();
-    let expected =
-        [10.0_f32, 40.0, 150.0, 240.0].into_iter().map(|value| T::from(value).unwrap()).collect::<Vec<_>>();
+    let expected = [10.0_f32, 40.0, 150.0, 240.0].into_iter().map(|value| T::from(value).unwrap()).collect::<Vec<_>>();
 
     // ple_dim=2, batch=2, num_layers=3, layer_index=1 -> value_offset=2, value_row_stride=6
     (

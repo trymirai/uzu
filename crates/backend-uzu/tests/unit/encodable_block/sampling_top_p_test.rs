@@ -3,25 +3,25 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use half::{bf16, f16};
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
-        common::{
-            AllocationType, Backend, Context, Encoder, Kernels,
-            kernel::{TopPKernel, sampling::SamplingKernel},
-        },
+        common::{AllocationType, Backend, Context, Encoder, Kernels, kernel::TopPKernel},
         cpu::Cpu,
     },
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
+use half::{bf16, f16};
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-use crate::{
-    common::helpers::{alloc_allocation_with_data, allocation_to_vec},
-    uzu_test,
-};
+use super::SamplingBlock;
+
+#[macro_use]
+#[path = "../../common/mod.rs"]
+mod common;
+
+use common::helpers::{alloc_allocation_with_data, allocation_to_vec};
 
 const TEST_SAMPLING_SEED: u64 = 42;
 
@@ -73,18 +73,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        logits_buffer.as_ref(),
-        &mut output,
-        input.batch_size,
-        input.vocab_size,
-        input.top_p,
-        &mut encoder,
-    );
+    kernel.encode(logits_buffer.as_ref(), &mut output, input.batch_size, input.vocab_size, input.top_p, &mut encoder);
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&output)
+    allocation_to_vec(&output)
 }
 
 fn assert_top_p_equal<T: ArrayElement + Float + Display>(
@@ -142,54 +135,54 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 }
 
 // Out-of-place tests (same data as sampling_test::test_topp_gpu_cpu_match)
-#[uzu_test]
+#[test]
 fn test_f32() {
     test_internal::<f32>(4, 1024, 0.9, false);
 }
 
-#[uzu_test]
+#[test]
 fn test_f16() {
     test_internal::<f16>(4, 1024, 0.9, false);
 }
 
-#[uzu_test]
+#[test]
 fn test_bf16() {
     test_internal::<bf16>(4, 1024, 0.9, false);
 }
 
 // In-place tests
-#[uzu_test]
+#[test]
 fn test_in_place_f32() {
     test_internal::<f32>(4, 1024, 0.9, true);
 }
 
-#[uzu_test]
+#[test]
 fn test_in_place_f16() {
     test_internal::<f16>(4, 1024, 0.9, true);
 }
 
-#[uzu_test]
+#[test]
 fn test_in_place_bf16() {
     test_internal::<bf16>(4, 1024, 0.9, true);
 }
 
 // Edge cases
-#[uzu_test]
+#[test]
 fn test_single_batch_f32() {
     test_internal::<f32>(1, 1024, 0.9, false);
 }
 
-#[uzu_test]
+#[test]
 fn test_top_p_very_small() {
     test_internal::<f32>(4, 1024, 0.01, false);
 }
 
-#[uzu_test]
+#[test]
 fn test_top_p_near_1() {
     test_internal::<f32>(4, 1024, 0.99, false);
 }
 
-// --- Sampling-level top-p tests (test the full SamplingKernel with top_p) ---
+// --- Sampling-level top-p tests (test the full SamplingBlock with top_p) ---
 
 fn cpu_reference_top_p(
     row_logits: &[f32],
@@ -237,7 +230,7 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
 
     let p = (k as f32) * 0.1;
 
-    let kernel = SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+    let block = SamplingBlock::<B>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
     // Build probability table
     let low_prob = (1.0 - p) / (vocab_size - k) as f32;
@@ -281,7 +274,7 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
         let seeds_allocation = alloc_allocation_with_data::<B, u64>(&context, &seeds);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-        kernel
+        block
             .encode(
                 &mut logits_allocation,
                 &seeds_allocation,
@@ -332,21 +325,21 @@ fn test_topp_sampling_from_prob_exact_match_internal<B: Backend>(
     );
 }
 
-#[uzu_test]
+#[test]
 fn test_topp_sampling_match_small() {
     for_each_non_cpu_backend!(|B| {
         test_topp_sampling_from_prob_exact_match_internal::<B>(8, 10, 1024);
     });
 }
 
-#[uzu_test]
+#[test]
 fn test_topp_sampling_match_large() {
     for_each_non_cpu_backend!(|B| {
         test_topp_sampling_from_prob_exact_match_internal::<B>(32, 50, 4096);
     });
 }
 
-#[uzu_test]
+#[test]
 fn test_topp_sampling_statistical_large() {
     for_each_non_cpu_backend!(|B| {
         const BATCH: usize = 32;
@@ -357,8 +350,7 @@ fn test_topp_sampling_statistical_large() {
 
         let context = <B as Backend>::Context::new().expect("Failed to create Context");
 
-        let kernel =
-            SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+        let block = SamplingBlock::<B>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
         let mut rng = StdRng::seed_from_u64(42);
         let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -386,7 +378,7 @@ fn test_topp_sampling_statistical_large() {
 
             let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-            kernel
+            block
                 .encode(
                     &mut logits_allocation,
                     &seeds_allocation,
@@ -436,7 +428,7 @@ fn test_topp_sampling_statistical_large() {
     });
 }
 
-#[uzu_test]
+#[test]
 fn perf_topp_128k_vocab() {
     for_each_non_cpu_backend!(|B| {
         const BATCH: usize = 8;
@@ -445,8 +437,7 @@ fn perf_topp_128k_vocab() {
 
         let context = <B as Backend>::Context::new().expect("Failed to create Context");
 
-        let kernel =
-            SamplingKernel::<B>::new(&context, DataType::F32).expect("Failed to create sampling kernel");
+        let block = SamplingBlock::<B>::new(&context, DataType::F32).expect("Failed to create sampling block");
 
         let mut rng = StdRng::seed_from_u64(123);
         let mut logits = vec![0.0f32; BATCH * VOCAB];
@@ -463,7 +454,7 @@ fn perf_topp_128k_vocab() {
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
 
-        kernel
+        block
             .encode(
                 &mut logits_allocation,
                 &seeds_allocation,

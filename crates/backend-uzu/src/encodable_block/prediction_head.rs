@@ -4,17 +4,18 @@ use crate::{
     DataType,
     array::size_for_shape,
     backends::common::{
-        ActivationConfig, Allocation, Backend, Encoder,
+        Allocation, Backend, Encoder,
         gpu_types::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
+    config::activation::AnyActivation,
     encodable_block::{Normalization, linear::Linear},
 };
 
 pub struct ClassifierPredictionHead<B: Backend> {
     dense: Box<dyn Linear<B>>,
     activation_kernel: <B::Kernels as Kernels>::ActivationKernel,
-    activation: ActivationConfig,
+    activation: AnyActivation,
     activation_data_type: DataType,
     norm: Normalization<B>,
     readout: Box<dyn Linear<B>>,
@@ -25,7 +26,7 @@ impl<B: Backend> ClassifierPredictionHead<B> {
     pub fn new(
         context: &B::Context,
         dense: Box<dyn Linear<B>>,
-        activation: ActivationConfig,
+        activation: AnyActivation,
         activation_data_type: DataType,
         norm: Normalization<B>,
         readout: Box<dyn Linear<B>>,

@@ -1,6 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
@@ -63,14 +61,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        logits_buffer.as_ref(),
-        &mut output,
-        input.batch_size,
-        input.vocab_size,
-        input.top_k,
-        &mut encoder,
-    );
+    kernel.encode(logits_buffer.as_ref(), &mut output, input.batch_size, input.vocab_size, input.top_k, &mut encoder);
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 

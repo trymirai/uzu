@@ -1,6 +1,3 @@
-use half::bf16;
-use num_traits::Float;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 use backend_uzu::{
     ArrayContextExt, ArrayElement, DataType,
     backends::{
@@ -14,6 +11,9 @@ use backend_uzu::{
         cpu::Cpu,
     },
 };
+use half::bf16;
+use num_traits::Float;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{common::helpers::create_context, uzu_test};
 
@@ -105,8 +105,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let ctx = create_context::<B>();
 
     // top-k
-    let (topk_ids, topk_probs) =
-        get_output_topk::<B, T>(ctx.as_ref(), input, weights, bias, t, d_model, e, k);
+    let (topk_ids, topk_probs) = get_output_topk::<B, T>(ctx.as_ref(), input, weights, bias, t, d_model, e, k);
 
     // fused
     let mut offsets = ctx.create_array_uninitialized(&[e + 1], DataType::U32).into_allocation();
@@ -116,16 +115,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let fused_kernel =
         <<B as Backend>::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-    fused_kernel.encode(
-        &topk_ids,
-        &mut offsets,
-        &mut sumk,
-        &mut partials,
-        t as u32,
-        e as u32,
-        k as u32,
-        &mut encoder,
-    );
+    fused_kernel.encode(&topk_ids, &mut offsets, &mut sumk, &mut partials, t as u32, e as u32, k as u32, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     // scatter bases

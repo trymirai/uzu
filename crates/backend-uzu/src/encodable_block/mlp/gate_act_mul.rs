@@ -1,14 +1,13 @@
 use crate::{
     DataType,
     array::size_for_shape,
-    backends::common::{
-        ActivationConfig, Allocation, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel,
-    },
+    backends::common::{Allocation, Backend, Encoder, Kernels, gpu_types::ActivationType, kernel::GatedActMulKernel},
+    config::activation::AnyActivation,
 };
 
 pub struct MlpGateActMulEncodable<B: Backend> {
     kernel: <B::Kernels as Kernels>::GatedActMulKernel,
-    activation: ActivationConfig,
+    activation: AnyActivation,
     hidden_dim: usize,
     data_type: DataType,
     hadamard_factors: Option<Allocation<B>>,
@@ -18,7 +17,7 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
     pub fn new(
         context: &B::Context,
         data_type: DataType,
-        activation: ActivationConfig,
+        activation: AnyActivation,
         hidden_dim: usize,
         hadamard_factors: Option<Allocation<B>>,
     ) -> Result<Self, B::Error> {

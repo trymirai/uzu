@@ -10,7 +10,7 @@ pub struct Result {
     pub engine_version: String,
     pub timestamp: u64,
     pub data_type: DataType,
-    pub memory_used: Option<u64>,
+    pub memory_used: Option<usize>,
     pub tokens_count_input: u64,
     pub tokens_count_output: u64,
     pub time_to_first_token: f64,

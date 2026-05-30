@@ -141,7 +141,7 @@ impl<B: Backend> Decoder<B> {
         })
     }
 
-    pub(crate) fn build_transformer_layers_and_norm(
+    pub fn build_transformer_layers_and_norm(
         context: &B::Context,
         decoder_config: &DecoderConfig,
         root_weight_loader: &ParameterTree<B>,

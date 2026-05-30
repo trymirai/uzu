@@ -6,10 +6,10 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Lifetime, Type};
 
-use super::{identifiers::KernelPath, kernel::Kernel};
 use crate::common::{
     codegen::write_tokens,
-    kernel::{KernelArgumentType, KernelBufferAccess, KernelParameterType},
+    identifiers::KernelPath,
+    kernel::{Kernel, KernelArgumentType, KernelBufferAccess, KernelParameterType},
     utils::get_generic_name_stream,
 };
 
@@ -87,6 +87,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
         pub trait #trait_name: Sized {
             type Backend: crate::backends::common::Backend<Kernels: Kernels<#trait_name = Self>>;
 
+            #[allow(non_snake_case)]
             fn new(context: &<Self::Backend as crate::backends::common::Backend>::Context #(, #params)*) -> Result<Self, <Self::Backend as crate::backends::common::Backend>::Error>;
 
             fn encode<#(#encode_generics),*>(&self, #(#args),*)#maybe_where_block;
@@ -126,10 +127,7 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -
     }
 
     let kernel_traits = quote! {
-        use crate::backends::common::{
-            Buffer,
-            buffer_range::{AsBufferRangeMut, AsBufferRangeRef},
-        };
+        use crate::backends::common::{AsBufferRangeMut, AsBufferRangeRef, Buffer};
 
         pub trait BufferArg<'a, B: Buffer> {
             fn into_parts(self) -> (&'a B, usize, usize);
@@ -173,10 +171,10 @@ pub fn traitgen_all(backends_kernels: Vec<HashMap<KernelPath, Box<[Kernel]>>>) -
 
         #(#kernel_traits)*
 
-        pub trait Kernels: Sized {
-            type Backend: crate::backends::common::Backend<Kernels = Self>;
-
-            #(#kernel_types)*
+        macro_rules! autogen_kernels {
+            () => {
+                #(#kernel_types)*
+            }
         }
     };
 
