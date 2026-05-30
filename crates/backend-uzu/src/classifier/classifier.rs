@@ -144,6 +144,7 @@ impl<B: Backend> Classifier<B> {
                         token_parents: token_inputs.token_parents(),
                         token_subtrie_ranges: None,
                         rope_buffers,
+                        per_layer_inputs: None,
                         sampling_start: 0,
                         sampling_length: batch_dim,
                         cache_access: None,

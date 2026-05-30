@@ -9,7 +9,7 @@ use crate::{
             AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
             CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
-        cpu::{BufferDowncastExt, Cpu, error::CpuError},
+        cpu::{Cpu, buffer::BufferDowncastExt, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };

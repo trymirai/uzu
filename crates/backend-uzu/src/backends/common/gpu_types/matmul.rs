@@ -1,8 +1,7 @@
-#![allow(non_snake_case)]
-
 use derive_more::Display;
 
 #[repr(C)]
+#[allow(non_snake_case)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct GemmParams {
     pub M: u32,

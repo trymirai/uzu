@@ -1,7 +1,4 @@
-use num_traits::Float;
 use proc_macros::kernel;
-
-use crate::ArrayElement;
 
 #[kernel(MoeTileCounts)]
 pub fn moe_tile_counts(

@@ -33,13 +33,12 @@ use crate::{
     backends::common::{
         Backend, Context as BackendContext, Encoder, Kernels,
         kernel::{
-            EmbeddingRowsSumKernel, ManualKernels, TensorAddScaleKernel, TokenCopySampledKernel,
-            kv_cache_update::KVCacheUpdate,
+            EmbeddingRowsSumKernel, TensorAddScaleKernel, TokenCopySampledKernel,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::{model::tts_model::TTSModelConfig, token_codec::tts_codec::TTSCodecConfig},
-    encodable_block::{Decoder, Sampling as GpuSampling},
+    encodable_block::{Decoder, KVCacheUpdate, Sampling as GpuSampling},
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,
     session::{

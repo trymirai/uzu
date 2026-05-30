@@ -6,7 +6,7 @@ use backend_uzu::{
         common::{
             AllocationType, Backend, Context,
             kernel::{
-                ManualKernels,
+                Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
@@ -49,7 +49,7 @@ fn bench_fp_gemv_typed<T: ArrayElement + Float>(
     context: &MetalContext,
     label: &str,
 ) {
-    let mut kernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         context,
         T::data_type(),
         T::data_type(),

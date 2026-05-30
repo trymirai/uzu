@@ -1,8 +1,8 @@
 use proc_macros::uzu_config;
 
-use crate::{
-    config::{embedding::AnyEmbeddingConfig, token_mixer::attention::AttentionConfig, transformer::TransformerConfig},
-    utils::strict_serde::Unsupported,
+use crate::config::{
+    embedding::AnyEmbeddingConfig, per_layer_embedding::PLEModelConfig, token_mixer::attention::AttentionConfig,
+    transformer::TransformerConfig,
 };
 
 #[uzu_config]
@@ -12,7 +12,7 @@ pub struct DecoderConfig {
 
     pub vocab_size: usize,
     pub pard_token: Option<u64>,
-    pub ple_model_config: Option<Unsupported>,
+    pub ple_model_config: Option<PLEModelConfig>,
 }
 
 impl DecoderConfig {

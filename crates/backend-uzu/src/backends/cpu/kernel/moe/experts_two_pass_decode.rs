@@ -45,9 +45,11 @@ pub fn moe_experts_decode_down_fused2_d<T: ArrayElement + Float, AccumT: ArrayEl
 ) {
     let dm = d_model as usize;
     let df = d_ff as usize;
+    let e = e as usize;
 
     for row_idx in 0..total_rows as usize {
         let expert_idx = unsafe { *row_expert_map.add(row_idx) } as usize;
+        assert!(expert_idx < e);
         let hidden_base = row_idx * df;
         let w2_expert_base = expert_idx * dm * df;
 

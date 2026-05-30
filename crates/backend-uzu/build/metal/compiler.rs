@@ -302,12 +302,10 @@ impl MetalCompiler {
 
             #(#bindings)*
 
-            pub struct MetalKernels;
-
-            impl crate::backends::common::kernel::Kernels for MetalKernels {
-                type Backend = crate::backends::metal::Metal;
-
-                #(#associated_types)*
+            macro_rules! autogen_kernels {
+                () => {
+                    #(#associated_types)*
+                }
             }
         };
 

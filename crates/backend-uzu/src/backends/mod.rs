@@ -6,10 +6,11 @@ pub mod metal;
 
 macro_rules! select_backend {
     ($expr:expr, $unk:expr) => {{
-        let mut default = "cpu";
-        if cfg!(metal_backend) {
-            default = "metal";
-        }
+        let default = if cfg!(metal_backend) {
+            "metal"
+        } else {
+            "cpu"
+        };
 
         match std::env::var("UZU_BACKEND").map(|s| s.to_lowercase()).as_deref().unwrap_or(default) {
             "cpu" => {

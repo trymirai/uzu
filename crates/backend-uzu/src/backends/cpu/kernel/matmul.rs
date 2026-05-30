@@ -7,18 +7,14 @@ use crate::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
             gpu_types::{HadamardTransformOrder, QuantizationMode},
             kernel::{
-                HadamardTransformKernel, ManualKernels,
+                HadamardTransformKernel,
                 matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
             },
         },
-        cpu::{BufferDowncastExt, Cpu, context::CpuContext, error::CpuError, kernel::CpuKernels},
+        cpu::{Cpu, buffer::BufferDowncastExt, context::CpuContext, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
-
-impl ManualKernels for CpuKernels {
-    type MatmulKernel = MatmulCpuKernel;
-}
 
 pub struct MatmulCpuKernel {
     weights_data_type: DataType,

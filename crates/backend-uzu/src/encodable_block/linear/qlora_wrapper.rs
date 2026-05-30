@@ -9,7 +9,7 @@ use crate::{
         Allocation, Backend, Encoder,
         gpu_types::HadamardTransformOrder,
         kernel::{
-            HadamardTransformKernel, Kernels, ManualKernels,
+            HadamardTransformKernel, Kernels,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
@@ -37,8 +37,8 @@ pub struct QLoRALinearWrapper<B: Backend> {
     base_linear: LinearMatmul<B>,
     input_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
     output_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
-    adapter_down_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    adapter_up_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+    adapter_down_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    adapter_up_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
     adapter_down: Allocation<B>,
     adapter_up: Allocation<B>,
     input_dim: usize,
@@ -120,7 +120,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
         };
 
         let adapter_down_kernel = RefCell::new(
-            <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(
+            <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
                 context,
                 weights_data_type,
                 input_data_type,
@@ -129,7 +129,7 @@ impl<B: Backend> QLoRALinearWrapper<B> {
             .map_err(QLoRALinearWrapperError::BackendError)?,
         );
         let adapter_up_kernel = RefCell::new(
-            <<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(
+            <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
                 context,
                 weights_data_type,
                 weights_data_type,

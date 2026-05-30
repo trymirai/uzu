@@ -85,7 +85,7 @@ fn build_indirect_dispatch(
 
     let dispatch_code = quote! {
         compute_encoder.dispatch_threadgroups_indirect(
-            crate::backends::metal::BufferDowncastExt::downcast(__dsl_indirect_dispatch_buffer.0),
+            crate::backends::metal::buffer::BufferDowncastExt::downcast(__dsl_indirect_dispatch_buffer.0),
             __dsl_indirect_dispatch_buffer.1,
             MTLSize::new(#((#threads) as usize, )*),
         );

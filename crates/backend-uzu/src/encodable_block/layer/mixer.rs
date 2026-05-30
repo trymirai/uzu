@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// Mixer component - either attention, state space, short conv, or delta net.
-pub(crate) enum MixerExecutables<B: Backend> {
+pub enum MixerExecutables<B: Backend> {
     Attention {
         attention: Attention<B>,
     },

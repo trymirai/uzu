@@ -6,7 +6,7 @@ use backend_uzu::{
         common::{
             Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
             kernel::{
-                ManualKernels,
+                Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
@@ -21,7 +21,7 @@ use super::{
 };
 
 #[cfg(metal_backend)]
-pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as ManualKernels>::MatmulKernel;
+pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Case {
@@ -125,9 +125,9 @@ pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
 
 fn run<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
-    kernel: &mut <B::Kernels as ManualKernels>::MatmulKernel,
+    kernel: &mut <B::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,
-    encode: impl FnOnce(&mut <B::Kernels as ManualKernels>::MatmulKernel, MatmulArguments<B>, &mut Encoder<B>),
+    encode: impl FnOnce(&mut <B::Kernels as Kernels>::MatmulKernel, MatmulArguments<B>, &mut Encoder<B>),
 ) -> Vec<T> {
     let Shape {
         m,
@@ -184,7 +184,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
 
 pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = <Cpu as Backend>::Context::new().expect("CPU context");
-    let mut kernel = <<Cpu as Backend>::Kernels as ManualKernels>::MatmulKernel::new(
+    let mut kernel = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         T::data_type(),
         T::data_type(),

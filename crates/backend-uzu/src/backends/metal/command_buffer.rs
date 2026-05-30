@@ -6,7 +6,7 @@ use metal::{
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
-use super::{BufferDowncastExt, Metal};
+use super::{Metal, buffer::BufferDowncastExt};
 use crate::{
     backends::{
         common::{

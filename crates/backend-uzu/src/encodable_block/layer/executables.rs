@@ -12,8 +12,8 @@ use crate::{
     },
     encodable_block::{
         Attention, AttentionError, DeltaNetArguments, DeltaNetMixer, DeltaNetMixerError, MambaArguments, MambaMixer,
-        MambaMixerError, Mlp, MlpBlockError, PostLayerScalar, QkUnpack, RMSNorm, RMSNormError, Rope,
-        ShortConvArguments, ShortConvMixer, ShortConvMixerError, layer::MixerExecutables,
+        MambaMixerError, Mlp, MlpBlockError, PerLayerEmbeddingProjection, PostLayerScalar, QkUnpack, RMSNorm,
+        RMSNormError, Rope, ShortConvArguments, ShortConvMixer, ShortConvMixerError, layer::MixerExecutables,
     },
     forward_pass::{cache_layers::LayerCacheAccess, state::RopeBuffers},
     parameters::{ParameterLoaderError, ParameterTree},
@@ -61,11 +61,12 @@ pub struct LayerExecutables<B: Backend> {
     #[cfg(feature = "tracing")]
     pub tensor_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     pub pre_mixer_norm: RMSNorm<B>,
-    pub(crate) mixer: MixerExecutables<B>,
+    mixer: MixerExecutables<B>,
     pub post_mixer_norm: Option<RMSNorm<B>>,
     pub pre_mlp_norm: RMSNorm<B>,
     pub mlp: Box<dyn Mlp<B>>,
     pub post_mlp_norm: Option<RMSNorm<B>>,
+    pub ple_projection: Option<PerLayerEmbeddingProjection<B>>,
     #[cfg(feature = "tracing")]
     model_dim: usize,
 }
@@ -82,7 +83,7 @@ impl<B: Backend> LayerExecutables<B> {
         qk_unpack: &Rc<QkUnpack<B>>,
         data_type: DataType,
     ) -> Result<Self, LayerExecutablesError<B>> {
-        let (residual_sum_scalar, output_scalar) = if layer_config.has_post_layer_scalar {
+        let post_layer_scalar = if layer_config.has_post_layer_scalar {
             if layer_config.post_mlp_norm_config.is_none() {
                 return Err(LayerExecutablesError::PostLayerScalarWithoutPostMlpNorm {
                     layer_index,
@@ -99,9 +100,16 @@ impl<B: Backend> LayerExecutables<B> {
                     });
                 },
             };
-            (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar))
+            Some(scalar)
         } else {
-            (PostLayerScalar::None, PostLayerScalar::None)
+            None
+        };
+
+        // When a PLE projection is present it owns the post-layer scalar (applied
+        // to the combined residual), so the norms must not also apply it.
+        let (residual_sum_scalar, output_scalar) = match (post_layer_scalar, layer_config.ple_config.is_none()) {
+            (Some(scalar), true) => (PostLayerScalar::ScaleResidualSum(scalar), PostLayerScalar::ScaleOutput(scalar)),
+            _ => (PostLayerScalar::None, PostLayerScalar::None),
         };
 
         #[cfg(feature = "tracing")]
@@ -237,6 +245,20 @@ impl<B: Backend> LayerExecutables<B> {
             None
         };
 
+        let ple_projection = layer_config.ple_config.as_ref().map(|ple_config| {
+            let ple_loader = parameter_tree.subtree("ple").expect("Failed to get ple subtree");
+            PerLayerEmbeddingProjection::new(
+                context,
+                ple_config,
+                transformer_config.model_dim,
+                transformer_config.layer_configs.len(),
+                post_layer_scalar.unwrap_or(1.0),
+                data_type,
+                &ple_loader,
+            )
+            .expect("Failed to create per-layer embedding projection")
+        });
+
         Ok(Self {
             layer_index,
             #[cfg(feature = "tracing")]
@@ -247,6 +269,7 @@ impl<B: Backend> LayerExecutables<B> {
             pre_mlp_norm,
             mlp,
             post_mlp_norm,
+            ple_projection,
             #[cfg(feature = "tracing")]
             model_dim: transformer_config.model_dim,
         })
@@ -265,6 +288,7 @@ impl<B: Backend> LayerExecutables<B> {
             token_parents,
             token_subtrie_ranges,
             rope_buffers,
+            per_layer_inputs,
             sampling_start,
             sampling_length,
             cache_access,
@@ -388,6 +412,12 @@ impl<B: Backend> LayerExecutables<B> {
             }
         }
 
+        if let Some(ple_projection) = &self.ple_projection {
+            let per_layer_inputs = per_layer_inputs.expect("per-layer inputs required for PLE layer");
+            ple_projection.encode(self.layer_index, per_layer_inputs, shortcut, &hidden, batch_dim, encoder)?;
+            encoder.encode_fill(&mut hidden, 0);
+        }
+
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             let size = (batch_dim * self.model_dim) as u32;
@@ -411,6 +441,7 @@ pub struct LayerArguments<'a, B: Backend> {
     pub token_parents: &'a Allocation<B>,
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
     pub rope_buffers: Option<&'a RopeBuffers<B>>,
+    pub per_layer_inputs: Option<&'a Allocation<B>>,
     pub sampling_start: usize,
     pub sampling_length: usize,
     pub cache_access: Option<LayerCacheAccess<'a, B>>,

@@ -3,15 +3,13 @@
 use ndarray::{Array4, s};
 use test_tag::tag;
 
+use super::{AttentionGemmArguments, AttentionGemmBlock};
 use crate::{
     DataType,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
-            kernel::{
-                AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel,
-                attention::{AttentionGemmArguments, AttentionGemmBlock},
-            },
+            kernel::{AttentionSinglePassKernel, AttentionTwoPass1Kernel, AttentionTwoPass2Kernel},
         },
         metal::Metal,
     },
@@ -340,7 +338,6 @@ fn run_gemm_attention(
         suffix_length: seq_len,
         sequence_length: seq_len,
         segment_prefix_length: 0,
-        max_sequence_length: seq_len,
         ring_params: None,
         head_dim,
         sliding_window_size: None,

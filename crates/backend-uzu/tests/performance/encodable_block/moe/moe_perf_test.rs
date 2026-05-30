@@ -1,18 +1,23 @@
-use backend_uzu::{
+use half::bf16;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGather};
+use crate::{
     DataType,
     backends::common::{
         Backend, Encoder, Kernels,
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGatherKernel},
         },
     },
 };
-use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::common::{
+#[macro_use]
+#[path = "../../../common/mod.rs"]
+mod common;
+
+use common::{
     helpers::{alloc_allocation, alloc_allocation_with_data, create_context},
     perf::run_perf_with_warmup,
 };
@@ -210,7 +215,7 @@ fn test_moe_pipeline_breakdown_decode() {
         let scatter_map_kernel =
             <<B as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(&ctx, DataType::BF16)
                 .expect("<<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel");
-        let gather_kernel = MoeGatherKernel::<B>::new(&ctx, DataType::BF16).expect("gather");
+        let gather = MoeGather::<B>::new(&ctx, DataType::BF16).expect("gather");
         let experts_kernel =
             MoeExpertsTwoPassDecodeBlock::<B>::new(&ctx, DataType::BF16, 2).expect("experts two-pass decode");
         let finalize_kernel =
@@ -286,7 +291,7 @@ fn test_moe_pipeline_breakdown_decode() {
 
         let gather_perf = run_perf_with_warmup("Gather", 2, 5, || {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let x_perm = gather_kernel
+            let x_perm = gather
                 .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder)
                 .expect("failed to encode MoE gather");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
@@ -296,7 +301,7 @@ fn test_moe_pipeline_breakdown_decode() {
 
         let (x_perm_buf, x_perm_completed) = {
             let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
-            let x_perm = gather_kernel
+            let x_perm = gather
                 .encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder)
                 .expect("failed to encode MoE gather");
             let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();

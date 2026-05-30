@@ -31,6 +31,11 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
     #[specialize] is_sliding_window: bool,
     #[specialize] has_sinks: bool,
 ) {
+    assert_eq!(suffix_length, params.q_len);
+    assert_eq!(align_q, params.q_rem == 0);
+    assert_eq!(align_k, params.k_rem == 0);
+    assert_eq!(sliding_window_size.is_some(), is_sliding_window);
+
     let q_len = params.q_len as usize;
     let k_len = params.k_len as usize;
     let head_dim = BD as usize;

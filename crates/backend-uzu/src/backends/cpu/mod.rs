@@ -7,7 +7,4 @@ mod error;
 mod kernel;
 mod sparse;
 
-pub mod argmax;
-
 pub use backend::Cpu;
-pub use buffer::BufferDowncastExt;
