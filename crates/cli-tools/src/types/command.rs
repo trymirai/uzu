@@ -413,6 +413,12 @@ impl Command {
         Self::new("sh").with_argument("-c").with_argument("cmake --version >/dev/null 2>&1 || brew install cmake")
     }
 
+    pub fn clang_format_setup() -> Self {
+        Self::new("sh")
+            .with_argument("-c")
+            .with_argument("clang-format --version >/dev/null 2>&1 || brew install clang-format")
+    }
+
     pub fn xcodebuild_create_xcframework(
         slice_libraries_with_headers_paths: Vec<(PathBuf, PathBuf)>,
         output_path: PathBuf,
