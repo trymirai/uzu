@@ -287,7 +287,10 @@ struct SimdgroupMmaCore {
             b +
             (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
         return BLoaderFp(
-            b_block_fp, params->leading_dimension_b, b_shared, thread_context
+            b_block_fp,
+            params->leading_dimension_b,
+            b_shared,
+            thread_context
         );
       } else {
         constexpr int pack_factor = get_pack_factor<BITS, 8>();
