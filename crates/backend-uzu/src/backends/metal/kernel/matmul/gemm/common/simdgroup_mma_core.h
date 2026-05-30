@@ -7,6 +7,7 @@
 #include "../../common/threadgroup_tile.h"
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
+#include "../../../hadamard_transform/hadamard_transform.h"
 #include "block_geometry.h"
 #include "gemm_alignment.h"
 #include "gemm_tiling.h"
@@ -24,8 +25,7 @@ template <
     typename DT,
     GemmTiling GEMM_TILING,
     bool TRANSPOSE_B,
-    GemmWeightPrologueKind WEIGHT_PROLOGUE =
-        GemmWeightPrologueKind::FullPrecision,
+    GemmBPrologueKind B_PROLOGUE = GemmBPrologueKind::FullPrecision,
     int BITS = 0,
     int GROUP_SIZE = 0>
 struct SimdgroupMmaCore {
@@ -168,7 +168,10 @@ struct SimdgroupMmaCore {
       const thread uzu::matmul::TransformScaleAccumulate<float, float>&
           epilogue,
       const device BT* bias_block,
-      const bool needs_bias
+      const bool needs_bias,
+      const device int32_t* rht_factors_block,
+      const bool needs_rht,
+      const thread ThreadContext& thread_context
   ) {
     constexpr GemmAlignment gemm_alignment{GEMM_ALIGNMENT_RAW};
     if constexpr (
@@ -204,11 +207,24 @@ struct SimdgroupMmaCore {
           short2(tile_block_cols, tile_block_rows)
       );
     }
+
+    if (needs_rht) {
+      threadgroup_barrier(mem_flags::mem_device);
+      apply_output_random_hadamard_transform(
+          d,
+          rht_factors_block,
+          tile_block_rows,
+          tile_block_cols,
+          params->leading_dimension_d,
+          ushort(SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN),
+          thread_context
+      );
+    }
   }
 
   static METAL_FUNC void run(
       const device AT* a,
-      const device uint8_t* b_packed,
+      const device BT* b,
       device DT* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
@@ -217,6 +233,7 @@ struct SimdgroupMmaCore {
       const device BT* biases,
       const device uint8_t* zero_points,
       const device BT* output_bias,
+      const device int32_t* rht_factors,
       threadgroup AT* a_shared,
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
@@ -256,11 +273,13 @@ struct SimdgroupMmaCore {
     const bool needs_accumulate =
         output_transform.contains(GemmDTransform::ACCUMULATE);
     const bool needs_bias = output_transform.contains(GemmDTransform::BIAS);
+    const bool needs_rht = output_transform.contains(GemmDTransform::RHT);
     const bool needs_epilogue = needs_scale || needs_accumulate;
     const float alpha = needs_scale ? params->ab_scale : 1.0f;
     const float beta = needs_accumulate ? 1.0f : 0.0f;
     uzu::matmul::TransformScaleAccumulate<float, float> epilogue(alpha, beta);
     const device BT* bias_block = output_bias + block_col;
+    const device int32_t* rht_factors_block = rht_factors + block_col;
 
     const bool all_aligned = ((alignment.contains(GemmAlignment::M)) ||
                               (tile_block_rows == THREADGROUP_BLOCK_M)) &&
@@ -289,11 +308,11 @@ struct SimdgroupMmaCore {
       }
     };
 
-    if constexpr (WEIGHT_PROLOGUE == GemmWeightPrologueKind::FullPrecision) {
-      const device BT* b = reinterpret_cast<const device BT*>(b_packed);
-      b += TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col;
-      thread BLoaderFp
-          loader_b(b, params->leading_dimension_b, b_shared, thread_context);
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
+      const device BT* b_block_fp =
+          b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
+      thread BLoaderFp loader_b(
+          b_block_fp, params->leading_dimension_b, b_shared, thread_context);
       dispatch_kernel([&](auto gemm_alignment_mask) {
         constexpr uint mask = gemm_alignment_mask.value;
         k_loop<mask, BLoaderFp>(
@@ -316,13 +335,16 @@ struct SimdgroupMmaCore {
             needs_epilogue,
             epilogue,
             bias_block,
-            needs_bias
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
         );
       });
       return;
     }
 
-    if constexpr (WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleBiasDequant) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       constexpr int pack_factor = get_pack_factor<BITS, 8>();
       constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
       const int k_elements = int(params->K);
@@ -330,7 +352,8 @@ struct SimdgroupMmaCore {
           k_elements * bytes_per_pack / pack_factor;
       const int groups_per_row = (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
       const device uint8_t* weights_block =
-          b_packed + block_col * weights_row_stride_bytes;
+          reinterpret_cast<const device uint8_t*>(b) +
+          block_col * weights_row_stride_bytes;
       const device BT* scales_offset = scales + block_col * groups_per_row;
       const device BT* biases_offset = biases + block_col * groups_per_row;
       thread BLoaderScaleBias loader_b(
@@ -364,15 +387,16 @@ struct SimdgroupMmaCore {
             needs_epilogue,
             epilogue,
             bias_block,
-            needs_bias
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
         );
       });
       return;
     }
 
-    if constexpr (
-        WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleZeroPointDequant
-    ) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
       constexpr int pack_factor = get_pack_factor<BITS, 8>();
       constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
       const int k_elements = int(params->K);
@@ -380,7 +404,8 @@ struct SimdgroupMmaCore {
           k_elements * bytes_per_pack / pack_factor;
       const int groups_per_row = (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
       const device uint8_t* weights_block =
-          b_packed + block_col * weights_row_stride_bytes;
+          reinterpret_cast<const device uint8_t*>(b) +
+          block_col * weights_row_stride_bytes;
       const device BT* scales_offset = scales + block_col * groups_per_row;
       const int zero_point_stride_per_row =
           (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
@@ -418,15 +443,16 @@ struct SimdgroupMmaCore {
             needs_epilogue,
             epilogue,
             bias_block,
-            needs_bias
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
         );
       });
       return;
     }
 
-    if constexpr (
-        WEIGHT_PROLOGUE == GemmWeightPrologueKind::ScaleSymmetricDequant
-    ) {
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleSymmetricDequant) {
       constexpr int pack_factor = get_pack_factor<BITS, 8>();
       constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
       const int k_elements = int(params->K);
@@ -434,7 +460,8 @@ struct SimdgroupMmaCore {
           k_elements * bytes_per_pack / pack_factor;
       const int groups_per_row = (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
       const device uint8_t* weights_block =
-          b_packed + block_col * weights_row_stride_bytes;
+          reinterpret_cast<const device uint8_t*>(b) +
+          block_col * weights_row_stride_bytes;
       const device BT* scales_offset = scales + block_col * groups_per_row;
       thread BLoaderScaleSymmetric loader_b(
           weights_block,
@@ -468,7 +495,10 @@ struct SimdgroupMmaCore {
             needs_epilogue,
             epilogue,
             bias_block,
-            needs_bias
+            needs_bias,
+            rht_factors_block,
+            needs_rht,
+            thread_context
         );
       });
     }

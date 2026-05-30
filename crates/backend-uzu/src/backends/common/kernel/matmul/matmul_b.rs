@@ -2,7 +2,7 @@ use crate::{
     DataType,
     backends::common::{
         Allocation, AsBufferRangeRef, Backend,
-        gpu_types::{QuantizationMode, gemm::GemmWeightPrologueKind},
+        gpu_types::{QuantizationMode, gemm::GemmBPrologueKind},
     },
 };
 
@@ -33,24 +33,24 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
 }
 
 impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
-    pub fn weight_prologue(&self) -> GemmWeightPrologueKind {
+    pub fn b_prologue(&self) -> GemmBPrologueKind {
         match self {
             Self::FullPrecision {
                 ..
-            } => GemmWeightPrologueKind::FullPrecision,
+            } => GemmBPrologueKind::FullPrecision,
             Self::ScaleBiasDequant {
                 ..
-            } => GemmWeightPrologueKind::ScaleBiasDequant,
+            } => GemmBPrologueKind::ScaleBiasDequant,
             Self::ScaleZeroPointDequant {
                 ..
-            } => GemmWeightPrologueKind::ScaleZeroPointDequant,
+            } => GemmBPrologueKind::ScaleZeroPointDequant,
             Self::ScaleSymmetricDequant {
                 ..
-            } => GemmWeightPrologueKind::ScaleSymmetricDequant,
+            } => GemmBPrologueKind::ScaleSymmetricDequant,
         }
     }
 
-    pub fn bits_per_weight(&self) -> Option<u32> {
+    pub fn bits_per_b(&self) -> Option<u32> {
         match self {
             Self::FullPrecision {
                 ..

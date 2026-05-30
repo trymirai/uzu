@@ -5,7 +5,7 @@
 using namespace metal;
 
 namespace uzu::gemm {
-enum class GemmWeightPrologueKind : uint32_t {
+enum class GemmBPrologueKind : uint32_t {
   FullPrecision = 0,
   ScaleBiasDequant = 1,
   ScaleZeroPointDequant = 2,
@@ -31,14 +31,15 @@ struct GemmDTransform {
 };
 
 enum class GemmTiling : uint32_t {
-  T8x32x32_1x1 = 0,
-  T64x32x32_2x2 = 1,
-  T64x64x16_2x2 = 2,
-  T64x64x32_2x2 = 3,
-  T32x32x32_2x2 = 4,
-  T32x64x32_2x2 = 5,
-  T64x32x32_4x1 = 6,
-  T128x128x32_4x4 = 7,
+  Tile8x32x32_Simdgroups1x1 = 0,
+  Tile64x32x32_Simdgroups2x2 = 1,
+  Tile64x64x16_Simdgroups2x2 = 2,
+  Tile64x64x32_Simdgroups2x2 = 3,
+  Tile32x32x32_Simdgroups2x2 = 4,
+  Tile32x64x256_Simdgroups2x2 = 5,
+  Tile64x32x256_Simdgroups4x1 = 6,
+  Tile64x64x256_Simdgroups2x2 = 7,
+  Tile128x128x256_Simdgroups4x4 = 8,
 };
 
 struct GemmAlignment {
