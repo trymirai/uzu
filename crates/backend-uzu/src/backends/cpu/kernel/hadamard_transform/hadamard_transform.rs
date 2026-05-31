@@ -1,4 +1,4 @@
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::{Float, NumCast};
 use proc_macros::kernel;
 
@@ -6,8 +6,27 @@ use crate::{array::ArrayElement, backends::common::gpu_types::HadamardTransformO
 
 const SIMD_SIZE: usize = 32;
 
+fn hadamard_transform(values: &mut [f32; SIMD_SIZE]) {
+    let mut stride = 1;
+    while stride < SIMD_SIZE {
+        for lane in 0..SIMD_SIZE {
+            if lane & stride == 0 {
+                let a = values[lane];
+                let b = values[lane | stride];
+                values[lane] = a + b;
+                values[lane | stride] = a - b;
+            }
+        }
+        stride <<= 1;
+    }
+    let scale = 1.0 / (SIMD_SIZE as f32).sqrt();
+    for v in values.iter_mut() {
+        *v *= scale;
+    }
+}
+
 #[kernel(HadamardTransform)]
-#[variants(T, f32, f16, bf16)]
+#[variants(T, f32, bf16)]
 pub fn hadamard_transform_mul<T: ArrayElement + Float>(
     data: *mut T,
     factors: *const i32,
@@ -17,52 +36,30 @@ pub fn hadamard_transform_mul<T: ArrayElement + Float>(
 ) {
     let hidden_dim = hidden_dim as usize;
     let batch_size = batch_size as usize;
-    let num_blocks = hidden_dim.div_ceil(SIMD_SIZE);
-    let inv_sqrt = 1.0_f32 / (SIMD_SIZE as f32).sqrt();
-    let apply_factor_first = matches!(transform_order, HadamardTransformOrder::Input);
+    assert_eq!(hidden_dim % SIMD_SIZE, 0, "hidden_dim must be a multiple of {SIMD_SIZE}");
 
     for batch in 0..batch_size {
-        let row = batch * hidden_dim;
-        for block in 0..num_blocks {
-            let mut buf = [0.0_f32; SIMD_SIZE];
+        let row_offset = batch * hidden_dim;
+        for stripe_start in (0..hidden_dim).step_by(SIMD_SIZE) {
+            let mut stripe = [0.0f32; SIMD_SIZE];
             for lane in 0..SIMD_SIZE {
-                let col = block * SIMD_SIZE + lane;
-                if col < hidden_dim {
-                    let element: T = unsafe { *data.add(row + col) };
-                    let element_f32: f32 = <f32 as NumCast>::from(element).unwrap_or(0.0);
-                    if apply_factor_first {
-                        let factor: i32 = unsafe { *factors.add(col) };
-                        buf[lane] = element_f32 * (factor as f32);
-                    } else {
-                        buf[lane] = element_f32;
-                    }
-                }
+                let v: f32 = NumCast::from(unsafe { *data.add(row_offset + stripe_start + lane) }).unwrap();
+                let f = unsafe { *factors.add(stripe_start + lane) } as f32;
+                stripe[lane] = match transform_order {
+                    HadamardTransformOrder::Input => v * f,
+                    HadamardTransformOrder::Output => v,
+                };
             }
-            for &stride in &[1usize, 2, 4, 8, 16] {
-                let mut next = [0.0_f32; SIMD_SIZE];
-                for lane in 0..SIMD_SIZE {
-                    let partner = lane ^ stride;
-                    let self_val = buf[lane];
-                    let partner_val = buf[partner];
-                    next[lane] = if (lane & stride) != 0 {
-                        partner_val - self_val
-                    } else {
-                        partner_val + self_val
-                    };
-                }
-                buf = next;
-            }
+
+            hadamard_transform(&mut stripe);
+
             for lane in 0..SIMD_SIZE {
-                let col = block * SIMD_SIZE + lane;
-                if col < hidden_dim {
-                    let mut value_f32 = buf[lane] * inv_sqrt;
-                    if !apply_factor_first {
-                        let factor: i32 = unsafe { *factors.add(col) };
-                        value_f32 *= factor as f32;
-                    }
-                    let value: T = <T as NumCast>::from(value_f32).unwrap_or(T::zero());
-                    unsafe { *data.add(row + col) = value };
-                }
+                let f = unsafe { *factors.add(stripe_start + lane) } as f32;
+                let result = match transform_order {
+                    HadamardTransformOrder::Input => stripe[lane],
+                    HadamardTransformOrder::Output => stripe[lane] * f,
+                };
+                unsafe { *data.add(row_offset + stripe_start + lane) = <T as NumCast>::from(result).unwrap() };
             }
         }
     }

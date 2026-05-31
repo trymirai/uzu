@@ -17,12 +17,7 @@ use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use super::SamplingBlock;
-
-#[macro_use]
-#[path = "../../common/mod.rs"]
-mod common;
-
-use common::helpers::{alloc_allocation_with_data, allocation_to_vec};
+use crate::common::helpers::{alloc_allocation_with_data, allocation_to_vec};
 
 const TEST_SAMPLING_SEED: u64 = 42;
 

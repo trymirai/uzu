@@ -37,7 +37,7 @@ fn verify_sprout(
     let flat_trie = trie_root.linearize();
 
     assert_eq!(flat_trie.len(), 1);
-    assert_eq!(flat_trie.index(&trie_root), Some(0));
+    assert_eq!(flat_trie.index(trie_root), Some(0));
     assert_eq!(flat_trie.index(&TrieNode::new(1, None, 0)), None);
     assert_eq!(flat_trie.index(&TrieNode::new(0, None, 1)), None);
     assert_eq!(flat_trie.index(&TrieNode::new(0, None, 0)), None);
@@ -95,8 +95,8 @@ fn verify_stick(
     assert_eq!(token_seeds[position], rng.derive(0));
 
     for i in 1..10 {
-        cur_node = cur_node.get(i as u64).unwrap();
-        assert_eq!(cur_node.token(), i as u64);
+        cur_node = cur_node.get(i).unwrap();
+        assert_eq!(cur_node.token(), i);
         assert_eq!(cur_node.seed(), rng.derive(i));
 
         let position = flat_trie.index(cur_node).unwrap();
@@ -158,7 +158,7 @@ fn verify_bush(
     assert_eq!(token_positions.len(), 4);
     assert_eq!(token_seeds.len(), 4);
 
-    let root_position = flat_trie.index(&trie_root).unwrap();
+    let root_position = flat_trie.index(trie_root).unwrap();
     assert_eq!(token_ids[root_position], 0);
     assert_eq!(token_positions[root_position], 0);
     assert_eq!(token_seeds[root_position], rng.derive(0));
@@ -168,7 +168,7 @@ fn verify_bush(
         assert_eq!(leaf.token(), leaf_token);
         assert_eq!(leaf.seed(), rng.derive(1));
 
-        let position = flat_trie.index(&leaf).unwrap();
+        let position = flat_trie.index(leaf).unwrap();
         assert_eq!(token_ids[position], leaf.token());
         assert_eq!(token_positions[position], 1);
         assert_eq!(token_seeds[position], rng.derive(1));
@@ -226,14 +226,14 @@ fn verify_tree(
     assert_eq!(token_positions.len(), 7);
     assert_eq!(token_seeds.len(), 7);
 
-    let root_position = flat_trie.index(&trie_root).unwrap();
+    let root_position = flat_trie.index(trie_root).unwrap();
     assert_eq!(token_ids[root_position], 0);
     assert_eq!(token_positions[root_position], 0);
     assert_eq!(token_seeds[root_position], rng.derive(0));
 
     for mid_token in [1, 2, 3] {
         let node = trie_root.get(mid_token).unwrap();
-        let position = flat_trie.index(&node).unwrap();
+        let position = flat_trie.index(node).unwrap();
         assert_eq!(token_ids[position], mid_token);
         assert_eq!(token_positions[position], 1);
         assert_eq!(token_seeds[position], rng.derive(1));

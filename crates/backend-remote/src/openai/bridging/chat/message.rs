@@ -69,11 +69,7 @@ pub fn build(message: &ChatMessage) -> Result<ChatCompletionRequestMessage, Erro
             }
         }),
         ResolvedRole::Assistant => {
-            let text_content = if let Some(content) = content {
-                Some(ChatCompletionRequestAssistantMessageContent::Text(content))
-            } else {
-                None
-            };
+            let text_content = content.map(ChatCompletionRequestAssistantMessageContent::Text);
             #[allow(deprecated)]
             ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
                 content: text_content,

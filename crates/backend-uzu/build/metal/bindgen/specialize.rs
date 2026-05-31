@@ -42,7 +42,7 @@ pub fn parse(
         .enumerate()
         .map(|(offset, (argument, rust_type_text))| -> Result<SpecializeArgument> {
             let name = format_ident!("{}", argument.name.as_ref());
-            let rust_type: Type = syn::parse_str(&rust_type_text).with_context(|| {
+            let rust_type: Type = syn::parse_str(rust_type_text).with_context(|| {
                 format!("specialize type `{}` in kernel `{}` cannot be parsed", rust_type_text, kernel_name)
             })?;
             let function_constant_index = base_function_constant_index.unwrap_or(0) + offset;

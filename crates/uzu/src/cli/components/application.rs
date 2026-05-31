@@ -260,7 +260,7 @@ pub fn Application(
         ContextProvider(value: Context::owned(state)) {
             View(
                 flex_direction: FlexDirection::Column,
-                width: width as u16,
+                width: width,
             ) {
                 View(
                     padding_left: state.read().theme.padding(),

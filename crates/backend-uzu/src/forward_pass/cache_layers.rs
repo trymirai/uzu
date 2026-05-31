@@ -422,11 +422,9 @@ impl<B: Backend> CacheLayers<B> {
         for layer in self.entries.iter() {
             match layer {
                 CacheLayer::Transformer(kv) => {
-                    let mut encoder =
+                    let encoder =
                         encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
-                    let Some(slice) = kv.slice(context, &mut encoder, range.clone()) else {
-                        return None;
-                    };
+                    let slice = kv.slice(context, encoder, range.clone())?;
                     layers.push(CacheLayerSlice::Transformer(slice));
                 },
                 CacheLayer::StateSpace(_) => layers.push(CacheLayerSlice::StateSpace),
@@ -454,9 +452,9 @@ impl<B: Backend> CacheLayers<B> {
         for (layer, snapshot) in self.entries.iter_mut().zip(slice.layers.iter()) {
             match (layer, snapshot) {
                 (CacheLayer::Transformer(kv), CacheLayerSlice::Transformer(s)) => {
-                    let mut encoder =
+                    let encoder =
                         encoder.get_or_insert_with(|| Encoder::new(context).expect("Failed to create Encoder"));
-                    kv.apply_slice(context, &mut encoder, &s, range.clone());
+                    kv.apply_slice(context, encoder, s, range.clone());
                 },
                 (CacheLayer::StateSpace(_), CacheLayerSlice::StateSpace) => {},
                 (CacheLayer::ShortConv(_), CacheLayerSlice::ShortConv) => {},

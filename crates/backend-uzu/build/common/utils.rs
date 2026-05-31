@@ -11,6 +11,6 @@ pub fn get_generic_name_stream(var_name: &str) -> TokenStream {
             }
         })
         .collect();
-    generic_name.insert_str(0, "T");
+    generic_name.insert(0, 'T');
     generic_name.parse().unwrap()
 }

@@ -179,7 +179,7 @@ impl<B: Backend> Classifier<B> {
         let logits =
             self.context.prediction_head.encode(pooling, &mut encoder).map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = trace.as_deref_mut() {
+        if let Some(trace) = trace {
             encoder.encode_copy(&logits, .., trace.logits.allocation_mut(), ..);
         }
 
@@ -232,7 +232,7 @@ impl<B: Backend> Classifier<B> {
             let prob = 1.0 / (1.0 + (-logit).exp());
 
             let label = if let Some(labels) = output_labels {
-                labels.get(idx).map(|s| s.clone()).unwrap_or_else(|| format!("class_{}", idx))
+                labels.get(idx).cloned().unwrap_or_else(|| format!("class_{}", idx))
             } else {
                 format!("class_{}", idx)
             };

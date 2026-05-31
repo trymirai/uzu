@@ -12,6 +12,13 @@
     }
   },
   "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "command": "clippy"
+        }
+      }
+    },
     "metal-analyzer": {
       "initialization_options": {
         "metal-analyzer": {

@@ -173,7 +173,6 @@ impl<B: Backend> FileDownloadManager for DownloadManager<B> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn observe_startup<B: Backend>(
     download_id: crate::DownloadId,
     source_url: &str,
@@ -195,7 +194,6 @@ pub(crate) async fn observe_startup<B: Backend>(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn prepare_startup<B: Backend>(
     startup: Startup,
     context: &B::Context,

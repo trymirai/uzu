@@ -72,7 +72,6 @@ pub struct LayerExecutables<B: Backend> {
 }
 
 impl<B: Backend> LayerExecutables<B> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: &B::Context,
         transformer_config: &TransformerConfig,
@@ -419,7 +418,7 @@ impl<B: Backend> LayerExecutables<B> {
         }
 
         #[cfg(feature = "tracing")]
-        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+        if let Some(layer_traces) = layer_traces {
             let size = (batch_dim * self.model_dim) as u32;
             self.tensor_add.encode(
                 Some(&hidden),

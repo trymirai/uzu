@@ -92,7 +92,7 @@ fn get_output_two_pass<T: ArrayElement + Float, B: Backend>(input: &Input<T>) ->
     let block_size = 1024;
     let grain_size = 4;
     let elements_per_group = block_size * grain_size;
-    let vocab_groups_per_batch = (input.vocab_size as usize + elements_per_group - 1) / elements_per_group;
+    let vocab_groups_per_batch = (input.vocab_size as usize).div_ceil(elements_per_group);
     let partial_results_count = input.batch_size as usize * vocab_groups_per_batch;
     let mut partial_results = context
         .create_array_uninitialized(&[partial_results_count * size_of::<ArgmaxPair>()], DataType::U8)

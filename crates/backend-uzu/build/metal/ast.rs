@@ -86,7 +86,7 @@ fn annotation_from_ast_node(annotation_node: MetalAstNode) -> anyhow::Result<Box
             };
 
             // NOTE: string literal includes "" (and is probably not parsed?), using json parse here for now
-            Ok(serde_json::from_str(&value).context("failed to parse string literal")?)
+            serde_json::from_str(&value).context("failed to parse string literal")
         })
         .collect()
 }
@@ -284,7 +284,7 @@ fn parse_argument_type(
                     bail!("dsl.specialize takes no arguments, got {}", annotation.len());
                 }
                 let rust_type = MetalArgument::scalar_type_to_rust(c_type)?;
-                Ok(MetalArgumentType::Specialize(rust_type.into()))
+                Ok(MetalArgumentType::Specialize(rust_type))
             },
             "dsl.axis" => {
                 if annotation.len() != 2 {
@@ -326,7 +326,7 @@ fn parse_argument_type(
 
     if let ["const", "constant", c_type_scalar, "&"] = c_type.split_whitespace().collect::<Vec<_>>().as_slice() {
         return Ok(MetalArgumentType::Constant((
-            MetalArgument::scalar_type_to_rust(c_type_scalar)?.into(),
+            MetalArgument::scalar_type_to_rust(c_type_scalar)?,
             MetalConstantType::Scalar,
         )));
     }
@@ -341,7 +341,7 @@ fn parse_argument_type(
         };
 
         return Ok(MetalArgumentType::Constant((
-            MetalArgument::scalar_type_to_rust(c_type_scalar)?.into(),
+            MetalArgument::scalar_type_to_rust(c_type_scalar)?,
             MetalConstantType::Array(size),
         )));
     }
@@ -573,7 +573,8 @@ impl MetalKernelInfo {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        if variants.is_empty() != !is_template {
+        let has_variants = !variants.is_empty();
+        if has_variants != is_template {
             bail!("mismatch between AST nodes and variants annotation");
         }
 
@@ -587,7 +588,7 @@ impl MetalKernelInfo {
             Some(
                 template_parameters
                     .into_iter()
-                    .zip(variants.into_iter())
+                    .zip(variants)
                     .map(|((name, ty), (v_name, variants))| {
                         assert_eq!(name, v_name);
 

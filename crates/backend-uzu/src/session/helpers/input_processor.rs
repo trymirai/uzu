@@ -84,10 +84,10 @@ impl InputProcessor for InputProcessorDefault {
                 return Err(Error::UnexpectedReasoningContent);
             }
         }
-        if let Some(default_system_prompt) = self.token_codec_config.default_system_prompt.clone() {
-            if messages.first().is_none_or(|message| message.role != Role::System) {
-                messages.insert(0, Message::system(default_system_prompt));
-            }
+        if let Some(default_system_prompt) = self.token_codec_config.default_system_prompt.clone()
+            && messages.first().is_none_or(|message| message.role != Role::System)
+        {
+            messages.insert(0, Message::system(default_system_prompt));
         }
 
         let messages =

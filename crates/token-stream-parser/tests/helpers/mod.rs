@@ -139,14 +139,14 @@ impl TestSuite {
                         "name" => {},
                         "marker" | "open" | "close" => {
                             if let Value::String(token_value) = field {
-                                *field = serde_json::to_value(&self.token(token_value)).unwrap();
+                                *field = serde_json::to_value(self.token(token_value)).unwrap();
                             }
                         },
                         "text" => {
                             if let Value::Array(items) = field {
                                 for item in items.iter_mut() {
                                     if let Value::String(token_value) = item {
-                                        *item = serde_json::to_value(&self.token(token_value)).unwrap();
+                                        *item = serde_json::to_value(self.token(token_value)).unwrap();
                                     }
                                 }
                             }

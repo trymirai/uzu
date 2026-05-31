@@ -76,7 +76,7 @@ fn matches_cpu_reference_bf16(
 
 #[test]
 fn matches_cpu_reference_f32() {
-    run_matrix::<f32>(|shape| Case::new(shape), 0.01);
+    run_matrix::<f32>(Case::new, 0.01);
 }
 
 #[test]

@@ -57,7 +57,7 @@ impl EncodingTrait for Encoding {
         let parser = StreamableParser::new(encoding.clone(), None).map_err(|_| Error::UnableToLoadEncoding)?;
         Ok(Self {
             encoding,
-            parser: parser,
+            parser,
             state: State::default(),
         })
     }
@@ -118,7 +118,7 @@ impl Encoding {
 
         if let Some(current_role) = self.parser.current_role() {
             let mut content: Vec<HarmonyContent> = vec![];
-            if let Some(current_content) = self.parser.current_content().ok() {
+            if let Ok(current_content) = self.parser.current_content() {
                 content.push(HarmonyContent::Text(HarmonyTextContent {
                     text: current_content,
                 }));
@@ -143,7 +143,7 @@ fn resolve_token(
     encoding: &HarmonyEncoding,
     token_id: TokenId,
 ) -> Result<Token, Error> {
-    let value = encoding.tokenizer().decode_utf8(&[token_id]).map_err(|_| Error::UnableToDecodeToken)?;
+    let value = encoding.tokenizer().decode_utf8([token_id]).map_err(|_| Error::UnableToDecodeToken)?;
     let is_special = encoding.tokenizer().is_special_token(token_id);
     Ok(Token {
         id: token_id,

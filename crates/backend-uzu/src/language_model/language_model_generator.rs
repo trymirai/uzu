@@ -200,27 +200,23 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
             let step_token_subtrie_ranges = step_token_subtrie_ranges.collect::<Box<[Option<[u32; 3]>]>>();
             let step_token_subtrie_ranges: Option<Box<[[u32; 3]]>> =
-                if let Some(trie_start) = step_token_subtrie_ranges.iter().position(|e| e.is_some()) {
-                    Some(
-                        step_token_subtrie_ranges
-                            .iter()
-                            .enumerate()
-                            .map(|(i, me)| {
-                                if let Some([subtrie_start, subtrie_end, height]) = me {
-                                    [
-                                        trie_start as u32 + subtrie_start,
-                                        trie_start as u32 + subtrie_end,
-                                        trie_start as u32 + height,
-                                    ]
-                                } else {
-                                    [i as u32, step_token_subtrie_ranges.len() as u32 - 1, i as u32]
-                                }
-                            })
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
+                step_token_subtrie_ranges.iter().position(|e| e.is_some()).map(|trie_start| {
+                    step_token_subtrie_ranges
+                        .iter()
+                        .enumerate()
+                        .map(|(i, me)| {
+                            if let Some([subtrie_start, subtrie_end, height]) = me {
+                                [
+                                    trie_start as u32 + subtrie_start,
+                                    trie_start as u32 + subtrie_end,
+                                    trie_start as u32 + height,
+                                ]
+                            } else {
+                                [i as u32, step_token_subtrie_ranges.len() as u32 - 1, i as u32]
+                            }
+                        })
+                        .collect()
+                });
             let step_token_positions = step_token_positions.collect::<Box<[usize]>>();
             let step_token_seeds = step_token_seeds.collect::<Box<[u64]>>();
 
@@ -243,7 +239,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let step_token_bitmask: Option<Box<[u32]>> = if has_grammar && sampling_length > 0 {
                 Some(
                     step_token_bitmasks
-                        .map(|mask| match mask {
+                        .flat_map(|mask| match mask {
                             Some(mask) => Either::Left(
                                 mask.iter()
                                     .copied()
@@ -252,7 +248,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                             ),
                             None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
                         })
-                        .flatten()
                         .collect::<Box<[u32]>>(),
                 )
             } else {
@@ -328,8 +323,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let last_suffix_start = prefill_step_size * (prefill_steps - 1);
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
 
-        let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+        let (accepted_tokens, accepted_token_indices) = flat_trie.accept(&sampled_tokens, compiled_grammar);
 
         self.update_cache_layers(
             &accepted_token_indices.into_iter().map(|p| suffix_root_index + p).collect::<Box<[usize]>>(),
@@ -379,7 +373,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             flat_trie
                 .token_masks()
                 .chain(repeat_n(None, suffix_length - active_row_count))
-                .map(|mask| match mask {
+                .flat_map(|mask| match mask {
                     Some(mask) => Either::Left(
                         mask.iter()
                             .copied()
@@ -388,7 +382,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                     ),
                     None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
                 })
-                .flatten()
                 .collect::<Box<[u32]>>()
         });
 
@@ -419,8 +412,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let sampled_tokens =
             self.read_sampling_output(sampling_output.as_ref().expect("sampling output must exist"), sampling_length)?;
 
-        let (accepted_tokens, accepted_token_indices) =
-            flat_trie.accept(&sampled_tokens, compiled_grammar.as_deref_mut());
+        let (accepted_tokens, accepted_token_indices) = flat_trie.accept(&sampled_tokens, compiled_grammar);
         let speculator_proposed = active_row_count.saturating_sub(1);
         let speculator_accepted = accepted_tokens.len().saturating_sub(1);
 

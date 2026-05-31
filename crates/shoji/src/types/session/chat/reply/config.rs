@@ -3,21 +3,11 @@ use serde::{Deserialize, Serialize};
 use crate::types::basic::{Grammar, SamplingMethod, SamplingPolicy};
 
 #[bindings::export(Structure(Class))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatReplyConfig {
     pub token_limit: Option<u32>,
     pub sampling_policy: SamplingPolicy,
     pub grammar: Option<Grammar>,
-}
-
-impl Default for ChatReplyConfig {
-    fn default() -> Self {
-        Self {
-            token_limit: None,
-            sampling_policy: SamplingPolicy::default(),
-            grammar: None,
-        }
-    }
 }
 
 #[bindings::export(Implementation)]

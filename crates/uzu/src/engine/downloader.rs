@@ -78,7 +78,8 @@ impl Downloader {
         let state = self.state().await.ok_or(StorageError::ItemNotFound {
             identifier: self.identifier.clone(),
         })?;
-        let result = match state.phase {
+
+        match state.phase {
             DownloadPhase::Downloading {} | DownloadPhase::Downloaded {} => Ok(()),
             DownloadPhase::NotDownloaded {} | DownloadPhase::Paused {} | DownloadPhase::Locked {} => {
                 let stream = self.storage.lock().await.subscribe();
@@ -95,8 +96,7 @@ impl Downloader {
                 drop(storage);
                 self.wait_for_resume_to_be_observable(stream).await
             },
-        };
-        result
+        }
     }
 
     #[bindings::export(Method)]

@@ -49,7 +49,7 @@ pub fn rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
     if head_dim & 1 != 0 || rope_dim & 1 != 0 || rope_dim > head_dim {
         return;
     }
-    if !query_only && (num_groups == 0 || num_heads % num_groups as u32 != 0) {
+    if !query_only && (num_groups == 0 || !num_heads.is_multiple_of(num_groups as u32)) {
         return;
     }
 

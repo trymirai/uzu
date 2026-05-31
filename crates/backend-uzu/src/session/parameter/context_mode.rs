@@ -1,16 +1,11 @@
 use crate::session::types::Input;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum ContextMode {
+    #[default]
     None,
     Static {
         input: Input,
     },
     Dynamic,
-}
-
-impl Default for ContextMode {
-    fn default() -> Self {
-        ContextMode::None
-    }
 }

@@ -207,6 +207,18 @@ rodio = { version = "0.22.2", default-features = false, features = [
     "wav",
 ] }
 
+[workspace.lints.clippy]
+# TODO: add large_stack_frames, large_stack_arrays, trivially_copy_pass_by_ref, needless_pass_by_value, map_err_ignore, use_self, cloned_instead_of_copied, manual_let_else, semicolon_if_nothing_returned, uninlined_format_args, lossy_float_literal
+module_inception = "allow"
+type_complexity = "allow"
+upper_case_acronyms = "allow"
+large_enum_variant = "allow" # TODO: remove
+enum_variant_names = "allow"
+new_without_default = "allow"
+too_many_arguments = "allow"
+needless_range_loop = "allow" # TODO: remove
+missing_safety_doc = "allow" # TODO: maybe remove?
+
 [workspace.metadata.dinghy]
 forward-cfgs = ["metal_backend", "grammar_xgrammar"]
 

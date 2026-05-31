@@ -158,10 +158,10 @@ fn kernel_wrappers(
     } else {
         vec![None]
     } {
-        if let Some(ref tv) = type_variant {
-            if !evaluator.satisfied(tv, &kernel.constraints) {
-                continue;
-            }
+        if let Some(ref tv) = type_variant
+            && !evaluator.satisfied(tv, &kernel.constraints)
+        {
+            continue;
         }
 
         let (wrapper_name, underlying_name) = if let Some(type_variant) = &type_variant {
@@ -197,10 +197,10 @@ fn kernel_wrappers(
                 let condition_field = format!("__dsl_buffer_condition_{}_{}", wrapper_name, a.name);
                 match a.condition.as_deref() {
                     Some(condition) => (
-                        format!("{} {} [[buffer({}), function_constant({})]]", &a.c_type, a.name, i, condition_field,),
+                        format!("{} {} [[buffer({}), function_constant({})]]", a.c_type, a.name, i, condition_field,),
                         Some(format!("constant bool {} = ({});", condition_field, condition)),
                     ),
-                    None => (format!("{} {} [[buffer({})]]", &a.c_type, a.name, i), None),
+                    None => (format!("{} {} [[buffer({})]]", a.c_type, a.name, i), None),
                 }
             })
             .unzip();

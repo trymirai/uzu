@@ -42,10 +42,10 @@ pub fn SelectedModel(
 
             let mut stream = engine.storage_subscribe().await;
 
-            if let Some(initial) = downloader.state().await {
-                if let Some(model_state) = state.write().model_state.as_mut() {
-                    model_state.download_state = initial;
-                }
+            if let Some(initial) = downloader.state().await
+                && let Some(model_state) = state.write().model_state.as_mut()
+            {
+                model_state.download_state = initial;
             }
 
             if downloader.resume().await.is_err() {

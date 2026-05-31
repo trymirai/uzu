@@ -60,9 +60,9 @@ fn person_schema_metal_bitmask() {
     };
     let device_id = device.registry_id() as i32;
     let batch: usize = 1;
-    let vocab = tokenizer_info.vocab_size() as usize;
+    let vocab = tokenizer_info.vocab_size();
     // xgrammar uses a dynamic bitset over the vocab, packed into i32 words
-    let buffer_size = (vocab + 31) / 32; // number of i32s required
+    let buffer_size = vocab.div_ceil(32); // number of i32s required
     let shape = [batch, buffer_size];
 
     // xgrammar expects an int32 mask tensor of shape [buffer_size]

@@ -58,38 +58,24 @@ CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
 Run one benchmark group at a time to avoid the iOS watchdog killing the
 app.
 
-Key flags (this is the trymirai/dinghy fork — upstream cargo-dinghy does
-not support `--sync-dirs`):
+Key flags:
 
-- `-e CRITERION_HOME=criterion/a19` — on-device env var. Path is
+- `-e CRITERION_HOME=target/criterion/a19` — on-device env var. Path is
   relative to the app's cwd (`Documents/`), so this becomes
-  `Documents/criterion/a19/` on device.
-- `--sync-dirs "$(pwd)/target/criterion=Documents/criterion"` —
-  bidirectional sync of one host directory with one device directory.
-  Before launch, `cargo-dinghy` runs `xcrun devicectl device copy to`
-  to push the host directory to the device (overwriting the device
-  copy). After launch, it runs `xcrun devicectl device copy from` to
-  pull it back.
-
-> **Important:** scope `--sync-dirs` to `target/criterion`, **not** the
-> full `target/`. A workspace `target/` directory routinely grows past
-> 20 GB (build artefacts, dinghy runner intermediates), and
-> `devicectl copy` performs an unconditional whole-tree push and pull
-> with `--remove-existing-content true`. Pushing 20 GB over USB takes
-> 5–10 minutes per direction, before any benchmark code runs.
-> `target/criterion` is typically <100 MB.
->
-> The first push on a fresh device is skipped automatically (when the
-> device path does not yet exist), but every subsequent run pushes
-> whatever is at the host path.
+  `Documents/target/criterion/a19/` on device.
+- `--copy-back "Documents/target=$(pwd)/target"` — after the run,
+  `cargo-dinghy` pulls `Documents/target` from the device into your
+  repo's `target/`. `$(pwd)` is required (absolute DST) because the
+  cargo runner is launched with cwd set to the package dir, not the
+  workspace root.
 
 ```bash
 DEVICE=<DEVICE_ID>
 
 cargo dinghy \
   -d "$DEVICE" \
-  -e CRITERION_HOME=criterion/a19 \
-  --sync-dirs "$(pwd)/target/criterion=Documents/criterion" \
+  -e CRITERION_HOME=target/criterion/a19 \
+  --copy-back "Documents/target=$(pwd)/target" \
   bench -p backend-uzu --bench kernel -- \
     "Metal/Kernel/Matmul" \
     --save-baseline matmul_baseline_a19
@@ -98,19 +84,6 @@ cargo dinghy \
 After the run completes you'll have
 `target/criterion/a19/Metal/Kernel/Matmul/<GEMM|GEMM_MXU>/…/matmul_baseline_a19/`
 on the host, next to any `m2_max/` baselines.
-
-### Tips
-
-- Trim or wipe old baselines from `target/criterion/` before runs you do
-  not need shipped to the device — they are part of the push payload.
-- The first device-side run with a fresh `Documents/criterion` skips the
-  initial push. To reset, delete it: `xcrun devicectl device process
-  launch ...` is not needed; reinstalling the Dinghy app or wiping its
-  data container achieves the same.
-- Use a tighter Criterion regex filter to keep on-device time short and
-  the resulting baseline directory small, e.g.
-  `"Metal/Kernel/UnifiedQuantizedGemm/(Simdgroup|Mxu)/ScaleBias_BF16_gs64/M\[(4|8|16|32|64)\]K\[4096\]N\[(4096|14336)\]"`
-  matches 20 cases (~3–4 min on device).
 
 ## Viewing reports
 

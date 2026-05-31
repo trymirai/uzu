@@ -189,9 +189,9 @@ fn test_basic<
     ACC: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if IN::data_type() == OUT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {
@@ -209,9 +209,9 @@ fn test_edge<
     ACC: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if IN::data_type() == OUT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {

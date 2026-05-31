@@ -87,7 +87,7 @@ impl RegistryTrait for Registry {
                     self.model_filter.as_ref().is_none_or(|regex| regex.is_match(identifier).unwrap_or(false))
                 })
                 .map(|identifier| {
-                    let model = ShojiModel::external(
+                    ShojiModel::external(
                         identifier.clone(),
                         self.config.identifier.clone(),
                         self.config.name.clone(),
@@ -98,8 +98,7 @@ impl RegistryTrait for Registry {
                         ModelAccessibility::Remote {
                             repository: None,
                         },
-                    );
-                    model
+                    )
                 })
                 .collect();
 

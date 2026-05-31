@@ -44,11 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         schema: schema_string,
     }));
     let replies = session.reply(messages, chat_reply_config).await?;
-    if let Some(reply) = replies.first() {
-        if let Some(text) = reply.message.text() {
-            let parsed: CountryList = serde_json::from_str(&text)?;
-            println!("{parsed:#?}");
-        }
+    if let Some(reply) = replies.first()
+        && let Some(text) = reply.message.text()
+    {
+        let parsed: CountryList = serde_json::from_str(&text)?;
+        println!("{parsed:#?}");
     }
 
     Ok(())

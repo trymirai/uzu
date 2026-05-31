@@ -9,3 +9,6 @@ file-types = []
 [[language]]
 name = "metal"
 file-types = ["metal", "h"]
+
+[language-server.rust-analyzer.config.check]
+command = "clippy"

@@ -35,7 +35,7 @@ impl Registry for CachedRegistry {
         Box::pin(async {
             let mut cached_models = self.models.lock().await;
             if let Some(cached_models) = cached_models.as_ref() {
-                return Ok(cached_models.clone());
+                Ok(cached_models.clone())
             } else {
                 let models = match self.registry.models().await {
                     Ok(models) => models.clone(),
@@ -44,7 +44,7 @@ impl Registry for CachedRegistry {
                     },
                 };
                 *cached_models = Some(models.clone());
-                return Ok(models);
+                Ok(models)
             }
         })
     }

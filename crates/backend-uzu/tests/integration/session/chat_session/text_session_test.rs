@@ -113,15 +113,7 @@ fn test_text_session_stability() {
     println!("Index | TTFT, s | Prompt t/s | Generate t/s");
     for index in 0..10 {
         let input = Input::Text(build_default_text());
-        let output = session
-            .run(
-                input,
-                RunConfig::default().tokens_limit(128),
-                Some(|_: Output| {
-                    return true;
-                }),
-            )
-            .unwrap();
+        let output = session.run(input, RunConfig::default().tokens_limit(128), Some(|_: Output| true)).unwrap();
         println!(
             "{:.5} | {:.5} | {:.5} | {:.5}",
             index,
@@ -139,15 +131,7 @@ fn run(
 ) {
     let mut session = Session::new(get_test_model_path(), decoding_config).unwrap();
     let input = Input::Text(text);
-    let output = session
-        .run(
-            input,
-            RunConfig::default().tokens_limit(tokens_limit),
-            Some(|_: Output| {
-                return true;
-            }),
-        )
-        .unwrap();
+    let output = session.run(input, RunConfig::default().tokens_limit(tokens_limit), Some(|_: Output| true)).unwrap();
 
     let empty_response = String::from("None");
 
@@ -179,17 +163,9 @@ fn run_scenario(
         println!("User > {}", user_prompt.clone());
 
         let input = Input::Messages(messages.clone());
-        let output = session
-            .run(
-                input,
-                RunConfig::default(),
-                Some(|_: Output| {
-                    return true;
-                }),
-            )
-            .unwrap();
+        let output = session.run(input, RunConfig::default(), Some(|_: Output| true)).unwrap();
         messages.push(Message::assistant(
-            output.text.parsed.response.clone().unwrap_or(String::new()),
+            output.text.parsed.response.clone().unwrap_or_default(),
             output.text.parsed.chain_of_thought.clone(),
         ));
         println!("Assistant > {}", output.text.original.clone());

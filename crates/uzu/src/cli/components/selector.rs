@@ -186,22 +186,20 @@ fn item_component(
 
     let row = element! {
         View(flex_direction: FlexDirection::Row, column_gap: columns_padding, width: 100pct) {
-            View(width: title_column_width as u16) {
+            View(width: title_column_width) {
                 Text(content: title_text, color: title_color, weight: title_weight)
             }
             #(description_view.into_iter())
         }
     };
 
-    if is_selected {
-        if let Some(color) = item.color {
-            return element! {
-                Gradient(from_color: Some(color.darker(0.25)), to_color: Some(color), width: 100pct) {
-                    #(row)
-                }
+    if is_selected && let Some(color) = item.color {
+        return element! {
+            Gradient(from_color: Some(color.darker(0.25)), to_color: Some(color), width: 100pct) {
+                #(row)
             }
-            .into();
         }
+        .into();
     }
 
     row.into()

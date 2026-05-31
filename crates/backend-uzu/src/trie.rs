@@ -101,7 +101,7 @@ impl TrieNode {
         max_length: usize,
     ) -> Self {
         assert!(max_length >= 1, "can't have zero sized trie");
-        assert!(prefix.len() >= 1, "need seed node");
+        assert!(!prefix.is_empty(), "need seed node");
 
         let prefix_length = prefix.len();
         let mut speculated_suffix = prefix.to_vec();
@@ -153,10 +153,10 @@ impl TrieNode {
             } else if let Some(next_node_token) = next_node.take() {
                 // Out of speculated tokens for this node, move onto the likeliest next node
                 speculated_suffix.push(next_node_token);
-                if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
-                    if compiled_grammar.accept_token(next_node_token).is_err() {
-                        break;
-                    }
+                if let Some(compiled_grammar) = compiled_grammar.as_deref_mut()
+                    && compiled_grammar.accept_token(next_node_token).is_err()
+                {
+                    break;
                 }
                 height += 1;
                 cur_node = cur_node.get_mut(next_node_token).unwrap();
@@ -169,7 +169,7 @@ impl TrieNode {
             };
         }
 
-        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+        if let Some(compiled_grammar) = compiled_grammar {
             compiled_grammar.rollback(height);
         }
 
