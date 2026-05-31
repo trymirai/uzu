@@ -2,11 +2,11 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use super::spec::GemvSpecialization;
 use crate::{
-    DataType,
     backends::{
         common::kernel::matmul::MatmulError,
         metal::{Metal, context::MetalContext, kernel::MatmulGemvMetalKernel},
     },
+    data_type::DataType,
 };
 
 pub(crate) struct GemvKernel {

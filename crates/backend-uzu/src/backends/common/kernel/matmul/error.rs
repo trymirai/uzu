@@ -1,8 +1,8 @@
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::common::{Backend, gpu_types::gemm::GemmDTransform},
+    data_type::DataType,
 };
 
 #[derive(Debug, Error)]

@@ -1,7 +1,7 @@
 use crate::{
-    Array, ArrayElement, DataType,
-    array::size_for_shape,
+    array::{Array, ArrayElement, size_for_shape},
     backends::common::{AllocationType, Context},
+    data_type::DataType,
 };
 
 pub trait ArrayContextExt: Context {

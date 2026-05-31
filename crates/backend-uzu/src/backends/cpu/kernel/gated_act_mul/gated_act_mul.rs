@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::activation_type::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::activation_type::ActivationType};
 
 #[kernel(GatedActMul)]
 #[variants(T, f32, bf16)]

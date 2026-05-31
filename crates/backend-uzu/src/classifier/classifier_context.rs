@@ -1,10 +1,10 @@
 use std::{fs::File, path::Path, rc::Rc};
 
 use crate::{
-    DataType,
     backends::common::{Backend, Context},
     classifier::ClassifierError,
     config::{decoder::DecoderConfig, model::classifier_model::ClassifierModelConfig},
+    data_type::DataType,
     encodable_block::{
         ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, QkUnpack, Rope,
     },

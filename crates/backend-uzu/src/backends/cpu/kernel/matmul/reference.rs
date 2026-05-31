@@ -1,11 +1,11 @@
 use half::{bf16, f16};
 
 use crate::{
-    DataType,
     backends::{
         common::{AsBufferRangeRef, Buffer, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
         cpu::{Cpu, buffer::BufferDowncastExt},
     },
+    data_type::DataType,
     utils::pointers::SendPtr,
 };
 

@@ -1,12 +1,13 @@
 use std::{fmt::Display, mem::size_of};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::common::{
         Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;

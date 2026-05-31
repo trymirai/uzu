@@ -9,13 +9,13 @@ use super::{
     rng::PRng,
 };
 use crate::{
-    DataType,
     array::{Array, ArrayContextExt},
     backends::common::{
         Allocation, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
         kernel::TokenCopySampledKernel,
     },
     config::model::language_model::LanguageModelConfig,
+    data_type::DataType,
     encodable_block::{DecoderDecodeInput, SamplingArguments, SamplingInputs},
     forward_pass::{cache_layers::CacheLayersSlice, kv_cache_layer::INVALID_POSITION, token_inputs::TokenInputs},
     language_model::grammar::CompiledGrammar,
@@ -523,7 +523,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
         let token_ids_shape = [1];
-        let token_ids_data_type = crate::DataType::U64;
+        let token_ids_data_type = DataType::U64;
         let mut async_token_ids_allocation =
             self.context.context.create_array_uninitialized(&token_ids_shape, token_ids_data_type).into_allocation();
         let async_token_ids_buffer_range = async_token_ids_allocation.as_buffer_range_ref();
@@ -766,9 +766,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_method: Option<SamplingMethod>,
         sampling_inputs: Option<SamplingInputs<B>>,
     ) -> Result<ForwardPassResources<B>, Error> {
-        let mut sampling_output = sampling_method.map(|_| {
-            context.context.create_array_uninitialized(&[sampling_length], crate::DataType::U32).into_allocation()
-        });
+        let mut sampling_output = sampling_method
+            .map(|_| context.context.create_array_uninitialized(&[sampling_length], DataType::U32).into_allocation());
         let mut logits = None;
         if is_prefilling {
             let mut cache_layers = context.cache_layers.borrow_mut();

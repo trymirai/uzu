@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::{Float, NumCast};
 use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::HadamardTransformOrder};
+use crate::{array::ArrayElement, backends::common::gpu_types::HadamardTransformOrder};
 
 const SIMD_SIZE: usize = 32;
 

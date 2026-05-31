@@ -1,5 +1,4 @@
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
@@ -8,6 +7,7 @@ use crate::{
             MoeTileScanKernel, MoeWriteDispatchArgsKernel,
         },
     },
+    data_type::DataType,
 };
 
 pub struct MoeExpertsTwoPassPrefillBlock<B: Backend> {

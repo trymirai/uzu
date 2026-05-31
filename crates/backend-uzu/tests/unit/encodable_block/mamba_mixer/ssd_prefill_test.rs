@@ -1,9 +1,10 @@
 use super::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use crate::{
-    DataType,
+    array::ArrayElement,
     backends::common::{
         Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel,
     },
+    data_type::DataType,
 };
 
 #[macro_use]
@@ -12,7 +13,7 @@ mod common;
 
 use common::helpers::allocation_to_vec;
 
-fn allocation_from_slice<B: Backend, T: crate::ArrayElement>(
+fn allocation_from_slice<B: Backend, T: ArrayElement>(
     context: &B::Context,
     data: &[T],
 ) -> Allocation<B> {

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::common::{
         AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef, Context, DenseBuffer,
         allocator::{RangeAllocationType, RangeAllocator},

@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use backend_uzu::{
-    Array, ArrayContextExt, DataType,
+    array::{Array, ArrayContextExt},
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -17,6 +17,7 @@ use backend_uzu::{
         },
         metal::Metal,
     },
+    data_type::DataType,
 };
 
 type Ctx = <Metal as Backend>::Context;

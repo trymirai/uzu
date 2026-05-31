@@ -1,9 +1,9 @@
 use crate::{
-    DataType,
     backends::common::{
         AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
         kernel::matmul::{arguments::MatmulArguments, quant_combo::MatmulQuantCombo},
     },
+    data_type::DataType,
 };
 
 pub trait MatmulKernel: Sized {

@@ -1,6 +1,5 @@
 use super::MoeExpertsTwoPassArguments;
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
@@ -10,6 +9,7 @@ use crate::{
             MoePassAWriteDispatchArgsKernel,
         },
     },
+    data_type::DataType,
 };
 
 pub struct MoeExpertsTwoPassDecodeBlock<B: Backend> {

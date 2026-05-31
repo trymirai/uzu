@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::common::{
         Backend, Context, Encoder, Kernels, gpu_types::HadamardTransformOrder, kernel::HadamardTransformKernel,
     },

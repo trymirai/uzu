@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(Activation)]
 #[variants(T, f16, f32, bf16)]

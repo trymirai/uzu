@@ -5,8 +5,8 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock};
 use crate::{
-    DataType,
     backends::common::{Backend, Encoder},
+    data_type::DataType,
 };
 
 #[macro_use]

@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 // Pre-compute L2-normalized q/k, beta, and decay for all tokens.
 #[kernel(DeltaNetPrefillPrep)]

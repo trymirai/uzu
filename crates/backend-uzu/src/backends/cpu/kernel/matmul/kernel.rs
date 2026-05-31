@@ -1,6 +1,5 @@
 use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
-    DataType,
     backends::{
         common::{
             AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
@@ -12,6 +11,7 @@ use crate::{
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
     },
+    data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
 };
 

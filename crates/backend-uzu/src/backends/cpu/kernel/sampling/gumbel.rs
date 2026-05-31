@@ -3,7 +3,7 @@ use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     language_model::gumbel::{gumbel_float, revidx},
 };
 

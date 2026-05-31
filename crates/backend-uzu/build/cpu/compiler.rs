@@ -332,7 +332,7 @@ impl CpuCompiler {
                 let ident = &parameter.name;
 
                 let ty = match &parameter.ty {
-                    FunctionParameterType::Type => quote! { crate::DataType },
+                    FunctionParameterType::Type => quote! { crate::data_type::DataType },
                     FunctionParameterType::Value(ty) => quote! { #ty },
                 };
 
@@ -355,7 +355,9 @@ impl CpuCompiler {
                 let parameter_ident: Ident = syn::parse_str(parameter.name.as_ref())?;
 
                 Ok(match &parameter.ty {
-                    KernelParameterType::Type => quote! { #[allow(non_snake_case)] #parameter_ident: crate::DataType },
+                    KernelParameterType::Type => {
+                        quote! { #[allow(non_snake_case)] #parameter_ident: crate::data_type::DataType }
+                    },
                     KernelParameterType::Value(ty) => {
                         let ty: syn::Type = syn::parse_str(ty.as_ref()).unwrap();
                         quote! { #[allow(non_snake_case)] #parameter_ident: #ty }
@@ -522,7 +524,7 @@ impl CpuCompiler {
                                 FunctionParameterType::Type => {
                                     let dtype =
                                         format_ident!("{}", variant.to_token_stream().to_string().to_uppercase());
-                                    quote! { crate::DataType::#dtype }
+                                    quote! { crate::data_type::DataType::#dtype }
                                 },
                                 FunctionParameterType::Value(_) => quote! { #variant },
                             },

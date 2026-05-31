@@ -9,7 +9,6 @@ pub use self::{
     gemv::QuantGemvKernel,
 };
 use crate::{
-    DataType,
     backends::{
         common::{
             AsBufferRangeRef, Backend, Buffer, Encoder,
@@ -21,6 +20,7 @@ use crate::{
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
+    data_type::DataType,
 };
 
 pub struct MatmulMetalKernel {

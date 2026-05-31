@@ -1,9 +1,9 @@
 use std::cell::Cell;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{Allocation, Backend, Encoder},
+    data_type::DataType,
 };
 
 pub struct ShortConvLayer<B: Backend> {

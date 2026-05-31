@@ -1,6 +1,5 @@
 use super::error::GemmSpecializationError;
 use crate::{
-    DataType,
     backends::common::{
         gpu_types::{
             QuantizationMethod,
@@ -8,6 +7,7 @@ use crate::{
         },
         kernel::matmul::MatmulQuantCombo,
     },
+    data_type::DataType,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

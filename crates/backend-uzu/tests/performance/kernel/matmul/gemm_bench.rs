@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             AllocationType, Backend, Context,

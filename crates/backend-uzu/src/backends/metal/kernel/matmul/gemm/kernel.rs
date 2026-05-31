@@ -2,7 +2,6 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use super::specialization::GemmSpecialization;
 use crate::{
-    DataType,
     backends::{
         common::{
             Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
@@ -23,6 +22,7 @@ use crate::{
             metal_extensions::DeviceExt,
         },
     },
+    data_type::DataType,
 };
 
 #[derive(Debug, Clone, Copy)]

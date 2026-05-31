@@ -1,7 +1,7 @@
 use crate::{
-    DataType,
     array::ArrayContextExt,
     backends::common::{Allocation, Backend},
+    data_type::DataType,
     parameters::ParameterTree,
     session::types::Error,
 };

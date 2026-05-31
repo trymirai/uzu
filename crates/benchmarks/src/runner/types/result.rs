@@ -1,4 +1,4 @@
-use backend_uzu::DataType;
+use backend_uzu::data_type::DataType;
 use serde::{Deserialize, Serialize};
 
 use crate::runner::types::{Device, Task};
