@@ -4,13 +4,14 @@
 #include "../../../common/thread_context.h"
 #include "../../../hadamard_transform/hadamard_transform.h"
 #include "../../common/fragment.h"
+#include "gemm_rht.h"
 #include "../../common/mxu_fragment_ops.h"
 #include "../../common/mxu_gemm_loop.h"
 #include "../../../generated/matmul.h"
 #include "../generated/gemm.h"
 #include "block_geometry.h"
 #include "gemm_tiling.h"
-#include "../../common/quant_pack.h"
+#include "quant_pack.h"
 #include "quant_scale_bias.h"
 #include "quant_scale_zero_point.h"
 
@@ -19,8 +20,6 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-// MXU MMA core: FP streams A/B from device; quantized B dequantizes into
-// b_shared (MLX-style) and reads MMA B-fragments from threadgroup memory.
 template <
     typename AT,
     typename BT,
@@ -106,7 +105,7 @@ struct MxuMmaCore {
   using AccumFragment = uzu::matmul::
       Fragment<AccumulatorType, TILES_M, TILES_N, uzu::matmul::MxuFragmentOps>;
 
-  template <typename Loader, bool ALIGNED_M, bool ALIGNED_N>
+  template <bool ALIGNED_M, bool ALIGNED_N, typename Loader>
   static METAL_FUNC AccumFragment quant_k_loop(
       const device AT* a_simdgroup,
       threadgroup BT* b_shared,
@@ -172,7 +171,7 @@ struct MxuMmaCore {
 
   static METAL_FUNC void run(
       const device AT* a,
-      const device uint8_t* b_packed,
+      const device BT* b,
       device DT* d,
       const constant uzu::matmul::GemmParams* params,
       GemmAlignment alignment,
@@ -198,8 +197,7 @@ struct MxuMmaCore {
 
     const device AT* a_block = a + block_row * params->leading_dimension_a;
     const device BT* b_block_fp =
-        reinterpret_cast<const device BT*>(b_packed) +
-        (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
+        b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M *
@@ -308,98 +306,72 @@ struct MxuMmaCore {
                       const int groups_per_row =
                           (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
                       const device uint8_t* weights_block =
-                          b_packed + block_col * weights_row_stride_bytes;
+                          reinterpret_cast<const device uint8_t*>(b) +
+                          block_col * weights_row_stride_bytes;
                       const device BT* scales_offset =
                           scales + block_col * groups_per_row;
-                      if constexpr (
-                          B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
-                      ) {
-                        const device BT* biases_offset =
-                            biases + block_col * groups_per_row;
-                        thread BLoaderScaleBias loader_b(
-                            weights_block,
-                            scales_offset,
-                            biases_offset,
-                            k_elements,
-                            b_shared,
-                            thread_context.simdgroup_index,
-                            thread_context.simd_lane_id
-                        );
-                        return quant_k_loop<
-                            BLoaderScaleBias,
-                            aligned_m.value,
-                            aligned_n.value>(
-                            a_simdgroup,
-                            b_shared,
-                            int(params->leading_dimension_a),
-                            aligned_k_iterations_q,
-                            simdgroup_limit_m,
-                            simdgroup_limit_n,
-                            tile_col_offset,
-                            tile_block_cols,
-                            loader_b,
-                            thread_context
-                        );
-                      } else if constexpr (
-                          B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-                      ) {
-                        const int zero_point_stride_per_row =
-                            (BITS == 4) ? ((groups_per_row + 1) / 2)
-                                        : groups_per_row;
-                        const device uint8_t* zero_points_row_start =
-                            zero_points + block_col * zero_point_stride_per_row;
-                        thread BLoaderScaleZeroPoint loader_b(
-                            weights_block,
-                            scales_offset,
-                            zero_points_row_start,
-                            k_elements,
-                            groups_per_row,
-                            b_shared,
-                            thread_context.simdgroup_index,
-                            thread_context.simd_lane_id
-                        );
-                        return quant_k_loop<
-                            BLoaderScaleZeroPoint,
-                            aligned_m.value,
-                            aligned_n.value>(
-                            a_simdgroup,
-                            b_shared,
-                            int(params->leading_dimension_a),
-                            aligned_k_iterations_q,
-                            simdgroup_limit_m,
-                            simdgroup_limit_n,
-                            tile_col_offset,
-                            tile_block_cols,
-                            loader_b,
-                            thread_context
-                        );
-                      } else {
-                        thread BLoaderScaleSymmetric loader_b(
-                            weights_block,
-                            scales_offset,
-                            nullptr,
-                            k_elements,
-                            groups_per_row,
-                            b_shared,
-                            thread_context.simdgroup_index,
-                            thread_context.simd_lane_id
-                        );
-                        return quant_k_loop<
-                            BLoaderScaleSymmetric,
-                            aligned_m.value,
-                            aligned_n.value>(
-                            a_simdgroup,
-                            b_shared,
-                            int(params->leading_dimension_a),
-                            aligned_k_iterations_q,
-                            simdgroup_limit_m,
-                            simdgroup_limit_n,
-                            tile_col_offset,
-                            tile_block_cols,
-                            loader_b,
-                            thread_context
-                        );
-                      }
+
+                      auto loader_b = [&]() {
+                        if constexpr (
+                            B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
+                        ) {
+                          const device BT* biases_offset =
+                              biases + block_col * groups_per_row;
+                          return BLoaderScaleBias(
+                              weights_block,
+                              scales_offset,
+                              biases_offset,
+                              k_elements,
+                              b_shared,
+                              thread_context.simdgroup_index,
+                              thread_context.simd_lane_id
+                          );
+                        } else if constexpr (
+                            B_PROLOGUE ==
+                            GemmBPrologueKind::ScaleZeroPointDequant
+                        ) {
+                          const int zero_point_stride_per_row =
+                              (BITS == 4) ? ((groups_per_row + 1) / 2)
+                                          : groups_per_row;
+                          const device uint8_t* zero_points_row_start =
+                              zero_points +
+                              block_col * zero_point_stride_per_row;
+                          return BLoaderScaleZeroPoint(
+                              weights_block,
+                              scales_offset,
+                              zero_points_row_start,
+                              k_elements,
+                              groups_per_row,
+                              b_shared,
+                              thread_context.simdgroup_index,
+                              thread_context.simd_lane_id
+                          );
+                        } else {
+                          return BLoaderScaleSymmetric(
+                              weights_block,
+                              scales_offset,
+                              nullptr,
+                              k_elements,
+                              groups_per_row,
+                              b_shared,
+                              thread_context.simdgroup_index,
+                              thread_context.simd_lane_id
+                          );
+                        }
+                      }();
+
+                      return quant_k_loop<aligned_m.value, aligned_n.value>(
+                          a_simdgroup,
+                          b_shared,
+                          int(params->leading_dimension_a),
+                          aligned_k_iterations_q,
+                          simdgroup_limit_m,
+                          simdgroup_limit_n,
+                          tile_col_offset,
+                          tile_block_cols,
+                          loader_b,
+                          thread_context
+                      );
                     }
                   }();
 
@@ -505,33 +477,21 @@ struct MxuMmaCore {
       threadgroup_barrier(mem_flags::mem_device);
       device DT* d_block =
           d + block_row * params->leading_dimension_d + block_col;
-      const device int32_t* rht_factors_block = rht_factors + block_col;
       const ushort tile_block_rows = ushort(
           min(int(THREADGROUP_BLOCK_M), int(params->M) - int(block_row))
       );
-      const ushort tile_block_cols_local = ushort(
+      const ushort tile_block_cols = ushort(
           min(int(THREADGROUP_BLOCK_N), int(params->N) - int(block_col))
       );
-      constexpr ushort SIMDGROUP_COUNT =
-          SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
-      const ushort stripes_per_row = tile_block_cols_local / METAL_SIMD_SIZE;
-      const ushort sg_index = thread_context.simdgroup_index;
-      const ushort simd_lane = thread_context.simd_lane_id;
-      const uint total_work = uint(tile_block_rows) * uint(stripes_per_row);
-      for (uint w = sg_index; w < total_work; w += SIMDGROUP_COUNT) {
-        const ushort row_local = ushort(w / stripes_per_row);
-        const ushort stripe = ushort(w % stripes_per_row);
-        const ushort col_local = stripe * ushort(METAL_SIMD_SIZE) + simd_lane;
-        const size_t d_idx =
-            size_t(row_local) * size_t(params->leading_dimension_d) +
-            size_t(col_local);
-        DT value = d_block[d_idx];
-        d_block[d_idx] = simdgroup_output_random_hadamard_transform(
-            simd_lane,
-            value,
-            rht_factors_block[col_local]
-        );
-      }
+      apply_output_random_hadamard_transform(
+          d_block,
+          rht_factors + block_col,
+          tile_block_rows,
+          tile_block_cols,
+          params->leading_dimension_d,
+          ushort(SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN),
+          thread_context
+      );
     }
   }
 };

@@ -10,7 +10,6 @@ constexpr uint gemm_tiling_block_m(GemmTiling t) {
          : t == GemmTiling::Tile64x32x32_Simdgroups2x2    ? 64
          : t == GemmTiling::Tile64x64x16_Simdgroups2x2    ? 64
          : t == GemmTiling::Tile64x64x32_Simdgroups2x2    ? 64
-         : t == GemmTiling::Tile64x64x64_Simdgroups2x2    ? 64
          : t == GemmTiling::Tile32x32x32_Simdgroups2x2    ? 32
          : t == GemmTiling::Tile32x64x256_Simdgroups2x2   ? 32
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 64
@@ -24,7 +23,6 @@ constexpr uint gemm_tiling_block_n(GemmTiling t) {
          : t == GemmTiling::Tile64x32x32_Simdgroups2x2    ? 32
          : t == GemmTiling::Tile64x64x16_Simdgroups2x2    ? 64
          : t == GemmTiling::Tile64x64x32_Simdgroups2x2    ? 64
-         : t == GemmTiling::Tile64x64x64_Simdgroups2x2    ? 64
          : t == GemmTiling::Tile32x32x32_Simdgroups2x2    ? 32
          : t == GemmTiling::Tile32x64x256_Simdgroups2x2   ? 64
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 32
@@ -38,7 +36,6 @@ constexpr uint gemm_tiling_block_k(GemmTiling t) {
          : t == GemmTiling::Tile64x32x32_Simdgroups2x2    ? 32
          : t == GemmTiling::Tile64x64x16_Simdgroups2x2    ? 16
          : t == GemmTiling::Tile64x64x32_Simdgroups2x2    ? 32
-         : t == GemmTiling::Tile64x64x64_Simdgroups2x2    ? 64
          : t == GemmTiling::Tile32x32x32_Simdgroups2x2    ? 32
          : t == GemmTiling::Tile32x64x256_Simdgroups2x2   ? 256
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 256
@@ -52,7 +49,6 @@ constexpr uint gemm_tiling_simdgroups_per_row(GemmTiling t) {
          : t == GemmTiling::Tile64x32x32_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile64x64x16_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile64x64x32_Simdgroups2x2    ? 2
-         : t == GemmTiling::Tile64x64x64_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile32x32x32_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile32x64x256_Simdgroups2x2   ? 2
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 4
@@ -66,7 +62,6 @@ constexpr uint gemm_tiling_simdgroups_per_column(GemmTiling t) {
          : t == GemmTiling::Tile64x32x32_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile64x64x16_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile64x64x32_Simdgroups2x2    ? 2
-         : t == GemmTiling::Tile64x64x64_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile32x32x32_Simdgroups2x2    ? 2
          : t == GemmTiling::Tile32x64x256_Simdgroups2x2   ? 2
          : t == GemmTiling::Tile64x32x256_Simdgroups4x1   ? 1

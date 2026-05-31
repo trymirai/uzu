@@ -4,15 +4,22 @@ use super::specialization::GemmSpecialization;
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Buffer, Encoder,
+            Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
             gpu_types::{
-                GemmParams,
+                GemmParams, HadamardTransformOrder,
                 gemm::{GemmAlignment, GemmDTransform, GemmTiling},
             },
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
+            kernel::{
+                HadamardTransformKernel, Kernels, TensorAddBiasKernel,
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
+            },
         },
         metal::{
-            Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel, metal_extensions::DeviceExt,
+            Metal,
+            context::MetalContext,
+            error::MetalError,
+            kernel::{GemmMetalKernel, TensorAddBiasMetalKernel},
+            metal_extensions::DeviceExt,
         },
     },
     data_type::DataType,
@@ -29,6 +36,8 @@ pub struct GemmKernel {
     input_data_type: DataType,
     output_data_type: DataType,
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
+    pub bias_add: TensorAddBiasMetalKernel,
+    pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
 }
 
 impl GemmKernel {
@@ -38,11 +47,19 @@ impl GemmKernel {
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> Result<Self, MetalError> {
+        let bias_add = TensorAddBiasMetalKernel::new(context, output_data_type, weights_data_type, true)?;
+        let hadamard = <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
+            context,
+            output_data_type,
+            HadamardTransformOrder::Output,
+        )?;
         let mut kernel = Self {
             weights_data_type,
             input_data_type,
             output_data_type,
             kernels: HashMap::new(),
+            bias_add,
+            hadamard,
         };
         for specialization in GemmSpecialization::precompile_configs(weights_data_type) {
             kernel.get_or_create(context, specialization)?;
@@ -109,7 +126,7 @@ impl GemmKernel {
                 arguments.b_transpose
                     && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
                     && arguments.b_offset == 0
-                    && arguments.k % select_mxu_tiling(arguments.m, arguments.n).block_k() == 0
+                    && arguments.k.is_multiple_of(select_mxu_tiling(arguments.m, arguments.n).block_k())
             },
         };
         let path = if encoder.context().device.supports_mxu()
@@ -424,7 +441,7 @@ fn select_quant_tiling(
         GemmTiling::Tile8x32x32_Simdgroups1x1
     } else if m >= 64 && n <= 2048 {
         GemmTiling::Tile64x32x32_Simdgroups2x2
-    } else if m >= 64 && n >= 6144 && n % 64 == 0 {
+    } else if m >= 64 && n >= 6144 && n.is_multiple_of(64) {
         GemmTiling::Tile64x64x32_Simdgroups2x2
     } else {
         GemmTiling::Tile32x32x32_Simdgroups2x2

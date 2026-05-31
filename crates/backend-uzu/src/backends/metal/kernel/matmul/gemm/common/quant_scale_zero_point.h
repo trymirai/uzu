@@ -4,8 +4,8 @@
 #include <metal_stdlib>
 
 #include "../../common/defines.h"
-#include "../../common/quant_pack.h"
-#include "../../common/quant_unpack.h"
+#include "quant_pack.h"
+#include "quant_unpack.h"
 
 using namespace metal;
 
