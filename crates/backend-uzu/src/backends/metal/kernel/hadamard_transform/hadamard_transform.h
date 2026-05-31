@@ -42,4 +42,3 @@ static METAL_FUNC T simdgroup_output_random_hadamard_transform(
       float(lane_factor)
   );
 }
-
