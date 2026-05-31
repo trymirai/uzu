@@ -59,6 +59,26 @@ fn print_summary(results: &[BenchmarkResult]) -> Result<()> {
     let prompt_tokens_per_second_metric = calculate_metric(&prompt_tokens_per_second_list);
     let generate_tokens_per_second_metric = calculate_metric(&generate_tokens_per_second_list);
 
+    let speculator_proposed_total: u64 = results.iter().map(|result| result.speculator_proposed).sum();
+    let accepted_per_forward_pass_list = results
+        .iter()
+        .filter_map(|result| {
+            let forward_pass_count = result.tokens_count_output.checked_sub(result.speculator_accepted)?;
+            if forward_pass_count == 0 {
+                None
+            } else {
+                Some(result.speculator_accepted as f64 / forward_pass_count as f64)
+            }
+        })
+        .collect::<Vec<f64>>();
+    let acceptance_rate_list = results
+        .iter()
+        .filter(|result| result.speculator_proposed > 0)
+        .map(|result| 100.0 * result.speculator_accepted as f64 / result.speculator_proposed as f64)
+        .collect::<Vec<f64>>();
+    let accepted_per_forward_pass_metric = calculate_metric(&accepted_per_forward_pass_list);
+    let acceptance_rate_metric = calculate_metric(&acceptance_rate_list);
+
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
@@ -69,6 +89,11 @@ fn print_summary(results: &[BenchmarkResult]) -> Result<()> {
         .add_row(vec!["TTFT, s", time_to_first_token_metric.as_str()])
         .add_row(vec!["Prompt, t/s", prompt_tokens_per_second_metric.as_str()])
         .add_row(vec!["Generate, t/s", generate_tokens_per_second_metric.as_str()]);
+
+    if speculator_proposed_total > 0 {
+        table.add_row(vec!["Accepted / forward pass", accepted_per_forward_pass_metric.as_str()]);
+        table.add_row(vec!["Acceptance rate, %", acceptance_rate_metric.as_str()]);
+    }
 
     let Some(column) = table.column_mut(1) else {
         bail!("Benchmark summary table value column is missing");

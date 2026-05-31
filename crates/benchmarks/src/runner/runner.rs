@@ -1,20 +1,22 @@
 use std::{
     path::PathBuf,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use backend_uzu::{
     VERSION,
+    prelude::PromptLookupSpeculator,
     session::{
         ChatSession,
-        config::{DecodingConfig, RunConfig},
+        config::{DecodingConfig, RunConfig, SpeculatorConfig},
         parameter::{PrefillStepSize, SamplingMethod, SamplingPolicy},
         types::{Input, Output},
     },
 };
 use sysinfo::System;
 
-use crate::runner::types::{Device, Result as TaskResult, Task};
+use crate::runner::types::{Device, Result as TaskResult, SpeculatorSpec, Task};
 
 pub struct Runner {
     pub task: Task,
@@ -46,6 +48,18 @@ impl Runner {
         if let Some(prefill_step_size) = self.prefill_step_size {
             decoding_config = decoding_config.with_prefill_step_size(PrefillStepSize::Custom(prefill_step_size));
         }
+        if let Some(speculator) = &self.task.speculator {
+            let speculator_config = match speculator {
+                SpeculatorSpec::PromptLookup {
+                    max_ngram_size,
+                    number_of_speculated_tokens,
+                } => SpeculatorConfig::new(
+                    *number_of_speculated_tokens,
+                    Arc::new(PromptLookupSpeculator::new_with_params(*max_ngram_size)),
+                ),
+            };
+            decoding_config = decoding_config.with_speculator_config(speculator_config);
+        }
 
         let mut session = ChatSession::new(PathBuf::from(self.model_path.clone()), decoding_config)?;
         let data_type = session.activation_data_type();
@@ -71,6 +85,13 @@ impl Runner {
 
             let memory_used = session.peak_memory_usage();
 
+            let (speculator_proposed, speculator_accepted) = output
+                .stats
+                .generate_stats
+                .as_ref()
+                .map(|stats| (stats.speculator_proposed, stats.speculator_accepted))
+                .unwrap_or((0, 0));
+
             let result = TaskResult {
                 task: self.task.clone(),
                 device: device.clone(),
@@ -83,6 +104,8 @@ impl Runner {
                 time_to_first_token: output.stats.prefill_stats.duration,
                 prompt_tokens_per_second: output.stats.prefill_stats.processed_tokens_per_second,
                 generate_tokens_per_second: output.stats.generate_stats.map(|stats| stats.tokens_per_second),
+                speculator_proposed,
+                speculator_accepted,
                 text: output.text.original,
             };
             results.push(result);

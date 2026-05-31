@@ -16,5 +16,7 @@ pub struct Result {
     pub time_to_first_token: f64,
     pub prompt_tokens_per_second: f64,
     pub generate_tokens_per_second: Option<f64>,
+    pub speculator_proposed: u64,
+    pub speculator_accepted: u64,
     pub text: String,
 }
