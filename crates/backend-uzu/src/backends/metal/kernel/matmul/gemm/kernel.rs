@@ -2,7 +2,6 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use super::specialization::GemmSpecialization;
 use crate::{
-    DataType,
     backends::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
@@ -16,6 +15,7 @@ use crate::{
             Metal, context::MetalContext, error::MetalError, kernel::GemmMetalKernel, metal_extensions::DeviceExt,
         },
     },
+    data_type::DataType,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -402,8 +402,7 @@ fn select_mxu_quant_tiling(
     n: u32,
     group_size: u32,
 ) -> GemmTiling {
-    let large_tile_fits = group_size > 0 && group_size <= 64;
-    if m >= 256 && n >= 128 && large_tile_fits {
+    if m >= 256 && n >= 128 && GemmTiling::Tile128x128x256_Simdgroups4x4.fits_quant_group_size(group_size) {
         GemmTiling::Tile128x128x256_Simdgroups4x4
     } else if n < 64 {
         GemmTiling::Tile64x32x256_Simdgroups4x1

@@ -2,12 +2,12 @@
 
 // New integration test for ParameterLoader
 use backend_uzu::{
-    DataType, ParameterLoader,
     backends::{
         common::{Backend, Context},
         metal::Metal,
     },
-    read_safetensors_metadata,
+    data_type::DataType,
+    parameters::{ParameterLoader, read_safetensors_metadata},
 };
 use half::bf16;
 use test_tag::tag;

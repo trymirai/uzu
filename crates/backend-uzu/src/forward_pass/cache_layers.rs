@@ -1,10 +1,10 @@
 use std::cell::Cell;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{AllocationType, Backend, Context, Encoder},
     config::token_mixer::AnyTokenMixerConfig,
+    data_type::DataType,
     encodable_block::KVCacheUpdate,
     forward_pass::{
         delta_net_layer::DeltaNetLayer,

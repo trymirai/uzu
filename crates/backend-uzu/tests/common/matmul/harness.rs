@@ -1,7 +1,7 @@
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,

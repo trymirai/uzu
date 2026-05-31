@@ -1,6 +1,6 @@
 use crate::{
-    DataType,
     backends::common::{Allocation, Backend},
+    data_type::DataType,
 };
 
 pub struct SSMLayer<B: Backend> {

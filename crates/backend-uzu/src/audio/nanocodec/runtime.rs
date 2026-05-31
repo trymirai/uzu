@@ -9,7 +9,6 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    DataType,
     array::{ArrayContextExt, size_for_shape},
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     backends::common::{
@@ -30,6 +29,7 @@ use crate::{
             audio_decoder::{AnyTTSAudioDecoderConfig, descript_audio_codec::DescriptAudioCodecConfig},
         },
     },
+    data_type::DataType,
     encodable_block::{Decoder, LayerExecutables, RMSNorm},
     forward_pass::{model_shape::ModelShape, state::SharedBuffers},
     parameters::ParameterLoader,

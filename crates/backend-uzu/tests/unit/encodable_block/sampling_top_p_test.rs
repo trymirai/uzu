@@ -4,11 +4,12 @@ use std::{
 };
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{AllocationType, Backend, Context, Encoder, Kernels, kernel::TopPKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 use half::{bf16, f16};

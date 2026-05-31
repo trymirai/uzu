@@ -16,11 +16,12 @@ use std::{
 use backend_uzu::{
     _private::{
         ActivationTrace, AnyModelConfig, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
-        LanguageModelGeneratorContext, ParameterLoaderError, ParameterTree, TokenInputs,
+        LanguageModelGeneratorContext, TokenInputs,
     },
-    Array, ArrayElement, DataType, ParameterLoader,
+    array::{Array, ArrayElement},
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
-    read_safetensors_metadata,
+    data_type::DataType,
+    parameters::{ParameterLoader, ParameterLoaderError, ParameterTree, read_safetensors_metadata},
     session::{
         config::{DecodingConfig, SpeculatorConfig},
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},

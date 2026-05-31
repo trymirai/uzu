@@ -7,10 +7,10 @@ use std::{
 };
 
 use crate::{
-    DataType,
     array::{Array, ArrayContextExt},
     backends::common::{Backend, Context, Kernels, kernel::TokenCopySampledKernel},
     config::{decoder::DecoderConfig, model::language_model::LanguageModelConfig},
+    data_type::DataType,
     encodable_block::{Decoder, KVCacheUpdate, Sampling},
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
     language_model::rng::PRng,

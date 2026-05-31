@@ -1,5 +1,5 @@
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             Allocation, Backend, Encoder, Kernels,
@@ -10,6 +10,7 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::bf16;
 use num_traits::Float;

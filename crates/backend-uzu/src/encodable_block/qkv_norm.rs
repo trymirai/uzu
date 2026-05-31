@@ -1,12 +1,12 @@
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, QKVNormKernel},
     },
     config::normalization::{NormalizationConfig, UpcastMode},
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

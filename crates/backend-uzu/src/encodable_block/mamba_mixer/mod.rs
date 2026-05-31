@@ -8,7 +8,6 @@ use ssd_prefill::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
@@ -16,6 +15,7 @@ use crate::{
         kernel::{Conv1dDecodeKernel, Conv1dPackKernel, Conv1dScanKernel, SSDUpdateKernel, SplitInProjKernel},
     },
     config::token_mixer::mamba2::Mamba2Config,
+    data_type::DataType,
     encodable_block::linear::{Linear, LinearBlockError},
     forward_pass::ssm_layer::SSMLayer,
     parameters::{ParameterLoaderError, ParameterTree},

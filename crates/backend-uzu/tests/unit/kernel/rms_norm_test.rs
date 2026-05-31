@@ -4,11 +4,12 @@ use std::{
 };
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::{bf16, f16};

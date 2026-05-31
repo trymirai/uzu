@@ -6,7 +6,7 @@ use std::{
 };
 
 use backend_uzu::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{
         common::{
             Backend, Context, Encoder,

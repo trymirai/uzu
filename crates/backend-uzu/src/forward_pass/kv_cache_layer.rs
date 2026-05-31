@@ -1,9 +1,9 @@
 use std::{any::Any, ops::Range};
 
 use crate::{
-    DataType,
     array::{Array, ArrayContextExt, size_for_shape},
     backends::common::{AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Context, Encoder, SparseBuffer},
+    data_type::DataType,
     encodable_block::{KVCacheUpdate, KVLayerData},
 };
 

@@ -1,6 +1,6 @@
 use crate::{
-    DataType,
     config::{decoder::DecoderConfig, token_mixer::AnyTokenMixerConfig},
+    data_type::DataType,
 };
 
 #[derive(Debug, Clone)]

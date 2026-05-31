@@ -1,7 +1,6 @@
 //! Prediction head encodable for classification output.
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
@@ -9,6 +8,7 @@ use crate::{
         kernel::{ActivationKernel, Kernels},
     },
     config::activation::AnyActivation,
+    data_type::DataType,
     encodable_block::{Normalization, linear::Linear},
 };
 

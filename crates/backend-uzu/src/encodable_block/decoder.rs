@@ -7,9 +7,9 @@ use thiserror::Error;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
-    DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::decoder::DecoderConfig,
+    data_type::DataType,
     encodable_block::{
         Embedding, LayerArguments, LayerExecutables, PerLayerEmbedding, PostLayerScalar, QkUnpack, RMSNorm,
         RMSNormError, Rope, embedding::EmbeddingError, layer::LayerExecutablesError,

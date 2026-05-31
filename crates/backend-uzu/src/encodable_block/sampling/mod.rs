@@ -7,9 +7,9 @@ pub use block::SamplingError;
 use ndarray::ArrayView2;
 
 use crate::{
-    DataType,
     array::{Array, ArrayContextExt},
     backends::common::{Allocation, Backend, Encoder},
+    data_type::DataType,
     session::parameter::SamplingMethod,
 };
 

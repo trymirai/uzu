@@ -1,7 +1,7 @@
 use half::{bf16, f16};
 
 use crate::{
-    DataType,
+    data_type::DataType,
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,

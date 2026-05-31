@@ -132,6 +132,16 @@ impl GemmTiling {
             self.block_k()
         }
     }
+
+    pub const fn fits_quant_group_size(
+        self,
+        group_size: u32,
+    ) -> bool {
+        match self {
+            Self::Tile128x128x256_Simdgroups4x4 => group_size <= 64,
+            _ => true,
+        }
+    }
 }
 
 pub const fn gemm_tiling_simdgroups_per_row(t: GemmTiling) -> u32 {

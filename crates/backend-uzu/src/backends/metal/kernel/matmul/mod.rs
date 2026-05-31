@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 pub use self::gemm::{GemmDispatchPath, GemmKernel};
 use self::gemv::GemvDispatch;
 use crate::{
-    DataType,
+    data_type::DataType,
     backends::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,

@@ -1,6 +1,5 @@
 use super::error::GemmSpecializationError;
 use crate::{
-    DataType,
     backends::common::{
         gpu_types::{
             QuantizationMethod,
@@ -8,6 +7,7 @@ use crate::{
         },
         kernel::matmul::MatmulQuantCombo,
     },
+    data_type::DataType,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,12 +31,9 @@ impl GemmSpecialization {
                 use_mxu: self.use_mxu,
             });
         }
-        if self.use_mxu
-            && self.b_prologue != GemmBPrologueKind::FullPrecision
-            && matches!(self.tiling, GemmTiling::Tile128x128x256_Simdgroups4x4)
-        {
+        if self.use_mxu && self.b_prologue != GemmBPrologueKind::FullPrecision {
             if let Some(group_size) = self.group_size {
-                if group_size > 64 {
+                if !self.tiling.fits_quant_group_size(group_size) {
                     return Err(GemmSpecializationError::MxuQuantTileTooLarge {
                         tiling: self.tiling,
                         group_size,
@@ -171,7 +168,7 @@ impl GemmSpecialization {
             if group_size % 32 != 0 {
                 continue;
             }
-            if matches!(tiling, GemmTiling::Tile128x128x256_Simdgroups4x4) && group_size > 64 {
+            if !tiling.fits_quant_group_size(group_size) {
                 continue;
             }
             for align_m in [true, false] {

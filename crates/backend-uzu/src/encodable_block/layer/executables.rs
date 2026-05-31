@@ -5,11 +5,11 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::common::{Allocation, Backend, Encoder},
     config::{
         token_mixer::AnyTokenMixerConfig, transformer::TransformerConfig, transformer_layer::TransformerLayerConfig,
     },
+    data_type::DataType,
     encodable_block::{
         Attention, AttentionError, DeltaNetArguments, DeltaNetMixer, DeltaNetMixerError, MambaArguments, MambaMixer,
         MambaMixerError, Mlp, MlpBlockError, PerLayerEmbeddingProjection, PostLayerScalar, QkUnpack, RMSNorm,

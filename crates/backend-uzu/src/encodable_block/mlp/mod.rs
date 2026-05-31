@@ -9,9 +9,9 @@ use thiserror::Error;
 
 use super::linear::{Linear, LinearBlockError};
 use crate::{
-    DataType,
     backends::common::{Allocation, Backend, Encoder},
     config::mlp::AnyMLPConfig,
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

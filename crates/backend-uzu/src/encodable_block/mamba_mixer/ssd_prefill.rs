@@ -1,10 +1,10 @@
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{SSDPrefill64Kernel, SSDPrefillKernel, SSDPrefillSequentialKernel},
     },
+    data_type::DataType,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

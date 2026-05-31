@@ -7,7 +7,9 @@ use xgrammar::{
     TokenizerInfo,
 };
 
-use crate::{DataType, language_model::grammar::CompiledGrammar, prelude::Error, session::config::GrammarConfig};
+use crate::{
+    data_type::DataType, language_model::grammar::CompiledGrammar, prelude::Error, session::config::GrammarConfig,
+};
 
 enum CompiledGrammarEngagementState {
     Always,

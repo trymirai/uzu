@@ -5,7 +5,7 @@ use std::{collections::HashMap, fs::File, str::Utf8Error};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{DataType, utils::fs::file_read_exact_at};
+use crate::{data_type::DataType, utils::fs::file_read_exact_at};
 
 #[derive(Debug, Error)]
 pub enum HeaderLoadingError {

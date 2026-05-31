@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use backend_uzu::{
-    ArrayContextExt, DataType,
+    array::ArrayContextExt,
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -14,6 +14,7 @@ use backend_uzu::{
         },
         metal::Metal,
     },
+    data_type::DataType,
 };
 
 use crate::{

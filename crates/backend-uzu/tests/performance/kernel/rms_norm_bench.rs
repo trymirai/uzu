@@ -1,5 +1,5 @@
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
 };
 use criterion::{BenchmarkId, Criterion, Throughput};

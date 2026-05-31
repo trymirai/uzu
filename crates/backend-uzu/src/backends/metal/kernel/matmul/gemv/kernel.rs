@@ -1,7 +1,6 @@
 use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
-    DataType,
     backends::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
@@ -13,6 +12,7 @@ use crate::{
         },
         metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
     },
+    data_type::DataType,
 };
 
 const FP_PATH: &str = "FpGemv";

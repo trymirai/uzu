@@ -1,6 +1,3 @@
-use bytemuck::Pod;
-use half::{bf16, f16};
-use num_traits::NumCast;
 use proc_macros::uzu_config;
 
 #[derive(Eq, PartialOrd, Ord, Copy, Hash)]
@@ -54,35 +51,4 @@ impl DataType {
     pub const fn size_in_bytes(&self) -> usize {
         self.size_in_bits().div_ceil(8)
     }
-}
-
-pub trait ArrayElement: NumCast + Pod {
-    fn data_type() -> DataType;
-}
-
-macro_rules! impl_array_element {
-    ($($type:ty => $variant:ident),+ $(,)?) => {
-        $(
-            impl ArrayElement for $type {
-                fn data_type() -> DataType {
-                    DataType::$variant
-                }
-            }
-        )+
-    };
-}
-
-impl_array_element! {
-    f16 => F16,
-    bf16 => BF16,
-    f32 => F32,
-    f64 => F64,
-    i8 => I8,
-    u8 => U8,
-    i16 => I16,
-    u16 => U16,
-    i32 => I32,
-    u32 => U32,
-    i64 => I64,
-    u64 => U64,
 }
