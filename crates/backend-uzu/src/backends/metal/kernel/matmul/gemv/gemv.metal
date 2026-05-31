@@ -30,9 +30,15 @@ struct QuantRowOffsets {
       offset[1] = static_cast<U>(biases[group_stride]);
       offset[2] = static_cast<U>(biases[2 * group_stride]);
       offset[3] = static_cast<U>(biases[3 * group_stride]);
-    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
-      uchar4 zp_bytes =
-          uchar4(zps[0], zps[zp_stride], zps[2 * zp_stride], zps[3 * zp_stride]);
+    } else if constexpr (
+        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
+    ) {
+      uchar4 zp_bytes = uchar4(
+          zps[0],
+          zps[zp_stride],
+          zps[2 * zp_stride],
+          zps[3 * zp_stride]
+      );
       uchar4 zp_nibbles;
       if (BITS == 4) {
         const uint8_t shift = high_nibble ? 4u : 0u;
@@ -57,7 +63,9 @@ struct QuantRowOffsets {
     scales += groups;
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       biases += groups;
-    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
+    } else if constexpr (
+        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
+    ) {
       zps += (BITS == 4) ? (groups / 2) : groups;
     }
   }
@@ -218,7 +226,9 @@ KERNEL(Gemv)(
     prep.scales = scales + out_row * in_vec_size_g + g_offset;
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       prep.biases = biases + out_row * in_vec_size_g + g_offset;
-    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
+    } else if constexpr (
+        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
+    ) {
       if (BITS == 4) {
         prep.zp_stride = (in_vec_size_g + 1) / 2;
         prep.zps = zero_points + out_row * prep.zp_stride + g_offset / 2;
@@ -245,16 +255,32 @@ KERNEL(Gemv)(
       U offset[4];
       prep.load(scale, offset);
       result[0] += qdot<U, values_per_thread, BITS>(
-          wl0, x_thread, scale[0], offset[0], sum
+          wl0,
+          x_thread,
+          scale[0],
+          offset[0],
+          sum
       );
       result[1] += qdot<U, values_per_thread, BITS>(
-          wl1, x_thread, scale[1], offset[1], sum
+          wl1,
+          x_thread,
+          scale[1],
+          offset[1],
+          sum
       );
       result[2] += qdot<U, values_per_thread, BITS>(
-          wl2, x_thread, scale[2], offset[2], sum
+          wl2,
+          x_thread,
+          scale[2],
+          offset[2],
+          sum
       );
       result[3] += qdot<U, values_per_thread, BITS>(
-          wl3, x_thread, scale[3], offset[3], sum
+          wl3,
+          x_thread,
+          scale[3],
+          offset[3],
+          sum
       );
 
       ws += block_size * bytes_per_pack / pack_factor;
@@ -285,16 +311,36 @@ KERNEL(Gemv)(
         U offset[4];
         prep.load(scale, offset);
         result[0] += qdot_safe<U, values_per_thread, BITS>(
-            wl0, x_thread, scale[0], offset[0], sum, remaining
+            wl0,
+            x_thread,
+            scale[0],
+            offset[0],
+            sum,
+            remaining
         );
         result[1] += qdot_safe<U, values_per_thread, BITS>(
-            wl1, x_thread, scale[1], offset[1], sum, remaining
+            wl1,
+            x_thread,
+            scale[1],
+            offset[1],
+            sum,
+            remaining
         );
         result[2] += qdot_safe<U, values_per_thread, BITS>(
-            wl2, x_thread, scale[2], offset[2], sum, remaining
+            wl2,
+            x_thread,
+            scale[2],
+            offset[2],
+            sum,
+            remaining
         );
         result[3] += qdot_safe<U, values_per_thread, BITS>(
-            wl3, x_thread, scale[3], offset[3], sum, remaining
+            wl3,
+            x_thread,
+            scale[3],
+            offset[3],
+            sum,
+            remaining
         );
       }
     }
