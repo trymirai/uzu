@@ -114,9 +114,6 @@ fn parity_bf16(
     run_parity::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
 }
 
-/// Parity for the quantized GEMV path: a small batch routes through the
-/// top-level dispatch (`None`) to the unified `Gemv` kernel, checked against the
-/// CPU reference matmul.
 fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
     m: usize,
     k: usize,
@@ -205,9 +202,6 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     assert_parity::<bf16>("with_bias", &reference, &actual, 0.05, 0.4);
 }
 
-/// Drives the quantized GEMV (`qmv_fast`) path through the top-level dispatch (m < 5)
-/// with the fused scale + bias epilogue, and checks it against an independent
-/// host-computed reference (raw dot products scaled and biased on the CPU).
 #[uzu_test]
 fn parity_bf16_gemv_qmv_fused_scale_bias() {
     let context = MetalContext::new().expect("Metal context");
@@ -217,7 +211,6 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
     let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.25 + 0.1 * (j % 7) as f32).collect();
     let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
 
-    // Independent reference: raw dot products, then scale + bias applied on the host.
     let raw = run_quant_cpu::<bf16>(&input);
     let reference: Vec<bf16> = (0..input.m as usize)
         .flat_map(|i| {
@@ -350,9 +343,6 @@ fn mxu_quant_parity_bf16(
     let input = QuantInput::<bf16>::new(m, k, n, gs, bits, method, 0);
     let actual = run_quant_metal::<bf16>(&context, &input, Some(GemmDispatchPath::Mxu));
     let reference = run_quant_cpu::<bf16>(&input);
-    // MXU accumulates fragments in a different order than the simdgroup
-    // reference path, so bf16 reductions over k=256 can drift one element
-    // above the 0.4 absolute tolerance the simdgroup path uses.
     assert_parity::<bf16>(
         &format!("MXU m={m} k={k} n={n} gs={gs} bits={bits} method={method:?}"),
         &reference,

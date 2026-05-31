@@ -28,19 +28,6 @@ pub struct GemvParams {
     pub ab_scale: f32,
 }
 
-/// Per-threadgroup tile layout for the GEMV kernel. Each variant is named for
-/// the three layout levels it encodes: `Tg{r}x{c}` is the simdgroup grid per
-/// threadgroup, `Sg{r}x{c}` is the thread grid per simdgroup, and `Out{r}x{c}`
-/// is the output block each thread computes. The `Out1x4` siblings drop
-/// `thread_out_rows` to 1 for tiny output dimensions; `Tg8x1_Sg1x32_Out4x4`
-/// doubles as the canonical quantized tile.
-///
-/// | variant                | tg rows×cols | sg rows×cols | out rows×cols |
-/// |------------------------|--------------|--------------|---------------|
-/// | `Tg4x1_Sg1x32_Out4x4`  | 4×1          | 1×32         | 4×4           |
-/// | `Tg8x1_Sg1x32_Out4x4`  | 8×1          | 1×32         | 4×4           |
-/// | `Tg1x1_Sg8x4_Out4x4`   | 1×1          | 8×4          | 4×4           |
-/// | `Tg1x8_Sg1x32_Out4x4`  | 1×8          | 1×32         | 4×4           |
 #[repr(C)]
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(non_camel_case_types)]
