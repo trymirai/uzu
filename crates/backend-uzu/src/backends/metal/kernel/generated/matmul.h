@@ -29,13 +29,13 @@ typedef struct {
 } GemvParams;
 
 enum class GemvTiling : uint32_t {
-  Standard = 0,
-  StandardNarrow = 1,
-  Wide = 2,
-  WideNarrow = 3,
-  SmallInput = 4,
-  SmallInputNarrow = 5,
-  SplitInput = 6,
-  SplitInputNarrow = 7,
+  Tg4x1_Sg1x32_Out4x4 = 0,
+  Tg4x1_Sg1x32_Out1x4 = 1,
+  Tg8x1_Sg1x32_Out4x4 = 2,
+  Tg8x1_Sg1x32_Out1x4 = 3,
+  Tg1x1_Sg8x4_Out4x4 = 4,
+  Tg1x1_Sg8x4_Out1x4 = 5,
+  Tg1x8_Sg1x32_Out4x4 = 6,
+  Tg1x8_Sg1x32_Out1x4 = 7,
 };
 } // namespace uzu::matmul
