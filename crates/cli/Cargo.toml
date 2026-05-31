@@ -29,3 +29,6 @@ clap.workspace = true
 comfy-table.workspace = true
 indicatif.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

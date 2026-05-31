@@ -12,17 +12,12 @@ fn env_prefill_step_size_default_override() -> Option<usize> {
     })
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum PrefillStepSize {
+    #[default]
     Default,
     Maximal,
     Custom(usize),
-}
-
-impl Default for PrefillStepSize {
-    fn default() -> Self {
-        PrefillStepSize::Default
-    }
 }
 
 impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {

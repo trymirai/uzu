@@ -463,7 +463,7 @@ impl Engine {
             let session = ChatSession::new(backend.clone(), config, model, path).await?;
             Ok(session)
         } else {
-            return Err(EngineError::BackendNotFound {});
+            Err(EngineError::BackendNotFound {})
         }
     }
 
@@ -479,7 +479,7 @@ impl Engine {
             let session = ClassificationSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
-            return Err(EngineError::BackendNotFound {});
+            Err(EngineError::BackendNotFound {})
         }
     }
 
@@ -495,7 +495,7 @@ impl Engine {
             let session = TextToSpeechSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
-            return Err(EngineError::BackendNotFound {});
+            Err(EngineError::BackendNotFound {})
         }
     }
 }

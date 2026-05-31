@@ -54,7 +54,7 @@ impl Player {
         })?;
         let channel_count = channels.get() as usize;
 
-        if batch.samples.len() % channel_count != 0 {
+        if !batch.samples.len().is_multiple_of(channel_count) {
             return Err(PlayerError::InvalidPcmBatch {
                 message: "Sample count must be divisible by channel count".to_string(),
             });

@@ -37,7 +37,7 @@ pub fn moe_finalize<T: ArrayElement + Float>(
                         if !val.is_finite() {
                             val = 0.0;
                         }
-                        acc = prob * val + acc;
+                        acc += prob * val;
                     }
                 }
                 if !acc.is_finite() {

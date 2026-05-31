@@ -239,7 +239,7 @@ impl<B: Backend> ClassifierLayer<B> {
 
         self.mlp_residual_add.encode(shortcut, &mut main, layer_len as u32, encoder);
         #[cfg(feature = "tracing")]
-        if let Some(layer_traces) = layer_traces.as_deref_mut() {
+        if let Some(layer_traces) = layer_traces {
             encoder.encode_copy(&main, .., layer_traces.outputs.allocation_mut(), ..);
         }
 

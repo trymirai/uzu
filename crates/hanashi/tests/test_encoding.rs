@@ -186,39 +186,34 @@ fn test_encoding_gpt_oss() {
             if let Some(original_developer_message) = original_developer_message {
                 for block in original_developer_message.content {
                     let new_block = block.clone();
-                    match block {
-                        ChatContentBlock::Tools {
-                            namespaces,
-                        } => {
-                            if namespaces.iter().any(|namespace| !namespace.tools.is_empty()) {
-                                developer_message.content.push(new_block);
-                            }
-                        },
-                        _ => {},
+                    if let ChatContentBlock::Tools {
+                        namespaces,
+                    } = block
+                        && namespaces.iter().any(|namespace| !namespace.tools.is_empty())
+                    {
+                        developer_message.content.push(new_block);
                     }
                 }
             }
             if let Some(original_system_message) = original_system_message {
                 for block in original_system_message.content {
-                    match block {
-                        ChatContentBlock::Text {
-                            value,
-                        } => {
-                            developer_message.content.push(ChatContentBlock::Text {
-                                value: format!(
-                                    "{}{}",
-                                    value,
-                                    if developer_message.content.is_empty() {
-                                        "\n\n"
-                                    } else {
-                                        ""
-                                    }
-                                )
-                                .to_string(),
-                            });
-                            break;
-                        },
-                        _ => {},
+                    if let ChatContentBlock::Text {
+                        value,
+                    } = block
+                    {
+                        developer_message.content.push(ChatContentBlock::Text {
+                            value: format!(
+                                "{}{}",
+                                value,
+                                if developer_message.content.is_empty() {
+                                    "\n\n"
+                                } else {
+                                    ""
+                                }
+                            )
+                            .to_string(),
+                        });
+                        break;
                     }
                 }
             }
@@ -336,11 +331,12 @@ fn test_encoding_functiongemma() {
                 if matches!(message.role, ChatRole::System {}) {
                     message.role = ChatRole::Developer {};
                 }
-                if let Some(last) = result.last_mut() {
-                    if matches!(last.role, ChatRole::Developer {}) && matches!(message.role, ChatRole::Developer {}) {
-                        last.content.extend(message.content);
-                        continue;
-                    }
+                if let Some(last) = result.last_mut()
+                    && matches!(last.role, ChatRole::Developer {})
+                    && matches!(message.role, ChatRole::Developer {})
+                {
+                    last.content.extend(message.content);
+                    continue;
                 }
                 result.push(message);
             }

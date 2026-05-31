@@ -90,11 +90,8 @@ impl PlatformsConfig {
         let language_config = self.languages.get(&language).context("Language not found")?;
         let language_targets = language_config.targets.clone();
 
-        let resolved_targets = language_targets
-            .iter()
-            .filter(|target| requested_targets.contains(target))
-            .map(|target| target.clone())
-            .collect::<Vec<_>>();
+        let resolved_targets =
+            language_targets.iter().filter(|target| requested_targets.contains(target)).cloned().collect::<Vec<_>>();
         Ok(resolved_targets)
     }
 
@@ -103,7 +100,7 @@ impl PlatformsConfig {
         target: String,
     ) -> Result<Backend> {
         let target_config = self.targets.get(&target).context("Target not found")?;
-        Ok(target_config.backend.clone())
+        Ok(target_config.backend)
     }
 
     pub fn capabilities_for_target(
@@ -122,7 +119,7 @@ impl PlatformsConfig {
         Ok(requested_capabilities
             .iter()
             .filter(|capability| supported_capabilities.contains(capability))
-            .map(|capability| capability.clone())
+            .copied()
             .collect::<Vec<_>>())
     }
 

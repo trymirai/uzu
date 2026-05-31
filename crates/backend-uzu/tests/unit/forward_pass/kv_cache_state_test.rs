@@ -7,13 +7,11 @@ use crate::{
         common::{Backend, Context, Encoder},
         metal::Metal,
     },
+    common::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec, sparse_buffer_write},
     data_type::DataType,
     encodable_block::KVCacheUpdate,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
-
-#[path = "../../common/mod.rs"]
-mod common;
 
 #[derive(Debug)]
 struct Scenario {
@@ -48,8 +46,8 @@ fn make_test_layer<B: Backend>(
     let shape = [total_len.max(1), 1, 1];
 
     let zeroes = vec![0.0_f32; shape.iter().product()];
-    let keys = common::helpers::sparse_buffer_create_with::<B, f32>(context, &zeroes);
-    let values = common::helpers::sparse_buffer_create_with::<B, f32>(context, &zeroes);
+    let keys = sparse_buffer_create_with::<B, f32>(context, &zeroes);
+    let values = sparse_buffer_create_with::<B, f32>(context, &zeroes);
     let layer = KVCacheLayer {
         state,
         keys,
@@ -66,11 +64,11 @@ fn overwrite_sparse_buffer<B: Backend>(
     elements_count: usize,
     updates: &[(usize, f32)],
 ) {
-    let mut data: Vec<f32> = common::helpers::sparse_buffer_read_vec::<B, f32>(context, buffer, elements_count);
+    let mut data: Vec<f32> = sparse_buffer_read_vec::<B, f32>(context, buffer, elements_count);
     for (index, value) in updates {
         data[*index] = *value;
     }
-    common::helpers::sparse_buffer_write::<B, f32>(context, buffer, &data);
+    sparse_buffer_write::<B, f32>(context, buffer, &data);
 }
 
 fn fill_arrays<B: Backend>(
@@ -80,14 +78,14 @@ fn fill_arrays<B: Backend>(
     let initial_keys = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 1_000.0 + idx as f32).collect();
-        common::helpers::sparse_buffer_write::<B, f32>(context, &mut layer.keys, &data);
+        sparse_buffer_write::<B, f32>(context, &mut layer.keys, &data);
         data
     };
 
     let initial_values = {
         let len = layer.shape.iter().product();
         let data: Vec<f32> = (0..len).map(|idx| 2_000.0 + idx as f32).collect();
-        common::helpers::sparse_buffer_write::<B, f32>(context, &mut layer.values, &data);
+        sparse_buffer_write::<B, f32>(context, &mut layer.values, &data);
         data
     };
 
@@ -179,12 +177,10 @@ fn run_scenario<B: Backend>(
 
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
-    let actual_keys: Vec<f32> =
-        common::helpers::sparse_buffer_read_vec::<B, f32>(context, &layer.keys, expected_keys.len());
+    let actual_keys: Vec<f32> = sparse_buffer_read_vec::<B, f32>(context, &layer.keys, expected_keys.len());
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
-    let actual_values: Vec<f32> =
-        common::helpers::sparse_buffer_read_vec::<B, f32>(context, &layer.values, expected_values.len());
+    let actual_values: Vec<f32> = sparse_buffer_read_vec::<B, f32>(context, &layer.values, expected_values.len());
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
 
     match &layer.state {
@@ -328,10 +324,8 @@ fn kv_cache_slice_apply_contiguous_window() {
     layer.apply_slice(&context, &mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
-    let keys_after: Vec<f32> =
-        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
-    let values_after: Vec<f32> =
-        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
+    let keys_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
+    let values_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for contiguous slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
@@ -367,10 +361,8 @@ fn kv_cache_slice_apply_wrap_window() {
     layer.apply_slice(&context, &mut encoder, &slice, None);
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
-    let keys_after: Vec<f32> =
-        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
-    let values_after: Vec<f32> =
-        common::helpers::sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
+    let keys_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
+    let values_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for wrapped slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }

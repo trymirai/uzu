@@ -13,9 +13,7 @@ fn round_ties_to_even(value: f32) -> f32 {
 
     if fraction < 0.5 {
         floor
-    } else if fraction > 0.5 {
-        floor + 1.0
-    } else if (floor as i64 & 1) != 0 {
+    } else if fraction > 0.5 || (floor as i64 & 1) != 0 {
         floor + 1.0
     } else {
         floor

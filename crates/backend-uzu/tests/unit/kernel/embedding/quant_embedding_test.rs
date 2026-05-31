@@ -47,7 +47,7 @@ fn get_test_data<T: ArrayElement + Float>(quant_mode: QuantizationMode) -> (Inpu
         .map(|i| ((i % 16) as u8) | ((((i + 3) % 16) as u8) * 16))
         .collect();
 
-    let num_groups = (model_dim + group_size - 1) / group_size;
+    let num_groups = model_dim.div_ceil(group_size);
     let scales: Vec<T> = (0..vocab_size as usize * num_groups as usize)
         .map(|i| T::from(0.5 + (i as f32 * 0.1).sin() * 0.3).unwrap())
         .collect();
@@ -90,7 +90,7 @@ fn get_test_data_zero_point_group16<T: ArrayElement + Float>() -> (Input<T>, Vec
         .map(|i| ((i % 16) as u8) | ((((i + 3) % 16) as u8) * 16))
         .collect();
 
-    let num_groups = (model_dim + group_size - 1) / group_size;
+    let num_groups = model_dim.div_ceil(group_size);
     let scales: Vec<T> = (0..vocab_size as usize * num_groups as usize)
         .map(|i| T::from(0.5 + (i as f32 * 0.1).sin() * 0.3).unwrap())
         .collect();
@@ -131,7 +131,7 @@ fn get_test_data_symmetric_u8<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let weights: Vec<u8> =
         (0..vocab_size as usize * model_dim as usize).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
 
-    let num_groups = (model_dim + group_size - 1) / group_size;
+    let num_groups = model_dim.div_ceil(group_size);
     let scales: Vec<T> = (0..vocab_size as usize * num_groups as usize)
         .map(|i| T::from(0.5 + (i as f32 * 0.1).sin() * 0.3).unwrap())
         .collect();
@@ -167,7 +167,7 @@ fn get_test_data_oob<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
 
     let weights: Vec<u8> = (0..vocab_size as usize * model_dim as usize).map(|i| (i % 200) as u8).collect();
 
-    let num_groups = (model_dim + group_size - 1) / group_size;
+    let num_groups = model_dim.div_ceil(group_size);
     let scales: Vec<T> =
         (0..vocab_size as usize * num_groups as usize).map(|i| T::from(0.5 + i as f32 * 0.1).unwrap()).collect();
     let biases: Vec<T> =
@@ -207,7 +207,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     let packing_divisor = input.quant_mode.packing_divisor();
     let weights_stride = input.model_dim as usize / packing_divisor;
-    let num_groups = (input.model_dim as usize + input.group_size as usize - 1) / input.group_size as usize;
+    let num_groups = (input.model_dim as usize).div_ceil(input.group_size as usize);
 
     let token_ids_array = context.create_array_from(&[input.batch_size as usize], &input.token_ids);
     let weights_array = context.create_array_from(&[input.vocab_size as usize, weights_stride], &input.weights);

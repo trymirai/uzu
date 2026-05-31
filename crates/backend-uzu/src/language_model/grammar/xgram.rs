@@ -79,7 +79,7 @@ impl CompiledXGrammar {
         trigger_token_id: Option<u64>,
         tokenizer_info: &TokenizerInfo,
     ) -> Result<Self, Error> {
-        let vocab_size = tokenizer_info.vocab_size() as usize;
+        let vocab_size = tokenizer_info.vocab_size();
 
         let grammar = match config {
             GrammarConfig::JsonSchema {

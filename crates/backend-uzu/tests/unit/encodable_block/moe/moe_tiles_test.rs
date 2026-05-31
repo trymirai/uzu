@@ -4,11 +4,11 @@ use backend_uzu::backends::common::{
 };
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::encodable_block::mlp::moe::tests::{
+use crate::{
     common::helpers::{
         alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
     },
-    cpu_tile_counts, cpu_tile_scan,
+    encodable_block::mlp::moe::tests::{cpu_tile_counts, cpu_tile_scan},
 };
 
 #[test]

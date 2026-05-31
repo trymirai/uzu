@@ -21,3 +21,6 @@ tracing.workspace = true
 [dev-dependencies]
 tracing-subscriber.workspace = true
 tracing-tree.workspace = true
+
+[lints]
+workspace = true

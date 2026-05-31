@@ -145,10 +145,10 @@ impl StructuredAudioCodecGraph {
     ) -> AudioResult<Rc<StructuredAudioPostModuleRuntime<B>>> {
         {
             let cached = resources.post_module_runtime.borrow();
-            if let Some(runtime) = cached.as_ref() {
-                if runtime.max_sequence_length >= required_sequence_length.max(1) {
-                    return Ok(runtime.clone());
-                }
+            if let Some(runtime) = cached.as_ref()
+                && runtime.max_sequence_length >= required_sequence_length.max(1)
+            {
+                return Ok(runtime.clone());
             }
         }
         let runtime = Rc::new(self.build_post_module_runtime(resources.context().clone(), required_sequence_length)?);

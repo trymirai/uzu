@@ -34,7 +34,7 @@ pub(super) fn read_conv1d_layer<B: Backend>(
     if groups == 0 || cin == 0 || cout == 0 || kernel_size == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    if cin % groups != 0 || cout % groups != 0 {
+    if !cin.is_multiple_of(groups) || !cout.is_multiple_of(groups) {
         return Err(AudioError::Runtime(format!(
             "invalid grouped conv dimensions: cin {cin}, cout {cout}, groups {groups}"
         )));
@@ -64,7 +64,7 @@ pub(super) fn read_conv_transpose1d_layer<B: Backend>(
     if stride == 0 || groups == 0 || cin == 0 || cout == 0 || kernel_size == 0 {
         return Err(AudioError::InvalidTokenCardinality);
     }
-    if cin % groups != 0 || cout % groups != 0 {
+    if !cin.is_multiple_of(groups) || !cout.is_multiple_of(groups) {
         return Err(AudioError::InvalidTokenCardinality);
     }
     let weight = tree.leaf("weights")?.validate(&[cout, cin / groups, kernel_size], data_type)?.read_array()?;

@@ -368,7 +368,7 @@ fn audio_kernel_perf() {
                             ch as i32,
                             dec_frames as i32,
                             ksize as i32,
-                            dilation as i32,
+                            dilation,
                             0_i32,
                             batch_size as i32,
                             &mut encoder,
@@ -493,7 +493,7 @@ fn audio_kernel_perf() {
 
             let label = format!("CausalConv1dGrouped dw up{block_idx} [{ch}, g={ch}, k={ksize}, T={frames}]");
             let input = context.create_array_zeros(&[batch_size * ch * frames], dt);
-            let weight = context.create_array_zeros(&[ch * 1 * ksize], dt);
+            let weight = context.create_array_zeros(&[ch * ksize], dt);
             let bias = context.create_array_zeros(&[ch], dt);
             let mut output = context.create_array_zeros(&[batch_size * ch * frames], dt).into_allocation();
             let lengths = make_lengths(&context, batch_size, frames as i32);
@@ -775,7 +775,7 @@ fn audio_kernel_perf() {
     let u0_b = context.create_array_zeros(&[UP_CHANNELS[1]], dt);
     // ConvNeXt 0 (ch=512)
     let c0_ch = UP_CHANNELS[1];
-    let c0_dw_w = context.create_array_zeros(&[c0_ch * 1 * 7], dt);
+    let c0_dw_w = context.create_array_zeros(&[c0_ch * 7], dt);
     let c0_dw_b = context.create_array_zeros(&[c0_ch], dt);
     let c0_ns = context.create_array_zeros(&[c0_ch], dt);
     let c0_nb = context.create_array_zeros(&[c0_ch], dt);
@@ -789,7 +789,7 @@ fn audio_kernel_perf() {
     let u1_b = context.create_array_zeros(&[UP_CHANNELS[2]], dt);
     // ConvNeXt 1 (ch=256)
     let c1_ch = UP_CHANNELS[2];
-    let c1_dw_w = context.create_array_zeros(&[c1_ch * 1 * 7], dt);
+    let c1_dw_w = context.create_array_zeros(&[c1_ch * 7], dt);
     let c1_dw_b = context.create_array_zeros(&[c1_ch], dt);
     let c1_ns = context.create_array_zeros(&[c1_ch], dt);
     let c1_nb = context.create_array_zeros(&[c1_ch], dt);
@@ -838,7 +838,7 @@ fn audio_kernel_perf() {
 
     // final snake + conv + tanh
     let final_snake_a = context.create_array_zeros(&[DEC_CHANNELS[4]], dt);
-    let final_conv_w = context.create_array_zeros(&[1 * DEC_CHANNELS[4] * 7], dt);
+    let final_conv_w = context.create_array_zeros(&[DEC_CHANNELS[4] * 7], dt);
     let final_conv_b = context.create_array_zeros(&[1], dt);
 
     // Length arrays

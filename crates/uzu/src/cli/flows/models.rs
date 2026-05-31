@@ -61,11 +61,11 @@ fn Models(
                 .await
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|model| registry_id.as_ref().map_or(true, |id| &model.registry.identifier == id))
+                .filter(|model| registry_id.as_ref().is_none_or(|id| &model.registry.identifier == id))
                 .filter(|model| {
                     family_id
                         .as_ref()
-                        .map_or(true, |id| model.family.as_ref().map_or(false, |family| &family.identifier == id))
+                        .is_none_or(|id| model.family.as_ref().is_some_and(|family| &family.identifier == id))
                 })
                 .collect();
             let download_statuses = engine.download_states().await;
@@ -96,7 +96,7 @@ fn Models(
             }
         })
         .collect();
-    let height = (items.len() as u16).min(5).max(1);
+    let height = (items.len() as u16).clamp(1, 5);
 
     element! {
         Loading(loaded: loaded) {

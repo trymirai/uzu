@@ -1,7 +1,3 @@
-#[macro_use]
-#[path = "../../../common/mod.rs"]
-mod common;
-
 use super::{
     experts_two_pass_decode::MoeExpertsTwoPassDecodeBlock,
     experts_two_pass_prefill::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock},
@@ -35,7 +31,7 @@ pub fn cpu_tile_counts(
         tile_counts[expert] = if seg_len == 0 {
             0
         } else {
-            ((seg_len as usize + bm - 1) / bm) as u32
+            (seg_len as usize).div_ceil(bm) as u32
         };
     }
     tile_counts

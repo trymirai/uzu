@@ -12,12 +12,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 
 use super::{AttentionGemmArguments, AttentionGemmBlock};
-
-#[macro_use]
-#[path = "../../common/mod.rs"]
-mod common;
-
-use common::{
+use crate::common::{
     assert::assert_eq_float,
     helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };

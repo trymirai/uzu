@@ -35,7 +35,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         )?;
         let executables = Decoder::new_with_embedding_subtree(
             context.as_ref(),
-            &decoder_config,
+            decoder_config,
             root_loader_view,
             transformer_subtree,
             embedding_subtree,

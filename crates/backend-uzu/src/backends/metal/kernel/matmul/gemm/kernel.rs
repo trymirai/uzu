@@ -126,7 +126,7 @@ impl GemmKernel {
                 arguments.b_transpose
                     && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
                     && arguments.b_offset == 0
-                    && arguments.k % select_mxu_tiling(arguments.m, arguments.n).block_k() == 0
+                    && arguments.k.is_multiple_of(select_mxu_tiling(arguments.m, arguments.n).block_k())
             },
         };
         let path = if encoder.context().device.supports_mxu()
@@ -441,7 +441,7 @@ fn select_quant_tiling(
         GemmTiling::Tile8x32x32_Simdgroups1x1
     } else if m >= 64 && n <= 2048 {
         GemmTiling::Tile64x32x32_Simdgroups2x2
-    } else if m >= 64 && n >= 6144 && n % 64 == 0 {
+    } else if m >= 64 && n >= 6144 && n.is_multiple_of(64) {
         GemmTiling::Tile64x64x32_Simdgroups2x2
     } else {
         GemmTiling::Tile32x32x32_Simdgroups2x2

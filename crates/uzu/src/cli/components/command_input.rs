@@ -29,7 +29,7 @@ pub fn CommandInput(
     let on_submit = props.on_submit.clone();
 
     let state = *hooks.use_context::<State<ApplicationState>>();
-    let mut input = hooks.use_state(|| String::new());
+    let mut input = hooks.use_state(String::new);
     let (width, _) = hooks.use_terminal_size();
 
     let input_text = input.read().clone();
@@ -96,19 +96,15 @@ fn hint_component(
 ) -> AnyElement<'static> {
     let mut hints = Vec::new();
     match state.read().model_state.as_ref() {
-        Some(model_state) => {
-            if model_state.model.is_downloadable() {
-                if !matches!(model_state.download_state.phase, DownloadPhase::Downloaded {}) {
-                    hints.push(HINT_STORAGE_PAUSE_RESUME.to_string());
-                } else {
-                    hints.push(HINT_SEND.to_string());
-                }
-                hints.push(HINT_STORAGE_DELETE.to_string());
+        Some(model_state) if model_state.model.is_downloadable() => {
+            if !matches!(model_state.download_state.phase, DownloadPhase::Downloaded {}) {
+                hints.push(HINT_STORAGE_PAUSE_RESUME.to_string());
             } else {
                 hints.push(HINT_SEND.to_string());
             }
+            hints.push(HINT_STORAGE_DELETE.to_string());
         },
-        None => {
+        _ => {
             hints.push(HINT_SEND.to_string());
         },
     }

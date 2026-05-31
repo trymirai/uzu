@@ -780,7 +780,7 @@ impl<B: Backend> TraceValidator<B> {
 
         if expected_shape != produced_shape {
             if expected_shape.len() == produced_shape.len() + 1
-                && expected_shape.get(0) == Some(&1)
+                && expected_shape.first() == Some(&1)
                 && expected_shape[1..] == produced_shape[..]
             {
                 produced_data = produced_data

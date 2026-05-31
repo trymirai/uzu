@@ -63,7 +63,7 @@ pub fn write_allocation<B: Backend, T: ArrayElement>(
 }
 
 pub fn create_context<B: Backend>() -> Rc<<B as Backend>::Context> {
-    B::Context::new().expect(format!("Failed to create context for {}", std::any::type_name::<B>()).as_str())
+    B::Context::new().unwrap_or_else(|_| panic!("Failed to create context for {}", std::any::type_name::<B>()))
 }
 
 pub fn submit_encoder<B: Backend>(encoder: Encoder<B>) {

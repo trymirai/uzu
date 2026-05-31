@@ -76,7 +76,7 @@ fn trim_log_file(
     let reader = BufReader::new(file);
     let lines: Vec<String> = reader
         .lines()
-        .filter_map(Result::ok)
+        .map_while(Result::ok)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -107,10 +107,10 @@ fn start_trim_thread(
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(60));
-            if let Ok(metadata) = fs::metadata(&log_path) {
-                if metadata.len() > max_size_bytes {
-                    let _ = trim_log_file(&log_path, keep_lines);
-                }
+            if let Ok(metadata) = fs::metadata(&log_path)
+                && metadata.len() > max_size_bytes
+            {
+                let _ = trim_log_file(&log_path, keep_lines);
             }
         }
     });

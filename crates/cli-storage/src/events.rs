@@ -21,11 +21,11 @@ impl EventHandler {
     }
 
     pub async fn poll_event(&mut self) -> io::Result<bool> {
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                self.last_event = Some(AppEvent::Key(key.code));
-                return Ok(true);
-            }
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            self.last_event = Some(AppEvent::Key(key.code));
+            return Ok(true);
         }
         Ok(false)
     }

@@ -42,13 +42,13 @@ impl Message {
                 } => blocks.clone(),
             };
             for block_type in block_types {
-                if let Some(existing_field) = seen_block_types.get(&block_type) {
-                    if existing_field != field_name {
-                        return Err(Error::DuplicateBlock {
-                            role: role.clone(),
-                            block_type,
-                        });
-                    }
+                if let Some(existing_field) = seen_block_types.get(&block_type)
+                    && existing_field != field_name
+                {
+                    return Err(Error::DuplicateBlock {
+                        role: role.clone(),
+                        block_type,
+                    });
                 }
                 seen_block_types.insert(block_type, field_name.clone());
             }
@@ -185,14 +185,14 @@ fn apply_field_value(
                 });
             }
 
-            if let Some(allowed) = allowed_values {
-                if !allowed.contains(value) {
-                    return Err(Error::ValueNotAllowed {
-                        role: role.clone(),
-                        block_type: block_type.clone(),
-                        allowed_values: format!("{:?}", allowed),
-                    });
-                }
+            if let Some(allowed) = allowed_values
+                && !allowed.contains(value)
+            {
+                return Err(Error::ValueNotAllowed {
+                    role: role.clone(),
+                    block_type: block_type.clone(),
+                    allowed_values: format!("{:?}", allowed),
+                });
             }
 
             if let Some(mapping) = mapping {
@@ -220,14 +220,14 @@ fn apply_field_value(
             } else {
                 let entry = destination.entry(field_name.to_string()).or_insert_with(|| Value::Array(vec![]));
                 if let Value::Array(array) = entry {
-                    if let Some(limit) = limit {
-                        if array.len() >= *limit {
-                            return Err(Error::LimitExceeded {
-                                role: role.clone(),
-                                block_type: block_type.clone(),
-                                limit: *limit,
-                            });
-                        }
+                    if let Some(limit) = limit
+                        && array.len() >= *limit
+                    {
+                        return Err(Error::LimitExceeded {
+                            role: role.clone(),
+                            block_type: block_type.clone(),
+                            limit: *limit,
+                        });
                     }
                     array.push(value.clone());
                 }

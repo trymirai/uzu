@@ -84,6 +84,7 @@ pub fn traitgen(kernel: &Kernel) -> (TokenStream, TokenStream) {
     };
 
     let kernel_trait = quote! {
+        #[allow(clippy::style, clippy::complexity, clippy::perf)]
         pub trait #trait_name: Sized {
             type Backend: crate::backends::common::Backend<Kernels: Kernels<#trait_name = Self>>;
 

@@ -50,7 +50,7 @@ impl FunctionArgument {
                     format!("&[{}]", canonicalize_type_text(ty, enum_paths)).into_boxed_str(),
                 ),
                 FunctionArgumentType::Constant(ty, Some(size)) => KernelArgumentType::Constant(
-                    format!("&[{}; {}]", canonicalize_type_text(ty, enum_paths), size.to_token_stream().to_string(),)
+                    format!("&[{}; {}]", canonicalize_type_text(ty, enum_paths), size.to_token_stream(),)
                         .into_boxed_str(),
                 ),
                 FunctionArgumentType::Scalar(ty) => {
@@ -208,7 +208,7 @@ impl CpuCompiler {
                     let expr = attr.parse_args::<Expr>().context("cannot parse constraint attribute")?;
                     function_constraints.push(expr);
                 },
-                _ => bail!("Unexpected attr {attr:?}"),
+                _ => {},
             }
         }
 
@@ -266,7 +266,7 @@ impl CpuCompiler {
                         bail!("conditional argument type path must have one segment");
                     }
                     let seg = &ty.path.segments[0];
-                    if seg.ident.to_string() != "Option" {
+                    if seg.ident != "Option" {
                         bail!("conditional argument type must be Option<...>");
                     }
                     let PathArguments::AngleBracketed(option_arguments) = &seg.arguments else {
@@ -313,11 +313,7 @@ impl CpuCompiler {
 
         for (parameter, (variant_name, _)) in std::iter::zip(function_parameters.iter(), function_variants.iter()) {
             if &parameter.name != variant_name {
-                bail!(
-                    "Parameter name doesn't match variant name: {} | {}",
-                    parameter.name.to_string(),
-                    variant_name.to_string(),
-                );
+                bail!("Parameter name doesn't match variant name: {} | {}", parameter.name, variant_name,);
             }
         }
 
@@ -492,7 +488,7 @@ impl CpuCompiler {
             }
         };
 
-        let encode_body = if function_parameters.len() > 0 {
+        let encode_body = if !function_parameters.is_empty() {
             let mut parameter_idents = function_parameters.iter().map(|p| p.name.clone()).fold(quote! {}, |a, b| {
                 if !a.is_empty() {
                     quote! {#a , self.#b}
@@ -610,6 +606,7 @@ impl CpuCompiler {
                 #(#struct_fields_defs ,)*
             }
 
+            #[allow(clippy::style, clippy::complexity, clippy::perf)]
             impl crate::backends::common::kernel::#trait_ident for #struct_ident {
                 type Backend = crate::backends::cpu::Cpu;
 
@@ -646,10 +643,10 @@ impl CpuCompiler {
             Type::Reference(ty) => match *ty.elem {
                 Type::Slice(ty) => FunctionArgumentType::Constant(*ty.elem, None),
                 Type::Array(ty) => FunctionArgumentType::Constant(*ty.elem, Some(ty.len)),
-                ty => bail!("unsupported reference type: {} ({:?})", ty.to_token_stream().to_string(), ty),
+                ty => bail!("unsupported reference type: {} ({:?})", ty.to_token_stream(), ty),
             },
             Type::Path(ty) => FunctionArgumentType::Scalar(Type::Path(ty)),
-            ty => bail!("unsupported type: {} ({:?})", ty.to_token_stream().to_string(), ty),
+            ty => bail!("unsupported type: {} ({:?})", ty.to_token_stream(), ty),
         })
     }
 

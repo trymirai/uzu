@@ -3,7 +3,7 @@ use crate::session::{
     parameter::{AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DecodingConfig {
     pub context_mode: ContextMode,
     pub context_length: ContextLength,
@@ -34,19 +34,6 @@ impl DecodingConfig {
 
     pub fn generate_suffix_length(&self) -> usize {
         self.speculator_config.number_of_speculated_tokens + 1
-    }
-}
-
-impl Default for DecodingConfig {
-    fn default() -> Self {
-        Self {
-            context_mode: ContextMode::default(),
-            context_length: ContextLength::default(),
-            prefill_step_size: PrefillStepSize::default(),
-            speculator_config: SpeculatorConfig::default(),
-            sampling_seed: SamplingSeed::default(),
-            async_batch_size: AsyncBatchSize::default(),
-        }
     }
 }
 

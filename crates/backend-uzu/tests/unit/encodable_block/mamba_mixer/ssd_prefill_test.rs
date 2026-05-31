@@ -1,24 +1,9 @@
 use super::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use crate::{
-    array::ArrayElement,
-    backends::common::{
-        Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel,
-    },
+    backends::common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel},
+    common::helpers::{alloc_allocation_with_data, allocation_to_vec},
     data_type::DataType,
 };
-
-#[macro_use]
-#[path = "../../../common/mod.rs"]
-mod common;
-
-use common::helpers::allocation_to_vec;
-
-fn allocation_from_slice<B: Backend, T: ArrayElement>(
-    context: &B::Context,
-    data: &[T],
-) -> Allocation<B> {
-    common::helpers::alloc_allocation_with_data(context, data)
-}
 
 fn ssd_prefill_cpu_reference(
     suffix_len: usize,
@@ -151,13 +136,13 @@ fn run_prefill_kernel_mode<B: Backend>(
     fixture: &SSDPrefillFixture,
     mode: SSDPrefillMode,
 ) -> (Vec<f32>, Vec<f32>, Option<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)>) {
-    let x_buf = allocation_from_slice::<B, _>(ctx, &fixture.x_data);
-    let dt_buf = allocation_from_slice::<B, _>(ctx, &fixture.dt_data);
-    let b_buf = allocation_from_slice::<B, _>(ctx, &fixture.b_data);
-    let c_buf = allocation_from_slice::<B, _>(ctx, &fixture.c_data);
-    let d_buf = allocation_from_slice::<B, _>(ctx, &fixture.d_data);
-    let z_buf = allocation_from_slice::<B, _>(ctx, &fixture.z_data);
-    let mut state_buf = allocation_from_slice::<B, _>(ctx, &fixture.state_init);
+    let x_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.x_data);
+    let dt_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.dt_data);
+    let b_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.b_data);
+    let c_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.c_data);
+    let d_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.d_data);
+    let z_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.z_data);
+    let mut state_buf = alloc_allocation_with_data::<B, _>(ctx, &fixture.state_init);
 
     let args = SSDPrefillArguments {
         x: &x_buf,
@@ -208,16 +193,16 @@ fn run_conv_scan_once<B: Backend>(
     let total_state = channels * tap_count;
 
     let mut y_buf = if alias_io {
-        allocation_from_slice::<B, _>(ctx, x_data)
+        alloc_allocation_with_data::<B, _>(ctx, x_data)
     } else {
-        allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_x])
+        alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_x])
     };
-    let mut b_out_buf = allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_x]);
-    let mut c_out_buf = allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_x]);
-    let w_buf = allocation_from_slice::<B, _>(ctx, w_data);
-    let b_buf = allocation_from_slice::<B, _>(ctx, b_data);
-    let mut state_buf = allocation_from_slice::<B, _>(ctx, state_init);
-    let scratch_buf = allocation_from_slice::<B, _>(ctx, &vec![0.0f32; total_state]);
+    let mut b_out_buf = alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_x]);
+    let mut c_out_buf = alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_x]);
+    let w_buf = alloc_allocation_with_data::<B, _>(ctx, w_data);
+    let b_buf = alloc_allocation_with_data::<B, _>(ctx, b_data);
+    let mut state_buf = alloc_allocation_with_data::<B, _>(ctx, state_init);
+    let scratch_buf = alloc_allocation_with_data::<B, _>(ctx, &vec![0.0f32; total_state]);
 
     let padded_len = tap_count + suffix_len;
     let mut padded_host = vec![0.0f32; padded_len * channels];
@@ -231,7 +216,7 @@ fn run_conv_scan_once<B: Backend>(
             padded_host[(tap_count + token) * channels + ch] = x_data[token * channels + ch];
         }
     }
-    let padded_buf = allocation_from_slice::<B, _>(ctx, &padded_host);
+    let padded_buf = alloc_allocation_with_data::<B, _>(ctx, &padded_host);
 
     let mut encoder = Encoder::new(ctx).unwrap();
     kernel.encode(
