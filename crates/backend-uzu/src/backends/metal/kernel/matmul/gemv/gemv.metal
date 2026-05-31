@@ -10,6 +10,59 @@ using namespace metal;
 using namespace uzu::quantization_method;
 using namespace uzu::gemm;
 
+template <typename WeightT, typename U, GemmBPrologueKind B_PROLOGUE, uint BITS>
+struct QuantRowOffsets {
+  const device WeightT* scales = nullptr;
+  const device WeightT* biases = nullptr;
+  const device uint8_t* zps = nullptr;
+  uint group_stride = 0;
+  uint zp_stride = 0;
+  bool high_nibble = false;
+
+  void load(thread U* scale, thread U* offset) const {
+    scale[0] = static_cast<U>(scales[0]);
+    scale[1] = static_cast<U>(scales[group_stride]);
+    scale[2] = static_cast<U>(scales[2 * group_stride]);
+    scale[3] = static_cast<U>(scales[3 * group_stride]);
+
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
+      offset[0] = static_cast<U>(biases[0]);
+      offset[1] = static_cast<U>(biases[group_stride]);
+      offset[2] = static_cast<U>(biases[2 * group_stride]);
+      offset[3] = static_cast<U>(biases[3 * group_stride]);
+    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
+      uchar4 zp_bytes =
+          uchar4(zps[0], zps[zp_stride], zps[2 * zp_stride], zps[3 * zp_stride]);
+      uchar4 zp_nibbles;
+      if (BITS == 4) {
+        const uint8_t shift = high_nibble ? 4u : 0u;
+        zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
+      } else {
+        zp_nibbles = zp_bytes;
+      }
+      offset[0] = -scale[0] * static_cast<U>(zp_nibbles.x);
+      offset[1] = -scale[1] * static_cast<U>(zp_nibbles.y);
+      offset[2] = -scale[2] * static_cast<U>(zp_nibbles.z);
+      offset[3] = -scale[3] * static_cast<U>(zp_nibbles.w);
+    } else {
+      constexpr U midpoint = U(1u << (BITS - 1));
+      offset[0] = -scale[0] * midpoint;
+      offset[1] = -scale[1] * midpoint;
+      offset[2] = -scale[2] * midpoint;
+      offset[3] = -scale[3] * midpoint;
+    }
+  }
+
+  void advance(uint groups) {
+    scales += groups;
+    if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
+      biases += groups;
+    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
+      zps += (BITS == 4) ? (groups / 2) : groups;
+    }
+  }
+};
+
 template <
     typename WeightT,
     typename InputT,
@@ -158,27 +211,21 @@ KERNEL(Gemv)(
     const uint in_vec_size_g = in_vec_size / GROUP_SIZE;
     ws +=
         out_row * in_vec_size_w + simd_lane * packs_per_thread * bytes_per_pack;
-    scales += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
 
-    uint zp_stride = 0;
-    const device uint8_t* zps = nullptr;
-    bool high_nibble = false;
-
+    QuantRowOffsets<WeightT, U, B_PROLOGUE, BITS> prep;
+    prep.group_stride = in_vec_size_g;
+    const uint g_offset = simd_lane / scale_step_per_thread;
+    prep.scales = scales + out_row * in_vec_size_g + g_offset;
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-      biases += out_row * in_vec_size_g + simd_lane / scale_step_per_thread;
-    } else if constexpr (
-        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-    ) {
+      prep.biases = biases + out_row * in_vec_size_g + g_offset;
+    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
       if (BITS == 4) {
-        zp_stride = (in_vec_size_g + 1) / 2;
-        zps = zero_points + out_row * zp_stride;
-        uint g_offset = simd_lane / scale_step_per_thread;
-        zps += g_offset / 2;
-        high_nibble = (g_offset & 1);
+        prep.zp_stride = (in_vec_size_g + 1) / 2;
+        prep.zps = zero_points + out_row * prep.zp_stride + g_offset / 2;
+        prep.high_nibble = (g_offset & 1);
       } else {
-        zp_stride = in_vec_size_g;
-        zps = zero_points + out_row * zp_stride;
-        zps += simd_lane / scale_step_per_thread;
+        prep.zp_stride = in_vec_size_g;
+        prep.zps = zero_points + out_row * prep.zp_stride + g_offset;
       }
     }
 
@@ -189,120 +236,29 @@ KERNEL(Gemv)(
     for (; k + block_size <= in_vec_size; k += block_size) {
       U sum = load_vector<InputT, U, values_per_thread, BITS>(in, x_thread);
 
-      {
-        auto wl0 = (const device uint8_t*)(ws);
-        auto wl1 = (const device uint8_t*)(ws + in_vec_size_w);
-        auto wl2 = (const device uint8_t*)(ws + 2 * in_vec_size_w);
-        auto wl3 = (const device uint8_t*)(ws + 3 * in_vec_size_w);
+      const device uint8_t* wl0 = ws;
+      const device uint8_t* wl1 = ws + in_vec_size_w;
+      const device uint8_t* wl2 = ws + 2 * in_vec_size_w;
+      const device uint8_t* wl3 = ws + 3 * in_vec_size_w;
 
-        U s0 = static_cast<U>(scales[0]);
-        U s1 = static_cast<U>(scales[in_vec_size_g]);
-        U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
-        U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
-
-        if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-          U b0 = static_cast<U>(biases[0]);
-          U b1 = static_cast<U>(biases[in_vec_size_g]);
-          U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
-          U b3 = static_cast<U>(biases[3 * in_vec_size_g]);
-          result[0] +=
-              qdot<U, values_per_thread, BITS>(wl0, x_thread, s0, b0, sum);
-          result[1] +=
-              qdot<U, values_per_thread, BITS>(wl1, x_thread, s1, b1, sum);
-          result[2] +=
-              qdot<U, values_per_thread, BITS>(wl2, x_thread, s2, b2, sum);
-          result[3] +=
-              qdot<U, values_per_thread, BITS>(wl3, x_thread, s3, b3, sum);
-        } else if constexpr (
-            B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-        ) {
-          uchar4 zp_bytes = uchar4(
-              zps[0],
-              zps[zp_stride],
-              zps[2 * zp_stride],
-              zps[3 * zp_stride]
-          );
-          uchar4 zp_nibbles;
-          if (BITS == 4) {
-            const uint8_t shift = high_nibble ? 4u : 0u;
-            zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
-          } else {
-            zp_nibbles = zp_bytes;
-          }
-          result[0] += qdot<U, values_per_thread, BITS>(
-              wl0,
-              x_thread,
-              s0,
-              -s0 * static_cast<U>(zp_nibbles.x),
-              sum
-          );
-          result[1] += qdot<U, values_per_thread, BITS>(
-              wl1,
-              x_thread,
-              s1,
-              -s1 * static_cast<U>(zp_nibbles.y),
-              sum
-          );
-          result[2] += qdot<U, values_per_thread, BITS>(
-              wl2,
-              x_thread,
-              s2,
-              -s2 * static_cast<U>(zp_nibbles.z),
-              sum
-          );
-          result[3] += qdot<U, values_per_thread, BITS>(
-              wl3,
-              x_thread,
-              s3,
-              -s3 * static_cast<U>(zp_nibbles.w),
-              sum
-          );
-        } else {
-          constexpr U midpoint = U(1u << (BITS - 1));
-          result[0] += qdot<U, values_per_thread, BITS>(
-              wl0,
-              x_thread,
-              s0,
-              -s0 * midpoint,
-              sum
-          );
-          result[1] += qdot<U, values_per_thread, BITS>(
-              wl1,
-              x_thread,
-              s1,
-              -s1 * midpoint,
-              sum
-          );
-          result[2] += qdot<U, values_per_thread, BITS>(
-              wl2,
-              x_thread,
-              s2,
-              -s2 * midpoint,
-              sum
-          );
-          result[3] += qdot<U, values_per_thread, BITS>(
-              wl3,
-              x_thread,
-              s3,
-              -s3 * midpoint,
-              sum
-          );
-        }
-      }
+      U scale[4];
+      U offset[4];
+      prep.load(scale, offset);
+      result[0] += qdot<U, values_per_thread, BITS>(
+          wl0, x_thread, scale[0], offset[0], sum
+      );
+      result[1] += qdot<U, values_per_thread, BITS>(
+          wl1, x_thread, scale[1], offset[1], sum
+      );
+      result[2] += qdot<U, values_per_thread, BITS>(
+          wl2, x_thread, scale[2], offset[2], sum
+      );
+      result[3] += qdot<U, values_per_thread, BITS>(
+          wl3, x_thread, scale[3], offset[3], sum
+      );
 
       ws += block_size * bytes_per_pack / pack_factor;
-      scales += block_size / GROUP_SIZE;
-      if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-        biases += block_size / GROUP_SIZE;
-      } else if constexpr (
-          B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-      ) {
-        if (BITS == 4) {
-          zps += (block_size / GROUP_SIZE) / 2;
-        } else {
-          zps += block_size / GROUP_SIZE;
-        }
-      }
+      prep.advance(block_size / GROUP_SIZE);
       in += block_size;
     }
 
@@ -320,136 +276,26 @@ KERNEL(Gemv)(
             remaining
         );
 
-        auto wl0 = (const device uint8_t*)(ws);
-        auto wl1 = (const device uint8_t*)(ws + in_vec_size_w);
-        auto wl2 = (const device uint8_t*)(ws + 2 * in_vec_size_w);
-        auto wl3 = (const device uint8_t*)(ws + 3 * in_vec_size_w);
+        const device uint8_t* wl0 = ws;
+        const device uint8_t* wl1 = ws + in_vec_size_w;
+        const device uint8_t* wl2 = ws + 2 * in_vec_size_w;
+        const device uint8_t* wl3 = ws + 3 * in_vec_size_w;
 
-        U s0 = static_cast<U>(scales[0]);
-        U s1 = static_cast<U>(scales[in_vec_size_g]);
-        U s2 = static_cast<U>(scales[2 * in_vec_size_g]);
-        U s3 = static_cast<U>(scales[3 * in_vec_size_g]);
-
-        if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-          U b0 = static_cast<U>(biases[0]);
-          U b1 = static_cast<U>(biases[in_vec_size_g]);
-          U b2 = static_cast<U>(biases[2 * in_vec_size_g]);
-          U b3 = static_cast<U>(biases[3 * in_vec_size_g]);
-          result[0] += qdot_safe<U, values_per_thread, BITS>(
-              wl0,
-              x_thread,
-              s0,
-              b0,
-              sum,
-              remaining
-          );
-          result[1] += qdot_safe<U, values_per_thread, BITS>(
-              wl1,
-              x_thread,
-              s1,
-              b1,
-              sum,
-              remaining
-          );
-          result[2] += qdot_safe<U, values_per_thread, BITS>(
-              wl2,
-              x_thread,
-              s2,
-              b2,
-              sum,
-              remaining
-          );
-          result[3] += qdot_safe<U, values_per_thread, BITS>(
-              wl3,
-              x_thread,
-              s3,
-              b3,
-              sum,
-              remaining
-          );
-        } else if constexpr (
-            B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-        ) {
-          uchar4 zp_bytes = uchar4(
-              zps[0],
-              zps[zp_stride],
-              zps[2 * zp_stride],
-              zps[3 * zp_stride]
-          );
-          uchar4 zp_nibbles;
-          if (BITS == 4) {
-            const uint8_t shift = high_nibble ? 4u : 0u;
-            zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
-          } else {
-            zp_nibbles = zp_bytes;
-          }
-          result[0] += qdot_safe<U, values_per_thread, BITS>(
-              wl0,
-              x_thread,
-              s0,
-              -s0 * static_cast<U>(zp_nibbles.x),
-              sum,
-              remaining
-          );
-          result[1] += qdot_safe<U, values_per_thread, BITS>(
-              wl1,
-              x_thread,
-              s1,
-              -s1 * static_cast<U>(zp_nibbles.y),
-              sum,
-              remaining
-          );
-          result[2] += qdot_safe<U, values_per_thread, BITS>(
-              wl2,
-              x_thread,
-              s2,
-              -s2 * static_cast<U>(zp_nibbles.z),
-              sum,
-              remaining
-          );
-          result[3] += qdot_safe<U, values_per_thread, BITS>(
-              wl3,
-              x_thread,
-              s3,
-              -s3 * static_cast<U>(zp_nibbles.w),
-              sum,
-              remaining
-          );
-        } else {
-          constexpr U midpoint = U(1u << (BITS - 1));
-          result[0] += qdot_safe<U, values_per_thread, BITS>(
-              wl0,
-              x_thread,
-              s0,
-              -s0 * midpoint,
-              sum,
-              remaining
-          );
-          result[1] += qdot_safe<U, values_per_thread, BITS>(
-              wl1,
-              x_thread,
-              s1,
-              -s1 * midpoint,
-              sum,
-              remaining
-          );
-          result[2] += qdot_safe<U, values_per_thread, BITS>(
-              wl2,
-              x_thread,
-              s2,
-              -s2 * midpoint,
-              sum,
-              remaining
-          );
-          result[3] += qdot_safe<U, values_per_thread, BITS>(
-              wl3,
-              x_thread,
-              s3,
-              -s3 * midpoint,
-              sum,
-              remaining
-          );
-        }
+        U scale[4];
+        U offset[4];
+        prep.load(scale, offset);
+        result[0] += qdot_safe<U, values_per_thread, BITS>(
+            wl0, x_thread, scale[0], offset[0], sum, remaining
+        );
+        result[1] += qdot_safe<U, values_per_thread, BITS>(
+            wl1, x_thread, scale[1], offset[1], sum, remaining
+        );
+        result[2] += qdot_safe<U, values_per_thread, BITS>(
+            wl2, x_thread, scale[2], offset[2], sum, remaining
+        );
+        result[3] += qdot_safe<U, values_per_thread, BITS>(
+            wl3, x_thread, scale[3], offset[3], sum, remaining
+        );
       }
     }
   }
