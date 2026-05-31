@@ -117,8 +117,6 @@ struct ThreadgroupTile {
     METAL_PRAGMA_UNROLL
     for (ushort k_block_index = 0; k_block_index < BLOCK_DEPTH;
          k_block_index += SIMDGROUP_BLOCK_SIZE) {
-      simdgroup_barrier(mem_flags::mem_none);
-
       a_fragment.template load<
           AT,
           SIMDGROUPS_PER_ROW,
@@ -126,16 +124,12 @@ struct ThreadgroupTile {
           A_STRIDE_ROW,
           A_STRIDE_INNER>(a_shared);
 
-      simdgroup_barrier(mem_flags::mem_none);
-
       b_fragment.template load<
           BT,
           1,
           SIMDGROUPS_PER_COLUMN,
           B_STRIDE_INNER,
           B_STRIDE_COL>(b_shared);
-
-      simdgroup_barrier(mem_flags::mem_none);
 
       tile_multiply_accumulate(c_fragment, a_fragment, b_fragment, c_fragment);
 
