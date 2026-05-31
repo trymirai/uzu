@@ -6,7 +6,6 @@ use std::sync::OnceLock;
 pub use self::gemm::{GemmDispatchPath, GemmKernel};
 use self::gemv::GemvDispatch;
 use crate::{
-    data_type::DataType,
     backends::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
@@ -14,6 +13,7 @@ use crate::{
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
+    data_type::DataType,
 };
 
 pub struct MatmulMetalKernel {

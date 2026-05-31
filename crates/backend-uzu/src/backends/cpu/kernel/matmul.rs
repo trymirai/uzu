@@ -1,7 +1,6 @@
 use half::{bf16, f16};
 
 use crate::{
-    data_type::DataType,
     backends::{
         common::{
             Allocation, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
@@ -13,6 +12,7 @@ use crate::{
         },
         cpu::{Cpu, buffer::BufferDowncastExt, context::CpuContext, error::CpuError},
     },
+    data_type::DataType,
     utils::pointers::{SendPtr, SendPtrMut},
 };
 
