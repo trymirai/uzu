@@ -34,3 +34,4 @@ tools/gpu_trace/*.json
 .build/
 .swiftpm/
 Package.resolved
+.dinghy.toml

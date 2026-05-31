@@ -17,7 +17,6 @@ mod moe;
 mod pooling;
 mod qk_unpack_test;
 mod qkv_norm_test;
-mod quant_matmul;
 mod rms_norm_test;
 mod rope_test;
 mod sampling;

@@ -10,7 +10,7 @@ use backend_uzu::{
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
-        metal::{GemmDispatchPath, Metal, MetalContext},
+        metal::{GemmDispatchPath, Metal},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -26,7 +26,7 @@ use crate::{
 
 #[uzu_bench]
 fn bench_gemm(c: &mut Criterion) {
-    let context = MetalContext::new().expect("Metal context");
+    let context = crate::common::shared_metal_context();
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -35,44 +35,52 @@ fn bench_gemm(c: &mut Criterion) {
     )
     .expect("MatmulKernel");
 
-    let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/GEMM", type_short_name::<Metal>()));
+    let paths: &[(&str, GemmDispatchPath)] = if context.supports_mxu() {
+        &[("GEMM", GemmDispatchPath::Simdgroup), ("GEMM_MXU", GemmDispatchPath::Mxu)]
+    } else {
+        &[("GEMM", GemmDispatchPath::Simdgroup)]
+    };
 
-    for shape in bench_fp_gemm_shapes() {
-        let (m, k, n) = (shape.m, shape.k, shape.n);
-        let a = context
-            .create_allocation(m * k * std::mem::size_of::<bf16>(), AllocationType::Global)
-            .expect("a allocation");
-        let b_array = context.create_array_uninitialized(&[n, k], bf16::data_type());
-        let mut d = context
-            .create_allocation(m * n * std::mem::size_of::<bf16>(), AllocationType::Global)
-            .expect("d allocation");
+    for &(group_label, path) in paths {
+        let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/{}", type_short_name::<Metal>(), group_label));
 
-        group.throughput(Throughput::Elements((2 * m * k * n) as u64));
-        group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
-            iter_encode_loop::<Metal, _>(&context, b, |encoder| {
-                kernel
-                    .gemm
-                    .encode_dispatch_path(
-                        MatmulArguments {
-                            a: &a,
-                            a_offset: 0,
-                            b: MatmulB::FullPrecision {
-                                b: b_array.allocation(),
+        for shape in bench_fp_gemm_shapes() {
+            let (m, k, n) = (shape.m, shape.k, shape.n);
+            let a = context
+                .create_allocation(m * k * std::mem::size_of::<bf16>(), AllocationType::Global)
+                .expect("a allocation");
+            let b_array = context.create_array_uninitialized(&[n, k], bf16::data_type());
+            let mut d = context
+                .create_allocation(m * n * std::mem::size_of::<bf16>(), AllocationType::Global)
+                .expect("d allocation");
+
+            group.throughput(Throughput::Elements((2 * m * k * n) as u64));
+            group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
+                iter_encode_loop::<Metal, _>(&context, b, |encoder| {
+                    kernel
+                        .gemm
+                        .encode_dispatch_path(
+                            MatmulArguments {
+                                a: &a,
+                                a_offset: 0,
+                                b: MatmulB::FullPrecision {
+                                    b: b_array.allocation(),
+                                },
+                                b_offset: 0,
+                                b_leading_dimension: None,
+                                b_transpose: true,
+                                d: &mut d,
+                                d_transform: MatmulDOps::none(),
+                                m: m as u32,
+                                n: n as u32,
+                                k: k as u32,
                             },
-                            b_offset: 0,
-                            b_leading_dimension: None,
-                            b_transpose: true,
-                            d: &mut d,
-                            d_transform: MatmulDOps::none(),
-                            m: m as u32,
-                            n: n as u32,
-                            k: k as u32,
-                        },
-                        GemmDispatchPath::Mxu,
-                        encoder,
-                    )
-                    .expect("encode_dispatch_path failed");
+                            path,
+                            encoder,
+                        )
+                        .expect("encode_dispatch_path failed");
+                });
             });
-        });
+        }
     }
 }

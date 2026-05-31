@@ -1,6 +1,6 @@
 use std::collections::{HashMap, hash_map::Entry};
 
-use super::{MXU_THREADGROUP_BLOCK_K, specialization::GemmSpecialization};
+use super::specialization::GemmSpecialization;
 use crate::{
     backends::{
         common::{
@@ -94,8 +94,8 @@ impl GemmKernel {
                     specialization.tiling,
                     specialization.transpose_b,
                     specialization.use_mxu,
-                    specialization.weight_prologue,
-                    specialization.bits_per_weight.unwrap_or(0),
+                    specialization.b_prologue,
+                    specialization.bits_per_b.unwrap_or(0),
                     specialization.group_size.unwrap_or(0),
                     specialization.output_transform,
                     specialization.alignment,
@@ -110,11 +110,30 @@ impl GemmKernel {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        let mxu_eligible_for_quant = match &arguments.b {
+            MatmulB::FullPrecision {
+                ..
+            } => true,
+            MatmulB::ScaleBiasDequant {
+                ..
+            }
+            | MatmulB::ScaleZeroPointDequant {
+                ..
+            }
+            | MatmulB::ScaleSymmetricDequant {
+                ..
+            } => {
+                arguments.b_transpose
+                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
+                    && arguments.b_offset == 0
+                    && arguments.k % select_mxu_tiling(arguments.m, arguments.n).block_k() == 0
+            },
+        };
         let path = if encoder.context().device.supports_mxu()
             && [self.weights_data_type, self.input_data_type, self.output_data_type]
                 .into_iter()
                 .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
-            && matches!(arguments.b, MatmulB::FullPrecision { .. })
+            && mxu_eligible_for_quant
         {
             GemmDispatchPath::Mxu
         } else {
@@ -129,29 +148,21 @@ impl GemmKernel {
         path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let use_mxu = match path {
-            GemmDispatchPath::Mxu => {
-                assert!(
-                    encoder.context().device.supports_mxu(),
-                    "GemmDispatchPath::Mxu requested on hardware without MXU support",
-                );
-                assert!(
-                    [self.weights_data_type, self.input_data_type, self.output_data_type]
-                        .into_iter()
-                        .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32)),
-                    "GemmDispatchPath::Mxu requires BF16 or F32 data types, got weights {:?}, input {:?}, output {:?}",
-                    self.weights_data_type,
-                    self.input_data_type,
-                    self.output_data_type,
-                );
-                assert!(
-                    matches!(arguments.b, MatmulB::FullPrecision { .. }),
-                    "GemmDispatchPath::Mxu requires FullPrecision B",
-                );
-                true
-            },
-            GemmDispatchPath::Simdgroup => false,
-        };
+        if matches!(path, GemmDispatchPath::Mxu) {
+            assert!(
+                encoder.context().device.supports_mxu(),
+                "GemmDispatchPath::Mxu requested on hardware without MXU support",
+            );
+            assert!(
+                [self.weights_data_type, self.input_data_type, self.output_data_type]
+                    .into_iter()
+                    .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32)),
+                "GemmDispatchPath::Mxu requires BF16 or F32 data types, got weights {:?}, input {:?}, output {:?}",
+                self.weights_data_type,
+                self.input_data_type,
+                self.output_data_type,
+            );
+        }
 
         let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });
         if is_quant {
@@ -176,25 +187,12 @@ impl GemmKernel {
         }
 
         let ab_scale = arguments.d_transform.ab_scale;
-        let post_bias = if use_mxu {
-            arguments.d_transform.bias
-        } else {
-            None
-        };
-        let output_bias = if use_mxu {
-            None
-        } else {
-            arguments.d_transform.bias
-        };
-        let post_rht = arguments.d_transform.rht_factors;
-        let mut output_transform = arguments.d_transform.mask();
-        output_transform.remove(GemmDTransform::RHT);
-        if use_mxu {
-            output_transform.remove(GemmDTransform::BIAS);
-        }
+        let output_bias = arguments.d_transform.bias;
+        let rht_factors = arguments.d_transform.rht_factors;
+        let output_transform = arguments.d_transform.mask();
 
-        let weight_prologue = arguments.b.weight_prologue();
-        let bits_per_weight = arguments.b.bits_per_weight();
+        let b_prologue = arguments.b.b_prologue();
+        let bits_per_b = arguments.b.bits_per_b();
         let group_size = arguments.b.group_size();
 
         let MatmulArguments {
@@ -211,6 +209,8 @@ impl GemmKernel {
             ..
         } = arguments;
 
+        let use_mxu = matches!(path, GemmDispatchPath::Mxu);
+
         match b {
             MatmulB::FullPrecision {
                 b: weights,
@@ -219,11 +219,6 @@ impl GemmKernel {
                     select_mxu_tiling(m, n)
                 } else {
                     select_simdgroup_tiling(m, n, k)
-                };
-                let k_block = if use_mxu {
-                    MXU_THREADGROUP_BLOCK_K
-                } else {
-                    tiling.block_k()
                 };
 
                 let threadgroups_per_row = n.div_ceil(tiling.block_n());
@@ -246,7 +241,7 @@ impl GemmKernel {
                 };
 
                 let alignment =
-                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % k_block == 0);
+                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
                 let default_ldb = if b_transpose {
                     k
@@ -262,7 +257,7 @@ impl GemmKernel {
                     leading_dimension_d: n,
                     threadgroups_per_row,
                     threadgroups_per_column,
-                    aligned_inner_iterations: k / k_block,
+                    aligned_inner_iterations: k / tiling.block_k(),
                     use_morton,
                     ab_scale,
                 };
@@ -274,8 +269,8 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: b_transpose,
-                    weight_prologue,
-                    bits_per_weight,
+                    b_prologue,
+                    bits_per_b,
                     group_size,
                 };
                 specialization.validate()?;
@@ -288,6 +283,7 @@ impl GemmKernel {
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     output_bias,
+                    rht_factors,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -324,7 +320,11 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
-                let tiling = select_quant_tiling(m, n, group_size.unwrap());
+                let tiling = if use_mxu {
+                    select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
+                } else {
+                    select_quant_tiling(m, n, group_size.unwrap_or(0))
+                };
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
                 let params = quant_params(m, n, k, tiling, ab_scale);
@@ -338,8 +338,8 @@ impl GemmKernel {
                     output_transform,
                     alignment,
                     transpose_b: true,
-                    weight_prologue,
-                    bits_per_weight,
+                    b_prologue,
+                    bits_per_b,
                     group_size,
                 };
                 specialization.validate()?;
@@ -352,6 +352,7 @@ impl GemmKernel {
                     biases,
                     zero_points,
                     output_bias,
+                    rht_factors,
                     std::slice::from_ref(&params),
                     group_count_x,
                     group_count_y,
@@ -360,12 +361,6 @@ impl GemmKernel {
             },
         }
 
-        if let Some(bias) = post_bias {
-            self.bias_add.encode(None::<&<Metal as Backend>::DenseBuffer>, bias, &mut *d, n, m * n, encoder);
-        }
-        if let Some(factors) = post_rht {
-            self.hadamard.encode(d, factors, n, m, encoder);
-        }
         Ok(())
     }
 }
@@ -398,9 +393,9 @@ fn select_simdgroup_tiling(
     k: u32,
 ) -> GemmTiling {
     if 2 * m.max(n) > k {
-        GemmTiling::T64x64x16_2x2
+        GemmTiling::Tile64x64x16_Simdgroups2x2
     } else {
-        GemmTiling::T64x32x32_2x2
+        GemmTiling::Tile64x32x32_Simdgroups2x2
     }
 }
 
@@ -409,13 +404,29 @@ fn select_mxu_tiling(
     n: u32,
 ) -> GemmTiling {
     if m >= 256 && n >= 128 {
-        GemmTiling::T128x128x32_4x4
+        GemmTiling::Tile128x128x256_Simdgroups4x4
     } else if n < 64 {
-        GemmTiling::T64x32x32_4x1
+        GemmTiling::Tile64x32x256_Simdgroups4x1
     } else if m < 64 {
-        GemmTiling::T32x64x32_2x2
+        GemmTiling::Tile32x64x256_Simdgroups2x2
     } else {
-        GemmTiling::T64x64x32_2x2
+        GemmTiling::Tile64x64x256_Simdgroups2x2
+    }
+}
+
+fn select_mxu_quant_tiling(
+    m: u32,
+    n: u32,
+    group_size: u32,
+) -> GemmTiling {
+    if m >= 256 && n >= 128 && GemmTiling::Tile128x128x256_Simdgroups4x4.fits_quant_group_size(group_size) {
+        GemmTiling::Tile128x128x256_Simdgroups4x4
+    } else if n < 64 {
+        GemmTiling::Tile64x32x256_Simdgroups4x1
+    } else if m < 64 {
+        GemmTiling::Tile32x64x256_Simdgroups2x2
+    } else {
+        GemmTiling::Tile64x64x256_Simdgroups2x2
     }
 }
 
@@ -425,14 +436,14 @@ fn select_quant_tiling(
     group_size: u32,
 ) -> GemmTiling {
     if group_size < 32 {
-        GemmTiling::T64x64x16_2x2
+        GemmTiling::Tile64x64x16_Simdgroups2x2
     } else if m < 32 {
-        GemmTiling::T8x32x32_1x1
+        GemmTiling::Tile8x32x32_Simdgroups1x1
     } else if m >= 64 && n <= 2048 {
-        GemmTiling::T64x32x32_2x2
+        GemmTiling::Tile64x32x32_Simdgroups2x2
     } else if m >= 64 && n >= 6144 && n % 64 == 0 {
-        GemmTiling::T64x64x32_2x2
+        GemmTiling::Tile64x64x32_Simdgroups2x2
     } else {
-        GemmTiling::T32x32x32_2x2
+        GemmTiling::Tile32x32x32_Simdgroups2x2
     }
 }

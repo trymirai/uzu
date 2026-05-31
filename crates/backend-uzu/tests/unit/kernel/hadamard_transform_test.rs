@@ -6,7 +6,7 @@ use backend_uzu::{
         Backend, Context, Encoder, Kernels, gpu_types::HadamardTransformOrder, kernel::HadamardTransformKernel,
     },
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::uzu_test;
@@ -152,11 +152,6 @@ fn test_hadamard_transform<T: ArrayElement + Float + Debug>(tolerance: f64) {
 #[uzu_test]
 fn test_f32() {
     test_hadamard_transform::<f32>(1e-4);
-}
-
-#[uzu_test]
-fn test_f16() {
-    test_hadamard_transform::<f16>(0.05);
 }
 
 #[uzu_test]

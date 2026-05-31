@@ -1,3 +1,5 @@
+#pragma once
+
 #include <metal_stdlib>
 #include "../common/defines.h"
 #include "../common/thread_context.h"

@@ -1,7 +1,14 @@
+#![cfg(metal_backend)]
+
 use backend_uzu::{
     array::ArrayElement,
-    backends::common::{
-        Allocation, Backend, Context, Kernels, gpu_types::QuantizationMethod, kernel::QuantizedMatmulQmvFastKernel,
+    backends::{
+        common::{
+            Backend,
+            gpu_types::QuantizationMethod,
+            kernel::{Kernels, matmul::MatmulKernel},
+        },
+        metal::{Metal, MetalContext},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -10,70 +17,48 @@ use num_traits::Float;
 
 use crate::{
     common::{
-        matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop},
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop, quant_arguments},
         type_short_name,
     },
     uzu_bench,
 };
 
-fn bench_qmv_fast_typed<B: Backend, T: ArrayElement + Float>(
+fn bench_quant_gemv_typed<T: ArrayElement + Float>(
+    context: &MetalContext,
     c: &mut Criterion,
-    context: &B::Context,
     label: &str,
     group_size: u32,
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    let mut group = c.benchmark_group(format!("{}/Kernel/QmvFast/{}", type_short_name::<B>(), label));
+    let mut group = c.benchmark_group(format!("{}/Kernel/Matmul/QuantGemv/{}", type_short_name::<Metal>(), label));
 
     for shape in bench_quant_gemv_shapes(bits) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
-        let mut buffers = QuantBuffers::<B, T>::allocate(context, &input);
-
-        let kernel = <<B as Backend>::Kernels as Kernels>::QuantizedMatmulQmvFastKernel::new(
+        let mut buffers = QuantBuffers::<Metal, T>::allocate(context, &input);
+        let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
             context,
             T::data_type(),
             T::data_type(),
             T::data_type(),
-            group_size,
-            bits,
-            quant_method,
-            false,
         )
         .unwrap();
 
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
-            iter_encode_loop::<B, _>(context, b, |encoder| {
-                kernel.encode(
-                    &buffers.w,
-                    &buffers.scales,
-                    buffers.zp.as_ref(),
-                    buffers.bias.as_ref(),
-                    &buffers.x,
-                    &mut buffers.y,
-                    None::<&Allocation<B>>,
-                    k as u32,
-                    n as u32,
-                    m as u32,
-                    encoder,
-                );
+            iter_encode_loop::<Metal, _>(context, b, |encoder| {
+                matmul.quant_gemv.encode(encoder, quant_arguments(&mut buffers, &input)).expect("encode quant gemv");
             });
         });
     }
 }
 
 #[uzu_bench]
-fn bench_qmv_fast(c: &mut Criterion) {
-    for_each_backend!(|B| {
-        let context = <B as Backend>::Context::new().unwrap();
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs32", 32, 4, QuantizationMethod::ScaleBias);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs32", 32, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
-        bench_qmv_fast_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleZeroPoint);
-    });
+fn bench_quant_gemv(c: &mut Criterion) {
+    let context = crate::common::shared_metal_context();
+    bench_quant_gemv_typed::<bf16>(&context, c, "ScaleBias_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
+    bench_quant_gemv_typed::<bf16>(&context, c, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
+    bench_quant_gemv_typed::<bf16>(&context, c, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);
+    bench_quant_gemv_typed::<bf16>(&context, c, "ZP_BF16_gs128", 128, 4, QuantizationMethod::ScaleZeroPoint);
 }
