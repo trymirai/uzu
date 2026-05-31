@@ -4,6 +4,7 @@
 #include "../../../common/thread_context.h"
 #include "../../../hadamard_transform/hadamard_transform.h"
 #include "../../common/fragment.h"
+#include "gemm_rht.h"
 #include "../../common/mxu_fragment_ops.h"
 #include "../../common/mxu_gemm_loop.h"
 #include "../../../generated/matmul.h"

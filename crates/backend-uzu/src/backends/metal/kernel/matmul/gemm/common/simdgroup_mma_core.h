@@ -9,6 +9,7 @@
 #include "../generated/gemm.h"
 #include "../../../hadamard_transform/hadamard_transform.h"
 #include "block_geometry.h"
+#include "gemm_rht.h"
 #include "gemm_alignment.h"
 #include "gemm_tiling.h"
 #include "quant_scale_bias.h"
