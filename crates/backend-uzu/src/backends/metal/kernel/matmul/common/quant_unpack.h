@@ -51,7 +51,7 @@ METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 8>(uint4 n) {
 }
 
 template <typename U, int N, int bits>
-inline void dequantize(
+METAL_FUNC void dequantize(
     const device uint8_t* w,
     U scale,
     U bias,
@@ -62,11 +62,13 @@ inline void dequantize(
   if constexpr (bits == 4) {
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
+    METAL_PRAGMA_UNROLL
     for (int i = 0; i < (N / 2); i++) {
       w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
       w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
     }
   } else if constexpr (bits == 8) {
+    METAL_PRAGMA_UNROLL
     for (int i = 0; i < N; i++) {
       w_local[i] = scale * w[i] + bias;
     }
@@ -74,7 +76,7 @@ inline void dequantize(
 }
 
 template <>
-inline void dequantize<bfloat, 8, 4>(
+METAL_FUNC void dequantize<bfloat, 8, 4>(
     const device uint8_t* w,
     bfloat scale,
     bfloat bias,

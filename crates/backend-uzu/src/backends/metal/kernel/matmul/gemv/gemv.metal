@@ -345,20 +345,24 @@ KERNEL(Gemv)(
     }
   }
 
+  METAL_PRAGMA_UNROLL
   for (uint row = 0; row < results_per_simdgroup; row++) {
     result[row] = simd_sum(result[row]);
   }
 
   if constexpr (K_SPLIT > 1) {
     if (simd_lane == 0) {
+      METAL_PRAGMA_UNROLL
       for (uint row = 0; row < results_per_simdgroup; row++) {
         shared_results[simd_group * results_per_simdgroup + row] = result[row];
       }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (k_slice == 0 && simd_lane == 0) {
+      METAL_PRAGMA_UNROLL
       for (uint row = 0; row < results_per_simdgroup; row++) {
         U acc = 0;
+        METAL_PRAGMA_UNROLL
         for (uint s = 0; s < k_split; s++) {
           acc += shared_results
               [(row_group * k_split + s) * results_per_simdgroup + row];
@@ -371,6 +375,7 @@ KERNEL(Gemv)(
   const bool writer = (k_split == 1) || (k_slice == 0);
 
   if (writer && simd_lane == 0) {
+    METAL_PRAGMA_UNROLL
     for (uint row = 0; row < results_per_simdgroup; row++) {
       U value = result[row];
       if (is_scale) {
@@ -389,6 +394,7 @@ KERNEL(Gemv)(
 
   if (use_hadamard) {
     if (simd_lane == 0) {
+      METAL_PRAGMA_UNROLL
       for (uint row = 0; row < results_per_simdgroup; row++) {
         shared_results[simd_group * results_per_simdgroup + row] = result[row];
       }
@@ -408,6 +414,7 @@ KERNEL(Gemv)(
     }
   } else {
     if (writer && simd_lane == 0) {
+      METAL_PRAGMA_UNROLL
       for (uint row = 0; row < results_per_simdgroup; row++) {
         if (out_row + row < out_vec_size) {
           output[row] = static_cast<OutputT>(result[row]);
