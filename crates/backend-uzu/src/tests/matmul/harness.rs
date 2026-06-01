@@ -4,7 +4,7 @@ use super::Shape;
 #[cfg(metal_backend)]
 use crate::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{
             AllocationType, Backend, Context, Encoder,
@@ -125,7 +125,7 @@ fn run<B: Backend, T: ArrayElement + Float>(
     context: &B::Context,
     kernel: &mut <B::Kernels as Kernels>::MatmulKernel,
     input: &Input<T>,
-    encode: impl FnOnce(&mut <B::Kernels as Kernels>::MatmulKernel, MatmulArguments<B>, &mut Encoder<B>),
+    encode: impl for<'a> FnOnce(&mut <B::Kernels as Kernels>::MatmulKernel, MatmulArguments<'a, 'a, 'a, B>, &mut Encoder<B>),
 ) -> Vec<T> {
     let Shape {
         m,
@@ -159,13 +159,12 @@ fn run<B: Backend, T: ArrayElement + Float>(
     let mut encoder = Encoder::new(context).expect("encoder");
     encode(
         kernel,
-        MatmulArguments::<'_, B> {
+        MatmulArguments {
             a: &a_allocation,
             a_offset: 0,
             b: MatmulB::FullPrecision {
                 b: b_array.allocation(),
             },
-            b_offset: 0,
             b_leading_dimension: None,
             b_transpose: input.case.b_transpose,
             d: &mut d_allocation,

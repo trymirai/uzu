@@ -24,8 +24,6 @@ template <
     ushort THREAD_COLS = THREADGROUP_TILE_COLS / READS_PER_THREAD,
     ushort THREAD_ROWS = THREADGROUP_SIZE / THREAD_COLS>
 struct ThreadgroupLoader {
-  METAL_CONST ushort ROW_ITERATIONS = (THREADGROUP_TILE_ROWS + THREAD_ROWS - 1) / THREAD_ROWS;
-
   const int source_leading_dimension;
   const int tile_stride;
 

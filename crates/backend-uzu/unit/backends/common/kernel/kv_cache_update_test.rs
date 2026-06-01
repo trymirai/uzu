@@ -8,7 +8,7 @@ use test_runner::for_each_non_cpu_backend;
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
-        common::{Backend, Context, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
+        common::{Backend, Context, Encoder, Kernels, gpu_types::Copy, kernel::KVCacheUpdateKernel},
         cpu::Cpu,
     },
     tests::assert::assert_eq_float,
@@ -17,18 +17,16 @@ use crate::{
 struct Input<T: ArrayElement + Float> {
     keys: Box<[T]>,
     values: Box<[T]>,
-    swaps: Vec<Swap>,
-    num_heads: u32,
+    copies: Vec<Copy>,
     max_sequence_length: u32,
-    head_dim: u32,
+    element_dim: u32,
 }
 
 fn make_data<T: ArrayElement + Float>(
-    num_heads: usize,
     max_sequence_length: usize,
-    head_dim: usize,
+    element_dim: usize,
 ) -> (Vec<T>, Vec<T>) {
-    let total = num_heads * max_sequence_length * head_dim;
+    let total = max_sequence_length * element_dim;
     let mut keys = Vec::with_capacity(total);
     let mut values = Vec::with_capacity(total);
     for i in 0..total {
@@ -43,34 +41,27 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let kernel = <<B as Backend>::Kernels as Kernels>::KVCacheUpdateKernel::new(&context, T::data_type())
         .expect("Failed to create KVCacheUpdateKernel");
 
-    let total = input.num_heads as usize * input.max_sequence_length as usize * input.head_dim as usize;
+    let total = input.max_sequence_length as usize * input.element_dim as usize;
     let mut keys = context.create_array_from(&[total], &input.keys).into_allocation();
     let mut values = context.create_array_from(&[total], &input.values).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-    kernel.encode(
-        &mut keys,
-        &mut values,
-        &input.swaps,
-        input.swaps.len() as u32,
-        input.num_heads,
-        input.head_dim,
-        &mut encoder,
-    );
+    kernel.encode(&mut keys, &mut values, &input.copies, input.copies.len() as u32, input.element_dim, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     (crate::tests::helpers::allocation_to_vec(&keys), crate::tests::helpers::allocation_to_vec(&values))
 }
 
-/// Single swap between two different positions.
-fn get_test_data_single_swap<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+/// Single copy between two different positions.
+fn get_test_data_single_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 4usize;
     let head_dim = 3usize;
+    let element_dim = num_heads * head_dim;
 
-    let (keys, values) = make_data::<T>(num_heads, max_sequence_length, head_dim);
+    let (keys, values) = make_data::<T>(max_sequence_length, element_dim);
 
-    let swaps = vec![Swap {
+    let copies = vec![Copy {
         source: 0,
         destination: 2,
     }];
@@ -78,30 +69,30 @@ fn get_test_data_single_swap<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Ve
     let input = Input {
         keys: keys.into_boxed_slice(),
         values: values.into_boxed_slice(),
-        swaps: swaps.clone(),
-        num_heads: num_heads as u32,
+        copies: copies.clone(),
         max_sequence_length: max_sequence_length as u32,
-        head_dim: head_dim as u32,
+        element_dim: element_dim as u32,
     };
 
     let (expected_keys, expected_values) = get_output::<T, Cpu>(&input);
     (input, expected_keys, expected_values)
 }
 
-/// Multiple swaps.
-fn get_test_data_multi_swap<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+/// Multiple copies.
+fn get_test_data_multi_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 8usize;
     let head_dim = 4usize;
+    let element_dim = num_heads * head_dim;
 
-    let (keys, values) = make_data::<T>(num_heads, max_sequence_length, head_dim);
+    let (keys, values) = make_data::<T>(max_sequence_length, element_dim);
 
-    let swaps = vec![
-        Swap {
+    let copies = vec![
+        Copy {
             source: 1,
             destination: 3,
         },
-        Swap {
+        Copy {
             source: 0,
             destination: 5,
         },
@@ -110,23 +101,23 @@ fn get_test_data_multi_swap<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec
     let input = Input {
         keys: keys.into_boxed_slice(),
         values: values.into_boxed_slice(),
-        swaps: swaps.clone(),
-        num_heads: num_heads as u32,
+        copies: copies.clone(),
         max_sequence_length: max_sequence_length as u32,
-        head_dim: head_dim as u32,
+        element_dim: element_dim as u32,
     };
 
     let (expected_keys, expected_values) = get_output::<T, Cpu>(&input);
     (input, expected_keys, expected_values)
 }
 
-/// No swaps — data should remain unchanged.
-fn get_test_data_no_swap<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
+/// No copies — data should remain unchanged.
+fn get_test_data_no_copy<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) {
     let num_heads = 2usize;
     let max_sequence_length = 4usize;
     let head_dim = 3usize;
+    let element_dim = num_heads * head_dim;
 
-    let (keys, values) = make_data::<T>(num_heads, max_sequence_length, head_dim);
+    let (keys, values) = make_data::<T>(max_sequence_length, element_dim);
 
     let expected_keys = keys.clone();
     let expected_values = values.clone();
@@ -134,10 +125,9 @@ fn get_test_data_no_swap<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>
     let input = Input {
         keys: keys.into_boxed_slice(),
         values: values.into_boxed_slice(),
-        swaps: vec![],
-        num_heads: num_heads as u32,
+        copies: vec![],
         max_sequence_length: max_sequence_length as u32,
-        head_dim: head_dim as u32,
+        element_dim: element_dim as u32,
     };
 
     (input, expected_keys, expected_values)
@@ -148,19 +138,20 @@ fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) 
     let num_heads = 8usize;
     let max_sequence_length = 64usize;
     let head_dim = 128usize;
+    let element_dim = num_heads * head_dim;
 
-    let (keys, values) = make_data::<T>(num_heads, max_sequence_length, head_dim);
+    let (keys, values) = make_data::<T>(max_sequence_length, element_dim);
 
-    let swaps = vec![
-        Swap {
+    let copies = vec![
+        Copy {
             source: 0,
             destination: 63,
         },
-        Swap {
+        Copy {
             source: 10,
             destination: 30,
         },
-        Swap {
+        Copy {
             source: 5,
             destination: 20,
         },
@@ -169,10 +160,9 @@ fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>, Vec<T>) 
     let input = Input {
         keys: keys.into_boxed_slice(),
         values: values.into_boxed_slice(),
-        swaps: swaps.clone(),
-        num_heads: num_heads as u32,
+        copies: copies.clone(),
         max_sequence_length: max_sequence_length as u32,
-        head_dim: head_dim as u32,
+        element_dim: element_dim as u32,
     };
 
     let (expected_keys, expected_values) = get_output::<T, Cpu>(&input);
@@ -195,19 +185,19 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-fn test_single_swap_internal<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected_keys, expected_values) = get_test_data_single_swap::<T>();
-    test_internal::<T>(&input, &expected_keys, &expected_values, "single_swap");
+fn test_single_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+    let (input, expected_keys, expected_values) = get_test_data_single_copy::<T>();
+    test_internal::<T>(&input, &expected_keys, &expected_values, "single_copy");
 }
 
-fn test_multi_swap_internal<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected_keys, expected_values) = get_test_data_multi_swap::<T>();
-    test_internal::<T>(&input, &expected_keys, &expected_values, "multi_swap");
+fn test_multi_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+    let (input, expected_keys, expected_values) = get_test_data_multi_copy::<T>();
+    test_internal::<T>(&input, &expected_keys, &expected_values, "multi_copy");
 }
 
-fn test_no_swap_internal<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected_keys, expected_values) = get_test_data_no_swap::<T>();
-    test_internal::<T>(&input, &expected_keys, &expected_values, "no_swap");
+fn test_no_copy_internal<T: ArrayElement + Float + Debug + Display>() {
+    let (input, expected_keys, expected_values) = get_test_data_no_copy::<T>();
+    test_internal::<T>(&input, &expected_keys, &expected_values, "no_copy");
 }
 
 fn test_large_internal<T: ArrayElement + Float + Debug + Display>() {
@@ -215,52 +205,52 @@ fn test_large_internal<T: ArrayElement + Float + Debug + Display>() {
     test_internal::<T>(&input, &expected_keys, &expected_values, "large");
 }
 
-// Single swap tests
+// Single copy tests
 #[uzu_test]
-fn test_single_swap_f32() {
-    test_single_swap_internal::<f32>();
+fn test_single_copy_f32() {
+    test_single_copy_internal::<f32>();
 }
 
 #[uzu_test]
-fn test_single_swap_f16() {
-    test_single_swap_internal::<f16>();
+fn test_single_copy_f16() {
+    test_single_copy_internal::<f16>();
 }
 
 #[uzu_test]
-fn test_single_swap_bf16() {
-    test_single_swap_internal::<bf16>();
+fn test_single_copy_bf16() {
+    test_single_copy_internal::<bf16>();
 }
 
-// Multi swap tests
+// Multi copy tests
 #[uzu_test]
-fn test_multi_swap_f32() {
-    test_multi_swap_internal::<f32>();
-}
-
-#[uzu_test]
-fn test_multi_swap_f16() {
-    test_multi_swap_internal::<f16>();
+fn test_multi_copy_f32() {
+    test_multi_copy_internal::<f32>();
 }
 
 #[uzu_test]
-fn test_multi_swap_bf16() {
-    test_multi_swap_internal::<bf16>();
-}
-
-// No swap tests
-#[uzu_test]
-fn test_no_swap_f32() {
-    test_no_swap_internal::<f32>();
+fn test_multi_copy_f16() {
+    test_multi_copy_internal::<f16>();
 }
 
 #[uzu_test]
-fn test_no_swap_f16() {
-    test_no_swap_internal::<f16>();
+fn test_multi_copy_bf16() {
+    test_multi_copy_internal::<bf16>();
+}
+
+// No copy tests
+#[uzu_test]
+fn test_no_copy_f32() {
+    test_no_copy_internal::<f32>();
 }
 
 #[uzu_test]
-fn test_no_swap_bf16() {
-    test_no_swap_internal::<bf16>();
+fn test_no_copy_f16() {
+    test_no_copy_internal::<f16>();
+}
+
+#[uzu_test]
+fn test_no_copy_bf16() {
+    test_no_copy_internal::<bf16>();
 }
 
 // Large dimension tests

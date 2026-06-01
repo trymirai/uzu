@@ -21,6 +21,10 @@ pub struct Allocation<B: Backend> {
 }
 
 impl<B: Backend> Allocation<B> {
+    pub fn size(&self) -> usize {
+        self.range.len()
+    }
+
     pub fn copyin<T: ArrayElement>(
         &mut self,
         data: &[T],
@@ -32,7 +36,6 @@ impl<B: Backend> Allocation<B> {
         };
         bytemuck::cast_slice_mut::<u8, T>(bytes).copy_from_slice(data);
     }
-
     pub fn copyout<T: ArrayElement>(&self) -> Vec<T> {
         let buffer_range = self.as_buffer_range_ref();
         let (buffer, range) = (buffer_range.buffer(), buffer_range.range());

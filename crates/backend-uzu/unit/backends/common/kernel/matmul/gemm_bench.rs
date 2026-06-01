@@ -64,7 +64,6 @@ fn bench_gemm(c: &mut Criterion) {
                                 b: MatmulB::FullPrecision {
                                     b: b_array.allocation(),
                                 },
-                                b_offset: 0,
                                 b_leading_dimension: None,
                                 b_transpose: true,
                                 d: &mut d,

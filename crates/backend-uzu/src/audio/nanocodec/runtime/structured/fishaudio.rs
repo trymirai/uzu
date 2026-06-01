@@ -13,8 +13,8 @@ pub(super) struct StructuredAudioPostModuleRuntime<B: Backend> {
     pub(super) context: Rc<B::Context>,
     pub(super) model_shape: ModelShape,
     pub(super) rope_configs: Box<[AnyRoPEConfig]>,
-    pub(super) layers: Box<[LayerExecutables<B>]>,
-    pub(super) output_norm: RMSNorm<B>,
+    pub(super) layers: Box<[DecoderLayer<B>]>,
+    pub(super) output_norm: Normalization<B>,
     pub(super) max_sequence_length: usize,
 }
 

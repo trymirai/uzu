@@ -12,19 +12,17 @@ use crate::{
     tests::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec},
 };
 
-fn apply_swaps_3d<T: Clone>(
+fn apply_copies_3d<T: Clone>(
     array: &mut Array3<T>,
-    swaps: &[Swap],
+    copies: &[Copy],
 ) {
     let (_seq_len, num_heads, head_dim) = array.dim();
     for head in 0..num_heads {
         for channel in 0..head_dim {
-            for swap in swaps {
-                let src = swap.source as usize;
-                let dst = swap.destination as usize;
-                let temp = array[(src, head, channel)].clone();
-                array[(src, head, channel)] = array[(dst, head, channel)].clone();
-                array[(dst, head, channel)] = temp;
+            for copy in copies {
+                let src = copy.source as usize;
+                let dst = copy.destination as usize;
+                array[(dst, head, channel)] = array[(src, head, channel)].clone();
             }
         }
     }
@@ -60,9 +58,9 @@ fn test_random_pattern<B: Backend>(context: &B::Context) {
     let mut expected_keys = key_data.clone();
     let mut expected_values = value_data.clone();
 
-    let swaps = create_swaps_direct(&source_indices, &destination_indices);
-    apply_swaps_3d(&mut expected_keys, &swaps);
-    apply_swaps_3d(&mut expected_values, &swaps);
+    let copies = create_copies_direct(&source_indices, &destination_indices);
+    apply_copies_3d(&mut expected_keys, &copies);
+    apply_copies_3d(&mut expected_values, &copies);
 
     let mut key_buffer = sparse_buffer_create_with::<B, f32>(context, key_data.as_slice().unwrap());
     let mut value_buffer = sparse_buffer_create_with::<B, f32>(context, value_data.as_slice().unwrap());
@@ -122,15 +120,15 @@ fn test_kv_cache_update_kernel() {
 }
 
 #[uzu_test]
-fn test_direct_swaps() {
+fn test_direct_copies() {
     let sources = [0, 2, 4];
     let destinations = [1, 3, 5];
-    let swaps = create_swaps_direct(&sources, &destinations);
-    assert_eq!(swaps.len(), 3);
-    assert_eq!(swaps[0].source, 0);
-    assert_eq!(swaps[0].destination, 1);
-    assert_eq!(swaps[1].source, 2);
-    assert_eq!(swaps[1].destination, 3);
-    assert_eq!(swaps[2].source, 4);
-    assert_eq!(swaps[2].destination, 5);
+    let copies = create_copies_direct(&sources, &destinations);
+    assert_eq!(copies.len(), 3);
+    assert_eq!(copies[0].source, 0);
+    assert_eq!(copies[0].destination, 1);
+    assert_eq!(copies[1].source, 2);
+    assert_eq!(copies[1].destination, 3);
+    assert_eq!(copies[2].source, 4);
+    assert_eq!(copies[2].destination, 5);
 }

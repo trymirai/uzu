@@ -1,22 +1,19 @@
 #![cfg_attr(test, feature(custom_test_frameworks, test))]
 #![cfg_attr(test, test_runner(test_runner::uzu_harness))]
 
-pub mod array;
-mod audio;
-mod classifier;
+mod array;
+// mod audio;
 mod config;
 mod encodable_block;
-mod forward_pass;
-mod language_model;
 mod parameters;
-mod speculators;
+pub mod speculators;
 mod trie;
 mod utils;
 
 pub mod backends;
 pub mod data_type;
-pub mod inference;
-pub mod session;
+
+pub mod engine;
 
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 

@@ -78,7 +78,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
                 b: MatmulB::FullPrecision {
                     b: b_array.allocation(),
                 },
-                b_offset: 0,
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut d_allocation,

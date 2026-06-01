@@ -6,7 +6,7 @@ use proc_macros::kernel;
 
 use crate::{
     array::ArrayElement,
-    language_model::gumbel::{gumbel_float, revidx},
+    encodable_block::sampling::{gumbel_float, revidx},
 };
 
 // NOTE: top_k + top_p combination is not exactly matching lalamo ("parallel" here, should be top-k then top-p)

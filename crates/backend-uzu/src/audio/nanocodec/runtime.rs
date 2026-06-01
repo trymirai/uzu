@@ -32,7 +32,7 @@ use crate::{
         },
     },
     data_type::DataType,
-    encodable_block::{Decoder, LayerExecutables, RMSNorm},
+    encodable_block::{decoder::Decoder, decoder_layer::DecoderLayer, normalization::Normalization},
     forward_pass::model_shape::ModelShape,
     parameters::ParameterLoader,
 };
