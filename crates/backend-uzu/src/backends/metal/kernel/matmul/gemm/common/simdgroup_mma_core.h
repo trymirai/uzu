@@ -239,9 +239,9 @@ struct SimdgroupMmaCore {
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    // Split-K: the partition is the grid z-axis (group_count_z == split_k; == 1 and thus
-    // partition == 0 for a normal non-split dispatch). Each partition reduces its own K-slice
-    // into its own output slice.
+    // Split-K: the partition is the grid z-axis (group_count_z == split_k; == 1
+    // and thus partition == 0 for a normal non-split dispatch). Each partition
+    // reduces its own K-slice into its own output slice.
     const uint partition = thread_context.threadgroup_position.z;
     const uint tile_row = thread_context.threadgroup_position.y;
     const uint2 tile =
@@ -296,7 +296,8 @@ struct SimdgroupMmaCore {
       if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
         const device BT* b_block_fp =
             b +
-            (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
+            (TRANSPOSE_B ? block_col * params->leading_dimension_b
+                         : block_col) +
             (TRANSPOSE_B ? k_offset : k_offset * params->leading_dimension_b);
         return BLoaderFp(
             b_block_fp,

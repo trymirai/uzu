@@ -184,13 +184,14 @@ struct MxuMmaCore {
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    // Split-K: the partition is the grid z-axis (group_count_z == split_k; == 1 and thus
-    // partition == 0 for a normal non-split dispatch). Each partition reduces its own K-slice
-    // into its own output slice.
+    // Split-K: the partition is the grid z-axis (group_count_z == split_k; == 1
+    // and thus partition == 0 for a normal non-split dispatch). Each partition
+    // reduces its own K-slice into its own output slice.
     const uint partition = thread_context.threadgroup_position.z;
     const uint tile_y = thread_context.threadgroup_position.y;
 
-    const uint2 tile = tile_id(uint2(thread_context.threadgroup_position.x, tile_y), params);
+    const uint2 tile =
+        tile_id(uint2(thread_context.threadgroup_position.x, tile_y), params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
             compute(tile, params);
@@ -202,21 +203,25 @@ struct MxuMmaCore {
     const size_t block_col = size_t(geometry.block_col_start);
 
     // K-slice offset for this partition (0 for non-split dispatch).
-    // For the quant path, aligned_inner_iterations counts QUANT_BK blocks; for FP it counts
-    // THREADGROUP_BLOCK_K_FP blocks. The correct k_offset uses the per-partition K step (kp),
-    // which is K/split_k — reconstructed from aligned_inner_iterations * block_k.
-    // aligned_inner_iterations = kp / block_k where block_k is QUANT_BK (quant) or
-    // THREADGROUP_BLOCK_K_FP (FP). Use GemmTiling block_k from params->aligned_inner_iterations
-    // combined with known QUANT_BK / THREADGROUP_BLOCK_K_FP.
+    // For the quant path, aligned_inner_iterations counts QUANT_BK blocks; for
+    // FP it counts THREADGROUP_BLOCK_K_FP blocks. The correct k_offset uses the
+    // per-partition K step (kp), which is K/split_k — reconstructed from
+    // aligned_inner_iterations * block_k. aligned_inner_iterations = kp /
+    // block_k where block_k is QUANT_BK (quant) or THREADGROUP_BLOCK_K_FP (FP).
+    // Use GemmTiling block_k from params->aligned_inner_iterations combined
+    // with known QUANT_BK / THREADGROUP_BLOCK_K_FP.
     const uint k_offset_per_block =
-        (B_PROLOGUE == GemmBPrologueKind::FullPrecision) ? uint(THREADGROUP_BLOCK_K_FP)
-                                                         : uint(QUANT_BK);
+        (B_PROLOGUE == GemmBPrologueKind::FullPrecision)
+            ? uint(THREADGROUP_BLOCK_K_FP)
+            : uint(QUANT_BK);
     const uint k_offset =
         partition * params->aligned_inner_iterations * k_offset_per_block;
 
-    const device AT* a_block = a + block_row * params->leading_dimension_a + k_offset;
+    const device AT* a_block =
+        a + block_row * params->leading_dimension_a + k_offset;
     const device BT* b_block_fp =
-        b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
+        b +
+        (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
         (TRANSPOSE_B ? k_offset : k_offset * uint(params->leading_dimension_b));
 
     const ushort tile_row_offset =
@@ -317,8 +322,9 @@ struct MxuMmaCore {
                           thread_context
                       );
                     } else {
-                      // Per-partition iteration count (= kp / QUANT_BK for split-K, K / QUANT_BK
-                      // otherwise). Set by the host so split-K partitions only walk their K-slice.
+                      // Per-partition iteration count (= kp / QUANT_BK for
+                      // split-K, K / QUANT_BK otherwise). Set by the host so
+                      // split-K partitions only walk their K-slice.
                       const int aligned_k_iterations_q =
                           int(params->aligned_inner_iterations);
                       constexpr int pack_factor = get_pack_factor<BITS, 8>();
@@ -341,7 +347,8 @@ struct MxuMmaCore {
                             B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
                         ) {
                           const device BT* biases_offset =
-                              biases + block_col * groups_per_row + k_offset_groups;
+                              biases + block_col * groups_per_row +
+                              k_offset_groups;
                           return BLoaderScaleBias(
                               weights_block,
                               scales_offset,
@@ -361,7 +368,8 @@ struct MxuMmaCore {
                           const device uint8_t* zero_points_row_start =
                               zero_points +
                               block_col * zero_point_stride_per_row +
-                              ((BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
+                              ((BITS == 4) ? (k_offset_groups / 2)
+                                           : k_offset_groups);
                           return BLoaderScaleZeroPoint(
                               weights_block,
                               scales_offset,

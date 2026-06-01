@@ -81,13 +81,16 @@ inline void dequantize<bfloat, 8, 4>(
     threadgroup bfloat* w_local
 ) {
   const uint32_t packed = *reinterpret_cast<const device uint32_t*>(w);
-  // Mask the whole 32-bit word and reinterpret as uchar4 — gets all four low (resp. high)
-  // nibbles in one vector op, with NO per-nibble shifts. High nibbles stay shifted left by 4
-  // (value * 16), compensated by scaling with scale/16. ~12 ALU ops vs ~30 for the per-nibble
-  // shift + per-element int->bfloat convert form (measured in AIR).
-  const bfloat4 lo = bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
-  const bfloat4 hi =
-      bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) * (scale * bfloat(0.0625f)) + bias;
+  // Mask the whole 32-bit word and reinterpret as uchar4 — gets all four low
+  // (resp. high) nibbles in one vector op, with NO per-nibble shifts. High
+  // nibbles stay shifted left by 4 (value * 16), compensated by scaling with
+  // scale/16. ~12 ALU ops vs ~30 for the per-nibble shift + per-element
+  // int->bfloat convert form (measured in AIR).
+  const bfloat4 lo =
+      bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
+  const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) *
+                         (scale * bfloat(0.0625f)) +
+                     bias;
 
   // Interleave back to nibble order: [b0lo, b0hi, b1lo, b1hi, ...].
   w_local[0] = lo.x;
