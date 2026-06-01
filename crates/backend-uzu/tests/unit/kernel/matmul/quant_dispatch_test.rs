@@ -265,6 +265,88 @@ fn parity_gemv_partial_group_bf16(
     run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.6);
 }
 
+#[rstest]
+#[case::n12_gs32_4bit(1, 256, 12, 32, 4, QuantizationMethod::ScaleBias)]
+#[case::n20_gs64_4bit_zp(2, 256, 20, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::n36_gs32_8bit(1, 256, 36, 32, 8, QuantizationMethod::ScaleBias)]
+fn parity_gemv_unaligned_width_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] gs: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    // n is not a multiple of 8; the output-tail clamp must cover the partial block.
+    run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.6);
+}
+
+#[uzu_test]
+fn parity_bf16_gemv_quant_rht_with_bias() {
+    let context = MetalContext::new().expect("Metal context");
+    let input = QuantInput::<bf16>::new(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
+    let rht: Vec<i32> = (0..input.n as usize)
+        .map(|i| {
+            if i % 2 == 0 {
+                1
+            } else {
+                -1
+            }
+        })
+        .collect();
+    let bias_f32: Vec<f32> = (0..input.n as usize).map(|j| 0.3 + 0.05 * (j % 4) as f32).collect();
+    let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
+
+    // CPU reference applies bias before RHT (matmul loop adds bias, then the
+    // Hadamard pass transforms the result) — the same order GEMV uses.
+    let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");
+    let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &input);
+    let cpu_rht = crate::common::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
+    let cpu_bias = crate::common::helpers::alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &bias_t);
+    let mut cpu_matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &cpu_context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulCpuKernel");
+    let mut cpu_encoder = Encoder::<Cpu>::new(&cpu_context).expect("cpu encoder");
+    let mut cpu_args = quant_arguments(&mut cpu_buffers, &input);
+    cpu_args.d_transform = MatmulDOps {
+        ab_scale: 1.0,
+        accumulate: false,
+        bias: Some(&cpu_bias),
+        rht_factors: Some(&cpu_rht),
+    };
+    cpu_matmul.encode(cpu_args, &mut cpu_encoder).expect("cpu encode quant+rht+bias");
+    cpu_encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let reference = allocation_to_vec::<Cpu, bf16>(&cpu_buffers.y);
+
+    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    let metal_rht = crate::common::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
+    let metal_bias = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulMetalKernel");
+    let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+    let mut args = quant_arguments(&mut buffers, &input);
+    args.d_transform = MatmulDOps {
+        ab_scale: 1.0,
+        accumulate: false,
+        bias: Some(&metal_bias),
+        rht_factors: Some(&metal_rht),
+    };
+    matmul.encode(args, &mut encoder).expect("encode quant gemv with rht+bias");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let actual = allocation_to_vec::<Metal, bf16>(&buffers.y);
+
+    assert_parity::<bf16>("gemv_quant_rht_bias", &reference, &actual, 0.05, 0.6);
+}
+
 #[uzu_test]
 fn parity_bf16_gemv_quant_rht() {
     let context = MetalContext::new().expect("Metal context");
