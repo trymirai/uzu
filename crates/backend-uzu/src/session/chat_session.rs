@@ -22,6 +22,7 @@ use crate::{
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
         grammar::{CompiledGrammar, create_compiled_grammar},
+        language_model_generator::AsyncGenerateResult,
         result::{GenerateResult, PrefillResult},
     },
     session::{
@@ -221,7 +222,16 @@ impl ChatSession {
             .iter()
             .map(|&id| id as u64)
             .collect();
+        self.run_forward_pass(&tokens, config, progress, run_start)
+    }
 
+    pub fn run_forward_pass(
+        &mut self,
+        tokens: &Vec<u64>,
+        config: RunConfig,
+        progress: Option<impl Fn(Output) -> bool>,
+        run_start: Instant,
+    ) -> Result<Output, Error> {
         let language_model_generator = self.llm.as_mut();
         let context_length = language_model_generator.get_context_length();
         if tokens.len() >= context_length {
@@ -396,7 +406,7 @@ impl ChatSession {
 
         llm.prepare_async(tokens_to_generate);
 
-        let (sender, receiver) = mpsc::channel::<(usize, u64, u64)>();
+        let (sender, receiver) = mpsc::channel::<(usize, AsyncGenerateResult, u64)>();
         let start_time = Instant::now();
         let last_nanos = Arc::new(AtomicU64::new(0));
 
@@ -420,10 +430,10 @@ impl ChatSession {
                 llm.async_generate(
                     idx,
                     sampling_method,
-                    Box::new(move |token| {
+                    Box::new(move |result| {
                         let now_nanos = batch_start_time.elapsed().as_nanos() as u64;
                         let prev_nanos = last_callback_nanos.swap(now_nanos, Ordering::SeqCst);
-                        let _ = batch_sender.send((idx, token, now_nanos.saturating_sub(prev_nanos)));
+                        let _ = batch_sender.send((idx, result, now_nanos.saturating_sub(prev_nanos)));
                     }),
                 )?;
                 in_flight += 1;
@@ -431,21 +441,22 @@ impl ChatSession {
             next_to_submit = batch_end;
 
             for _ in 0..batch_submitted {
-                let (idx, token, duration_nanos) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
+                let (idx, generate_result, duration_nanos) = receiver.recv().map_err(|_| Error::SamplingFailed)?;
                 in_flight -= 1;
                 llm.finish_async(idx);
 
                 let duration = nanos_to_secs(duration_nanos);
-                llm.tokens_push(token);
+                llm.tokens_push(generate_result.token);
                 results.push(GenerateResult {
-                    tokens: vec![token],
-                    forwardpass_duration: duration,
+                    tokens: vec![generate_result.token],
+                    forward_pass_cpu_duration: duration,
+                    forward_pass_gpu_duration: generate_result.gpu_duration,
                     speculator_proposed: 0,
                     speculator_accepted: 0,
                 });
                 durations.push(duration);
 
-                let should_stop = if run_context.eos_tokens.contains(&token) {
+                let should_stop = if run_context.eos_tokens.contains(&generate_result.token) {
                     finish_reason = FinishReason::Stop;
                     true
                 } else if llm.tokens_len() >= run_context.context_length {
@@ -602,7 +613,8 @@ impl ChatSession {
 
             let model_run_count = generate_results.len();
             let model_run_average_duration =
-                generate_results.iter().map(|result| result.forwardpass_duration).sum::<f64>() / model_run_count as f64;
+                generate_results.iter().map(|result| result.forward_pass_cpu_duration).sum::<f64>()
+                    / model_run_count as f64;
 
             let run_count = generate_durations.len();
             let run_average_duration = generate_durations.iter().sum::<f64>() / run_count as f64;
@@ -632,7 +644,8 @@ impl ChatSession {
         };
 
         let total_stats = TotalStats {
-            duration: total_duration,
+            cpu_duration: total_duration,
+            gpu_duration: generate_results.iter().map(|result| result.forward_pass_gpu_duration).sum::<f64>(),
             tokens_count_input: tokens_count_input as u64,
             tokens_count_output: tokens_count_output as u64,
         };

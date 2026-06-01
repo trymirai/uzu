@@ -11,8 +11,8 @@ use super::{
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{
-        Allocation, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
-        kernel::TokenCopySampledKernel,
+        Allocation, AsBufferRangeRef, Backend, CommandBuffer, CommandBufferCompleted, Context, DenseBuffer, Encoder,
+        Pending, kernel::TokenCopySampledKernel,
     },
     config::model::language_model::LanguageModelConfig,
     data_type::DataType,
@@ -54,6 +54,17 @@ struct InFlightForwardPass<B: Backend> {
     pending: Pending<B>,
 }
 
+struct RunResult<B: Backend> {
+    sampling_output: Option<Allocation<B>>,
+    cpu_duration: f64,
+    gpu_duration: f64,
+}
+
+pub struct AsyncGenerateResult {
+    pub token: u64,
+    pub gpu_duration: f64,
+}
+
 pub struct LanguageModelGenerator<B: Backend> {
     pub decoding_config: DecodingConfig,
     pub tokens: Vec<u64>,
@@ -89,7 +100,7 @@ pub trait LanguageModelGeneratorTrait {
         &mut self,
         pass_idx: usize,
         sampling_method: SamplingMethod,
-        on_complete: Box<dyn FnOnce(u64) + Send>,
+        on_complete: Box<dyn FnOnce(AsyncGenerateResult) + Send>,
     ) -> Result<(), Error>;
     fn finish_async(
         &mut self,
@@ -278,7 +289,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 is_prefilling: !should_sample_after_step,
             };
 
-            let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
+            let run_result = self.run_model(task, sampling_method)?;
 
             if should_capture {
                 self.gpu_capture
@@ -303,8 +314,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             }
 
             last_sampling_length = sampling_length;
-            last_sampling_output = sampling_output;
-            run_times.push(run_time);
+            last_sampling_output = run_result.sampling_output;
+            run_times.push(run_result.cpu_duration);
         }
 
         let final_sampling_output = last_sampling_output;
@@ -408,9 +419,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         };
 
         let sampling_length = task.sampling_length;
-        let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
-        let sampled_tokens =
-            self.read_sampling_output(sampling_output.as_ref().expect("sampling output must exist"), sampling_length)?;
+        let run_result = self.run_model(task, sampling_method)?;
+        let sampled_tokens = self.read_sampling_output(
+            run_result.sampling_output.as_ref().expect("sampling output must exist"),
+            sampling_length,
+        )?;
 
         let (accepted_tokens, accepted_token_indices) = flat_trie.accept(&sampled_tokens, compiled_grammar);
         let speculator_proposed = active_row_count.saturating_sub(1);
@@ -423,7 +436,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         Ok(GenerateResult {
             tokens: accepted_tokens,
-            forwardpass_duration: run_time,
+            forward_pass_cpu_duration: run_result.cpu_duration,
+            forward_pass_gpu_duration: run_result.gpu_duration,
             speculator_proposed,
             speculator_accepted,
         })
@@ -454,7 +468,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         &mut self,
         pass_idx: usize,
         sampling_method: SamplingMethod,
-        on_complete: Box<dyn FnOnce(u64) + Send>,
+        on_complete: Box<dyn FnOnce(AsyncGenerateResult) + Send>,
     ) -> Result<(), Error> {
         assert_eq!(self.decoding_config.generate_suffix_length(), 1, "async_generate only supports suffix_length=1");
 
@@ -545,9 +559,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         // Add completion handler
         let handler = move |result: Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>| {
-            result.expect("async decoding forward pass completed with error");
-            let token = unsafe { *async_token_ptr.as_ptr() };
-            on_complete(token);
+            let completed = result.expect("async decoding forward pass completed with error");
+            on_complete(AsyncGenerateResult {
+                token: unsafe { *async_token_ptr.as_ptr() },
+                gpu_duration: completed.gpu_execution_time().as_secs_f64(),
+            });
         };
 
         encoder.add_completion_handler(handler);
@@ -689,7 +705,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         &mut self,
         task: Task,
         sampling_method: SamplingMethod,
-    ) -> Result<(Option<Allocation<B>>, f64), Error> {
+    ) -> Result<RunResult<B>, Error> {
         let run_start = Instant::now();
         let sample = !task.is_prefilling;
         let is_prefilling = task.is_prefilling;
@@ -727,6 +743,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let pending = encoder.end_encoding().submit();
 
         let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let gpu_duration = completed.gpu_execution_time();
         let ForwardPassResources {
             token_inputs,
             logits,
@@ -744,7 +761,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
         }
 
-        Ok((sampling_output, run_time))
+        Ok(RunResult {
+            sampling_output,
+            cpu_duration: run_time,
+            gpu_duration: gpu_duration.as_secs_f64(),
+        })
     }
 
     fn encode_forward_pass_on(

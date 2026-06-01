@@ -21,7 +21,8 @@ pub struct StepStats {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TotalStats {
-    pub duration: f64,
+    pub cpu_duration: f64,
+    pub gpu_duration: f64,
     pub tokens_count_input: u64,
     pub tokens_count_output: u64,
 }

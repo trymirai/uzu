@@ -40,7 +40,7 @@ impl Output {
                 prefill_stats: self.stats.prefill_stats.clone(),
                 generate_stats: self.stats.generate_stats.clone(),
                 total_stats: TotalStats {
-                    duration,
+                    cpu_duration: duration,
                     ..self.stats.total_stats.clone()
                 },
             },
