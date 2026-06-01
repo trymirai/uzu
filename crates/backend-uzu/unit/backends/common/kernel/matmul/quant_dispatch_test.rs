@@ -428,40 +428,6 @@ fn parity_bf16_gemv_quant_rht() {
 }
 
 #[uzu_test]
-fn quant_gemm_nonzero_b_offset_returns_unsupported_layout() {
-    let context = MetalContext::new().expect("Metal context");
-    let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
-    let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
-        &context,
-        bf16::data_type(),
-        bf16::data_type(),
-        bf16::data_type(),
-    )
-    .expect("MatmulMetalKernel");
-
-    let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
-    let mut args = quant_arguments(&mut buffers, &input);
-    args.b_offset = 16;
-    let result = matmul.encode(args, &mut encoder);
-
-    let err = result.expect_err("expected error");
-    let matmul: &MatmulError<Metal> = (&err as &dyn StdError)
-        .source()
-        .and_then(|s| s.downcast_ref::<MatmulError<Metal>>())
-        .expect("expected MatmulError source");
-    assert!(
-        matches!(
-            matmul,
-            MatmulError::UnsupportedLayout {
-                path: "QuantGemm"
-            }
-        ),
-        "got {matmul:?}"
-    );
-}
-
-#[uzu_test]
 fn quant_gemm_accumulate_returns_unsupported_dop() {
     let context = MetalContext::new().expect("Metal context");
     let input = QuantInput::<bf16>::new(64, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);

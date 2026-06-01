@@ -13,7 +13,7 @@ use super::{
     },
     variant_path_rewriter::VariantPathRewriter,
 };
-use crate::common::{enum_paths::EnumPaths, utils::get_generic_name_stream};
+use crate::common::enum_paths::EnumPaths;
 
 pub enum ArgumentEmission {
     Buffer(BufferArgument),
@@ -220,7 +220,7 @@ impl ArgumentEmission {
             ArgumentEmission::Shared(_) => None,
             ArgumentEmission::IndirectDispatch(_) => Some(quote! {
                 __dsl_indirect_dispatch_buffer: impl crate::backends::common::kernel::BufferArg<
-                    '__dsl_indirect_dispatch_buffer, TDslIndirectDispatchBuffer
+                    '__dsl_indirect_dispatch_buffer, crate::backends::metal::Metal
                 >
             }),
         }
@@ -278,30 +278,6 @@ impl ArgumentEmission {
         }
     }
 
-    pub fn encode_generic(&self) -> Option<TokenStream> {
-        match self {
-            ArgumentEmission::Buffer(buffer_arg) => {
-                let buffer_type = get_generic_name_stream(buffer_arg.name.to_string().as_ref());
-                Some(quote! { #buffer_type })
-            },
-            ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
-            ArgumentEmission::IndirectDispatch(_) => Some(quote! { TDslIndirectDispatchBuffer }),
-        }
-    }
-
-    pub fn encode_where_generic(&self) -> Option<TokenStream> {
-        match self {
-            ArgumentEmission::Buffer(buffer_arg) => {
-                let buffer_type = get_generic_name_stream(buffer_arg.name.to_string().as_ref());
-                Some(quote! { #buffer_type: crate::backends::common::Buffer<Backend = crate::backends::metal::Metal> })
-            },
-            ArgumentEmission::Constant(_) | ArgumentEmission::Shared(_) => None,
-            ArgumentEmission::IndirectDispatch(_) => Some(
-                quote! { TDslIndirectDispatchBuffer: crate::backends::common::Buffer<Backend = crate::backends::metal::Metal> },
-            ),
-        }
-    }
-
     fn condition(&self) -> Option<&ArgumentCondition> {
         match self {
             ArgumentEmission::Buffer(buffer) => buffer.condition.as_ref(),
@@ -319,8 +295,7 @@ fn emit_buffer_argument_definition(buffer: &BufferArgument) -> TokenStream {
         MetalBufferAccess::Read => quote! { crate::backends::common::kernel::BufferArg },
         MetalBufferAccess::ReadWrite => quote! { crate::backends::common::kernel::BufferArgMut },
     };
-    let buffer_type = get_generic_name_stream(name.to_string().as_ref());
-    let buffer_argument_type = quote! { impl #trait_path<#lifetime, #buffer_type> };
+    let buffer_argument_type = quote! { impl #trait_path<#lifetime, crate::backends::metal::Metal> };
     if buffer.condition.is_some() {
         quote! { #name: Option<#buffer_argument_type> }
     } else {
@@ -370,7 +345,7 @@ fn emit_buffer_set(buffer: &BufferArgument) -> TokenStream {
     let name = &buffer.name;
     let buffer_index = buffer.buffer_index;
     let unconditional_set = quote! {
-        compute_encoder.set_buffer(Some(crate::backends::metal::buffer::BufferDowncastExt::downcast(#name.0)), #name.1, #buffer_index);
+        compute_encoder.set_buffer(Some(#name.0.downcast()), #name.1, #buffer_index);
     };
     match &buffer.condition {
         Some(condition) => {

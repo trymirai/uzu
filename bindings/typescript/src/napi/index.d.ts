@@ -65,6 +65,7 @@ export declare class TextToSpeechSessionStreamChunkOutput {
 
 export type ChatSessionError =
   | { type: 'Backend', message: string }
+  | { type: 'Loading', message: string }
   | { type: 'UnsupportedModel' }
   | { type: 'UnableToPerformOperationInCurrentState' }
   | { type: 'NoResponse' }

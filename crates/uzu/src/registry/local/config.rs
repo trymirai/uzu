@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use backend_uzu::inference::resolve_model_specialization;
+use backend_uzu::bridge::resolve_model_specialization;
 use shoji::types::model::Model;
 
 use crate::registry::RegistryError;

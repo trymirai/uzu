@@ -6,13 +6,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::ShortConvPackKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -30,17 +33,17 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPackKernel::new(&context, T::data_type())
         .expect("Failed to create ShortConvPackKernel");
 
-    let state_in_array = context.create_array_from(&[input.state_in.len()], &input.state_in);
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
+    let state_in = alloc_allocation_with_data::<B, T>(&context, &input.state_in);
+    let in_proj = alloc_allocation_with_data::<B, T>(&context, &input.in_proj);
 
     let padded_rows = (input.state_stride + input.suffix_len) as usize;
     let padded_size = padded_rows * input.model_dim as usize;
-    let mut padded = context.create_array_uninitialized(&[padded_size], T::data_type()).into_allocation();
+    let mut padded = alloc_allocation::<B, T>(&context, padded_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        state_in_array.allocation(),
-        in_proj_array.allocation(),
+        &state_in,
+        &in_proj,
         &mut padded,
         input.state_stride,
         input.suffix_len,
@@ -50,7 +53,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::tests::helpers::allocation_to_vec(&padded)
+    allocation_to_vec(&padded)
 }
 
 /// Build test input for ShortConvPack.

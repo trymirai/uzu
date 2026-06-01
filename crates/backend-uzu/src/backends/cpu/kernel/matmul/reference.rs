@@ -2,8 +2,12 @@ use half::{bf16, f16};
 
 use crate::{
     backends::{
-        common::{AsBufferRangeRef, Buffer, gpu_types::QuantizationMode, kernel::matmul::MatmulB},
-        cpu::{Cpu, buffer::BufferDowncastExt},
+        common::{
+            AsBufferRangeRef,
+            gpu_types::QuantizationMode,
+            kernel::{BufferArg, matmul::MatmulB},
+        },
+        cpu::Cpu,
     },
     data_type::DataType,
     utils::pointers::SendPtr,
@@ -26,12 +30,10 @@ pub(super) enum WeightData {
 }
 
 impl WeightData {
-    pub(super) fn from_b<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
-        b: MatmulB<'_, Cpu, TB>,
-        b_offset: usize,
+    pub(super) fn from_b<'a, TB: BufferArg<'a, Cpu>>(
+        b: MatmulB<'a, Cpu, TB>,
         b_leading_dimension: Option<u32>,
         b_transpose: bool,
-        weights_data_type: DataType,
         k: usize,
         n: usize,
     ) -> Self {
@@ -52,10 +54,9 @@ impl WeightData {
                 } else {
                     n
                 });
-                let r = weights.as_buffer_range_ref();
-                let byte_off = r.range().start + b_offset * weights_data_type.size_in_bytes();
+                let (buffer, byte_off, _) = weights.into_parts();
                 WeightData::FullPrecision {
-                    ptr: SendPtr(unsafe { &*r.buffer().downcast().get() }.as_ptr().wrapping_byte_add(byte_off)),
+                    ptr: SendPtr(unsafe { &*buffer.downcast().get() }.as_ptr().wrapping_byte_add(byte_off)),
                     leading_dimension,
                     transpose: b_transpose,
                 }

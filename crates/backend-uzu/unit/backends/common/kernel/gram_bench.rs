@@ -7,13 +7,16 @@ use half::bf16;
 use proc_macros::uzu_bench;
 
 use crate::{
-    array::ArrayContextExt,
     backends::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::BuildTreeGramKernel},
         metal::Metal,
     },
     data_type::DataType,
-    tests::{cold_pool::ColdPool, matmul::iter_encode_loop_named},
+    tests::{
+        cold_pool::ColdPool,
+        helpers::{alloc_allocation, alloc_allocation_with_data},
+        matmul::iter_encode_loop_named,
+    },
 };
 
 const K_HEADS: usize = 16;
@@ -95,14 +98,14 @@ fn make_buffers(
     let scale = (HEAD_K_DIM as f32).sqrt().recip();
     (
         TreeGramBuffers {
-            q: context.create_array_from(&[q.len()], &q).into_allocation(),
-            k: context.create_array_from(&[k.len()], &k).into_allocation(),
-            trie: context.create_array_from(&[trie.len()], &trie).into_allocation(),
-            prefix: context.create_array_from(&[prefix.len()], &prefix).into_allocation(),
-            beta: context.create_array_from(&[beta.len()], &beta).into_allocation(),
-            a_mat: context.create_array_uninitialized(&[out_len], DataType::F32).into_allocation(),
-            qkd: context.create_array_uninitialized(&[out_len], DataType::F32).into_allocation(),
-            ainv: context.create_array_uninitialized(&[out_len], DataType::F32).into_allocation(),
+            q: alloc_allocation_with_data::<Metal, bf16>(context, &q),
+            k: alloc_allocation_with_data::<Metal, bf16>(context, &k),
+            trie: alloc_allocation_with_data::<Metal, u32>(context, &trie),
+            prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
+            beta: alloc_allocation_with_data::<Metal, f32>(context, &beta),
+            a_mat: alloc_allocation::<Metal, f32>(context, out_len),
+            qkd: alloc_allocation::<Metal, f32>(context, out_len),
+            ainv: alloc_allocation::<Metal, f32>(context, out_len),
         },
         scale,
     )

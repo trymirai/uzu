@@ -16,7 +16,6 @@ default = ["backend-metal", "capability-grammar", "capability-cli"]
 backend-cpu = []
 backend-metal = ["backend-uzu/metal"]
 capability-grammar = ["backend-uzu/grammar"]
-capability-tracing = ["backend-uzu/tracing"]
 capability-cli = ["dep:iocraft", "dep:indoc"]
 bindings = [
     "bindings-uniffi",

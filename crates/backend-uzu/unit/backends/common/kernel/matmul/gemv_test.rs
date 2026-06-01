@@ -7,10 +7,10 @@ use rstest::rstest;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{
-            AllocationType, Backend, Context, Encoder,
+            Backend, Context, Encoder,
             kernel::{
                 Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -20,7 +20,7 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_to_vec},
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     },
 };
 
@@ -59,11 +59,9 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let k = input.k as u32;
     let n = input.n as u32;
 
-    let b_array = context.create_array_from(&[input.n, input.k], &input.b);
+    let b_allocation = alloc_allocation_with_data::<B, T>(&context, &input.b);
     let a_allocation = alloc_allocation_with_data::<B, T>(&context, &input.a);
-    let mut d_allocation = context
-        .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
-        .expect("Failed to create allocation");
+    let mut d_allocation = alloc_allocation::<B, T>(&context, input.m * input.n);
 
     let mut kernel =
         <B::Kernels as Kernels>::MatmulKernel::new(&context, T::data_type(), T::data_type(), T::data_type())
@@ -76,9 +74,8 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
                 a: &a_allocation,
                 a_offset: 0,
                 b: MatmulB::FullPrecision {
-                    b: b_array.allocation(),
+                    b: &b_allocation,
                 },
-                b_offset: 0,
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut d_allocation,

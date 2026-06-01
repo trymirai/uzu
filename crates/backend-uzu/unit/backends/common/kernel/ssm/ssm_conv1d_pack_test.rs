@@ -6,13 +6,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::Conv1dPackKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -51,19 +54,17 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type(), T::data_type())
         .expect("Failed to create Conv1dPackKernel");
 
-    let state_size = input.state_in.len();
-    let x_size = input.x.len();
     let total_rows = input.state_stride as usize + input.suffix_len as usize;
     let padded_size = total_rows * input.row_stride as usize;
 
-    let state_array = context.create_array_from(&[state_size], &input.state_in);
-    let x_array = context.create_array_from(&[x_size], &input.x);
-    let mut padded = context.create_array_uninitialized(&[padded_size], T::data_type()).into_allocation();
+    let state = alloc_allocation_with_data::<B, T>(&context, &input.state_in);
+    let x = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let mut padded = alloc_allocation::<B, T>(&context, padded_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        state_array.allocation(),
-        x_array.allocation(),
+        &state,
+        &x,
         &mut padded,
         input.state_stride,
         input.row_stride,
@@ -73,7 +74,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    crate::tests::helpers::allocation_to_vec(&padded)
+    allocation_to_vec(&padded)
 }
 
 fn get_test_data<T: ArrayElement + Float>(

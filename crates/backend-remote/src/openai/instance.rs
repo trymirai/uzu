@@ -70,4 +70,8 @@ impl InstanceTrait for Instance {
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, BackendError>> + Send + 'a>> {
         self.api_stream.stream(self.client.clone(), self.model_identifier.clone(), config, input.clone(), cancel)
     }
+
+    fn peak_memory_usage(&self) -> Option<usize> {
+        None
+    }
 }

@@ -6,7 +6,7 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
@@ -15,7 +15,10 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 const TOTAL_BLOCKS_COUNT: u32 = 32;
@@ -100,24 +103,24 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     )
     .expect("Failed to create AttentionTwoPass1Kernel");
 
-    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries);
-    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys);
-    let values_array = context.create_array_from(&[input.values.len()], &input.values);
+    let queries = alloc_allocation_with_data::<B, T>(&context, &input.queries);
+    let keys = alloc_allocation_with_data::<B, T>(&context, &input.keys);
+    let values = alloc_allocation_with_data::<B, T>(&context, &input.values);
 
     let total_offsets = (input.suffix_length * input.num_heads) as usize;
     let partials_size = total_offsets * TOTAL_BLOCKS_COUNT as usize * input.head_dim as usize;
     let sums_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
     let maxs_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
 
-    let mut partials = context.create_array_uninitialized(&[partials_size], DataType::F32).into_allocation();
-    let mut sums = context.create_array_uninitialized(&[sums_size], DataType::F32).into_allocation();
-    let mut maxs = context.create_array_uninitialized(&[maxs_size], DataType::F32).into_allocation();
+    let mut partials = alloc_allocation::<B, f32>(&context, partials_size);
+    let mut sums = alloc_allocation::<B, f32>(&context, sums_size);
+    let mut maxs = alloc_allocation::<B, f32>(&context, maxs_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        queries_array.allocation(),
-        keys_array.allocation(),
-        values_array.allocation(),
+        &queries,
+        &keys,
+        &values,
         &mut partials,
         &mut sums,
         &mut maxs,
@@ -139,9 +142,9 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     FirstPassOutput {
-        partials: crate::tests::helpers::allocation_to_vec(&partials),
-        sums: crate::tests::helpers::allocation_to_vec(&sums),
-        maxs: crate::tests::helpers::allocation_to_vec(&maxs),
+        partials: allocation_to_vec(&partials),
+        sums: allocation_to_vec(&sums),
+        maxs: allocation_to_vec(&maxs),
     }
 }
 
@@ -199,26 +202,18 @@ fn get_second_pass_output<T: ArrayElement + Float, B: Backend>(input: &SecondPas
         <<B as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(&context, T::data_type(), input.head_dim)
             .expect("Failed to create AttentionTwoPass2Kernel");
 
-    let partials_array = context.create_array_from(&[input.partials.len()], &input.partials);
-    let sums_array = context.create_array_from(&[input.sums.len()], &input.sums);
-    let maxs_array = context.create_array_from(&[input.maxs.len()], &input.maxs);
+    let partials = alloc_allocation_with_data::<B, f32>(&context, &input.partials);
+    let sums = alloc_allocation_with_data::<B, f32>(&context, &input.sums);
+    let maxs = alloc_allocation_with_data::<B, f32>(&context, &input.maxs);
 
     let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
-    let mut output = context.create_array_uninitialized(&[output_size], T::data_type()).into_allocation();
+    let mut output = alloc_allocation::<B, T>(&context, output_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        partials_array.allocation(),
-        sums_array.allocation(),
-        maxs_array.allocation(),
-        &mut output,
-        input.num_heads,
-        input.suffix_length,
-        &mut encoder,
-    );
+    kernel.encode(&partials, &sums, &maxs, &mut output, input.num_heads, input.suffix_length, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::tests::helpers::allocation_to_vec(&output)
+    allocation_to_vec(&output)
 }
 
 // --- First pass tests ---
