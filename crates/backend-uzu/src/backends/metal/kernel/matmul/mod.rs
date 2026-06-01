@@ -19,7 +19,12 @@ use crate::{
 pub struct MatmulMetalKernel {
     gemv: GemvDispatch,
     pub gemm: GemmKernel,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
 }
+
+const RESULTS_PER_SIMDGROUP: u32 = 4;
 
 const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
 static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
@@ -30,16 +35,33 @@ fn max_gemv_batch_threshold() -> u32 {
     })
 }
 
-fn gemv_eligible<TB: AsBufferRangeRef>(args: &MatmulArguments<Metal, TB>) -> bool {
+fn gemv_eligible<TB: AsBufferRangeRef>(
+    args: &MatmulArguments<Metal, TB>,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
+) -> bool {
     // GEMV does not implement output accumulation; leave it to GEMM.
     if args.d_transform.accumulate {
         return false;
     }
+    // GEMV fuses output RHT only for whole 32-wide Hadamard blocks, and applies
+    // bias before the transform; route partial-block or biased RHT to GEMM, which
+    // applies bias after RHT.
+    if args.d_transform.rht_factors.is_some() && (!args.n.is_multiple_of(32) || args.d_transform.bias.is_some()) {
+        return false;
+    }
     let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
     if is_quant {
-        args.m < 5 || args.n == 1
+        // Quant GEMV packs output rows in groups of 8; other widths go to GEMM.
+        args.n.is_multiple_of(8) && args.m < 5
     } else {
-        args.b_transpose
+        // No mixed-precision FP GEMV variant: F32 weights require F32 activations.
+        let mixed_precision = weights_data_type == DataType::F32
+            && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
+        !mixed_precision
+            && args.n >= RESULTS_PER_SIMDGROUP
+            && args.b_transpose
             && args.b_offset == 0
             && args.b_leading_dimension.is_none_or(|ld| ld == args.k)
             && args.m <= max_gemv_batch_threshold()
@@ -68,6 +90,9 @@ impl MatmulKernel for MatmulMetalKernel {
         Ok(Self {
             gemv,
             gemm,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
         })
     }
 
@@ -76,7 +101,7 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        if gemv_eligible(&arguments) {
+        if gemv_eligible(&arguments, self.weights_data_type, self.input_data_type, self.output_data_type) {
             self.gemv.encode(arguments, encoder).map_err(MetalError::from)
         } else {
             self.gemm.encode(arguments, encoder)
