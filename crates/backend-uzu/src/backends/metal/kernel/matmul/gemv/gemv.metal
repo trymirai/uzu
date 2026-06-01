@@ -100,7 +100,6 @@ CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || WeightT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
-CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || NUM_SIMDGROUPS == 2)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::FullPrecision || NUM_SIMDGROUPS == 8)
 KERNEL(Gemv)(
     const device uint32_t* weights,
@@ -244,7 +243,7 @@ KERNEL(Gemv)(
 
     uint k = 0;
     for (; k + block_size <= in_vec_size; k += block_size) {
-      U sum = load_vector<InputT, U, values_per_thread, BITS>(in, x_thread);
+      U sum = load_vector<InputT, U, values_per_thread>(in, x_thread);
 
       const device uint8_t* wl0 = ws;
       const device uint8_t* wl1 = ws + in_vec_size_w;
@@ -296,7 +295,7 @@ KERNEL(Gemv)(
                     static_cast<int>(values_per_thread))
               : 0;
       if (remaining > 0) {
-        U sum = load_vector_safe<InputT, U, values_per_thread, BITS>(
+        U sum = load_vector_safe<InputT, U, values_per_thread>(
             in,
             x_thread,
             remaining
