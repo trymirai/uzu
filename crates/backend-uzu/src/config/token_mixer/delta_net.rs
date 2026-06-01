@@ -17,21 +17,3 @@ pub struct DeltaNetConfig {
     pub value_head_dim: usize,
     pub kernel_size: usize,
 }
-
-impl DeltaNetConfig {
-    pub fn key_dim(&self) -> usize {
-        self.num_groups * self.head_dim
-    }
-
-    pub fn value_dim(&self) -> usize {
-        self.num_heads * self.value_head_dim
-    }
-
-    pub fn conv_dim(&self) -> usize {
-        self.key_dim() * 2 + self.value_dim()
-    }
-
-    pub fn total_proj_dim(&self) -> usize {
-        self.conv_dim() + self.value_dim() + self.num_heads + self.num_heads
-    }
-}

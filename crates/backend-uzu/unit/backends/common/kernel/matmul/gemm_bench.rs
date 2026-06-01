@@ -5,10 +5,10 @@ use half::bf16;
 use proc_macros::uzu_bench;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{
-            AllocationType, Backend, Context,
+            Backend,
             kernel::{
                 Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -17,6 +17,7 @@ use crate::{
         metal::{GemmDispatchPath, Metal},
     },
     tests::{
+        helpers::alloc_allocation,
         matmul::{bench_fp_gemm_shapes, iter_encode_loop},
         util::type_short_name,
     },
@@ -44,13 +45,9 @@ fn bench_gemm(c: &mut Criterion) {
 
         for shape in bench_fp_gemm_shapes() {
             let (m, k, n) = (shape.m, shape.k, shape.n);
-            let a = context
-                .create_allocation(m * k * std::mem::size_of::<bf16>(), AllocationType::Global)
-                .expect("a allocation");
-            let b_array = context.create_array_uninitialized(&[n, k], bf16::data_type());
-            let mut d = context
-                .create_allocation(m * n * std::mem::size_of::<bf16>(), AllocationType::Global)
-                .expect("d allocation");
+            let a = alloc_allocation::<Metal, bf16>(&context, m * k);
+            let b_weights = alloc_allocation::<Metal, bf16>(&context, n * k);
+            let mut d = alloc_allocation::<Metal, bf16>(&context, m * n);
 
             group.throughput(Throughput::Elements((2 * m * k * n) as u64));
             group.bench_function(BenchmarkId::new("BF16", shape.to_string()), |b| {
@@ -62,9 +59,8 @@ fn bench_gemm(c: &mut Criterion) {
                                 a: &a,
                                 a_offset: 0,
                                 b: MatmulB::FullPrecision {
-                                    b: b_array.allocation(),
+                                    b: &b_weights,
                                 },
-                                b_offset: 0,
                                 b_leading_dimension: None,
                                 b_transpose: true,
                                 d: &mut d,

@@ -22,11 +22,7 @@ use crate::openai::{
 #[derive(Debug, Clone)]
 pub struct State;
 
-impl StateTrait for State {
-    fn clone_boxed(&self) -> Box<dyn StateTrait> {
-        Box::new(self.clone())
-    }
-}
+impl StateTrait for State {}
 
 pub struct Instance {
     client: Arc<Client<OpenAIConfig>>,
@@ -69,5 +65,9 @@ impl InstanceTrait for Instance {
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, BackendError>> + Send + 'a>> {
         self.api_stream.stream(self.client.clone(), self.model_identifier.clone(), config, input.clone(), cancel)
+    }
+
+    fn peak_memory_usage(&self) -> Option<usize> {
+        None
     }
 }

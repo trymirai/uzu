@@ -6,13 +6,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -96,26 +99,26 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let y_size = bsz * h * dh;
     let ns_size = bsz * h * dh * n;
 
-    let x_array = context.create_array_from(&[input.x.len()], &input.x);
-    let dt_array = context.create_array_from(&[input.dt.len()], &input.dt);
-    let b_array = context.create_array_from(&[input.b.len()], &input.b);
-    let c_array = context.create_array_from(&[input.c.len()], &input.c);
-    let d_array = context.create_array_from(&[input.d.len()], &input.d);
-    let z_array = context.create_array_from(&[input.z.len()], &input.z);
+    let x = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let dt = alloc_allocation_with_data::<B, T>(&context, &input.dt);
+    let b = alloc_allocation_with_data::<B, T>(&context, &input.b);
+    let c = alloc_allocation_with_data::<B, T>(&context, &input.c);
+    let d = alloc_allocation_with_data::<B, T>(&context, &input.d);
+    let z = alloc_allocation_with_data::<B, T>(&context, &input.z);
 
-    let mut y = context.create_array_uninitialized(&[y_size], T::data_type()).into_allocation();
+    let mut y = alloc_allocation::<B, T>(&context, y_size);
 
     if input.state_in_place {
-        let mut next_state = context.create_array_from(&[ns_size], &input.state).into_allocation();
+        let mut next_state = alloc_allocation_with_data::<B, T>(&context, &input.state);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(
-            x_array.allocation(),
-            dt_array.allocation(),
-            b_array.allocation(),
-            c_array.allocation(),
-            d_array.allocation(),
-            z_array.allocation(),
+            &x,
+            &dt,
+            &b,
+            &c,
+            &d,
+            &z,
             None::<&Allocation<B>>,
             &mut y,
             &mut next_state,
@@ -133,22 +136,22 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: crate::tests::helpers::allocation_to_vec(&y),
-            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
+            y: allocation_to_vec(&y),
+            next_state: allocation_to_vec(&next_state),
         }
     } else {
-        let state_array = context.create_array_from(&[ns_size], &input.state);
-        let mut next_state = context.create_array_uninitialized(&[ns_size], T::data_type()).into_allocation();
+        let state = alloc_allocation_with_data::<B, T>(&context, &input.state);
+        let mut next_state = alloc_allocation::<B, T>(&context, ns_size);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(
-            x_array.allocation(),
-            dt_array.allocation(),
-            b_array.allocation(),
-            c_array.allocation(),
-            d_array.allocation(),
-            z_array.allocation(),
-            Some(state_array.allocation()),
+            &x,
+            &dt,
+            &b,
+            &c,
+            &d,
+            &z,
+            Some(&state),
             &mut y,
             &mut next_state,
             (h / g) as u32,
@@ -165,8 +168,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: crate::tests::helpers::allocation_to_vec(&y),
-            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
+            y: allocation_to_vec(&y),
+            next_state: allocation_to_vec(&next_state),
         }
     }
 }

@@ -3,11 +3,11 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use test_runner::{for_each_backend, for_each_non_cpu_backend};
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
         cpu::Cpu,
     },
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec},
 };
 
 fn gen_random_topk_ids(
@@ -38,19 +38,19 @@ fn get_output<B: Backend>(
         .expect("Failed to create MoeCountsOffsetsFusedKernel");
 
     let topk_ids_len = (t * k).max(1);
-    let topk_ids_array = if topk_ids.is_empty() {
-        context.create_array_uninitialized(&[topk_ids_len], i32::data_type())
+    let topk_ids_allocation = if topk_ids.is_empty() {
+        alloc_allocation::<B, i32>(&context, topk_ids_len)
     } else {
-        context.create_array_from(&[topk_ids_len], topk_ids)
+        alloc_allocation_with_data::<B, i32>(&context, topk_ids)
     };
-    let mut offsets = context.create_array_uninitialized(&[e + 1], u32::data_type()).into_allocation();
-    let mut sum_k = context.create_array_uninitialized(&[1], u32::data_type()).into_allocation();
+    let mut offsets = alloc_allocation::<B, u32>(&context, e + 1);
+    let mut sum_k = alloc_allocation::<B, u32>(&context, 1);
     let num_tiles = e.div_ceil(512).max(1);
-    let mut partials = context.create_array_uninitialized(&[num_tiles * 512], u32::data_type()).into_allocation();
+    let mut partials = alloc_allocation::<B, u32>(&context, num_tiles * 512);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        topk_ids_array.allocation(),
+        &topk_ids_allocation,
         &mut offsets,
         &mut sum_k,
         &mut partials,
@@ -61,9 +61,9 @@ fn get_output<B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let offsets = crate::tests::helpers::allocation_to_vec::<B, u32>(&offsets);
-    let sum_k = crate::tests::helpers::allocation_to_vec::<B, u32>(&sum_k)[0];
-    let partials = crate::tests::helpers::allocation_prefix_to_vec::<B, u32>(&partials, e);
+    let offsets = allocation_to_vec::<B, u32>(&offsets);
+    let sum_k = allocation_to_vec::<B, u32>(&sum_k)[0];
+    let partials = allocation_prefix_to_vec::<B, u32>(&partials, e);
 
     (offsets, sum_k, partials)
 }
