@@ -10,10 +10,8 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-template <typename T, typename U, int VALUES_PER_THREAD, int BITS>
+template <typename T, typename U, int VALUES_PER_THREAD>
 inline U load_vector(const device T* x, thread U* x_thread) {
-  static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
-
   using U4 = vec<U, 4>;
   U sum = 0;
   thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
@@ -25,10 +23,8 @@ inline U load_vector(const device T* x, thread U* x_thread) {
   return sum;
 }
 
-template <typename T, typename U, int VALUES_PER_THREAD, int BITS>
+template <typename T, typename U, int VALUES_PER_THREAD>
 inline U load_vector_safe(const device T* x, thread U* x_thread, int N) {
-  static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
-
   U sum = 0;
   for (int i = 0; i < VALUES_PER_THREAD; ++i) {
     x_thread[i] = 0;

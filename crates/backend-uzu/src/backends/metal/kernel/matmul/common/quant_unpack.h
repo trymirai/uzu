@@ -59,14 +59,14 @@ inline void dequantize(
 ) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  if (bits == 4) {
+  if constexpr (bits == 4) {
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
     for (int i = 0; i < (N / 2); i++) {
       w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
       w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
     }
-  } else if (bits == 8) {
+  } else if constexpr (bits == 8) {
     for (int i = 0; i < N; i++) {
       w_local[i] = scale * w[i] + bias;
     }
