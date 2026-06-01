@@ -23,7 +23,6 @@ use crate::{
         },
     },
     data_type::DataType,
-    forward_pass::model_shape::ModelShape,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -114,6 +113,8 @@ struct LogitSoftCap<B: Backend> {
     kernel: <B::Kernels as Kernels>::LogitSoftCapKernel,
 }
 
+// TODO: embedding lookup dtype (u64) should match sampling (u32)
+
 impl<B: Backend> Embedding<B> {
     pub fn new(
         context: &B::Context,
@@ -121,7 +122,7 @@ impl<B: Backend> Embedding<B> {
         model_dim: u32,
         config: &AnyEmbeddingConfig,
         parameter_tree: &ParameterTree<B>,
-        model_shape: &ModelShape,
+        data_type: DataType,
     ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
         let (tying, readout_input_hadamard_factors) = match config {
             AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
@@ -135,21 +136,15 @@ impl<B: Backend> Embedding<B> {
                     }) => {
                         let weights = embedding_tree
                             .leaf("weights")?
-                            .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
+                            .validate(&[vocab_size as usize, model_dim as usize], data_type)?
                             .read_allocation()?;
 
-                        let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(
-                            context,
-                            model_shape.data_type,
-                        )
-                        .map_err(EmbeddingError::BackendError)?;
-                        let readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
-                            context,
-                            model_shape.data_type,
-                            model_shape.data_type,
-                            model_shape.data_type,
-                        )
-                        .map_err(EmbeddingError::BackendError)?;
+                        let lookup =
+                            <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
+                                .map_err(EmbeddingError::BackendError)?;
+                        let readout_kernel =
+                            <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+                                .map_err(EmbeddingError::BackendError)?;
                         let readout = RefCell::new(readout_kernel);
 
                         (
@@ -168,7 +163,7 @@ impl<B: Backend> Embedding<B> {
                             &embedding_tree,
                             vocab_size as usize,
                             model_dim as usize,
-                            model_shape.data_type,
+                            data_type,
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
@@ -176,7 +171,7 @@ impl<B: Backend> Embedding<B> {
 
                         let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                             context,
-                            model_shape.data_type,
+                            data_type,
                             group_size as u32,
                             embedding_quantization_mode,
                             quantization_method,
@@ -185,7 +180,7 @@ impl<B: Backend> Embedding<B> {
                         .map_err(EmbeddingError::BackendError)?;
                         let (readout, readout_config) = quantized_readout(
                             context,
-                            model_shape.data_type,
+                            data_type,
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
@@ -219,7 +214,7 @@ impl<B: Backend> Embedding<B> {
                             &quantized_tree,
                             vocab_size as usize,
                             model_dim as usize,
-                            model_shape.data_type,
+                            data_type,
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
@@ -240,7 +235,7 @@ impl<B: Backend> Embedding<B> {
                         );
                         let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                             context,
-                            model_shape.data_type,
+                            data_type,
                             group_size as u32,
                             embedding_quantization_mode,
                             quantization_method,
@@ -249,7 +244,7 @@ impl<B: Backend> Embedding<B> {
                         .map_err(EmbeddingError::BackendError)?;
                         let (readout, readout_config) = quantized_readout(
                             context,
-                            model_shape.data_type,
+                            data_type,
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
@@ -290,14 +285,12 @@ impl<B: Backend> Embedding<B> {
                     }) => {
                         let weights = input_embedding_tree
                             .leaf("weights")?
-                            .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
+                            .validate(&[vocab_size as usize, model_dim as usize], data_type)?
                             .read_allocation()?;
 
-                        let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(
-                            context,
-                            model_shape.data_type,
-                        )
-                        .map_err(EmbeddingError::BackendError)?;
+                        let lookup =
+                            <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
+                                .map_err(EmbeddingError::BackendError)?;
 
                         UntiedEmbeddingLookupType::FullPrecision {
                             weights,
@@ -311,7 +304,7 @@ impl<B: Backend> Embedding<B> {
                             &input_embedding_tree,
                             vocab_size as usize,
                             model_dim as usize,
-                            model_shape.data_type,
+                            data_type,
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
@@ -319,7 +312,7 @@ impl<B: Backend> Embedding<B> {
 
                         let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
                             context,
-                            model_shape.data_type,
+                            data_type,
                             group_size as u32,
                             embedding_quantization_mode,
                             quantization_method,
@@ -349,15 +342,11 @@ impl<B: Backend> Embedding<B> {
                     }) => {
                         let weights = output_embedding_tree
                             .leaf("weights")?
-                            .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
+                            .validate(&[vocab_size as usize, model_dim as usize], data_type)?
                             .read_allocation()?;
-                        let readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
-                            context,
-                            model_shape.data_type,
-                            model_shape.data_type,
-                            model_shape.data_type,
-                        )
-                        .map_err(EmbeddingError::BackendError)?;
+                        let readout_kernel =
+                            <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+                                .map_err(EmbeddingError::BackendError)?;
                         let readout = RefCell::new(readout_kernel);
 
                         UntiedEmbeddingReadoutType::FullPrecision {
@@ -372,14 +361,14 @@ impl<B: Backend> Embedding<B> {
                             &output_embedding_tree,
                             vocab_size as usize,
                             model_dim as usize,
-                            model_shape.data_type,
+                            data_type,
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
                         )?;
                         let (readout, readout_config) = quantized_readout(
                             context,
-                            model_shape.data_type,
+                            data_type,
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
@@ -408,7 +397,7 @@ impl<B: Backend> Embedding<B> {
 
         let input_scale = config.input_scale().unwrap_or(1.0);
         let logit_soft_cap = if let Some(value) = *config.logit_soft_cap() {
-            let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(context, model_shape.data_type)
+            let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(context, data_type)
                 .map_err(EmbeddingError::BackendError)?;
             Some(LogitSoftCap {
                 value,
@@ -422,7 +411,7 @@ impl<B: Backend> Embedding<B> {
             Self {
                 tying,
                 input_scale,
-                data_type: model_shape.data_type,
+                data_type,
                 logit_soft_cap,
                 vocab_size,
                 model_dim,
@@ -555,7 +544,6 @@ impl<B: Backend> Embedding<B> {
                             b: MatmulB::FullPrecision {
                                 b: weights,
                             },
-                            b_offset: 0,
                             b_leading_dimension: None,
                             b_transpose: true,
                             d: &mut output_allocation,
@@ -623,7 +611,6 @@ impl<B: Backend> Embedding<B> {
                             a: input_allocation,
                             a_offset: 0,
                             b,
-                            b_offset: 0,
                             b_leading_dimension: None,
                             b_transpose: true,
                             d: &mut output_allocation,

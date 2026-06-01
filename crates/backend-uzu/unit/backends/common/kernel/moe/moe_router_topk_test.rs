@@ -7,13 +7,12 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Encoder, Kernels, kernel::MoeRouterTopKKernel},
         cpu::Cpu,
     },
-    data_type::DataType,
-    tests::helpers::create_context,
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec, create_context},
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -39,33 +38,33 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
 ) -> (Vec<i32>, Vec<T>) {
     let ctx = create_context::<B>();
 
-    let input_array = ctx.create_array_from(&[input.len()], input);
-    let weights_array = ctx.create_array_from(&[weights.len()], weights);
-    let bias_array = bias.map(|bias| ctx.create_array_from(&[bias.len()], bias));
-    let router_scale_array =
-        router_scale.map(|router_scale| ctx.create_array_from(&[router_scale.len()], router_scale));
-    let per_expert_scale_array =
-        per_expert_scale.map(|per_expert_scale| ctx.create_array_from(&[per_expert_scale.len()], per_expert_scale));
-    let mut ids = ctx.create_array_uninitialized(&[t * k], DataType::I32).into_allocation();
-    let mut probs = ctx.create_array_uninitialized(&[t * k], T::data_type()).into_allocation();
+    let input_allocation = alloc_allocation_with_data::<B, T>(&ctx, input);
+    let weights_allocation = alloc_allocation_with_data::<B, T>(&ctx, weights);
+    let bias_allocation = bias.map(|bias| alloc_allocation_with_data::<B, T>(&ctx, bias));
+    let router_scale_allocation =
+        router_scale.map(|router_scale| alloc_allocation_with_data::<B, T>(&ctx, router_scale));
+    let per_expert_scale_allocation =
+        per_expert_scale.map(|per_expert_scale| alloc_allocation_with_data::<B, T>(&ctx, per_expert_scale));
+    let mut ids = alloc_allocation::<B, i32>(&ctx, t * k);
+    let mut probs = alloc_allocation::<B, T>(&ctx, t * k);
 
     let kernel = <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(
         &ctx,
         T::data_type(),
-        bias_array.is_some(),
-        router_scale_array.is_some(),
-        per_expert_scale_array.is_some(),
+        bias_allocation.is_some(),
+        router_scale_allocation.is_some(),
+        per_expert_scale_allocation.is_some(),
         router_input_scale.is_some(),
         router_norm_epsilon.is_some(),
     )
     .expect("kernel");
     let mut encoder = Encoder::new(ctx.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_array.allocation(),
-        weights_array.allocation(),
-        bias_array.as_ref().map(|bias| bias.allocation()),
-        router_scale_array.as_ref().map(|router_scale| router_scale.allocation()),
-        per_expert_scale_array.as_ref().map(|per_expert_scale| per_expert_scale.allocation()),
+        &input_allocation,
+        &weights_allocation,
+        bias_allocation.as_ref(),
+        router_scale_allocation.as_ref(),
+        per_expert_scale_allocation.as_ref(),
         &mut ids,
         &mut probs,
         t as u32,
@@ -79,7 +78,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::tests::helpers::allocation_to_vec(&ids), crate::tests::helpers::allocation_to_vec(&probs))
+    (allocation_to_vec(&ids), allocation_to_vec(&probs))
 }
 
 fn run_router_topk_once<B: Backend, T: ArrayElement + Debug + Float>(

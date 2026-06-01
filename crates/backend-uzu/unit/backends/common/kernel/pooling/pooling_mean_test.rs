@@ -6,13 +6,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::PoolingMeanKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -47,24 +50,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::PoolingMeanKernel::new(&context, T::data_type())
         .expect("Failed to create PoolingMeanKernel");
 
-    let input_len = (input.batch_size * input.seq_len * input.hidden_dim) as usize;
     let output_len = (input.batch_size * input.hidden_dim) as usize;
 
-    let input_array = context.create_array_from(&[input_len], &input.input);
-    let mut output = context.create_array_uninitialized(&[output_len], T::data_type()).into_allocation();
+    let input_allocation = alloc_allocation_with_data::<B, T>(&context, &input.input);
+    let mut output = alloc_allocation::<B, T>(&context, output_len);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        input_array.allocation(),
-        &mut output,
-        input.seq_len,
-        input.hidden_dim,
-        input.batch_size,
-        &mut encoder,
-    );
+    kernel.encode(&input_allocation, &mut output, input.seq_len, input.hidden_dim, input.batch_size, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::tests::helpers::allocation_to_vec(&output)
+    allocation_to_vec(&output)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(

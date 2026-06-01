@@ -6,7 +6,7 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dDecodeKernel,
@@ -14,7 +14,10 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -103,22 +106,22 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let c_out_size = input.suffix_len as usize * input.proj_dim as usize;
     let state_size = input.num_channels as usize * input.state_stride as usize;
 
-    let x_array = context.create_array_from(&[input.x.len()], &input.x);
-    let w_array = context.create_array_from(&[input.w.len()], &input.w);
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
+    let x = alloc_allocation_with_data::<B, T>(&context, &input.x);
+    let w = alloc_allocation_with_data::<B, T>(&context, &input.w);
+    let b = input.b.as_ref().map(|b| alloc_allocation_with_data::<B, T>(&context, b));
 
-    let mut x_out = context.create_array_uninitialized(&[x_out_size], T::data_type()).into_allocation();
-    let mut b_out = context.create_array_uninitialized(&[b_out_size], T::data_type()).into_allocation();
-    let mut c_out = context.create_array_uninitialized(&[c_out_size], T::data_type()).into_allocation();
+    let mut x_out = alloc_allocation::<B, T>(&context, x_out_size);
+    let mut b_out = alloc_allocation::<B, T>(&context, b_out_size);
+    let mut c_out = alloc_allocation::<B, T>(&context, c_out_size);
 
     if input.state_in_place {
-        let mut next_state = context.create_array_from(&[state_size], &input.state).into_allocation();
+        let mut next_state = alloc_allocation_with_data::<B, T>(&context, &input.state);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(
-            x_array.allocation(),
-            w_array.allocation(),
-            b_array.as_ref().map(|bias| bias.allocation()),
+            &x,
+            &w,
+            b.as_ref(),
             None::<&Allocation<B>>,
             &mut x_out,
             &mut b_out,
@@ -137,21 +140,21 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            x_out: crate::tests::helpers::allocation_to_vec(&x_out),
-            b_out: crate::tests::helpers::allocation_to_vec(&b_out),
-            c_out: crate::tests::helpers::allocation_to_vec(&c_out),
-            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
+            x_out: allocation_to_vec(&x_out),
+            b_out: allocation_to_vec(&b_out),
+            c_out: allocation_to_vec(&c_out),
+            next_state: allocation_to_vec(&next_state),
         }
     } else {
-        let state_array = context.create_array_from(&[state_size], &input.state);
-        let mut next_state = context.create_array_uninitialized(&[state_size], T::data_type()).into_allocation();
+        let state = alloc_allocation_with_data::<B, T>(&context, &input.state);
+        let mut next_state = alloc_allocation::<B, T>(&context, state_size);
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(
-            x_array.allocation(),
-            w_array.allocation(),
-            b_array.as_ref().map(|bias| bias.allocation()),
-            Some(state_array.allocation()),
+            &x,
+            &w,
+            b.as_ref(),
+            Some(&state),
             &mut x_out,
             &mut b_out,
             &mut c_out,
@@ -169,10 +172,10 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            x_out: crate::tests::helpers::allocation_to_vec(&x_out),
-            b_out: crate::tests::helpers::allocation_to_vec(&b_out),
-            c_out: crate::tests::helpers::allocation_to_vec(&c_out),
-            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
+            x_out: allocation_to_vec(&x_out),
+            b_out: allocation_to_vec(&b_out),
+            c_out: allocation_to_vec(&c_out),
+            next_state: allocation_to_vec(&next_state),
         }
     }
 }
@@ -277,11 +280,6 @@ fn test_gelu_activation<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected, "gelu_activation");
 }
 
-fn test_tanh_activation<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(4, 8, 4, 2, 1, true, true, ActivationType::TANH);
-    test_internal(&input, &expected, "tanh_activation");
-}
-
 // f32
 #[uzu_test]
 fn test_basic_f32() {
@@ -306,11 +304,6 @@ fn test_identity_activation_f32() {
 #[uzu_test]
 fn test_gelu_activation_f32() {
     test_gelu_activation::<f32>();
-}
-
-#[uzu_test]
-fn test_tanh_activation_f32() {
-    test_tanh_activation::<f32>();
 }
 
 // f16

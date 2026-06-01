@@ -6,7 +6,7 @@ use proc_macros::kernel;
 
 use crate::{
     array::ArrayElement,
-    language_model::gumbel::{gumbel_float, revidx},
+    encodable_block::sampling::{gumbel_float, revidx},
 };
 
 // NOTE: top_k + top_p combination is not exactly matching lalamo ("parallel" here, should be top-k then top-p)
@@ -26,7 +26,6 @@ pub fn unified_sampling<T: ArrayElement + Float>(
     #[specialize] is_stochastic: bool,
     #[specialize] has_bitmask: bool,
     #[specialize] has_temperature: bool,
-    #[specialize] temperature_after_filters: bool,
     #[specialize] has_top_k: bool,
     #[specialize] has_top_p: bool,
     #[specialize] has_min_p: bool,
@@ -53,7 +52,7 @@ pub fn unified_sampling<T: ArrayElement + Float>(
             }
         }
 
-        if has_temperature && !temperature_after_filters {
+        if has_temperature {
             let recip_temperature = 1.0 / temperature.unwrap();
             for logit in logits.iter_mut() {
                 *logit *= recip_temperature;
@@ -78,13 +77,6 @@ pub fn unified_sampling<T: ArrayElement + Float>(
                 }
                 logits[index] = logit;
                 top_p_mass += (logit - logits_max).exp() / logits_norm;
-            }
-        }
-
-        if has_temperature && temperature_after_filters {
-            let recip_temperature = 1.0 / temperature.unwrap();
-            for logit in logits.iter_mut() {
-                *logit *= recip_temperature;
             }
         }
 

@@ -80,11 +80,6 @@ inline T activate_softplus(T x) {
 }
 
 template <typename T>
-inline T activate_tanh(T x) {
-  return static_cast<T>(metal::tanh(float(x)));
-}
-
-template <typename T>
 inline T activate(T x, ActivationType type) {
   switch (type) {
   case ActivationType::SILU:
@@ -93,8 +88,6 @@ inline T activate(T x, ActivationType type) {
     return activate_gelu(x);
   case ActivationType::GELUExact:
     return activate_gelu_exact(x);
-  case ActivationType::TANH:
-    return activate_tanh(x);
   case ActivationType::IDENTITY:
     return x;
   case ActivationType::SOFTPLUS:

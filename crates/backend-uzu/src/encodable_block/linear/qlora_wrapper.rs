@@ -14,10 +14,7 @@ use crate::{
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
     data_type::DataType,
-    encodable_block::{
-        Linear,
-        linear::{LinearMatmul, LinearMatmulError},
-    },
+    encodable_block::linear::{Linear, LinearMatmul, LinearMatmulError},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -184,7 +181,6 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_down,
                     },
-                    b_offset: 0,
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut intermediate,
@@ -224,7 +220,6 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
                     b: MatmulB::FullPrecision {
                         b: &self.adapter_up,
                     },
-                    b_offset: 0,
                     b_leading_dimension: None,
                     b_transpose: true,
                     d: &mut output,

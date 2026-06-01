@@ -1,18 +1,17 @@
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{rc::Rc, time::Duration};
 
 use metal::{
-    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
-    MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferStatus,
+    MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
 };
-use objc2::{Message, rc::Retained, runtime::ProtocolObject};
+use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::{Metal, buffer::BufferDowncastExt};
 use crate::backends::{
     common::{
         AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
         CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
     },
-    metal::{MetalContext, error::MetalError},
+    metal::{Metal, MetalContext, error::MetalError},
 };
 
 pub struct MetalCommandBuffer;
@@ -25,14 +24,6 @@ impl CommandBuffer for MetalCommandBuffer {
     type Executable = MetalCommandBufferExecutable;
     type Pending = MetalCommandBufferPending;
     type Completed = MetalCommandBufferCompleted;
-}
-
-fn command_buffer_result(command_buffer: &ProtocolObject<dyn MTLCommandBuffer>) -> Result<(), MetalError> {
-    match (command_buffer.status(), command_buffer.error()) {
-        (MTLCommandBufferStatus::Completed, None) => Ok(()),
-        (status, Some(nserror)) => Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}: {nserror:?}"))),
-        (status, None) => Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}"))),
-    }
 }
 
 pub struct MetalCommandBufferInitial {
@@ -135,9 +126,9 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert_eq!(src_range.len(), dst_range.len());
 
         self.ensure_blit().copy_buffer_to_buffer(
-            src.buffer().downcast(),
+            (src.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
             src_range.start,
-            dst.buffer().downcast(),
+            (dst.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
             dst_range.start,
             src_range.len(),
         );
@@ -152,7 +143,11 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         assert!(range.end > range.start);
         assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
 
-        self.ensure_blit().fill_buffer_range_value(dst.buffer().downcast(), range, value);
+        self.ensure_blit().fill_buffer_range_value(
+            (dst.buffer() as &dyn Buffer<Backend = Metal>).downcast(),
+            range,
+            value,
+        );
     }
 
     fn encode_barrier(
@@ -160,21 +155,6 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
-    }
-
-    fn add_completion_handler(
-        &mut self,
-        handler: impl FnOnce(Result<&MetalCommandBufferCompleted, MetalError>) + Send + 'static,
-    ) {
-        let cell = Cell::new(Some(handler));
-        self.command_buffer.add_completed_handler(&MTLCommandBufferHandler::new(move |command_buffer| {
-            let cbuf_ref = MetalCommandBufferCompleted {
-                command_buffer: command_buffer.retain(),
-            };
-            cell.take().expect("completion handler called more than once")(
-                command_buffer_result(command_buffer).map(|_| &cbuf_ref),
-            )
-        }));
     }
 
     fn end_encoding(mut self) -> <Self::CommandBuffer as CommandBuffer>::Executable {
@@ -229,7 +209,15 @@ impl CommandBufferPending for MetalCommandBufferPending {
     fn wait_until_completed(self) -> Result<MetalCommandBufferCompleted, MetalError> {
         self.command_buffer.wait_until_completed();
 
-        command_buffer_result(&self.command_buffer).map(|_| MetalCommandBufferCompleted {
+        match (self.command_buffer.status(), self.command_buffer.error()) {
+            (MTLCommandBufferStatus::Completed, None) => (),
+            (status, Some(nserror)) => {
+                return Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}: {nserror:?}")));
+            },
+            (status, None) => return Err(MetalError::CommandBufferExecutionFailed(format!("{status:?}"))),
+        }
+
+        Ok(MetalCommandBufferCompleted {
             command_buffer: self.command_buffer,
         })
     }
