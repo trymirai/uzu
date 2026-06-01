@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use super::safetensors_metadata::{HeaderLoadingError, read_metadata as read_st_metadata};
 use crate::{
-    array::{Array, ArrayElement, size_for_shape},
+    array::{ArrayElement, size_for_shape},
     backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, DenseBuffer},
     data_type::DataType,
     utils::{fs::file_read_exact_at, strict_serde::DeserializeStrictOwned},
@@ -179,12 +179,6 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
             self.metadata.offset as u64,
         )?;
         Ok(allocation)
-    }
-
-    #[allow(unused)]
-    pub fn read_array(&self) -> Result<Array<B>, ParameterLoaderError<B>> {
-        let allocation = self.read_allocation()?;
-        Ok(unsafe { Array::from_allocation(allocation, 0, self.metadata.shape.as_ref(), self.metadata.data_type) })
     }
 }
 

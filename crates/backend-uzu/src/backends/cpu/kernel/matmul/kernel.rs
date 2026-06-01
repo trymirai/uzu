@@ -2,10 +2,10 @@ use super::reference::{WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
-            AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
+            AsBufferRangeMut, AsBufferRangeRef, Backend, Encoder, Kernels,
             gpu_types::HadamardTransformOrder,
             kernel::{
-                HadamardTransformKernel,
+                BufferArg, HadamardTransformKernel,
                 matmul::{MatmulArguments, MatmulError, MatmulKernel},
             },
         },
@@ -49,9 +49,9 @@ impl MatmulKernel for MatmulCpuKernel {
         })
     }
 
-    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Cpu>>>(
+    fn encode<'a, 'b, 'd, TB: BufferArg<'b, Cpu>>(
         &mut self,
-        arguments: MatmulArguments<Cpu, TB>,
+        arguments: MatmulArguments<'a, 'b, 'd, Cpu, TB>,
         encoder: &mut Encoder<Cpu>,
     ) -> Result<(), CpuError> {
         let output_scale = arguments.d_transform.ab_scale;
@@ -63,7 +63,6 @@ impl MatmulKernel for MatmulCpuKernel {
             a,
             a_offset,
             b,
-            b_offset,
             b_leading_dimension,
             b_transpose,
             d,
@@ -92,8 +91,7 @@ impl MatmulKernel for MatmulCpuKernel {
             (&*d_buffer_range.buffer().get()).as_ptr().wrapping_byte_add(d_buffer_range.range().start) as *mut u8
         });
 
-        let weight_data =
-            WeightData::from_b(b, b_offset, b_leading_dimension, b_transpose, weights_data_type, k_u, n_u);
+        let weight_data = WeightData::from_b(b, b_leading_dimension, b_transpose, k_u, n_u);
 
         let command_buffer = encoder.as_command_buffer_mut();
         command_buffer.push_command(move || {

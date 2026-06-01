@@ -8,5 +8,5 @@ namespace uzu::kv_cache_update {
 typedef struct {
   uint32_t source;
   uint32_t destination;
-} Swap;
+} Copy;
 } // namespace uzu::kv_cache_update

@@ -228,11 +228,6 @@ fn test_gelu_activation<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected, "gelu_activation");
 }
 
-fn test_tanh_activation<T: ArrayElement + Float + Debug + Display>() {
-    let (input, expected) = get_test_data::<T>(4, 8, 4, 2, 2, true, ActivationType::TANH);
-    test_internal(&input, &expected, "tanh_activation");
-}
-
 // f32
 #[uzu_test]
 fn test_basic_f32() {
@@ -267,11 +262,6 @@ fn test_identity_activation_f32() {
 #[uzu_test]
 fn test_gelu_activation_f32() {
     test_gelu_activation::<f32>();
-}
-
-#[uzu_test]
-fn test_tanh_activation_f32() {
-    test_tanh_activation::<f32>();
 }
 
 // f16

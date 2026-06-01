@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use backend_uzu::session::{
     Session,
     config::{DecodingConfig, RunConfig},
-    parameter::{SamplingMethod, SamplingPolicy, SamplingProcessingOrder, SamplingSeed},
+    parameter::{SamplingMethod, SamplingPolicy, SamplingSeed},
     types::{Input, Message, Output},
 };
 use proc_macros::uzu_test;
@@ -51,7 +51,6 @@ fn stochastic(temperature: f32) -> SamplingPolicy {
             min_p: None,
             repetition_penalty: None,       // TODO
             suffix_repetition_length: None, // TODO
-            processing_order: SamplingProcessingOrder::TemperatureThenFilters,
         },
     }
 }

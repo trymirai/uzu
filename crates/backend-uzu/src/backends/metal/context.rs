@@ -22,15 +22,12 @@ use super::{
     kernel,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
 };
-use crate::{
-    backends::{
-        common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
-        metal::{
-            command_buffer::MetalCommandBufferInitial,
-            sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
-        },
+use crate::backends::{
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
+    metal::{
+        command_buffer::MetalCommandBufferInitial,
+        sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
     },
-    utils::model_size::ModelSize,
 };
 
 pub struct MetalContext {
@@ -161,22 +158,6 @@ impl Context for MetalContext {
             #[cfg(test)]
             timeline_shared_event,
         }))
-    }
-
-    fn recommended_async_batch_size(
-        &self,
-        model_path: &Path,
-    ) -> Result<usize, MetalError> {
-        let cores = self.gpu_core_count;
-        let model_size = ModelSize::from_path(model_path)?;
-        Ok(match (model_size, cores) {
-            (ModelSize::Large, c) if c > 20 => 32,
-            (ModelSize::Large, c) if c > 10 => 16,
-            (ModelSize::Large, _) => 8,
-            (ModelSize::Small, c) if c > 20 => 256,
-            (ModelSize::Small, c) if c > 10 => 128,
-            (ModelSize::Small, _) => 64,
-        })
     }
 
     fn create_buffer(

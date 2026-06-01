@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use proc_macros::uzu_test;
 
 use crate::{
-    language_model::rng::PRng,
+    engine::language_model::prng::PRng,
     speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
     trie::{TrieCreationConfig, TrieNode},
 };
