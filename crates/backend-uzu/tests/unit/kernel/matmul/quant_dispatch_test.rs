@@ -253,7 +253,15 @@ fn parity_bf16_gemv_quant_rht() {
     let context = MetalContext::new().expect("Metal context");
     // n % 32 == 0 so the output RHT covers whole 32-element blocks; m = 1 routes to GEMV.
     let input = QuantInput::<bf16>::new(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias, 0);
-    let rht: Vec<i32> = (0..input.n as usize).map(|i| if i % 2 == 0 { 1 } else { -1 }).collect();
+    let rht: Vec<i32> = (0..input.n as usize)
+        .map(|i| {
+            if i % 2 == 0 {
+                1
+            } else {
+                -1
+            }
+        })
+        .collect();
 
     // CPU reference applies the RHT through the CPU matmul kernel.
     let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");

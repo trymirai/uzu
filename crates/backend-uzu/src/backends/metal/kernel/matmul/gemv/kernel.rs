@@ -159,7 +159,14 @@ impl GemvDispatch {
         let (num_simdgroups, k_split) = if is_quant {
             // Output RHT needs a full 32-row threadgroup (8 simdgroups x 4 rows)
             // so the simdgroup-wide Hadamard covers one 32-element block.
-            (if rht_factors.is_some() { 8u32 } else { 2u32 }, 1u32)
+            (
+                if rht_factors.is_some() {
+                    8u32
+                } else {
+                    2u32
+                },
+                1u32,
+            )
         } else if rht_factors.is_some() {
             (8u32, 1u32)
         } else {
