@@ -248,6 +248,23 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
     assert_parity::<bf16>("gemv_qmv_scale_bias", &reference, &actual, 0.05, 0.4);
 }
 
+#[rstest]
+#[case::gs64_4bit(1, 96, 64, 64, 4, QuantizationMethod::ScaleBias)]
+#[case::gs64_4bit_zp(2, 96, 64, 64, 4, QuantizationMethod::ScaleZeroPoint)]
+#[case::gs128_8bit(1, 192, 64, 128, 8, QuantizationMethod::ScaleBias)]
+fn parity_gemv_partial_group_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] gs: u32,
+    #[case] bits: u32,
+    #[case] method: QuantizationMethod,
+) {
+    // k is not a multiple of group_size, so the per-row scale/zp stride must use
+    // ceil(k / group_size) groups.
+    run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.6);
+}
+
 #[uzu_test]
 fn parity_bf16_gemv_quant_rht() {
     let context = MetalContext::new().expect("Metal context");

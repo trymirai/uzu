@@ -132,3 +132,22 @@ fn bias_parity_bf16() {
         }
     }
 }
+
+#[test]
+fn gemv_fp_partial_output_block_bf16() {
+    use crate::common::matmul::Shape;
+    let context = MetalContext::new().expect("Metal context");
+    let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulKernel");
+    // Small m routes to GEMV; n that is not a multiple of the 32-row threadgroup
+    // block exercises the tail-row clamp (must not read weight rows past B).
+    let shapes = [Shape::new(1, 128, 33), Shape::new(2, 256, 65), Shape::new(4, 384, 100)];
+    for shape in shapes {
+        check_case::<bf16>(&context, &mut kernel, None, Case::new(shape), 1.0);
+    }
+}
