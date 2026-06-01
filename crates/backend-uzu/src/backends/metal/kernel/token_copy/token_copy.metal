@@ -31,7 +31,3 @@ PUBLIC KERNEL(TokenCopySampled)(
     *reinterpret_cast<device RingParams*>(context_ring) = ring;
   }
 }
-
-/// Copies a single sampled token (u32) to an indexed results buffer (u32).
-/// Used in async pipeline to store result for callback access.
-PUBLIC KERNEL(TokenCopyToResults)(device const uint32_t* src, device uint32_t* dst) { dst[0] = src[0]; }

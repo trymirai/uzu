@@ -103,7 +103,6 @@ metal = [
     "dep:metal",
 ]
 grammar = ["dep:xgrammar"]
-tracing = []
 
 [lints]
 workspace = true

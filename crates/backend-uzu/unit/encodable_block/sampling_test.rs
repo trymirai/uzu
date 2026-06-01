@@ -11,8 +11,7 @@ use crate::{
     backends::common::{AllocationType, Backend, Context, Encoder},
     data_type::DataType,
     dispatch_dtype,
-    encodable_block::Sampling,
-    session::parameter::{SamplingMethod, SamplingProcessingOrder},
+    encodable_block::sampling::{Sampling, SamplingMethod, SamplingProcessingOrder},
     tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
 };
 
@@ -36,7 +35,7 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
     seeds: Option<&[u64]>,
     bitmask: Option<&[u32]>,
     vocab_size: usize,
-    method: SamplingMethod,
+    method: &SamplingMethod,
     batch_size: usize,
 ) -> Result<SamplingTestResults, TestCaseError> {
     let sampling = Sampling::new(T::data_type(), vocab_size);
@@ -177,7 +176,7 @@ fn test_sampling_prop() {
                 seeds.as_ref().map(Box::as_ref),
                 bitmask.as_ref().map(Box::as_ref),
                 sampling_case.vocab_size,
-                sampling_case.method,
+                &sampling_case.method,
                 sampling_case.batch_size,
             ))
             .compare_results()?

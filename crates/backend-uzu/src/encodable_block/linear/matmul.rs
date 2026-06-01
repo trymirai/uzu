@@ -2,7 +2,6 @@ use std::cell::RefCell;
 
 use thiserror::Error;
 
-use super::Linear;
 use crate::{
     array::size_for_shape,
     backends::common::{
@@ -15,6 +14,7 @@ use crate::{
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
     data_type::DataType,
+    encodable_block::linear::Linear,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -275,7 +275,6 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 a: &input,
                 a_offset: 0,
                 b,
-                b_offset: 0,
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,

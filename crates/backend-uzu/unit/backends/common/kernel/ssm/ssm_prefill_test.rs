@@ -7,13 +7,7 @@ use test_runner::for_each_non_cpu_backend;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},
-    backends::{
-        common::{
-            Backend, Context, Encoder, Kernels,
-            kernel::{SSDPrefillKernel, SSDPrefillSequentialKernel},
-        },
-        cpu::Cpu,
-    },
+    backends::common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::SSDPrefillKernel},
     data_type::DataType,
     tests::assert::assert_eq_float,
 };
@@ -40,11 +34,6 @@ struct Input<T: ArrayElement + Float> {
 struct Output<T: ArrayElement + Float> {
     y: Vec<T>,
     state: Vec<T>,
-}
-
-enum KernelType {
-    Prefill,
-    Sequential,
 }
 
 fn get_input<T: ArrayElement + Float>(
@@ -94,10 +83,7 @@ fn get_input<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<B: Backend, T: ArrayElement + Float>(
-    input: &Input<T>,
-    kernel_type: &KernelType,
-) -> Output<T> {
+fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
     let total_x = input.suffix_len * input.num_heads * input.head_dim;
@@ -117,57 +103,28 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     let state_strides: [u32; 3] = input.state_strides.map(|s| s as u32);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    match kernel_type {
-        KernelType::Prefill => {
-            let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(&context, T::data_type())
-                .expect("Failed to create SSDPrefillKernel");
-            kernel.encode(
-                x_array.allocation(),
-                dt_array.allocation(),
-                b_array.allocation(),
-                c_array.allocation(),
-                d_array.allocation(),
-                z_array.allocation(),
-                &mut state,
-                &mut y,
-                input.suffix_len as u32,
-                input.group_size,
-                input.state_dim as u32,
-                &x_strides,
-                &dt_strides,
-                &cb_strides,
-                &state_strides,
-                input.num_heads as u32,
-                input.head_dim as u32,
-                &mut encoder,
-            );
-        },
-        KernelType::Sequential => {
-            let kernel =
-                <<B as Backend>::Kernels as Kernels>::SSDPrefillSequentialKernel::new(&context, T::data_type())
-                    .expect("Failed to create SSDPrefillSequentialKernel");
-            kernel.encode(
-                x_array.allocation(),
-                dt_array.allocation(),
-                b_array.allocation(),
-                c_array.allocation(),
-                d_array.allocation(),
-                z_array.allocation(),
-                &mut state,
-                &mut y,
-                input.suffix_len as u32,
-                input.group_size,
-                input.state_dim as u32,
-                &x_strides,
-                &dt_strides,
-                &cb_strides,
-                &state_strides,
-                input.num_heads as u32,
-                input.head_dim as u32,
-                &mut encoder,
-            );
-        },
-    };
+    let kernel = <<B as Backend>::Kernels as Kernels>::SSDPrefillKernel::new(&context, T::data_type())
+        .expect("Failed to create SSDPrefillKernel");
+    kernel.encode(
+        x_array.allocation(),
+        dt_array.allocation(),
+        b_array.allocation(),
+        c_array.allocation(),
+        d_array.allocation(),
+        z_array.allocation(),
+        &mut state,
+        &mut y,
+        input.suffix_len as u32,
+        input.group_size,
+        input.state_dim as u32,
+        &x_strides,
+        &dt_strides,
+        &cb_strides,
+        &state_strides,
+        input.num_heads as u32,
+        input.head_dim as u32,
+        &mut encoder,
+    );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
@@ -176,10 +133,48 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
     }
 }
 
+fn reference_output<T: ArrayElement + Float>(input: &Input<T>) -> Output<T> {
+    let safe_group = input.group_size.max(1) as usize;
+    let mut state = input.state.to_vec();
+    let mut y = vec![T::zero(); input.suffix_len * input.num_heads * input.head_dim];
+
+    for h in 0..input.num_heads {
+        let group_idx = h / safe_group;
+        for dh in 0..input.head_dim {
+            let state_base = h * input.state_strides[0] + dh * input.state_strides[1];
+            for token in 0..input.suffix_len {
+                let x_idx = token * input.x_strides[0] + h * input.x_strides[1] + dh * input.x_strides[2];
+                let dt_idx = token * input.dt_strides[0] + h * input.dt_strides[1];
+                let cb_base = token * input.cb_strides[0] + group_idx * input.cb_strides[1];
+
+                let x_val = input.x[x_idx];
+                let dt_val = ActivationType::SOFTPLUS.activate(input.dt[dt_idx]);
+                let decay_val = (-dt_val).exp();
+
+                let mut acc = input.d[h] * x_val;
+                for s in 0..input.state_dim {
+                    let state_idx = state_base + s * input.state_strides[2];
+                    let cb_idx = cb_base + s * input.cb_strides[2];
+                    let new_state = decay_val * state[state_idx] + x_val * input.b[cb_idx];
+                    state[state_idx] = new_state;
+                    acc = acc + new_state * input.c[cb_idx];
+                }
+
+                let gate = ActivationType::SILU.activate(input.z[x_idx]);
+                y[x_idx] = acc * gate;
+            }
+        }
+    }
+
+    Output {
+        y,
+        state,
+    }
+}
+
 fn test_internal<T: ArrayElement + Float + Debug + Display>(
     input: &Input<T>,
     expected: &Output<T>,
-    kernel_type: &KernelType,
     label: &str,
 ) {
     let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
@@ -189,7 +184,7 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
     };
 
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<B, T>(input, kernel_type);
+        let output = get_output::<B, T>(input);
         let backend_name = std::any::type_name::<B>();
         let type_name = std::any::type_name::<T>();
 
@@ -197,13 +192,13 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
             &expected.y,
             &output.y,
             eps,
-            &format!("SSDPrefillSequential y {backend_name} {label} (type={type_name})"),
+            &format!("SSDPrefill y {backend_name} {label} (type={type_name})"),
         );
         assert_eq_float::<T>(
             &expected.state,
             &output.state,
             eps,
-            &format!("SSDPrefillSequential state {backend_name} {label} (type={type_name})"),
+            &format!("SSDPrefill state {backend_name} {label} (type={type_name})"),
         );
     });
 }
@@ -211,7 +206,6 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(
 // --- test shapes ---
 
 fn test_shape(
-    kernel_type: &KernelType,
     suffix_len: usize,
     num_heads: usize,
     head_dim: usize,
@@ -220,7 +214,6 @@ fn test_shape(
     label: &str,
 ) {
     fn run<T: ArrayElement + Float + Debug + Display>(
-        kernel_type: &KernelType,
         suffix_len: usize,
         num_heads: usize,
         head_dim: usize,
@@ -229,62 +222,36 @@ fn test_shape(
         label: &str,
     ) {
         let input = get_input::<T>(suffix_len, num_heads, head_dim, state_dim, group_size);
-        let expected = get_output::<Cpu, T>(&input, &KernelType::Sequential);
-        test_internal(&input, &expected, kernel_type, label);
+        let expected = reference_output(&input);
+        test_internal(&input, &expected, label);
     }
-    run::<f32>(kernel_type, suffix_len, num_heads, head_dim, state_dim, group_size, label);
-    run::<f16>(kernel_type, suffix_len, num_heads, head_dim, state_dim, group_size, label);
-    run::<bf16>(kernel_type, suffix_len, num_heads, head_dim, state_dim, group_size, label);
-}
-
-// --- Sequential ---
-#[uzu_test]
-fn test_sequential_basic() {
-    test_shape(&KernelType::Sequential, 512, 32, 64, 64, 1, "sequential_basic");
-}
-
-#[uzu_test]
-fn test_sequential_small() {
-    test_shape(&KernelType::Sequential, 4, 4, 4, 8, 1, "sequential_small");
-}
-
-#[uzu_test]
-fn test_sequential_minimal() {
-    test_shape(&KernelType::Sequential, 1, 1, 1, 1, 1, "sequential_minimal");
-}
-
-#[uzu_test]
-fn test_sequential_multi_group() {
-    test_shape(&KernelType::Sequential, 8, 8, 4, 16, 4, "sequential_multi_group");
-}
-
-#[uzu_test]
-fn test_sequential_group_per_head() {
-    test_shape(&KernelType::Sequential, 8, 4, 4, 8, 1, "sequential_group_per_head");
+    run::<f32>(suffix_len, num_heads, head_dim, state_dim, group_size, label);
+    run::<f16>(suffix_len, num_heads, head_dim, state_dim, group_size, label);
+    run::<bf16>(suffix_len, num_heads, head_dim, state_dim, group_size, label);
 }
 
 // --- Prefill ---
 #[uzu_test]
 fn test_prefill_basic() {
-    test_shape(&KernelType::Prefill, 512, 32, 64, 64, 1, "prefill_basic");
+    test_shape(512, 32, 64, 64, 1, "prefill_basic");
 }
 
 #[uzu_test]
 fn test_prefill_small() {
-    test_shape(&KernelType::Prefill, 4, 4, 4, 8, 1, "prefill_small");
+    test_shape(4, 4, 4, 8, 1, "prefill_small");
 }
 
 #[uzu_test]
 fn test_prefill_minimal() {
-    test_shape(&KernelType::Prefill, 1, 1, 1, 1, 1, "prefill_minimal");
+    test_shape(1, 1, 1, 1, 1, "prefill_minimal");
 }
 
 #[uzu_test]
 fn test_prefill_multi_group() {
-    test_shape(&KernelType::Prefill, 8, 8, 4, 16, 4, "prefill_multi_group");
+    test_shape(8, 8, 4, 16, 4, "prefill_multi_group");
 }
 
 #[uzu_test]
 fn test_prefill_group_per_head() {
-    test_shape(&KernelType::Prefill, 8, 4, 4, 8, 1, "prefill_group_per_head");
+    test_shape(8, 4, 4, 8, 1, "prefill_group_per_head");
 }

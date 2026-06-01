@@ -135,9 +135,8 @@ fn pipeline_output<B: Backend>(
                     a: &qa,
                     a_offset: g as usize * GQA as usize * SUFFIX as usize * q_row,
                     b: MatmulB::FullPrecision {
-                        b: &ka,
+                        b: (&ka, g as usize * head_stride * dt),
                     },
-                    b_offset: g as usize * head_stride * dt,
                     b_leading_dimension: Some(HEAD_DIM),
                     b_transpose: true,
                     d: &mut grp_s,
@@ -176,9 +175,8 @@ fn pipeline_output<B: Backend>(
                     a: &scores,
                     a_offset: g as usize * GQA as usize * SUFFIX as usize * s_row,
                     b: MatmulB::FullPrecision {
-                        b: &va,
+                        b: (&va, g as usize * head_stride * dt),
                     },
-                    b_offset: g as usize * head_stride * dt,
                     b_leading_dimension: Some(HEAD_DIM),
                     b_transpose: false,
                     d: &mut grp_o,

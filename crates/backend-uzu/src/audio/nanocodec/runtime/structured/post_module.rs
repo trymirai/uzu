@@ -302,8 +302,6 @@ impl StructuredAudioCodecGraph {
                         sampling_start: 0,
                         sampling_length: batch_dim,
                         cache_access: None,
-                        #[cfg(feature = "tracing")]
-                        trace: None,
                     },
                     main,
                     &mut shortcut,

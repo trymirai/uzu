@@ -1,7 +1,8 @@
 use thiserror::Error;
 
 use crate::{
-    language_model::{grammar::CompiledGrammar, gumbel::speculator_sample, rng::PRng},
+    encodable_block::sampling::speculator_sample,
+    engine::language_model::{grammar::CompiledGrammar, prng::PRng},
     speculators::speculator::Speculator,
 };
 

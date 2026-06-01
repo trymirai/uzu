@@ -1,7 +1,6 @@
 pub mod dispatch_dtype;
-pub mod env_utils;
 pub mod fs;
-pub mod memory;
+pub mod maybe_mut;
 #[cfg(metal_backend)]
 pub mod model_size;
 pub mod pointers;

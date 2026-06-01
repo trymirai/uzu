@@ -13,16 +13,3 @@ pub mod short_conv;
     short_conv::ShortConvConfig
 )]
 pub struct TokenMixerConfig;
-
-impl AnyTokenMixerConfig {
-    pub fn as_attention(&self) -> Option<&attention::AttentionConfig> {
-        match self {
-            AnyTokenMixerConfig::AttentionConfig(config) => Some(config),
-            _ => None,
-        }
-    }
-
-    pub fn sliding_window_size(&self) -> Option<usize> {
-        self.as_attention().and_then(|config| config.sliding_window_size)
-    }
-}

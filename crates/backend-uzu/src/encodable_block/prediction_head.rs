@@ -1,68 +1,111 @@
-//! Prediction head encodable for classification output.
+use thiserror::Error;
 
 use crate::{
-    array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         gpu_types::ActivationType,
         kernel::{ActivationKernel, Kernels},
     },
-    config::activation::AnyActivation,
+    config::classifier::PredictionHeadConfig,
     data_type::DataType,
-    encodable_block::{Normalization, linear::Linear},
+    encodable_block::{
+        linear::{Linear, LinearBlockError},
+        normalization::{Normalization, NormalizationNewError, PostLayerScalar},
+    },
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
-pub struct ClassifierPredictionHead<B: Backend> {
-    dense: Box<dyn Linear<B>>,
-    activation_kernel: <B::Kernels as Kernels>::ActivationKernel,
-    activation: AnyActivation,
-    activation_data_type: DataType,
-    norm: Normalization<B>,
-    readout: Box<dyn Linear<B>>,
-    hidden_dim: usize,
+#[derive(Debug, Error)]
+pub enum PredictionHeadError<B: Backend> {
+    #[error("Backend error: {0}")]
+    Backend(#[source] B::Error),
+    #[error("Parameter loading error: {0}")]
+    Parameter(#[from] ParameterLoaderError<B>),
+    #[error("Linear error: {0}")]
+    Linear(#[from] LinearBlockError<B>),
+    #[error("Normalization error: {0}")]
+    Normalization(#[from] NormalizationNewError<B>),
 }
 
-impl<B: Backend> ClassifierPredictionHead<B> {
+pub struct PredictionHead<B: Backend> {
+    hidden_dim: usize,
+    activation: ActivationType,
+    data_type: DataType,
+    dense_projection: Box<dyn Linear<B>>,
+    activation_kernel: <B::Kernels as Kernels>::ActivationKernel,
+    normalization: Normalization<B>,
+    readout: Box<dyn Linear<B>>,
+}
+
+impl<B: Backend> PredictionHead<B> {
     pub fn new(
-        context: &B::Context,
-        dense: Box<dyn Linear<B>>,
-        activation: AnyActivation,
-        activation_data_type: DataType,
-        norm: Normalization<B>,
-        readout: Box<dyn Linear<B>>,
         hidden_dim: usize,
-    ) -> Result<Self, B::Error> {
-        let activation_kernel = <B::Kernels as Kernels>::ActivationKernel::new(context, activation_data_type, false)?;
-        Ok(Self {
-            dense,
-            activation_kernel,
-            activation,
-            activation_data_type,
-            norm,
-            readout,
+        num_labels: usize,
+        data_type: DataType,
+        config: &PredictionHeadConfig,
+        parameter_tree: &ParameterTree<B>,
+        context: &B::Context,
+    ) -> Result<Self, PredictionHeadError<B>> {
+        let dense_projection = <dyn Linear<B>>::new(
             hidden_dim,
+            [hidden_dim],
+            config.use_dense_bias,
+            context,
+            data_type,
+            &parameter_tree.subtree("dense")?,
+        )?;
+
+        let activation = config.activation.act_type();
+        let activation_kernel = <B::Kernels as Kernels>::ActivationKernel::new(context, data_type, true)
+            .map_err(PredictionHeadError::Backend)?;
+
+        let normalization = Normalization::new(
+            hidden_dim,
+            None,
+            false,
+            false,
+            PostLayerScalar::None,
+            data_type,
+            &config.normalization_config,
+            &parameter_tree.subtree("norm")?,
+            context,
+        )?;
+
+        let readout = <dyn Linear<B>>::new(
+            hidden_dim,
+            [num_labels],
+            true,
+            context,
+            data_type,
+            &parameter_tree.subtree("readout")?,
+        )?;
+
+        Ok(Self {
+            hidden_dim,
+            activation,
+            data_type,
+            dense_projection,
+            activation_kernel,
+            normalization,
+            readout,
         })
     }
 
     pub fn encode(
         &self,
         input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let batch_dim = 1;
-        let dense = self.dense.encode(input, batch_dim, encoder)?;
-        if self.activation.act_type() == ActivationType::IDENTITY {
-            panic!("Identity activation is not supported for kernel");
-        }
-        let mut activated = encoder.allocate_scratch(size_for_shape(&[self.hidden_dim], self.activation_data_type))?;
+        let mut hidden = self.dense_projection.encode(input, batch_dim, encoder)?;
         self.activation_kernel.encode(
-            Some(&dense),
-            &mut activated,
+            None::<&Allocation<B>>,
+            &mut hidden,
             self.hidden_dim as u32,
-            self.activation.act_type(),
+            self.activation,
             encoder,
         );
-        let normalized = self.norm.encode(&activated, 0, batch_dim, encoder)?;
+        let normalized = self.normalization.encode(&hidden, 0, batch_dim, None, encoder)?;
         self.readout.encode(normalized, batch_dim, encoder)
     }
 }
