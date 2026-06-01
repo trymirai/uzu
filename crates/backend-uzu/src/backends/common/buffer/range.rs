@@ -97,20 +97,6 @@ pub trait AsBufferRangeMut: AsBufferRangeRef {
     fn as_buffer_range_mut(&mut self) -> BufferRangeMut<'_, Self::Buffer>;
 }
 
-impl<B: Buffer> AsBufferRangeRef for B {
-    type Buffer = B;
-
-    fn as_buffer_range_ref(&self) -> BufferRangeRef<'_, B> {
-        BufferRangeRef::new(self, 0..self.size())
-    }
-}
-
-impl<B: Buffer> AsBufferRangeMut for B {
-    fn as_buffer_range_mut(&mut self) -> BufferRangeMut<'_, B> {
-        BufferRangeMut::new_exclusive(self, 0..self.size())
-    }
-}
-
 fn subrange(
     buffer_range: Range<usize>,
     subrange: Range<usize>,

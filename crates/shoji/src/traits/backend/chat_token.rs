@@ -1,5 +1,7 @@
 use std::pin::Pin;
 
+use tokenizers::Tokenizer;
+
 use crate::{
     traits::backend::{Error, Instance as InstanceTrait},
     types::session::chat::{ChatConfig, ChatReplyConfig},
@@ -9,19 +11,18 @@ pub type StreamInput = Vec<u64>;
 pub type StreamOutput = u64;
 
 pub trait Backend: Send + Sync {
-    fn instance(
-        &self,
+    fn instance<'a>(
+        &'a self,
         reference: String,
         config: ChatConfig,
-    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Instance>, Error>> + Send + '_>>;
+        tokenizer: &'a Tokenizer,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Instance>, Error>> + Send + 'a>>;
 }
 
 pub trait Instance:
     InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
 {
-}
+    fn max_context_length(&self) -> Option<usize>;
 
-impl<T> Instance for T where
-    T: InstanceTrait<StreamConfig = ChatReplyConfig, StreamInput = StreamInput, StreamOutput = StreamOutput>
-{
+    fn stop_token_ids(&self) -> Option<Box<[u64]>>;
 }

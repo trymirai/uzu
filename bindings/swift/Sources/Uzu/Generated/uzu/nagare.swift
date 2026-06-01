@@ -1250,6 +1250,8 @@ public enum ChatSessionError: Swift.Error, Equatable, Hashable, Codable, Foundat
     
     case Backend(message: String
     )
+    case Loading(message: String
+    )
     case UnsupportedModel
     case UnableToPerformOperationInCurrentState
     case NoResponse
@@ -1285,9 +1287,12 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
         case 1: return .Backend(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 2: return .UnsupportedModel
-        case 3: return .UnableToPerformOperationInCurrentState
-        case 4: return .NoResponse
+        case 2: return .Loading(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .UnsupportedModel
+        case 4: return .UnableToPerformOperationInCurrentState
+        case 5: return .NoResponse
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1305,16 +1310,21 @@ public struct FfiConverterTypeChatSessionError: FfiConverterRustBuffer {
             FfiConverterString.write(message, into: &buf)
             
         
-        case .UnsupportedModel:
+        case let .Loading(message):
             writeInt(&buf, Int32(2))
+            FfiConverterString.write(message, into: &buf)
+            
         
-        
-        case .UnableToPerformOperationInCurrentState:
+        case .UnsupportedModel:
             writeInt(&buf, Int32(3))
         
         
-        case .NoResponse:
+        case .UnableToPerformOperationInCurrentState:
             writeInt(&buf, Int32(4))
+        
+        
+        case .NoResponse:
+            writeInt(&buf, Int32(5))
         
         }
     }

@@ -4,12 +4,15 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BuildTreeOutKernel},
         cpu::Cpu,
     },
-    tests::{assert::assert_eq_float, helpers::allocation_to_vec},
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -81,20 +84,14 @@ fn run_build_tree_out<B: Backend, T: ArrayElement + Float>(
         use_h0,
     )
     .expect("BuildTreeOutKernel");
-    let q = context.as_ref().create_array_from(&[inputs.q.len()], &inputs.q).into_allocation();
-    let prefix = context.as_ref().create_array_from(&[inputs.prefix.len()], &inputs.prefix).into_allocation();
-    let qkd = context.as_ref().create_array_from(&[inputs.qkd.len()], &inputs.qkd).into_allocation();
-    let u = context.as_ref().create_array_from(&[inputs.u.len()], &inputs.u).into_allocation();
-    let h0 = use_h0.then(|| context.as_ref().create_array_from(&[inputs.h0.len()], &inputs.h0).into_allocation());
-    let h0_indices = use_h0
-        .then(|| context.as_ref().create_array_from(&[inputs.h0_indices.len()], &inputs.h0_indices).into_allocation());
-    let mut o = context
-        .as_ref()
-        .create_array_uninitialized(
-            &[shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim],
-            T::data_type(),
-        )
-        .into_allocation();
+    let q = alloc_allocation_with_data::<B, T>(&context, &inputs.q);
+    let prefix = alloc_allocation_with_data::<B, f32>(&context, &inputs.prefix);
+    let qkd = alloc_allocation_with_data::<B, f32>(&context, &inputs.qkd);
+    let u = alloc_allocation_with_data::<B, T>(&context, &inputs.u);
+    let h0 = use_h0.then(|| alloc_allocation_with_data::<B, f32>(&context, &inputs.h0));
+    let h0_indices = use_h0.then(|| alloc_allocation_with_data::<B, i32>(&context, &inputs.h0_indices));
+    let mut o =
+        alloc_allocation::<B, T>(&context, shape.batch_size * shape.tree_size * shape.value_heads * shape.head_v_dim);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(

@@ -130,7 +130,7 @@ impl<B: Backend, T: ArrayElement + Float> QuantBuffers<B, T> {
 pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
     buffers: &'a mut QuantBuffers<B, T>,
     input: &QuantInput<T>,
-) -> MatmulArguments<'a, B> {
+) -> MatmulArguments<'a, 'a, 'a, B> {
     let b_variant = match input.quant_method {
         QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
             b: &buffers.w,
@@ -157,7 +157,6 @@ pub fn quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
         a: &buffers.x,
         a_offset: 0,
         b: b_variant,
-        b_offset: 0,
         b_leading_dimension: None,
         b_transpose: true,
         d: &mut buffers.y,

@@ -8,8 +8,10 @@ mod state;
 pub use config::Config;
 pub use context::{Context, TokenizerLocation};
 pub use error::Error;
+pub use hanashi::renderer::strftime_now;
 use shoji::types::{basic::TokenId, session::chat::ChatMessage};
 pub use state::{State, SynchronizationError, SynchronizationResult};
+use tokenizers::Tokenizer;
 
 use crate::{
     Encoding as EncodingTrait,
@@ -74,5 +76,9 @@ impl EncodingTrait for Encoding {
         value: Self::Output,
     ) -> Result<(), Self::Error> {
         dispatch!(self, decode, value)
+    }
+
+    fn tokenizer(&self) -> Option<&Tokenizer> {
+        dispatch!(infallible self, tokenizer)
     }
 }

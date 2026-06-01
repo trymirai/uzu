@@ -57,4 +57,8 @@ impl Session {
             })
             .boxed()
     }
+
+    pub fn peak_memory_usage(&self) -> Option<usize> {
+        self.instance.peak_memory_usage()
+    }
 }

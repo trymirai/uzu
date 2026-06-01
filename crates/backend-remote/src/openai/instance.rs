@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::{any::Any, pin::Pin, sync::Arc};
 
 use async_openai::{Client, config::OpenAIConfig};
 use futures::Stream;
@@ -25,6 +25,10 @@ pub struct State;
 impl StateTrait for State {
     fn clone_boxed(&self) -> Box<dyn StateTrait> {
         Box::new(self.clone())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -69,5 +73,9 @@ impl InstanceTrait for Instance {
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, BackendError>> + Send + 'a>> {
         self.api_stream.stream(self.client.clone(), self.model_identifier.clone(), config, input.clone(), cancel)
+    }
+
+    fn peak_memory_usage(&self) -> Option<usize> {
+        None
     }
 }

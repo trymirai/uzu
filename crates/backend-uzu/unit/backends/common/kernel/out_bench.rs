@@ -8,12 +8,15 @@ use num_traits::Float;
 use proc_macros::uzu_bench;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Allocation, Backend, Context, Kernels, kernel::BuildTreeOutKernel},
         metal::Metal,
     },
-    tests::matmul::iter_encode_loop_named,
+    tests::{
+        helpers::{alloc_allocation, alloc_allocation_with_data},
+        matmul::iter_encode_loop_named,
+    },
 };
 
 const QK_HEADS: usize = 16;
@@ -62,13 +65,13 @@ fn make_buffers<T: ArrayElement + Float>(
     let h0_indices = (0..batch_size as i32).collect::<Vec<_>>();
 
     TreeOutBuffers {
-        q: context.create_array_from(&[q.len()], &q).into_allocation(),
-        prefix: context.create_array_from(&[prefix.len()], &prefix).into_allocation(),
-        qkd: context.create_array_from(&[qkd.len()], &qkd).into_allocation(),
-        u: context.create_array_from(&[u.len()], &u).into_allocation(),
-        h0: context.create_array_from(&[h0.len()], &h0).into_allocation(),
-        h0_indices: context.create_array_from(&[h0_indices.len()], &h0_indices).into_allocation(),
-        o: context.create_array_uninitialized(&[uv_len], T::data_type()).into_allocation(),
+        q: alloc_allocation_with_data::<Metal, T>(context, &q),
+        prefix: alloc_allocation_with_data::<Metal, f32>(context, &prefix),
+        qkd: alloc_allocation_with_data::<Metal, f32>(context, &qkd),
+        u: alloc_allocation_with_data::<Metal, T>(context, &u),
+        h0: alloc_allocation_with_data::<Metal, f32>(context, &h0),
+        h0_indices: alloc_allocation_with_data::<Metal, i32>(context, &h0_indices),
+        o: alloc_allocation::<Metal, T>(context, uv_len),
     }
 }
 

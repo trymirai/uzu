@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
             model_path,
             task_path,
             output_path,
-        }) => bench::run_bench(model_path, task_path, output_path)?,
+        }) => bench::run_bench(model_path, task_path, output_path).await?,
         Some(Commands::Server {
             model,
             port,

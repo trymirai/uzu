@@ -3,7 +3,7 @@ pub mod chat_token;
 pub mod classification;
 pub mod text_to_speech;
 
-use std::pin::Pin;
+use std::{any::Any, pin::Pin};
 
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
@@ -45,8 +45,12 @@ pub trait Instance: Send + Sync {
         config: Self::StreamConfig,
         cancel_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<Self::StreamOutput, Error>> + Send + 'a>>;
+
+    fn peak_memory_usage(&self) -> Option<usize>;
 }
 
 pub trait State: Send + Sync + 'static {
     fn clone_boxed(&self) -> Box<dyn State>;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }

@@ -4,7 +4,7 @@ mod functions;
 
 pub use config::{JinjaFunction, RendererConfig};
 pub use error::Error;
-use functions::{raise_exception, strftime_now, to_json};
+pub use functions::{raise_exception, strftime_now, to_json};
 use indexmap::IndexMap;
 use minijinja::Environment;
 use minijinja_contrib::pycompat::unknown_method_callback;
@@ -12,7 +12,7 @@ use shoji::types::{basic::Token, session::chat::ChatMessage};
 
 use crate::chat::hanashi::messages::rendered::Message as RenderedMessage;
 
-static TEMPLATE_NAME: &str = "chat_template";
+pub static TEMPLATE_NAME: &str = "chat_template";
 
 pub struct Renderer {
     config: RendererConfig,
