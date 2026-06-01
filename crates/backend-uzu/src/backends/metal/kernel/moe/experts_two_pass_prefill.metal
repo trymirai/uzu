@@ -9,19 +9,6 @@ static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
 
 static inline uint linear_tid(uint3 tid, uint3 tpg) { return tid.z * (tpg.x * tpg.y) + tid.y * tpg.x + tid.x; }
 
-template <typename T>
-inline void store_vec4(device T* dst, ulong base, float4 vals) {
-  dst[base + 0] = T(vals.x);
-  dst[base + 1] = T(vals.y);
-  dst[base + 2] = T(vals.z);
-  dst[base + 3] = T(vals.w);
-}
-
-template <>
-inline void store_vec4<float>(device float* dst, ulong base, float4 vals) {
-  *reinterpret_cast<device float4*>(dst + base) = vals;
-}
-
 // ------------------------ Pass A (X @ W13 → hidden) ------------------------
 // Tile config (tuned for A-series; matches your prior defaults)
 constant uint PASSA_BM = 16;

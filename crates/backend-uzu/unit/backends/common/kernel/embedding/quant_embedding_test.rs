@@ -6,7 +6,7 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
@@ -16,7 +16,10 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -207,34 +210,21 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     )
     .expect("Failed to create QuantizedEmbeddingLookupKernel");
 
-    let packing_divisor = input.quant_mode.packing_divisor();
-    let weights_stride = input.model_dim as usize / packing_divisor;
-    let num_groups = (input.model_dim as usize).div_ceil(input.group_size as usize);
-
-    let token_ids_array = context.create_array_from(&[input.batch_size as usize], &input.token_ids);
-    let weights_array = context.create_array_from(&[input.vocab_size as usize, weights_stride], &input.weights);
-    let scales_array = context.create_array_from(&[input.vocab_size as usize, num_groups], &input.scales);
-    let zero_point_stride = match input.quant_mode {
-        QuantizationMode::U4 => num_groups.div_ceil(2),
-        QuantizationMode::I8 | QuantizationMode::U8 => num_groups,
-    };
-    let zero_points_array = input
-        .zero_points
-        .as_ref()
-        .map(|zero_points| context.create_array_from(&[input.vocab_size as usize, zero_point_stride], zero_points));
-    let biases_array =
-        input.biases.as_ref().map(|biases| context.create_array_from(&[input.vocab_size as usize, num_groups], biases));
-    let mut output = context
-        .create_array_uninitialized(&[input.batch_size as usize, input.model_dim as usize], T::data_type())
-        .into_allocation();
+    let token_ids_allocation = alloc_allocation_with_data::<B, u64>(&context, &input.token_ids);
+    let weights_allocation = alloc_allocation_with_data::<B, u8>(&context, &input.weights);
+    let scales_allocation = alloc_allocation_with_data::<B, T>(&context, &input.scales);
+    let zero_points_allocation =
+        input.zero_points.as_ref().map(|zero_points| alloc_allocation_with_data::<B, u8>(&context, zero_points));
+    let biases_allocation = input.biases.as_ref().map(|biases| alloc_allocation_with_data::<B, T>(&context, biases));
+    let mut output = alloc_allocation::<B, T>(&context, input.batch_size as usize * input.model_dim as usize);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        token_ids_array.allocation(),
-        weights_array.allocation(),
-        scales_array.allocation(),
-        zero_points_array.as_ref().map(|array| array.allocation()),
-        biases_array.as_ref().map(|array| array.allocation()),
+        &token_ids_allocation,
+        &weights_allocation,
+        &scales_allocation,
+        zero_points_allocation.as_ref(),
+        biases_allocation.as_ref(),
         &mut output,
         None::<&Allocation<B>>,
         input.batch_size,
@@ -245,7 +235,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::tests::helpers::allocation_to_vec(&output)
+    allocation_to_vec(&output)
 }
 
 fn test_zero_point_group16<T: ArrayElement + Float + Debug + Display>() {

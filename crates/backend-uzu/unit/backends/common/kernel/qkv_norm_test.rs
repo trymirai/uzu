@@ -6,13 +6,16 @@ use proc_macros::uzu_test;
 use test_runner::for_each_non_cpu_backend;
 
 use crate::{
-    array::{ArrayContextExt, ArrayElement},
+    array::ArrayElement,
     backends::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::QKVNormKernel},
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT: ArrayElement + Float> {
@@ -129,20 +132,13 @@ fn get_output<
     )
     .expect("Failed to create QKVNormKernel");
 
-    let qkv_len = input.qkv.len();
-    let mut qkv = context.create_array_from(&[qkv_len], &input.qkv).into_allocation();
-    let scales_array = context.create_array_from(&[input.scales.len()], &input.scales);
-
-    let scales = if input.scale_free {
-        None
-    } else {
-        Some(scales_array.allocation())
-    };
+    let mut qkv = alloc_allocation_with_data::<B, OutputT>(&context, &input.qkv);
+    let scales = (!input.scale_free).then(|| alloc_allocation_with_data::<B, ScaleT>(&context, &input.scales));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
         None::<&Allocation<B>>,
-        scales,
+        scales.as_ref(),
         &mut qkv,
         input.batch_size,
         input.num_q_heads,
@@ -157,7 +153,7 @@ fn get_output<
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    crate::tests::helpers::allocation_to_vec(&qkv)
+    allocation_to_vec(&qkv)
 }
 
 fn test_internal<
