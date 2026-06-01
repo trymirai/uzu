@@ -40,7 +40,7 @@ struct QuantRowOffsets {
           zps[3 * zp_stride]
       );
       uchar4 zp_nibbles;
-      if (BITS == 4) {
+      if constexpr (BITS == 4) {
         const uint8_t shift = high_nibble ? 4u : 0u;
         zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
       } else {
@@ -128,8 +128,6 @@ KERNEL(Gemv)(
     const uint simd_group THREADS(NUM_SIMDGROUPS)
 ) {
   const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
-  const bool is_accumulate =
-      output_transform.contains(GemmDTransform::ACCUMULATE);
   const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
   const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
@@ -382,9 +380,6 @@ KERNEL(Gemv)(
         value = static_cast<U>(ab_scale) * value;
       }
       const uint global_row = out_row + row;
-      if (is_accumulate && global_row < out_vec_size) {
-        value += static_cast<U>(output[row]);
-      }
       if (is_bias && global_row < out_vec_size) {
         value += static_cast<U>(output_bias[global_row]);
       }

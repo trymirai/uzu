@@ -31,6 +31,10 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 fn gemv_eligible<TB: AsBufferRangeRef>(args: &MatmulArguments<Metal, TB>) -> bool {
+    // GEMV does not implement output accumulation; leave it to GEMM.
+    if args.d_transform.accumulate {
+        return false;
+    }
     let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
     if is_quant {
         args.m < 5 || args.n == 1
