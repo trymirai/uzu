@@ -4,10 +4,7 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
-            gpu_types::{
-                QuantizationMode,
-                gemm::{GemmBPrologueKind, GemmDTransform},
-            },
+            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
         metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
@@ -110,11 +107,98 @@ impl GemvDispatch {
         arguments: MatmulArguments<'a, Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MatmulError<Metal>> {
-        match arguments.b {
+        let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });
+        let path = if is_quant {
+            QUANT_PATH
+        } else {
+            FP_PATH
+        };
+        let bad_leading_dimension = if is_quant {
+            arguments.b_leading_dimension.is_some()
+        } else {
+            arguments.b_leading_dimension.is_some_and(|ld| ld != arguments.k)
+        };
+        if !arguments.b_transpose || arguments.b_offset != 0 || bad_leading_dimension {
+            return Err(MatmulError::UnsupportedLayout {
+                path,
+            });
+        }
+        if is_quant && !arguments.n.is_multiple_of(8) {
+            return Err(MatmulError::UnsupportedLayout {
+                path: QUANT_PATH,
+            });
+        }
+
+        let ab_scale = arguments.d_transform.ab_scale;
+        let output_bias = arguments.d_transform.bias;
+        let rht_factors = arguments.d_transform.rht_factors;
+        let output_transform = arguments.d_transform.mask();
+        let b_prologue = arguments.b.b_prologue();
+        let bits = arguments.b.bits_per_b().unwrap_or(0);
+        let group_size = arguments.b.group_size().unwrap_or(0);
+
+        let MatmulArguments {
+            a,
+            a_offset,
+            b,
+            d,
+            m,
+            n,
+            k,
+            ..
+        } = arguments;
+
+        let block_size = if !is_quant {
+            FP_BLOCK
+        } else if bits == 4 {
+            512
+        } else {
+            256
+        };
+        let input_aligned = k % block_size == 0;
+        let (num_simdgroups, k_split) = if is_quant {
+            (2u32, 1u32)
+        } else if rht_factors.is_some() {
+            (8u32, 1u32)
+        } else {
+            (8u32, fp_k_split(n, k, input_aligned))
+        };
+        let group_count_x = n.div_ceil(rows_per_threadgroup(k_split, num_simdgroups));
+
+        let key = GemvKey {
+            b_prologue,
+            group_size,
+            bits,
+            output_transform,
+            input_aligned,
+            k_split,
+            num_simdgroups,
+        };
+        let context = encoder.context();
+        let pipeline = self.get_or_create(context, key)?;
+
+        match b {
             MatmulB::FullPrecision {
-                ..
-            } => self.encode_fp(arguments, encoder),
-            MatmulB::ScaleBiasDequant {
+                b: weights,
+            } => {
+                pipeline.encode(
+                    weights,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    (a, a_offset),
+                    &mut *d,
+                    output_bias,
+                    rht_factors,
+                    k,
+                    n,
+                    m,
+                    ab_scale,
+                    group_count_x,
+                    encoder,
+                );
+            },
+            quant_b @ (MatmulB::ScaleBiasDequant {
                 ..
             }
             | MatmulB::ScaleZeroPointDequant {
@@ -122,179 +206,47 @@ impl GemvDispatch {
             }
             | MatmulB::ScaleSymmetricDequant {
                 ..
-            } => self.encode_quant(arguments, encoder),
+            }) => {
+                let (weights, scales, zero_points, biases) = match quant_b {
+                    MatmulB::ScaleBiasDequant {
+                        b: w,
+                        scales,
+                        biases,
+                        ..
+                    } => (w, scales, None, Some(biases)),
+                    MatmulB::ScaleZeroPointDequant {
+                        b: w,
+                        scales,
+                        zero_points,
+                        ..
+                    } => (w, scales, Some(zero_points), None),
+                    MatmulB::ScaleSymmetricDequant {
+                        b: w,
+                        scales,
+                        ..
+                    } => (w, scales, None, None),
+                    MatmulB::FullPrecision {
+                        ..
+                    } => unreachable!(),
+                };
+                pipeline.encode(
+                    weights,
+                    Some(scales),
+                    zero_points,
+                    biases,
+                    (a, a_offset),
+                    &mut *d,
+                    output_bias,
+                    rht_factors,
+                    k,
+                    n,
+                    m,
+                    ab_scale,
+                    group_count_x,
+                    encoder,
+                );
+            },
         }
-    }
-
-    fn encode_fp<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
-        &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
-        let output_mask = arguments.d_transform.mask();
-        let ab_scale = arguments.d_transform.ab_scale;
-        let output_bias = arguments.d_transform.bias;
-        let rht_factors = arguments.d_transform.rht_factors;
-
-        let MatmulArguments {
-            a,
-            a_offset,
-            b,
-            b_offset,
-            b_leading_dimension,
-            b_transpose,
-            d,
-            m,
-            n,
-            k,
-            ..
-        } = arguments;
-        let weights = match b {
-            MatmulB::FullPrecision {
-                b: w,
-            } => w,
-            _ => unreachable!(),
-        };
-        if !b_transpose || b_offset != 0 || b_leading_dimension.is_some_and(|ld| ld != k) {
-            return Err(MatmulError::UnsupportedLayout {
-                path: FP_PATH,
-            });
-        }
-        let context = encoder.context();
-
-        let input_aligned = k % FP_BLOCK == 0;
-        let k_split = if rht_factors.is_some() {
-            1
-        } else {
-            fp_k_split(n, k, input_aligned)
-        };
-        let num_simdgroups = 8u32;
-        let group_count_x = n.div_ceil(rows_per_threadgroup(k_split, num_simdgroups));
-        let key = GemvKey {
-            b_prologue: GemmBPrologueKind::FullPrecision,
-            group_size: 0,
-            bits: 0,
-            output_transform: output_mask,
-            input_aligned,
-            k_split,
-            num_simdgroups,
-        };
-        self.get_or_create(context, key)?.encode(
-            weights,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            None::<&Allocation<Metal>>,
-            (a, a_offset),
-            &mut *d,
-            output_bias,
-            rht_factors,
-            k,
-            n,
-            m,
-            ab_scale,
-            group_count_x,
-            encoder,
-        );
-
-        Ok(())
-    }
-
-    fn encode_quant<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
-        &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
-        if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
-            return Err(MatmulError::UnsupportedLayout {
-                path: QUANT_PATH,
-            });
-        }
-
-        let output_mask = arguments.d_transform.mask();
-        let ab_scale = arguments.d_transform.ab_scale;
-        let output_bias = arguments.d_transform.bias;
-        let hadamard_factors = arguments.d_transform.rht_factors;
-
-        let MatmulArguments {
-            a,
-            a_offset,
-            b,
-            d,
-            m,
-            n,
-            k,
-            ..
-        } = arguments;
-        let (weights, scales, zero_points, biases, b_prologue, mode, group_size) = match b {
-            MatmulB::ScaleBiasDequant {
-                b: w,
-                scales,
-                biases,
-                mode,
-                group_size,
-            } => (w, scales, None, Some(biases), GemmBPrologueKind::ScaleBiasDequant, mode, group_size),
-            MatmulB::ScaleZeroPointDequant {
-                b: w,
-                scales,
-                zero_points,
-                mode,
-                group_size,
-            } => (w, scales, Some(zero_points), None, GemmBPrologueKind::ScaleZeroPointDequant, mode, group_size),
-            MatmulB::ScaleSymmetricDequant {
-                b: w,
-                scales,
-                mode,
-                group_size,
-            } => (w, scales, None, None, GemmBPrologueKind::ScaleSymmetricDequant, mode, group_size),
-            MatmulB::FullPrecision {
-                ..
-            } => unreachable!(),
-        };
-
-        let bits = match mode {
-            QuantizationMode::U4 => 4u32,
-            QuantizationMode::I8 | QuantizationMode::U8 => 8u32,
-        };
-        if n % 8 != 0 {
-            return Err(MatmulError::UnsupportedLayout {
-                path: QUANT_PATH,
-            });
-        }
-
-        let block_size = if bits == 4 {
-            512
-        } else {
-            256
-        };
-        let input_aligned = k % block_size == 0;
-        let num_simdgroups = 2u32;
-        let group_count_x = n.div_ceil(rows_per_threadgroup(1, num_simdgroups));
-        let key = GemvKey {
-            b_prologue,
-            group_size,
-            bits,
-            output_transform: output_mask,
-            input_aligned,
-            k_split: 1,
-            num_simdgroups,
-        };
-        let context = encoder.context();
-        self.get_or_create(context, key)?.encode(
-            weights,
-            Some(scales),
-            zero_points,
-            biases,
-            (a, a_offset),
-            &mut *d,
-            output_bias,
-            hadamard_factors,
-            k,
-            n,
-            m,
-            ab_scale,
-            group_count_x,
-            encoder,
-        );
 
         Ok(())
     }
