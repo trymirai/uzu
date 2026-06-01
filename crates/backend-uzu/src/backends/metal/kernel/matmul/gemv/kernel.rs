@@ -49,9 +49,7 @@ fn fp_k_split(
         1
     } else if k >= 16 * n || n <= 512 {
         8
-    } else if n <= 1024 {
-        4
-    } else if k >= 3072 {
+    } else if n <= 1024 || k >= 3072 {
         4
     } else {
         2
