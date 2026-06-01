@@ -8,17 +8,11 @@
 using namespace metal;
 
 #define UPDATE_THREADS 512
-// Max supported head_v_dim (value_head_dim). The threadgroup holds one o_i per
-// dv for the cross-dv RMSNorm, so this bounds the shared array.
+// Bounds shared_o, which holds one o_i per dv for the cross-dv RMSNorm.
 #define UPDATE_MAX_HEAD_V_DIM 128
 
-// Task 3 (+ Task 1 dtype split): one SIMD group per output dim `dv`. 32 lanes
-// cover Dk (`lane + SIMD*i`) so each state row read/write is a fully-coalesced
-// 128B line and the Dk reduction is one `simd_sum`. 512/32 = 16 simd groups per
-// threadgroup, each looping over head_v_dim/16 dv rows; all dv stay in one
-// threadgroup so RMSNorm is a single threadgroup reduction (no extra dispatch).
-// Activations (in_proj/out) are model dtype `T` (bf16); ssm_state and the small
-// weights stay `float` (Task 1).
+// One simd group per output dim dv; 32 lanes cover Dk (coalesced state IO,
+// reduction via simd_sum). Activations are model dtype T; state stays float.
 template <typename T, uint HEAD_K_DIM>
 VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
@@ -56,9 +50,8 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   const uint groups_per_head = num_v_heads / num_k_heads;
   const uint hk = hv_idx / groups_per_head;
 
-  // --- Load + normalize q/k for this head. Each lane owns Dk = lane + SIMD*i;
-  // the head norm is a per-simd-group simd_sum (computed redundantly by every
-  // simd group, which avoids a threadgroup barrier). ---
+  // Load + normalize q/k; each simd group recomputes the norm to skip a
+  // barrier.
   float q[ELEMS];
   float k[ELEMS];
   float q_sq = 0.0f;
@@ -81,7 +74,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   }
   const float kq_dot = simd_sum(kq_partial);
 
-  // --- beta / decay (scalar per head) ---
+  // beta / decay (scalar per head)
   const float beta_raw = float(in_proj[conv_dim + value_dim + hv_idx]);
   const float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
   const float a_raw =
@@ -89,9 +82,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   const float sp = activate_softplus(a_raw + float(dt_bias[hv_idx]));
   const float decay = fast::exp(-fast::exp(float(a_log[hv_idx])) * sp);
 
-  // --- Delta rule per dv owned by this simd group: dv = sg, sg+NUM_SG, ...
-  // State layout [Hv, Dv, Dk] — Dk contiguous, so `lane + SIMD*i` coalesces.
-  // ---
+  // Delta rule over the dv owned by this simd group. State is [Hv, Dv, Dk].
   for (uint dv = sg; dv < head_v_dim; dv += NUM_SG) {
     const uint state_row = (hv_idx * head_v_dim + dv) * HEAD_K_DIM;
     const float v_i = float(in_proj[2 * key_dim + hv_idx * head_v_dim + dv]);
@@ -123,7 +114,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  // --- RMSNorm over all dv (held in shared_o), then SiLU gate + write out. ---
+  // RMSNorm over all dv, then SiLU gate + write out.
   float o_sq = 0.0f;
   for (uint dv = tid; dv < head_v_dim; dv += UPDATE_THREADS) {
     const float o = shared_o[dv];
