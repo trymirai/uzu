@@ -17,8 +17,8 @@ const QUANT_PATH: &str = "QuantGemv";
 
 const FP_BLOCK: u32 = 128;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-struct GemvKey {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct GemvSpecialization {
     b_prologue: GemmBPrologueKind,
     group_size: u32,
     bits: u32,
@@ -57,7 +57,7 @@ pub(crate) struct GemvDispatch {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
-    pipelines: HashMap<GemvKey, GemvMetalKernel>,
+    pipelines: HashMap<GemvSpecialization, GemvMetalKernel>,
 }
 
 impl GemvDispatch {
@@ -78,9 +78,9 @@ impl GemvDispatch {
     fn get_or_create(
         &mut self,
         context: &MetalContext,
-        key: GemvKey,
+        specialization: GemvSpecialization,
     ) -> Result<&GemvMetalKernel, MatmulError<Metal>> {
-        match self.pipelines.entry(key) {
+        match self.pipelines.entry(specialization) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 let kernel = GemvMetalKernel::new(
@@ -88,13 +88,13 @@ impl GemvDispatch {
                     self.weights_data_type,
                     self.input_data_type,
                     self.output_data_type,
-                    key.b_prologue,
-                    key.group_size,
-                    key.bits,
-                    key.k_split,
-                    key.input_aligned,
-                    key.num_simdgroups,
-                    key.output_transform,
+                    specialization.b_prologue,
+                    specialization.group_size,
+                    specialization.bits,
+                    specialization.k_split,
+                    specialization.input_aligned,
+                    specialization.num_simdgroups,
+                    specialization.output_transform,
                 )
                 .map_err(MatmulError::BackendError)?;
                 Ok(entry.insert(kernel))
@@ -165,7 +165,7 @@ impl GemvDispatch {
         };
         let group_count_x = n.div_ceil(rows_per_threadgroup(k_split, num_simdgroups));
 
-        let key = GemvKey {
+        let specialization = GemvSpecialization {
             b_prologue,
             group_size,
             bits,
@@ -175,7 +175,7 @@ impl GemvDispatch {
             num_simdgroups,
         };
         let context = encoder.context();
-        let pipeline = self.get_or_create(context, key)?;
+        let pipeline = self.get_or_create(context, specialization)?;
 
         match b {
             MatmulB::FullPrecision {
