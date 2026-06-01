@@ -41,20 +41,20 @@ fn gemv_eligible<TB: AsBufferRangeRef>(
     input_data_type: DataType,
     output_data_type: DataType,
 ) -> bool {
-    // GEMV does not implement output accumulation; leave it to GEMM.
-    if args.d_transform.accumulate {
+    // Accumulation reads-modifies-writes the output; the partial-block clamp can make
+    // two threadgroups touch the same row, so require exact 32-aligned coverage when
+    // accumulating (no overlapping writes).
+    if args.d_transform.accumulate && !args.n.is_multiple_of(32) {
         return false;
     }
-    // GEMV fuses output RHT only for whole 32-wide Hadamard blocks, and applies
-    // bias before the transform; route partial-block or biased RHT to GEMM, which
-    // applies bias after RHT.
-    if args.d_transform.rht_factors.is_some() && (!args.n.is_multiple_of(32) || args.d_transform.bias.is_some()) {
+    // Fused output RHT needs whole 32-wide Hadamard blocks.
+    if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(32) {
         return false;
     }
     let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
     if is_quant {
-        // Quant GEMV packs output rows in groups of 8; other widths go to GEMM.
-        args.n.is_multiple_of(8) && args.m < 5
+        // The output-tail clamp handles partial row blocks, so any n >= 4 works.
+        args.n >= RESULTS_PER_SIMDGROUP && args.m < 5
     } else {
         // No mixed-precision FP GEMV variant: F32 weights require F32 activations.
         let mixed_precision = weights_data_type == DataType::F32

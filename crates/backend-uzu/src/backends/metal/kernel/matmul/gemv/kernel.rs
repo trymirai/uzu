@@ -123,11 +123,6 @@ impl GemvDispatch {
                 path,
             });
         }
-        if is_quant && !arguments.n.is_multiple_of(8) {
-            return Err(MatmulError::UnsupportedLayout {
-                path: QUANT_PATH,
-            });
-        }
 
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
