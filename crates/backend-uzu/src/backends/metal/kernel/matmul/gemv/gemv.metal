@@ -128,6 +128,8 @@ KERNEL(Gemv)(
     const uint simd_group THREADS(NUM_SIMDGROUPS)
 ) {
   const bool is_scale = output_transform.contains(GemmDTransform::SCALE);
+  const bool is_accumulate =
+      output_transform.contains(GemmDTransform::ACCUMULATE);
   const bool is_bias = output_transform.contains(GemmDTransform::BIAS);
   const bool use_hadamard = output_transform.contains(GemmDTransform::RHT);
 
@@ -387,6 +389,9 @@ KERNEL(Gemv)(
         value = static_cast<U>(ab_scale) * value;
       }
       const uint global_row = out_row + row;
+      if (is_accumulate && global_row < out_vec_size) {
+        value += static_cast<U>(output[row]);
+      }
       if (is_bias && global_row < out_vec_size) {
         value += static_cast<U>(output_bias[global_row]);
       }
