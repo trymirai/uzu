@@ -141,8 +141,13 @@ KERNEL(Gemv)(
   const uint k_slice = simd_group % k_split;
   constexpr uint rows_per_threadgroup =
       (num_simdgroups / k_split) * results_per_simdgroup;
-  const uint out_row =
+  uint out_row =
       out_block_idx * rows_per_threadgroup + row_group * results_per_simdgroup;
+  // Clamp the 4-row read/write window into bounds so a partial final output
+  // block never reads weight rows past the buffer (writes stay overlap-safe).
+  out_row = out_vec_size > results_per_simdgroup
+                ? min(out_row, out_vec_size - results_per_simdgroup)
+                : 0u;
   output += batch_idx * out_vec_size + out_row;
 
   if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
@@ -213,7 +218,9 @@ KERNEL(Gemv)(
     thread U x_thread[values_per_thread];
 
     const uint in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
-    const uint in_vec_size_g = in_vec_size / GROUP_SIZE;
+    // Groups per row are laid out with a ceiling, so a partial final group
+    // still gets its own scale/zero-point entry; match that stride here.
+    const uint in_vec_size_g = (in_vec_size + GROUP_SIZE - 1) / GROUP_SIZE;
     ws +=
         out_row * in_vec_size_w + simd_lane * packs_per_thread * bytes_per_pack;
 
