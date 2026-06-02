@@ -88,19 +88,11 @@ impl GemvSpecialization {
         };
         let input_aligned = args.k.is_multiple_of(block_size);
         let has_rht = args.d_transform.rht_factors.is_some();
-        let (num_simdgroups, k_split) = if is_quant {
-            (
-                if has_rht {
-                    8
-                } else {
-                    2
-                },
-                1,
-            )
-        } else if has_rht {
-            (8, 1)
+        let num_simdgroups = 8;
+        let k_split = if is_quant || has_rht {
+            1
         } else {
-            (8, fp_k_split(args.n, args.k, input_aligned))
+            fp_k_split(args.n, args.k, input_aligned)
         };
         Some(GemvSpecialization {
             b_prologue: args.b.b_prologue(),
@@ -128,11 +120,6 @@ impl GemvSpecialization {
             GemmDTransform::RHT,
             GemmDTransform::BIAS | GemmDTransform::RHT,
         ] {
-            let num_simdgroups = if output_transform.contains(GemmDTransform::RHT) {
-                8
-            } else {
-                2
-            };
             for input_aligned in [true, false] {
                 out.push(GemvSpecialization {
                     b_prologue,
@@ -141,7 +128,7 @@ impl GemvSpecialization {
                     output_transform,
                     input_aligned,
                     k_split: 1,
-                    num_simdgroups,
+                    num_simdgroups: 8,
                 });
             }
         }
