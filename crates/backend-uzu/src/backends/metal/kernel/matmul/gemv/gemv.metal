@@ -9,19 +9,19 @@ using namespace metal;
 using namespace uzu::gemm;
 
 template <
-    typename WeightT,
-    typename InputT,
-    typename OutputT,
+    typename AT,
+    typename BT,
+    typename DT,
     GemmBPrologueKind B_PROLOGUE,
     uint GROUP_SIZE,
     uint BITS,
     uint K_SPLIT,
     bool INPUT_ALIGNED,
     uint NUM_SIMDGROUPS>
-VARIANTS(WeightT, bfloat, float)
-VARIANTS(InputT, bfloat, float)
-VARIANTS(OutputT, bfloat, float)
-CONSTRAINT(WeightT != "float" || (InputT == "float" && OutputT == "float"))
+VARIANTS(AT, bfloat, float)
+VARIANTS(BT, bfloat, float)
+VARIANTS(DT, bfloat, float)
+CONSTRAINT(BT != "float" || (AT == "float" && DT == "float"))
 VARIANTS(
     B_PROLOGUE,
     GemmBPrologueKind::FullPrecision,
@@ -35,20 +35,20 @@ VARIANTS(INPUT_ALIGNED, false, true)
 VARIANTS(NUM_SIMDGROUPS, 2, 8)
 CONSTRAINT((B_PROLOGUE == GemmBPrologueKind::FullPrecision) == (BITS == 0))
 CONSTRAINT((BITS == 0) == (GROUP_SIZE == 0))
-CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || WeightT != "float")
+CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || BT != "float")
 CONSTRAINT(B_PROLOGUE == GemmBPrologueKind::FullPrecision || K_SPLIT == 1)
 CONSTRAINT(B_PROLOGUE != GemmBPrologueKind::FullPrecision || NUM_SIMDGROUPS == 8)
 KERNEL(Gemv)(
-    const device uint32_t* weights,
-    const device WeightT* scales
+    const device uint32_t* b,
+    const device BT* scales
         OPTIONAL(B_PROLOGUE != GemmBPrologueKind::FullPrecision),
     const device uint8_t* zero_points
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant),
-    const device WeightT* biases
+    const device BT* biases
         OPTIONAL(B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant),
-    const device InputT* input,
-    device OutputT* output,
-    const device WeightT* output_bias
+    const device AT* a,
+    device DT* d,
+    const device BT* output_bias
         OPTIONAL(output_transform.contains(GemmDTransform::BIAS)),
     const device int32_t* hadamard_factors
         OPTIONAL(output_transform.contains(GemmDTransform::RHT)),
@@ -73,24 +73,16 @@ KERNEL(Gemv)(
           simd_group,
           out_vec_size
       );
-  output += batch_idx * out_vec_size + tile.out_row;
+  d += batch_idx * out_vec_size + tile.out_row;
 
-  BSource<
-      WeightT,
-      InputT,
-      U,
-      B_PROLOGUE,
-      GROUP_SIZE,
-      BITS,
-      K_SPLIT,
-      INPUT_ALIGNED>::
+  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, INPUT_ALIGNED>::
       accumulate(
           result,
-          weights,
+          b,
           scales,
           zero_points,
           biases,
-          input,
+          a,
           in_vec_size,
           tile.out_row,
           batch_idx,
@@ -107,9 +99,9 @@ KERNEL(Gemv)(
       tile.k_slice
   );
 
-  Epilogue<WeightT, OutputT, U>::store(
+  Epilogue<BT, DT, U>::store(
       result,
-      output,
+      d,
       output_bias,
       hadamard_factors,
       shared_results,

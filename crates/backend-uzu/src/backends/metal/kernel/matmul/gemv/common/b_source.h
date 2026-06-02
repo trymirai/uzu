@@ -9,8 +9,8 @@ namespace uzu {
 namespace gemm {
 
 template <
-    typename WeightT,
-    typename InputT,
+    typename BT,
+    typename AT,
     typename U,
     GemmBPrologueKind B_PROLOGUE,
     uint GROUP_SIZE,
@@ -20,11 +20,11 @@ template <
 struct BSource {
   static METAL_FUNC void accumulate(
       thread U (&result)[RESULTS_PER_SIMDGROUP],
-      const device uint32_t* weights,
-      const device WeightT* scales,
+      const device uint32_t* b,
+      const device BT* scales,
       const device uint8_t* zero_points,
-      const device WeightT* biases,
-      const device InputT* input,
+      const device BT* biases,
+      const device AT* a,
       uint in_vec_size,
       uint out_row,
       uint batch_idx,
@@ -34,15 +34,14 @@ struct BSource {
     if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
       constexpr uint values_per_thread = 4;
       constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
-      typedef vec<WeightT, 4> W4;
-      typedef vec<InputT, 4> I4;
+      typedef vec<BT, 4> W4;
+      typedef vec<AT, 4> I4;
       const uint k_stride = K_SPLIT * block_size;
       const uint k_start = k_slice * block_size;
-      const device WeightT* w =
-          reinterpret_cast<const device WeightT*>(weights);
+      const device BT* w = reinterpret_cast<const device BT*>(b);
       w += out_row * in_vec_size + simd_lane * values_per_thread + k_start;
-      const device InputT* in = input + batch_idx * in_vec_size +
-                                simd_lane * values_per_thread + k_start;
+      const device AT* in =
+          a + batch_idx * in_vec_size + simd_lane * values_per_thread + k_start;
 
       uint k = k_start;
       for (; k + block_size <= in_vec_size; k += k_stride) {
@@ -78,10 +77,10 @@ struct BSource {
                       static_cast<int>(values_per_thread))
                 : 0;
         if (remaining > 0) {
-          const device WeightT* w0 = w;
-          const device WeightT* w1 = w + in_vec_size;
-          const device WeightT* w2 = w + 2 * in_vec_size;
-          const device WeightT* w3 = w + 3 * in_vec_size;
+          const device BT* w0 = w;
+          const device BT* w1 = w + in_vec_size;
+          const device BT* w2 = w + 2 * in_vec_size;
+          const device BT* w3 = w + 3 * in_vec_size;
           for (int j = 0; j < remaining; j++) {
             U x = static_cast<U>(in[j]);
             result[0] += static_cast<U>(w0[j]) * x;
@@ -98,7 +97,7 @@ struct BSource {
       constexpr uint values_per_thread = pack_factor * packs_per_thread;
       constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
       constexpr uint scale_step_per_thread = GROUP_SIZE / values_per_thread;
-      const device uint8_t* ws = (const device uint8_t*)weights;
+      const device uint8_t* ws = (const device uint8_t*)b;
       thread U x_thread[values_per_thread];
 
       const uint in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
@@ -106,7 +105,7 @@ struct BSource {
       ws += out_row * in_vec_size_w +
             simd_lane * packs_per_thread * bytes_per_pack;
 
-      QuantRowOffsets<WeightT, U, B_PROLOGUE, BITS> prep;
+      QuantRowOffsets<BT, U, B_PROLOGUE, BITS> prep;
       prep.group_stride = in_vec_size_g;
       const uint g_offset = simd_lane / scale_step_per_thread;
       prep.scales = scales + out_row * in_vec_size_g + g_offset;
@@ -125,12 +124,12 @@ struct BSource {
         }
       }
 
-      const device InputT* in =
-          input + batch_idx * in_vec_size + simd_lane * values_per_thread;
+      const device AT* in =
+          a + batch_idx * in_vec_size + simd_lane * values_per_thread;
 
       uint k = 0;
       for (; k + block_size <= in_vec_size; k += block_size) {
-        U sum = load_vector<InputT, U, values_per_thread>(in, x_thread);
+        U sum = load_vector<AT, U, values_per_thread>(in, x_thread);
 
         const device uint8_t* wl0 = ws;
         const device uint8_t* wl1 = ws + in_vec_size_w;
@@ -182,7 +181,7 @@ struct BSource {
                       static_cast<int>(values_per_thread))
                 : 0;
         if (remaining > 0) {
-          U sum = load_vector_safe<InputT, U, values_per_thread>(
+          U sum = load_vector_safe<AT, U, values_per_thread>(
               in,
               x_thread,
               remaining

@@ -166,8 +166,8 @@ impl GemvDispatch {
             Entry::Vacant(entry) => {
                 let kernel = GemvMetalKernel::new(
                     context,
-                    self.weights_data_type,
                     self.input_data_type,
+                    self.weights_data_type,
                     self.output_data_type,
                     specialization.b_prologue,
                     specialization.group_size,

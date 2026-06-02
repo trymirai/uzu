@@ -6,14 +6,14 @@
 namespace uzu {
 namespace gemm {
 
-template <typename WeightT, typename U, GemmBPrologueKind B_PROLOGUE, uint BITS>
+template <typename BT, typename U, GemmBPrologueKind B_PROLOGUE, uint BITS>
 struct QuantRowOffsets {
   static_assert(
       BITS == 4 || BITS == 8,
       "QuantRowOffsets supports 4- and 8-bit only"
   );
-  const device WeightT* scales = nullptr;
-  const device WeightT* biases = nullptr;
+  const device BT* scales = nullptr;
+  const device BT* biases = nullptr;
   const device uint8_t* zps = nullptr;
   uint group_stride = 0;
   uint zp_stride = 0;

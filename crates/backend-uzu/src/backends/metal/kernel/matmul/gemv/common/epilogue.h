@@ -6,12 +6,12 @@
 namespace uzu {
 namespace gemm {
 
-template <typename WeightT, typename OutputT, typename U>
+template <typename BT, typename DT, typename U>
 struct Epilogue {
   static METAL_FUNC void store(
       thread U (&result)[RESULTS_PER_SIMDGROUP],
-      device OutputT* output,
-      const device WeightT* output_bias,
+      device DT* d,
+      const device BT* output_bias,
       const device int32_t* hadamard_factors,
       threadgroup U* shared_results,
       float ab_scale,
@@ -38,7 +38,7 @@ struct Epilogue {
         }
         const uint global_row = out_row + row;
         if (is_accumulate && global_row < out_vec_size) {
-          value += static_cast<U>(output[row]);
+          value += static_cast<U>(d[row]);
         }
         if (is_bias && global_row < out_vec_size) {
           value += static_cast<U>(output_bias[global_row]);
@@ -61,9 +61,9 @@ struct Epilogue {
       if (simd_group == 0) {
         uint global_out_idx = out_block_idx * 32 + simd_lane;
         if (global_out_idx < out_vec_size) {
-          output[simd_lane] = simdgroup_output_random_hadamard_transform(
+          d[simd_lane] = simdgroup_output_random_hadamard_transform(
               static_cast<ushort>(simd_lane),
-              static_cast<OutputT>(shared_results[simd_lane]),
+              static_cast<DT>(shared_results[simd_lane]),
               hadamard_factors[global_out_idx]
           );
         }
@@ -73,7 +73,7 @@ struct Epilogue {
         METAL_PRAGMA_UNROLL
         for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
           if (out_row + row < out_vec_size) {
-            output[row] = static_cast<OutputT>(result[row]);
+            d[row] = static_cast<DT>(result[row]);
           }
         }
       }
