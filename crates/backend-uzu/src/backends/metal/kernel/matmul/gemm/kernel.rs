@@ -7,7 +7,7 @@ use crate::{
             Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
             gpu_types::{
                 GemmParams, HadamardTransformOrder,
-                gemm::{GemmAlignment, GemmDTransform, GemmTiling},
+                gemm::{GemmAlignment, GemmBPrologueKind, GemmDTransform, GemmTiling},
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
@@ -452,7 +452,7 @@ impl GemmKernel {
         ab_scale: f32,
         use_mxu: bool,
         tiling: GemmTiling,
-        b_prologue: crate::backends::common::gpu_types::gemm::GemmBPrologueKind,
+        b_prologue: GemmBPrologueKind,
         bits_per_b: Option<u32>,
         group_size: Option<u32>,
         split_k: u32,
@@ -461,7 +461,6 @@ impl GemmKernel {
         rht_factors: Option<&Allocation<Metal>>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        use crate::backends::common::gpu_types::gemm::GemmBPrologueKind;
         let full_precision = matches!(b_prologue, GemmBPrologueKind::FullPrecision);
         let kp = k / split_k;
         // K-step of the inner loop (QUANT_BK=group_size on the quant MXU path, block_k otherwise);
