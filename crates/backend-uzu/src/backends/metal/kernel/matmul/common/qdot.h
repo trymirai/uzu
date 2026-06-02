@@ -10,19 +10,19 @@ using namespace metal;
 namespace uzu {
 namespace gemm {
 
-// Pre-scales each activation lane k by 2^-(BITS*k). qdot then reads the matching
-// weight nibble/byte in place (value = q * 2^(BITS*k)) without shifting it down to
-// the low bits; the positional 2^(BITS*k) factor cancels the 2^-(BITS*k) here, so
-// the dot product is unchanged. All factors are powers of two, so this is bit-exact.
+// Pre-scales each activation lane k by 2^-(BITS*k). qdot then reads the
+// matching weight nibble/byte in place (value = q * 2^(BITS*k)) without
+// shifting it down to the low bits; the positional 2^(BITS*k) factor cancels
+// the 2^-(BITS*k) here, so the dot product is unchanged. All factors are powers
+// of two, so this is bit-exact.
 template <typename T, typename U, int VALUES_PER_THREAD, int BITS>
 METAL_FUNC U load_vector(const device T* x, thread U* x_thread) {
   using U4 = vec<U, 4>;
-  const U4 inv = U4(
-      U(1),
-      U(1) / U(1u << BITS),
-      U(1) / U(1u << (2u * BITS)),
-      U(1) / U(1u << (3u * BITS))
-  );
+  const U4 inv =
+      U4(U(1),
+         U(1) / U(1u << BITS),
+         U(1) / U(1u << (2u * BITS)),
+         U(1) / U(1u << (3u * BITS)));
   U sum = 0;
   thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
   METAL_PRAGMA_UNROLL
@@ -70,8 +70,8 @@ METAL_FUNC U qdot(
       // Mask each nibble in place (no shifts); value of lane k is n_k << (4*k),
       // i.e. n_k * 16^k, which is < 2^23 so the magic-number convert is valid.
       // The matching x lane was pre-divided by 16^k in load_vector.
-      const uint4 lanes = uint4(weight_words[i]) &
-          uint4(0x000fu, 0x00f0u, 0x0f00u, 0xf000u);
+      const uint4 lanes =
+          uint4(weight_words[i]) & uint4(0x000fu, 0x00f0u, 0x0f00u, 0xf000u);
       const U4 weight_vec4 =
           U4(as_type<float4>(lanes | uint4(0x4b000000u)) - float4(8388608.0f));
       accumulator += dot(x_vec4[i], weight_vec4);
@@ -85,7 +85,8 @@ METAL_FUNC U qdot(
       // Mask each byte in place (no shifts); lane k value is b_k * 256^k. This
       // exceeds the magic-number range for k=3, so use the hardware convert
       // (exact for b_k * 256^k). x lane k was pre-divided by 256^k.
-      const uint4 lanes = uint4(weight_words[i]) &
+      const uint4 lanes =
+          uint4(weight_words[i]) &
           uint4(0x000000ffu, 0x0000ff00u, 0x00ff0000u, 0xff000000u);
       const U4 weight_vec4 = U4(float4(lanes));
       accumulator += dot(x_vec4[i], weight_vec4);
