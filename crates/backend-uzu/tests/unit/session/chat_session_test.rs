@@ -1,4 +1,8 @@
-use crate::session::{chat_session::find_stop_match, helpers::OutputParser};
+use crate::session::{
+    chat_session::{find_stop_match, finish_reason_with_stop},
+    helpers::OutputParser,
+    types::FinishReason,
+};
 
 const REASONING_REGEX: &str = r"(?s)(?:<think>)?(?P<chain_of_thought>.*?)(?:</think>\s*(?P<response>.*))?\Z";
 
@@ -59,4 +63,25 @@ fn test_chat_session_stop_no_response_while_reasoning_is_open() {
     let parser = OutputParser::new(Some(REASONING_REGEX.to_string())).unwrap();
     let parsed = parser.parse("<think>still thinking, STOP appears".to_string());
     assert!(parsed.parsed.response.is_none());
+}
+
+#[test]
+fn test_chat_session_stop_overrides_length_finish_reason() {
+    assert!(matches!(finish_reason_with_stop(Some(FinishReason::Length), true), Some(FinishReason::Stop)));
+}
+
+#[test]
+fn test_chat_session_stop_overrides_context_limit_finish_reason() {
+    assert!(matches!(finish_reason_with_stop(Some(FinishReason::ContextLimitReached), true), Some(FinishReason::Stop)));
+}
+
+#[test]
+fn test_chat_session_stop_sets_stop_when_no_other_reason() {
+    assert!(matches!(finish_reason_with_stop(None, true), Some(FinishReason::Stop)));
+}
+
+#[test]
+fn test_chat_session_no_stop_match_preserves_finish_reason() {
+    assert!(matches!(finish_reason_with_stop(Some(FinishReason::Length), false), Some(FinishReason::Length)));
+    assert!(matches!(finish_reason_with_stop(None, false), None));
 }

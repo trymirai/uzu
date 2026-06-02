@@ -43,6 +43,17 @@ fn find_stop_match(
     stop_sequences.iter().filter(|stop| !stop.is_empty()).filter_map(|stop| text.find(stop.as_str())).min()
 }
 
+fn finish_reason_with_stop(
+    finish_reason: Option<FinishReason>,
+    stop_matched: bool,
+) -> Option<FinishReason> {
+    if stop_matched {
+        Some(FinishReason::Stop)
+    } else {
+        finish_reason
+    }
+}
+
 struct RunContext {
     eos_tokens: Vec<u64>,
     stop_sequences: Vec<String>,
@@ -555,7 +566,6 @@ impl ChatSession {
     ) -> Result<Output, Error> {
         let text = Self::decode_generated_tokens(tokenizer, &run_context.prefill_result.tokens, generate_results)?;
         let mut output_text = output_parser.parse(text);
-        let mut finish_reason = finish_reason;
         let stop_offset = output_text
             .parsed
             .response
@@ -565,10 +575,8 @@ impl ChatSession {
             if let Some(response) = output_text.parsed.response.as_mut() {
                 response.truncate(offset);
             }
-            if finish_reason.is_none() {
-                finish_reason = Some(FinishReason::Stop);
-            }
         }
+        let finish_reason = finish_reason_with_stop(finish_reason, stop_offset.is_some());
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens = language_model_generator.tokens_len().saturating_sub(start_idx);
 
