@@ -61,6 +61,7 @@ class PrefectBenchmarkRunTests(unittest.TestCase):
                             "task": "london-summary",
                             "profile": "qwen35_uzu_vs_mlx_fast",
                             "uzu_ref": "gemm_perf_update",
+                            "upload_metrics": False,
                         }
                     },
                 }
