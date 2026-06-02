@@ -1,3 +1,3 @@
 mod kernel;
 
-pub(crate) use kernel::GemvDispatch;
+pub(crate) use kernel::{GemvDispatch, GemvSpecialization};
