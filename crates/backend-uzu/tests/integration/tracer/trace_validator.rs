@@ -519,55 +519,57 @@ impl<B: Backend> TraceValidator<B> {
     ) {
         let shape = kv.shape();
         let size = shape.iter().product::<usize>() * ctx.model_shape.data_type.size_in_bytes();
-        let keys = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-            common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.keys, size)
-        } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
-            let mut allocation = ctx
-                .context
-                .create_allocation(size, AllocationType::Global)
-                .expect("Failed to create KV cache keys read allocation");
-            let mut encoder =
-                Encoder::<B>::new(ctx.context.as_ref()).expect("Failed to create KV cache keys read encoder");
-            encoder.encode_copy(&layer.keys, 0..size, &mut allocation, 0..size);
-            encoder.end_encoding().submit().wait_until_completed().expect("Failed to read KV cache keys");
-            allocation
-        } else {
-            panic!("Wrong keys type")
-        };
-        let values = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-            common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.values, size)
-        } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
-            let mut allocation = ctx
-                .context
-                .create_allocation(size, AllocationType::Global)
-                .expect("Failed to create KV cache values read allocation");
-            let mut encoder =
-                Encoder::<B>::new(ctx.context.as_ref()).expect("Failed to create KV cache values read encoder");
-            encoder.encode_copy(&layer.values, 0..size, &mut allocation, 0..size);
-            encoder.end_encoding().submit().wait_until_completed().expect("Failed to read KV cache values");
-            allocation
-        } else {
-            panic!("Wrong values type")
-        };
-
-        for (name, allocation) in [("keys", &keys), ("values", &values)] {
-            let path = format!("{prefix}.{name}");
+        for field in ["keys", "values"] {
+            let path = format!("{prefix}.{field}");
             if !trace_shapes.contains_key(&path) {
                 continue;
             }
+            let allocation = Self::read_kv_buffer(ctx, kv, field, size);
             let expected = Self::read_required_array(traces_view, trace_shapes, &path, ctx.model_shape.data_type);
             results.push(TracerValidationResult {
                 name: path,
                 metrics: Self::validate_allocation(
                     ctx.model_shape.data_type,
                     &expected,
-                    allocation,
+                    &allocation,
                     &shape,
                     Some(ArrayTransform::KVCacheSlice {
                         start: kv.prefix_segment_length(),
                     }),
                 ),
             });
+        }
+    }
+
+    fn read_kv_buffer(
+        ctx: &LanguageModelGeneratorContext<B>,
+        kv: &dyn KVCacheLayerTrait<B>,
+        field: &str,
+        size: usize,
+    ) -> Allocation<B> {
+        if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
+            let buffer = if field == "keys" {
+                &layer.keys
+            } else {
+                &layer.values
+            };
+            common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), buffer, size)
+        } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
+            let buffer = if field == "keys" {
+                &layer.keys
+            } else {
+                &layer.values
+            };
+            let mut allocation = ctx
+                .context
+                .create_allocation(size, AllocationType::Global)
+                .expect("Failed to create KV cache read allocation");
+            let mut encoder = Encoder::<B>::new(ctx.context.as_ref()).expect("Failed to create KV cache read encoder");
+            encoder.encode_copy(buffer, 0..size, &mut allocation, 0..size);
+            encoder.end_encoding().submit().wait_until_completed().expect("Failed to read KV cache buffer");
+            allocation
+        } else {
+            panic!("Unexpected KV cache buffer type")
         }
     }
 
@@ -579,52 +581,38 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
         for (rope_index, rope) in ctx.shared_buffers.rope_buffers.iter().enumerate() {
-            Self::validate_optional_rope_tensor(
-                &mut results,
-                traces_view,
-                trace_shapes,
-                &format!("activation_trace.rope_embeddings.{}.cosines", rope_index),
-                &rope.cosines,
-                &[rope.max_sequence_length(), rope.dim()],
-                token_positions,
-                ctx.model_shape.rope_data_type,
-            );
-            Self::validate_optional_rope_tensor(
-                &mut results,
-                traces_view,
-                trace_shapes,
-                &format!("activation_trace.rope_embeddings.{}.sines", rope_index),
-                &rope.sines,
-                &[rope.max_sequence_length(), rope.dim()],
-                token_positions,
-                ctx.model_shape.rope_data_type,
-            );
+            for (name, allocation) in [("cosines", &rope.cosines), ("sines", &rope.sines)] {
+                Self::validate_optional_rope_tensor(
+                    &mut results,
+                    traces_view,
+                    trace_shapes,
+                    &format!("activation_trace.rope_embeddings.{rope_index}.{name}"),
+                    allocation,
+                    &[rope.max_sequence_length(), rope.dim()],
+                    token_positions,
+                    ctx.model_shape.rope_data_type,
+                );
+            }
         }
 
         for layer_index in 0..ctx.model_shape.num_layers {
             let Some(rope) = ctx.shared_buffers.rope_buffers_for_layer(layer_index) else {
                 continue;
             };
-            Self::validate_optional_rope_tensor(
-                &mut results,
-                traces_view,
-                trace_shapes,
-                &format!("activation_trace.layer_results.{layer_index}.activation_trace.positional_embeddings.cosines"),
-                &rope.cosines,
-                &[rope.max_sequence_length(), rope.dim()],
-                token_positions,
-                ctx.model_shape.rope_data_type,
-            );
-            Self::validate_optional_rope_tensor(
-                &mut results,
-                traces_view,
-                trace_shapes,
-                &format!("activation_trace.layer_results.{layer_index}.activation_trace.positional_embeddings.sines"),
-                &rope.sines,
-                &[rope.max_sequence_length(), rope.dim()],
-                token_positions,
-                ctx.model_shape.rope_data_type,
-            );
+            for (name, allocation) in [("cosines", &rope.cosines), ("sines", &rope.sines)] {
+                Self::validate_optional_rope_tensor(
+                    &mut results,
+                    traces_view,
+                    trace_shapes,
+                    &format!(
+                        "activation_trace.layer_results.{layer_index}.activation_trace.positional_embeddings.{name}"
+                    ),
+                    allocation,
+                    &[rope.max_sequence_length(), rope.dim()],
+                    token_positions,
+                    ctx.model_shape.rope_data_type,
+                );
+            }
         }
         results
     }
