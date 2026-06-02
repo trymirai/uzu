@@ -5,9 +5,12 @@ use backend_uzu::{
     prelude::{DecodingConfig, Input, Output, RunConfig},
     session::ChatSession,
 };
-use criterion::{BatchSize, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
 
-use crate::{common::path::get_test_model_path, uzu_bench};
+use crate::{
+    common::{metrics::wait_gpu_cooldown, path::get_test_model_path},
+    uzu_bench,
+};
 
 fn create_session<B: Backend>() -> ChatSession {
     let model_path = get_test_model_path();
@@ -28,21 +31,22 @@ fn run_session(
 #[uzu_bench]
 fn bench_chat_session(c: &mut Criterion) {
     let message = "How are you?";
-    let mut iter = 0;
     for_each_non_cpu_backend!(|B| {
-        let mut group = c.benchmark_group("ChatSession run");
-        group.bench_function(BenchmarkId::from_parameter(message), |b| {
-            b.iter_batched_ref(
-                create_session::<B>,
-                |session| {
-                    let duration = run_session(session, Input::Text(message.to_string()));
+        wait_gpu_cooldown();
 
-                    println!("Iter {iter}: {duration:?}");
-                    iter += 1;
-                    duration
-                },
-                BatchSize::PerIteration,
-            );
+        let mut session = create_session::<B>();
+        let mut group = c.benchmark_group("ChatSession run");
+        group.sample_size(10);
+        group.bench_function(BenchmarkId::from_parameter(message), |b| {
+            b.iter_custom(|n_iter| {
+                let mut total_duration = Duration::from_secs(0);
+                for _ in 0..n_iter {
+                    session.reset().unwrap();
+                    let duration = run_session(&mut session, Input::Text(message.to_string()));
+                    total_duration += duration;
+                }
+                total_duration
+            });
         });
         group.finish();
     });
