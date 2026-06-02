@@ -261,7 +261,9 @@ impl GemmKernel {
 
                 if b_transpose && b_leading_dimension.is_none() && b_offset == 0 {
                     let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false);
-                    if split_k > 1 {
+                    if split_k > 1
+                        && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
+                    {
                         return self.encode_split_k(
                             a,
                             a_offset,
@@ -380,7 +382,9 @@ impl GemmKernel {
 
                 let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
                 let split_k = select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit);
-                if split_k > 1 {
+                if split_k > 1
+                    && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
+                {
                     return self.encode_split_k(
                         a,
                         a_offset,
@@ -588,6 +592,18 @@ fn split_k_step(
     (step != 0).then_some(step)
 }
 
+fn split_k_output_supported(
+    output_transform: GemmDTransform,
+    n: u32,
+    weights_data_type: DataType,
+    output_data_type: DataType,
+) -> bool {
+    if !output_transform.contains(GemmDTransform::BIAS) {
+        return true;
+    }
+    n.is_multiple_of(4) && weights_data_type == output_data_type
+}
+
 fn select_split_k(
     m: u32,
     n: u32,
@@ -600,6 +616,9 @@ fn select_split_k(
 ) -> u32 {
     let base_tiles = n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m());
     if base_tiles == 0 {
+        return 1;
+    }
+    if !((m as u64) * (n as u64)).is_multiple_of(4) {
         return 1;
     }
     let mut split_k = (512 / base_tiles).max(1);
