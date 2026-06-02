@@ -37,7 +37,10 @@ pub mod _private {
         config::model::AnyModelConfig,
         encodable_block::{DecoderDecodeInput, Sampling},
         forward_pass::{
-            cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
+            cache_layers::CacheLayers,
+            kv_cache_layer::{KVCacheLayer, KVCacheLayerTrait},
+            token_inputs::TokenInputs,
+            traces::ActivationTrace,
         },
         language_model::language_model_generator_context::LanguageModelGeneratorContext,
     };
