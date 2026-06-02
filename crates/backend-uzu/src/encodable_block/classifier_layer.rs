@@ -79,6 +79,7 @@ impl<B: Backend> ClassifierLayer<B> {
             rope,
             qk_unpack,
             false,
+            false,
         )?;
         if attention_hadamard_factors.is_some() {
             return Err(ClassifierLayerError::AttentionHadamardUnsupported);
