@@ -1,4 +1,10 @@
-use std::{any::Any, iter::repeat_n, ops::Range, path::Path, time::Instant};
+use std::{
+    any::Any,
+    iter::repeat_n,
+    ops::Range,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -52,6 +58,12 @@ struct ForwardPassResources<B: Backend> {
 struct InFlightForwardPass<B: Backend> {
     resources: ForwardPassResources<B>,
     pending: Pending<B>,
+}
+
+struct RunModelResult<B: Backend> {
+    sampling_output: Option<Allocation<B>>,
+    cpu_run_time: f64,
+    gpu_run_time: Duration,
 }
 
 pub struct LanguageModelGenerator<B: Backend> {
@@ -278,8 +290,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 is_prefilling: !should_sample_after_step,
             };
 
-            let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
-
+            let run_result = self.run_model(task, sampling_method)?;
             if should_capture {
                 self.gpu_capture
                     .stop_capture(&self.context.context, "prefill")
@@ -303,8 +314,8 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             }
 
             last_sampling_length = sampling_length;
-            last_sampling_output = sampling_output;
-            run_times.push(run_time);
+            last_sampling_output = run_result.sampling_output;
+            run_times.push(run_result.cpu_run_time);
         }
 
         let final_sampling_output = last_sampling_output;
@@ -408,9 +419,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         };
 
         let sampling_length = task.sampling_length;
-        let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
-        let sampled_tokens =
-            self.read_sampling_output(sampling_output.as_ref().expect("sampling output must exist"), sampling_length)?;
+        let run_result = self.run_model(task, sampling_method)?;
+        let sampled_tokens = self.read_sampling_output(
+            run_result.sampling_output.as_ref().expect("sampling output must exist"),
+            sampling_length,
+        )?;
 
         let (accepted_tokens, accepted_token_indices) = flat_trie.accept(&sampled_tokens, compiled_grammar);
         let speculator_proposed = active_row_count.saturating_sub(1);
@@ -423,7 +436,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         Ok(GenerateResult {
             tokens: accepted_tokens,
-            forwardpass_duration: run_time,
+            forwardpass_duration: run_result.cpu_run_time,
             speculator_proposed,
             speculator_accepted,
         })
@@ -689,7 +702,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         &mut self,
         task: Task,
         sampling_method: SamplingMethod,
-    ) -> Result<(Option<Allocation<B>>, f64), Error> {
+    ) -> Result<RunModelResult<B>, Error> {
         let run_start = Instant::now();
         let sample = !task.is_prefilling;
         let is_prefilling = task.is_prefilling;
@@ -727,6 +740,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let pending = encoder.end_encoding().submit();
 
         let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let gpu_run_time = completed.gpu_execution_time();
         let ForwardPassResources {
             token_inputs,
             logits,
@@ -744,7 +758,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
         }
 
-        Ok((sampling_output, run_time))
+        Ok(RunModelResult {
+            sampling_output,
+            cpu_run_time: run_time,
+            gpu_run_time,
+        })
     }
 
     fn encode_forward_pass_on(
