@@ -2,8 +2,6 @@
 
 using namespace metal;
 
-// Sums split_k partials ([split_k, n_elements]) into the final output.
-// Non-PUBLIC.
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 KERNEL(GemmSplitKReduce)(
