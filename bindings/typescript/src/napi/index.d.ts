@@ -256,15 +256,15 @@ export declare class ChatReplyConfig {
   tokenLimit?: number
   samplingPolicy: SamplingPolicy
   grammar?: Grammar
-  stop: Array<string>
-  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, stop: Array<string>)
+  stop?: Array<string>
+  constructor(tokenLimit?: number, samplingPolicy: SamplingPolicy, grammar?: Grammar, stop?: Array<string>)
 
   static create(): ChatReplyConfig
   withTokenLimit(tokenLimit?: number | undefined | null): ChatReplyConfig
   withSamplingPolicy(samplingPolicy: SamplingPolicy): ChatReplyConfig
   withSamplingMethod(samplingMethod: SamplingMethod): ChatReplyConfig
   withGrammar(grammar?: Grammar | undefined | null): ChatReplyConfig
-  withStop(stop: Array<string>): ChatReplyConfig
+  withStop(stop?: Array<string> | undefined | null): ChatReplyConfig
 }
 
 export declare class ChatReplyStats {

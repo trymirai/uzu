@@ -1079,11 +1079,11 @@ public struct ChatReplyConfig: Equatable, Hashable, Codable {
     public var tokenLimit: UInt32?
     public var samplingPolicy: SamplingPolicy
     public var grammar: Grammar?
-    public var stop: [String]
+    public var stop: [String]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(tokenLimit: UInt32?, samplingPolicy: SamplingPolicy, grammar: Grammar?, stop: [String]) {
+    public init(tokenLimit: UInt32?, samplingPolicy: SamplingPolicy, grammar: Grammar?, stop: [String]?) {
         self.tokenLimit = tokenLimit
         self.samplingPolicy = samplingPolicy
         self.grammar = grammar
@@ -1118,11 +1118,11 @@ public func withSamplingPolicy(samplingPolicy: SamplingPolicy) -> ChatReplyConfi
 })
 }
     
-public func withStop(stop: [String]) -> ChatReplyConfig  {
+public func withStop(stop: [String]?) -> ChatReplyConfig  {
     return try!  FfiConverterTypeChatReplyConfig_lift(try! rustCall() {
     uniffi_shoji_fn_method_chatreplyconfig_with_stop(
             FfiConverterTypeChatReplyConfig_lower(self),
-        FfiConverterSequenceString.lower(stop),$0
+        FfiConverterOptionSequenceString.lower(stop),$0
     )
 })
 }
@@ -1154,7 +1154,7 @@ public struct FfiConverterTypeChatReplyConfig: FfiConverterRustBuffer {
                 tokenLimit: FfiConverterOptionUInt32.read(from: &buf), 
                 samplingPolicy: FfiConverterTypeSamplingPolicy.read(from: &buf), 
                 grammar: FfiConverterOptionTypeGrammar.read(from: &buf), 
-                stop: FfiConverterSequenceString.read(from: &buf)
+                stop: FfiConverterOptionSequenceString.read(from: &buf)
         )
     }
 
@@ -1162,7 +1162,7 @@ public struct FfiConverterTypeChatReplyConfig: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.tokenLimit, into: &buf)
         FfiConverterTypeSamplingPolicy.write(value.samplingPolicy, into: &buf)
         FfiConverterOptionTypeGrammar.write(value.grammar, into: &buf)
-        FfiConverterSequenceString.write(value.stop, into: &buf)
+        FfiConverterOptionSequenceString.write(value.stop, into: &buf)
     }
 }
 
