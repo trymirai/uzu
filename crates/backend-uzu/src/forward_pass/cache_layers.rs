@@ -222,9 +222,7 @@ impl<B: Backend> CacheLayers<B> {
                     })
                 },
                 AnyTokenMixerConfig::DeltaNetConfig(c) => {
-                    // conv_state is a short FIR shift register (no error compounding) -> model
-                    // dtype (bf16). ssm_state is the recurrent state -> must stay f32.
-                    let conv_data_type = model_shape.data_type;
+                    let conv_data_type = DataType::F32;
                     let ssm_data_type = DataType::F32;
                     let conv_shape = [c.conv_dim(), c.kernel_size.saturating_sub(1)];
                     let ssm_shape = [c.num_heads, c.value_head_dim, c.head_dim];

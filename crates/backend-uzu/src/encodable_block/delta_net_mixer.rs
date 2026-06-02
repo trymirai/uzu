@@ -222,8 +222,8 @@ impl<B: Backend> DeltaNetMixer<B> {
         let state_stride = kernel_size - 1;
         let conv_dim = self.conv_dim;
         let total_proj_dim = self.total_proj_dim;
-        let mut padded = encoder
-            .allocate_scratch(size_for_shape(&[suffix_length + state_stride, total_proj_dim], self.outer_data_type))?;
+        let mut padded =
+            encoder.allocate_scratch(size_for_shape(&[suffix_length + state_stride, total_proj_dim], DataType::F32))?;
 
         self.conv_pack.encode(
             &layer.conv_state,
