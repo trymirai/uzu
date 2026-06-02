@@ -8,7 +8,7 @@ use backend_uzu::{
         Session,
         config::{DecodingConfig, RunConfig},
         parameter::{AsyncBatchSize, SamplingSeed},
-        types::{Input, Message, Output},
+        types::{FinishReason, Input, Message, Output},
     },
 };
 use shoji::types::basic::Feature;
@@ -122,6 +122,45 @@ fn test_text_session_stability() {
             output.stats.generate_stats.unwrap().tokens_per_second
         );
     }
+}
+
+#[tag(heavy)]
+#[test]
+fn test_text_session_stop_sequence() {
+    let mut session = Session::new(get_test_model_path(), build_decoding_config()).unwrap();
+    let baseline = session
+        .run(Input::Text(build_default_text()), RunConfig::default().tokens_limit(128), Some(|_: Output| true))
+        .unwrap();
+    let full = baseline.text.parsed.response.clone().expect("baseline must have a response");
+    assert!(full.chars().count() > 12, "baseline reply too short to derive a stop sequence: {full:?}");
+
+    let mut start = full.len() / 2;
+    while !full.is_char_boundary(start) {
+        start += 1;
+    }
+    let stop: String = full[start..].chars().take(6).collect();
+    assert!(!stop.is_empty());
+
+    let mut session = Session::new(get_test_model_path(), build_decoding_config()).unwrap();
+    let stopped = session
+        .run(
+            Input::Text(build_default_text()),
+            RunConfig::default().tokens_limit(128).stop_sequences(vec![stop.clone()]),
+            Some(|_: Output| true),
+        )
+        .unwrap();
+    let stopped_response = stopped.text.parsed.response.clone().expect("stopped reply must have a response");
+
+    assert!(
+        matches!(stopped.finish_reason, Some(FinishReason::Stop)),
+        "expected Stop finish reason, got {:?}, stop={stop:?}",
+        stopped.finish_reason
+    );
+    assert!(!stopped_response.contains(&stop), "stop sequence {stop:?} leaked into output: {stopped_response:?}");
+    assert!(
+        full.starts_with(&stopped_response),
+        "stopped reply should be a prefix of the full reply; stopped={stopped_response:?} full={full:?}"
+    );
 }
 
 fn run(

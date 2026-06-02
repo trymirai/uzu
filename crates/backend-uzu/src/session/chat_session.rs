@@ -36,8 +36,16 @@ fn nanos_to_secs(nanos: u64) -> f64 {
     nanos as f64 / 1_000_000_000.0
 }
 
+fn find_stop_match(
+    text: &str,
+    stop_sequences: &[String],
+) -> Option<usize> {
+    stop_sequences.iter().filter(|stop| !stop.is_empty()).filter_map(|stop| text.find(stop.as_str())).min()
+}
+
 struct RunContext {
     eos_tokens: Vec<u64>,
+    stop_sequences: Vec<String>,
     context_length: usize,
     prefix_len_before: usize,
     input_tokens_len: usize,
@@ -257,6 +265,7 @@ impl ChatSession {
 
         let run_context = RunContext {
             eos_tokens,
+            stop_sequences: config.stop_sequences.clone(),
             context_length,
             prefix_len_before,
             input_tokens_len: tokens.len(),
@@ -290,7 +299,7 @@ impl ChatSession {
             true
         };
 
-        if !prefill_should_continue || prefill_finish_reason.is_some() {
+        if !prefill_should_continue || prefill_output.finish_reason.is_some() {
             if prefill_should_continue {
                 return Ok(prefill_output);
             } else {
@@ -371,7 +380,7 @@ impl ChatSession {
                 true
             };
 
-            if !generate_should_continue || generate_finish_reason.is_some() {
+            if !generate_should_continue || generate_output.finish_reason.is_some() {
                 if generate_should_continue {
                     return Ok(generate_output);
                 } else {
@@ -450,6 +459,15 @@ impl ChatSession {
                     true
                 } else if llm.tokens_len() >= run_context.context_length {
                     finish_reason = FinishReason::ContextLimitReached;
+                    true
+                } else if !run_context.stop_sequences.is_empty()
+                    && Self::decode_generated_tokens(tokenizer, &run_context.prefill_result.tokens, &results)
+                        .ok()
+                        .and_then(|text| output_parser.parse(text).parsed.response)
+                        .and_then(|response| find_stop_match(&response, &run_context.stop_sequences))
+                        .is_some()
+                {
+                    finish_reason = FinishReason::Stop;
                     true
                 } else if let Some(progress_fn) = progress {
                     let output =
@@ -536,12 +554,26 @@ impl ChatSession {
         finish_reason: Option<FinishReason>,
     ) -> Result<Output, Error> {
         let text = Self::decode_generated_tokens(tokenizer, &run_context.prefill_result.tokens, generate_results)?;
-        let parsed = output_parser.parse(text);
+        let mut output_text = output_parser.parse(text);
+        let mut finish_reason = finish_reason;
+        let stop_offset = output_text
+            .parsed
+            .response
+            .as_deref()
+            .and_then(|response| find_stop_match(response, &run_context.stop_sequences));
+        if let Some(offset) = stop_offset {
+            if let Some(response) = output_text.parsed.response.as_mut() {
+                response.truncate(offset);
+            }
+            if finish_reason.is_none() {
+                finish_reason = Some(FinishReason::Stop);
+            }
+        }
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens = language_model_generator.tokens_len().saturating_sub(start_idx);
 
         Ok(Output {
-            text: parsed,
+            text: output_text,
             stats: Self::build_stats(
                 run_context.prefill_result.clone(),
                 run_context.prefill_duration,
@@ -648,3 +680,7 @@ impl ChatSession {
         self.llm.peak_memory_usage()
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/session/chat_session_test.rs"]
+mod tests;

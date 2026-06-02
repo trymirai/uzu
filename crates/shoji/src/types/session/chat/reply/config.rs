@@ -8,6 +8,8 @@ pub struct ChatReplyConfig {
     pub token_limit: Option<u32>,
     pub sampling_policy: SamplingPolicy,
     pub grammar: Option<Grammar>,
+    #[serde(default)]
+    pub stop: Vec<String>,
 }
 
 #[bindings::export(Implementation)]
@@ -62,6 +64,17 @@ impl ChatReplyConfig {
     ) -> Self {
         Self {
             grammar,
+            ..self.clone()
+        }
+    }
+
+    #[bindings::export(Method)]
+    pub fn with_stop(
+        &self,
+        stop: Vec<String>,
+    ) -> Self {
+        Self {
+            stop,
             ..self.clone()
         }
     }

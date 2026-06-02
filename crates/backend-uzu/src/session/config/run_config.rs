@@ -6,6 +6,7 @@ pub struct RunConfig {
     pub enable_thinking: bool,
     pub sampling_policy: SamplingPolicy,
     pub grammar_config: Option<GrammarConfig>,
+    pub stop_sequences: Vec<String>,
 }
 
 impl RunConfig {
@@ -20,6 +21,7 @@ impl RunConfig {
             enable_thinking,
             sampling_policy,
             grammar_config,
+            stop_sequences: Vec::new(),
         }
     }
 
@@ -52,6 +54,14 @@ impl RunConfig {
         grammar_config: GrammarConfig,
     ) -> Self {
         self.grammar_config = Some(grammar_config);
+        self
+    }
+
+    pub fn stop_sequences(
+        mut self,
+        stop_sequences: Vec<String>,
+    ) -> Self {
+        self.stop_sequences = stop_sequences;
         self
     }
 }
