@@ -63,6 +63,10 @@ comfy-table.workspace = true
 indicatif.workspace = true
 rstest.workspace = true
 
+[target.'cfg(any(target_os = "macos"))'.dev-dependencies]
+# for GPU temperature measurement
+macmon.workspace = true
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }

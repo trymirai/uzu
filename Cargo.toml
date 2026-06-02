@@ -206,6 +206,7 @@ rodio = { version = "0.22.2", default-features = false, features = [
     "playback",
     "wav",
 ] }
+macmon = "0.7"
 
 [workspace.lints.clippy]
 # TODO: add large_stack_frames, large_stack_arrays, trivially_copy_pass_by_ref, needless_pass_by_value, map_err_ignore, use_self, cloned_instead_of_copied, manual_let_else, semicolon_if_nothing_returned, uninlined_format_args, lossy_float_literal

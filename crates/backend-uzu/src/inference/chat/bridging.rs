@@ -189,7 +189,7 @@ fn build_stats(stats: &Stats) -> ShojiStats {
     let prefill_tokens_per_second = Some(stats.prefill_stats.processed_tokens_per_second);
     let generate_tokens_per_second = stats.generate_stats.as_ref().map(|step| step.tokens_per_second);
     ShojiStats {
-        duration: stats.total_stats.duration,
+        duration: stats.total_stats.cpu_duration,
         time_to_first_token,
         prefill_tokens_per_second,
         generate_tokens_per_second,

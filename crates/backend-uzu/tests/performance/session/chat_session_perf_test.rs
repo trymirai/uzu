@@ -7,7 +7,10 @@ use backend_uzu::{
 };
 use criterion::{BatchSize, BenchmarkId, Criterion};
 
-use crate::{common::path::get_test_model_path, uzu_bench};
+use crate::{
+    common::{metrics::wait_gpu_cool_down, path::get_test_model_path},
+    uzu_bench,
+};
 
 fn create_session<B: Backend>() -> ChatSession {
     let model_path = get_test_model_path();
@@ -36,7 +39,7 @@ fn bench_forward_pass(c: &mut Criterion) {
             b.iter_batched_ref(
                 || create_session::<B>(),
                 |session| {
-                    // TODO: maybe add waiting for GPU cooling
+                    wait_gpu_cool_down();
 
                     let duration = run_session(session, &tokens);
 
