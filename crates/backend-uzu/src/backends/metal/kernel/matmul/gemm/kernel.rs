@@ -39,8 +39,8 @@ pub struct GemmKernel {
     pub bias_add: TensorAddBiasMetalKernel,
     pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
     // Single-dispatch reduction of split-K partials (sum over split_k), with the elementwise
-    // epilogue (scale, then per-column bias) fused in — like the main GEMM finalize. Two
-    // bias-specialized variants; RHT (cross-column) stays a separate post-pass.
+    // epilogue (scale, optional accumulate, then per-column bias) fused in — like the main GEMM
+    // finalize. Two bias-specialized variants; RHT (cross-column) stays a separate post-pass.
     split_k_reduce: GemmSplitKReduceMetalKernel,
     split_k_reduce_bias: GemmSplitKReduceMetalKernel,
 }
@@ -252,6 +252,38 @@ impl GemmKernel {
                 let alignment =
                     GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
 
+                // Split-K on a clean transposed layout that under-fills the GPU — same mechanism as
+                // the quantized path (the partition kernel and reduce are prologue-agnostic).
+                if b_transpose && b_leading_dimension.is_none() && b_offset == 0 {
+                    let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false);
+                    if split_k > 1 {
+                        return self.encode_split_k(
+                            a,
+                            a_offset,
+                            weights,
+                            b_offset,
+                            None,
+                            None,
+                            None,
+                            &mut *d,
+                            m,
+                            n,
+                            k,
+                            ab_scale,
+                            use_mxu,
+                            tiling,
+                            b_prologue,
+                            bits_per_b,
+                            group_size,
+                            split_k,
+                            output_transform,
+                            output_bias,
+                            rht_factors,
+                            encoder,
+                        );
+                    }
+                }
+
                 let default_ldb = if b_transpose {
                     k
                 } else {
@@ -341,22 +373,20 @@ impl GemmKernel {
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
-                // Split-K when the base tiling under-fills the GPU; scale+bias epilogue is fused
-                // into the reduce and RHT runs as a post-pass. Covers both the simdgroup and MXU
-                // paths. ACCUMULATE (read-modify-write on d) and zero-point quant are unsupported.
-                let split_k = if zero_points.is_none() && !output_transform.contains(GemmDTransform::ACCUMULATE) {
-                    select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0))
-                } else {
-                    1
-                };
+                // Split-K when the base tiling under-fills the GPU; the scale/accumulate/bias
+                // epilogue is fused into the reduce and RHT runs as a post-pass. Covers all quant
+                // schemes (scale+bias, zero-point, symmetric) on both the simdgroup and MXU paths.
+                let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
+                let split_k = select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit);
                 if split_k > 1 {
-                    return self.encode_quant_split_k(
+                    return self.encode_split_k(
                         a,
                         a_offset,
                         weights,
                         b_offset,
                         scales,
                         biases,
+                        zero_points,
                         &mut *d,
                         m,
                         n,
@@ -415,14 +445,19 @@ impl GemmKernel {
     /// `threadgroup_position.z`, reduces only its K-slice (output_transform NONE), and writes a
     /// partial into `temp[partition]`; the partials are then summed into `d`.
     #[allow(clippy::too_many_arguments)]
-    fn encode_quant_split_k<'x, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    fn encode_split_k<
+        'x,
+        TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>,
+        WB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>,
+    >(
         &mut self,
         a: &TB,
         a_offset: usize,
-        weights: &Allocation<Metal>,
+        weights: &WB,
         b_offset: usize,
         scales: Option<&Allocation<Metal>>,
         biases: Option<&Allocation<Metal>>,
+        zero_points: Option<&Allocation<Metal>>,
         d: &mut Allocation<Metal>,
         m: u32,
         n: u32,
@@ -439,10 +474,12 @@ impl GemmKernel {
         rht_factors: Option<&Allocation<Metal>>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        use crate::backends::common::gpu_types::gemm::GemmBPrologueKind;
+        let full_precision = matches!(b_prologue, GemmBPrologueKind::FullPrecision);
         let kp = k / split_k;
-        // K-step of the quant inner loop (QUANT_BK=group_size on MXU, block_k on simdgroup);
+        // K-step of the inner loop (QUANT_BK=group_size on the quant MXU path, block_k otherwise);
         // select_split_k guarantees kp is a multiple of it.
-        let k_step = quant_k_step(tiling, use_mxu, group_size.unwrap_or(0)).unwrap_or(1);
+        let k_step = split_k_step(tiling, use_mxu, group_size.unwrap_or(0), full_precision).unwrap_or(1);
         let base_gx = n.div_ceil(tiling.block_n());
         let base_gy = m.div_ceil(tiling.block_m());
         // Partitions are step-aligned, so force the K-alignment bit: this compiles out the
@@ -489,7 +526,7 @@ impl GemmKernel {
             &mut temp,
             scales,
             biases,
-            None::<&Allocation<Metal>>,
+            zero_points,
             None::<&Allocation<Metal>>,
             None::<&Allocation<Metal>>,
             std::slice::from_ref(&params),
@@ -503,9 +540,11 @@ impl GemmKernel {
         // per thread (M*N is a multiple of 4 since N is a multiple of the block-N tile).
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        // Fuse the elementwise epilogue (scale, then per-column bias) into the reduce, matching the
-        // main GEMM finalize. For quant, BIAS and RHT are mutually exclusive (asserted upstream).
+        // Fuse the elementwise epilogue into the reduce, matching the main GEMM finalize order:
+        // scale the summed partials, accumulate the prior `d` (read-modify-write) when requested,
+        // then add the per-column bias. RHT (cross-column) stays a post-pass.
         let has_bias = output_transform.contains(GemmDTransform::BIAS);
+        let accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
         let out_scale = if output_transform.contains(GemmDTransform::SCALE) {
             ab_scale
         } else {
@@ -521,7 +560,18 @@ impl GemmKernel {
         } else {
             None
         };
-        reduce.encode((&temp, 0usize), &mut *d, bias_arg, elem as u32, split_k, group_count, n, out_scale, encoder);
+        reduce.encode(
+            (&temp, 0usize),
+            &mut *d,
+            bias_arg,
+            elem as u32,
+            split_k,
+            group_count,
+            n,
+            out_scale,
+            u32::from(accumulate),
+            encoder,
+        );
 
         // RHT is a cross-column transform — applied separately, as the main GEMM finalize also does.
         if output_transform.contains(GemmDTransform::RHT) {
@@ -553,20 +603,22 @@ fn quant_params(
         threadgroups_per_column: m.div_ceil(tiling.block_m()),
         // The MXU quant K-loop steps by QUANT_BK == group_size; the simdgroup one steps by the
         // tile's block_k. (FP uses block_k on both, but FP doesn't go through quant_params.)
-        aligned_inner_iterations: quant_k_step(tiling, use_mxu, group_size).map_or(0, |step| k / step),
+        aligned_inner_iterations: split_k_step(tiling, use_mxu, group_size, false).map_or(0, |step| k / step),
         use_morton: false,
         ab_scale,
     }
 }
 
-/// K-step (in elements) of the quant inner loop: `group_size` (= QUANT_BK) on the MXU path,
-/// the tile's `block_k` on the simdgroup path. A partition's K-slice must be a multiple of this.
-fn quant_k_step(
+/// K-step (in elements) of the inner loop: `group_size` (= QUANT_BK) on the quantized MXU path,
+/// the tile's `block_k` everywhere else (simdgroup, or full precision on either path). A split-K
+/// partition's K-slice must be a whole multiple of this.
+fn split_k_step(
     tiling: GemmTiling,
     use_mxu: bool,
     group_size: u32,
+    full_precision: bool,
 ) -> Option<u32> {
-    let step = if use_mxu {
+    let step = if use_mxu && !full_precision {
         group_size
     } else {
         tiling.block_k()
@@ -584,23 +636,31 @@ fn select_split_k(
     tiling: GemmTiling,
     use_mxu: bool,
     group_size: u32,
+    full_precision: bool,
+    zero_point_4bit: bool,
 ) -> u32 {
     let base_tiles = n.div_ceil(tiling.block_n()) * m.div_ceil(tiling.block_m());
     if base_tiles == 0 {
         return 1;
     }
     let mut split_k = (512 / base_tiles).max(1);
-    // Each partition's K-slice must be a whole number of quant K-steps (and groups). On MXU the
-    // step is group_size; on simdgroup it's lcm(group_size, block_k) (powers of two → max).
-    let step = match quant_k_step(tiling, use_mxu, group_size) {
+    // Each partition's K-slice must be a whole number of inner K-steps (and quant groups). On the
+    // quant MXU path the step is group_size; on simdgroup it's lcm(group_size, block_k) (powers of
+    // two → max). Full precision has no groups, so the step is just block_k.
+    let step = match split_k_step(tiling, use_mxu, group_size, full_precision) {
         Some(s) => s,
         None => return 1,
     };
-    let align = if use_mxu {
+    let mut align = if use_mxu || full_precision {
         step
     } else {
         step.max(group_size)
     };
+    // 4-bit zero-points pack two groups per byte, so a partition must start on a whole byte (an
+    // even group index) for the loader's nibble phase to stay correct — align to two groups.
+    if zero_point_4bit {
+        align = align.max(2 * group_size);
+    }
     split_k = split_k.min((k / align).max(1));
     while split_k > 1 && !k.is_multiple_of(split_k * align) {
         split_k -= 1;

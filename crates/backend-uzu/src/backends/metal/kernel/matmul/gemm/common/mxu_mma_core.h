@@ -296,8 +296,10 @@ struct MxuMmaCore {
                     if constexpr (
                         B_PROLOGUE == GemmBPrologueKind::FullPrecision
                     ) {
+                      // Per-partition iteration count (= kp / block_k for split-K, K / block_k
+                      // otherwise). Set by the host so split-K partitions only walk their K-slice.
                       const int aligned_k_iterations_fp =
-                          int(params->K) / int(THREADGROUP_BLOCK_K_FP);
+                          int(params->aligned_inner_iterations);
                       return uzu::matmul::gemm_loop<
                           AT,
                           BT,
