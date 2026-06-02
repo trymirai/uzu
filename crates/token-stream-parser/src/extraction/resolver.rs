@@ -166,16 +166,16 @@ fn compose_typed_sections(child_values: Vec<(String, Value)>) -> Value {
     let mut sections: Vec<Value> = Vec::new();
     for (name, value) in child_values {
         // Spread arrays for non-text children into separate sections
-        if name != NODE_NAME_TEXT {
-            if let Value::Array(items) = value {
-                for item in items {
-                    let mut map = serde_json::Map::new();
-                    map.insert(SECTION_KEY_TYPE.to_string(), Value::String(name.clone()));
-                    map.insert(SECTION_KEY_VALUE.to_string(), item);
-                    sections.push(Value::Object(map));
-                }
-                continue;
+        if name != NODE_NAME_TEXT
+            && let Value::Array(items) = value
+        {
+            for item in items {
+                let mut map = serde_json::Map::new();
+                map.insert(SECTION_KEY_TYPE.to_string(), Value::String(name.clone()));
+                map.insert(SECTION_KEY_VALUE.to_string(), item);
+                sections.push(Value::Object(map));
             }
+            continue;
         }
         let mut map = serde_json::Map::new();
         map.insert(SECTION_KEY_TYPE.to_string(), Value::String(name));
@@ -224,11 +224,11 @@ fn merge_or_push_text(
     results: &mut Vec<(String, Value)>,
     text: String,
 ) {
-    if let Some((name, Value::String(existing))) = results.last_mut() {
-        if name == NODE_NAME_TEXT {
-            existing.push_str(&text);
-            return;
-        }
+    if let Some((name, Value::String(existing))) = results.last_mut()
+        && name == NODE_NAME_TEXT
+    {
+        existing.push_str(&text);
+        return;
     }
     results.push((NODE_NAME_TEXT.to_string(), Value::String(text)));
 }

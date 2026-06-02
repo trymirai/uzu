@@ -89,7 +89,7 @@ fn replace_string_array_field(
 ) -> Result<String> {
     let pattern = format!(r#"("{key}"\s*:\s*)\[[^\]]*\]"#);
     let regex = Regex::new(&pattern)?;
-    let items = values.iter().map(|value| serde_json::to_string(value)).collect::<Result<Vec<_>, _>>()?;
+    let items = values.iter().map(serde_json::to_string).collect::<Result<Vec<_>, _>>()?;
     let replacement = format!("$1[\n        {}\n    ]", items.join(",\n        "));
     Ok(regex.replace(input, replacement.as_str()).into_owned())
 }

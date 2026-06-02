@@ -3,11 +3,11 @@ use std::rc::Rc;
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::Metal;
 use backend_uzu::{
-    DataType,
     backends::{
         common::{Backend, Context},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use proptest::prelude::*;
 

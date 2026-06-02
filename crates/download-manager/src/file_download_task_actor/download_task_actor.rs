@@ -51,7 +51,6 @@ pub struct DownloadTaskActor<B: DownloadBackend> {
 }
 
 impl<B: DownloadBackend> DownloadTaskActor<B> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Arc<DownloadConfig>,
         context: Arc<B::Context>,

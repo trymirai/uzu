@@ -1,5 +1,5 @@
 use backend_uzu::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{
         common::{Backend, Encoder},
         cpu::Cpu,
@@ -10,12 +10,7 @@ use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::MoeGather;
-
-#[macro_use]
-#[path = "../../../common/mod.rs"]
-mod common;
-
-use common::{
+use crate::common::{
     assert::assert_eq_float,
     helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
 };

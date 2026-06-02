@@ -105,12 +105,10 @@ impl Runner {
         let cpu_name = system_info.cpus().first().map(|cpu| cpu.brand().to_string());
         let memory_total = system_info.total_memory();
 
-        let device = Device {
+        Device {
             os_name,
             cpu_name,
             memory_total,
-        };
-
-        device
+        }
     }
 }

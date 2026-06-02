@@ -19,7 +19,7 @@ VARIANTS(InputT, float, bfloat)
 VARIANTS(OutputT, float, bfloat)
 VARIANTS(GROUP_SIZE, 16, 32, 64, 128)
 VARIANTS(BITS, 4, 8)
-PUBLIC KERNEL(QuantizedMatmulQmvFast)(
+KERNEL(QuantizedMatmulQmvFast)(
     const device uint32_t* weights,
     const device WeightT* scales,
     const device uint8_t* zero_points OPTIONAL(quant_method == QuantizationMethod::ScaleZeroPoint),

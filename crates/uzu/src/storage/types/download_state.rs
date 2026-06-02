@@ -125,19 +125,16 @@ pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> Downloa
     let any_downloaded = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Downloaded));
     let any_downloading = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Downloading));
     let any_paused = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Paused));
-    let any_error = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Error(_)));
     let any_locked = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::LockedByOther(_)));
 
     if all_downloaded {
         return DownloadState::downloaded(total_bytes as i64);
     }
 
-    if any_error {
-        if let Some(error_state) = file_states.iter().find(|f| matches!(f.phase, FileDownloadPhase::Error(_))) {
-            if let FileDownloadPhase::Error(err) = &error_state.phase {
-                return DownloadState::error(err.clone());
-            }
-        }
+    if let Some(error_state) = file_states.iter().find(|f| matches!(f.phase, FileDownloadPhase::Error(_)))
+        && let FileDownloadPhase::Error(err) = &error_state.phase
+    {
+        return DownloadState::error(err.clone());
     }
 
     if any_locked {

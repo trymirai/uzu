@@ -1,10 +1,10 @@
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
         kernel::{Kernels, QkUnpackKernel},
     },
+    data_type::DataType,
 };
 
 pub struct QkUnpack<B: Backend> {

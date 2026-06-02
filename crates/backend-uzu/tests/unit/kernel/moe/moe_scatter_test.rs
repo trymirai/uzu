@@ -1,5 +1,5 @@
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             Allocation, Backend, Encoder, Kernels,
@@ -10,6 +10,7 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::bf16;
 use num_traits::Float;
@@ -73,7 +74,7 @@ fn get_output_topk<B: Backend, T: ArrayElement + Float>(
     let mut topk_probs = ctx.create_array_uninitialized(&[t * k], T::data_type()).into_allocation();
 
     let topk_kernel =
-        <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, T::data_type()).expect("router_topk");
+        <<B as Backend>::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, T::data_type()).expect("router_topk");
     let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
     topk_kernel.encode(
         input_array.allocation(),

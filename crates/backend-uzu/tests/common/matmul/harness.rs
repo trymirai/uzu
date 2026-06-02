@@ -1,7 +1,7 @@
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
@@ -29,6 +29,8 @@ pub struct Case {
     pub ab_scale: f32,
     pub accumulate: bool,
     pub b_transpose: bool,
+    pub enable_rht: bool,
+    pub enable_bias: bool,
 }
 
 impl Case {
@@ -38,6 +40,8 @@ impl Case {
             ab_scale: 1.0,
             accumulate: false,
             b_transpose: true,
+            enable_rht: false,
+            enable_bias: false,
         }
     }
 
@@ -56,12 +60,30 @@ impl Case {
         self.accumulate = accumulate;
         self
     }
+
+    pub const fn with_rht(
+        mut self,
+        enable_rht: bool,
+    ) -> Self {
+        self.enable_rht = enable_rht;
+        self
+    }
+
+    pub const fn with_bias(
+        mut self,
+        enable_bias: bool,
+    ) -> Self {
+        self.enable_bias = enable_bias;
+        self
+    }
 }
 
 pub struct Input<T: ArrayElement + Float> {
     pub a: Box<[T]>,
     pub b: Box<[T]>,
     pub d_prefill: Option<Box<[T]>>,
+    pub rht_factors: Option<Box<[i32]>>,
+    pub bias: Option<Box<[T]>>,
     pub case: Case,
 }
 
@@ -76,10 +98,27 @@ pub fn deterministic_input<T: ArrayElement + Float>(case: Case) -> Input<T> {
     let d_prefill = case.accumulate.then(|| {
         (0..m * n).map(|i| T::from(((i % 7) as f32) * 0.03 - 0.09).unwrap()).collect::<Vec<_>>().into_boxed_slice()
     });
+    let rht_factors = (case.enable_rht && n % 32 == 0).then(|| {
+        (0..n)
+            .map(|i| {
+                if (i % 2) == 0 {
+                    1i32
+                } else {
+                    -1i32
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    });
+    let bias = case.enable_bias.then(|| {
+        (0..n).map(|i| T::from(((i % 11) as f32) * 0.05 - 0.25).unwrap()).collect::<Vec<_>>().into_boxed_slice()
+    });
     Input {
         a: a.into_boxed_slice(),
         b: b.into_boxed_slice(),
         d_prefill,
+        rht_factors,
+        bias,
         case,
     }
 }
@@ -108,12 +147,15 @@ fn run<B: Backend, T: ArrayElement + Float>(
             .create_allocation(m * n * std::mem::size_of::<T>(), AllocationType::Global)
             .expect("create d allocation")
     };
+    let rht_allocation =
+        input.rht_factors.as_ref().map(|factors| alloc_allocation_with_data::<B, i32>(context, factors));
+    let bias_allocation = input.bias.as_ref().map(|bias| alloc_allocation_with_data::<B, T>(context, bias));
 
     let d_transform = MatmulDOps::<'_, B> {
         ab_scale: input.case.ab_scale,
         accumulate: input.case.accumulate,
-        bias: None,
-        rht_factors: None,
+        bias: bias_allocation.as_ref(),
+        rht_factors: rht_allocation.as_ref(),
     };
 
     let mut encoder = Encoder::new(context).expect("encoder");

@@ -105,6 +105,9 @@ metal = [
 grammar = ["dep:xgrammar"]
 tracing = []
 
+[lints]
+workspace = true
+
 [[test]]
 name = "integration"
 path = "tests/integration/mod.rs"

@@ -14,11 +14,11 @@ use std::{
 use tokenizers::Tokenizer;
 
 use crate::{
-    DataType,
     backends::{common::Backend, select_backend},
     config::{
         model::language_model::LanguageModelConfig, token_codec::AnyTokenCodecConfig, token_mixer::AnyTokenMixerConfig,
     },
+    data_type::DataType,
     language_model::{
         LanguageModelGenerator, LanguageModelGeneratorTrait,
         grammar::{CompiledGrammar, create_compiled_grammar},
@@ -231,7 +231,7 @@ impl ChatSession {
         let prefix_offset = language_model_generator.tokens_len();
         let prefix_len_before = prefix_offset;
 
-        let eos_tokens: Vec<u64> = self.model_config.generation_config.stop_token_ids.iter().copied().collect();
+        let eos_tokens: Vec<u64> = self.model_config.generation_config.stop_token_ids.to_vec();
 
         let sampling_method = config.sampling_policy.resolve(&self.model_config);
 
@@ -595,8 +595,7 @@ impl ChatSession {
             }
         };
 
-        let generate_stats: Option<StepStats>;
-        if generate_results.len() != 0 {
+        let generate_stats = if !generate_results.is_empty() {
             let duration = generate_durations.iter().sum::<f64>();
             let tokens_count: usize = generate_results.iter().map(|result| result.tokens.len()).sum();
             let tokens_per_second: f64 = tokens_count as f64 / duration;
@@ -611,7 +610,7 @@ impl ChatSession {
             let speculator_proposed: usize = generate_results.iter().map(|result| result.speculator_proposed).sum();
             let speculator_accepted: usize = generate_results.iter().map(|result| result.speculator_accepted).sum();
 
-            generate_stats = Some(StepStats {
+            Some(StepStats {
                 duration,
                 suffix_length: generate_suffix_length as u64,
                 tokens_count: tokens_count as u64,
@@ -627,10 +626,10 @@ impl ChatSession {
                 }),
                 speculator_proposed: speculator_proposed as u64,
                 speculator_accepted: speculator_accepted as u64,
-            });
+            })
         } else {
-            generate_stats = None;
-        }
+            None
+        };
 
         let total_stats = TotalStats {
             duration: total_duration,
@@ -638,13 +637,11 @@ impl ChatSession {
             tokens_count_output: tokens_count_output as u64,
         };
 
-        let stats = Stats {
+        Stats {
             prefill_stats,
             generate_stats,
             total_stats,
-        };
-
-        stats
+        }
     }
 
     pub fn peak_memory_usage(&self) -> Option<usize> {

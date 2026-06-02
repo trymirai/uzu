@@ -97,19 +97,17 @@ async fn run_app<B: ratatui::backend::Backend>(
     app.spawn_state_listener().await;
 
     loop {
-        terminal
-            .draw(|f| ui::draw(f, &mut app))
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string()))?;
+        terminal.draw(|f| ui::draw(f, &mut app)).map_err(|error| io::Error::other(error.to_string()))?;
 
         if app.should_quit {
             break;
         }
 
         // Handle events
-        if event_handler.poll_event().await? {
-            if let Some(event) = event_handler.next_event() {
-                app.handle_event(event).await;
-            }
+        if event_handler.poll_event().await?
+            && let Some(event) = event_handler.next_event()
+        {
+            app.handle_event(event).await;
         }
 
         // Small delay to reduce CPU usage

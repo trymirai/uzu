@@ -2,7 +2,7 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(LogitSoftCap)]
 #[variants(T, f32, bf16)]

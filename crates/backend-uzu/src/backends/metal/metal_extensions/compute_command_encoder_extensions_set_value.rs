@@ -36,6 +36,6 @@ impl ComputeEncoderSetValue for ProtocolObject<dyn MTLComputeCommandEncoder> {
         index: usize,
     ) {
         let ptr = NonNull::new(slice.as_ptr() as *mut c_void).expect("slice pointer should never be null");
-        self.set_bytes(ptr, size_of::<T>() * slice.len(), index);
+        self.set_bytes(ptr, size_of_val(slice), index);
     }
 }

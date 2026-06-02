@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
@@ -23,6 +22,7 @@ use crate::{
             mlx_spec::MLXSpec,
         },
     },
+    data_type::DataType,
     forward_pass::model_shape::ModelShape,
     parameters::{ParameterLoaderError, ParameterTree},
 };

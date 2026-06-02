@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
@@ -13,6 +12,7 @@ use crate::{
         activation::AnyActivation,
         per_layer_embedding::{PLELayerConfig, PLEModelConfig},
     },
+    data_type::DataType,
     encodable_block::{Linear, PostLayerScalar, RMSNorm, RMSNormError, linear::LinearBlockError},
     parameters::{ParameterLoaderError, ParameterTree},
 };

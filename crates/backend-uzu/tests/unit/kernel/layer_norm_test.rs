@@ -1,11 +1,12 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::LayerNormKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -188,9 +189,9 @@ fn test_basic<
     ACC: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if IN::data_type() == OUT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {
@@ -208,9 +209,9 @@ fn test_edge<
     ACC: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if IN::data_type() == OUT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {

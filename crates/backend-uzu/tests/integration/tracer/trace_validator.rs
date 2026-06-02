@@ -16,11 +16,12 @@ use std::{
 use backend_uzu::{
     _private::{
         ActivationTrace, AnyModelConfig, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
-        LanguageModelGeneratorContext, ParameterLoaderError, ParameterTree, TokenInputs,
+        LanguageModelGeneratorContext, TokenInputs,
     },
-    Array, ArrayElement, DataType, ParameterLoader,
+    array::{Array, ArrayElement},
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
-    read_safetensors_metadata,
+    data_type::DataType,
+    parameters::{ParameterLoader, ParameterLoaderError, ParameterTree, read_safetensors_metadata},
     session::{
         config::{DecodingConfig, SpeculatorConfig},
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
@@ -779,7 +780,7 @@ impl<B: Backend> TraceValidator<B> {
 
         if expected_shape != produced_shape {
             if expected_shape.len() == produced_shape.len() + 1
-                && expected_shape.get(0) == Some(&1)
+                && expected_shape.first() == Some(&1)
                 && expected_shape[1..] == produced_shape[..]
             {
                 produced_data = produced_data

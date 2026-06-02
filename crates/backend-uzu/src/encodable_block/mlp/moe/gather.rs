@@ -1,10 +1,10 @@
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
         kernel::{MoeGatherXPerm1DKernel, MoeGatherXPerm2DKernel},
     },
+    data_type::DataType,
 };
 
 enum MoeGatherVariant<B: Backend> {

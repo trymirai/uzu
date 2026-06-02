@@ -4,9 +4,9 @@ use thiserror::Error;
 
 use super::{LayerNorm, LayerNormError, PostLayerScalar, RMSNorm, RMSNormError};
 use crate::{
-    DataType,
     backends::common::{Allocation, Backend, Encoder},
     config::normalization::NormalizationConfig,
+    data_type::DataType,
     parameters::ParameterTree,
 };
 

@@ -4,7 +4,6 @@ use thiserror::Error;
 
 use super::Linear;
 use crate::{
-    DataType,
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
@@ -15,6 +14,7 @@ use crate::{
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 

@@ -51,7 +51,7 @@ runs:
 
     - uses: dtolnay/rust-toolchain@nightly
       with:
-        components: ${{ inputs.linters == 'true' && 'rustfmt' || '' }}
+        components: ${{ inputs.linters == 'true' && 'rustfmt,clippy' || '' }}
 
     - if: inputs.linux == 'true'
       run: sudo apt-get update && sudo apt-get install -y libasound2-dev

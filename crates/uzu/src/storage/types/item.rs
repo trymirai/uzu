@@ -97,8 +97,7 @@ impl Item {
     }
 
     pub async fn state(&self) -> DownloadState {
-        let state = self.download_state.lock().await.clone();
-        state
+        self.download_state.lock().await.clone()
     }
 
     async fn get_file_download_states(&self) -> Vec<FileDownloadState> {
@@ -113,12 +112,11 @@ impl Item {
         if !cache_guard.is_empty() && cache_guard.len() == num_file_tasks {
             let mut states = cache_guard.clone();
             for (i, state) in states.iter_mut().enumerate() {
-                if state.total_bytes == 0 {
-                    if let Some(file_info) = self.files.get(i) {
-                        if file_info.size > 0 {
-                            state.total_bytes = file_info.size as u64;
-                        }
-                    }
+                if state.total_bytes == 0
+                    && let Some(file_info) = self.files.get(i)
+                    && file_info.size > 0
+                {
+                    state.total_bytes = file_info.size as u64;
                 }
             }
             return states;
@@ -145,12 +143,11 @@ impl Item {
 
         // Patch total_bytes from registry if missing (safety net)
         for (i, state) in states.iter_mut().enumerate() {
-            if state.total_bytes == 0 {
-                if let Some(file_info) = self.files.get(i) {
-                    if file_info.size > 0 {
-                        state.total_bytes = file_info.size as u64;
-                    }
-                }
+            if state.total_bytes == 0
+                && let Some(file_info) = self.files.get(i)
+                && file_info.size > 0
+            {
+                state.total_bytes = file_info.size as u64;
             }
         }
 
@@ -536,12 +533,11 @@ impl Item {
             streams.push((idx, stream));
 
             let mut state = file_task.state().await;
-            if state.total_bytes == 0 {
-                if let Some(file_info) = self.files.get(idx) {
-                    if file_info.size > 0 {
-                        state.total_bytes = file_info.size as u64;
-                    }
-                }
+            if state.total_bytes == 0
+                && let Some(file_info) = self.files.get(idx)
+                && file_info.size > 0
+            {
+                state.total_bytes = file_info.size as u64;
             }
             initial_states.push(state);
         }
@@ -624,12 +620,11 @@ impl Item {
                         if let Some(mut s) = slot.take() {
                             if i < cache_guard.len() {
                                 // Patch total bytes if 0 in incoming update
-                                if s.total_bytes == 0 {
-                                    if let Some(file_info) = model.files.get(i) {
-                                        if file_info.size > 0 {
-                                            s.total_bytes = file_info.size as u64;
-                                        }
-                                    }
+                                if s.total_bytes == 0
+                                    && let Some(file_info) = model.files.get(i)
+                                    && file_info.size > 0
+                                {
+                                    s.total_bytes = file_info.size as u64;
                                 }
                                 cache_guard[i] = s;
                             } else {

@@ -5,7 +5,7 @@ use std::{collections::HashMap, fs::File, str::Utf8Error};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{DataType, utils::fs::file_read_exact_at};
+use crate::{data_type::DataType, utils::fs::file_read_exact_at};
 
 #[derive(Debug, Error)]
 pub enum HeaderLoadingError {
@@ -119,7 +119,7 @@ pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoading
     }
 
     let stop = metadata_size.checked_add(8).ok_or(HeaderLoadingError::InvalidHeaderLength)?;
-    let mut json_buffer: Box<[u8]> = core::iter::repeat(0).take(stop - size_of::<u64>()).collect();
+    let mut json_buffer: Box<[u8]> = core::iter::repeat_n(0, stop - size_of::<u64>()).collect();
     file_read_exact_at(file, &mut json_buffer, 8).map_err(HeaderLoadingError::UnableToReadHeaderJson)?;
     let string = core::str::from_utf8(&json_buffer)?;
     let metadata: HashMetadata = serde_json::from_str(string)?;

@@ -26,7 +26,7 @@ impl Output {
         Self {
             text: self.text.clone(),
             stats: self.stats.clone(),
-            finish_reason: finish_reason,
+            finish_reason,
         }
     }
 
@@ -40,7 +40,7 @@ impl Output {
                 prefill_stats: self.stats.prefill_stats.clone(),
                 generate_stats: self.stats.generate_stats.clone(),
                 total_stats: TotalStats {
-                    duration: duration,
+                    duration,
                     ..self.stats.total_stats.clone()
                 },
             },

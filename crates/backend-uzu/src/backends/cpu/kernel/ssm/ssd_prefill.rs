@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 
 #[kernel(SSDPrefill64)]
 #[variants(T, f32, f16, bf16)]
@@ -79,7 +79,7 @@ pub fn ssd_prefill_sequential<T: ArrayElement + Float>(
     let channels = channels as usize;
     let head_dim = head_dim as usize;
 
-    let safe_group = group_size.max(1) as usize;
+    let safe_group = group_size.max(1);
 
     unsafe {
         for h in 0..channels {

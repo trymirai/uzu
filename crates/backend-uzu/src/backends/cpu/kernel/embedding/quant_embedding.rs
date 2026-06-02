@@ -3,8 +3,9 @@ use num_traits::Float;
 use proc_macros::kernel;
 
 use crate::{
-    ArrayElement, DataType,
+    array::ArrayElement,
     backends::common::gpu_types::{QuantizationMethod, QuantizationMode},
+    data_type::DataType,
 };
 
 #[kernel(QuantizedEmbeddingLookup)]
@@ -46,7 +47,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
 
     let packing_divisor = quantization_mode.packing_divisor() as u32;
     let weights_stride = model_dim / packing_divisor;
-    let num_groups = (model_dim + group_size - 1) / group_size;
+    let num_groups = model_dim.div_ceil(group_size);
     let zero_points_stride = match quantization_mode {
         QuantizationMode::U4 => num_groups.div_ceil(2),
         QuantizationMode::I8 | QuantizationMode::U8 => num_groups,

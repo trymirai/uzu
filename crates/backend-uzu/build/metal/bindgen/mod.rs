@@ -88,6 +88,7 @@ pub fn bindgen(
             #(#variant_struct_fields,)*
         }
 
+        #[allow(clippy::style, clippy::complexity, clippy::perf)]
         impl #trait_implementation_for #struct_name {
             #associate_backend
 

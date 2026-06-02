@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -13,6 +13,7 @@ use backend_uzu::{
         cpu::Cpu,
         metal::Metal,
     },
+    data_type::DataType,
 };
 use half::bf16;
 

@@ -4,11 +4,12 @@ use std::{
 };
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::{bf16, f16};
@@ -198,7 +199,7 @@ fn test_internal<
             input.full_layer,
             input.in_place,
         );
-        assert_eq_float::<OutputT>(&expected, &output, eps, &msg);
+        assert_eq_float::<OutputT>(expected, &output, eps, &msg);
     });
 }
 
@@ -209,9 +210,9 @@ fn test_basic<
     AccumT: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if InputT::data_type() == OutputT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {
@@ -229,9 +230,9 @@ fn test_edge<
     AccumT: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if InputT::data_type() == OutputT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {

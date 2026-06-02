@@ -3,10 +3,12 @@ pub mod gemv;
 
 use std::sync::OnceLock;
 
-pub use self::gemm::{GemmDispatchPath, GemmKernel};
-use self::gemv::{GemvKernel, QuantGemvKernel};
+use self::gemv::GemvKernel;
+pub use self::{
+    gemm::{GemmDispatchPath, GemmKernel},
+    gemv::QuantGemvKernel,
+};
 use crate::{
-    DataType,
     backends::{
         common::{
             AsBufferRangeRef, Backend, Buffer, Encoder,
@@ -18,11 +20,12 @@ use crate::{
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
+    data_type::DataType,
 };
 
 pub struct MatmulMetalKernel {
     gemv: GemvKernel,
-    quant_gemv: QuantGemvKernel,
+    pub quant_gemv: QuantGemvKernel,
     pub gemm: GemmKernel,
 }
 

@@ -8,7 +8,7 @@ using namespace metal;
 using namespace uzu::hadamard_order;
 
 template <typename T>
-VARIANTS(T, half, bfloat, float)
+VARIANTS(T, bfloat, float)
 PUBLIC KERNEL(HadamardTransform)(
     device T* data,
     const device int32_t* factors,

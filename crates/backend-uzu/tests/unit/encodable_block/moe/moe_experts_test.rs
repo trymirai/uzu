@@ -7,22 +7,22 @@
 //! - Numerical correctness against CPU reference
 
 use backend_uzu::{
-    DataType,
     backends::common::{
         Encoder,
         gpu_types::{ActivationType, activation_silu_alpha},
     },
+    data_type::DataType,
 };
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::{
-    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock,
-    common::{
-        assert::assert_eq_float,
-        helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
-    },
-    cpu_tile_counts, cpu_tile_scan,
+    MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, cpu_tile_counts,
+    cpu_tile_scan,
+};
+use crate::common::{
+    assert::assert_eq_float,
+    helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
 };
 
 /// Test data for MoE experts
@@ -166,7 +166,6 @@ fn gather_and_finalize(
 /// - 1: SiLU(up)
 /// - 2: SwiGLU = SiLU(gate) * up
 /// - 3: GEGLU = GELU(gate) * up
-#[allow(clippy::too_many_arguments)]
 fn cpu_moe_reference(
     x: &[bf16],           // [T, d_model]
     topk_ids: &[i32],     // [T * K]

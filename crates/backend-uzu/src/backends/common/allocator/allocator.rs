@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::common::{
         AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer, BufferRangeMut, BufferRangeRef, Context, DenseBuffer,
         allocator::{RangeAllocationType, RangeAllocator},
@@ -190,9 +190,7 @@ impl<B: Backend> Allocator<B> {
 
         let allocator_buffer_index = allocator_buffers
             .iter()
-            .position(|allocator_buffer| {
-                (allocator_buffer.buffer.as_ref().get_ref() as *const B::DenseBuffer) == allocation.buffer
-            })
+            .position(|allocator_buffer| std::ptr::eq(allocator_buffer.buffer.as_ref().get_ref(), allocation.buffer))
             .unwrap(); // Can never fail
 
         allocator_buffers[allocator_buffer_index]

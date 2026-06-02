@@ -45,6 +45,6 @@ impl Serialize for JinjaFunction {
 impl<'d> Deserialize<'d> for JinjaFunction {
     fn deserialize<D: Deserializer<'d>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Ok(JinjaFunction::from_str(&name).map_err(de::Error::custom)?)
+        JinjaFunction::from_str(&name).map_err(de::Error::custom)
     }
 }

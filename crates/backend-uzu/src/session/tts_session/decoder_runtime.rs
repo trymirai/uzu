@@ -35,7 +35,7 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         )?;
         let executables = Decoder::new_with_embedding_subtree(
             context.as_ref(),
-            &decoder_config,
+            decoder_config,
             root_loader_view,
             transformer_subtree,
             embedding_subtree,
@@ -173,10 +173,9 @@ impl<B: Backend> TokenDecoderContext<B> {
         context: &Rc<B::Context>,
         async_chain_capacity: usize,
     ) -> Result<(Array<B>, Array<B>, Allocation<B>), Error> {
-        let positions = context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::I32);
-        let seeds = context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::U64);
-        let results =
-            context.create_array_uninitialized(&[async_chain_capacity], crate::DataType::U32).into_allocation();
+        let positions = context.create_array_uninitialized(&[async_chain_capacity], DataType::I32);
+        let seeds = context.create_array_uninitialized(&[async_chain_capacity], DataType::U64);
+        let results = context.create_array_uninitialized(&[async_chain_capacity], DataType::U32).into_allocation();
         Ok((positions, seeds, results))
     }
 }
@@ -522,7 +521,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
 
         let first_followup_token_ids = if followup_count > 0 {
             let token_ids_shape = [1];
-            let token_ids_data_type = crate::DataType::U64;
+            let token_ids_data_type = DataType::U64;
             let mut next_token_ids =
                 self.ctx.context.create_array_uninitialized(&token_ids_shape, token_ids_data_type).into_allocation();
             self.ctx.token_copy_sampled.encode(&sampling_output, &mut next_token_ids, encoder);
@@ -612,7 +611,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 )?;
                 if pass + 1 < followup_count {
                     let token_ids_shape = [1];
-                    let token_ids_data_type = crate::DataType::U64;
+                    let token_ids_data_type = DataType::U64;
                     let mut updated_token_ids = self
                         .ctx
                         .context
@@ -704,7 +703,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         &self,
         sampling_length: usize,
     ) -> Allocation<B> {
-        self.ctx.context.create_array_uninitialized(&[sampling_length], crate::DataType::U32).into_allocation()
+        self.ctx.context.create_array_uninitialized(&[sampling_length], DataType::U32).into_allocation()
     }
 
     fn encode_decode_with_fishaudio_readout_on<'input>(

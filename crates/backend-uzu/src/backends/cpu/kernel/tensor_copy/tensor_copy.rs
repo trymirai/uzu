@@ -2,7 +2,7 @@ use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(TensorCopy)]
 #[variants(T, f32, f16, bf16)]
@@ -13,7 +13,7 @@ pub fn tensor_copy<T: ArrayElement + Float>(
 ) {
     unsafe {
         for i in 0usize..(length as usize) {
-            *dst_buffer.offset(i as isize) = *src_buffer.offset(i as isize);
+            *dst_buffer.add(i) = *src_buffer.add(i);
         }
     }
 }

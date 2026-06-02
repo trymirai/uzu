@@ -7,7 +7,9 @@ use xgrammar::{
     TokenizerInfo,
 };
 
-use crate::{DataType, language_model::grammar::CompiledGrammar, prelude::Error, session::config::GrammarConfig};
+use crate::{
+    data_type::DataType, language_model::grammar::CompiledGrammar, prelude::Error, session::config::GrammarConfig,
+};
 
 enum CompiledGrammarEngagementState {
     Always,
@@ -77,7 +79,7 @@ impl CompiledXGrammar {
         trigger_token_id: Option<u64>,
         tokenizer_info: &TokenizerInfo,
     ) -> Result<Self, Error> {
-        let vocab_size = tokenizer_info.vocab_size() as usize;
+        let vocab_size = tokenizer_info.vocab_size();
 
         let grammar = match config {
             GrammarConfig::JsonSchema {

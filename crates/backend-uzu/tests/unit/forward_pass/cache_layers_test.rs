@@ -4,11 +4,12 @@ use std::{mem::size_of, ops::Range};
 
 use super::{CacheEntryIndex, CacheLayer, CacheLayers, LayerCacheBinding};
 use crate::{
-    ArrayContextExt, DataType,
+    array::ArrayContextExt,
     backends::{
         common::{Allocation, AllocationType, Backend, Context, Encoder, SparseBuffer},
         metal::Metal,
     },
+    data_type::DataType,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVCacheLayerTrait},
 };
 

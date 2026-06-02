@@ -4,11 +4,12 @@ use std::{
 };
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{AllocationType, Backend, Context, Encoder, Kernels, kernel::TopPKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 use half::{bf16, f16};
@@ -16,12 +17,7 @@ use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use super::SamplingBlock;
-
-#[macro_use]
-#[path = "../../common/mod.rs"]
-mod common;
-
-use common::helpers::{alloc_allocation_with_data, allocation_to_vec};
+use crate::common::helpers::{alloc_allocation_with_data, allocation_to_vec};
 
 const TEST_SAMPLING_SEED: u64 = 42;
 

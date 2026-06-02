@@ -65,11 +65,11 @@ enum Commands {
 }
 
 fn run_setup(include_platform_specific: bool) -> Result<()> {
-    if include_platform_specific {
-        if cfg!(target_vendor = "apple") {
-            Command::xcodebuild_first_launch().run()?;
-            Command::xcodebuild_download_metal_toolchain().run()?;
-        }
+    if include_platform_specific && cfg!(target_vendor = "apple") {
+        Command::xcodebuild_first_launch().run()?;
+        Command::xcodebuild_download_metal_toolchain().run()?;
+        Command::cmake_setup().run()?;
+        Command::clang_format_setup().run()?;
     }
 
     Command::rustup_setup().run()?;
@@ -83,7 +83,7 @@ fn run_setup(include_platform_specific: bool) -> Result<()> {
 
 fn run_verify(config: &PlatformsConfig) -> Result<()> {
     for language in config.languages.keys() {
-        let backend = language_backend(language.clone(), config.clone())?;
+        let backend = language_backend(*language, config.clone())?;
         backend.build(Configuration::Release, vec![config.host_target()?], vec![])?;
     }
     let (output, _) = Command::git_status_porcelain().output()?;

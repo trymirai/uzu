@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -9,6 +9,7 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -128,7 +129,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
                 &mut state,
                 &mut y,
                 input.suffix_len as u32,
-                input.group_size as u32,
+                input.group_size,
                 input.state_dim as u32,
                 &x_strides,
                 &dt_strides,
@@ -153,7 +154,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(
                 &mut state,
                 &mut y,
                 input.suffix_len as u32,
-                input.group_size as u32,
+                input.group_size,
                 input.state_dim as u32,
                 &x_strides,
                 &dt_strides,

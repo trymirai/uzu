@@ -25,3 +25,6 @@ tracing-appender.workspace = true
 dotenvy.workspace = true
 clap.workspace = true
 download-manager.workspace = true
+
+[lints]
+workspace = true

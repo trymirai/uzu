@@ -1,11 +1,12 @@
 use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::BitmaskKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -27,7 +28,7 @@ fn get_test_data_basic<T: ArrayElement + Float>(in_place: bool) -> (Input<T>, Ve
     let len = (batch_size * vocab_size) as usize;
     let logits: Vec<T> = (0..len).map(|i| T::from((i as f32 * 0.1).sin() * 2.0).unwrap()).collect();
 
-    let bitmask_size = ((vocab_size + 31) / 32) as usize;
+    let bitmask_size = vocab_size.div_ceil(32) as usize;
     let mut bitmask = vec![0u32; batch_size as usize * bitmask_size];
     // Allow every other token
     for b in 0..batch_size as usize {
@@ -55,7 +56,7 @@ fn get_test_data_all_allowed<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let len = (batch_size * vocab_size) as usize;
     let logits: Vec<T> = (0..len).map(|i| T::from(i as f32 * 0.5).unwrap()).collect();
 
-    let bitmask_size = ((vocab_size + 31) / 32) as usize;
+    let bitmask_size = vocab_size.div_ceil(32) as usize;
     let bitmask = vec![0xFFFFFFFFu32; batch_size as usize * bitmask_size];
 
     let input = Input {
@@ -77,7 +78,7 @@ fn get_test_data_none_allowed<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let len = (batch_size * vocab_size) as usize;
     let logits: Vec<T> = (0..len).map(|i| T::from(i as f32 * 0.5).unwrap()).collect();
 
-    let bitmask_size = ((vocab_size + 31) / 32) as usize;
+    let bitmask_size = vocab_size.div_ceil(32) as usize;
     let bitmask = vec![0u32; batch_size as usize * bitmask_size];
 
     let input = Input {
@@ -100,7 +101,7 @@ fn get_test_data_non_aligned<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
     let len = (batch_size * vocab_size) as usize;
     let logits: Vec<T> = (0..len).map(|i| T::from((i as f32 * 0.3).cos() * 3.0).unwrap()).collect();
 
-    let bitmask_size = ((vocab_size + 31) / 32) as usize;
+    let bitmask_size = vocab_size.div_ceil(32) as usize;
     let mut bitmask = vec![0u32; batch_size as usize * bitmask_size];
     // Set specific bits
     for b in 0..batch_size as usize {

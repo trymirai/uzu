@@ -7,9 +7,9 @@ use thiserror::Error;
 #[cfg(feature = "tracing")]
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
-    DataType,
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
     config::decoder::DecoderConfig,
+    data_type::DataType,
     encodable_block::{
         Embedding, LayerArguments, LayerExecutables, PerLayerEmbedding, PostLayerScalar, QkUnpack, RMSNorm,
         RMSNormError, Rope, embedding::EmbeddingError, layer::LayerExecutablesError,
@@ -363,7 +363,7 @@ impl<B: Backend> Decoder<B> {
 
         let logits = self.embed.encode_readout(sampling_length, &output_norm, encoder)?;
         #[cfg(feature = "tracing")]
-        if let Some(trace) = trace.as_deref_mut() {
+        if let Some(trace) = trace {
             encoder.encode_copy(&logits, .., trace.logits.allocation_mut(), ..);
         }
         Ok(logits)

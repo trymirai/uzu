@@ -3,8 +3,8 @@ use std::mem::size_of;
 use thiserror::Error;
 
 use crate::{
-    DataType,
     backends::common::{Backend, Buffer, Encoder, Kernels, gpu_types::Swap, kernel::KVCacheUpdateKernel},
+    data_type::DataType,
 };
 
 pub struct KVLayerData<'a, B: Backend, Buf: Buffer<Backend = B>> {

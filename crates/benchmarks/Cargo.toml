@@ -17,3 +17,6 @@ sysinfo.workspace = true
 default = ["metal"]
 
 metal = ["backend-uzu/metal"]
+
+[lints]
+workspace = true
