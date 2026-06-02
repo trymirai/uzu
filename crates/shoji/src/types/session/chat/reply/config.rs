@@ -9,7 +9,7 @@ pub struct ChatReplyConfig {
     pub sampling_policy: SamplingPolicy,
     pub grammar: Option<Grammar>,
     #[serde(default)]
-    pub stop: Vec<String>,
+    pub stop: Option<Vec<String>>,
 }
 
 #[bindings::export(Implementation)]
@@ -71,7 +71,7 @@ impl ChatReplyConfig {
     #[bindings::export(Method)]
     pub fn with_stop(
         &self,
-        stop: Vec<String>,
+        stop: Option<Vec<String>>,
     ) -> Self {
         Self {
             stop,

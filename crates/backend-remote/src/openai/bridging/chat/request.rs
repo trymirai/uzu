@@ -48,8 +48,8 @@ pub fn build(
     if let Some(token_limit) = config.token_limit {
         request.max_completion_tokens = Some(token_limit);
     }
-    if !config.stop.is_empty() {
-        request.stop = Some(StopConfiguration::StringArray(config.stop.clone()));
+    if let Some(stop) = config.stop.clone().filter(|stop| !stop.is_empty()) {
+        request.stop = Some(StopConfiguration::StringArray(stop));
     }
     match &config.sampling_policy {
         SamplingPolicy::Default {} => {},

@@ -134,7 +134,8 @@ fn build_run_config(
     let tokens_limit = config.token_limit.map(|value| value as u64).unwrap_or(2048);
     let enable_thinking =
         messages.reasoning_effort().map(|effort| !matches!(effort, ReasoningEffort::Disabled)).unwrap_or(true);
-    RunConfig::new(tokens_limit, enable_thinking, sampling_policy, grammar_config).stop_sequences(config.stop.clone())
+    RunConfig::new(tokens_limit, enable_thinking, sampling_policy, grammar_config)
+        .stop_sequences(config.stop.clone().unwrap_or_default())
 }
 
 fn build_sampling_policy(sampling_policy: &ShojiSamplingPolicy) -> SamplingPolicy {
