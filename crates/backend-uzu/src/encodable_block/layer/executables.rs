@@ -128,6 +128,7 @@ impl<B: Backend> LayerExecutables<B> {
                     rope.clone(),
                     qk_unpack.clone(),
                     attention_config.gate_projection_config.is_none(),
+                    layer_config.kv_source_layer_index.is_some(),
                 )?;
 
                 (
