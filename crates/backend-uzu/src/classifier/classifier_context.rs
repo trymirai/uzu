@@ -83,7 +83,7 @@ impl<B: Backend> ClassifierContext<B> {
         }
 
         let rope = Rc::new(
-            Rope::<B>::new(context.as_ref(), &model_shape)
+            Rope::<B>::new(context.as_ref(), &model_shape, false)
                 .map_err(|e| Error::Classifier(ClassifierError::KernelCreationFailed(format!("RoPE: {:?}", e))))?,
         );
         let qk_unpack = Rc::new(
