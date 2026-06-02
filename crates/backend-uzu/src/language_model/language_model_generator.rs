@@ -31,17 +31,17 @@ use crate::{
         parameter::{ConfigResolvableValue, ResolvableValue, SamplingMethod},
         types::Error,
     },
-    trie::{TrieCreationConfig, TrieNode},
+    trie::{FlatTrie, TrieCreationConfig, TrieNode},
     utils::pointers::SendPtr,
 };
 
 #[derive(Debug, Clone)]
-struct Task<'a> {
-    token_ids: &'a [u64],
-    token_subtrie_ranges: Option<&'a [[u32; 3]]>,
-    token_positions: &'a [usize],
-    token_bitmask: Option<&'a [u32]>,
-    token_seeds: &'a [u64],
+pub struct Task {
+    token_ids: Box<[u64]>,
+    token_subtrie_ranges: Option<Box<[[u32; 3]]>>,
+    token_positions: Box<[usize]>,
+    token_bitmask: Option<Box<[u32]>>,
+    token_seeds: Box<[u64]>,
     active_row_count: usize,
     sampling_start: usize,
     sampling_length: usize,
@@ -60,10 +60,11 @@ struct InFlightForwardPass<B: Backend> {
     pending: Pending<B>,
 }
 
-struct RunModelResult<B: Backend> {
-    sampling_output: Option<Allocation<B>>,
-    cpu_run_time: f64,
-    gpu_run_time: Duration,
+pub struct RunModelResult<B: Backend> {
+    pub sampling_output: Option<Allocation<B>>,
+    pub cpu_run_time: f64,
+    #[allow(unused)]
+    pub gpu_run_time: Duration,
 }
 
 pub struct LanguageModelGenerator<B: Backend> {
@@ -279,11 +280,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let _ = last_sampling_output.take();
 
             let task = Task {
-                token_ids: &step_token_ids,
-                token_subtrie_ranges: step_token_subtrie_ranges.as_deref(),
-                token_positions: &step_token_positions,
-                token_bitmask: step_token_bitmask.as_deref(),
-                token_seeds: &step_token_seeds,
+                token_ids: step_token_ids,
+                token_subtrie_ranges: step_token_subtrie_ranges,
+                token_positions: step_token_positions,
+                token_bitmask: step_token_bitmask,
+                token_seeds: step_token_seeds,
                 active_row_count,
                 sampling_start,
                 sampling_length,
@@ -357,7 +358,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
-
         let suffix_length = self.decoding_config.generate_suffix_length();
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
@@ -367,57 +367,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &TrieCreationConfig::default(),
             suffix_length,
         );
-
         let flat_trie = suffix_root.linearize();
-        let active_row_count = flat_trie.len();
 
-        let token_ids =
-            flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
+        let task = self.get_generate_task(&flat_trie, compiled_grammar.is_some());
 
-        let token_subtrie_ranges = flat_trie
-            .token_subtrie_ranges()
-            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_row_count))
-            .collect::<Box<[[u32; 3]]>>();
-
-        let token_bitmask: Option<Box<[u32]>> = compiled_grammar.is_some().then(|| {
-            let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
-            flat_trie
-                .token_masks()
-                .chain(repeat_n(None, suffix_length - active_row_count))
-                .flat_map(|mask| match mask {
-                    Some(mask) => Either::Left(
-                        mask.iter()
-                            .copied()
-                            .take(single_token_bitmask_size)
-                            .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
-                    ),
-                    None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
-                })
-                .collect::<Box<[u32]>>()
-        });
-
-        let start_position = self.tokens.len() - 1;
-        let token_positions = flat_trie
-            .token_positions()
-            .map(|trie_position| start_position + trie_position)
-            .chain(repeat_n(INVALID_POSITION, suffix_length - active_row_count))
-            .collect::<Box<[usize]>>();
-
-        let token_seeds =
-            flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
-
-        let task = Task {
-            token_ids: &token_ids,
-            token_subtrie_ranges: Some(&token_subtrie_ranges),
-            token_positions: &token_positions,
-            token_bitmask: token_bitmask.as_deref(),
-            token_seeds: &token_seeds,
-            active_row_count,
-            sampling_start: 0,
-            sampling_length: active_row_count,
-            is_prefilling: false,
-        };
-
+        let active_row_count = task.active_row_count;
         let sampling_length = task.sampling_length;
         let run_result = self.run_model(task, sampling_method)?;
         let sampled_tokens = self.read_sampling_output(
@@ -482,11 +436,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_seed = self.context.async_buffers.seeds.as_slice::<u64>()[pass_idx];
 
         let task = Task {
-            token_ids: &[last_token],
+            token_ids: Box::new([last_token]),
             token_subtrie_ranges: None,
-            token_positions: &[token_position],
+            token_positions: Box::new([token_position]),
             token_bitmask: None,
-            token_seeds: &[0], // Ignored, using async buffer
+            token_seeds: Box::new([0]), // Ignored, using async buffer
             active_row_count: 1,
             sampling_start: 0,
             sampling_length: 1,
@@ -698,6 +652,60 @@ impl<B: Backend> LanguageModelGenerator<B> {
         })
     }
 
+    pub fn get_generate_task(
+        &self,
+        flat_trie: &FlatTrie,
+        has_grammar: bool,
+    ) -> Task {
+        let suffix_length = self.decoding_config.generate_suffix_length();
+        let active_row_count = flat_trie.len();
+
+        let token_ids = flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_row_count)).collect();
+
+        let token_subtrie_ranges = flat_trie
+            .token_subtrie_ranges()
+            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_row_count))
+            .collect();
+
+        let token_bitmask: Option<Box<[u32]>> = has_grammar.then(|| {
+            let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
+            flat_trie
+                .token_masks()
+                .chain(repeat_n(None, suffix_length - active_row_count))
+                .flat_map(|mask| match mask {
+                    Some(mask) => Either::Left(
+                        mask.iter()
+                            .copied()
+                            .take(single_token_bitmask_size)
+                            .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
+                    ),
+                    None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
+                })
+                .collect::<Box<[u32]>>()
+        });
+
+        let start_position = self.tokens.len() - 1;
+        let token_positions = flat_trie
+            .token_positions()
+            .map(|trie_position| start_position + trie_position)
+            .chain(repeat_n(INVALID_POSITION, suffix_length - active_row_count))
+            .collect();
+
+        let token_seeds = flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_row_count)).collect();
+
+        Task {
+            token_ids,
+            token_subtrie_ranges: Some(token_subtrie_ranges),
+            token_positions,
+            token_bitmask,
+            token_seeds,
+            active_row_count,
+            sampling_start: 0,
+            sampling_length: active_row_count,
+            is_prefilling: false,
+        }
+    }
+
     pub fn run_model(
         &mut self,
         task: Task,
@@ -710,7 +718,12 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let sampling_start = task.sampling_start;
         let sampling_length = task.sampling_length;
         let sampling_inputs = sample.then(|| {
-            self.create_sampling_inputs(task.sampling_start, task.sampling_length, task.token_seeds, task.token_bitmask)
+            self.create_sampling_inputs(
+                task.sampling_start,
+                task.sampling_length,
+                &task.token_seeds,
+                task.token_bitmask.as_deref(),
+            )
         });
 
         let is_first_decode = task.token_ids.len() == 1;
@@ -846,9 +859,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
         TokenInputs::new_llm(
             self.context.context.as_ref(),
             &self.context.model_shape,
-            task.token_ids,
-            task.token_subtrie_ranges,
-            task.token_positions,
+            &task.token_ids,
+            task.token_subtrie_ranges.as_deref(),
+            &task.token_positions,
             token_ids_array,
             token_positions_array,
             task.sampling_start,

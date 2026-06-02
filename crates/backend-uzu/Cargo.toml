@@ -122,7 +122,7 @@ path = "tests/performance/mod.rs"
 
 [[bench]]
 name = "benchmarks"
-path = "tests/performance/kernel/bench_entry.rs"
+path = "tests/performance/bench_entry.rs"
 
 [[bench]]
 name = "kernel"

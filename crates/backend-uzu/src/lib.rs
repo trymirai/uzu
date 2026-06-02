@@ -39,6 +39,10 @@ pub mod _private {
         forward_pass::{
             cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
         },
-        language_model::{LanguageModelGenerator, language_model_generator_context::LanguageModelGeneratorContext},
+        language_model::{
+            LanguageModelGenerator, language_model_generator::RunModelResult,
+            language_model_generator_context::LanguageModelGeneratorContext,
+        },
+        trie::{TrieCreationConfig, TrieNode},
     };
 }
