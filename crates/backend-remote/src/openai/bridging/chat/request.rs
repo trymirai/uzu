@@ -1,5 +1,6 @@
 use async_openai::types::chat::{
-    ChatCompletionStreamOptions, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, ToolChoiceOptions,
+    ChatCompletionStreamOptions, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, StopConfiguration,
+    ToolChoiceOptions,
 };
 use shoji::types::{
     basic::{SamplingMethod, SamplingPolicy},
@@ -46,6 +47,9 @@ pub fn build(
     }
     if let Some(token_limit) = config.token_limit {
         request.max_completion_tokens = Some(token_limit);
+    }
+    if !config.stop.is_empty() {
+        request.stop = Some(StopConfiguration::StringArray(config.stop.clone()));
     }
     match &config.sampling_policy {
         SamplingPolicy::Default {} => {},
