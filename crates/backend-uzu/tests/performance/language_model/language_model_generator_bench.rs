@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use backend_uzu::{
     _benchmarks::{LanguageModelConfig, LanguageModelGenerator, RunModelResult, TrieCreationConfig, TrieNode},
     backends::common::Backend,
     prelude::{DecodingConfig, SamplingMethod},
 };
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput};
 
 use crate::{common::path::get_test_model_path, uzu_bench};
 
@@ -37,20 +39,22 @@ fn run_generator<B: Backend>(
 
 #[uzu_bench]
 fn bench_forward_pass(c: &mut Criterion) {
-    let tokens: Vec<u64> = vec![0; 128];
+    // Empty prompt first decode: the generate path requires one seed token.
+    let tokens: Vec<u64> = vec![0];
     for_each_non_cpu_backend!(|B| {
         let mut group = c.benchmark_group("Forward pass");
         group.sample_size(10);
         group.throughput(Throughput::Elements(tokens.len() as u64));
-        group.bench_function(BenchmarkId::from_parameter(format!("{} zero tokens", tokens.len())), |b| {
-            b.iter_batched_ref(
-                create_generator::<B>,
-                |generator| {
-                    let result = run_generator(generator, &tokens);
-                    result.gpu_run_time
-                },
-                BatchSize::PerIteration,
-            )
+        group.bench_function(BenchmarkId::from_parameter("empty prompt first decode"), |b| {
+            b.iter_custom(|n_iters| {
+                let mut total_duration = Duration::from_secs(0);
+                for _ in 0..n_iters {
+                    let mut generator = create_generator::<B>();
+                    let result = run_generator(&mut generator, &tokens);
+                    total_duration += result.gpu_run_time
+                }
+                total_duration
+            });
         });
         group.finish()
     })

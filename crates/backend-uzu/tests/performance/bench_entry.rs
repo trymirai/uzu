@@ -2,6 +2,8 @@
 #![test_runner(crate::bench_runner)]
 
 fn bench_runner(benches: &[&dyn Fn()]) {
+    #[cfg(target_os = "ios")]
+    crate::common::path::ios_set_current_dir();
     criterion::runner(benches);
 }
 
