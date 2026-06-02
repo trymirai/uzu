@@ -26,7 +26,6 @@ pub struct AttentionConfig {
     pub has_out_biases: bool,
     pub gate_projection_config: Option<LinearConfig>,
     pub normalize_values: bool,
-    #[serde(default)]
     pub is_kv_sharing: bool,
 }
 
