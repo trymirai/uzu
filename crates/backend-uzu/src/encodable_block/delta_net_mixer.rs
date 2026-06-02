@@ -287,7 +287,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         suffix_length: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
-        let num_dv_groups = ((self.value_head_dim + 7) / 8) as u32;
+        let num_dv_groups = self.value_head_dim.div_ceil(16) as u32;
         let mut prep_q_norm =
             encoder.allocate_scratch(size_for_shape(&[suffix_length * self.key_dim], DataType::F32))?;
         let mut prep_k_norm =

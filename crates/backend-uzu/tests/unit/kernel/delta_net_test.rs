@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use backend_uzu::{
-    ArrayContextExt, DataType,
+    ArrayContextExt, ArrayElement, DataType,
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -14,6 +14,7 @@ use backend_uzu::{
         metal::Metal,
     },
 };
+use half::bf16;
 
 use crate::uzu_test;
 
@@ -287,8 +288,8 @@ fn test_delta_net_update_qwen35_shapes() {
 
 // DeltaNetPrefill + NormGate
 
-fn run_prefill_with_norm_gate(
-    in_proj: &[f32],
+fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
+    in_proj: &[T],
     a_log: &[f32],
     dt_bias: &[f32],
     norm_weight: &[f32],
@@ -303,7 +304,7 @@ fn run_prefill_with_norm_gate(
     let value_dim = num_v_heads * head_v_dim;
     let conv_dim = 2 * key_dim + value_dim;
     let total_proj_dim = conv_dim + value_dim + num_v_heads + num_v_heads;
-    let num_dv_groups = (head_v_dim as u32 + 7) / 8;
+    let num_dv_groups = head_v_dim.div_ceil(16) as u32;
 
     let context = <Metal as Backend>::Context::new().expect("context");
     let in_proj_array = context.create_array_from(&[in_proj.len()], in_proj);
@@ -311,7 +312,7 @@ fn run_prefill_with_norm_gate(
     let dt_bias_array = context.create_array_from(&[dt_bias.len()], dt_bias);
     let norm_weight_array = context.create_array_from(&[norm_weight.len()], norm_weight);
     let mut state_array = context.create_array_from(&[state.len()], state).into_allocation();
-    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], DataType::F32).into_allocation();
+    let mut out_array = context.create_array_zeros(&[suffix_len * value_dim], T::data_type()).into_allocation();
     let mut q_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
     let mut k_norm_array = context.create_array_zeros(&[suffix_len * key_dim], DataType::F32).into_allocation();
 
@@ -320,18 +321,18 @@ fn run_prefill_with_norm_gate(
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
-        DataType::F32,
+        T::data_type(),
         head_k_dim as u32,
     )
     .unwrap();
     let prefill_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillKernel::new(
         &context,
-        DataType::F32,
+        T::data_type(),
         head_k_dim as u32,
     )
     .unwrap();
     let norm_k =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, DataType::F32).unwrap();
+        <<Metal as Backend>::Kernels as Kernels>::DeltaNetNormGateKernel::new(&context, T::data_type()).unwrap();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     prep_k.encode(
@@ -381,15 +382,20 @@ fn run_prefill_with_norm_gate(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::common::helpers::allocation_to_vec(&out_array), crate::common::helpers::allocation_to_vec(&state_array))
+    let out: Vec<T> = crate::common::helpers::allocation_to_vec(&out_array);
+    let out = out.into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
+    let state = crate::common::helpers::allocation_to_vec(&state_array);
+    (out, state)
 }
 
-fn test_prefill_norm_gate_impl(
+fn test_prefill_norm_gate_impl<T: ArrayElement>(
     num_v_heads: usize,
     num_k_heads: usize,
     head_k_dim: usize,
     head_v_dim: usize,
     suffix_len: usize,
+    output_atol: f32,
+    output_rtol: f32,
     label: &str,
 ) {
     let key_dim = num_k_heads * head_k_dim;
@@ -399,6 +405,16 @@ fn test_prefill_norm_gate_impl(
     let state_size = num_v_heads * head_k_dim * head_v_dim;
 
     let in_proj: Vec<f32> = (0..suffix_len * total_proj_dim).map(|i| ((i % 37) as f32) * 0.02 - 0.3).collect();
+    let in_proj_typed: Vec<T> = in_proj
+        .iter()
+        .copied()
+        .map(|value| <T as num_traits::NumCast>::from(value).expect("input to activation dtype"))
+        .collect();
+    let reference_in_proj: Vec<f32> = in_proj_typed
+        .iter()
+        .copied()
+        .map(|value| <f32 as num_traits::NumCast>::from(value).expect("activation dtype to f32"))
+        .collect();
     let a_log: Vec<f32> = (0..num_v_heads).map(|i| -1.5 + (i as f32) * 0.05).collect();
     let dt_bias: Vec<f32> = (0..num_v_heads).map(|i| 0.3 + (i as f32) * 0.02).collect();
     let norm_weight: Vec<f32> = (0..head_v_dim).map(|i| 0.9 + (i as f32) * 0.001).collect();
@@ -407,8 +423,9 @@ fn test_prefill_norm_gate_impl(
     // Reference: fused decode kernel token-by-token
     let mut ref_state = state.clone();
     let mut ref_outputs = vec![0.0f32; suffix_len * value_dim];
-    for t in 0..suffix_len {
-        let token_in: Vec<f32> = in_proj[t * total_proj_dim..(t + 1) * total_proj_dim].to_vec();
+    for token_index in 0..suffix_len {
+        let token_in: Vec<f32> =
+            reference_in_proj[token_index * total_proj_dim..(token_index + 1) * total_proj_dim].to_vec();
         let (out, new_state) = run_delta_net_update::<Cpu>(
             &token_in,
             &a_log,
@@ -423,11 +440,11 @@ fn test_prefill_norm_gate_impl(
             value_dim as u32,
         );
         ref_state = new_state;
-        ref_outputs[t * value_dim..(t + 1) * value_dim].copy_from_slice(&out);
+        ref_outputs[token_index * value_dim..(token_index + 1) * value_dim].copy_from_slice(&out);
     }
 
-    let (gpu_out, gpu_state) = run_prefill_with_norm_gate(
-        &in_proj,
+    let (gpu_out, gpu_state) = run_prefill_with_norm_gate_typed(
+        &in_proj_typed,
         &a_log,
         &dt_bias,
         &norm_weight,
@@ -439,13 +456,18 @@ fn test_prefill_norm_gate_impl(
         suffix_len,
     );
 
-    assert_close(&ref_outputs, &gpu_out, 1e-3, 1e-2, &format!("{label} output"));
+    assert_close(&ref_outputs, &gpu_out, output_atol, output_rtol, &format!("{label} output"));
     assert_close(&ref_state, &gpu_state, 1e-3, 1e-2, &format!("{label} state"));
 }
 
 #[uzu_test]
 fn test_delta_net_prefill_qwen35_shapes() {
-    test_prefill_norm_gate_impl(48, 16, 128, 128, 32, "Prefill+NormGate Qwen3.5");
+    test_prefill_norm_gate_impl::<f32>(48, 16, 128, 128, 32, 1e-3, 1e-2, "Prefill+NormGate Qwen3.5");
+}
+
+#[uzu_test]
+fn test_delta_net_prefill_qwen35_shapes_bf16() {
+    test_prefill_norm_gate_impl::<bf16>(48, 16, 128, 128, 32, 2e-2, 5e-2, "Prefill+NormGate Qwen3.5 BF16");
 }
 
 #[uzu_test]
@@ -585,7 +607,7 @@ fn bench_delta_net_prefill() {
     let mut beta_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
     let mut decay_array = context.create_array_zeros(&[suffix_len * num_v_heads], DataType::F32).into_allocation();
 
-    let num_dv_groups = (head_v_dim as u32 + 7) / 8;
+    let num_dv_groups = head_v_dim.div_ceil(16) as u32;
 
     let prep_k = <<Metal as Backend>::Kernels as Kernels>::DeltaNetPrefillPrepKernel::new(
         &context,
