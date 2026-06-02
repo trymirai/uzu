@@ -12,6 +12,10 @@ using namespace uzu::gemm;
 
 template <typename WeightT, typename U, GemmBPrologueKind B_PROLOGUE, uint BITS>
 struct QuantRowOffsets {
+  static_assert(
+      BITS == 4 || BITS == 8,
+      "QuantRowOffsets supports 4- and 8-bit only"
+  );
   const device WeightT* scales = nullptr;
   const device WeightT* biases = nullptr;
   const device uint8_t* zps = nullptr;
@@ -66,7 +70,8 @@ struct QuantRowOffsets {
     } else if constexpr (
         B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
     ) {
-      zps += (BITS == 4) ? (groups / 2) : groups;
+      constexpr uint zps_per_byte = get_pack_factor<BITS, 8>();
+      zps += groups / zps_per_byte;
     }
   }
 };
@@ -145,8 +150,6 @@ KERNEL(Gemv)(
       (num_simdgroups / k_split) * results_per_simdgroup;
   uint out_row =
       out_block_idx * rows_per_threadgroup + row_group * results_per_simdgroup;
-  // Clamp the 4-row read/write window into bounds so a partial final output
-  // block never reads weight rows past the buffer (writes stay overlap-safe).
   out_row = out_vec_size > results_per_simdgroup
                 ? min(out_row, out_vec_size - results_per_simdgroup)
                 : 0u;
@@ -220,8 +223,6 @@ KERNEL(Gemv)(
     thread U x_thread[values_per_thread];
 
     const uint in_vec_size_w = in_vec_size * bytes_per_pack / pack_factor;
-    // Groups per row are laid out with a ceiling, so a partial final group
-    // still gets its own scale/zero-point entry; match that stride here.
     const uint in_vec_size_g = (in_vec_size + GROUP_SIZE - 1) / GROUP_SIZE;
     ws +=
         out_row * in_vec_size_w + simd_lane * packs_per_thread * bytes_per_pack;
