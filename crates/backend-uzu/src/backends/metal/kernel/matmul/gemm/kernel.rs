@@ -38,7 +38,6 @@ pub struct GemmKernel {
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
     pub bias_add: TensorAddBiasMetalKernel,
     pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
-    // Two bias-specialized reduce variants; RHT stays a separate post-pass.
     split_k_reduce: GemmSplitKReduceMetalKernel,
     split_k_reduce_bias: GemmSplitKReduceMetalKernel,
 }
@@ -463,12 +462,9 @@ impl GemmKernel {
     ) -> Result<(), MetalError> {
         let full_precision = matches!(b_prologue, GemmBPrologueKind::FullPrecision);
         let kp = k / split_k;
-        // K-step of the inner loop (QUANT_BK=group_size on the quant MXU path, block_k otherwise);
-        // select_split_k guarantees kp is a multiple of it.
         let k_step = split_k_step(tiling, use_mxu, group_size.unwrap_or(0), full_precision).unwrap_or(1);
         let base_gx = n.div_ceil(tiling.block_n());
         let base_gy = m.div_ceil(tiling.block_m());
-        // Force K-aligned: compiles out the leftover-K tail (its depth is per-partition, not full-K).
         let alignment =
             GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
         let part_spec = GemmSpecialization {
@@ -621,7 +617,6 @@ fn select_split_k(
     } else {
         step.max(group_size)
     };
-    // 4-bit zero-points pack 2 groups per byte; partitions must start on a byte boundary.
     if zero_point_4bit {
         align = align.max(2 * group_size);
     }
@@ -685,8 +680,6 @@ fn select_quant_tiling(
     } else if m < 32 {
         GemmTiling::Tile8x32x32_Simdgroups1x1
     } else if m >= 64 && n <= 2048 {
-        // BM=32 (Tile32x32x32) doubles the threadgroup count vs BM=64 for small-N / down-proj
-        // shapes (e.g. 64x3584x1024), raising occupancy.
         GemmTiling::Tile32x32x32_Simdgroups2x2
     } else if m >= 64 && n >= 6144 && n.is_multiple_of(64) {
         GemmTiling::Tile64x64x32_Simdgroups2x2

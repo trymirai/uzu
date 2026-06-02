@@ -110,8 +110,6 @@ fn parity_bf16(
     run_parity::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
 }
 
-// 8-bit split-K accumulates bf16 partials; rounding of large 8-bit partial dot-products can
-// reach ~1% relative error when partials nearly cancel, so a wider tolerance applies.
 #[rstest]
 #[case::gs32_8bit_mlx_prefill(64, 256, 64, 32, 8, QuantizationMethod::ScaleBias)]
 #[case::gs64_8bit_zp_prefill(64, 256, 64, 64, 8, QuantizationMethod::ScaleZeroPoint)]

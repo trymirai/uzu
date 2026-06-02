@@ -184,9 +184,6 @@ struct MxuMmaCore {
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    // Split-K: the partition is the grid z-axis (group_count_z == split_k; == 1
-    // and thus partition == 0 for a normal non-split dispatch). Each partition
-    // reduces its own K-slice into its own output slice.
     const uint partition = thread_context.threadgroup_position.z;
     const uint tile_y = thread_context.threadgroup_position.y;
 
