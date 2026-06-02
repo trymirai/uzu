@@ -7,8 +7,11 @@ use crate::{
     backends::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
-            gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
+            gpu_types::{
+                QuantizationMethod,
+                gemm::{GemmBPrologueKind, GemmDTransform},
+            },
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
         },
         metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
     },
@@ -109,6 +112,41 @@ impl GemvSpecialization {
             num_simdgroups,
         })
     }
+
+    fn quant_combo_specs(combo: MatmulQuantCombo) -> Vec<GemvSpecialization> {
+        let bits = DataType::from(combo.mode).size_in_bits() as u32;
+        let group_size = combo.group_size;
+        let b_prologue = match combo.method {
+            QuantizationMethod::ScaleBias => GemmBPrologueKind::ScaleBiasDequant,
+            QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
+            QuantizationMethod::ScaleSymmetric => GemmBPrologueKind::ScaleSymmetricDequant,
+        };
+        let mut out = Vec::new();
+        for output_transform in [
+            GemmDTransform::empty(),
+            GemmDTransform::BIAS,
+            GemmDTransform::RHT,
+            GemmDTransform::BIAS | GemmDTransform::RHT,
+        ] {
+            let num_simdgroups = if output_transform.contains(GemmDTransform::RHT) {
+                8
+            } else {
+                2
+            };
+            for input_aligned in [true, false] {
+                out.push(GemvSpecialization {
+                    b_prologue,
+                    group_size,
+                    bits,
+                    output_transform,
+                    input_aligned,
+                    k_split: 1,
+                    num_simdgroups,
+                });
+            }
+        }
+        out
+    }
 }
 
 fn rows_per_threadgroup(
@@ -154,6 +192,20 @@ impl GemvDispatch {
             output_data_type,
             pipelines: HashMap::new(),
         })
+    }
+
+    pub(crate) fn preheat_quant_combo(
+        &mut self,
+        context: &MetalContext,
+        combo: MatmulQuantCombo,
+    ) -> Result<(), MatmulError<Metal>> {
+        if self.weights_data_type != DataType::BF16 {
+            return Ok(());
+        }
+        for specialization in GemvSpecialization::quant_combo_specs(combo) {
+            self.get_or_create(context, specialization)?;
+        }
+        Ok(())
     }
 
     fn get_or_create(

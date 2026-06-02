@@ -71,6 +71,7 @@ impl MatmulKernel for MatmulMetalKernel {
         context: &MetalContext,
         combo: MatmulQuantCombo,
     ) -> Result<(), MetalError> {
+        self.gemv.preheat_quant_combo(context, combo).map_err(MetalError::from)?;
         self.gemm.preheat_quant_combo(context, combo)
     }
 }

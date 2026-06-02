@@ -129,7 +129,7 @@ struct BSource {
 
       uint k = 0;
       for (; k + block_size <= in_vec_size; k += block_size) {
-        U sum = load_vector<AT, U, values_per_thread>(in, x_thread);
+        U sum = load_vector<AT, U, values_per_thread, BITS>(in, x_thread);
 
         const device uint8_t* wl0 = ws;
         const device uint8_t* wl1 = ws + in_vec_size_w;
