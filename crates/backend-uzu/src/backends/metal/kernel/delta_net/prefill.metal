@@ -8,7 +8,7 @@ using namespace metal;
 // float4. Grid is num_v_heads x num_dv_groups.
 
 #define PREFILL_THREADS 128
-#define PREFILL_DV_PER_SIMDGROUP 4
+#define DV_PER_SIMDGROUP 4
 
 static_assert(
     PREFILL_THREADS % METAL_SIMD_SIZE == 0,
@@ -45,11 +45,11 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   constexpr uint ELEMS = HEAD_K_DIM / SIMD;
   constexpr uint NUM_SG = PREFILL_THREADS / SIMD;
   static_assert(ELEMS == 4, "float4 prefill requires ELEMS == 4");
-  static_assert(PREFILL_DV_PER_SIMDGROUP == 4, "packs dv rows into a float4");
+  static_assert(DV_PER_SIMDGROUP == 4, "packs dv rows into a float4");
 
   const uint lane = tid % SIMD;
   const uint dv_local = tid / SIMD;
-  const uint dv_idx = (dv_group * NUM_SG + dv_local) * PREFILL_DV_PER_SIMDGROUP;
+  const uint dv_idx = (dv_group * NUM_SG + dv_local) * DV_PER_SIMDGROUP;
 
   const uint groups_per_head = num_v_heads / num_k_heads;
   const uint hk = hv_idx / groups_per_head;
@@ -64,16 +64,13 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   device const T* v_ptr = in_proj + 2 * key_dim + hv_idx * head_v_dim;
   device T* out_ptr = out + hv_idx * head_v_dim;
 
-  float4 s[PREFILL_DV_PER_SIMDGROUP];
+  float4 s[DV_PER_SIMDGROUP];
   METAL_PRAGMA_UNROLL
-  for (uint i = 0; i < PREFILL_DV_PER_SIMDGROUP; ++i) {
+  for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
     uint dv = dv_idx + i;
-    const bool active = (dv < head_v_dim);
-    s[i] = active
-               ? *reinterpret_cast<device const float4*>(
-                     state + (hv_idx * head_v_dim + dv) * HEAD_K_DIM + dk_base
-                 )
-               : float4(0.0f);
+    s[i] = *reinterpret_cast<device const float4*>(
+        state + (hv_idx * head_v_dim + dv) * HEAD_K_DIM + dk_base
+    );
   }
 
   for (uint token = 0; token < suffix_len; ++token) {
@@ -83,19 +80,18 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     float4 q = *reinterpret_cast<device const float4*>(q_ptr);
 
     METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < PREFILL_DV_PER_SIMDGROUP; ++i)
+    for (uint i = 0; i < DV_PER_SIMDGROUP; ++i)
       s[i] *= decay;
-    float4 retrieved =
+    float4 kv_mem =
         float4(dot(s[0], k), dot(s[1], k), dot(s[2], k), dot(s[3], k));
-    retrieved = simd_sum(retrieved);
+    kv_mem = simd_sum(kv_mem);
 
     float4 o;
     METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < PREFILL_DV_PER_SIMDGROUP; ++i) {
+    for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
       uint dv = dv_idx + i;
-      const bool active = (dv < head_v_dim);
-      float v_val = active ? float(v_ptr[token * total_proj_dim + dv]) : 0.0f;
-      float delta = beta * (v_val - retrieved[i]);
+      float v_val = float(v_ptr[token * total_proj_dim + dv]);
+      float delta = beta * (v_val - kv_mem[i]);
       s[i] += k * delta;
       o[i] = dot(s[i], q);
     }
@@ -103,11 +99,9 @@ PUBLIC KERNEL(DeltaNetPrefill)(
 
     if (lane == 0) {
       METAL_PRAGMA_UNROLL
-      for (uint i = 0; i < PREFILL_DV_PER_SIMDGROUP; ++i) {
+      for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
         uint dv = dv_idx + i;
-        const bool active = (dv < head_v_dim);
-        if (active)
-          out_ptr[token * value_dim + dv] = static_cast<T>(o[i]);
+        out_ptr[token * value_dim + dv] = static_cast<T>(o[i]);
       }
     }
 
@@ -118,13 +112,10 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   }
 
   METAL_PRAGMA_UNROLL
-  for (uint i = 0; i < PREFILL_DV_PER_SIMDGROUP; ++i) {
+  for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
     uint dv = dv_idx + i;
-    const bool active = (dv < head_v_dim);
-    if (active) {
-      *reinterpret_cast<device float4*>(
-          state + (hv_idx * head_v_dim + dv) * HEAD_K_DIM + dk_base
-      ) = s[i];
-    }
+    *reinterpret_cast<device float4*>(
+        state + (hv_idx * head_v_dim + dv) * HEAD_K_DIM + dk_base
+    ) = s[i];
   }
 }
