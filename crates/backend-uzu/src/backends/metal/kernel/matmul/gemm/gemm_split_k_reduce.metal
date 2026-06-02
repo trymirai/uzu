@@ -22,10 +22,10 @@ KERNEL(GemmSplitKReduce)(
     const uint local_id THREADS(256)
 ) {
   // Vectorized by 4: one thread reduces a vec<T,4> (n_elements is a multiple of
-  // 4 since N is a multiple of the block-N tile). Fuses the elementwise epilogue
-  // in the main-GEMM finalize order — scale the sum, accumulate the prior output
-  // (read-modify-write) when requested, then add per-column bias; any
-  // cross-column RHT is applied as a separate post-pass.
+  // 4 since N is a multiple of the block-N tile). Fuses the elementwise
+  // epilogue in the main-GEMM finalize order — scale the sum, accumulate the
+  // prior output (read-modify-write) when requested, then add per-column bias;
+  // any cross-column RHT is applied as a separate post-pass.
   const uint n4 = n_elements >> 2;
   const uint idx = group * 256u + local_id;
   if (idx >= n4) {
