@@ -202,14 +202,6 @@ struct MxuMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    // K-slice offset for this partition (0 for non-split dispatch).
-    // For the quant path, aligned_inner_iterations counts QUANT_BK blocks; for
-    // FP it counts THREADGROUP_BLOCK_K_FP blocks. The correct k_offset uses the
-    // per-partition K step (kp), which is K/split_k — reconstructed from
-    // aligned_inner_iterations * block_k. aligned_inner_iterations = kp /
-    // block_k where block_k is QUANT_BK (quant) or THREADGROUP_BLOCK_K_FP (FP).
-    // Use GemmTiling block_k from params->aligned_inner_iterations combined
-    // with known QUANT_BK / THREADGROUP_BLOCK_K_FP.
     const uint k_offset_per_block =
         (B_PROLOGUE == GemmBPrologueKind::FullPrecision)
             ? uint(THREADGROUP_BLOCK_K_FP)
@@ -296,9 +288,6 @@ struct MxuMmaCore {
                     if constexpr (
                         B_PROLOGUE == GemmBPrologueKind::FullPrecision
                     ) {
-                      // Per-partition iteration count (= kp / block_k for
-                      // split-K, K / block_k otherwise). Set by the host so
-                      // split-K partitions only walk their K-slice.
                       const int aligned_k_iterations_fp =
                           int(params->aligned_inner_iterations);
                       return uzu::matmul::gemm_loop<
@@ -325,9 +314,6 @@ struct MxuMmaCore {
                           thread_context
                       );
                     } else {
-                      // Per-partition iteration count (= kp / QUANT_BK for
-                      // split-K, K / QUANT_BK otherwise). Set by the host so
-                      // split-K partitions only walk their K-slice.
                       const int aligned_k_iterations_q =
                           int(params->aligned_inner_iterations);
                       constexpr int pack_factor = get_pack_factor<BITS, 8>();
