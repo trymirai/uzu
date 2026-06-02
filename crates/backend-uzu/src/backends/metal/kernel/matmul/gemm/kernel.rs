@@ -526,8 +526,8 @@ impl GemmKernel {
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        let reduce_transform = output_transform
-            .intersection(GemmDTransform::SCALE | GemmDTransform::ACCUMULATE | GemmDTransform::BIAS);
+        let reduce_transform =
+            output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::ACCUMULATE | GemmDTransform::BIAS);
         let bias_arg = if reduce_transform.contains(GemmDTransform::BIAS) {
             output_bias
         } else {
@@ -539,17 +539,7 @@ impl GemmKernel {
             None
         };
         let reduce = self.get_or_create_split_k_reduce(encoder.context(), reduce_transform)?;
-        reduce.encode(
-            (&temp, 0usize),
-            &mut *d,
-            bias_arg,
-            elem as u32,
-            split_k,
-            group_count,
-            n,
-            scale_arg,
-            encoder,
-        );
+        reduce.encode((&temp, 0usize), &mut *d, bias_arg, elem as u32, split_k, group_count, n, scale_arg, encoder);
 
         if output_transform.contains(GemmDTransform::RHT)
             && let Some(factors) = rht_factors

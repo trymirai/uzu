@@ -33,18 +33,21 @@ KERNEL(GemmSplitKReduce)(
       thread_context.simd_lane_id;
   const uint vector_count = element_count / 4u;
   const uint vector_index =
-      thread_context.threadgroup_position.x * threads_per_threadgroup + local_thread_index;
+      thread_context.threadgroup_position.x * threads_per_threadgroup +
+      local_thread_index;
   if (vector_index >= vector_count) {
     return;
   }
 
-  device vec<T, 4>* output_vectors = reinterpret_cast<device vec<T, 4>*>(output);
+  device vec<T, 4>* output_vectors =
+      reinterpret_cast<device vec<T, 4>*>(output);
   const device vec<T, 4>* partial_sum_vectors =
       reinterpret_cast<const device vec<T, 4>*>(partial_sums);
 
   float4 accumulator = float4(0.0f);
   for (uint partition = 0u; partition < partition_count; ++partition) {
-    accumulator += float4(partial_sum_vectors[partition * vector_count + vector_index]);
+    accumulator +=
+        float4(partial_sum_vectors[partition * vector_count + vector_index]);
   }
 
   if (output_transform.contains(GemmDTransform::SCALE)) {
@@ -55,7 +58,9 @@ KERNEL(GemmSplitKReduce)(
   }
   if (output_transform.contains(GemmDTransform::BIAS)) {
     const uint column = (vector_index * 4u) % column_count;
-    accumulator += float4(*reinterpret_cast<const device vec<T, 4>*>(output_bias + column));
+    accumulator += float4(
+        *reinterpret_cast<const device vec<T, 4>*>(output_bias + column)
+    );
   }
 
   output_vectors[vector_index] = vec<T, 4>(accumulator);
