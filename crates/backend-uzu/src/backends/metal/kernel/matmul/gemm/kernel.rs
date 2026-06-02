@@ -434,7 +434,6 @@ impl GemmKernel {
 
     #[allow(clippy::too_many_arguments)]
     fn encode_split_k<
-        'x,
         TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>,
         WB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>,
     >(
@@ -471,7 +470,8 @@ impl GemmKernel {
         let base_gx = n.div_ceil(tiling.block_n());
         let base_gy = m.div_ceil(tiling.block_m());
         // Force K-aligned: compiles out the leftover-K tail (its depth is per-partition, not full-K).
-        let alignment = GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, true);
+        let alignment =
+            GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
         let part_spec = GemmSpecialization {
             weights_data_type: self.weights_data_type,
             tiling,
@@ -551,10 +551,10 @@ impl GemmKernel {
             encoder,
         );
 
-        if output_transform.contains(GemmDTransform::RHT) {
-            if let Some(factors) = rht_factors {
-                self.hadamard.encode(&mut *d, factors, n, m, encoder);
-            }
+        if output_transform.contains(GemmDTransform::RHT)
+            && let Some(factors) = rht_factors
+        {
+            self.hadamard.encode(&mut *d, factors, n, m, encoder);
         }
         Ok(())
     }
