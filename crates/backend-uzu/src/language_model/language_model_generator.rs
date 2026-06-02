@@ -698,7 +698,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         })
     }
 
-    fn run_model(
+    pub fn run_model(
         &mut self,
         task: Task,
         sampling_method: SamplingMethod,

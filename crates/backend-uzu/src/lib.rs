@@ -30,15 +30,15 @@ pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
-#[cfg(feature = "tracing")]
+#[cfg(any(feature = "tracing", bench))]
 pub mod _private {
     pub use crate::{
         classifier::Classifier,
-        config::model::AnyModelConfig,
+        config::model::{AnyModelConfig, language_model::LanguageModelConfig},
         encodable_block::{DecoderDecodeInput, Sampling},
         forward_pass::{
             cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
         },
-        language_model::language_model_generator_context::LanguageModelGeneratorContext,
+        language_model::{LanguageModelGenerator, language_model_generator_context::LanguageModelGeneratorContext},
     };
 }

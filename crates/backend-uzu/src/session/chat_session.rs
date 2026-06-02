@@ -81,10 +81,7 @@ impl ChatSession {
             return Err(Error::NotEnoughMemory);
         }
 
-        let config_path = model_path.join("config.json");
-        let config_file = File::open(&config_path)?;
-        let model_config: LanguageModelConfig = serde_json::from_reader(BufReader::new(config_file))?;
-
+        let model_config = LanguageModelConfig::new(&model_path)?;
         let layers = &model_config.decoder_config.transformer_config.layer_configs;
         let has_non_attention_mixer =
             layers.iter().any(|layer| !matches!(layer.mixer_config, AnyTokenMixerConfig::AttentionConfig(_)));
