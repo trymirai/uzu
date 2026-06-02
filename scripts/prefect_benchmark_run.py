@@ -91,12 +91,32 @@ class PrefectApiClient(BasePrefectApiClient):
             method="POST",
             path=f"/deployments/{urllib.parse.quote(deployment_id, safe='')}/create_flow_run",
             body={
-                "parameters": {
-                    "benchmark_args": list(benchmark_args),
-                }
+                "parameters": parse_benchmark_run_parameters(benchmark_args),
             },
         )
         return parse_flow_run(response, self.ui_base_url)
+
+
+def parse_benchmark_run_parameters(benchmark_args: tuple[str, ...]) -> dict[str, str]:
+    parser = argparse.ArgumentParser(
+        prog="uv run benchmarks",
+        description="Parse benchmark CLI arguments into Prefect worker flow parameters.",
+        allow_abbrev=False,
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    run_parser = subparsers.add_parser("run", allow_abbrev=False)
+    run_parser.add_argument("identifier")
+    run_parser.add_argument("--task", required=True)
+    run_parser.add_argument("--profile", required=True)
+    run_parser.add_argument("--uzu-branch", "--uzu-ref", dest="uzu_ref", default="main")
+
+    parsed_args = parser.parse_args(list(benchmark_args))
+    return {
+        "identifier": parsed_args.identifier,
+        "task": parsed_args.task,
+        "profile": parsed_args.profile,
+        "uzu_ref": parsed_args.uzu_ref,
+    }
 
 
 def parse_benchmark_args_json(raw_value: str) -> tuple[str, ...]:
