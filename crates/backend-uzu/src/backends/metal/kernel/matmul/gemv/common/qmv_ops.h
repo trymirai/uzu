@@ -15,12 +15,17 @@ inline U load_vector(const device T* x, thread U* x_thread) {
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
   using U4 = vec<U, 4>;
+  const U4 inv =
+      U4(U(1),
+         U(1) / U(1u << BITS),
+         U(1) / U(1u << (2u * BITS)),
+         U(1) / U(1u << (3u * BITS)));
   U sum = 0;
   thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
   for (int i = 0; i < VALUES_PER_THREAD / 4; i++) {
     U4 v = U4(x[4 * i], x[4 * i + 1], x[4 * i + 2], x[4 * i + 3]);
     sum += v[0] + v[1] + v[2] + v[3];
-    x_vec4[i] = v;
+    x_vec4[i] = v * inv;
   }
   return sum;
 }
@@ -81,13 +86,10 @@ inline U qdot(
         reinterpret_cast<const device ushort*>(w);
     const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
     for (int i = 0; i < (VALUES_PER_THREAD / 4); i++) {
-      uint weight_word = weight_words[i];
-      U4 weight_vec4 = uint4_to_fp4<U, 4>(uint4(
-          weight_word,
-          weight_word >> 4,
-          weight_word >> 8,
-          weight_word >> 12
-      ));
+      const uint4 lanes =
+          uint4(weight_words[i]) & uint4(0x000fu, 0x00f0u, 0x0f00u, 0xf000u);
+      const U4 weight_vec4 =
+          U4(as_type<float4>(lanes | uint4(0x4b000000u)) - float4(8388608.0f));
       accumulator += dot(x_vec4[i], weight_vec4);
     }
   } else if (BITS == 8) {
@@ -95,13 +97,10 @@ inline U qdot(
     const device uint* weight_words = reinterpret_cast<const device uint*>(w);
     const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
     for (int i = 0; i < (VALUES_PER_THREAD / 4); i++) {
-      uint weight_word = weight_words[i];
-      U4 weight_vec4 = uint4_to_fp4<U, 8>(uint4(
-          weight_word,
-          weight_word >> 8,
-          weight_word >> 16,
-          weight_word >> 24
-      ));
+      const uint4 lanes =
+          uint4(weight_words[i]) &
+          uint4(0x000000ffu, 0x0000ff00u, 0x00ff0000u, 0xff000000u);
+      const U4 weight_vec4 = U4(float4(lanes));
       accumulator += dot(x_vec4[i], weight_vec4);
     }
   }
