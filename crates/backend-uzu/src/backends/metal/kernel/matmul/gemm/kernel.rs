@@ -38,8 +38,7 @@ pub struct GemmKernel {
     kernels: HashMap<GemmSpecialization, GemmMetalKernel>,
     pub bias_add: TensorAddBiasMetalKernel,
     pub hadamard: <<Metal as Backend>::Kernels as Kernels>::HadamardTransformKernel,
-    split_k_reduce: GemmSplitKReduceMetalKernel,
-    split_k_reduce_bias: GemmSplitKReduceMetalKernel,
+    split_k_reduce: HashMap<GemmDTransform, GemmSplitKReduceMetalKernel>,
 }
 
 impl GemmKernel {
@@ -55,8 +54,6 @@ impl GemmKernel {
             output_data_type,
             HadamardTransformOrder::Output,
         )?;
-        let split_k_reduce = GemmSplitKReduceMetalKernel::new(context, output_data_type, false)?;
-        let split_k_reduce_bias = GemmSplitKReduceMetalKernel::new(context, output_data_type, true)?;
         let mut kernel = Self {
             weights_data_type,
             input_data_type,
@@ -64,8 +61,7 @@ impl GemmKernel {
             kernels: HashMap::new(),
             bias_add,
             hadamard,
-            split_k_reduce,
-            split_k_reduce_bias,
+            split_k_reduce: HashMap::new(),
         };
         for specialization in GemmSpecialization::precompile_configs(weights_data_type) {
             kernel.get_or_create(context, specialization)?;
@@ -106,6 +102,20 @@ impl GemmKernel {
                     specialization.output_transform,
                     specialization.alignment,
                 )?;
+                Ok(entry.insert(kernel))
+            },
+        }
+    }
+
+    fn get_or_create_split_k_reduce(
+        &mut self,
+        context: &MetalContext,
+        output_transform: GemmDTransform,
+    ) -> Result<&GemmSplitKReduceMetalKernel, MetalError> {
+        match self.split_k_reduce.entry(output_transform) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let kernel = GemmSplitKReduceMetalKernel::new(context, self.output_data_type, output_transform)?;
                 Ok(entry.insert(kernel))
             },
         }
@@ -516,23 +526,19 @@ impl GemmKernel {
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        let has_bias = output_transform.contains(GemmDTransform::BIAS);
-        let accumulate = output_transform.contains(GemmDTransform::ACCUMULATE);
-        let out_scale = if output_transform.contains(GemmDTransform::SCALE) {
-            ab_scale
-        } else {
-            1.0
-        };
-        let reduce = if has_bias {
-            &self.split_k_reduce_bias
-        } else {
-            &self.split_k_reduce
-        };
-        let bias_arg = if has_bias {
+        let reduce_transform = output_transform
+            .intersection(GemmDTransform::SCALE | GemmDTransform::ACCUMULATE | GemmDTransform::BIAS);
+        let bias_arg = if reduce_transform.contains(GemmDTransform::BIAS) {
             output_bias
         } else {
             None
         };
+        let scale_arg = if reduce_transform.contains(GemmDTransform::SCALE) {
+            Some(ab_scale)
+        } else {
+            None
+        };
+        let reduce = self.get_or_create_split_k_reduce(encoder.context(), reduce_transform)?;
         reduce.encode(
             (&temp, 0usize),
             &mut *d,
@@ -541,8 +547,7 @@ impl GemmKernel {
             split_k,
             group_count,
             n,
-            out_scale,
-            u32::from(accumulate),
+            scale_arg,
             encoder,
         );
 
