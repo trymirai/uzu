@@ -26,7 +26,6 @@ use crate::{
         common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
         metal::{
             command_buffer::MetalCommandBufferInitial,
-            metal_extensions::SparsePageSizeExt,
             sparse::{MetalSparseBuffer, MetalSparseHeapPool, MetalSparseMappingOpsBatch},
         },
     },
@@ -133,7 +132,7 @@ impl Context for MetalContext {
         let gpu_core_count = device.gpu_core_count();
 
         let page_size = MTLSparsePageSize::KB256;
-        let heap_capacity = 64 * 4 * page_size.in_bytes();
+        let heap_capacity = Metal::ALLOCATION_GRANULARITY;
         let sparse_pool = MetalSparseHeapPool::new(page_size, heap_capacity);
         let timeline_event = device.new_event().ok_or(MetalError::CannotCreateEvent)?;
         #[cfg(test)]
