@@ -88,8 +88,12 @@ PUBLIC KERNEL(DeltaNetPrefill)(
         float4(dot(s[0], k), dot(s[1], k), dot(s[2], k), dot(s[3], k));
     kv_mem = simd_sum(kv_mem);
 
-    float4 v_val = float4(float(v_row[0]), float(v_row[1]),
-                          float(v_row[2]), float(v_row[3]));
+    float4 v_val = float4(
+        float(v_row[0]),
+        float(v_row[1]),
+        float(v_row[2]),
+        float(v_row[3])
+    );
     float4 delta = beta * (v_val - kv_mem);
     s[0] += k * delta[0];
     s[1] += k * delta[1];
