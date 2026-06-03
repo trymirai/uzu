@@ -12,7 +12,7 @@ fn get_gpu_temp() -> f32 {
     }
 
     #[cfg(not(target_os = "macos"))]
-    0.0f
+    0.0f32
 }
 
 pub fn wait_gpu_cooldown() {
