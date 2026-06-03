@@ -14,8 +14,8 @@ VARIANTS(T, float, half, bfloat)
 VARIANTS(HEAD_K_DIM, 128)
 PUBLIC KERNEL(DeltaNetPrefillPrep)(
     device const T* in_proj,
-    device const T* a_log,
-    device const T* dt_bias,
+    device const float* a_log,
+    device const float* dt_bias,
     device float* q_norm_out,
     device float* k_norm_out,
     device float* beta_out,
