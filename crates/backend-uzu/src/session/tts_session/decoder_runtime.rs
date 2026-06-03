@@ -3,13 +3,14 @@ use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{Allocation, AsBufferRangeRef},
     config::decoder::DecoderConfig,
-    encodable_block::{DecoderArguments, DecoderDecodeInput, LayerArguments, Linear, SamplingInputs},
-    forward_pass::token_inputs::TokenInputs,
+    encodable_block::{
+        DecoderArguments, DecoderDecodeInput, LayerArguments, Linear, PrecalculatedRope, SamplingInputs,
+    },
+    forward_pass::{rope::precalculate_rope, token_inputs::TokenInputs},
     session::types::TtsModelConfigError,
 };
 
 struct TokenDecoderLoadedModel<B: Backend> {
-    shared_buffers: Rc<SharedBuffers<B>>,
     executables: Decoder<B>,
     readout: Box<dyn Linear<B>>,
     sampler: GpuSampling<B>,
@@ -26,13 +27,6 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         embedding_subtree: &str,
         readout_subtree: &str,
     ) -> Result<Self, Error> {
-        let shared_buffers = TokenDecoderContext::<B>::build_shared_buffers(
-            context,
-            decoder_config,
-            model_shape,
-            root_loader_view,
-            transformer_subtree,
-        )?;
         let executables = Decoder::new_with_embedding_subtree(
             context.as_ref(),
             decoder_config,
@@ -58,7 +52,6 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
             <B::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref()).map_err(unable_to_create_context)?;
 
         Ok(Self {
-            shared_buffers,
             executables,
             readout,
             sampler,
@@ -70,7 +63,6 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
 struct TokenDecoderContext<B: Backend> {
     context: Rc<B::Context>,
     cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    shared_buffers: Rc<SharedBuffers<B>>,
     model_shape: ModelShape,
     decoder_config: Rc<DecoderConfig>,
     runtime_config: TextDecoderRuntimeConfig,
@@ -137,7 +129,6 @@ impl<B: Backend> TokenDecoderContext<B> {
         Ok(Self {
             context,
             cache_layers,
-            shared_buffers: loaded_model.shared_buffers,
             model_shape,
             decoder_config,
             runtime_config: runtime_config.clone(),
@@ -152,21 +143,6 @@ impl<B: Backend> TokenDecoderContext<B> {
             async_chain_capacity,
             current_max_prefix_length: max_prefix_length,
         })
-    }
-
-    fn build_shared_buffers(
-        context: &Rc<B::Context>,
-        decoder_config: &Rc<DecoderConfig>,
-        model_shape: &ModelShape,
-        root_loader_view: &crate::parameters::ParameterTree<B>,
-        transformer_subtree: &str,
-    ) -> Result<Rc<SharedBuffers<B>>, Error> {
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), decoder_config, model_shape);
-        let transformer_tree = root_loader_view
-            .subtree(transformer_subtree)
-            .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
-        shared_buffers.update_data_from_transformer_tree(&transformer_tree)?;
-        Ok(Rc::new(shared_buffers))
     }
 
     fn build_async_chain_buffers(
@@ -259,7 +235,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
         token_ids: &[u64],
         token_positions: &[usize],
         token_ids_array: Option<Array<B>>,
-        token_positions_array: Option<Array<B>>,
         sampling_start: usize,
         sampling_length: usize,
     ) -> TokenInputs<B> {
@@ -270,7 +245,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
             None,
             token_positions,
             token_ids_array,
-            token_positions_array,
             sampling_start,
             sampling_length,
         )
@@ -288,7 +262,6 @@ impl<B: Backend> TokenDecoderRunner<B> {
             token_positions: token_inputs.token_positions(),
             token_parents: token_inputs.token_parents(),
             token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
-            shared_buffers: self.ctx.shared_buffers.as_ref(),
             cache_layers: Some(cache_layers),
             batch_dim,
             sampling_start,
@@ -378,7 +351,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let token_count = token_ids.len();
 
             let positions: Vec<usize> = (self.next_position..self.next_position + token_count).collect();
-            let token_inputs = self.llm_token_inputs(token_ids, &positions, None, None, 0, 0);
+            let token_inputs = self.llm_token_inputs(token_ids, &positions, None, 0, 0);
 
             let context = Rc::clone(&self.ctx.context);
             let mut encoder = Encoder::new(context.as_ref()).map_err(unable_to_create_context)?;
@@ -585,7 +558,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let seed = self.ctx.async_chain_seeds.as_slice::<u64>()[pass];
             let sampling_inputs = self.create_sampling_inputs_from_slices(&[seed], token_bitmask.as_deref());
             let token_inputs =
-                self.llm_token_inputs(&token_ids, &[self.next_position + pass], next_token_ids.take(), None, 0, 1);
+                self.llm_token_inputs(&token_ids, &[self.next_position + pass], next_token_ids.take(), 0, 1);
             pending_token_inputs.push(token_inputs);
             let token_inputs = pending_token_inputs.last().expect("token inputs must be pending");
 
@@ -732,15 +705,34 @@ impl<B: Backend> TokenDecoderRunner<B> {
         {
             let mut cache_layers = self.ctx.cache_layers.borrow_mut();
             cache_layers.prepare_for_forward_pass(&self.ctx.context, batch_dim);
+            let ropes = self
+                .ctx
+                .executables
+                .rope_configs
+                .iter()
+                .map(|rope_config| {
+                    let (sines, cosines) = precalculate_rope(rope_config, token_inputs.token_positions());
+                    let mut sines_allocation = encoder.allocate_constant(sines.len() * std::mem::size_of::<f32>())?;
+                    sines_allocation.copyin(sines.as_ref());
+                    let mut cosines_allocation =
+                        encoder.allocate_constant(cosines.len() * std::mem::size_of::<f32>())?;
+                    cosines_allocation.copyin(cosines.as_ref());
+                    Ok(PrecalculatedRope {
+                        cosines: cosines_allocation,
+                        sines: sines_allocation,
+                        dim: *rope_config.head_dim(),
+                    })
+                })
+                .collect::<Result<Box<[_]>, B::Error>>()
+                .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
             for layer in self.ctx.executables.layers.iter() {
                 main = layer
                     .encode(
                         LayerArguments {
                             batch_dim,
-                            token_positions: token_inputs.token_positions(),
                             token_parents: token_inputs.token_parents(),
                             token_subtrie_ranges: token_inputs.token_subtrie_ranges(),
-                            rope_buffers: self.ctx.shared_buffers.rope_buffers_for_layer(layer.layer_index),
+                            rope: layer.rope_kind.get(&ropes),
                             per_layer_inputs: None,
                             sampling_start,
                             sampling_length,
@@ -855,7 +847,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
             &mask[row_start..row_end]
         });
         let sampling_inputs = self.create_sampling_inputs_from_slices(sampling_token_seeds, sampling_token_bitmask);
-        let token_inputs = self.llm_token_inputs(token_ids, positions, None, None, sampling_start, sampling_length);
+        let token_inputs = self.llm_token_inputs(token_ids, positions, None, sampling_start, sampling_length);
         pending_token_inputs.push(token_inputs);
         let token_inputs = pending_token_inputs.last().expect("token inputs must be pending");
 

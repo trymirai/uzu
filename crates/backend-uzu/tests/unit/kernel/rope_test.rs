@@ -83,18 +83,31 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
 
     let total_heads = (input.num_heads + 2 * input.num_groups) as usize;
     let qkv_len = input.suffix_length as usize * total_heads * input.head_dim as usize;
-    let cos_sin_len = input.max_sequence_length as usize * input.rope_dim as usize;
+    let cos_sin_len = input.suffix_length as usize * input.rope_dim as usize;
     let queries_len = input.num_heads as usize * input.suffix_length as usize * input.head_dim as usize;
     let keys_len = input.num_groups as usize * input.suffix_length as usize * input.head_dim as usize;
+    let mut cosines = Vec::with_capacity(cos_sin_len);
+    let mut sines = Vec::with_capacity(cos_sin_len);
+    for token_index in 0..input.suffix_length as usize {
+        let raw_position = input.token_positions[token_index] as usize;
+        let absolute_position = if raw_position >= input.max_sequence_length as usize {
+            0
+        } else {
+            raw_position
+        };
+        let offset = absolute_position * input.rope_dim as usize;
+        let end = offset + input.rope_dim as usize;
+        cosines.extend_from_slice(&input.cosines[offset..end]);
+        sines.extend_from_slice(&input.sines[offset..end]);
+    }
 
     let qkv_array = if query_only {
         context.create_array_from(&[queries_len], &input.qkv[..queries_len])
     } else {
         context.create_array_from(&[qkv_len], &input.qkv)
     };
-    let cosines_array = context.create_array_from(&[cos_sin_len], &input.cosines);
-    let sines_array = context.create_array_from(&[cos_sin_len], &input.sines);
-    let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions);
+    let cosines_array = context.create_array_from(&[cos_sin_len], &cosines);
+    let sines_array = context.create_array_from(&[cos_sin_len], &sines);
     let mut rotated_queries = context.create_array_uninitialized(&[queries_len], T::data_type()).into_allocation();
     let mut rotated_keys = context.create_array_uninitialized(&[keys_len], T::data_type()).into_allocation();
 
@@ -103,7 +116,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
         qkv_array.allocation(),
         cosines_array.allocation(),
         sines_array.allocation(),
-        token_positions_array.allocation(),
         &mut rotated_queries,
         if query_only {
             None::<&mut backend_uzu::backends::common::Allocation<B>>
@@ -119,7 +131,6 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
             Some(input.num_groups)
         },
         input.suffix_length,
-        input.max_sequence_length,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();

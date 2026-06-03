@@ -33,7 +33,6 @@ pub fn rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
     qkv: *const ElementT,
     cosines: *const RopeT,
     sines: *const RopeT,
-    token_positions: *const i32,
     rotated_queries: *mut ElementT,
     #[optional(!query_only)] rotated_keys: Option<*mut ElementT>,
     head_dim: u32,
@@ -41,7 +40,6 @@ pub fn rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
     num_heads: u32,
     #[optional(!query_only)] num_groups: Option<u32>,
     suffix_length: u32,
-    max_sequence_length: u32,
     #[specialize] query_only: bool,
 ) {
     // Query-only projections carry no K/V heads, i.e. num_groups == 0.
@@ -57,7 +55,6 @@ pub fn rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
     let rope_dim = rope_dim as usize;
     let num_heads = num_heads as usize;
     let suffix_length = suffix_length as usize;
-    let max_sequence_length = max_sequence_length as usize;
 
     let half_rope_dim = rope_dim / 2;
     let total_heads = num_heads + 2 * num_groups;
@@ -67,17 +64,10 @@ pub fn rope<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
         let group_index = head_index / heads_per_group;
 
         for token_index in 0..suffix_length {
-            let raw_position = unsafe { *token_positions.add(token_index) } as usize;
-            let absolute_position = if raw_position >= max_sequence_length {
-                0
-            } else {
-                raw_position
-            };
-
             // Rotated dimensions: apply RoPE to dims 0..rope_dim
             for dim_index in 0..rope_dim {
-                let cos_val = unsafe { (*cosines.add(absolute_position * rope_dim + dim_index)).to_f32().unwrap() };
-                let sin_val = unsafe { (*sines.add(absolute_position * rope_dim + dim_index)).to_f32().unwrap() };
+                let cos_val = unsafe { (*cosines.add(token_index * rope_dim + dim_index)).to_f32().unwrap() };
+                let sin_val = unsafe { (*sines.add(token_index * rope_dim + dim_index)).to_f32().unwrap() };
 
                 // Query rotation
                 let q_val = unsafe {

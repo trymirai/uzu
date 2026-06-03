@@ -2,8 +2,8 @@ use super::*;
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{Allocation, AsBufferRangeRef},
-    encodable_block::LayerArguments,
-    forward_pass::token_inputs::TokenInputs,
+    encodable_block::{LayerArguments, PrecalculatedRope},
+    forward_pass::{rope::precalculate_rope, token_inputs::TokenInputs},
 };
 
 impl StructuredAudioCodecGraph {
@@ -108,17 +108,7 @@ impl StructuredAudioCodecGraph {
 
         let max_sequence_length =
             decoder_config.transformer_config.max_sequence_length().unwrap_or(0).max(required_sequence_length.max(1));
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
-        {
-            let transformer_tree = root_loader_view
-                .subtree(transformer_subtree_name)
-                .map_err(|err| AudioError::Runtime(format!("missing structured audio post_module subtree: {err}")))?;
-            shared_buffers.update_data_from_transformer_tree(&transformer_tree).map_err(|err| {
-                AudioError::Runtime(format!("failed to update structured audio post_module shared buffers: {err}"))
-            })?;
-        }
-        let shared_buffers = Rc::new(shared_buffers);
-        let (layers, output_norm) = Decoder::build_transformer_layers_and_norm(
+        let (rope_configs, layers, output_norm) = Decoder::build_transformer_layers_and_norm(
             context.as_ref(),
             &decoder_config,
             &root_loader_view,
@@ -131,7 +121,7 @@ impl StructuredAudioCodecGraph {
         Ok(StructuredAudioPostModuleRuntime {
             context,
             model_shape,
-            shared_buffers,
+            rope_configs,
             layers,
             output_norm,
             max_sequence_length,
@@ -281,16 +271,34 @@ impl StructuredAudioCodecGraph {
         let mut shortcut = encoder
             .allocate_scratch(main.as_buffer_range_ref().range().len())
             .map_err(|err| AudioError::Runtime(format!("post_module shortcut allocation failed: {err}")))?;
+        let ropes = runtime
+            .rope_configs
+            .iter()
+            .map(|rope_config| {
+                let (sines, cosines) = precalculate_rope(rope_config, token_inputs.token_positions());
+                let mut sines_allocation = encoder
+                    .allocate_constant(sines.len() * std::mem::size_of::<f32>())
+                    .map_err(|err| AudioError::Runtime(format!("post_module rope sines allocation failed: {err}")))?;
+                sines_allocation.copyin(sines.as_ref());
+                let mut cosines_allocation = encoder
+                    .allocate_constant(cosines.len() * std::mem::size_of::<f32>())
+                    .map_err(|err| AudioError::Runtime(format!("post_module rope cosines allocation failed: {err}")))?;
+                cosines_allocation.copyin(cosines.as_ref());
+                Ok(PrecalculatedRope {
+                    cosines: cosines_allocation,
+                    sines: sines_allocation,
+                    dim: *rope_config.head_dim(),
+                })
+            })
+            .collect::<AudioResult<Box<[_]>>>()?;
         for layer in runtime.layers.iter() {
-            let rope_buffers = runtime.shared_buffers.rope_buffers_for_layer(layer.layer_index);
             main = layer
                 .encode(
                     LayerArguments {
                         batch_dim,
-                        token_positions: token_inputs.token_positions(),
                         token_parents: token_inputs.token_parents(),
                         token_subtrie_ranges: None,
-                        rope_buffers,
+                        rope: layer.rope_kind.get(&ropes),
                         per_layer_inputs: None,
                         sampling_start: 0,
                         sampling_length: batch_dim,

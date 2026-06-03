@@ -465,7 +465,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let batch_dim = task.active_row_count;
         let sampling_start = task.sampling_start;
         let sampling_length = task.sampling_length;
-        let token_inputs = self.build_token_inputs(task, token_ids_array, None);
+        let token_inputs = self.build_token_inputs(task, token_ids_array);
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
         let resources = Self::encode_forward_pass_on(
@@ -728,7 +728,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let is_first_decode = task.token_ids.len() == 1;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
-        let token_inputs = self.build_token_inputs(task, None, None);
+        let token_inputs = self.build_token_inputs(task, None);
 
         if should_capture {
             self.gpu_capture
@@ -796,7 +796,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             let mut cache_layers = context.cache_layers.borrow_mut();
             cache_layers.prepare_for_forward_pass(&context.context, batch_dim);
             let decoder_arguments = token_inputs.decoder_arguments(
-                context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
                 batch_dim,
                 sampling_start,
@@ -812,7 +811,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             let mut cache_layers = context.cache_layers.borrow_mut();
             cache_layers.prepare_for_forward_pass(&context.context, batch_dim);
             let decoder_arguments = token_inputs.decoder_arguments(
-                context.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
                 batch_dim,
                 sampling_start,
@@ -854,7 +852,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
         &self,
         task: Task,
         token_ids_array: Option<Array<B>>,
-        token_positions_array: Option<Array<B>>,
     ) -> TokenInputs<B> {
         TokenInputs::new_llm(
             self.context.context.as_ref(),
@@ -863,7 +860,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
             task.token_subtrie_ranges.as_deref(),
             &task.token_positions,
             token_ids_array,
-            token_positions_array,
             task.sampling_start,
             task.sampling_length,
         )

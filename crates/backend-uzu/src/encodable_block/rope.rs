@@ -16,6 +16,12 @@ pub struct Rope<B: Backend> {
     query_only: bool,
 }
 
+pub struct PrecalculatedRope<B: Backend> {
+    pub cosines: Allocation<B>,
+    pub sines: Allocation<B>,
+    pub dim: usize,
+}
+
 impl<B: Backend> Rope<B> {
     pub fn new(
         context: &B::Context,
@@ -37,15 +43,11 @@ impl<B: Backend> Rope<B> {
     pub fn encode(
         &self,
         qkv: &Allocation<B>,
-        token_positions: &Allocation<B>,
-        cosines: &Allocation<B>,
-        sines: &Allocation<B>,
+        rope: &PrecalculatedRope<B>,
         suffix_length: usize,
         num_heads: usize,
         num_groups: usize,
         head_dim: usize,
-        rope_max_seq_len: usize,
-        rope_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Option<Allocation<B>>), B::Error> {
         let mut rotated_queries =
@@ -57,17 +59,15 @@ impl<B: Backend> Rope<B> {
         };
         self.kernel.encode(
             qkv,
-            cosines,
-            sines,
-            token_positions,
+            &rope.cosines,
+            &rope.sines,
             &mut rotated_queries,
             rotated_keys.as_mut(),
             head_dim as u32,
-            rope_dim as u32,
+            rope.dim as u32,
             num_heads as u32,
             (!self.query_only).then_some(num_groups as u32),
             suffix_length as u32,
-            rope_max_seq_len as u32,
             encoder,
         );
         Ok((rotated_queries, rotated_keys))
