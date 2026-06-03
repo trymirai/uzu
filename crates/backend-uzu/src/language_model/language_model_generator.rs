@@ -102,6 +102,36 @@ impl PrefillStepSchedule {
             accepted_prompt_rows,
         }
     }
+
+    fn split_sampling_start(
+        self,
+        prefill_skips_trailing_layers: bool,
+    ) -> Option<usize> {
+        match self.forward_pass {
+            ForwardPassKind::SampleFrom {
+                row_start,
+                ..
+            } if prefill_skips_trailing_layers && row_start > 0 => Some(row_start),
+            _ => None,
+        }
+    }
+}
+
+fn rebase_sampling_subtrie_ranges(
+    ranges: &[[u32; 3]],
+    row_offset: usize,
+) -> Box<[[u32; 3]]> {
+    let offset = u32::try_from(row_offset).expect("prefill split point must fit in u32");
+    ranges[row_offset..]
+        .iter()
+        .map(|[start, end, height]| {
+            [
+                start.checked_sub(offset).expect("sampling subtrie start must be after prompt rows"),
+                end.checked_sub(offset).expect("sampling subtrie end must be after prompt rows"),
+                height.checked_sub(offset).expect("sampling subtrie height must be after prompt rows"),
+            ]
+        })
+        .collect()
 }
 
 struct ForwardPassResources<B: Backend> {
@@ -114,6 +144,12 @@ struct ForwardPassResources<B: Backend> {
 struct InFlightForwardPass<B: Backend> {
     resources: ForwardPassResources<B>,
     pending: Pending<B>,
+}
+
+struct PrefillStepRun<B: Backend> {
+    sampling_output: Option<Allocation<B>>,
+    run_time: f64,
+    sampling_rows_are_local: bool,
 }
 
 pub struct LanguageModelGenerator<B: Backend> {
@@ -248,6 +284,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         let mut last_sampling_output: Option<Allocation<B>> = None;
         let mut last_sampling_length = 0;
+        let mut final_sampling_rows_are_local = false;
         let mut run_times: Vec<f64> = Vec::new();
 
         // Process each prefill step and update the KV cache.
@@ -333,7 +370,13 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 pass: schedule.forward_pass,
             };
 
-            let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
+            let step_run = self.run_prefill_step(
+                task,
+                schedule,
+                prefix_offset + tokens_start_index,
+                single_token_bitmask_size,
+                sampling_method,
+            )?;
 
             if should_capture {
                 self.gpu_capture
@@ -341,14 +384,10 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                     .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
             }
 
-            self.accept_prefilled_prompt_rows(
-                schedule.accepted_prompt_rows,
-                prefix_offset + tokens_start_index + schedule.accepted_prompt_rows,
-            )?;
-
             last_sampling_length = sampling_length;
-            last_sampling_output = sampling_output;
-            run_times.push(run_time);
+            final_sampling_rows_are_local = step_run.sampling_rows_are_local;
+            last_sampling_output = step_run.sampling_output;
+            run_times.push(step_run.run_time);
         }
 
         let final_sampling_output = last_sampling_output;
@@ -368,7 +407,11 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let suffix_root_index = (tokens_length - last_suffix_start) - 1;
 
         let (accepted_tokens, accepted_token_indices) = flat_trie.accept(&sampled_tokens, compiled_grammar);
-        self.accept_sampled_prefill_rows(accepted_token_indices, suffix_root_index, last_suffix_start)?;
+        if final_sampling_rows_are_local {
+            self.update_cache_layers(&accepted_token_indices, None, false)?;
+        } else {
+            self.accept_sampled_prefill_rows(accepted_token_indices, suffix_root_index, last_suffix_start)?;
+        }
 
         self.tokens.extend(accepted_tokens.clone());
         self.sync_prefix();
@@ -780,6 +823,67 @@ impl<B: Backend> LanguageModelGenerator<B> {
         Ok((sampling_output, run_time))
     }
 
+    fn run_prefill_step(
+        &mut self,
+        task: Task<'_>,
+        schedule: PrefillStepSchedule,
+        prefix_start_token_index: usize,
+        bitmask_row_len: usize,
+        sampling_method: SamplingMethod,
+    ) -> Result<PrefillStepRun<B>, Error> {
+        let Some(prompt_row_count) =
+            schedule.split_sampling_start(self.context.model_shape.prefill_skips_trailing_layers())
+        else {
+            let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
+            self.accept_prefilled_prompt_rows(
+                schedule.accepted_prompt_rows,
+                prefix_start_token_index + schedule.accepted_prompt_rows,
+            )?;
+            return Ok(PrefillStepRun {
+                sampling_output,
+                run_time,
+                sampling_rows_are_local: false,
+            });
+        };
+
+        let prefix_task = Task {
+            token_ids: &task.token_ids[..prompt_row_count],
+            token_subtrie_ranges: None,
+            token_positions: &task.token_positions[..prompt_row_count],
+            token_bitmask: None,
+            token_seeds: &task.token_seeds[..prompt_row_count],
+            active_row_count: prompt_row_count,
+            pass: ForwardPassKind::CacheOnly,
+        };
+        let (_, prefix_run_time) = self.run_model(prefix_task, sampling_method)?;
+        self.accept_prefilled_prompt_rows(prompt_row_count, prefix_start_token_index + prompt_row_count)?;
+
+        let sampling_length = task.pass.sampling().expect("split prefill step must sample").1;
+        let suffix_token_ids = &task.token_ids[prompt_row_count..];
+        let suffix_token_bitmask = task.token_bitmask.map(|mask| &mask[prompt_row_count * bitmask_row_len..]);
+        let suffix_token_subtrie_ranges =
+            task.token_subtrie_ranges.map(|ranges| rebase_sampling_subtrie_ranges(ranges, prompt_row_count));
+        let suffix_task = Task {
+            token_ids: suffix_token_ids,
+            token_subtrie_ranges: suffix_token_subtrie_ranges.as_deref(),
+            token_positions: &task.token_positions[prompt_row_count..],
+            token_bitmask: suffix_token_bitmask,
+            token_seeds: &task.token_seeds[prompt_row_count..],
+            active_row_count: suffix_token_ids.len(),
+            pass: ForwardPassKind::SampleFrom {
+                row_start: 0,
+                row_count: sampling_length,
+            },
+        };
+        let (sampling_output, suffix_run_time) = self.run_model(suffix_task, sampling_method)?;
+
+        Ok(PrefillStepRun {
+            sampling_output,
+            run_time: prefix_run_time + suffix_run_time,
+            sampling_rows_are_local: true,
+        })
+    }
+
     fn encode_forward_pass_on(
         context: &LanguageModelGeneratorContext<B>,
         encoder: &mut Encoder<B>,
@@ -831,7 +935,12 @@ impl<B: Backend> LanguageModelGenerator<B> {
         } else {
             context
                 .executables
-                .encode_prefill(decoder_arguments, token_inputs.token_ids(), encoder)
+                .encode_prefill(
+                    decoder_arguments,
+                    token_inputs.token_ids(),
+                    context.model_shape.prefill_layer_count(),
+                    encoder,
+                )
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
 
