@@ -39,7 +39,7 @@ use crate::{
     config::{model::tts_model::TTSModelConfig, token_codec::tts_codec::TTSCodecConfig},
     data_type::DataType,
     encodable_block::{Decoder, KVCacheUpdate, Sampling as GpuSampling},
-    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape},
     parameters::ParameterLoader,
     session::{
         config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsSessionOptions},

@@ -8,7 +8,7 @@ use gemm::{AttentionGemmArguments, AttentionGemmBlock};
 use itertools::iproduct;
 use thiserror::Error;
 
-use super::{Linear, QKVNorm, QkUnpack, Rope, linear::LinearBlockError, qkv_norm::QKVNormError};
+use super::{Linear, PrecalculatedRope, QKVNorm, QkUnpack, Rope, linear::LinearBlockError, qkv_norm::QKVNormError};
 use crate::{
     array::size_for_shape,
     backends::common::{
@@ -26,7 +26,6 @@ use crate::{
     forward_pass::{
         cache_layers::LayerCacheAccess,
         kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
-        state::RopeBuffers,
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -330,9 +329,8 @@ impl<B: Backend> Attention<B> {
 
     pub fn encode(
         &self,
-        token_positions: &Allocation<B>,
         token_subtrie_ranges: Option<&Allocation<B>>,
-        rope_buffers: Option<&RopeBuffers<B>>,
+        rope: Option<&PrecalculatedRope<B>>,
         cache_access: Option<LayerCacheAccess<B>>,
         hidden: Allocation<B>,
         suffix_length: usize,
@@ -352,20 +350,10 @@ impl<B: Backend> Attention<B> {
         if let Some(qkv_norm) = &self.qkv_norm {
             qkv_norm.encode(&mut qkv, suffix_length, encoder)?;
         }
-        let (queries, rotated_keys) = match rope_buffers {
-            Some(rope_buffers) => self.rope.encode(
-                &qkv,
-                token_positions,
-                &rope_buffers.cosines,
-                &rope_buffers.sines,
-                suffix_length,
-                self.num_heads,
-                self.num_groups,
-                self.head_dim,
-                rope_buffers.max_sequence_length(),
-                rope_buffers.dim(),
-                encoder,
-            )?,
+        let (queries, rotated_keys) = match rope {
+            Some(rope) => {
+                self.rope.encode(&qkv, rope, suffix_length, self.num_heads, self.num_groups, self.head_dim, encoder)?
+            },
             None => {
                 let (queries, keys) = self.qk_unpack.encode(
                     &qkv,

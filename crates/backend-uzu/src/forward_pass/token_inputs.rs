@@ -7,13 +7,13 @@ use crate::{
     backends::common::{Allocation, Backend},
     data_type::DataType,
     encodable_block::DecoderArguments,
-    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape},
 };
 
 pub struct TokenInputs<B: Backend> {
     token_ids: Array<B>,
     token_subtrie_ranges: Option<Array<B>>,
-    token_positions: Array<B>,
+    token_positions: Box<[usize]>,
     token_parents: Array<B>,
 }
 
@@ -25,7 +25,6 @@ impl<B: Backend> TokenInputs<B> {
         token_subtrie_ranges: Option<&[[u32; 3]]>,
         token_positions: &[usize],
         token_ids_array: Option<Array<B>>,
-        token_positions_array: Option<Array<B>>,
         sampling_start: usize,
         sampling_length: usize,
     ) -> Self {
@@ -36,8 +35,7 @@ impl<B: Backend> TokenInputs<B> {
             token_ids: token_ids_array.unwrap_or_else(|| Self::init_token_ids(context, token_ids)),
             token_subtrie_ranges: token_subtrie_ranges
                 .map(|ranges| Self::init_token_subtrie_ranges(context, model_shape, suffix_length, ranges)),
-            token_positions: token_positions_array
-                .unwrap_or_else(|| Self::init_token_positions(context, token_positions)),
+            token_positions: token_positions.to_vec().into_boxed_slice(),
             token_parents: Self::init_token_parents(context, token_positions, sampling_start, sampling_length),
         }
     }
@@ -53,7 +51,7 @@ impl<B: Backend> TokenInputs<B> {
         Self {
             token_ids: Self::init_token_ids(context, token_ids),
             token_subtrie_ranges: None,
-            token_positions: Self::init_token_positions(context, token_positions),
+            token_positions: token_positions.to_vec().into_boxed_slice(),
             token_parents: Self::init_token_parents(context, token_positions, 0, 0),
         }
     }
@@ -62,8 +60,8 @@ impl<B: Backend> TokenInputs<B> {
         self.token_ids.allocation()
     }
 
-    pub fn token_positions(&self) -> &Allocation<B> {
-        self.token_positions.allocation()
+    pub fn token_positions(&self) -> &[usize] {
+        &self.token_positions
     }
 
     pub fn token_parents(&self) -> &Allocation<B> {
@@ -76,7 +74,6 @@ impl<B: Backend> TokenInputs<B> {
 
     pub fn decoder_arguments<'a>(
         &'a self,
-        shared_buffers: &'a SharedBuffers<B>,
         cache_layers: Option<&'a mut CacheLayers<B>>,
         batch_dim: usize,
         sampling_start: usize,
@@ -87,7 +84,6 @@ impl<B: Backend> TokenInputs<B> {
             token_positions: self.token_positions(),
             token_parents: self.token_parents(),
             token_subtrie_ranges: self.token_subtrie_ranges(),
-            shared_buffers,
             cache_layers,
             batch_dim,
             sampling_start,
@@ -102,14 +98,6 @@ impl<B: Backend> TokenInputs<B> {
         token_ids: &[u64],
     ) -> Array<B> {
         context.create_array_from(&[token_ids.len()], token_ids)
-    }
-
-    fn init_token_positions(
-        context: &B::Context,
-        token_positions: &[usize],
-    ) -> Array<B> {
-        let positions_i32: Box<[i32]> = token_positions.iter().map(|position| *position as i32).collect();
-        context.create_array_from(&[token_positions.len()], positions_i32.as_ref())
     }
 
     fn init_token_parents(

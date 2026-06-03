@@ -7,8 +7,8 @@ use crate::{
     config::{transformer::TransformerConfig, transformer_layer::TransformerLayerConfig},
     data_type::DataType,
     encodable_block::{
-        Attention, AttentionError, LayerArguments, Mlp, MlpBlockError, Normalization, NormalizationError, QkUnpack,
-        Rope,
+        Attention, AttentionError, LayerArguments, LayerRopeKind, Mlp, MlpBlockError, Normalization,
+        NormalizationError, QkUnpack, Rope,
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -34,6 +34,9 @@ pub enum ClassifierLayerError<B: Backend> {
 }
 
 pub struct ClassifierLayer<B: Backend> {
+    #[cfg(feature = "tracing")]
+    pub layer_index: usize,
+    pub rope_kind: LayerRopeKind,
     pre_attention_norm: Option<Normalization<B>>,
     attention: Attention<B>,
     post_attention_norm: Option<Normalization<B>>,
@@ -50,6 +53,8 @@ impl<B: Backend> ClassifierLayer<B> {
         context: &B::Context,
         transformer_config: &TransformerConfig,
         layer_config: &TransformerLayerConfig,
+        #[cfg_attr(not(feature = "tracing"), allow(unused_variables))] layer_index: usize,
+        rope_kind: LayerRopeKind,
         layer_loader: &ParameterTree<B>,
         rope: Rc<Rope<B>>,
         qk_unpack: Rc<QkUnpack<B>>,
@@ -137,6 +142,9 @@ impl<B: Backend> ClassifierLayer<B> {
             .map_err(ClassifierLayerError::BackendError)?;
 
         Ok(Self {
+            #[cfg(feature = "tracing")]
+            layer_index,
+            rope_kind,
             pre_attention_norm,
             attention,
             post_attention_norm,
@@ -158,9 +166,8 @@ impl<B: Backend> ClassifierLayer<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let LayerArguments {
             batch_dim,
-            token_positions,
             token_subtrie_ranges,
-            rope_buffers,
+            rope,
             #[cfg(feature = "tracing")]
             trace,
             ..
@@ -187,15 +194,7 @@ impl<B: Backend> ClassifierLayer<B> {
             encoder.encode_copy(&main, .., layer_traces.pre_attention_norm.allocation_mut(), ..);
         }
 
-        main = self.attention.encode(
-            token_positions,
-            token_subtrie_ranges,
-            rope_buffers,
-            None,
-            main,
-            batch_dim,
-            encoder,
-        )?;
+        main = self.attention.encode(token_subtrie_ranges, rope, None, main, batch_dim, encoder)?;
         #[cfg(feature = "tracing")]
         if let Some(layer_traces) = layer_traces.as_deref_mut() {
             encoder.encode_copy(&main, .., layer_traces.attention.allocation_mut(), ..);
