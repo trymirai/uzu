@@ -39,12 +39,13 @@ PUBLIC KERNEL(DeltaNetUpdate)(
       HEAD_K_DIM % METAL_SIMD_SIZE == 0,
       "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE"
   );
-  constexpr uint SIMD = METAL_SIMD_SIZE;
-  constexpr uint ELEMS = HEAD_K_DIM / SIMD;      // Dk per lane (128/32 = 4)
-  constexpr uint NUM_SG = UPDATE_THREADS / SIMD; // simd groups / tg (16)
+  constexpr uint ELEMS =
+      HEAD_K_DIM / METAL_SIMD_SIZE; // Dk per lane (128/32 = 4)
+  constexpr uint NUM_SG =
+      UPDATE_THREADS / METAL_SIMD_SIZE; // simd groups / tg (16)
 
-  const uint lane = tid % SIMD;
-  const uint sg = tid / SIMD;
+  const uint lane = tid % METAL_SIMD_SIZE;
+  const uint sg = tid / METAL_SIMD_SIZE;
 
   const uint conv_dim = 2 * key_dim + value_dim;
   const uint groups_per_head = num_v_heads / num_k_heads;
@@ -57,7 +58,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   float q_sq = 0.0f;
   float k_sq = 0.0f;
   for (uint i = 0; i < ELEMS; ++i) {
-    const uint dk = lane + SIMD * i;
+    const uint dk = lane + METAL_SIMD_SIZE * i;
     q[i] = float(in_proj[hk * HEAD_K_DIM + dk]);
     k[i] = float(in_proj[key_dim + hk * HEAD_K_DIM + dk]);
     q_sq += q[i] * q[i];
@@ -91,7 +92,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     float sq_partial = 0.0f;
     float sk_partial = 0.0f;
     for (uint i = 0; i < ELEMS; ++i) {
-      const uint dk = lane + SIMD * i;
+      const uint dk = lane + METAL_SIMD_SIZE * i;
       s[i] = state[state_row + dk];
       sq_partial += s[i] * q[i];
       sk_partial += s[i] * k[i];
@@ -104,7 +105,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     const float o_i = decay * sq_acc + delta_i * kq_dot;
 
     for (uint i = 0; i < ELEMS; ++i) {
-      const uint dk = lane + SIMD * i;
+      const uint dk = lane + METAL_SIMD_SIZE * i;
       state[state_row + dk] = decay * s[i] + k[i] * delta_i;
     }
 

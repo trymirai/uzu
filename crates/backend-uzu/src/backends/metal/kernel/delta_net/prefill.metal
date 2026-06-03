@@ -41,14 +41,13 @@ PUBLIC KERNEL(DeltaNetPrefill)(
       HEAD_K_DIM % METAL_SIMD_SIZE == 0,
       "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE"
   );
-  constexpr uint SIMD = METAL_SIMD_SIZE;
-  constexpr uint ELEMS = HEAD_K_DIM / SIMD;
-  constexpr uint NUM_SG = PREFILL_THREADS / SIMD;
+  constexpr uint ELEMS = HEAD_K_DIM / METAL_SIMD_SIZE;
+  constexpr uint NUM_SG = PREFILL_THREADS / METAL_SIMD_SIZE;
   static_assert(ELEMS == 4, "float4 prefill requires ELEMS == 4");
   static_assert(DV_PER_SIMDGROUP == 4, "packs dv rows into a float4");
 
-  const uint lane = tid % SIMD;
-  const uint dv_local = tid / SIMD;
+  const uint lane = tid % METAL_SIMD_SIZE;
+  const uint dv_local = tid / METAL_SIMD_SIZE;
   const uint dv_idx = (dv_group * NUM_SG + dv_local) * DV_PER_SIMDGROUP;
 
   const uint groups_per_head = num_v_heads / num_k_heads;
