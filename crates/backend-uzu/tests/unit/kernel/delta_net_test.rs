@@ -154,13 +154,15 @@ fn test_delta_net_conv_scan() {
     let w: Vec<f32> = (0..conv_dim * kernel_size).map(|i| ((i % 11) as f32) * 0.05 - 0.2).collect();
     let b: Vec<f32> = (0..conv_dim).map(|i| ((i % 5) as f32) * 0.01).collect();
     let init_state: Vec<f32> = (0..conv_dim * tap_count).map(|i| ((i % 13) as f32) * 0.02 - 0.1).collect();
-    let in_proj: Vec<f32> = (0..suffix_len * total_proj_dim).map(|i| ((i % 37) as f32) * 0.02 - 0.3).collect();
+    let in_proj: Vec<bf16> =
+        (0..suffix_len * total_proj_dim).map(|i| bf16::from_f32(((i % 37) as f32) * 0.02 - 0.3)).collect();
+    let in_proj_f32: Vec<f32> = in_proj.iter().copied().map(f32::from).collect();
 
     // Reference: decode conv token-by-token
     let mut ref_state = init_state.clone();
     let mut ref_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
-        let token_in: Vec<f32> = in_proj[t * total_proj_dim..t * total_proj_dim + conv_dim].to_vec();
+        let token_in: Vec<f32> = in_proj_f32[t * total_proj_dim..t * total_proj_dim + conv_dim].to_vec();
         let (out, new_state) = run_conv_update::<Cpu>(
             &token_in,
             &w,
@@ -173,6 +175,7 @@ fn test_delta_net_conv_scan() {
         ref_state = new_state;
         ref_outputs[t * conv_dim..(t + 1) * conv_dim].copy_from_slice(&out);
     }
+    let ref_outputs: Vec<f32> = ref_outputs.iter().copied().map(|value| f32::from(bf16::from_f32(value))).collect();
 
     // Test: Conv1dPack + DeltaNetConvScan on Metal
     let context = <Metal as Backend>::Context::new().expect("context");
@@ -186,9 +189,10 @@ fn test_delta_net_conv_scan() {
     let mut state_out_array = context.create_array_zeros(&[conv_dim * tap_count], DataType::F32).into_allocation();
 
     let pack_kernel =
-        <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32).expect("pack");
+        <<Metal as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32, DataType::BF16)
+            .expect("pack");
     let scan_kernel =
-        <<Metal as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::F32, true)
+        <<Metal as Backend>::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::BF16, true)
             .expect("scan");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
@@ -218,7 +222,8 @@ fn test_delta_net_conv_scan() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let in_proj_result: Vec<f32> = crate::common::helpers::allocation_to_vec(&in_proj_array);
+    let in_proj_result: Vec<bf16> = crate::common::helpers::allocation_to_vec(&in_proj_array);
+    let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
     let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
         scan_outputs[t * conv_dim..(t + 1) * conv_dim]

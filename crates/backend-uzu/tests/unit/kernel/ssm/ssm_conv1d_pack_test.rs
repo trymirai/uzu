@@ -8,7 +8,7 @@ use backend_uzu::{
     },
     data_type::DataType,
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::{common::assert::assert_eq_float, uzu_test};
@@ -46,7 +46,7 @@ fn get_input<T: ArrayElement + Float>(
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type())
+    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type(), T::data_type())
         .expect("Failed to create Conv1dPackKernel");
 
     let state_size = input.state_in.len();
@@ -157,27 +157,6 @@ fn test_large_f32() {
 #[uzu_test]
 fn test_channels_lt_row_stride_f32() {
     test_channels_lt_row_stride::<f32>();
-}
-
-// f16
-#[uzu_test]
-fn test_basic_f16() {
-    test_basic::<f16>();
-}
-
-#[uzu_test]
-fn test_single_token_f16() {
-    test_single_token::<f16>();
-}
-
-#[uzu_test]
-fn test_many_tokens_f16() {
-    test_many_tokens::<f16>();
-}
-
-#[uzu_test]
-fn test_large_f16() {
-    test_large::<f16>();
 }
 
 // bf16

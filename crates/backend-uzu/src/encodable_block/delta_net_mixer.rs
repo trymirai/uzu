@@ -148,7 +148,7 @@ impl<B: Backend> DeltaNetMixer<B> {
         let delta_net_update =
             <B::Kernels as Kernels>::DeltaNetUpdateKernel::new(context, outer_data_type, config.head_dim as u32)
                 .map_err(DeltaNetMixerError::BackendError)?;
-        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, outer_data_type)
+        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, inner_data_type, outer_data_type)
             .map_err(DeltaNetMixerError::BackendError)?;
         let conv_scan = <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, outer_data_type, has_bias)
             .map_err(DeltaNetMixerError::BackendError)?;
