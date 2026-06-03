@@ -600,9 +600,20 @@ fn remove_resume_artifact(destination: &Path) {
 }
 
 async fn validate_completed_file(config: &DownloadConfig) -> Result<u64, String> {
+    // After the backend reports completion the destination may not yet be fully
+    // visible on disk: metadata can lag, and on the copy/move fallback path the
+    // file briefly exists with fewer bytes than expected. Retry until it is
+    // present with the expected size (or the budget runs out) so a transient
+    // mismatch is not mistaken for a corrupt download. A genuinely truncated file
+    // has a stable size and still fails once the retries are exhausted.
     let mut metadata = config.destination.metadata().ok();
     for _attempt in 0..10 {
-        if metadata.is_some() {
+        let is_ready = match (&metadata, config.expected_bytes) {
+            (Some(metadata), Some(expected_bytes)) => metadata.len() == expected_bytes,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if is_ready {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

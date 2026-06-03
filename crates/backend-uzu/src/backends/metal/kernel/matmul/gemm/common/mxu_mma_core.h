@@ -184,7 +184,11 @@ struct MxuMmaCore {
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
+    const uint partition = thread_context.threadgroup_position.z;
+    const uint tile_y = thread_context.threadgroup_position.y;
+
+    const uint2 tile =
+        tile_id(uint2(thread_context.threadgroup_position.x, tile_y), params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
             compute(tile, params);
@@ -195,9 +199,19 @@ struct MxuMmaCore {
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    const device AT* a_block = a + block_row * params->leading_dimension_a;
+    const uint k_offset_per_block =
+        (B_PROLOGUE == GemmBPrologueKind::FullPrecision)
+            ? uint(THREADGROUP_BLOCK_K_FP)
+            : uint(QUANT_BK);
+    const uint k_offset =
+        partition * params->aligned_inner_iterations * k_offset_per_block;
+
+    const device AT* a_block =
+        a + block_row * params->leading_dimension_a + k_offset;
     const device BT* b_block_fp =
-        b + (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
+        b +
+        (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col) +
+        (TRANSPOSE_B ? k_offset : k_offset * uint(params->leading_dimension_b));
 
     const ushort tile_row_offset =
         SIMDGROUP_BLOCK_M *
@@ -207,7 +221,8 @@ struct MxuMmaCore {
         (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
     device DT* d_simdgroup =
-        d + block_row * params->leading_dimension_d + block_col +
+        d + size_t(partition) * size_t(params->M) * size_t(params->N) +
+        block_row * params->leading_dimension_d + block_col +
         tile_row_offset * params->leading_dimension_d + tile_col_offset;
 
     const short simdgroup_limit_m =
@@ -271,7 +286,7 @@ struct MxuMmaCore {
                         B_PROLOGUE == GemmBPrologueKind::FullPrecision
                     ) {
                       const int aligned_k_iterations_fp =
-                          int(params->K) / int(THREADGROUP_BLOCK_K_FP);
+                          int(params->aligned_inner_iterations);
                       return uzu::matmul::gemm_loop<
                           AT,
                           BT,
@@ -297,7 +312,7 @@ struct MxuMmaCore {
                       );
                     } else {
                       const int aligned_k_iterations_q =
-                          int(params->K) / int(QUANT_BK);
+                          int(params->aligned_inner_iterations);
                       constexpr int pack_factor = get_pack_factor<BITS, 8>();
                       constexpr int bytes_per_pack = get_bytes_per_pack<BITS>();
                       const int k_elements = int(params->K);
@@ -305,18 +320,21 @@ struct MxuMmaCore {
                           k_elements * bytes_per_pack / pack_factor;
                       const int groups_per_row =
                           (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
+                      const int k_offset_groups = int(k_offset) / GROUP_SIZE;
                       const device uint8_t* weights_block =
                           reinterpret_cast<const device uint8_t*>(b) +
-                          block_col * weights_row_stride_bytes;
+                          block_col * weights_row_stride_bytes +
+                          int(k_offset) * bytes_per_pack / pack_factor;
                       const device BT* scales_offset =
-                          scales + block_col * groups_per_row;
+                          scales + block_col * groups_per_row + k_offset_groups;
 
                       auto loader_b = [&]() {
                         if constexpr (
                             B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
                         ) {
                           const device BT* biases_offset =
-                              biases + block_col * groups_per_row;
+                              biases + block_col * groups_per_row +
+                              k_offset_groups;
                           return BLoaderScaleBias(
                               weights_block,
                               scales_offset,
@@ -335,7 +353,9 @@ struct MxuMmaCore {
                                           : groups_per_row;
                           const device uint8_t* zero_points_row_start =
                               zero_points +
-                              block_col * zero_point_stride_per_row;
+                              block_col * zero_point_stride_per_row +
+                              ((BITS == 4) ? (k_offset_groups / 2)
+                                           : k_offset_groups);
                           return BLoaderScaleZeroPoint(
                               weights_block,
                               scales_offset,
