@@ -180,13 +180,6 @@ impl<B: Backend> Decoder<B> {
             })
             .collect();
 
-        for (rope_index, (rope_config, head_dim)) in rope_configs.iter().enumerate() {
-            let rope_tree = decoder_weight_loader.subtree(&format!("ropes.{}", rope_index))?;
-            let shape = [*rope_config.max_sequence_length(), *head_dim];
-            rope_tree.leaf("cosines")?.validate(&shape, model_shape.rope_data_type)?;
-            rope_tree.leaf("sines")?.validate(&shape, model_shape.rope_data_type)?;
-        }
-
         let rope = Rc::new(Rope::<B>::new(context, model_shape, false).map_err(DecoderError::BackendError)?);
         // Built only when some layer projects queries only (reuses an earlier layer's KV cache).
         let rope_query_only = if tf.layer_configs.iter().any(|l| l.kv_source_layer_index.is_some()) {

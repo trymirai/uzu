@@ -17,7 +17,6 @@ pub(super) fn load_audio_runtime_from_tts_config(
         embedding_config: AnyEmbeddingConfig::UntiedEmbeddingConfig(UntiedEmbeddingConfig::new(None, None)),
         transformer_config: cfg.quantizer_config.post_module_config.clone(),
         vocab_size: 1,
-        pard_token: None,
         ple_model_config: None,
     };
     let vocoder_data_type = ModelShape::from_decoder_config(&post_module_decoder_config, DataType::F32).data_type;

@@ -51,6 +51,14 @@ pub enum LayerExecutablesError<B: Backend> {
     UnsupportedPostLayerScalarDataType {
         data_type: DataType,
     },
+    #[error(
+        "layer {layer_index} AttentionConfig.is_kv_sharing={attention_is_kv_sharing} does not match kv_source_layer_index presence={has_kv_source_layer}"
+    )]
+    AttentionKvSharingMismatch {
+        layer_index: usize,
+        attention_is_kv_sharing: bool,
+        has_kv_source_layer: bool,
+    },
     #[error("decoder layers require pre_mixer_norm_config")]
     MissingPreMixerNormConfig,
 }
@@ -139,6 +147,15 @@ impl<B: Backend> LayerExecutables<B> {
 
         let (mixer, mixer_hadamard_factors) = match &layer_config.mixer_config {
             AnyTokenMixerConfig::AttentionConfig(attention_config) => {
+                let has_kv_source_layer = layer_config.kv_source_layer_index.is_some();
+                if attention_config.is_kv_sharing != has_kv_source_layer {
+                    return Err(LayerExecutablesError::AttentionKvSharingMismatch {
+                        layer_index,
+                        attention_is_kv_sharing: attention_config.is_kv_sharing,
+                        has_kv_source_layer,
+                    });
+                }
+
                 let (attention, input_hadamard_factors) = Attention::new(
                     context,
                     transformer_config.model_dim,
@@ -148,7 +165,7 @@ impl<B: Backend> LayerExecutables<B> {
                     rope.clone(),
                     qk_unpack.clone(),
                     attention_config.gate_projection_config.is_none(),
-                    layer_config.kv_source_layer_index.is_some(),
+                    has_kv_source_layer,
                 )?;
 
                 (

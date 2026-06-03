@@ -44,7 +44,6 @@ impl<B: Backend> ClassifierContext<B> {
             embedding_config: classifier_config.embedding_config.clone(),
             transformer_config: classifier_config.transformer_config.clone(),
             vocab_size: classifier_config.vocab_size,
-            pard_token: None,
             ple_model_config: None,
         });
 
@@ -81,21 +80,6 @@ impl<B: Backend> ClassifierContext<B> {
                 LayerRopeKind::Indexed(index)
             })
             .collect();
-
-        for (rope_index, (rope_config, head_dim)) in rope_configs.iter().enumerate() {
-            let rope_tree = transformer_tree
-                .subtree(&format!("ropes.{}", rope_index))
-                .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
-            let shape = [*rope_config.max_sequence_length(), *head_dim];
-            rope_tree
-                .leaf("cosines")
-                .and_then(|leaf| leaf.validate(&shape, model_shape.rope_data_type))
-                .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
-            rope_tree
-                .leaf("sines")
-                .and_then(|leaf| leaf.validate(&shape, model_shape.rope_data_type))
-                .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
-        }
 
         let output_norm_tree =
             transformer_tree.subtree("output_norm").map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
