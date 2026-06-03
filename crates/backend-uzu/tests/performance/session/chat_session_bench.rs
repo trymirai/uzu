@@ -22,8 +22,10 @@ fn run_session(
     session: &mut ChatSession,
     input: Input,
 ) -> Duration {
-    let mut run_config = RunConfig::default();
-    run_config.tokens_limit = 64;
+    let run_config = RunConfig {
+        tokens_limit: 64,
+        ..Default::default()
+    };
     let result = session.run_internal(input, run_config, None::<fn(Output) -> bool>).unwrap();
     Duration::from_secs_f64(result.stats.total_stats.duration)
 }
