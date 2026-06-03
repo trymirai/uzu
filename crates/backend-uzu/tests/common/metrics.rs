@@ -1,7 +1,7 @@
 const COOL_GPU_TEMP: f32 = 60.0;
 
 fn get_gpu_temp() -> f32 {
-    #[cfg(metal_backend)]
+    #[cfg(target_os = "macos")]
     {
         use macmon::Sampler;
         let mut sample = Sampler::new().unwrap();
@@ -9,7 +9,7 @@ fn get_gpu_temp() -> f32 {
         metrics.temp.gpu_temp_avg
     }
 
-    #[cfg(not(metal_backend))]
+    #[cfg(not(target_os = "macos"))]
     unimplemented!()
 }
 
