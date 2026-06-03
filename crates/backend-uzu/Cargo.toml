@@ -67,6 +67,10 @@ rstest.workspace = true
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# for getting gpu temperature
+macmon.workspace = true
+
 [build-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

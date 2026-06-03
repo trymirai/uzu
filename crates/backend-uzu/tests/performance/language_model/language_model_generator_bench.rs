@@ -7,7 +7,10 @@ use backend_uzu::{
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 
-use crate::{common::path::get_test_model_path, uzu_bench};
+use crate::{
+    common::{metrics::wait_gpu_cooldown, path::get_test_model_path},
+    uzu_bench,
+};
 
 fn create_generator<B: Backend>() -> LanguageModelGenerator<B> {
     let model_path = get_test_model_path();
@@ -42,6 +45,8 @@ fn bench_forward_pass(c: &mut Criterion) {
     // Empty prompt first decode: the generate path requires one seed token.
     let tokens: Vec<u64> = vec![0];
     for_each_non_cpu_backend!(|B| {
+        wait_gpu_cooldown();
+
         let mut group = c.benchmark_group("Forward pass");
         group.sample_size(10);
         group.throughput(Throughput::Elements(tokens.len() as u64));

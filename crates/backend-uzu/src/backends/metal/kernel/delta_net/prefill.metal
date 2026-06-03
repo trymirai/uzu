@@ -60,17 +60,19 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   device const float* k_ptr = k_norm + hk * HEAD_K_DIM + dk_base;
   device const float* beta_ptr = beta_buf + hv_idx;
   device const float* decay_ptr = decay_buf + hv_idx;
-  device const T* v_ptr = in_proj + 2 * key_dim + hv_idx * head_v_dim;
-  device T* out_ptr = out + hv_idx * head_v_dim;
+  device const T* v_row = in_proj + 2 * key_dim + hv_idx * head_v_dim + dv_idx;
+  device T* out_row = out + hv_idx * head_v_dim + dv_idx;
 
+  // State layout: [Hv, Dv, Dk], contiguous along Dk (HEAD_K_DIM floats/row).
+  // Unrolled by hand: METAL_PRAGMA_UNROLL is ignored under metal4.0 -O2, so a
+  // loop over s[i] keeps the array in an alloca and reloads it every token.
+  device const float* s_in =
+      state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
   float4 s[DV_PER_SIMDGROUP];
-  METAL_PRAGMA_UNROLL
-  for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
-    uint dv = dv_idx + i;
-    s[i] = *reinterpret_cast<device const float4*>(
-        state + (hv_idx * head_v_dim + dv) * HEAD_K_DIM + dk_base
-    );
-  }
+  s[0] = *reinterpret_cast<device const float4*>(s_in + 0 * HEAD_K_DIM);
+  s[1] = *reinterpret_cast<device const float4*>(s_in + 1 * HEAD_K_DIM);
+  s[2] = *reinterpret_cast<device const float4*>(s_in + 2 * HEAD_K_DIM);
+  s[3] = *reinterpret_cast<device const float4*>(s_in + 3 * HEAD_K_DIM);
 
   for (uint token = 0; token < suffix_len; ++token) {
     float decay = *decay_ptr;
@@ -78,43 +80,47 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     float4 k = *reinterpret_cast<device const float4*>(k_ptr);
     float4 q = *reinterpret_cast<device const float4*>(q_ptr);
 
-    METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < DV_PER_SIMDGROUP; ++i)
-      s[i] *= decay;
+    s[0] *= decay;
+    s[1] *= decay;
+    s[2] *= decay;
+    s[3] *= decay;
     float4 kv_mem =
         float4(dot(s[0], k), dot(s[1], k), dot(s[2], k), dot(s[3], k));
     kv_mem = simd_sum(kv_mem);
 
-    float4 o;
-    METAL_PRAGMA_UNROLL
-    for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
-      uint dv = dv_idx + i;
-      float v_val = float(v_ptr[token * total_proj_dim + dv]);
-      float delta = beta * (v_val - kv_mem[i]);
-      s[i] += k * delta;
-      o[i] = dot(s[i], q);
-    }
+    float4 v_val = float4(
+        float(v_row[0]),
+        float(v_row[1]),
+        float(v_row[2]),
+        float(v_row[3])
+    );
+    float4 delta = beta * (v_val - kv_mem);
+    s[0] += k * delta[0];
+    s[1] += k * delta[1];
+    s[2] += k * delta[2];
+    s[3] += k * delta[3];
+    float4 o = float4(dot(s[0], q), dot(s[1], q), dot(s[2], q), dot(s[3], q));
     o = simd_sum(o);
 
     if (lane == 0) {
-      METAL_PRAGMA_UNROLL
-      for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
-        uint dv = dv_idx + i;
-        out_ptr[token * value_dim + dv] = static_cast<T>(o[i]);
-      }
+      out_row[0] = static_cast<T>(o[0]);
+      out_row[1] = static_cast<T>(o[1]);
+      out_row[2] = static_cast<T>(o[2]);
+      out_row[3] = static_cast<T>(o[3]);
     }
 
     q_ptr += key_dim;
     k_ptr += key_dim;
     beta_ptr += num_v_heads;
     decay_ptr += num_v_heads;
+    v_row += total_proj_dim;
+    out_row += value_dim;
   }
 
-  METAL_PRAGMA_UNROLL
-  for (uint i = 0; i < DV_PER_SIMDGROUP; ++i) {
-    uint dv = dv_idx + i;
-    *reinterpret_cast<device float4*>(
-        state + (hv_idx * head_v_dim + dv) * HEAD_K_DIM + dk_base
-    ) = s[i];
-  }
+  device float* s_out =
+      state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
+  *reinterpret_cast<device float4*>(s_out + 0 * HEAD_K_DIM) = s[0];
+  *reinterpret_cast<device float4*>(s_out + 1 * HEAD_K_DIM) = s[1];
+  *reinterpret_cast<device float4*>(s_out + 2 * HEAD_K_DIM) = s[2];
+  *reinterpret_cast<device float4*>(s_out + 3 * HEAD_K_DIM) = s[3];
 }
