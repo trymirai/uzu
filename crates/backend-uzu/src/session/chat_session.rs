@@ -571,10 +571,10 @@ impl ChatSession {
             .response
             .as_deref()
             .and_then(|response| find_stop_match(response, &run_context.stop_sequences));
-        if let Some(offset) = stop_offset {
-            if let Some(response) = output_text.parsed.response.as_mut() {
-                response.truncate(offset);
-            }
+        if let Some(offset) = stop_offset
+            && let Some(response) = output_text.parsed.response.as_mut()
+        {
+            response.truncate(offset);
         }
         let finish_reason = finish_reason_with_stop(finish_reason, stop_offset.is_some());
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;

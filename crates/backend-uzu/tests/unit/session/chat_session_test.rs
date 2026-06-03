@@ -83,5 +83,5 @@ fn test_chat_session_stop_sets_stop_when_no_other_reason() {
 #[test]
 fn test_chat_session_no_stop_match_preserves_finish_reason() {
     assert!(matches!(finish_reason_with_stop(Some(FinishReason::Length), false), Some(FinishReason::Length)));
-    assert!(matches!(finish_reason_with_stop(None, false), None));
+    assert!(finish_reason_with_stop(None, false).is_none());
 }
