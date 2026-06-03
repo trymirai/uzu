@@ -72,7 +72,7 @@ pub fn bench_quant_gemv_shapes(bits: u32) -> impl Iterator<Item = Shape> {
         256
     };
     let nk: &[(usize, usize)] = &[(4096, 4096), (4096, 14336), (14336, 4096), (14336, 14336)];
-    let ms = &[1usize, 2, 4, 8];
+    let ms = &[1usize, 2, 4];
     nk.iter()
         .filter(move |&&(n, k)| n % 8 == 0 && k % block_size == 0)
         .flat_map(move |&(n, k)| ms.iter().map(move |&m| Shape::new(m, k, n)))
