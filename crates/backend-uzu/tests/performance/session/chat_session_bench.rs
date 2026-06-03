@@ -21,9 +21,10 @@ fn create_session<B: Backend>() -> ChatSession {
 fn run_session(
     session: &mut ChatSession,
     input: Input,
+    tokens_limit: u64,
 ) -> Duration {
     let run_config = RunConfig {
-        tokens_limit: 64,
+        tokens_limit,
         ..Default::default()
     };
     let result = session.run_internal(input, run_config, None::<fn(Output) -> bool>).unwrap();
@@ -33,6 +34,8 @@ fn run_session(
 #[uzu_bench]
 fn bench_chat_session(c: &mut Criterion) {
     let message = "How are you?";
+    let tokens_limit = 64;
+
     for_each_non_cpu_backend!(|B| {
         wait_gpu_cooldown();
 
@@ -44,7 +47,7 @@ fn bench_chat_session(c: &mut Criterion) {
                 let mut total_duration = Duration::from_secs(0);
                 for _ in 0..n_iter {
                     session.reset().unwrap();
-                    let duration = run_session(&mut session, Input::Text(message.to_string()));
+                    let duration = run_session(&mut session, Input::Text(message.to_string()), tokens_limit);
                     total_duration += duration;
                 }
                 total_duration

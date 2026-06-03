@@ -1,3 +1,5 @@
+use std::{thread::sleep, time::Duration};
+
 const COOL_GPU_TEMP: f32 = 60.0;
 
 fn get_gpu_temp() -> f32 {
@@ -10,7 +12,7 @@ fn get_gpu_temp() -> f32 {
     }
 
     #[cfg(not(target_os = "macos"))]
-    unimplemented!()
+    0.0f
 }
 
 pub fn wait_gpu_cooldown() {
@@ -21,7 +23,7 @@ pub fn wait_gpu_cooldown() {
 
     println!("Waiting GPU for cooldown...");
     while gpu_temp > COOL_GPU_TEMP {
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        sleep(Duration::from_millis(10));
         gpu_temp = get_gpu_temp();
     }
 }
