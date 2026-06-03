@@ -239,7 +239,10 @@ struct SimdgroupMmaCore {
       threadgroup BT* b_shared,
       const thread ThreadContext& thread_context
   ) {
-    const uint2 tile = tile_id(thread_context.threadgroup_position.xy, params);
+    const uint partition = thread_context.threadgroup_position.z;
+    const uint tile_row = thread_context.threadgroup_position.y;
+    const uint2 tile =
+        tile_id(uint2(thread_context.threadgroup_position.x, tile_row), params);
     const auto geometry =
         ThreadgroupTileGeometry<THREADGROUP_BLOCK_M, THREADGROUP_BLOCK_N>::
             compute(tile, params);
@@ -247,13 +250,17 @@ struct SimdgroupMmaCore {
       return;
     }
 
+    const uint k_offset =
+        partition * params->aligned_inner_iterations * THREADGROUP_BLOCK_K;
+
     threadgroup_barrier(mem_flags::mem_none);
 
     const size_t block_row = size_t(geometry.block_row_start);
     const size_t block_col = size_t(geometry.block_col_start);
 
-    a += block_row * params->leading_dimension_a;
-    d += block_row * params->leading_dimension_d + block_col;
+    a += block_row * params->leading_dimension_a + k_offset;
+    d += size_t(partition) * size_t(params->M) * size_t(params->N) +
+         block_row * params->leading_dimension_d + block_col;
 
     thread ALoader
         loader_a(a, params->leading_dimension_a, a_shared, thread_context);
@@ -286,7 +293,9 @@ struct SimdgroupMmaCore {
       if constexpr (B_PROLOGUE == GemmBPrologueKind::FullPrecision) {
         const device BT* b_block_fp =
             b +
-            (TRANSPOSE_B ? block_col * params->leading_dimension_b : block_col);
+            (TRANSPOSE_B ? block_col * params->leading_dimension_b
+                         : block_col) +
+            (TRANSPOSE_B ? k_offset : k_offset * params->leading_dimension_b);
         return BLoaderFp(
             b_block_fp,
             params->leading_dimension_b,
@@ -300,13 +309,17 @@ struct SimdgroupMmaCore {
         const int weights_row_stride_bytes =
             k_elements * bytes_per_pack / pack_factor;
         const int groups_per_row = (k_elements + GROUP_SIZE - 1) / GROUP_SIZE;
+        const int k_offset_groups = int(k_offset) / GROUP_SIZE;
         const device uint8_t* weights_block =
             reinterpret_cast<const device uint8_t*>(b) +
-            block_col * weights_row_stride_bytes;
-        const device BT* scales_offset = scales + block_col * groups_per_row;
+            block_col * weights_row_stride_bytes +
+            int(k_offset) * bytes_per_pack / pack_factor;
+        const device BT* scales_offset =
+            scales + block_col * groups_per_row + k_offset_groups;
 
         if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-          const device BT* biases_offset = biases + block_col * groups_per_row;
+          const device BT* biases_offset =
+              biases + block_col * groups_per_row + k_offset_groups;
           return BLoaderScaleBias(
               weights_block,
               scales_offset,
@@ -322,7 +335,8 @@ struct SimdgroupMmaCore {
           const int zero_point_stride_per_row =
               (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
           const device uint8_t* zero_points_row_start =
-              zero_points + block_col * zero_point_stride_per_row;
+              zero_points + block_col * zero_point_stride_per_row +
+              ((BITS == 4) ? (k_offset_groups / 2) : k_offset_groups);
           return BLoaderScaleZeroPoint(
               weights_block,
               scales_offset,

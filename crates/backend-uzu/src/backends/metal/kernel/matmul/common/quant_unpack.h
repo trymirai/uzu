@@ -51,7 +51,7 @@ METAL_FUNC bfloat4 uint4_to_fp4<bfloat, 8>(uint4 n) {
 }
 
 template <typename U, int N, int bits>
-inline void dequantize(
+METAL_FUNC void dequantize(
     const device uint8_t* w,
     U scale,
     U bias,
@@ -59,14 +59,16 @@ inline void dequantize(
 ) {
   static_assert(bits == 4 || bits == 8, "Only int4 and int8 supported");
 
-  if (bits == 4) {
+  if constexpr (bits == 4) {
     U s0 = scale;
     U s1 = scale / static_cast<U>(16.0f);
+    METAL_PRAGMA_UNROLL
     for (int i = 0; i < (N / 2); i++) {
       w_local[2 * i] = s0 * (w[i] & 0x0f) + bias;
       w_local[2 * i + 1] = s1 * (w[i] & 0xf0) + bias;
     }
-  } else if (bits == 8) {
+  } else if constexpr (bits == 8) {
+    METAL_PRAGMA_UNROLL
     for (int i = 0; i < N; i++) {
       w_local[i] = scale * w[i] + bias;
     }
@@ -74,27 +76,34 @@ inline void dequantize(
 }
 
 template <>
-inline void dequantize<bfloat, 8, 4>(
+METAL_FUNC void dequantize<bfloat, 8, 4>(
     const device uint8_t* w,
     bfloat scale,
     bfloat bias,
     threadgroup bfloat* w_local
 ) {
-  const uint32_t packed = *reinterpret_cast<const device uint32_t*>(w);
-  const bfloat4 lo =
-      bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
-  const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) *
-                         (scale * bfloat(0.0625f)) +
-                     bias;
+  const device uint32_t* w_ptr = reinterpret_cast<const device uint32_t*>(w);
+  uint32_t packed = *w_ptr;
 
-  w_local[0] = lo.x;
-  w_local[1] = hi.x;
-  w_local[2] = lo.y;
-  w_local[3] = hi.y;
-  w_local[4] = lo.z;
-  w_local[5] = hi.z;
-  w_local[6] = lo.w;
-  w_local[7] = hi.w;
+  bfloat4 v0, v1;
+
+  v0.x = static_cast<bfloat>(packed & 0xF);
+  v0.y = static_cast<bfloat>((packed >> 4) & 0xF);
+  v0.z = static_cast<bfloat>((packed >> 8) & 0xF);
+  v0.w = static_cast<bfloat>((packed >> 12) & 0xF);
+
+  v1.x = static_cast<bfloat>((packed >> 16) & 0xF);
+  v1.y = static_cast<bfloat>((packed >> 20) & 0xF);
+  v1.z = static_cast<bfloat>((packed >> 24) & 0xF);
+  v1.w = static_cast<bfloat>((packed >> 28) & 0xF);
+
+  v0 = v0 * scale + bias;
+  v1 = v1 * scale + bias;
+
+  threadgroup bfloat4* out_ptr =
+      reinterpret_cast<threadgroup bfloat4*>(w_local);
+  out_ptr[0] = v0;
+  out_ptr[1] = v1;
 }
 
 } // namespace gemm

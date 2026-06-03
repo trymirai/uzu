@@ -8,10 +8,10 @@ use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 #[kernel(DeltaNetConvUpdate)]
 #[variants(T, f32, f16, bf16)]
 pub fn delta_net_conv_update<T: ArrayElement + Float>(
-    conv_weight: *const T,
-    #[optional(has_bias)] bias: Option<*const T>,
+    conv_weight: *const f32,
+    #[optional(has_bias)] bias: Option<*const f32>,
     in_out: *mut T,
-    state: *mut T,
+    state: *mut f32,
     kernel_size: u32,
     conv_dim: u32,
     state_stride: u32,
@@ -29,16 +29,15 @@ pub fn delta_net_conv_update<T: ArrayElement + Float>(
         let x = unsafe { (*in_out.add(channel)).to_f32().unwrap() };
 
         let mut acc = if has_bias {
-            unsafe { (*bias.unwrap().add(channel)).to_f32().unwrap() }
+            unsafe { *bias.unwrap().add(channel) }
         } else {
             0.0f32
         };
 
         for tap in 0..tap_count {
-            acc += unsafe { (*state.add(state_offset + tap)).to_f32().unwrap() }
-                * unsafe { (*conv_weight.add(weight_offset + tap)).to_f32().unwrap() };
+            acc += unsafe { *state.add(state_offset + tap) } * unsafe { *conv_weight.add(weight_offset + tap) };
         }
-        acc += x * unsafe { (*conv_weight.add(weight_offset + tap_count)).to_f32().unwrap() };
+        acc += x * unsafe { *conv_weight.add(weight_offset + tap_count) };
 
         unsafe {
             *in_out.add(channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();
@@ -50,7 +49,7 @@ pub fn delta_net_conv_update<T: ArrayElement + Float>(
             }
         }
         unsafe {
-            *state.add(state_offset + tap_count - 1) = T::from(x).unwrap();
+            *state.add(state_offset + tap_count - 1) = x;
         }
     }
 }

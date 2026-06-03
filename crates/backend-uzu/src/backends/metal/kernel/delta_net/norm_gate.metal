@@ -19,7 +19,7 @@ VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(DeltaNetNormGate)(
     device T* in_out,
     device const T* in_proj,
-    device const T* norm_weight,
+    device const float* norm_weight,
     constant const uint& num_v_heads,
     constant const uint& head_v_dim,
     constant const uint& value_dim,
