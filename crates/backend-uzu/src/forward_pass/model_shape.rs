@@ -32,6 +32,17 @@ impl ModelShape {
             assert_eq!(attn.num_heads, num_heads, "attention layers must share num_heads");
             assert_eq!(attn.num_groups, num_groups, "attention layers must share num_groups");
         }
+        for (layer_index, layer_config) in layer_configs.iter().enumerate() {
+            if let Some(attn) = layer_config.mixer_config.as_attention() {
+                if let Some(is_kv_sharing) = attn.is_kv_sharing {
+                    assert_eq!(
+                        is_kv_sharing,
+                        layer_config.kv_source_layer_index.is_some(),
+                        "attention is_kv_sharing must match kv_source_layer_index for layer {layer_index}"
+                    );
+                }
+            }
+        }
 
         let layer_mixers: Box<[AnyTokenMixerConfig]> = layer_configs.iter().map(|l| l.mixer_config.clone()).collect();
         let kv_source_layers: Box<[Option<usize>]> = layer_configs.iter().map(|l| l.kv_source_layer_index).collect();
@@ -58,6 +69,14 @@ impl ModelShape {
 
     pub fn kv_source_layers(&self) -> &[Option<usize>] {
         &self.kv_source_layers
+    }
+
+    pub fn prefill_layer_count(&self) -> usize {
+        self.kv_source_layers.iter().rposition(Option::is_none).map_or(self.num_layers, |layer_index| layer_index + 1)
+    }
+
+    pub fn prefill_skips_trailing_layers(&self) -> bool {
+        self.prefill_layer_count() < self.num_layers
     }
 
     pub fn layer_mixers(&self) -> &[AnyTokenMixerConfig] {

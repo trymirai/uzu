@@ -249,6 +249,7 @@ impl<B: Backend> Decoder<B> {
         args: DecoderArguments<B>,
         mut main: Allocation<B>,
         per_layer_inputs: Option<&Allocation<B>>,
+        layer_count: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
         let DecoderArguments {
@@ -269,7 +270,7 @@ impl<B: Backend> Decoder<B> {
         let mut shortcut =
             encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(DecoderError::BackendError)?;
 
-        for layer in self.layers.iter() {
+        for layer in self.layers.iter().take(layer_count) {
             let rope_buffers = shared_buffers.rope_buffers_for_layer(layer.layer_index);
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
@@ -305,11 +306,12 @@ impl<B: Backend> Decoder<B> {
         &self,
         args: DecoderArguments<B>,
         token_ids: &Allocation<B>,
+        layer_count: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
         let main = self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?;
         let per_layer_inputs = self.encode_per_layer_inputs(token_ids, &main, args.batch_dim, encoder)?;
-        let (main, _) = self.run_layers(args, main, per_layer_inputs.as_ref(), encoder)?;
+        let (main, _) = self.run_layers(args, main, per_layer_inputs.as_ref(), layer_count, encoder)?;
         Ok(main)
     }
 
@@ -355,6 +357,7 @@ impl<B: Backend> Decoder<B> {
             },
             main,
             per_layer_inputs.as_ref(),
+            self.layers.len(),
             encoder,
         )?;
 

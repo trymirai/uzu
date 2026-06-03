@@ -390,6 +390,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
                 .encode_prefill(
                     self.decoder_arguments(&token_inputs, token_count, 0, 0, &mut *cache_layers),
                     token_inputs.token_ids(),
+                    self.ctx.executables.layers.len(),
                     &mut encoder,
                 )
                 .map_err(|err| Error::EncodeFailed(Box::new(err)))?;
