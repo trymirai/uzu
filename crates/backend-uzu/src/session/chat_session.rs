@@ -200,7 +200,7 @@ impl ChatSession {
         Ok((output, new_context))
     }
 
-    fn run_internal(
+    pub fn run_internal(
         &mut self,
         input: Input,
         config: RunConfig,
