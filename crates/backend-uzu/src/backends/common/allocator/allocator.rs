@@ -105,7 +105,8 @@ impl<B: Backend> Allocator<B> {
         allocation_type: AllocationType<B>,
     ) -> Result<Allocation<B>, B::Error> {
         assert!(size > 0, "allocation size must be greater than 0");
-        let alignment = usize::clamp(size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, 16_384);
+        let alignment =
+            usize::clamp(size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, B::MAX_ALLOCATION_ALIGNMENT);
         let allocation_type = match allocation_type {
             AllocationType::Global => RangeAllocationType::Global,
             AllocationType::Pooled {
@@ -132,7 +133,7 @@ impl<B: Backend> Allocator<B> {
 
             (buffer, range)
         } else {
-            let new_allocator_buffer_size = usize::max(size, 268_435_456);
+            let new_allocator_buffer_size = usize::max(size, B::ALLOCATION_GRANULARITY);
 
             let mut allocator_buffer = AllocatorBuffer::<B> {
                 buffer: Box::pin(self.context.upgrade().unwrap().create_buffer(new_allocator_buffer_size)?), // Upgrade can never fail
