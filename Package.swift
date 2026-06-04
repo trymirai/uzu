@@ -17,8 +17,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "uzu",
-            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.4.zip",
-            checksum: "1ae6aa204204c8b82a2da6aa31e319ddbc645072877200f73949d6abb5e230f0"
+            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.6.zip",
+            checksum: "054ccd42a0e6e7484c8fae4106c0ba5e3352453f110804a5e93613df149a04e8"
         ),
         .target(
             name: "Uzu",
