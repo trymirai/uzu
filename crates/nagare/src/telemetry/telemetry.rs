@@ -1,5 +1,7 @@
 use serde_json::Value;
 use tokio::sync::mpsc;
+#[cfg(not(target_family = "wasm"))]
+use tokio::sync::mpsc::channel as TokioMpscChannel;
 
 use super::{TelemetryEvent, record::TelemetryRecord};
 #[cfg(not(target_family = "wasm"))]
@@ -34,7 +36,7 @@ impl Telemetry {
                 return Self::disabled();
             },
         };
-        let (sender, receiver) = mpsc::channel::<TelemetryRecord>(CAPACITY);
+        let (sender, receiver) = TokioMpscChannel::<TelemetryRecord>(CAPACITY);
         tokio::spawn(super::worker::run(client, path, context, receiver));
         Self {
             sender: Some(sender),
