@@ -111,9 +111,8 @@ struct BSource {
       prep.scales = scales + out_row * in_vec_size_g + g_offset;
       if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
         prep.biases = biases + out_row * in_vec_size_g + g_offset;
-      } else if constexpr (
-          B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-      ) {
+      } else if constexpr (B_PROLOGUE ==
+                           GemmBPrologueKind::ScaleZeroPointDequant) {
         if (BITS == 4) {
           prep.zp_stride = (in_vec_size_g + 1) / 2;
           prep.zps = zero_points + out_row * prep.zp_stride + g_offset / 2;
