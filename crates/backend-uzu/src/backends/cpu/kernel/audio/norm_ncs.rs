@@ -8,8 +8,8 @@ use crate::array::ArrayElement;
 #[variants(T, f32, f16, bf16)]
 pub fn audio_norm_ncs<T: ArrayElement + Float>(
     #[allow(unused)] input: *const T,
-    #[allow(unused)] scales: *const T,
-    #[allow(unused)] bias: *const T,
+    #[allow(unused)] scales: *const f32,
+    #[allow(unused)] bias: *const f32,
     #[allow(unused)] output: *mut T,
     #[allow(unused)] lengths: *const i32,
     #[allow(unused)] channels: i32,

@@ -100,17 +100,17 @@ pub(super) fn read_pointwise_conv_layer<B: Backend>(
 pub(super) fn read_norm_layer<B: Backend>(
     context: &Rc<B::Context>,
     tree: &ParameterTree<B>,
-    data_type: DataType,
     channels: usize,
     epsilon: f32,
     subtract_mean: bool,
     use_bias: bool,
 ) -> AudioResult<StructuredAudioNorm<B>> {
-    let scales = tree.leaf("scales")?.validate(&[channels], data_type)?.read_array()?;
+    let norm_data_type = DataType::F32;
+    let scales = tree.leaf("scales")?.validate(&[channels], norm_data_type)?.read_array()?;
     let bias = if use_bias {
-        tree.leaf("biases")?.validate(&[channels], data_type)?.read_array()?
+        tree.leaf("biases")?.validate(&[channels], norm_data_type)?.read_array()?
     } else {
-        context.create_array_zeros(&[channels], data_type)
+        context.create_array_zeros(&[channels], norm_data_type)
     };
     Ok(StructuredAudioNorm {
         scales,
@@ -133,7 +133,6 @@ pub(super) fn read_convnext_layer<B: Backend>(
     let norm = read_norm_layer::<B>(
         context,
         &tree.subtree("norm")?,
-        data_type,
         dim,
         norm_config.epsilon,
         norm_config.subtract_mean,

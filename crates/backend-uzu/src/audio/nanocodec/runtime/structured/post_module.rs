@@ -94,7 +94,7 @@ impl StructuredAudioCodecGraph {
             vocab_size: 1,
             ple_model_config: None,
         });
-        let model_shape = ModelShape::from_decoder_config(&decoder_config, DataType::F32);
+        let model_shape = ModelShape::from_decoder_config(&decoder_config, self.vocoder_data_type);
 
         let weights_file = File::open(self.weights_path.as_str()).map_err(|err| {
             AudioError::Runtime(format!("failed to open post_module weights '{}': {err}", self.weights_path))

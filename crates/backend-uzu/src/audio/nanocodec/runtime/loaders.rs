@@ -1,11 +1,4 @@
 use super::*;
-use crate::{
-    config::{
-        decoder::DecoderConfig,
-        embedding::{AnyEmbeddingConfig, untied_embedding::UntiedEmbeddingConfig},
-    },
-    forward_pass::model_shape::ModelShape,
-};
 
 pub(super) fn load_audio_runtime_from_tts_config(
     tts_config: &TTSConfig,
@@ -13,13 +6,7 @@ pub(super) fn load_audio_runtime_from_tts_config(
 ) -> AudioResult<(RuntimeConfigJson, StructuredAudioCodecGraph)> {
     let AnyTTSAudioDecoderConfig::DescriptAudioCodecConfig(cfg) = &tts_config.audio_decoder_config;
     let weights_path = model_path.join("model.safetensors");
-    let post_module_decoder_config = DecoderConfig {
-        embedding_config: AnyEmbeddingConfig::UntiedEmbeddingConfig(UntiedEmbeddingConfig::new(None, None)),
-        transformer_config: cfg.quantizer_config.post_module_config.clone(),
-        vocab_size: 1,
-        ple_model_config: None,
-    };
-    let vocoder_data_type = ModelShape::from_decoder_config(&post_module_decoder_config, DataType::F32).data_type;
+    let vocoder_data_type = DataType::BF16;
 
     let total_codebooks = cfg
         .n_codebooks
