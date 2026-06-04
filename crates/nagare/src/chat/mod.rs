@@ -21,6 +21,8 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
+use crate::telemetry::{Telemetry, TelemetryEvent};
+
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChatSessionStreamChunk {
@@ -80,6 +82,8 @@ pub struct ChatSession {
     instance: Arc<Mutex<Instance>>,
     state: Arc<Mutex<ChatSessionState>>,
     messages: Arc<Mutex<Vec<ChatMessage>>>,
+    model_id: String,
+    telemetry: Telemetry,
 }
 
 impl ChatSession {
@@ -88,10 +92,12 @@ impl ChatSession {
         config: ChatConfig,
         model: Model,
         path: Option<String>,
+        telemetry: Telemetry,
     ) -> Result<Self, ChatSessionError> {
         if !model.specializations.contains(&ModelSpecialization::Chat {}) {
             return Err(ChatSessionError::UnsupportedModel {});
         }
+        let model_id = model.identifier.clone();
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
         let instance = tokio::spawn(async move {
@@ -112,6 +118,8 @@ impl ChatSession {
             instance: Arc::new(Mutex::new(instance)),
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),
+            model_id,
+            telemetry,
         })
     }
 }
@@ -189,6 +197,8 @@ impl ChatSession {
         let instance = self.instance.clone();
         let state = self.state.clone();
         let messages = self.messages.clone();
+        let telemetry = self.telemetry.clone();
+        let model_id = self.model_id.clone();
         let cancel_token = cancel_token_to_return.inner().clone();
 
         tokio::spawn(async move {
@@ -221,6 +231,7 @@ impl ChatSession {
             };
 
             let turn_index: u32 = 0;
+            let mut errored = false;
             while let Some(partial_output) = stream.next().await {
                 match partial_output {
                     Ok(backend_output) => {
@@ -246,6 +257,7 @@ impl ChatSession {
                         }
                     },
                     Err(error) => {
+                        errored = true;
                         let _ = sender.send(Err(error));
                         break;
                     },
@@ -258,6 +270,13 @@ impl ChatSession {
             {
                 let mut state = state.lock().await;
                 *state = ChatSessionState::Idle;
+            }
+
+            if !errored && let Some(last) = outputs.values().last() {
+                telemetry.report(TelemetryEvent::SessionGenerationFinished {
+                    model_id,
+                    stats: last.stats.clone(),
+                });
             }
         });
 
