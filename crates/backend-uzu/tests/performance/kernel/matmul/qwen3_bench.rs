@@ -1,5 +1,7 @@
 #![cfg(metal_backend)]
 
+use std::time::Duration;
+
 use backend_uzu::{
     array::ArrayElement,
     backends::{
@@ -31,7 +33,11 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    let mut group = c.benchmark_group(format!("{}/Kernel/Qwen3Layers/{}", type_short_name::<Metal>(), label));
+    let mut group = c.benchmark_group(format!("{}/Kernel/Qwen35Layers/{}", type_short_name::<Metal>(), label));
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_millis(200));
+    group.measurement_time(Duration::from_millis(500));
+
     for (layer, shape) in qwen3_layer_shapes(bits) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = QuantInput::<T>::new(m, k, n, group_size, bits, quant_method, 42);
@@ -56,6 +62,9 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
 #[uzu_bench]
 fn bench_qwen3_layers(c: &mut Criterion) {
     let context = crate::common::shared_metal_context();
+    bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs16_4b", 16, 4, QuantizationMethod::ScaleBias);
+    bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs32_4b", 32, 4, QuantizationMethod::ScaleBias);
+    bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs64_4b", 64, 4, QuantizationMethod::ScaleBias);
     bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleBias);
-    bench_qwen3_layers_typed::<bf16>(c, &context, "ZP_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleZeroPoint);
+    bench_qwen3_layers_typed::<bf16>(c, &context, "Symmetric_BF16_gs32_8b", 32, 8, QuantizationMethod::ScaleSymmetric);
 }

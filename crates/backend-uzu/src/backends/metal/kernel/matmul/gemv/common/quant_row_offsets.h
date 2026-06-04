@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../../common/quant_pack.h"
-#include "gemv_common.h"
 
 namespace uzu {
 namespace gemm {
@@ -19,43 +18,39 @@ struct QuantRowOffsets {
   uint zp_stride = 0;
   bool high_nibble = false;
 
-  void load(thread U* scale, thread U* offset) const {
-    scale[0] = static_cast<U>(scales[0]);
-    scale[1] = static_cast<U>(scales[group_stride]);
-    scale[2] = static_cast<U>(scales[2 * group_stride]);
-    scale[3] = static_cast<U>(scales[3 * group_stride]);
+  template <uint RESULTS_PER_SIMDGROUP>
+  void load(
+      thread U (&scale)[RESULTS_PER_SIMDGROUP],
+      thread U (&offset)[RESULTS_PER_SIMDGROUP]
+  ) const {
+    METAL_PRAGMA_UNROLL
+    for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+      scale[row] = static_cast<U>(scales[row * group_stride]);
+    }
 
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
-      offset[0] = static_cast<U>(biases[0]);
-      offset[1] = static_cast<U>(biases[group_stride]);
-      offset[2] = static_cast<U>(biases[2 * group_stride]);
-      offset[3] = static_cast<U>(biases[3 * group_stride]);
+      METAL_PRAGMA_UNROLL
+      for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+        offset[row] = static_cast<U>(biases[row * group_stride]);
+      }
     } else if constexpr (
         B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
     ) {
-      uchar4 zp_bytes = uchar4(
-          zps[0],
-          zps[zp_stride],
-          zps[2 * zp_stride],
-          zps[3 * zp_stride]
-      );
-      uchar4 zp_nibbles;
-      if constexpr (BITS == 4) {
-        const uint8_t shift = high_nibble ? 4u : 0u;
-        zp_nibbles = (zp_bytes >> shift) & uchar4(0x0F);
-      } else {
-        zp_nibbles = zp_bytes;
+      METAL_PRAGMA_UNROLL
+      for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+        uint8_t zp = zps[row * zp_stride];
+        if constexpr (BITS == 4) {
+          const uint8_t shift = high_nibble ? 4u : 0u;
+          zp = (zp >> shift) & 0x0F;
+        }
+        offset[row] = -scale[row] * static_cast<U>(zp);
       }
-      offset[0] = -scale[0] * static_cast<U>(zp_nibbles.x);
-      offset[1] = -scale[1] * static_cast<U>(zp_nibbles.y);
-      offset[2] = -scale[2] * static_cast<U>(zp_nibbles.z);
-      offset[3] = -scale[3] * static_cast<U>(zp_nibbles.w);
     } else {
       constexpr U midpoint = U(1u << (BITS - 1));
-      offset[0] = -scale[0] * midpoint;
-      offset[1] = -scale[1] * midpoint;
-      offset[2] = -scale[2] * midpoint;
-      offset[3] = -scale[3] * midpoint;
+      METAL_PRAGMA_UNROLL
+      for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
+        offset[row] = -scale[row] * midpoint;
+      }
     }
   }
 

@@ -78,23 +78,167 @@ pub fn bench_quant_gemv_shapes(bits: u32) -> impl Iterator<Item = Shape> {
         .flat_map(move |&(n, k)| ms.iter().map(move |&m| Shape::new(m, k, n)))
 }
 
-const QWEN3_LAYERS: &[(&str, usize, usize)] = &[
-    ("0.6b_qkv", 1024, 4096),
-    ("0.6b_o", 2048, 1024),
-    ("0.6b_gateup", 1024, 6144),
-    ("0.6b_down", 3072, 1024),
-    ("1.7b_qkv", 2048, 4096),
-    ("1.7b_o", 2048, 2048),
-    ("1.7b_gateup", 2048, 12288),
-    ("1.7b_down", 6144, 2048),
-    ("4b_qkv", 2560, 6144),
-    ("4b_o", 4096, 2560),
-    ("4b_gateup", 2560, 19456),
-    ("4b_down", 9728, 2560),
-    ("8b_qkv", 4096, 6144),
-    ("8b_o", 4096, 4096),
-    ("8b_gateup", 4096, 24576),
-    ("8b_down", 12288, 4096),
+const QWEN35_DECODE_AND_CUTOFF_MS: &[usize] = &[1, 2, 4, 5, 8];
+const QWEN35_READOUT_MS: &[usize] = &[1];
+
+struct Qwen35LayerShape {
+    label: &'static str,
+    k: usize,
+    n: usize,
+    ms: &'static [usize],
+}
+
+const QWEN35_LAYERS: &[Qwen35LayerShape] = &[
+    // Qwen3.5-0.8B, workspace/models/0.5.3/Qwen3.5-0.8B-gs128emb/config.json:
+    // model_dim=1024, hidden_dim=3584, 18 DeltaNet layers, 6 attention layers.
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_delta_in_proj",
+        k: 1024,
+        n: 8224,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_delta_out_proj",
+        k: 2048,
+        n: 1024,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_attention_qkv",
+        k: 1024,
+        n: 3072,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_attention_out",
+        k: 2048,
+        n: 1024,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_attention_gate",
+        k: 1024,
+        n: 2048,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_mlp_gateup",
+        k: 1024,
+        n: 7168,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_mlp_down",
+        k: 3584,
+        n: 1024,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_0.8b_readout",
+        k: 1024,
+        n: 248320,
+        ms: QWEN35_READOUT_MS,
+    },
+    // Qwen3.5-2B public config values used by the layout benchmark:
+    // model_dim=2048, hidden_dim=6144.
+    Qwen35LayerShape {
+        label: "qwen35_2b_delta_in_proj",
+        k: 2048,
+        n: 8224,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_2b_delta_out_proj",
+        k: 2048,
+        n: 2048,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_2b_attention_qkv",
+        k: 2048,
+        n: 6144,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_2b_attention_out",
+        k: 2048,
+        n: 2048,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_2b_attention_gate",
+        k: 2048,
+        n: 2048,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_2b_mlp_gateup",
+        k: 2048,
+        n: 12288,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_2b_mlp_down",
+        k: 6144,
+        n: 2048,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_2b_readout",
+        k: 2048,
+        n: 248320,
+        ms: QWEN35_READOUT_MS,
+    },
+    // Qwen3.5-4B, workspace/models/0.5.3/Qwen3.5-4B/config.json:
+    // model_dim=2560, hidden_dim=9216, 24 DeltaNet layers, 8 attention layers.
+    Qwen35LayerShape {
+        label: "qwen35_4b_delta_in_proj",
+        k: 2560,
+        n: 12352,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_4b_delta_out_proj",
+        k: 4096,
+        n: 2560,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_4b_attention_qkv",
+        k: 2560,
+        n: 6144,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_4b_attention_out",
+        k: 4096,
+        n: 2560,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_4b_attention_gate",
+        k: 2560,
+        n: 4096,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_4b_mlp_gateup",
+        k: 2560,
+        n: 18432,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_4b_mlp_down",
+        k: 9216,
+        n: 2560,
+        ms: QWEN35_DECODE_AND_CUTOFF_MS,
+    },
+    Qwen35LayerShape {
+        label: "qwen35_4b_readout",
+        k: 2560,
+        n: 248320,
+        ms: QWEN35_READOUT_MS,
+    },
 ];
 
 pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shape)> {
@@ -103,13 +247,11 @@ pub fn qwen3_layer_shapes(bits: u32) -> impl Iterator<Item = (&'static str, Shap
     } else {
         256
     };
-    let decode_ms = &[1usize, 4, 8];
-    let prefill_ms = &[32usize, 64];
-    QWEN3_LAYERS.iter().flat_map(move |&(label, k, n)| {
-        decode_ms
+    QWEN35_LAYERS.iter().flat_map(move |layer| {
+        layer
+            .ms
             .iter()
-            .chain(prefill_ms.iter())
-            .filter(move |_| k % block_size == 0)
-            .map(move |&m| (label, Shape::new(m, k, n)))
+            .filter(move |_| layer.k % block_size == 0 && layer.n % 8 == 0)
+            .map(move |&m| (layer.label, Shape::new(m, layer.k, layer.n)))
     })
 }

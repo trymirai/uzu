@@ -20,14 +20,76 @@ use crate::{
 
 const FP_BLOCK: u32 = 128;
 const QMV_RESULTS_PER_SIMDGROUP: u32 = 4;
+const QMV_PACKS_PER_THREAD: u32 = 2;
+const DEFAULT_QMV_NUM_SIMDGROUPS: u32 = 8;
+const DEFAULT_QMV_K_SPLIT: u32 = 1;
+const QMV_NUM_SIMDGROUPS_ENV: &str = "UZU_QMV_NUM_SIMDGROUPS";
 
 const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
 static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
+static QMV_NUM_SIMDGROUPS: OnceLock<u32> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct QmvSchedule {
+    num_simdgroups: u32,
+}
+
+impl QmvSchedule {
+    const DEFAULT: QmvSchedule = QmvSchedule {
+        num_simdgroups: DEFAULT_QMV_NUM_SIMDGROUPS,
+    };
+}
 
 fn max_gemv_batch_threshold() -> u32 {
     *GEMV_MAX_BATCH.get_or_init(|| {
         std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
     })
+}
+
+fn env_choice(
+    name: &str,
+    default: u32,
+    allowed: &[u32],
+) -> u32 {
+    std::env::var(name).ok().and_then(|s| s.parse().ok()).filter(|v| allowed.contains(v)).unwrap_or(default)
+}
+
+fn qmv_num_simdgroups() -> u32 {
+    *QMV_NUM_SIMDGROUPS.get_or_init(|| env_choice(QMV_NUM_SIMDGROUPS_ENV, DEFAULT_QMV_NUM_SIMDGROUPS, &[2, 4, 8]))
+}
+
+fn has_explicit_qmv_schedule_env() -> bool {
+    std::env::var_os(QMV_NUM_SIMDGROUPS_ENV).is_some()
+}
+
+fn supports_qmv_schedule_tuning(
+    b_prologue: GemmBPrologueKind,
+    bits: u32,
+    group_size: u32,
+) -> bool {
+    b_prologue == GemmBPrologueKind::ScaleBiasDequant && bits == 4 && group_size == 32
+}
+
+fn qmv_schedule(
+    _bits: u32,
+    _group_size: u32,
+    _b_prologue: GemmBPrologueKind,
+) -> QmvSchedule {
+    QmvSchedule {
+        num_simdgroups: qmv_num_simdgroups(),
+    }
+}
+
+fn qmv_preheat_schedules(
+    b_prologue: GemmBPrologueKind,
+    bits: u32,
+    group_size: u32,
+) -> Vec<QmvSchedule> {
+    let env_schedule = qmv_schedule(bits, group_size, b_prologue);
+    if has_explicit_qmv_schedule_env() {
+        return vec![env_schedule];
+    }
+    vec![env_schedule]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,6 +128,17 @@ impl GemvSpecialization {
         if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(32) {
             return None;
         }
+        let has_rht = args.d_transform.rht_factors.is_some();
+        let b_prologue = args.b.b_prologue();
+        let bits = args.b.bits_per_b().unwrap_or(0);
+        let group_size = args.b.group_size().unwrap_or(0);
+        let tune_quant_schedule = is_quant && !has_rht && supports_qmv_schedule_tuning(b_prologue, bits, group_size);
+        let qmv_schedule = if tune_quant_schedule {
+            qmv_schedule(bits, group_size, b_prologue)
+        } else {
+            QmvSchedule::DEFAULT
+        };
+
         if is_quant {
             if args.n < QMV_RESULTS_PER_SIMDGROUP || args.m >= 5 {
                 return None;
@@ -78,30 +151,25 @@ impl GemvSpecialization {
             }
         }
 
-        let bits = args.b.bits_per_b().unwrap_or(0);
-        let block_size = if !is_quant {
-            FP_BLOCK
-        } else if bits == 4 {
-            512
-        } else {
-            256
+        let block_size = match bits {
+            4 => 512,
+            8 => 256,
+            _ => FP_BLOCK,
         };
         let input_aligned = args.k.is_multiple_of(block_size);
-        let has_rht = args.d_transform.rht_factors.is_some();
-        let num_simdgroups = 8;
         let k_split = if is_quant || has_rht {
-            1
+            DEFAULT_QMV_K_SPLIT
         } else {
             fp_k_split(args.n, args.k, input_aligned)
         };
         Some(GemvSpecialization {
-            b_prologue: args.b.b_prologue(),
-            group_size: args.b.group_size().unwrap_or(0),
+            b_prologue,
+            group_size,
             bits,
             output_transform: args.d_transform.mask(),
             input_aligned,
             k_split,
-            num_simdgroups,
+            num_simdgroups: qmv_schedule.num_simdgroups,
         })
     }
 
@@ -121,15 +189,24 @@ impl GemvSpecialization {
             GemmDTransform::BIAS | GemmDTransform::RHT,
         ] {
             for input_aligned in [true, false] {
-                out.push(GemvSpecialization {
-                    b_prologue,
-                    group_size,
-                    bits,
-                    output_transform,
-                    input_aligned,
-                    k_split: 1,
-                    num_simdgroups: 8,
-                });
+                let schedules = if !output_transform.contains(GemmDTransform::RHT)
+                    && supports_qmv_schedule_tuning(b_prologue, bits, group_size)
+                {
+                    qmv_preheat_schedules(b_prologue, bits, group_size)
+                } else {
+                    vec![QmvSchedule::DEFAULT]
+                };
+                for schedule in schedules {
+                    out.push(GemvSpecialization {
+                        b_prologue,
+                        group_size,
+                        bits,
+                        output_transform,
+                        input_aligned,
+                        k_split: DEFAULT_QMV_K_SPLIT,
+                        num_simdgroups: schedule.num_simdgroups,
+                    });
+                }
             }
         }
         out
@@ -214,6 +291,8 @@ impl GemvDispatch {
                     specialization.k_split,
                     specialization.input_aligned,
                     specialization.num_simdgroups,
+                    QMV_RESULTS_PER_SIMDGROUP,
+                    QMV_PACKS_PER_THREAD,
                     specialization.output_transform,
                 )
                 .map_err(MatmulError::BackendError)?;
