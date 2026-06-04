@@ -1,6 +1,7 @@
 use backend_uzu::prelude::TokenFinder;
+use proc_macros::uzu_test;
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_empty_sequence() {
     let sequence: Vec<u64> = vec![];
 
@@ -9,7 +10,7 @@ fn test_find_candidate_pred_token_empty_sequence() {
     assert!(result.is_none());
 }
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_sequence_too_short() {
     let sequence: Vec<u64> = vec![1, 2];
 
@@ -18,7 +19,7 @@ fn test_find_candidate_pred_token_sequence_too_short() {
     assert!(result.is_none());
 }
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_exact_pattern_match() {
     let sequence = vec![1, 2, 3, 4, 5, 1, 2, 3];
 
@@ -27,7 +28,7 @@ fn test_find_candidate_pred_token_exact_pattern_match() {
     assert_eq!(result, Some(4));
 }
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_valid_match() {
     let mut sequence = vec![1, 2, 3, 4, 5, 1, 2, 3];
 
@@ -42,7 +43,7 @@ fn test_find_candidate_pred_token_valid_match() {
     assert_eq!(result2, Some(5));
 }
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_multiple_matches() {
     let mut sequence = vec![1, 2, 3, 4, 5, 1, 2, 3, 6, 7, 1, 2, 3];
 
@@ -59,7 +60,7 @@ fn test_find_candidate_pred_token_multiple_matches() {
     assert_ne!(result2, Some(7));
 }
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_different_ngram_sizes() {
     let mut sequence = vec![1, 2, 3, 4, 5, 1, 2, 3, 8, 9, 1, 2, 3, 4, 5];
 
@@ -82,7 +83,7 @@ fn test_find_candidate_pred_token_different_ngram_sizes() {
     assert_eq!(result2_1, Some(2));
 }
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_no_match() {
     let sequence = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -91,7 +92,7 @@ fn test_find_candidate_pred_token_no_match() {
     assert!(result.is_none());
 }
 
-#[test]
+#[uzu_test]
 fn test_find_candidate_pred_token_max_ngram_higher_than_input() {
     let sequence = vec![1, 2, 3, 4, 5];
 

@@ -27,7 +27,7 @@ fn test_tracer_internal<B: Backend>() {
     );
 }
 
-#[test]
+#[uzu_test]
 #[ignore = "Lalamo 0.10.0 doesn't support exporting traces"] // TODO: this is horrible, should be resolved asap
 fn test_tracer() {
     let traces_path = get_traces_path();

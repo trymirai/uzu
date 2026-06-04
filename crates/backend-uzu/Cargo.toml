@@ -113,10 +113,6 @@ tracing = []
 workspace = true
 
 [[test]]
-name = "integration"
-path = "tests/integration/mod.rs"
-
-[[test]]
 name = "kernel"
 path = "tests/unit/kernel/test_entry.rs"
 

@@ -1,5 +1,3 @@
-#![cfg(metal_backend)]
-
 use std::sync::Arc;
 
 use backend_uzu::session::{
@@ -12,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use test_tag::tag;
 
-use crate::{common::path::get_test_model_path, util::speculator::RepeatSpeculator};
+use crate::common::{path::get_test_model_path, speculator::RepeatSpeculator};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Address {
@@ -92,13 +90,13 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
 }
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn test_grammar_json_schema() {
     test_grammar(SpeculatorConfig::default());
 }
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn test_grammar_json_schema_with_speculator() {
     test_grammar(SpeculatorConfig {
         number_of_speculated_tokens: 16,

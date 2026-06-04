@@ -1,6 +1,5 @@
-#![cfg(metal_backend)]
+#![cfg(feature = "backend-metal")]
 
-// New integration test for ParameterLoader
 use backend_uzu::{
     backends::{
         common::{Backend, Context},
@@ -18,7 +17,7 @@ const EMBEDDING_PATH: &str = "decoder.embedding.embedding.weights";
 const EMBEDDING_TREE_PATH: &str = "decoder.embedding.embedding";
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn test_parameter_loader_basic() {
     let weights_path = get_test_weights_path();
     let context = <Metal as Backend>::Context::new().expect("Failed to create MetalContext");

@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
-use backend_uzu::prelude::{FixedTokensSpeculator, Speculator};
+use proc_macros::uzu_test;
 
-#[test]
+use crate::prelude::{FixedTokensSpeculator, Speculator};
+
+#[uzu_test]
 fn test_fixed_token_speculator_single() {
     let speculator = FixedTokensSpeculator::new(vec![vec![0, 1, 2, 3, 4]]);
 
@@ -17,7 +19,7 @@ fn test_fixed_token_speculator_single() {
     assert_eq!(speculator.speculate(&[4]), HashMap::from([(0, 1.0)]));
 }
 
-#[test]
+#[uzu_test]
 fn test_fixed_token_speculator_multi() {
     let speculator =
         FixedTokensSpeculator::new(vec![vec![0, 1, 2, 3, 4], vec![0, 1, 2, 4, 8], vec![0, 10, 20, 30, 40]]);

@@ -1,4 +1,4 @@
-#![cfg(metal_backend)]
+#![cfg(feature = "backend-metal")]
 
 use std::path::PathBuf;
 
@@ -74,7 +74,7 @@ fn is_unknown_answer(response: &str) -> bool {
 }
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn test_context_mode_none() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::None);
     let mut session = Session::new(build_model_path(), decoding_config).unwrap();
@@ -92,7 +92,7 @@ fn test_context_mode_none() {
 }
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn test_context_mode_static() {
     let parameter_name = "Alice".to_string();
     let parameter_age = "30".to_string();
@@ -128,7 +128,7 @@ fn test_context_mode_static() {
 }
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 #[ignore = "Flaky test - depends on LLM output which varies even with fixed seed"]
 fn test_context_mode_dynamic() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::Dynamic);
@@ -171,7 +171,7 @@ fn test_context_mode_dynamic() {
 }
 
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn test_context_mode_dynamic_scenario() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::Dynamic);
     let mut session = Session::new(build_model_path(), decoding_config).unwrap();

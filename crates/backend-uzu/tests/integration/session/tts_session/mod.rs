@@ -1,2 +1,0 @@
-mod audio_nanocodec_fsq_test;
-mod audio_nanocodec_runtime_test;

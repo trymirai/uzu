@@ -23,27 +23,7 @@ fn tokenize_text(
     encoding.get_ids().iter().map(|&id| id as u64).collect()
 }
 
-#[test]
-fn test_empty_input() {
-    let speculator = PromptLookupSpeculator::new();
-    let prefix: Vec<u64> = vec![];
-
-    let proposals = speculator.speculate(&prefix);
-
-    assert_eq!(proposals.len(), 0);
-}
-
-#[test]
-fn test_no_pattern_found() {
-    let speculator = PromptLookupSpeculator::new();
-    let prefix = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
-
-    let proposals = speculator.speculate(&prefix);
-
-    assert_eq!(proposals.len(), 0);
-}
-
-#[test]
+#[uzu_test]
 fn test_with_real_text() {
     let tokenizer = load_tokenizer();
     let speculator = PromptLookupSpeculator::new_with_params(3);

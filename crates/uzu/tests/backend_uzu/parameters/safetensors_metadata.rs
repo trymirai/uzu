@@ -4,7 +4,7 @@ use backend_uzu::parameters::read_safetensors_metadata;
 
 use crate::common::path::get_test_weights_path;
 
-#[test]
+#[uzu_test]
 fn test_metadata_loading() {
     let path = get_test_weights_path();
     let file = File::open(&path).expect("weights not found");

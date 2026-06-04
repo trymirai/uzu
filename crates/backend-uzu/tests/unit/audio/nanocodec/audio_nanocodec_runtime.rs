@@ -5,6 +5,7 @@ use backend_uzu::{
     backends::metal::Metal,
     prelude::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid},
 };
+use proc_macros::uzu_test;
 
 use crate::common::audio::fsq_reference::{fsq_decode_reference, fsq_encode_reference};
 
@@ -70,7 +71,7 @@ fn unpack_reference_output(
     out
 }
 
-#[test]
+#[uzu_test]
 fn nanocodec_runtime_encode_matches_fsq_reference() {
     let runtime = create_runtime();
     let pcm = make_pcm(runtime.config().channels(), &[3, 5]);
@@ -106,7 +107,7 @@ fn nanocodec_runtime_encode_matches_fsq_reference() {
     assert_eq!(tokens.tokens(), expected.tokens());
 }
 
-#[test]
+#[uzu_test]
 fn nanocodec_runtime_decode_matches_fsq_reference() {
     let runtime = create_runtime();
     let pcm = make_pcm(runtime.config().channels(), &[4, 2]);
@@ -138,7 +139,7 @@ fn nanocodec_runtime_decode_matches_fsq_reference() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn nanocodec_runtime_decode_rejects_out_of_range_token() {
     let runtime = create_runtime();
     let cardinality = runtime.config().codec_cardinality();
@@ -161,7 +162,7 @@ fn nanocodec_runtime_decode_rejects_out_of_range_token() {
     );
 }
 
-#[test]
+#[uzu_test]
 fn nanocodec_runtime_encode_rejects_channel_mismatch() {
     let runtime = create_runtime();
     let pcm = make_pcm(runtime.config().channels() - 1, &[2]);

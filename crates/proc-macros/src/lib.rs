@@ -37,6 +37,14 @@ pub fn __internal_uzu_test(
 }
 
 #[proc_macro_attribute]
+pub fn uzu_test(
+    args: TokenStream,
+    input: TokenStream,
+) -> TokenStream {
+    uzu_test::__internal_uzu_test(args, input)
+}
+
+#[proc_macro_attribute]
 pub fn __internal_uzu_bench(
     args: TokenStream,
     input: TokenStream,

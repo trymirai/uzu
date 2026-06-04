@@ -1,6 +1,4 @@
-#![cfg(all(metal_backend, grammar_xgrammar))]
-
-use std::path::PathBuf;
+#![cfg(all(feature = "backend-metal", feature = "capability-grammar"))]
 
 use backend_uzu::{
     array::Array,
@@ -16,19 +14,17 @@ use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
+use crate::common::path::get_test_model_path;
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Person {
     name: String,
     age: u32,
 }
 
-#[test]
+#[uzu_test]
 fn person_schema_metal_bitmask() {
-    // Locate the tokenizer.json under {repo}/models/{version}/Llama-3.2-1B-Instruct
-    let crate_version = env!("CARGO_PKG_VERSION");
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
-    let model_dir = repo_root.join("../../../../models").join(crate_version).join("Llama-3.2-1B-Instruct");
+    let model_dir = get_test_model_path();
 
     let tokenizer_path = model_dir.join("tokenizer.json");
     if !tokenizer_path.exists() {

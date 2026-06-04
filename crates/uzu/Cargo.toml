@@ -130,6 +130,20 @@ schemars.workspace = true
 serde_json.workspace = true
 mock-registry.workspace = true
 rstest.workspace = true
+half.workspace = true
+test-tag.workspace = true
+proc-macros.workspace = true
+tokenizers.workspace = true
+
+# metal on macos requires objc2, bytesize, metal
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dev-dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+metal.workspace = true
+
+# grammar on non-wasm requires xgrammar
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+xgrammar.workspace = true
 
 [[test]]
 name = "unit"
