@@ -18,7 +18,7 @@ use nagare::{
     api::Config as ClientConfig,
     chat::ChatSession,
     classification::ClassificationSession,
-    telemetry::{Telemetry, TelemetryConfig, TelemetryEvent},
+    telemetry::{Telemetry, TelemetryEvent},
     text_to_speech::TextToSpeechSession,
 };
 use shoji::{
@@ -89,7 +89,7 @@ impl Engine {
                 "memory_total": device.memory_total,
                 "is_environment_sandboxed": crate::device::is_environment_sandboxed(),
             });
-            Telemetry::new(TelemetryConfig::new(client_config, "telemetry/events".to_string(), context))
+            Telemetry::new(client_config, "telemetry/events".to_string(), context)
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
@@ -558,19 +558,21 @@ impl Engine {
                     continue;
                 };
                 let previous = last_phase.insert(id.clone(), state.phase.clone());
-                if !matches!(previous, Some(DownloadPhase::Downloading {}))
-                    && matches!(state.phase, DownloadPhase::Downloading {})
-                {
-                    telemetry.report(TelemetryEvent::ModelDownloadStarted {
-                        model_id: id.clone(),
-                    });
-                }
-                if matches!(previous, Some(DownloadPhase::Downloading {}))
-                    && matches!(state.phase, DownloadPhase::Downloaded {})
-                {
-                    telemetry.report(TelemetryEvent::ModelDownloadFinished {
-                        model_id: id.clone(),
-                    });
+                let event = match (&previous, &state.phase) {
+                    (prev, DownloadPhase::Downloading {}) if !matches!(prev, Some(DownloadPhase::Downloading {})) => {
+                        Some(TelemetryEvent::ModelDownloadStarted {
+                            model_id: id,
+                        })
+                    },
+                    (Some(DownloadPhase::Downloading {}), DownloadPhase::Downloaded {}) => {
+                        Some(TelemetryEvent::ModelDownloadFinished {
+                            model_id: id,
+                        })
+                    },
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    telemetry.report(event);
                 }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {
                     callback.on_event();

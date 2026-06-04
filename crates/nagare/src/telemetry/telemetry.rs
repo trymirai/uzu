@@ -1,8 +1,13 @@
+use serde_json::Value;
 use tokio::sync::mpsc;
 
-use super::{TelemetryConfig, TelemetryEvent, record::TelemetryRecord};
+use super::{TelemetryEvent, record::TelemetryRecord};
 #[cfg(not(target_family = "wasm"))]
 use crate::api::Client;
+use crate::api::Config;
+
+#[cfg(not(target_family = "wasm"))]
+const CAPACITY: usize = 256;
 
 #[derive(Clone)]
 pub struct Telemetry {
@@ -17,23 +22,31 @@ impl Telemetry {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn new(config: TelemetryConfig) -> Self {
-        let client = match Client::new(config.client) {
+    pub fn new(
+        client_config: Config,
+        path: String,
+        context: Value,
+    ) -> Self {
+        let client = match Client::new(client_config) {
             Ok(client) => client,
             Err(error) => {
                 tracing::warn!(%error, "telemetry disabled: failed to build client");
                 return Self::disabled();
             },
         };
-        let (sender, receiver) = mpsc::channel::<TelemetryRecord>(config.capacity);
-        tokio::spawn(super::worker::run(client, config.path, config.context, receiver));
+        let (sender, receiver) = mpsc::channel::<TelemetryRecord>(CAPACITY);
+        tokio::spawn(super::worker::run(client, path, context, receiver));
         Self {
             sender: Some(sender),
         }
     }
 
     #[cfg(target_family = "wasm")]
-    pub fn new(_config: TelemetryConfig) -> Self {
+    pub fn new(
+        _client_config: Config,
+        _path: String,
+        _context: Value,
+    ) -> Self {
         Self::disabled()
     }
 
