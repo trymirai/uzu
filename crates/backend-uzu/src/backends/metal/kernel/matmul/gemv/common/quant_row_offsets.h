@@ -30,8 +30,9 @@ struct QuantRowOffsets {
       offset[1] = static_cast<U>(biases[group_stride]);
       offset[2] = static_cast<U>(biases[2 * group_stride]);
       offset[3] = static_cast<U>(biases[3 * group_stride]);
-    } else if constexpr (B_PROLOGUE ==
-                         GemmBPrologueKind::ScaleZeroPointDequant) {
+    } else if constexpr (
+        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
+    ) {
       uchar4 zp_bytes = uchar4(
           zps[0],
           zps[zp_stride],
@@ -62,8 +63,9 @@ struct QuantRowOffsets {
     scales += groups;
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       biases += groups;
-    } else if constexpr (B_PROLOGUE ==
-                         GemmBPrologueKind::ScaleZeroPointDequant) {
+    } else if constexpr (
+        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
+    ) {
       constexpr uint zps_per_byte = get_pack_factor<BITS, 8>();
       zps += groups / zps_per_byte;
     }

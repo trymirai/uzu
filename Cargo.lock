@@ -3890,6 +3890,7 @@ version = "0.5.4"
 dependencies = [
  "bindings",
  "bindings-types",
+ "chrono",
  "futures",
  "hanashi",
  "indexmap 2.14.0",
@@ -3910,6 +3911,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tracing",
  "tsify",
  "uniffi",
  "wasm-bindgen",
