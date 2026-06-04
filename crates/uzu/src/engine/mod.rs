@@ -4,7 +4,7 @@ mod download_manager;
 mod downloader;
 mod error;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
@@ -13,8 +13,15 @@ pub use config::EngineConfig;
 pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
-use indexmap::IndexSet;
-use nagare::{chat::ChatSession, classification::ClassificationSession, text_to_speech::TextToSpeechSession};
+use indexmap::{IndexMap, IndexSet};
+use nagare::{
+    api::Config as ClientConfig,
+    chat::ChatSession,
+    classification::ClassificationSession,
+    telemetry::{Telemetry, TelemetryConfig, TelemetryEvent},
+    text_to_speech::TextToSpeechSession,
+};
+use reqwest::header::AUTHORIZATION;
 use shoji::{
     traits::{Backend, Registry},
     types::{
@@ -50,6 +57,7 @@ pub struct Engine {
     storage: SharedAccess<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
+    telemetry: SharedAccess<Telemetry>,
 }
 
 impl Engine {
@@ -69,6 +77,21 @@ impl Engine {
         }
 
         let device = Device::new()?;
+
+        let telemetry = SharedAccess::new(match config.mirai_api_key.as_ref() {
+            Some(api_key) => {
+                let mut headers: IndexMap<String, String> = IndexMap::new();
+                headers.insert(AUTHORIZATION.to_string(), format!("Bearer {api_key}"));
+                let client_config =
+                    ClientConfig::new("https://sdk.trymirai.com/api/v1".to_string(), Duration::from_secs(10), headers);
+                let context = serde_json::json!({
+                    "device": serde_json::to_value(&device).unwrap_or_default(),
+                });
+                Telemetry::new(TelemetryConfig::new(client_config, "telemetry/event".to_string(), context))
+            },
+            None => Telemetry::disabled(),
+        });
+
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
         let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
             .with_download_manager_type(config.download_manager_type.into());
@@ -82,6 +105,7 @@ impl Engine {
             registry,
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
+            telemetry,
         };
         engine.spawn_storage_listener().await;
 
@@ -460,7 +484,8 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ChatSession::new(backend.clone(), config, model, path).await?;
+            let session =
+                ChatSession::new(backend.clone(), config, model, path, self.telemetry.lock().await.clone()).await?;
             Ok(session)
         } else {
             Err(EngineError::BackendNotFound {})
@@ -525,10 +550,20 @@ impl Engine {
     async fn spawn_storage_listener(&self) {
         let mut stream = self.storage_subscribe().await;
         let callback = self.callback.clone();
+        let telemetry = self.telemetry.lock().await.clone();
         tokio::spawn(async move {
+            let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
-                if update.is_err() {
+                let Ok((id, state)) = update else {
                     continue;
+                };
+                let previous = last_phase.insert(id.clone(), state.phase.clone());
+                if matches!(previous, Some(DownloadPhase::Downloading {}))
+                    && matches!(state.phase, DownloadPhase::Downloaded {})
+                {
+                    telemetry.report(TelemetryEvent::ModelDownloadFinished {
+                        model_id: id,
+                    });
                 }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {
                     callback.on_event();
