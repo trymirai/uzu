@@ -175,10 +175,8 @@ struct SimdgroupMmaCore {
       const thread ThreadContext& thread_context
   ) {
     constexpr GemmAlignment gemm_alignment{GEMM_ALIGNMENT_RAW};
-    if constexpr (
-        gemm_alignment.contains(GemmAlignment::M) &&
-        gemm_alignment.contains(GemmAlignment::N)
-    ) {
+    if constexpr (gemm_alignment.contains(GemmAlignment::M) &&
+                  gemm_alignment.contains(GemmAlignment::N)) {
       if (needs_epilogue) {
         accumulator.apply_epilogue(d, params->leading_dimension_d, 1, epilogue);
       }
@@ -329,9 +327,8 @@ struct SimdgroupMmaCore {
               thread_context.simdgroup_index,
               thread_context.simd_lane_id
           );
-        } else if constexpr (
-            B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-        ) {
+        } else if constexpr (B_PROLOGUE ==
+                             GemmBPrologueKind::ScaleZeroPointDequant) {
           const int zero_point_stride_per_row =
               (BITS == 4) ? ((groups_per_row + 1) / 2) : groups_per_row;
           const device uint8_t* zero_points_row_start =
