@@ -21,7 +21,6 @@ use nagare::{
     telemetry::{Telemetry, TelemetryConfig, TelemetryEvent},
     text_to_speech::TextToSpeechSession,
 };
-use reqwest::header::AUTHORIZATION;
 use shoji::{
     traits::{Backend, Registry},
     types::{
@@ -78,18 +77,19 @@ impl Engine {
 
         let device = Device::new()?;
 
-        let telemetry = SharedAccess::new(match config.mirai_api_key.as_ref() {
-            Some(api_key) => {
-                let mut headers: IndexMap<String, String> = IndexMap::new();
-                headers.insert(AUTHORIZATION.to_string(), format!("Bearer {api_key}"));
-                let client_config =
-                    ClientConfig::new("https://sdk.trymirai.com/api/v1".to_string(), Duration::from_secs(10), headers);
-                let context = serde_json::json!({
-                    "device": serde_json::to_value(&device).unwrap_or_default(),
-                });
-                Telemetry::new(TelemetryConfig::new(client_config, "telemetry/event".to_string(), context))
-            },
-            None => Telemetry::disabled(),
+        let telemetry = SharedAccess::new({
+            let client_config = ClientConfig::new(
+                "https://sdk.trymirai.com/api/v1".to_string(),
+                Duration::from_secs(10),
+                IndexMap::new(),
+            );
+            let context = serde_json::json!({
+                "os_name": device.os_name,
+                "cpu_name": device.cpu_name,
+                "memory_total": device.memory_total,
+                "is_environment_sandboxed": crate::device::is_environment_sandboxed(),
+            });
+            Telemetry::new(TelemetryConfig::new(client_config, "telemetry/events".to_string(), context))
         });
 
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
@@ -558,11 +558,18 @@ impl Engine {
                     continue;
                 };
                 let previous = last_phase.insert(id.clone(), state.phase.clone());
+                if !matches!(previous, Some(DownloadPhase::Downloading {}))
+                    && matches!(state.phase, DownloadPhase::Downloading {})
+                {
+                    telemetry.report(TelemetryEvent::ModelDownloadStarted {
+                        model_id: id.clone(),
+                    });
+                }
                 if matches!(previous, Some(DownloadPhase::Downloading {}))
                     && matches!(state.phase, DownloadPhase::Downloaded {})
                 {
                     telemetry.report(TelemetryEvent::ModelDownloadFinished {
-                        model_id: id,
+                        model_id: id.clone(),
                     });
                 }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {

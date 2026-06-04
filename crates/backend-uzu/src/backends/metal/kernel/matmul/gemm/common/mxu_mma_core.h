@@ -282,8 +282,9 @@ struct MxuMmaCore {
                     (simdgroup_limit_n == SIMDGROUP_BLOCK_N),
                 [&](auto aligned_n) {
                   auto accumulator_tile = [&]() {
-                    if constexpr (B_PROLOGUE ==
-                                  GemmBPrologueKind::FullPrecision) {
+                    if constexpr (
+                        B_PROLOGUE == GemmBPrologueKind::FullPrecision
+                    ) {
                       const int aligned_k_iterations_fp =
                           int(params->aligned_inner_iterations);
                       return uzu::matmul::gemm_loop<
@@ -328,8 +329,9 @@ struct MxuMmaCore {
                           scales + block_col * groups_per_row + k_offset_groups;
 
                       auto loader_b = [&]() {
-                        if constexpr (B_PROLOGUE ==
-                                      GemmBPrologueKind::ScaleBiasDequant) {
+                        if constexpr (
+                            B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant
+                        ) {
                           const device BT* biases_offset =
                               biases + block_col * groups_per_row +
                               k_offset_groups;
@@ -342,9 +344,10 @@ struct MxuMmaCore {
                               thread_context.simdgroup_index,
                               thread_context.simd_lane_id
                           );
-                        } else if constexpr (B_PROLOGUE ==
-                                             GemmBPrologueKind::
-                                                 ScaleZeroPointDequant) {
+                        } else if constexpr (
+                            B_PROLOGUE ==
+                            GemmBPrologueKind::ScaleZeroPointDequant
+                        ) {
                           const int zero_point_stride_per_row =
                               (BITS == 4) ? ((groups_per_row + 1) / 2)
                                           : groups_per_row;

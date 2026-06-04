@@ -216,6 +216,10 @@ impl ChatSession {
                 drop(state);
             }
 
+            telemetry.report(TelemetryEvent::ModelInferenceStarted {
+                model_id: model_id.clone(),
+            });
+
             let all_messages = {
                 let mut messages = messages.lock().await;
                 messages.extend(input);
@@ -258,6 +262,9 @@ impl ChatSession {
                     },
                     Err(error) => {
                         errored = true;
+                        telemetry.report(TelemetryEvent::ModelInferenceFailed {
+                            error: serde_json::json!({ "message": error.to_string() }),
+                        });
                         let _ = sender.send(Err(error));
                         break;
                     },
@@ -273,7 +280,7 @@ impl ChatSession {
             }
 
             if !errored && let Some(last) = outputs.values().last() {
-                telemetry.report(TelemetryEvent::SessionGenerationFinished {
+                telemetry.report(TelemetryEvent::ModelInferenceFinished {
                     model_id,
                     stats: last.stats.clone(),
                 });
