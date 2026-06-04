@@ -1638,6 +1638,14 @@ cargo run --release -p cli
 
 This launches an interactive app where you can browse, download, and interact with models.
 
+You can also preselect a model with `--model`, passing its identifier or repository id:
+
+```bash
+cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
+```
+
+If the model is not downloaded yet, the CLI starts downloading it automatically.
+
 ## Benchmarks
 
 To run benchmarks:
