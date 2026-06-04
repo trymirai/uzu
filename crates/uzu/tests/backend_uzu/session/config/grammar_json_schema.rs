@@ -1,3 +1,5 @@
+#![cfg(metal_backend)]
+
 use std::sync::Arc;
 
 use backend_uzu::session::{

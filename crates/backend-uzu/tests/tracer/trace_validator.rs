@@ -336,7 +336,6 @@ impl<B: Backend> TraceValidator<B> {
                 suffix_length,
                 /*sampling_start=*/ 0,
                 /*sampling_length=*/ suffix_length,
-                #[cfg(feature = "tracing")]
                 Some(&mut traces),
             );
             ctx.executables

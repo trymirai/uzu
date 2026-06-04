@@ -1,4 +1,4 @@
-#![cfg(all(feature = "backend-metal", feature = "capability-grammar"))]
+#![cfg(all(metal_backend, feature = "capability-grammar"))]
 
 use backend_uzu::{
     array::Array,

@@ -1,4 +1,4 @@
-#![cfg(feature = "backend-metal")]
+#![cfg(metal_backend)]
 
 use backend_uzu::{
     backends::{

@@ -1,12 +1,15 @@
-use backend_uzu::backends::common::Backend;
+use std::path::PathBuf;
 
-use crate::{
-    common::{
-        for_each_non_cpu_backend,
-        path::{get_test_model_path, get_traces_path},
-    },
-    tracer::trace_validator::TraceValidator,
-};
+use backend_uzu::backends::common::Backend;
+use proc_macros::uzu_test;
+
+use crate::{common::path::get_test_model_path, trace_validator::TraceValidator};
+
+const TRACES_FILE_NAME: &str = "traces.safetensors";
+
+fn get_traces_path() -> PathBuf {
+    get_test_model_path().join(TRACES_FILE_NAME)
+}
 
 fn test_tracer_internal<B: Backend>() {
     let model_path = get_test_model_path();
