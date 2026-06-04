@@ -82,12 +82,13 @@ impl<B: Backend> ShortConvMixer<B> {
             &parameter_tree.subtree("out_projection")?,
         )?;
 
+        let conv_data_type = DataType::F32;
         let conv_weight = conv_tree
             .leaf("weights")?
-            .validate(&[model_dim, short_conv_config.kernel_size], data_type)?
+            .validate(&[model_dim, short_conv_config.kernel_size], conv_data_type)?
             .read_allocation()?;
         let conv_bias = if short_conv_config.conv_config.has_biases {
-            Some(conv_tree.leaf("biases")?.validate(&[model_dim], data_type)?.read_allocation()?)
+            Some(conv_tree.leaf("biases")?.validate(&[model_dim], conv_data_type)?.read_allocation()?)
         } else {
             None
         };
@@ -95,12 +96,15 @@ impl<B: Backend> ShortConvMixer<B> {
         let has_bias = short_conv_config.conv_config.has_biases;
         let short_conv_pack = <B::Kernels as Kernels>::ShortConvPackKernel::new(context, data_type)
             .map_err(ShortConvMixerError::BackendError)?;
-        let short_conv_prefill = <B::Kernels as Kernels>::ShortConvPrefillKernel::new(context, data_type, has_bias)
-            .map_err(ShortConvMixerError::BackendError)?;
-        let short_conv_decode = <B::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, has_bias, true)
-            .map_err(ShortConvMixerError::BackendError)?;
-        let short_conv_trie = <B::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, has_bias)
-            .map_err(ShortConvMixerError::BackendError)?;
+        let short_conv_prefill =
+            <B::Kernels as Kernels>::ShortConvPrefillKernel::new(context, data_type, conv_data_type, has_bias)
+                .map_err(ShortConvMixerError::BackendError)?;
+        let short_conv_decode =
+            <B::Kernels as Kernels>::ShortConvDecodeKernel::new(context, data_type, conv_data_type, has_bias, true)
+                .map_err(ShortConvMixerError::BackendError)?;
+        let short_conv_trie =
+            <B::Kernels as Kernels>::ShortConvTrieKernel::new(context, data_type, conv_data_type, has_bias)
+                .map_err(ShortConvMixerError::BackendError)?;
 
         Ok((
             Self {

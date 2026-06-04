@@ -15,8 +15,8 @@ use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     in_proj: Box<[T]>,
-    w: Box<[T]>,
-    b: Option<Box<[T]>>,
+    w: Box<[f32]>,
+    b: Option<Box<[f32]>>,
     state: Box<[T]>,
     suffix_len: u32,
     kernel_size: u32,
@@ -35,6 +35,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvDecodeKernel::new(
         &context,
         T::data_type(),
+        DataType::F32,
         has_bias,
         state_in_place,
     )
@@ -104,11 +105,11 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
 
     // w[channel * kernel_size + tap]
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.1 * (tap as f32) - 0.01 * (ch as f32) + 0.5;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
@@ -122,9 +123,9 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.01 * (ch as f32) + 0.1).unwrap();
+            bias[ch] = 0.01 * (ch as f32) + 0.1;
         }
         Some(bias.into_boxed_slice())
     } else {
@@ -166,11 +167,11 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         in_proj[2 * model_dim + ch] = T::from(x_in).unwrap();
     }
 
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.25 * (tap as f32) + 0.1;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
@@ -183,9 +184,9 @@ fn get_test_data_edge<T: ArrayElement + Float>(
     }
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.005 * (ch as f32) + 0.01).unwrap();
+            bias[ch] = 0.005 * (ch as f32) + 0.01;
         }
         Some(bias.into_boxed_slice())
     } else {
