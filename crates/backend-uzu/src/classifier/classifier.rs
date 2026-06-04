@@ -4,7 +4,7 @@ use std::{collections::HashMap, path::Path, time::Instant};
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
-    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
+    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, Encoder},
     config::model::classifier_model::ClassifierModelConfig,
     data_type::DataType,
     encodable_block::{LayerArguments, PrecalculatedRope},
@@ -199,19 +199,26 @@ impl<B: Backend> Classifier<B> {
             encoder.encode_copy(&logits, .., trace.logits.allocation_mut(), ..);
         }
 
+        let mut logits_output = self
+            .context
+            .context
+            .create_allocation(logits.as_buffer_range_ref().range().len(), AllocationType::Global)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        encoder.encode_copy(&logits, .., &mut logits_output, ..);
+
+        drop(logits);
+        drop(main);
+        drop(shortcut);
+        drop(ropes);
+
         let completed = encoder
             .end_encoding()
             .submit()
             .wait_until_completed()
             .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
-
-        let logits_result = self.copy_logits_from_allocation(&logits);
-        drop(logits);
-        drop(main);
-        drop(shortcut);
         drop(completed);
 
-        logits_result
+        self.copy_logits_from_allocation(&logits_output)
     }
 
     #[cfg(not(feature = "tracing"))]
