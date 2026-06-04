@@ -98,7 +98,7 @@ impl<B: Backend> TokenDecoderContext<B> {
             .map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let root_loader_view = loader.tree();
 
-        let model_shape = ModelShape::from_decoder_config(&decoder_config, DataType::F32);
+        let model_shape = ModelShape::from_decoder_config(&decoder_config, DataType::BF16);
         let max_suffix_length = text_decoder_prefill_step_size(
             runtime_config,
             decoder_config.transformer_config.max_sequence_length().unwrap_or(usize::MAX),
