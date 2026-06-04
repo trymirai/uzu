@@ -28,6 +28,40 @@ impl Client {
         &self,
         endpoint: &E,
     ) -> Result<T, Error> {
+        let response = self.send_checked(endpoint).await?;
+        response.json::<T>().await.map_err(|error| Error::Decode(error.to_string()))
+    }
+
+    pub async fn send<E: Endpoint>(
+        &self,
+        endpoint: &E,
+    ) -> Result<(), Error> {
+        self.send_checked(endpoint).await?;
+        Ok(())
+    }
+}
+
+impl Client {
+    async fn send_checked<E: Endpoint>(
+        &self,
+        endpoint: &E,
+    ) -> Result<reqwest::Response, Error> {
+        let response = self.build_request(endpoint).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::Http {
+                code: status.as_u16(),
+                body,
+            });
+        }
+        Ok(response)
+    }
+
+    fn build_request<E: Endpoint>(
+        &self,
+        endpoint: &E,
+    ) -> reqwest::RequestBuilder {
         let url = self.url(endpoint);
         let method = endpoint.method();
         let payload = endpoint.payload(&self.config);
@@ -47,21 +81,9 @@ impl Client {
         for (key, value) in endpoint.headers().iter() {
             request = request.header(key, value);
         }
-
-        let response = request.send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(Error::Http {
-                code: status.as_u16(),
-                body,
-            });
-        }
-        response.json::<T>().await.map_err(|error| Error::Decode(error.to_string()))
+        request
     }
-}
 
-impl Client {
     fn url<E: Endpoint>(
         &self,
         endpoint: &E,
