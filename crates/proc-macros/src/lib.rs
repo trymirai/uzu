@@ -67,3 +67,11 @@ pub fn __internal_uzu_ignored(
 ) -> TokenStream {
     uzu_test::__internal_uzu_ignored(args, input)
 }
+
+#[proc_macro_attribute]
+pub fn uzu_ignore(
+    args: TokenStream,
+    input: TokenStream,
+) -> TokenStream {
+    uzu_test::__internal_uzu_ignored(args, input)
+}

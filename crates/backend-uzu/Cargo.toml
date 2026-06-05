@@ -112,14 +112,6 @@ tracing = []
 [lints]
 workspace = true
 
-[[test]]
-name = "performance"
-path = "tests/performance/mod.rs"
-
 [[bench]]
 name = "benchmarks"
-path = "tests/performance/bench_entry.rs"
-
-[[bench]]
-name = "kernel"
-path = "tests/performance/kernel/bench_entry.rs"
+path = "tests/benches/bench_entry.rs"

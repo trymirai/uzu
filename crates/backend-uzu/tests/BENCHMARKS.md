@@ -9,29 +9,29 @@ baselines side by side.
 
 - Rust nightly: `rustup toolchain install nightly`
 - For iOS runs:
-  - Apple target: `rustup target add aarch64-apple-ios`
-  - `cargo-dinghy` built from the [trymirai/dinghy](https://github.com/trymirai/dinghy/tree/mirai):
+    - Apple target: `rustup target add aarch64-apple-ios`
+    - `cargo-dinghy` built from the [trymirai/dinghy](https://github.com/trymirai/dinghy/tree/mirai):
 
-    ```bash
-    cargo install \
-      --git https://github.com/trymirai/dinghy \
-      --branch mirai \
-      cargo-dinghy
-    ```
+      ```bash
+      cargo install \
+        --git https://github.com/trymirai/dinghy \
+        --branch mirai \
+        cargo-dinghy
+      ```
 
-  - A physical device connected via USB with a device ID from
-    `xcrun devicectl list devices`.
+    - A physical device connected via USB with a device ID from
+      `xcrun devicectl list devices`.
 
 ## Available benchmark groups
 
-| Group id                          | Filter                            |
-| --------------------------------- | --------------------------------- |
-| `Metal/Kernel/Matmul/GEMM`        | `Metal/Kernel/Matmul/GEMM`        |
-| `Metal/Kernel/Matmul/GEMM_MXU`    | `Metal/Kernel/Matmul/GEMM_MXU`    |
-| `Metal/Kernel/QmmTransposed/...`  | `Metal/Kernel/QmmTransposed`      |
-| `Metal/Kernel/QmvFast/...`        | `Metal/Kernel/QmvFast`            |
-| `Metal/Kernel/RMSNorm`            | `Metal/Kernel/RMSNorm`            |
-| `Metal/Kernel/Sampling/Argmax`    | `Metal/Kernel/Sampling/Argmax`    |
+| Group id                         | Filter                         |
+|----------------------------------|--------------------------------|
+| `Metal/Kernel/Matmul/GEMM`       | `Metal/Kernel/Matmul/GEMM`     |
+| `Metal/Kernel/Matmul/GEMM_MXU`   | `Metal/Kernel/Matmul/GEMM_MXU` |
+| `Metal/Kernel/QmmTransposed/...` | `Metal/Kernel/QmmTransposed`   |
+| `Metal/Kernel/QmvFast/...`       | `Metal/Kernel/QmvFast`         |
+| `Metal/Kernel/RMSNorm`           | `Metal/Kernel/RMSNorm`         |
+| `Metal/Kernel/Sampling/Argmax`   | `Metal/Kernel/Sampling/Argmax` |
 
 The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass.
 
@@ -49,7 +49,7 @@ resolve relative to the package dir:
 ```bash
 CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
   -p backend-uzu \
-  --bench kernel -- "Metal/Kernel/Matmul" \
+  --bench benchmarks -- "Metal/Kernel/Matmul" \
   --save-baseline matmul_baseline_m2_max
 ```
 
@@ -76,7 +76,7 @@ cargo dinghy \
   -d "$DEVICE" \
   -e CRITERION_HOME=target/criterion/a19 \
   --copy-back "Documents/target=$(pwd)/target" \
-  bench -p backend-uzu --bench kernel -- \
+  bench -p backend-uzu --bench benchmarks -- \
     "Metal/Kernel/Matmul" \
     --save-baseline matmul_baseline_a19
 ```

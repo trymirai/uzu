@@ -19,6 +19,7 @@ use backend_uzu::{
     },
     data_type::DataType,
 };
+use proc_macros::uzu_ignore;
 
 type Ctx = <Metal as Backend>::Context;
 

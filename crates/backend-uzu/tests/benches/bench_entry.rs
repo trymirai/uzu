@@ -12,5 +12,6 @@ use proc_macros::__internal_uzu_bench as uzu_bench;
 #[macro_use]
 #[path = "../common/mod.rs"]
 mod common;
+mod kernel;
 mod language_model;
 mod session;
