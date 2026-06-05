@@ -54,6 +54,10 @@ impl MetalContext {
         self.device.supports_mxu()
     }
 
+    pub fn gpu_core_count(&self) -> u32 {
+        self.gpu_core_count
+    }
+
     pub(super) fn update_peak_memory_usage(&self) {
         let mut peak_memory_usage_borrow = self.peak_memory_usage.borrow_mut();
         *peak_memory_usage_borrow = peak_memory_usage_borrow.max(self.device.current_allocated_size());

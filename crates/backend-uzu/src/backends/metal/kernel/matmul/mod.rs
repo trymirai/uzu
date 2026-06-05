@@ -60,6 +60,7 @@ impl MatmulKernel for MatmulMetalKernel {
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
+            encoder.context().gpu_core_count(),
         ) {
             Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
             None => self.gemm.encode(arguments, encoder),

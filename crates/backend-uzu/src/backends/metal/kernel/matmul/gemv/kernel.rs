@@ -22,16 +22,25 @@ const FP_BLOCK: u32 = 128;
 const QMV_RESULTS_PER_SIMDGROUP: u32 = 4;
 
 /// Quantized GEMV uses 2 (instead of 8) simdgroups per threadgroup when the
-/// output is narrow (`n < QUANT_SMALL_N`, so 8 simdgroups would launch too few
-/// threadgroups to fill the GPU) AND the reduction is long enough
-/// (`k >= QUANT_LARGE_K`) that the per-dispatch work amortizes the 4x larger
-/// threadgroup count. GPU-counter traces (clock-controlled) show this lifts
-/// compute occupancy and is ~20% faster for large-k/small-n decode (e.g.
-/// k=14336,n=4096), while small-k/small-n (e.g. k=4096,n=4096) is the opposite
-/// — the kernel is too short and the extra threadgroup launches dominate
-/// (~1.7x slower), so it stays at 8 simdgroups. See `select`.
-const QUANT_SMALL_N: u32 = 8192;
+/// 8-simdgroup launch would UNDER-FILL the GPU — i.e. it produces fewer than
+/// [`MIN_SG8_TGS_PER_CORE`] threadgroups per GPU core — AND the reduction is
+/// long enough (`k >= QUANT_LARGE_K`) to amortize the 4x larger threadgroup
+/// count. Dropping to 2 simdgroups quadruples the threadgroup count (matching
+/// MLX's qmv granularity), lifting compute occupancy until the kernel becomes
+/// memory-bound.
+///
+/// Both gates are essential and were validated by GPU-counter traces +
+/// cross-chip runs (M1/M2/M2-Pro/M4/M4-Pro/M4-Max via ssh). Core-count gate:
+/// the win is real only on high-core GPUs (M2-Pro 19c −6%, M2-Max 38c / M4-Max
+/// 40c −9..14%); on ≤10-core parts (M1/M2/M4) sg8 already fills the GPU so 2
+/// simdgroups only add launch overhead. Because the threadgroup count scales
+/// with the batch m, this gate also keeps m>=2 (already enough threadgroups) at
+/// 8 simdgroups everywhere. Large-k gate: short reductions (e.g. k=4096) can't
+/// amortize the 4x threadgroups — sg2 is up to ~1.7x SLOWER there (M2-Max
+/// trace). RHT keeps 8 simdgroups (its epilogue needs the 32-row block). See
+/// `select`.
 const QUANT_LARGE_K: u32 = 8192;
+const MIN_SG8_TGS_PER_CORE: u32 = 8;
 
 const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
 static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
@@ -45,7 +54,7 @@ fn max_gemv_batch_threshold() -> u32 {
 static GEMV_QUANT_SIMDGROUPS: OnceLock<Option<u32>> = OnceLock::new();
 
 /// Optional override for the quantized-GEMV simdgroups-per-threadgroup choice
-/// (must be 2 or 8). Used for tuning; `None` falls back to the [`QUANT_SMALL_N`]
+/// (must be 2 or 8). Used for tuning; `None` falls back to the core-count
 /// heuristic in `select`.
 fn quant_simdgroups_override() -> Option<u32> {
     *GEMV_QUANT_SIMDGROUPS.get_or_init(|| {
@@ -70,6 +79,7 @@ impl GemvSpecialization {
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
+        gpu_core_count: u32,
     ) -> Option<GemvSpecialization> {
         if !args.b_transpose || args.b_offset != 0 {
             return None;
@@ -122,10 +132,18 @@ impl GemvSpecialization {
         // (already memory-bound) and for RHT (its epilogue needs the 32-row /
         // 8-simdgroup block).
         let num_simdgroups = if is_quant && !has_rht {
-            quant_simdgroups_override().unwrap_or(if args.n < QUANT_SMALL_N && args.k >= QUANT_LARGE_K {
-                2
-            } else {
-                8
+            quant_simdgroups_override().unwrap_or_else(|| {
+                // 8 simdgroups → rows_per_threadgroup = 8*4 = 32, so the launch
+                // is m * ceil(n/32) threadgroups. Switch to 2 simdgroups only
+                // when that under-fills the GPU and the reduction is long
+                // enough to pay for 4x more threadgroups (see consts above).
+                let tg_count_sg8 = args.m * args.n.div_ceil(8 * QMV_RESULTS_PER_SIMDGROUP);
+                let underfilled = tg_count_sg8 < gpu_core_count.saturating_mul(MIN_SG8_TGS_PER_CORE);
+                if args.k >= QUANT_LARGE_K && underfilled {
+                    2
+                } else {
+                    8
+                }
             })
         } else {
             8
