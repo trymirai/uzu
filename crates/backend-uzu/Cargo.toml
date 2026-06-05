@@ -70,6 +70,8 @@ proptest = { workspace = true, default-features = true }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # for getting gpu temperature
 macmon.workspace = true
+# MLX reference for gemv perf comparison
+pmetal-mlx-rs.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
