@@ -17,12 +17,12 @@ auto-format = true
 comment-tokens = ["//"]
 
 [language.block-comment-tokens]
-end = "*/"
 start = "/*"
+end = "*/"
 
 [language.formatter]
-args = []
 command = "clang-format"
+args = []
 
 [language.indent]
 tab-width = 2
