@@ -1,3 +1,5 @@
+#[cfg(metal_backend)]
+mod fp_gemv_bench;
 mod gemm_bench;
 #[cfg(all(metal_backend, target_os = "macos"))]
 mod gemv_vs_mlx_bench;
