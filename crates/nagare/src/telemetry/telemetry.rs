@@ -1,9 +1,8 @@
-use serde_json::Value;
 use tokio::sync::mpsc;
 #[cfg(not(target_family = "wasm"))]
 use tokio::sync::mpsc::channel as TokioMpscChannel;
 
-use super::{TelemetryEvent, record::TelemetryRecord};
+use super::{TelemetryContext, TelemetryEvent, record::TelemetryRecord};
 #[cfg(not(target_family = "wasm"))]
 use crate::api::Client;
 use crate::api::Config;
@@ -27,7 +26,7 @@ impl Telemetry {
     pub fn new(
         client_config: Config,
         path: String,
-        context: Value,
+        context: TelemetryContext,
     ) -> Self {
         let client = match Client::new(client_config) {
             Ok(client) => client,
@@ -47,7 +46,7 @@ impl Telemetry {
     pub fn new(
         _client_config: Config,
         _path: String,
-        _context: Value,
+        _context: TelemetryContext,
     ) -> Self {
         Self::disabled()
     }

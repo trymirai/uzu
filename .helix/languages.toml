@@ -1,17 +1,35 @@
 [[language]]
 name = "c"
-scope = "scope.c"
 file-types = []
 
 [[language]]
 name = "cpp"
-scope = "scope.cpp"
 file-types = []
 
 [[language]]
 name = "metal"
-scope = "scope.metal"
+scope = "source.metal"
+injection-regex = "metal"
 file-types = ["metal", "h"]
+grammar = "cpp"
+language-servers = ["metal-analyzer"]
+auto-format = true
+comment-tokens = ["//"]
+
+[language.block-comment-tokens]
+start = "/*"
+end = "*/"
+
+[language.formatter]
+command = "clang-format"
+args = []
+
+[language.indent]
+tab-width = 2
+unit = "  "
+
+[language-server.metal-analyzer]
+command = "metal-analyzer"
 
 [language-server.rust-analyzer.config.check]
 command = "clippy"

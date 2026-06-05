@@ -18,7 +18,7 @@ use nagare::{
     api::Config as ClientConfig,
     chat::ChatSession,
     classification::ClassificationSession,
-    telemetry::{Telemetry, TelemetryEvent},
+    telemetry::{Telemetry, TelemetryContext, TelemetryDevice, TelemetryEvent},
     text_to_speech::TextToSpeechSession,
 };
 use shoji::{
@@ -79,16 +79,20 @@ impl Engine {
 
         let telemetry = SharedAccess::new({
             let client_config = ClientConfig::new(
-                "https://sdk.trymirai.com/api/v1".to_string(),
+                "https://sdk.trymirai.com/api/v2".to_string(),
                 Duration::from_secs(10),
                 IndexMap::new(),
             );
-            let context = serde_json::json!({
-                "os_name": device.os_name,
-                "cpu_name": device.cpu_name,
-                "memory_total": device.memory_total,
-                "is_environment_sandboxed": crate::device::is_environment_sandboxed(),
-            });
+            let context = TelemetryContext::new(
+                env!("CARGO_PKG_VERSION").to_string(),
+                backend_uzu::TOOLCHAIN_VERSION.to_string(),
+                TelemetryDevice {
+                    os_name: device.os_name.clone(),
+                    cpu_name: device.cpu_name.clone(),
+                    memory_total: device.memory_total,
+                    is_environment_sandboxed: crate::device::is_environment_sandboxed(),
+                },
+            );
             Telemetry::new(client_config, "telemetry/events".to_string(), context)
         });
 
