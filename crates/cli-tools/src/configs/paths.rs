@@ -109,6 +109,17 @@ impl Paths {
         self.release_workspace_path().join("docs")
     }
 
+    pub fn release_binaries_path(&self) -> PathBuf {
+        self.release_workspace_path().join("binaries")
+    }
+
+    pub fn release_binary_path(
+        &self,
+        binary_name: &str,
+    ) -> PathBuf {
+        self.release_binaries_path().join(binary_name)
+    }
+
     pub fn release_swift_spm_path(&self) -> PathBuf {
         self.release_workspace_path().join("swift-spm")
     }

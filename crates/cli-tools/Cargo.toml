@@ -26,3 +26,6 @@ minijinja.workspace = true
 anyhow.workspace = true
 indexmap.workspace = true
 colored.workspace = true
+
+[lints]
+workspace = true

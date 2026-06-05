@@ -1,14 +1,12 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::EmbeddingRowsSumKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -105,16 +103,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::EmbeddingRowsSumKernel::new(&context, T::data_type())
         .expect("Failed to create EmbeddingRowsSumKernel");
 
-    let token_indices_array = context.create_array_from(&[input.num_rows as usize], &input.token_indices, "");
+    let token_indices_array = context.create_array_from(&[input.num_rows as usize], &input.token_indices);
     let weights_array =
-        context.create_array_from(&[input.total_rows as usize, input.model_dim as usize], &input.weights, "");
-    let output_array = context.create_array_uninitialized(&[input.model_dim as usize], T::data_type(), "");
+        context.create_array_from(&[input.total_rows as usize, input.model_dim as usize], &input.weights);
+    let mut output = context.create_array_uninitialized(&[input.model_dim as usize], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        token_indices_array.buffer().borrow().deref(),
-        weights_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        token_indices_array.allocation(),
+        weights_array.allocation(),
+        &mut output,
         input.num_rows,
         input.total_rows,
         input.model_dim,
@@ -123,7 +121,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn test_basic<T: ArrayElement + Float + Debug + Display>() {

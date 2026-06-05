@@ -1,21 +1,18 @@
-#[macro_use]
-#[path = "../../common/mod.rs"]
-mod common;
-
-mod activation_mul_test;
 mod activation_test;
 mod attention;
 mod audio;
 mod delta_net_test;
 mod embedding;
+mod gated_act_mul_test;
 mod hadamard_transform_test;
 mod kv_cache_update_test;
 mod layer_norm_test;
+mod logit_soft_cap_test;
 mod matmul;
 mod moe;
 mod pooling;
-mod qk_norm_test;
-mod quant_matmul;
+mod qk_unpack_test;
+mod qkv_norm_test;
 mod rms_norm_test;
 mod rope_test;
 mod sampling;

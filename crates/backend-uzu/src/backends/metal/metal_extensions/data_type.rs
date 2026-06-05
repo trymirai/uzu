@@ -1,4 +1,4 @@
-use crate::DataType;
+use crate::data_type::DataType;
 
 pub trait MetalDataTypeExt {
     fn metal_type(&self) -> &'static str;

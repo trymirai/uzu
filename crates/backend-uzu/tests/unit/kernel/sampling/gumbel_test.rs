@@ -1,10 +1,7 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::GumbelKernel},
         cpu::Cpu,
@@ -57,25 +54,21 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         .expect("Failed to create GumbelKernel");
 
     let len = (input.batch_size * input.vocab_size) as usize;
-    let logits_array = context.create_array_from(&[len], &input.logits, "");
-    let logits_array_buffer_rc = logits_array.buffer();
-    let logits_array_borrow = logits_array_buffer_rc.borrow();
-    let logits_array_deref = logits_array_borrow.deref();
-    let logits_buffer = (!input.in_place).then(|| logits_array_deref);
+    let logits_buffer = (!input.in_place).then(|| context.create_array_from(&[len], &input.logits).into_allocation());
 
-    let seeds_array = context.create_array_from(&[input.batch_size as usize], &input.seeds, "");
+    let seeds_array = context.create_array_from(&[input.batch_size as usize], &input.seeds);
 
-    let output_array = match input.in_place {
-        true => context.create_array_from(&[len], &input.logits, ""),
-        false => context.create_array_uninitialized(&[len], T::data_type(), ""),
+    let mut output = match input.in_place {
+        true => context.create_array_from(&[len], &input.logits).into_allocation(),
+        false => context.create_array_uninitialized(&[len], T::data_type()).into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        logits_buffer,
-        seeds_array.buffer().borrow().deref(),
+        logits_buffer.as_ref(),
+        seeds_array.allocation(),
         0,
-        output_array.buffer().borrow_mut().deref_mut(),
+        &mut output,
         input.batch_size,
         input.vocab_size,
         &mut encoder,
@@ -83,7 +76,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 // Verify determinism: same seeds produce same output.

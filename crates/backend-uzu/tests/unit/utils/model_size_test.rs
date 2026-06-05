@@ -23,7 +23,7 @@ fn test_model_size_from_path() {
     let model_path = get_test_model_path();
 
     if model_path.exists() {
-        let size = ModelSize::from_path(&model_path);
+        let size = ModelSize::from_path(&model_path).expect("load model size");
         println!("Model size: {:?}", size);
         assert_eq!(size, ModelSize::Small);
     }

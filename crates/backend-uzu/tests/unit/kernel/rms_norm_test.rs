@@ -1,15 +1,15 @@
 use std::{
     fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
     time::{Duration, Instant},
 };
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
-        common::{Backend, Context, DenseBuffer, Encoder, Kernels, kernel::RMSNormKernel},
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::{bf16, f16};
@@ -134,33 +134,33 @@ fn get_output<
         false,
         false,
         false,
+        false,
+        false,
     )
     .expect("Failed to create RMSNormKernel");
 
     let input_size = input.input.len();
-    let input_array = context.create_array_from(&[input_size], &input.input, "");
-    let input_array_buffer_rc = input_array.buffer();
-    let input_array_borrow = input_array_buffer_rc.borrow();
-    let input_array_deref = input_array_borrow.deref();
-    let input_buffer = (!input.in_place).then(|| input_array_deref);
+    let input_buffer =
+        (!input.in_place).then(|| context.create_array_from(&[input_size], &input.input).into_allocation());
 
-    let scales_array = context.create_array_from(&[input.scales.len()], &input.scales, "");
-    let output_array = match input.in_place {
-        true => context.create_array_from(&[input_size], &input.output, ""),
-        false => context.create_array_uninitialized(&[input_size], OutputT::data_type(), ""),
+    let scales_array = context.create_array_from(&[input.scales.len()], &input.scales);
+    let mut output = match input.in_place {
+        true => context.create_array_from(&[input_size], &input.output).into_allocation(),
+        false => context.create_array_uninitialized(&[input_size], OutputT::data_type()).into_allocation(),
     };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_buffer,
-        scales_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
-        None::<&mut B::DenseBuffer>,
-        None::<&B::DenseBuffer>,
+        input_buffer.as_ref(),
+        scales_array.allocation(),
+        &mut output,
+        None::<&mut Allocation<B>>,
+        None::<&Allocation<B>>,
         input.batch_size,
         input.element_count,
         input.epsilon,
         input.scale_offset,
+        1.0,
         &mut encoder,
     );
 
@@ -169,7 +169,7 @@ fn get_output<
     let host_elapsed_ms = instant.elapsed().as_secs_f64() * 1e3;
     let gpu_elapsed_ms = completed.gpu_execution_time();
 
-    (output_array.as_slice().to_vec(), host_elapsed_ms, gpu_elapsed_ms)
+    (crate::common::helpers::allocation_to_vec(&output), host_elapsed_ms, gpu_elapsed_ms)
 }
 
 fn test_internal<
@@ -199,7 +199,7 @@ fn test_internal<
             input.full_layer,
             input.in_place,
         );
-        assert_eq_float::<OutputT>(&expected, &output, eps, &msg);
+        assert_eq_float::<OutputT>(expected, &output, eps, &msg);
     });
 }
 
@@ -210,9 +210,9 @@ fn test_basic<
     AccumT: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if InputT::data_type() == OutputT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {
@@ -230,9 +230,9 @@ fn test_edge<
     AccumT: ArrayElement + Float,
 >() {
     let in_place_values: &[bool] = if InputT::data_type() == OutputT::data_type() {
-        &BOOL_ALL
+        BOOL_ALL
     } else {
-        &BOOL_FALSE
+        BOOL_FALSE
     };
 
     for in_place in in_place_values {
@@ -389,6 +389,73 @@ fn test_edge_f16_f16_f16_f16() {
     test_edge::<f16, f16, f16, f16>();
 }
 
+fn run_scaled_rms<B: Backend>(
+    with_shortcut: bool,
+    scale_residual_sum: bool,
+    scale_output: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    let (batch, dim) = (2usize, 64usize);
+    let total = batch * dim;
+    let mut rng = SmallRng::seed_from_u64(99);
+    let input: Vec<f32> = (0..total).map(|_| rng.random_range(-2.0f32..2.0f32)).collect();
+    let scales: Vec<f32> = (0..dim).map(|_| rng.random_range(0.1f32..3.0f32)).collect();
+    let shortcut: Vec<f32> = (0..total).map(|_| rng.random_range(-1.0f32..1.0f32)).collect();
+
+    let context = B::Context::new().expect("Failed to create Context");
+    let kernel = <<B as Backend>::Kernels as Kernels>::RMSNormKernel::new(
+        &context,
+        f32::data_type(),
+        f32::data_type(),
+        f32::data_type(),
+        f32::data_type(),
+        false,
+        false,
+        with_shortcut,
+        with_shortcut,
+        false,
+        scale_residual_sum,
+        scale_output,
+    )
+    .expect("Failed to create RMSNormKernel");
+
+    let input_buffer = context.create_array_from(&[total], &input).into_allocation();
+    let scales_buffer = context.create_array_from(&[dim], &scales).into_allocation();
+    let mut output = context.create_array_uninitialized(&[total], f32::data_type()).into_allocation();
+    let mut shortcut_buffer = with_shortcut.then(|| context.create_array_from(&[total], &shortcut).into_allocation());
+
+    let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
+    kernel.encode(
+        Some(&input_buffer),
+        &scales_buffer,
+        &mut output,
+        shortcut_buffer.as_mut(),
+        None::<&Allocation<B>>,
+        batch as u32,
+        dim as u32,
+        1e-6,
+        0.0,
+        0.7,
+        &mut encoder,
+    );
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
+
+    let output_values = crate::common::helpers::allocation_to_vec(&output);
+    let shortcut_values = shortcut_buffer.as_ref().map(crate::common::helpers::allocation_to_vec).unwrap_or_default();
+    (output_values, shortcut_values)
+}
+
+#[uzu_test]
+fn test_post_layer_scalar_metal_matches_cpu() {
+    for &(shortcut, residual_sum, output) in &[(false, false, true), (true, true, false)] {
+        let (cpu_out, cpu_shortcut) = run_scaled_rms::<Cpu>(shortcut, residual_sum, output);
+        for_each_non_cpu_backend!(|B| {
+            let (out, sc) = run_scaled_rms::<B>(shortcut, residual_sum, output);
+            assert_eq_float::<f32>(&cpu_out, &out, 1e-5, "post_layer_scalar output: metal != cpu");
+            assert_eq_float::<f32>(&cpu_shortcut, &sc, 1e-5, "post_layer_scalar shortcut: metal != cpu");
+        });
+    }
+}
+
 // benchmarks
 #[uzu_bench]
 fn bench_rms_norm(c: &mut Criterion) {
@@ -405,6 +472,8 @@ fn bench_rms_norm(c: &mut Criterion) {
             T::data_type(),
             T::data_type(),
             T::data_type(),
+            false,
+            false,
             false,
             false,
             false,
@@ -430,19 +499,9 @@ fn bench_rms_norm(c: &mut Criterion) {
             let (input_data, scale_data) = get_rms_norm_data(1337, batch_size, model_dim);
             let input_size = batch_size * model_dim;
 
-            let input_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
-            unsafe {
-                std::slice::from_raw_parts_mut::<T>(input_buffer.cpu_ptr().as_ptr() as *mut T, input_size)
-                    .copy_from_slice(input_data.as_ref());
-            }
-
-            let scales_buffer = context.create_buffer(model_dim * std::mem::size_of::<T>()).unwrap();
-            unsafe {
-                std::slice::from_raw_parts_mut::<T>(scales_buffer.cpu_ptr().as_ptr() as *mut T, model_dim)
-                    .copy_from_slice(scale_data.as_ref());
-            }
-
-            let mut output_buffer = context.create_buffer(input_size * std::mem::size_of::<T>()).unwrap();
+            let input_buffer = context.create_array_from(&[input_size], input_data.as_ref()).into_allocation();
+            let scales_buffer = context.create_array_from(&[model_dim], scale_data.as_ref()).into_allocation();
+            let mut output_buffer = context.create_array_uninitialized(&[input_size], T::data_type()).into_allocation();
 
             group.throughput(Throughput::Elements((batch_size * model_dim) as u64));
 
@@ -455,12 +514,13 @@ fn bench_rms_norm(c: &mut Criterion) {
                             Some(&input_buffer),
                             &scales_buffer,
                             &mut output_buffer,
-                            None::<&mut <B as Backend>::DenseBuffer>,
-                            None::<&<B as Backend>::DenseBuffer>,
+                            None::<&mut Allocation<B>>,
+                            None::<&Allocation<B>>,
                             batch_size as u32,
                             model_dim as u32,
                             epsilon,
                             scale_offset,
+                            1.0,
                             &mut encoder,
                         );
                     }

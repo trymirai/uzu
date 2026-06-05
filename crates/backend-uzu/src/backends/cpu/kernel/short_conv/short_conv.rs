@@ -1,8 +1,8 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::{Float, ToPrimitive};
+use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(ShortConvPack)]
 #[variants(T, f32, f16, bf16)]
@@ -43,11 +43,12 @@ pub fn short_conv_pack<T: ArrayElement + Float>(
 
 #[kernel(ShortConvPrefill)]
 #[variants(T, f32, f16, bf16)]
-pub fn short_conv_prefill<T: ArrayElement + Float>(
+#[variants(WeightT, f32)]
+pub fn short_conv_prefill<T: ArrayElement + Float, WeightT: ArrayElement + Float>(
     padded: *const T,
     in_proj: *const T,
-    w: *const T,
-    #[optional(has_bias)] b: Option<*const T>,
+    w: *const WeightT,
+    #[optional(has_bias)] b: Option<*const WeightT>,
     out: *mut T,
     state_out: *mut T,
     suffix_len: u32,
@@ -62,11 +63,6 @@ pub fn short_conv_prefill<T: ArrayElement + Float>(
     let in_proj_stride = in_proj_stride as usize;
     let state_stride = state_stride as usize;
     let model_dim = model_dim as usize;
-    let tap_count = if kernel_size > 0 {
-        kernel_size - 1
-    } else {
-        0
-    };
 
     unsafe {
         for token_idx in 0..suffix_len + kernel_size.saturating_sub(1) {
@@ -117,10 +113,11 @@ pub fn short_conv_prefill<T: ArrayElement + Float>(
 
 #[kernel(ShortConvDecode)]
 #[variants(T, f32, f16, bf16)]
-pub fn short_conv_decode<T: ArrayElement + Float>(
+#[variants(WeightT, f32)]
+pub fn short_conv_decode<T: ArrayElement + Float, WeightT: ArrayElement + Float>(
     in_proj: *const T,
-    w: *const T,
-    #[optional(has_bias)] b: Option<*const T>,
+    w: *const WeightT,
+    #[optional(has_bias)] b: Option<*const WeightT>,
     #[optional(!state_in_place)] state: Option<*const T>,
     out: *mut T,
     next_state: *mut T,
@@ -187,10 +184,11 @@ pub fn short_conv_decode<T: ArrayElement + Float>(
 
 #[kernel(ShortConvTrie)]
 #[variants(T, f32, f16, bf16)]
-pub fn short_conv_trie<T: ArrayElement + Float>(
+#[variants(WeightT, f32)]
+pub fn short_conv_trie<T: ArrayElement + Float, WeightT: ArrayElement + Float>(
     in_proj: *const T,
-    w: *const T,
-    #[optional(has_bias)] b: Option<*const T>,
+    w: *const WeightT,
+    #[optional(has_bias)] b: Option<*const WeightT>,
     base_state: *const T,
     parents: *const i32,
     out: *mut T,

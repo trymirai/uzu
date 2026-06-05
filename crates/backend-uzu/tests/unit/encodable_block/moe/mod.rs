@@ -1,9 +1,15 @@
-#[macro_use]
-#[path = "../../../common/mod.rs"]
-mod common;
+use super::{
+    experts_two_pass_decode::MoeExpertsTwoPassDecodeBlock,
+    experts_two_pass_prefill::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock},
+    gather::MoeGather,
+};
 
 mod moe_block_e2e_test;
+#[path = "../../../performance/encodable_block/moe/moe_experts_perf_test.rs"]
+mod moe_experts_perf_test;
 mod moe_experts_test;
+#[path = "../../../performance/encodable_block/moe/moe_perf_test.rs"]
+mod moe_perf_test;
 mod moe_tiles_test;
 
 /// CPU reference for tile counts: count number of BM-sized tiles per expert
@@ -25,7 +31,7 @@ pub fn cpu_tile_counts(
         tile_counts[expert] = if seg_len == 0 {
             0
         } else {
-            ((seg_len as usize + bm - 1) / bm) as u32
+            (seg_len as usize).div_ceil(bm) as u32
         };
     }
     tile_counts

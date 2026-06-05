@@ -1,4 +1,4 @@
-use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
+use crate::{config::model::language_model::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SamplingProcessingOrder {
@@ -18,24 +18,12 @@ pub enum SamplingMethod {
     },
 }
 
-impl Default for SamplingMethod {
-    fn default() -> Self {
-        SamplingMethod::Greedy
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum SamplingPolicy {
     Default,
     Custom {
         value: SamplingMethod,
     },
-}
-
-impl Default for SamplingPolicy {
-    fn default() -> Self {
-        SamplingPolicy::Default
-    }
 }
 
 impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod> for SamplingPolicy {

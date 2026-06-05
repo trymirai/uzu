@@ -111,21 +111,21 @@ uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 
 ## CLI
 
-You can run `uzu` in [CLI](https://docs.trymirai.com/overview/cli) mode:
+You can run `uzu` in CLI mode:
 
 ```bash
-cargo run --release -p cli -- help
+cargo run --release -p cli
 ```
 
-```text
-Usage: cli [COMMAND]
+This launches an interactive app where you can browse, download, and interact with models.
 
-Commands:
-  run    Run a model with the specified path
-  serve  Start a server with the specified model path
-  bench  Run benchmarks for the specified model
-  help   Print this message or the help of the given subcommand(s)
+You can also preselect a model with `--model`, passing its identifier or repository id:
+
+```bash
+cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
 ```
+
+If the model is not downloaded yet, the CLI starts downloading it automatically.
 
 ## Benchmarks
 

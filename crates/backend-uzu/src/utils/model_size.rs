@@ -9,11 +9,11 @@ pub enum ModelSize {
 }
 
 impl ModelSize {
-    pub fn from_path(model_path: &Path) -> Self {
+    pub fn from_path(model_path: &Path) -> std::io::Result<Self> {
         let weights_path = model_path.join("model.safetensors");
-        let size_bytes = std::fs::metadata(&weights_path).map(|m| m.len()).unwrap_or(0);
+        let size_bytes = std::fs::metadata(&weights_path)?.len();
 
-        Self::from_bytes(size_bytes)
+        Ok(Self::from_bytes(size_bytes))
     }
 
     pub fn from_bytes(size_bytes: u64) -> Self {

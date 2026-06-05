@@ -13,12 +13,6 @@ impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
     fn size(&self) -> usize {
         unsafe { &*self.get() }.len()
     }
-
-    fn set_label(
-        &mut self,
-        _label: Option<&str>,
-    ) {
-    }
 }
 
 impl DenseBuffer for UnsafeCell<Pin<Box<[u8]>>> {

@@ -1,8 +1,8 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 
 // In-place RMSNorm + SiLU gate for DeltaNet prefill output.
 //

@@ -17,8 +17,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "uzu",
-            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.4.4.zip",
-            checksum: "c60e4da947b20ee8dc53f0b3932d1bd8687c1ca27fcb1755bf2743259bbb3179"
+            url: "https://artifacts.trymirai.com/uzu-swift/releases/0.5.7.zip",
+            checksum: "d982723af604515d866b2eb17724560c3b3a8693e81f020669da30d784271a27"
         ),
         .target(
             name: "Uzu",
@@ -29,6 +29,8 @@ let package = Package(
                 .linkedFramework("SystemConfiguration"),
                 .linkedFramework("Metal"),
                 .linkedFramework("MetalPerformanceShadersGraph"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("AudioToolbox"),
             ]
         ),
         .executableTarget(

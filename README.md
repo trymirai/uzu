@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.4.4)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.4.4)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.4.4)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.4.4)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.7)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.7)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.7)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.7)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
 # uzu
 
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Add the dependency:
 
 ```bash
-uv add uzu==0.4.4
+uv add uzu==0.5.7
 ```
 
 Run the code below:
@@ -132,7 +132,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.4.4")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.7")
 ]
 ```
 
@@ -181,7 +181,7 @@ public func runQuickStart() async throws {
 Add the dependency:
 
 ```bash
-pnpm add @trymirai/uzu@0.4.4
+pnpm add @trymirai/uzu@0.5.7
 ```
 
 Run the code below:
@@ -1080,11 +1080,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         schema: schema_string,
     }));
     let replies = session.reply(messages, chat_reply_config).await?;
-    if let Some(reply) = replies.first() {
-        if let Some(text) = reply.message.text() {
-            let parsed: CountryList = serde_json::from_str(&text)?;
-            println!("{parsed:#?}");
-        }
+    if let Some(reply) = replies.first()
+        && let Some(text) = reply.message.text()
+    {
+        let parsed: CountryList = serde_json::from_str(&text)?;
+        println!("{parsed:#?}");
     }
 
     Ok(())
@@ -1429,10 +1429,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pcm_batches: Vec<PcmBatch> = Vec::new();
     while let Some(event) = stream.next().await {
         match event {
-            TextToSpeechSessionStreamChunk::PcmBatch {
-                batch,
+            TextToSpeechSessionStreamChunk::Output {
+                output,
             } => {
-                pcm_batches.push(batch);
+                pcm_batches.push(output.pcm_batch);
             },
             TextToSpeechSessionStreamChunk::Error {
                 error,
@@ -1487,8 +1487,8 @@ async def main() -> None:
     )
     output_path = Path.home() / "Desktop" / "output.wav"
     session = await engine.text_to_speech(model)
-    pcm_batch = await session.synthesize(text)
-    pcm_batch.save_as_wav(str(output_path))
+    output = await session.synthesize(text)
+    output.pcm_batch.save_as_wav(str(output_path))
     print(f"Output saved to: {output_path}")
 
 
@@ -1521,8 +1521,8 @@ public func runTextToSpeech() async throws {
         .appendingPathComponent("Desktop")
         .appendingPathComponent("output.wav")
     let session = try await engine.textToSpeech(model: model)
-    let pcmBatch = try await session.synthesize(input: text)
-    try pcmBatch.saveAsWav(path: outputPath.path())
+    let output = try await session.synthesize(input: text)
+    try output.pcmBatch.saveAsWav(path: outputPath.path())
     print("Output saved to: \(outputPath.path())")
 }
 ```
@@ -1552,8 +1552,8 @@ async function main() {
     const text = "London is the capital of United Kingdom and one of the world’s most influential cities, known for its rich history, cultural diversity, and global significance in finance, politics, and the arts. Situated along the River Thames, the city blends historic landmarks like Tower of London and Buckingham Palace with modern architecture such as The Shard. London is also home to renowned institutions including the British Museum and vibrant areas like Covent Garden, offering a mix of history, entertainment, and innovation that attracts millions of visitors each year.";
     const outputPath = join(homedir(), "Desktop", "output.wav");
     let session = await engine.textToSpeech(model);
-    let pcmBatch = await session.synthesize(text);
-    pcmBatch.saveAsWav(outputPath);
+    let output = await session.synthesize(text);
+    output.pcmBatch.saveAsWav(outputPath);
     console.log('Output saved to: ', outputPath);
 }
 
@@ -1617,7 +1617,7 @@ uv run downloader list             # show the list of supported models
 uv run downloader download {REPO}  # download a specific model
 ```
 
-Models downloaded for development are stored at `./workspace/models/0.4.4/`.
+Models downloaded for development are stored at `./workspace/models/0.5.7/`.
 
 You can also export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
@@ -1630,28 +1630,28 @@ uv run lalamo convert meta-llama/Llama-3.2-1B-Instruct
 
 ## CLI
 
-You can run `uzu` in [CLI](https://docs.trymirai.com/overview/cli) mode:
+You can run `uzu` in CLI mode:
 
 ```bash
-cargo run --release -p cli -- help
+cargo run --release -p cli
 ```
 
-```text
-Usage: cli [COMMAND]
+This launches an interactive app where you can browse, download, and interact with models.
 
-Commands:
-  run    Run a model with the specified path
-  serve  Start a server with the specified model path
-  bench  Run benchmarks for the specified model
-  help   Print this message or the help of the given subcommand(s)
+You can also preselect a model with `--model`, passing its identifier or repository id:
+
+```bash
+cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
 ```
+
+If the model is not downloaded yet, the CLI starts downloading it automatically.
 
 ## Benchmarks
 
 To run benchmarks:
 
 ```bash
-cargo run --release -p cli -- bench ./workspace/models/0.4.4/{MODEL_NAME} ./workspace/models/0.4.4/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.4.4/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench ./workspace/models/0.5.7/{MODEL_NAME} ./workspace/models/0.5.7/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.5.7/{MODEL_NAME}/benchmark_result.json
 ```
 
 `benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.

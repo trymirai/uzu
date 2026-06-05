@@ -1,16 +1,13 @@
-use std::{
-    fmt::Display,
-    mem::size_of,
-    ops::{Deref, DerefMut},
-};
+use std::{fmt::Display, mem::size_of};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::common::{
         Backend, Context, Encoder, Kernels,
         gpu_types::ArgmaxPair,
         kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -69,21 +66,15 @@ fn get_output_single<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> V
         .expect("Failed to create ArgmaxSingleKernel");
 
     let len = (input.batch_size * input.vocab_size) as usize;
-    let logits_array = context.create_array_from(&[len], &input.logits, "");
-    let output_array = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32, "");
+    let logits_array = context.create_array_from(&[len], &input.logits);
+    let mut output = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        logits_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
-        input.batch_size,
-        input.vocab_size,
-        &mut encoder,
-    );
+    kernel.encode(logits_array.allocation(), &mut output, input.batch_size, input.vocab_size, &mut encoder);
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice::<u32>().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn get_output_two_pass<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<u32> {
@@ -95,37 +86,31 @@ fn get_output_two_pass<T: ArrayElement + Float, B: Backend>(input: &Input<T>) ->
         .expect("Failed to create ArgmaxFinalKernel");
 
     let len = (input.batch_size * input.vocab_size) as usize;
-    let logits_array = context.create_array_from(&[len], &input.logits, "");
-    let output_array = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32, "");
+    let logits_array = context.create_array_from(&[len], &input.logits);
+    let mut output = context.create_array_uninitialized(&[input.batch_size as usize], DataType::U32).into_allocation();
 
     let block_size = 1024;
     let grain_size = 4;
     let elements_per_group = block_size * grain_size;
-    let vocab_groups_per_batch = (input.vocab_size as usize + elements_per_group - 1) / elements_per_group;
+    let vocab_groups_per_batch = (input.vocab_size as usize).div_ceil(elements_per_group);
     let partial_results_count = input.batch_size as usize * vocab_groups_per_batch;
-    let mut partial_results_buffer = context
-        .create_buffer(partial_results_count * size_of::<ArgmaxPair>())
-        .expect("Failed to create partial results buffer");
+    let mut partial_results = context
+        .create_array_uninitialized(&[partial_results_count * size_of::<ArgmaxPair>()], DataType::U8)
+        .into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     main_kernel.encode(
-        logits_array.buffer().borrow().deref(),
-        &mut partial_results_buffer,
+        logits_array.allocation(),
+        &mut partial_results,
         input.batch_size,
         input.vocab_size,
         &mut encoder,
     );
-    final_kernel.encode(
-        &partial_results_buffer,
-        output_array.buffer().borrow_mut().deref_mut(),
-        input.batch_size,
-        input.vocab_size,
-        &mut encoder,
-    );
+    final_kernel.encode(&partial_results, &mut output, input.batch_size, input.vocab_size, &mut encoder);
 
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice::<u32>().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn test_single_pass<T: ArrayElement + Float + Display>(

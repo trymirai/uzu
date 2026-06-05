@@ -26,3 +26,6 @@ indexmap.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true
+
+[lints]
+workspace = true

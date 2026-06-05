@@ -1,18 +1,21 @@
-use std::{cell::Cell, time::Duration};
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use metal::{
-    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLBuffer, MTLCommandBuffer, MTLCommandBufferExt,
-    MTLCommandBufferHandler, MTLCommandBufferStatus, MTLCommandEncoder, MTLComputeCommandEncoder, MTLEvent,
+    MTLBlitCommandEncoder, MTLBlitCommandEncoderExt, MTLCommandBuffer, MTLCommandBufferExt, MTLCommandBufferHandler,
+    MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
 };
 use objc2::{Message, rc::Retained, runtime::ProtocolObject};
 
-use super::Metal;
-use crate::backends::{
-    common::{
-        AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-        CommandBufferInitial, CommandBufferPending,
+use super::{Metal, buffer::BufferDowncastExt};
+use crate::{
+    backends::{
+        common::{
+            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
+        },
+        metal::error::MetalError,
     },
-    metal::error::MetalError,
+    prelude::MetalContext,
 };
 
 pub struct MetalCommandBuffer;
@@ -37,12 +40,17 @@ fn command_buffer_result(command_buffer: &ProtocolObject<dyn MTLCommandBuffer>) 
 
 pub struct MetalCommandBufferInitial {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    context: Rc<MetalContext>,
 }
 
 impl MetalCommandBufferInitial {
-    pub fn new(command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>) -> Self {
+    pub fn new(
+        command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        context: Rc<MetalContext>,
+    ) -> Self {
         Self {
             command_buffer,
+            context,
         }
     }
 }
@@ -54,6 +62,7 @@ impl CommandBufferInitial for MetalCommandBufferInitial {
         MetalCommandBufferEncoding {
             command_buffer: self.command_buffer,
             encoding_state: MetalCommandBufferEncodingEncodingState::None,
+            context: self.context,
         }
     }
 }
@@ -67,6 +76,7 @@ enum MetalCommandBufferEncodingEncodingState {
 pub struct MetalCommandBufferEncoding {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoding_state: MetalCommandBufferEncodingEncodingState,
+    context: Rc<MetalContext>,
 }
 
 impl MetalCommandBufferEncoding {
@@ -118,30 +128,34 @@ impl Drop for MetalCommandBufferEncoding {
 impl CommandBufferEncoding for MetalCommandBufferEncoding {
     type CommandBuffer = MetalCommandBuffer;
 
-    fn encode_copy(
+    fn encode_copy<Src: Buffer<Backend = Metal>, Dst: Buffer<Backend = Metal>>(
         &mut self,
-        src: &Retained<ProtocolObject<dyn MTLBuffer>>,
-        src_range: std::ops::Range<usize>,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
-        dst_range: std::ops::Range<usize>,
+        src: BufferRangeRef<Src>,
+        dst: BufferRangeMut<Dst>,
     ) {
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
-        assert!(src.length() >= src_range.end && dst.length() >= dst_range.end);
+        let src_range = src.range();
+        let dst_range = dst.range();
+        assert_eq!(src_range.len(), dst_range.len());
 
-        self.ensure_blit().copy_buffer_to_buffer(src, src_range.start, dst, dst_range.start, size);
+        self.ensure_blit().copy_buffer_to_buffer(
+            src.buffer().downcast(),
+            src_range.start,
+            dst.buffer().downcast(),
+            dst_range.start,
+            src_range.len(),
+        );
     }
 
-    fn encode_fill(
+    fn encode_fill<Dst: Buffer<Backend = Metal>>(
         &mut self,
-        dst: &mut Retained<ProtocolObject<dyn MTLBuffer>>,
-        range: std::ops::Range<usize>,
+        dst: BufferRangeMut<Dst>,
         value: u8,
     ) {
-        assert!(range.end > range.start && range.end <= dst.length());
-        assert!(range.start % 4 == 0 && range.end % 4 == 0);
+        let range = dst.range();
+        assert!(range.end > range.start);
+        assert!(range.start.is_multiple_of(4) && range.end.is_multiple_of(4));
 
-        self.ensure_blit().fill_buffer_range_value(dst, range, value);
+        self.ensure_blit().fill_buffer_range_value(dst.buffer().downcast(), range, value);
     }
 
     fn encode_barrier(
@@ -149,24 +163,6 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
-    }
-
-    fn encode_wait_for_event(
-        &mut self,
-        event: &Retained<ProtocolObject<dyn MTLEvent>>,
-        value: u64,
-    ) {
-        self.ensure_none();
-        self.command_buffer.encode_wait_for_event_value(event, value);
-    }
-
-    fn encode_signal_event(
-        &mut self,
-        event: &Retained<ProtocolObject<dyn MTLEvent>>,
-        value: u64,
-    ) {
-        self.ensure_none();
-        self.command_buffer.encode_signal_event_value(event, value);
     }
 
     fn add_completion_handler(
@@ -189,19 +185,36 @@ impl CommandBufferEncoding for MetalCommandBufferEncoding {
 
         MetalCommandBufferExecutable {
             command_buffer: self.command_buffer.clone(),
+            context: self.context.clone(),
         }
     }
 }
 
 pub struct MetalCommandBufferExecutable {
     command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    context: Rc<MetalContext>,
 }
 
 impl CommandBufferExecutable for MetalCommandBufferExecutable {
     type CommandBuffer = MetalCommandBuffer;
 
     fn submit(self) -> MetalCommandBufferPending {
+        let cmd_queue = self.command_buffer.command_queue();
+        let wait_value = self.context.timeline_get_and_increment();
+
+        {
+            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
+            cmd_buffer.encode_wait_for_event_value(self.context.timeline_event(), wait_value);
+            cmd_buffer.commit();
+        }
+
         self.command_buffer.commit();
+
+        {
+            let cmd_buffer = cmd_queue.command_buffer().expect("Failed to create command buffer");
+            cmd_buffer.encode_signal_event_value(self.context.timeline_event(), wait_value + 1);
+            cmd_buffer.commit();
+        }
 
         MetalCommandBufferPending {
             command_buffer: self.command_buffer,

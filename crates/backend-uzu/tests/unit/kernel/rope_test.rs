@@ -1,14 +1,12 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::RopeKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -17,8 +15,8 @@ use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     qkv: Box<[T]>,
-    cosines: Box<[T]>,
-    sines: Box<[T]>,
+    cosines: Box<[f32]>,
+    sines: Box<[f32]>,
     token_positions: Box<[i32]>,
     head_dim: u32,
     rope_dim: u32,
@@ -45,11 +43,11 @@ fn get_test_data<T: ArrayElement + Float>(
         qkv[i] = T::from(((i as f32) * 0.1).sin() * 2.0).unwrap();
     }
 
-    let mut cosines = vec![T::zero(); cos_sin_size];
-    let mut sines = vec![T::zero(); cos_sin_size];
+    let mut cosines = vec![0.0f32; cos_sin_size];
+    let mut sines = vec![0.0f32; cos_sin_size];
     for i in 0..cos_sin_size {
-        cosines[i] = T::from(((i as f32) * 0.05).cos()).unwrap();
-        sines[i] = T::from(((i as f32) * 0.05).sin()).unwrap();
+        cosines[i] = ((i as f32) * 0.05).cos();
+        sines[i] = ((i as f32) * 0.05).sin();
     }
 
     let mut token_positions = vec![0i32; suffix_length as usize];
@@ -71,44 +69,79 @@ fn get_test_data<T: ArrayElement + Float>(
     }
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>, Vec<T>) {
+fn get_output<T: ArrayElement + Float, B: Backend>(
+    input: &Input<T>,
+    query_only: bool,
+) -> (Vec<T>, Option<Vec<T>>) {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, T::data_type())
-        .expect("Failed to create RopeKernel");
+    let element_data_type = T::data_type();
+    let rope_data_type = DataType::F32;
+    let kernel =
+        <<B as Backend>::Kernels as Kernels>::RopeKernel::new(&context, element_data_type, rope_data_type, query_only)
+            .expect("Failed to create RopeKernel");
 
     let total_heads = (input.num_heads + 2 * input.num_groups) as usize;
     let qkv_len = input.suffix_length as usize * total_heads * input.head_dim as usize;
-    let cos_sin_len = input.max_sequence_length as usize * input.rope_dim as usize;
+    let cos_sin_len = input.suffix_length as usize * input.rope_dim as usize;
     let queries_len = input.num_heads as usize * input.suffix_length as usize * input.head_dim as usize;
     let keys_len = input.num_groups as usize * input.suffix_length as usize * input.head_dim as usize;
+    let mut cosines = Vec::with_capacity(cos_sin_len);
+    let mut sines = Vec::with_capacity(cos_sin_len);
+    for token_index in 0..input.suffix_length as usize {
+        let raw_position = input.token_positions[token_index] as usize;
+        let absolute_position = if raw_position >= input.max_sequence_length as usize {
+            0
+        } else {
+            raw_position
+        };
+        let offset = absolute_position * input.rope_dim as usize;
+        let end = offset + input.rope_dim as usize;
+        cosines.extend_from_slice(&input.cosines[offset..end]);
+        sines.extend_from_slice(&input.sines[offset..end]);
+    }
 
-    let qkv_array = context.create_array_from(&[qkv_len], &input.qkv, "");
-    let cosines_array = context.create_array_from(&[cos_sin_len], &input.cosines, "");
-    let sines_array = context.create_array_from(&[cos_sin_len], &input.sines, "");
-    let token_positions_array = context.create_array_from(&[input.suffix_length as usize], &input.token_positions, "");
-    let rotated_queries_array = context.create_array_uninitialized(&[queries_len], T::data_type(), "");
-    let rotated_keys_array = context.create_array_uninitialized(&[keys_len], T::data_type(), "");
+    let qkv_array = if query_only {
+        context.create_array_from(&[queries_len], &input.qkv[..queries_len])
+    } else {
+        context.create_array_from(&[qkv_len], &input.qkv)
+    };
+    let cosines_array = context.create_array_from(&[cos_sin_len], &cosines);
+    let sines_array = context.create_array_from(&[cos_sin_len], &sines);
+    let mut rotated_queries = context.create_array_uninitialized(&[queries_len], T::data_type()).into_allocation();
+    let mut rotated_keys = context.create_array_uninitialized(&[keys_len], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        qkv_array.buffer().borrow().deref(),
-        cosines_array.buffer().borrow().deref(),
-        sines_array.buffer().borrow().deref(),
-        token_positions_array.buffer().borrow().deref(),
-        rotated_queries_array.buffer().borrow_mut().deref_mut(),
-        rotated_keys_array.buffer().borrow_mut().deref_mut(),
+        qkv_array.allocation(),
+        cosines_array.allocation(),
+        sines_array.allocation(),
+        &mut rotated_queries,
+        if query_only {
+            None::<&mut backend_uzu::backends::common::Allocation<B>>
+        } else {
+            Some(&mut rotated_keys)
+        },
         input.head_dim,
         input.rope_dim,
         input.num_heads,
-        input.num_groups,
+        if query_only {
+            None
+        } else {
+            Some(input.num_groups)
+        },
         input.suffix_length,
-        input.max_sequence_length,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (rotated_queries_array.as_slice().to_vec(), rotated_keys_array.as_slice().to_vec())
+    let queries = crate::common::helpers::allocation_to_vec(&rotated_queries);
+    let keys = if query_only {
+        None
+    } else {
+        Some(crate::common::helpers::allocation_to_vec(&rotated_keys))
+    };
+    (queries, keys)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
@@ -118,10 +151,12 @@ fn test_internal<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
         1e-5
     };
 
-    let (expected_queries, expected_keys) = get_output::<T, Cpu>(input);
+    let (expected_queries, expected_keys) = get_output::<T, Cpu>(input, false);
+    let expected_keys = expected_keys.expect("full rope returns keys");
 
     for_each_non_cpu_backend!(|B| {
-        let (queries, keys) = get_output::<T, B>(input);
+        let (queries, keys) = get_output::<T, B>(input, false);
+        let keys = keys.expect("full rope returns keys");
         let msg = format!("Rope queries test failed with backend={}", std::any::type_name::<B>(),);
         assert_eq_float::<T>(&expected_queries, &queries, eps, &msg);
 
@@ -170,6 +205,20 @@ fn test_nonzero_positions<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input);
 }
 
+fn test_query_only<T: ArrayElement + Float + Debug + Display>(input: &Input<T>) {
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.02f32
+    } else {
+        1e-5
+    };
+    let (expected, _) = get_output::<T, Cpu>(input, true);
+    for_each_non_cpu_backend!(|B| {
+        let (actual, _) = get_output::<T, B>(input, true);
+        let msg = format!("Rope query-only test failed with backend={}", std::any::type_name::<B>());
+        assert_eq_float::<T>(&expected, &actual, eps, &msg);
+    });
+}
+
 // f32 tests
 #[uzu_test]
 fn test_basic_f32() {
@@ -194,6 +243,21 @@ fn test_small_f32() {
 #[uzu_test]
 fn test_nonzero_positions_f32() {
     test_nonzero_positions::<f32>();
+}
+
+#[uzu_test]
+fn test_query_only_f32() {
+    test_query_only::<f32>(&get_test_data::<f32>(8, 2, 64, 64, 4, 512));
+}
+
+#[uzu_test]
+fn test_query_only_partial_f32() {
+    test_query_only::<f32>(&get_test_data::<f32>(8, 2, 256, 128, 4, 512));
+}
+
+#[uzu_test]
+fn test_query_only_bf16() {
+    test_query_only::<bf16>(&get_test_data::<bf16>(8, 2, 64, 64, 4, 512));
 }
 
 // f16 tests

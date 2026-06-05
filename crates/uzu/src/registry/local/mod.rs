@@ -43,26 +43,29 @@ impl RegistryTrait for Registry {
             })?;
 
             let mut models = Vec::new();
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = entry.map_err(|error| RegistryError::UnableToGetModels {
+                    message: error.to_string(),
+                })?;
                 let path = entry.path();
-                let Ok(file_type) = entry.file_type() else {
-                    continue;
-                };
+                let file_type = entry.file_type().map_err(|error| RegistryError::UnableToGetModels {
+                    message: error.to_string(),
+                })?;
                 if !file_type.is_dir() {
                     continue;
                 }
-                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                    continue;
-                };
+                let name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+                    RegistryError::UnableToGetModels {
+                        message: format!("Invalid local model path: {}", path.display()),
+                    }
+                })?;
 
                 let model = self.model(name);
                 let model = match self.config.resolver.as_ref() {
-                    Some(resolver) => resolver(model),
-                    None => Some(model),
+                    Some(resolver) => resolver(model)?,
+                    None => model,
                 };
-                if let Some(model) = model {
-                    models.push(model);
-                }
+                models.push(model);
             }
 
             Ok(models)

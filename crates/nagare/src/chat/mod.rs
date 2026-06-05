@@ -21,6 +21,8 @@ use shoji::{
 };
 use tokio::sync::{Mutex, mpsc};
 
+use crate::telemetry::{Telemetry, TelemetryEvent};
+
 #[bindings::export(Enumeration)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChatSessionStreamChunk {
@@ -80,32 +82,44 @@ pub struct ChatSession {
     instance: Arc<Mutex<Instance>>,
     state: Arc<Mutex<ChatSessionState>>,
     messages: Arc<Mutex<Vec<ChatMessage>>>,
+    model_id: String,
+    telemetry: Telemetry,
 }
 
 impl ChatSession {
     pub async fn new(
-        backend: &dyn Backend,
+        backend: Arc<dyn Backend>,
         config: ChatConfig,
         model: Model,
         path: Option<String>,
+        telemetry: Telemetry,
     ) -> Result<Self, ChatSessionError> {
         if !model.specializations.contains(&ModelSpecialization::Chat {}) {
             return Err(ChatSessionError::UnsupportedModel {});
         }
+        let model_id = model.identifier.clone();
         let reference = path.unwrap_or_else(|| model.identifier.clone());
 
-        let instance = if let Some(token_backend) = backend.as_chat_via_token_capable() {
-            Instance::Token(token::Session::new(token_backend, config, reference).await?)
-        } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
-            Instance::Message(message::Session::new(message_backend, config, reference).await?)
-        } else {
-            return Err(ChatSessionError::UnsupportedModel {});
-        };
+        let instance = tokio::spawn(async move {
+            if let Some(token_backend) = backend.as_chat_via_token_capable() {
+                token::Session::new(token_backend, config, reference).await.map(Instance::Token)
+            } else if let Some(message_backend) = backend.as_chat_via_message_capable() {
+                message::Session::new(message_backend, config, reference).await.map(Instance::Message)
+            } else {
+                Err(ChatSessionError::UnsupportedModel {})
+            }
+        })
+        .await
+        .map_err(|error| ChatSessionError::Backend {
+            message: error.to_string(),
+        })??;
 
         Ok(Self {
             instance: Arc::new(Mutex::new(instance)),
             state: Arc::new(Mutex::new(ChatSessionState::Idle)),
             messages: Arc::new(Mutex::new(Vec::new())),
+            model_id,
+            telemetry,
         })
     }
 }
@@ -183,6 +197,8 @@ impl ChatSession {
         let instance = self.instance.clone();
         let state = self.state.clone();
         let messages = self.messages.clone();
+        let telemetry = self.telemetry.clone();
+        let model_id = self.model_id.clone();
         let cancel_token = cancel_token_to_return.inner().clone();
 
         tokio::spawn(async move {
@@ -200,6 +216,10 @@ impl ChatSession {
                 drop(state);
             }
 
+            telemetry.report(TelemetryEvent::ModelInferenceStarted {
+                model_id: model_id.clone(),
+            });
+
             let all_messages = {
                 let mut messages = messages.lock().await;
                 messages.extend(input);
@@ -215,6 +235,7 @@ impl ChatSession {
             };
 
             let turn_index: u32 = 0;
+            let mut errored = false;
             while let Some(partial_output) = stream.next().await {
                 match partial_output {
                     Ok(backend_output) => {
@@ -240,6 +261,10 @@ impl ChatSession {
                         }
                     },
                     Err(error) => {
+                        errored = true;
+                        telemetry.report(TelemetryEvent::ModelInferenceFailed {
+                            error: serde_json::json!({ "message": error.to_string() }),
+                        });
                         let _ = sender.send(Err(error));
                         break;
                     },
@@ -252,6 +277,13 @@ impl ChatSession {
             {
                 let mut state = state.lock().await;
                 *state = ChatSessionState::Idle;
+            }
+
+            if !errored && let Some(last) = outputs.values().last() {
+                telemetry.report(TelemetryEvent::ModelInferenceFinished {
+                    model_id,
+                    stats: last.stats.clone(),
+                });
             }
         });
 

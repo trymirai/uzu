@@ -1,147 +1,122 @@
 //! RMS Normalization encodable.
 
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
-
 use thiserror::Error;
 
 use crate::{
-    DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
         kernel::{Kernels, RMSNormKernel},
     },
-    config::{NormalizationConfig, UpcastMode},
-    forward_pass::state::{ArrayId, ForwardPassState},
+    config::normalization::{NormalizationConfig, UpcastMode},
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PostLayerScalar {
+    None,
+    ScaleResidualSum(f32),
+    ScaleOutput(f32),
+}
 
 #[derive(Debug, Error)]
 pub enum RMSNormError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
     #[error("Parameter loading error: {0}")]
-    ParameterError(ParameterLoaderError<B>),
+    ParameterError(#[from] ParameterLoaderError<B>),
 }
 
 pub struct RMSNorm<B: Backend> {
     kernel: <B::Kernels as Kernels>::RMSNormKernel,
     config: NormalizationConfig,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-    shortcut_array_id: Option<ArrayId>,
-    scales_buffer: Rc<RefCell<B::DenseBuffer>>,
-    hadamard_factors_buffer: Option<B::DenseBuffer>,
-    use_sampling_range: bool,
+    scales: Allocation<B>,
+    element_count: usize,
+    input_data_type: DataType,
+    output_data_type: DataType,
+    hadamard_factors: Option<Allocation<B>>,
+    post_layer_scalar_value: f32,
 }
 
 impl<B: Backend> RMSNorm<B> {
     pub fn new(
         context: &B::Context,
         intermediate_data_type: DataType,
+        element_count: usize,
         config: NormalizationConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<B::Context>,
-        hadamard_factors_buffer: Option<B::DenseBuffer>,
-        shortcut_array_id: Option<ArrayId>,
+        parameter_tree: &ParameterTree<B>,
+        hadamard_factors: Option<Allocation<B>>,
+        use_shortcut: bool,
         residual_add: bool,
+        post_layer_scalar: PostLayerScalar,
     ) -> Result<Self, RMSNormError<B>> {
-        let scales = parameter_tree.leaf_array("scales").map_err(RMSNormError::ParameterError)?;
+        let scale_data_type = super::normalization::NORMALIZATION_SCALE_DATA_TYPE;
+        let scales = parameter_tree.leaf("scales")?.validate(&[element_count], scale_data_type)?.read_allocation()?;
 
-        let accumulation_data_type: DataType = config.accumulation_precision.into();
-        let scale_data_type: DataType = config.scale_precision.into();
+        let accumulation_data_type = super::normalization::NORMALIZATION_ACCUMULATION_DATA_TYPE;
+        let output_data_type = intermediate_data_type;
 
-        let (input_type, scales_type, output_type) = match config.upcast_mode {
-            UpcastMode::OnlyNormalization => (intermediate_data_type, scale_data_type, scale_data_type),
-            UpcastMode::FullLayer => (intermediate_data_type, scale_data_type, scale_data_type),
+        let (scale_residual_sum, scale_output, post_layer_scalar_value) = match post_layer_scalar {
+            PostLayerScalar::None => (false, false, 1.0),
+            PostLayerScalar::ScaleResidualSum(value) => (true, false, value),
+            PostLayerScalar::ScaleOutput(value) => (false, true, value),
         };
 
         let kernel = <B::Kernels as Kernels>::RMSNormKernel::new(
             context,
-            input_type,
-            scales_type,
-            output_type,
+            intermediate_data_type,
+            scale_data_type,
+            output_data_type,
             accumulation_data_type,
-            input_array_id == output_array_id,
+            false,
             config.upcast_mode == UpcastMode::FullLayer,
-            shortcut_array_id.is_some(),
+            use_shortcut,
             residual_add,
-            hadamard_factors_buffer.is_some(),
+            hadamard_factors.is_some(),
+            scale_residual_sum,
+            scale_output,
         )
         .map_err(RMSNormError::BackendError)?;
 
         Ok(Self {
             kernel,
             config,
-            input_array_id,
-            output_array_id,
-            shortcut_array_id,
-            scales_buffer: scales.buffer(),
-            hadamard_factors_buffer,
-            use_sampling_range: false,
+            scales,
+            element_count,
+            input_data_type: intermediate_data_type,
+            output_data_type,
+            hadamard_factors,
+            post_layer_scalar_value,
         })
-    }
-
-    /// When enabled, this RMSNorm only runs on `state.sampling_start()..+state.sampling_length()`.
-    /// This is useful for the final output norm before readout/sampling in prefill.
-    pub fn with_sampling_range(mut self) -> Self {
-        self.use_sampling_range = true;
-        self
     }
 
     pub fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: &Allocation<B>,
+        row_offset: usize,
+        row_count: usize,
+        shortcut: Option<&mut Allocation<B>>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
-
-        let suffix_length = input_array.shape()[0];
-        let element_count = input_array.shape()[1];
-
-        let input_elem_size = input_array.data_type().size_in_bytes();
-        let output_elem_size = output_array.data_type().size_in_bytes();
-
-        let (batch_start, batch_len) = if self.use_sampling_range {
-            (state.sampling_start(), state.sampling_length())
-        } else {
-            (0, state.active_row_count())
-        };
-
-        let batch_len = batch_len.min(suffix_length.saturating_sub(batch_start));
-        if batch_len == 0 {
-            return Ok(());
-        }
-
-        let row_size_in_bytes = element_count * input_elem_size;
-        let input_offset = batch_start * row_size_in_bytes;
-
-        let output_row_size_in_bytes = element_count * output_elem_size;
-        let output_offset = batch_start * output_row_size_in_bytes;
-
-        let input_buffer = (self.input_array_id != self.output_array_id).then(|| input_array.buffer());
-        let input_buffer_borrow = input_buffer.as_ref().map(|b| b.borrow());
-
-        let shortcut_rc = self.shortcut_array_id.map(|id| state.array(id).buffer());
-        let mut shortcut_borrow = shortcut_rc.as_ref().map(|rc| rc.borrow_mut());
-
+    ) -> Result<Allocation<B>, B::Error> {
+        let row_size = self.element_count * self.input_data_type.size_in_bytes();
+        let row_offset_bytes = row_offset * row_size;
+        let shortcut = shortcut.map(|shortcut| (shortcut, row_offset_bytes));
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[row_count, self.element_count], self.output_data_type))?;
         self.kernel.encode(
-            input_buffer_borrow.as_deref().map(|b| (b, input_offset)),
-            self.scales_buffer.borrow().deref(),
-            (output_array.buffer().borrow_mut().deref_mut(), output_offset),
-            shortcut_borrow.as_deref_mut().map(|b| (b, input_offset)),
-            self.hadamard_factors_buffer.as_ref(),
-            batch_len as u32,
-            element_count as u32,
+            Some((input, row_offset_bytes)),
+            &self.scales,
+            &mut output,
+            shortcut,
+            self.hadamard_factors.as_ref(),
+            row_count as u32,
+            self.element_count as u32,
             self.config.epsilon,
             self.config.scale_offset.unwrap_or(0.0),
+            self.post_layer_scalar_value,
             encoder,
         );
-        Ok(())
+        Ok(output)
     }
 }

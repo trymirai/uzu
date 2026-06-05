@@ -1,19 +1,23 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::ActivationKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     data: Box<[T]>,
@@ -38,30 +42,24 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let n = input.data.len();
 
     if input.in_place {
-        let output_array = context.create_array_from(&[n], &input.data, "");
+        let mut output_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
         kernel.encode(
-            Option::<&B::DenseBuffer>::None,
-            output_array.buffer().borrow_mut().deref_mut(),
+            None::<&backend_uzu::backends::common::Allocation<B>>,
+            &mut output_allocation,
             n as u32,
             input.act_type,
             &mut encoder,
         );
         encoder.end_encoding().submit().wait_until_completed().unwrap();
-        output_array.as_slice().to_vec()
+        allocation_to_vec::<B, T>(&output_allocation)
     } else {
-        let input_array = context.create_array_from(&[n], &input.data, "");
-        let output_array = context.create_array_uninitialized(&[n], T::data_type(), "");
+        let input_allocation = alloc_allocation_with_data::<B, T>(&context, &input.data);
+        let mut output_allocation = alloc_allocation::<B, T>(&context, n);
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to get encoder");
-        kernel.encode(
-            Some(input_array.buffer().borrow().deref()),
-            output_array.buffer().borrow_mut().deref_mut(),
-            n as u32,
-            input.act_type,
-            &mut encoder,
-        );
+        kernel.encode(Some(&input_allocation), &mut output_allocation, n as u32, input.act_type, &mut encoder);
         encoder.end_encoding().submit().wait_until_completed().unwrap();
-        output_array.as_slice().to_vec()
+        allocation_to_vec::<B, T>(&output_allocation)
     }
 }
 
@@ -187,33 +185,49 @@ fn test_silu_in_place_bf16() {
 // GELU out-of-place tests
 #[uzu_test]
 fn test_gelu_f32() {
-    test_activation::<f32>(ActivationType::GELU, false);
+    test_activation::<f32>(ActivationType::GELUApprox, false);
 }
 
 #[uzu_test]
 fn test_gelu_f16() {
-    test_activation::<f16>(ActivationType::GELU, false);
+    test_activation::<f16>(ActivationType::GELUApprox, false);
 }
 
 #[uzu_test]
 fn test_gelu_bf16() {
-    test_activation::<bf16>(ActivationType::GELU, false);
+    test_activation::<bf16>(ActivationType::GELUApprox, false);
+}
+
+// Exact GELU out-of-place tests
+#[uzu_test]
+fn test_gelu_exact_f32() {
+    test_activation::<f32>(ActivationType::GELUExact, false);
+}
+
+#[uzu_test]
+fn test_gelu_exact_f16() {
+    test_activation::<f16>(ActivationType::GELUExact, false);
+}
+
+#[uzu_test]
+fn test_gelu_exact_bf16() {
+    test_activation::<bf16>(ActivationType::GELUExact, false);
 }
 
 // GELU in-place tests
 #[uzu_test]
 fn test_gelu_in_place_f32() {
-    test_activation::<f32>(ActivationType::GELU, true);
+    test_activation::<f32>(ActivationType::GELUApprox, true);
 }
 
 #[uzu_test]
 fn test_gelu_in_place_f16() {
-    test_activation::<f16>(ActivationType::GELU, true);
+    test_activation::<f16>(ActivationType::GELUApprox, true);
 }
 
 #[uzu_test]
 fn test_gelu_in_place_bf16() {
-    test_activation::<bf16>(ActivationType::GELU, true);
+    test_activation::<bf16>(ActivationType::GELUApprox, true);
 }
 
 // Large SILU tests
@@ -235,17 +249,17 @@ fn test_silu_large_bf16() {
 // Large GELU tests
 #[uzu_test]
 fn test_gelu_large_f32() {
-    test_activation_large::<f32>(ActivationType::GELU, false);
+    test_activation_large::<f32>(ActivationType::GELUApprox, false);
 }
 
 #[uzu_test]
 fn test_gelu_large_f16() {
-    test_activation_large::<f16>(ActivationType::GELU, false);
+    test_activation_large::<f16>(ActivationType::GELUApprox, false);
 }
 
 #[uzu_test]
 fn test_gelu_large_bf16() {
-    test_activation_large::<bf16>(ActivationType::GELU, false);
+    test_activation_large::<bf16>(ActivationType::GELUApprox, false);
 }
 
 // Large in-place tests
@@ -256,5 +270,5 @@ fn test_silu_in_place_large_f32() {
 
 #[uzu_test]
 fn test_gelu_in_place_large_f32() {
-    test_activation_large::<f32>(ActivationType::GELU, true);
+    test_activation_large::<f32>(ActivationType::GELUApprox, true);
 }

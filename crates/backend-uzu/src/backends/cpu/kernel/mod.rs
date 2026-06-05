@@ -1,22 +1,23 @@
-#![allow(unused)]
+use crate::backends::{common::Kernels, cpu::Cpu};
+
 mod activation;
 mod attention;
 mod audio;
 mod delta_net;
 mod embedding;
+mod gated_act_mul;
 mod hadamard_transform;
 mod kv_cache_update;
 mod layer_norm;
-
+mod logit_soft_cap;
 mod matmul;
-mod mlp;
 mod moe;
 mod pooling;
-mod quant_matmul;
 mod rms_norm;
 mod rope;
 mod sampling;
 mod short_conv;
+mod softmax;
 mod ssm;
 mod tensor_add_bias;
 mod tensor_add_scale;
@@ -26,6 +27,11 @@ mod token_copy;
 
 include!(concat!(env!("OUT_DIR"), "/cpu/dsl.rs"));
 
-/// Public re-export of the NF4-E4M3 CPU reference helpers for the
-/// bench/correctness test crate (NF4 GPU kernels are bench-only).
-pub use quant_matmul::nf4_e4m3;
+pub struct CpuKernels;
+
+impl Kernels for CpuKernels {
+    type Backend = Cpu;
+
+    autogen_kernels!();
+    type MatmulKernel = matmul::MatmulCpuKernel;
+}

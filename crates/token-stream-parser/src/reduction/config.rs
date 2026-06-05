@@ -138,10 +138,10 @@ impl ReductionParserConfig {
         tokens: &mut Vec<TokenValue>,
     ) {
         for group in groups {
-            if let Some(open) = group.open_token() {
-                if !tokens.contains(open) {
-                    tokens.push(open.clone());
-                }
+            if let Some(open) = group.open_token()
+                && !tokens.contains(open)
+            {
+                tokens.push(open.clone());
             }
             if let ReductionParserGroup::Bounded {
                 close_tokens,
@@ -170,12 +170,12 @@ fn validate_sibling_groups(groups: &[ReductionParserGroup]) -> Result<(), Reduct
             });
         }
 
-        if let Some(open_token) = group.open_token() {
-            if !seen_open_tokens.insert(open_token) {
-                return Err(ReductionParserError::DuplicateOpenToken {
-                    token: open_token.clone(),
-                });
-            }
+        if let Some(open_token) = group.open_token()
+            && !seen_open_tokens.insert(open_token)
+        {
+            return Err(ReductionParserError::DuplicateOpenToken {
+                token: open_token.clone(),
+            });
         }
 
         validate_sibling_groups(group.groups())?;

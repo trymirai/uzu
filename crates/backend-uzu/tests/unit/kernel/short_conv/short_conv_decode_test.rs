@@ -1,14 +1,12 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::ShortConvDecodeKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -17,8 +15,8 @@ use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     in_proj: Box<[T]>,
-    w: Box<[T]>,
-    b: Option<Box<[T]>>,
+    w: Box<[f32]>,
+    b: Option<Box<[f32]>>,
     state: Box<[T]>,
     suffix_len: u32,
     kernel_size: u32,
@@ -37,51 +35,40 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvDecodeKernel::new(
         &context,
         T::data_type(),
+        DataType::F32,
         has_bias,
         state_in_place,
     )
     .expect("Failed to create ShortConvDecodeKernel");
 
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
-    let w_array = context.create_array_from(&[input.w.len()], &input.w, "");
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
+    let w_array = context.create_array_from(&[input.w.len()], &input.w);
+    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let out_array = context.create_array_uninitialized(&[out_size], T::data_type(), "");
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
 
     let state_size = input.model_dim as usize * input.state_stride as usize;
-    let next_state_array = if state_in_place {
-        if state_size > 0 {
-            context.create_array_from(&[state_size], &input.state, "")
-        } else {
-            context.create_array_uninitialized(&[1], T::data_type(), "")
-        }
+    let state_allocation_size = state_size.max(1);
+    let state_data: Vec<T> =
+        input.state.iter().copied().chain(std::iter::repeat(T::zero())).take(state_allocation_size).collect();
+
+    let mut next_state = if state_in_place {
+        context.create_array_from(&[state_allocation_size], &state_data).into_allocation()
     } else {
-        context.create_array_uninitialized(&[state_size.max(1)], T::data_type(), "")
+        context.create_array_uninitialized(&[state_allocation_size], T::data_type()).into_allocation()
     };
 
-    let state_array = if state_in_place {
-        None
-    } else if state_size > 0 {
-        Some(context.create_array_from(&[state_size], &input.state, ""))
-    } else {
-        Some(context.create_array_uninitialized(&[1], T::data_type(), ""))
-    };
-
-    let bias_buf_rc = b_array.as_ref().map(|b| b.buffer());
-    let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
-
-    let state_buf_rc = state_array.as_ref().map(|s| s.buffer());
-    let state_buf_borrow = state_buf_rc.as_ref().map(|rc| rc.borrow());
+    let state_array = (!state_in_place).then(|| context.create_array_from(&[state_allocation_size], &state_data));
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        in_proj_array.buffer().borrow().deref(),
-        w_array.buffer().borrow().deref(),
-        bias_buf_borrow.as_deref(),
-        state_buf_borrow.as_deref(),
-        out_array.buffer().borrow_mut().deref_mut(),
-        next_state_array.buffer().borrow_mut().deref_mut(),
+        in_proj_array.allocation(),
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        state_array.as_ref().map(|state| state.allocation()),
+        &mut out,
+        &mut next_state,
         input.suffix_len,
         input.kernel_size,
         input.in_proj_stride,
@@ -91,7 +78,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (out_array.as_slice().to_vec(), next_state_array.as_slice().to_vec())
+    (crate::common::helpers::allocation_to_vec(&out), crate::common::helpers::allocation_to_vec(&next_state))
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(
@@ -118,11 +105,11 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
 
     // w[channel * kernel_size + tap]
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.1 * (tap as f32) - 0.01 * (ch as f32) + 0.5;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
@@ -136,9 +123,9 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.01 * (ch as f32) + 0.1).unwrap();
+            bias[ch] = 0.01 * (ch as f32) + 0.1;
         }
         Some(bias.into_boxed_slice())
     } else {
@@ -180,11 +167,11 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         in_proj[2 * model_dim + ch] = T::from(x_in).unwrap();
     }
 
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.25 * (tap as f32) + 0.1;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
@@ -197,9 +184,9 @@ fn get_test_data_edge<T: ArrayElement + Float>(
     }
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.005 * (ch as f32) + 0.01).unwrap();
+            bias[ch] = 0.005 * (ch as f32) + 0.01;
         }
         Some(bias.into_boxed_slice())
     } else {

@@ -67,6 +67,6 @@ impl Serialize for ChatRole {
 impl<'d> Deserialize<'d> for ChatRole {
     fn deserialize<D: Deserializer<'d>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Ok(ChatRole::from_str(&name).map_err(de::Error::custom)?)
+        ChatRole::from_str(&name).map_err(de::Error::custom)
     }
 }

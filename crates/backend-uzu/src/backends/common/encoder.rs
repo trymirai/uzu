@@ -1,11 +1,34 @@
-use std::{ops::Range, time::Duration};
+use std::{
+    ops::{Bound, Range, RangeBounds},
+    time::Duration,
+};
 
 use crate::backends::common::{
-    AccessFlags, Allocation, AllocationPool, AllocationType, Backend, BufferGpuAddressRangeExt, CommandBuffer,
-    CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
-    Context,
+    AccessFlags, Allocation, AllocationPool, AllocationType, AsBufferRangeMut, AsBufferRangeRef, Backend, Buffer,
+    BufferGpuAddressRangeExt, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
+    CommandBufferInitial, CommandBufferPending, Context,
     hazard_tracker::{Access, HazardTracker},
 };
+
+fn resolve_copy_range(
+    range: impl RangeBounds<usize>,
+    allocation_len: usize,
+    label: &str,
+) -> Range<usize> {
+    let start = match range.start_bound() {
+        Bound::Included(&value) => value,
+        Bound::Excluded(&value) => value.checked_add(1).expect("copy range start overflow"),
+        Bound::Unbounded => 0,
+    };
+    let end = match range.end_bound() {
+        Bound::Included(&value) => value.checked_add(1).expect("copy range end overflow"),
+        Bound::Excluded(&value) => value,
+        Bound::Unbounded => allocation_len,
+    };
+    assert!(start <= end, "{label} copy range start exceeds end");
+    assert!(end <= allocation_len, "{label} copy range exceeds allocation");
+    start..end
+}
 
 pub struct Encoder<'encoding, B: Backend> {
     context: &'encoding B::Context,
@@ -56,39 +79,50 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         )
     }
 
-    pub fn encode_copy(
+    pub fn encode_copy<
+        Src: AsBufferRangeRef<Buffer: Buffer<Backend = B>>,
+        Dst: AsBufferRangeMut<Buffer: Buffer<Backend = B>>,
+    >(
         &mut self,
-        src: &B::DenseBuffer,
-        src_range: Range<usize>,
-        dst: &mut B::DenseBuffer,
-        dst_range: Range<usize>,
+        src: &Src,
+        src_range: impl RangeBounds<usize>,
+        dst: &mut Dst,
+        dst_range: impl RangeBounds<usize>,
     ) {
-        let size = src_range.end - src_range.start;
-        debug_assert_eq!(size, dst_range.end - dst_range.start);
+        let src_buffer_range = src.as_buffer_range_ref();
+        let dst_buffer_range = dst.as_buffer_range_mut();
+        let src_range = resolve_copy_range(src_range, src_buffer_range.range().len(), "source");
+        let dst_range = resolve_copy_range(dst_range, dst_buffer_range.range().len(), "destination");
+        let byte_len = src_range.len();
+        assert_eq!(byte_len, dst_range.len(), "copy range lengths must match");
+        assert!(byte_len > 0, "zero-sized copies are not allowed");
+        let src_buffer_range = src_buffer_range.subrange(src_range);
+        let dst_buffer_range = dst_buffer_range.subrange(dst_range);
         self.access(&[
             Access {
-                range: src.gpu_address_subrange(src_range.clone()),
+                range: src_buffer_range.buffer().gpu_address_subrange(src_buffer_range.range()),
                 flags: AccessFlags::copy_read(),
             },
             Access {
-                range: dst.gpu_address_subrange(dst_range.clone()),
+                range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
                 flags: AccessFlags::copy_write(),
             },
         ]);
-        self.command_buffer.encode_copy(src, src_range, dst, dst_range);
+        self.command_buffer.encode_copy(src_buffer_range, dst_buffer_range);
     }
 
-    pub fn encode_fill(
+    pub fn encode_fill<Dst: AsBufferRangeMut<Buffer: Buffer<Backend = B>>>(
         &mut self,
-        dst: &mut B::DenseBuffer,
-        range: Range<usize>,
+        dst: &mut Dst,
         value: u8,
     ) {
+        let dst_buffer_range = dst.as_buffer_range_mut();
+        assert!(!dst_buffer_range.range().is_empty(), "zero-sized fills are not allowed");
         self.access(&[Access {
-            range: dst.gpu_address_subrange(range.clone()),
+            range: dst_buffer_range.buffer().gpu_address_subrange(dst_buffer_range.range()),
             flags: AccessFlags::copy_write(),
         }]);
-        self.command_buffer.encode_fill(dst, range, value);
+        self.command_buffer.encode_fill(dst_buffer_range, value);
     }
 
     pub fn access(
@@ -100,22 +134,6 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
         }
     }
 
-    pub fn encode_wait_for_event(
-        &mut self,
-        event: &B::Event,
-        value: u64,
-    ) {
-        self.command_buffer.encode_wait_for_event(event, value);
-    }
-
-    pub fn encode_signal_event(
-        &mut self,
-        event: &B::Event,
-        value: u64,
-    ) {
-        self.command_buffer.encode_signal_event(event, value);
-    }
-
     pub fn add_completion_handler(
         &mut self,
         handler: impl FnOnce(Result<&<B::CommandBuffer as CommandBuffer>::Completed, B::Error>) + Send + 'static,
@@ -125,6 +143,10 @@ impl<'encoding, B: Backend> Encoder<'encoding, B> {
 
     pub fn as_command_buffer_mut(&mut self) -> &mut <B::CommandBuffer as CommandBuffer>::Encoding {
         &mut self.command_buffer
+    }
+
+    pub fn context(&self) -> &'encoding B::Context {
+        self.context
     }
 
     pub fn end_encoding(self) -> Executable<B> {

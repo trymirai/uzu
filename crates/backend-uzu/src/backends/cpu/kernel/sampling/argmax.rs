@@ -1,8 +1,8 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::argmax::ArgmaxPair};
+use crate::{array::ArrayElement, backends::common::gpu_types::argmax::ArgmaxPair};
 
 fn argmax_is_better(
     a: &ArgmaxPair,
@@ -84,6 +84,7 @@ pub fn argmax_final(
     for batch_idx in 0..batch_size as usize {
         unsafe {
             let pair = *partial_results.add(batch_idx);
+            assert!(pair.index < vocab_size);
             *final_tokens.add(batch_idx) = pair.index;
         }
     }

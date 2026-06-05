@@ -45,7 +45,7 @@ pub fn build(
         request.reasoning_effort = Some(effort);
     }
     if let Some(token_limit) = config.token_limit {
-        request.max_completion_tokens = Some(token_limit as u32);
+        request.max_completion_tokens = Some(token_limit);
     }
     match &config.sampling_policy {
         SamplingPolicy::Default {} => {},

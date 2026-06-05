@@ -1,9 +1,16 @@
 #![cfg(all(metal_backend, grammar_xgrammar))]
 
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::path::PathBuf;
 
-use backend_uzu::{Array, DataType, backends::metal::Metal};
-use metal::{MTLDevice, MTLDeviceExt, MTLResourceOptions};
+use backend_uzu::{
+    array::Array,
+    backends::{
+        common::{AllocationType, Backend, Context},
+        metal::Metal,
+    },
+    data_type::DataType,
+};
+use metal::MTLDevice;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
@@ -53,16 +60,18 @@ fn person_schema_metal_bitmask() {
     };
     let device_id = device.registry_id() as i32;
     let batch: usize = 1;
-    let vocab = tokenizer_info.vocab_size() as usize;
+    let vocab = tokenizer_info.vocab_size();
     // xgrammar uses a dynamic bitset over the vocab, packed into i32 words
-    let buffer_size = (vocab + 31) / 32; // number of i32s required
+    let buffer_size = vocab.div_ceil(32); // number of i32s required
     let shape = [batch, buffer_size];
 
     // xgrammar expects an int32 mask tensor of shape [buffer_size]
     let elems = batch * buffer_size;
     let bytes = elems * core::mem::size_of::<i32>();
-    let buffer = device.new_buffer(bytes, MTLResourceOptions::STORAGE_MODE_SHARED).expect("Failed to create buffer");
-    let metal_bitmask = unsafe { Array::<Metal>::from_parts(Rc::new(RefCell::new(buffer)), 0, &shape, DataType::I32) };
+    let context = <Metal as Backend>::Context::new().expect("Metal context");
+    let allocation =
+        context.create_allocation(bytes.max(1), AllocationType::Global).expect("Failed to create allocation");
+    let metal_bitmask = unsafe { Array::<Metal>::from_allocation(allocation, 0, &shape, DataType::I32) };
 
     let mut shape_i64 = [buffer_size as i64];
     let mut bitmask_tensor = DLTensor {

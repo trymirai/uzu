@@ -65,7 +65,7 @@ inline void moe_scatter_buckets_impl(
           if (ue >= e0 && ue < e0 + tile_e) {
             const uint te = ue - e0;
             atomic_fetch_add_explicit(
-                &sg_counts[thread_context.threadgroup_index * TILE_E + te],
+                &sg_counts[thread_context.simdgroup_index * TILE_E + te],
                 1u,
                 memory_order_relaxed
             );
@@ -104,7 +104,7 @@ inline void moe_scatter_buckets_impl(
 
     // Phase 3: deterministic write with 32-lane sequencing, no device atomics
     for (uint step = 0; step < thread_context.simdgroup_size; ++step) {
-      if (thread_context.simdgroup_index == step) {
+      if (thread_context.simd_lane_id == step) {
         const uint t = t_start + lid;
         if (t < t_end) {
           const uint base = t * K;
@@ -118,7 +118,7 @@ inline void moe_scatter_buckets_impl(
                 const uint base_idx_block =
                     (block_id * num_tiles + tile_id) * TILE_E + te;
                 const uint idx_sg_te =
-                    thread_context.threadgroup_index * TILE_E + te;
+                    thread_context.simdgroup_index * TILE_E + te;
                 const uint local = atomic_fetch_add_explicit(
                     &sg_counts[idx_sg_te],
                     1u,

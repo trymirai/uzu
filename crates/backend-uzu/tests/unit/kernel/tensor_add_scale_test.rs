@@ -1,19 +1,23 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TensorAddScaleKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     input: Box<[T]>,
@@ -33,23 +37,29 @@ fn get_input<T: ArrayElement + Float>(
     (input, bias)
 }
 
-fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
+fn get_output<T: ArrayElement + Float, B: Backend>(
+    input: &Input<T>,
+    in_place: bool,
+) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::TensorAddScaleKernel::new(&context, T::data_type())
+    let kernel = <<B as Backend>::Kernels as Kernels>::TensorAddScaleKernel::new(&context, T::data_type(), in_place)
         .expect("Failed to create TensorAddScaleKernel");
 
     let length = input.length as usize;
     let num_cols = input.num_cols as usize;
-    let input_array = context.create_array_from(&[length], &input.input, "");
-    let bias_array = context.create_array_from(&[num_cols], &input.bias, "");
-    let output_array = context.create_array_uninitialized(&[length], T::data_type(), "");
+    let input_allocation = (!in_place).then(|| alloc_allocation_with_data::<B, T>(&context, &input.input[..length]));
+    let bias_allocation = alloc_allocation_with_data::<B, T>(&context, &input.bias[..num_cols]);
+    let mut output_allocation = match in_place {
+        true => alloc_allocation_with_data::<B, T>(&context, &input.input[..length]),
+        false => alloc_allocation::<B, T>(&context, length),
+    };
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        input_array.buffer().borrow().deref(),
-        bias_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        input_allocation.as_ref(),
+        &bias_allocation,
+        &mut output_allocation,
         input.num_cols,
         input.length,
         input.scale,
@@ -57,7 +67,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
@@ -73,7 +83,7 @@ fn get_test_data_basic<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
         scale: 0.5,
     };
 
-    let expected = get_output::<T, Cpu>(&input);
+    let expected = get_output::<T, Cpu>(&input, false);
     (input, expected)
 }
 
@@ -90,7 +100,7 @@ fn get_test_data_large<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
         scale: 2.0,
     };
 
-    let expected = get_output::<T, Cpu>(&input);
+    let expected = get_output::<T, Cpu>(&input, false);
     (input, expected)
 }
 
@@ -109,7 +119,7 @@ fn get_test_data_edge<T: ArrayElement + Float>() -> (Input<T>, Vec<T>) {
         scale: 1.0,
     };
 
-    let expected = get_output::<T, Cpu>(&input);
+    let expected = get_output::<T, Cpu>(&input, false);
     (input, expected)
 }
 
@@ -121,7 +131,7 @@ fn test_basic<T: ArrayElement + Float + Debug + Display>() {
     };
     let (input, expected) = get_test_data_basic::<T>();
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input);
+        let output = get_output::<T, B>(&input, false);
         assert_eq_float::<T>(
             &expected,
             &output,
@@ -139,7 +149,7 @@ fn test_large<T: ArrayElement + Float + Debug + Display>() {
     };
     let (input, expected) = get_test_data_large::<T>();
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input);
+        let output = get_output::<T, B>(&input, false);
         assert_eq_float::<T>(
             &expected,
             &output,
@@ -157,12 +167,30 @@ fn test_edge<T: ArrayElement + Float + Debug + Display>() {
     };
     let (input, expected) = get_test_data_edge::<T>();
     for_each_non_cpu_backend!(|B| {
-        let output = get_output::<T, B>(&input);
+        let output = get_output::<T, B>(&input, false);
         assert_eq_float::<T>(
             &expected,
             &output,
             eps,
             &format!("TensorAddScale edge test failed for backend {}", std::any::type_name::<B>()),
+        );
+    });
+}
+
+fn test_in_place<T: ArrayElement + Float + Debug + Display>() {
+    let eps = if matches!(T::data_type(), DataType::F16 | DataType::BF16) {
+        0.05f32
+    } else {
+        1e-5
+    };
+    let (input, expected) = get_test_data_basic::<T>();
+    for_each_non_cpu_backend!(|B| {
+        let output = get_output::<T, B>(&input, true);
+        assert_eq_float::<T>(
+            &expected,
+            &output,
+            eps,
+            &format!("TensorAddScale in-place test failed for backend {}", std::any::type_name::<B>()),
         );
     });
 }
@@ -213,4 +241,19 @@ fn test_edge_f16() {
 #[uzu_test]
 fn test_edge_bf16() {
     test_edge::<bf16>();
+}
+
+#[uzu_test]
+fn test_in_place_f32() {
+    test_in_place::<f32>();
+}
+
+#[uzu_test]
+fn test_in_place_f16() {
+    test_in_place::<f16>();
+}
+
+#[uzu_test]
+fn test_in_place_bf16() {
+    test_in_place::<bf16>();
 }

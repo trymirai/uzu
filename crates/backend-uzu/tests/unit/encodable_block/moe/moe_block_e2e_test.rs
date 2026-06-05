@@ -1,19 +1,21 @@
 use backend_uzu::{
-    DataType,
     backends::common::{
-        Backend, DenseBuffer, Encoder, Kernels,
+        Backend, Encoder, Kernels,
         gpu_types::{ActivationType, activation_silu_alpha},
         kernel::{
             MoeBlockBasesFromPartialsKernel, MoeCountsOffsetsFusedKernel, MoeFinalizeKernel, MoeRouterTopKKernel,
             MoeScatterBucketsMapKernel,
-            moe::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGatherArguments, MoeGatherKernels},
         },
     },
+    data_type::DataType,
 };
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::encodable_block::mlp::moe::tests::common::helpers::{alloc_buffer, alloc_buffer_with_data, create_context};
+use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather};
+use crate::common::helpers::{
+    alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
+};
 
 fn moe_cpu_reference(
     x: &[bf16],
@@ -104,10 +106,10 @@ fn moe_cpu_reference(
             let mut hidden = vec![0.0f32; d_ff];
             for i in 0..d_ff {
                 hidden[i] = match gating_code {
-                    0 => ActivationType::GELU.activate(up_out[i]),
+                    0 => ActivationType::GELUApprox.activate(up_out[i]),
                     1 => activation_silu_alpha(up_out[i], silu_alpha),
                     2 => activation_silu_alpha(gate_out[i], silu_alpha) * up_out[i],
-                    3 => ActivationType::GELU.activate(gate_out[i]) * up_out[i],
+                    3 => ActivationType::GELUApprox.activate(gate_out[i]) * up_out[i],
                     _ => activation_silu_alpha(gate_out[i], silu_alpha) * up_out[i], // fallback to SwiGLU
                 };
             }
@@ -282,47 +284,37 @@ fn run_moe_parity_test_internal<B: Backend>(
     let down_biases: Vec<bf16> = (0..e * d_model).map(|_| bf16::from_f32(rng.random_range(-0.1..0.1))).collect();
 
     // Create Metal buffers
-    let x_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &x);
-    let router_w_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_weight_bf16);
-    let router_b_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &router_bias_bf16);
-    let w13_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w13_gpu);
-    let w2_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &w2_gpu);
-    let up_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &up_biases);
-    let down_biases_buf = alloc_buffer_with_data::<B, bf16>(&ctx, &down_biases);
+    let x_buf = alloc_allocation_with_data::<B, bf16>(ctx, &x);
+    let router_w_buf = alloc_allocation_with_data::<B, bf16>(ctx, &router_weight_bf16);
+    let router_b_buf = alloc_allocation_with_data::<B, bf16>(ctx, &router_bias_bf16);
+    let w13_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w13_gpu);
+    let w2_buf = alloc_allocation_with_data::<B, bf16>(ctx, &w2_gpu);
+    let up_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &up_biases);
+    let down_biases_buf = alloc_allocation_with_data::<B, bf16>(ctx, &down_biases);
 
     // Allocate intermediate buffers (max capacity)
     let max_sumk = t * k;
-    let mut topk_ids_buf = alloc_buffer::<B, i32>(&ctx, t * k);
-    let mut topk_probs_buf = alloc_buffer::<B, bf16>(&ctx, t * k);
-    let mut offsets_buf = alloc_buffer::<B, u32>(&ctx, e + 1);
-    let mut sumk_buf = alloc_buffer::<B, u32>(&ctx, 1);
-    let num_blocks = ((t + 255) / 256).max(1);
-    let num_tiles = ((e + 512 - 1) / 512).max(1);
+    let mut topk_ids_buf = alloc_allocation::<B, i32>(ctx, t * k);
+    let mut topk_probs_buf = alloc_allocation::<B, bf16>(ctx, t * k);
+    let mut offsets_buf = alloc_allocation::<B, u32>(ctx, e + 1);
+    let mut sumk_buf = alloc_allocation::<B, u32>(ctx, 1);
+    let num_blocks = t.div_ceil(256).max(1);
+    let num_tiles = e.div_ceil(512).max(1);
     let entries = num_blocks * num_tiles * 512usize;
-    let mut partials_buf = alloc_buffer::<B, u32>(&ctx, entries);
-    let mut block_bases_buf = alloc_buffer::<B, u32>(&ctx, entries);
-    let mut block_alloc_buf = alloc_buffer::<B, u32>(&ctx, entries);
-    let mut bucketed_ids_buf = alloc_buffer::<B, i32>(&ctx, max_sumk);
-    let mut bucketed_probs_buf = alloc_buffer::<B, bf16>(&ctx, max_sumk);
-    let mut tok2row_buf = alloc_buffer::<B, i32>(&ctx, t * k);
-    let mut x_perm_buf = alloc_buffer::<B, bf16>(&ctx, max_sumk * d_model);
-    let mut y_partial_buf = alloc_buffer::<B, bf16>(&ctx, max_sumk * d_model);
-    let mut y_out_buf = alloc_buffer::<B, bf16>(&ctx, t * d_model);
-    const BLOCK_M_DECODE: usize = 4; // matches two-pass decode kernel configuration
-    let h_blocks_decode = (d_ff + BLOCK_M_DECODE - 1) / BLOCK_M_DECODE;
-    let max_tiles = max_sumk * h_blocks_decode;
-    let mut tile_counts_buf = alloc_buffer::<B, u32>(&ctx, e);
-    let mut tile_offsets_buf = alloc_buffer::<B, u32>(&ctx, e + 1);
-    let mut tile_map_buf = alloc_buffer::<B, u32>(&ctx, max_tiles * 3);
-    let mut total_tiles_buf = alloc_buffer::<B, u32>(&ctx, 8);
-    let mut dispatch_args_buf = alloc_buffer::<B, u32>(&ctx, 3);
+    let mut partials_buf = alloc_allocation::<B, u32>(ctx, entries);
+    let mut block_bases_buf = alloc_allocation::<B, u32>(ctx, entries);
+    let mut block_alloc_buf = alloc_allocation::<B, u32>(ctx, entries);
+    let mut bucketed_ids_buf = alloc_allocation::<B, i32>(ctx, max_sumk);
+    let mut bucketed_probs_buf = alloc_allocation::<B, bf16>(ctx, max_sumk);
+    let mut tok2row_buf = alloc_allocation::<B, i32>(ctx, t * k);
+    let mut y_out_buf = alloc_allocation::<B, bf16>(ctx, t * d_model);
 
     // Encode ALL kernels in one command buffer
     eprintln!("[E2E] Encoding entire MoE pipeline in single command buffer...");
     let mut encoder = Encoder::new(ctx).expect("Failed to create encoder");
 
     // Router + TopK (fused kernel)
-    let router_topk = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(&ctx, DataType::BF16).expect("router+topk");
+    let router_topk = <B::Kernels as Kernels>::MoeRouterTopKKernel::new(ctx, DataType::BF16).expect("router+topk");
     router_topk.encode(
         &x_buf,
         &router_w_buf,
@@ -337,7 +329,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         &mut encoder,
     );
 
-    let fused_kernel = <B::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(&ctx).expect("fused kernel");
+    let fused_kernel = <B::Kernels as Kernels>::MoeCountsOffsetsFusedKernel::new(ctx).expect("fused kernel");
     fused_kernel.encode(
         &topk_ids_buf,
         &mut offsets_buf,
@@ -350,7 +342,7 @@ fn run_moe_parity_test_internal<B: Backend>(
     );
 
     let scatter_bases_kernel =
-        <B::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(&ctx).expect("scatter bases kernel");
+        <B::Kernels as Kernels>::MoeBlockBasesFromPartialsKernel::new(ctx).expect("scatter bases kernel");
     scatter_bases_kernel.encode(
         &partials_buf,
         &mut block_bases_buf,
@@ -362,7 +354,7 @@ fn run_moe_parity_test_internal<B: Backend>(
         &mut encoder,
     );
 
-    let scatter_map_kernel = <B::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(&ctx, DataType::BF16)
+    let scatter_map_kernel = <B::Kernels as Kernels>::MoeScatterBucketsMapKernel::new(ctx, DataType::BF16)
         .expect("Failed to create <<Metal as Backend>::Kernels as Kernels>::MoeScatterBucketsMapKernel");
     scatter_map_kernel.encode(
         &topk_ids_buf,
@@ -381,59 +373,32 @@ fn run_moe_parity_test_internal<B: Backend>(
         &mut encoder,
     );
 
-    let gather = MoeGatherKernels::<B>::new(&ctx).expect("gather");
-    gather.encode(
-        &mut encoder,
-        DataType::BF16,
-        MoeGatherArguments {
-            x_buffer: &x_buf,
-            bucketed_ids_buffer: &bucketed_ids_buf,
-            x_perm_buffer: &mut x_perm_buf,
-            sumk_buffer: &sumk_buf,
-            t,
-            k,
-            d_model,
-        },
-    );
+    let gather = MoeGather::<B>::new(ctx, DataType::BF16).expect("gather");
+    let x_perm_buf = gather.encode(&x_buf, &bucketed_ids_buf, &sumk_buf, t, k, d_model, &mut encoder).expect("gather");
 
-    // Additional buffers for 2-pass
     let total_rows = t * k;
-    let mut hidden_buf = alloc_buffer::<B, f32>(&ctx, total_rows * d_ff);
-    let mut row_expert_map_buf = alloc_buffer::<B, u32>(&ctx, total_rows);
 
-    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(&ctx).expect("experts");
-    let num_tiles_k = ((d_ff + 64 - 1) / 64) as u32;
+    let experts = MoeExpertsTwoPassPrefillBlock::<B>::new(ctx, DataType::BF16, gating_code).expect("experts");
     let args = MoeExpertsTwoPassArguments {
-        x_perm_buffer: &x_perm_buf,
+        x_perm: &x_perm_buf,
         expert_offsets: &offsets_buf,
-        row_expert_map: &mut row_expert_map_buf,
-        hidden_buffer: &mut hidden_buf,
-        output_buffer: &mut y_partial_buf,
         w13_all: &w13_buf,
         w2_all: &w2_buf,
         up_biases: &up_biases_buf,
         down_biases: &down_biases_buf,
-        tile_counts: &mut tile_counts_buf,
-        tile_offsets: &mut tile_offsets_buf,
-        tile_map: &mut tile_map_buf,
-        total_tiles: &mut total_tiles_buf,
-        dispatch_args: &mut dispatch_args_buf,
         total_rows,
         d_model,
         d_ff,
-        e,
-        num_tiles_k,
-        gating_code,
+        num_routed_experts: e,
         gate_clip_min: gate_clip.0,
         gate_clip_max: gate_clip.1,
         up_clip_min: up_clip.0,
         up_clip_max: up_clip.1,
         silu_alpha,
-        data_type: DataType::BF16,
     };
-    experts.encode(&mut encoder, args);
+    let y_partial_buf = experts.encode(args, &mut encoder).expect("failed to encode MoE experts");
 
-    let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(&ctx, DataType::BF16).expect("finalize");
+    let finalize = <B::Kernels as Kernels>::MoeFinalizeKernel::new(ctx, DataType::BF16).expect("finalize");
     finalize.encode(
         &tok2row_buf,
         &topk_probs_buf,
@@ -446,11 +411,11 @@ fn run_moe_parity_test_internal<B: Backend>(
     );
 
     eprintln!("[E2E] All kernels encoded. Committing ONCE and waiting...");
-    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
     eprintln!("[E2E] GPU execution completed");
 
     // Read GPU output
-    let y_out_bf16 = unsafe { std::slice::from_raw_parts(y_out_buf.cpu_ptr().as_ptr() as *const bf16, t * d_model) };
+    let y_out_bf16 = allocation_prefix_to_vec::<B, bf16>(&y_out_buf, t * d_model);
     let y_out_gpu: Vec<f32> = y_out_bf16.iter().map(|&v| f32::from(v)).collect();
 
     // Validate GPU output is finite
@@ -474,47 +439,26 @@ fn run_moe_parity_test_internal<B: Backend>(
             f32::from(w2_cpu[0])
         );
 
-        // Probe tile bookkeeping
-        let total_tiles_cpu =
-            unsafe { std::slice::from_raw_parts(total_tiles_buf.cpu_ptr().as_ptr() as *const u32, 2) };
-        let dispatch_args_cpu =
-            unsafe { std::slice::from_raw_parts(dispatch_args_buf.cpu_ptr().as_ptr() as *const u32, 3) };
-        let tile_offsets_cpu =
-            unsafe { std::slice::from_raw_parts(tile_offsets_buf.cpu_ptr().as_ptr() as *const u32, (e + 1).min(8)) };
-        let sumk_val = unsafe { *(sumk_buf.cpu_ptr().as_ptr() as *const u32) } as usize;
-        eprintln!("[E2E] Tile bookkeeping:");
-        eprintln!(
-            "[E2E]   total_tiles={}, dispatch_args=({}, {}, {})",
-            total_tiles_cpu[0], dispatch_args_cpu[0], dispatch_args_cpu[1], dispatch_args_cpu[2]
-        );
-        eprintln!("[E2E]   tile_offsets[0..{}]={:?}", (e + 1).min(8), &tile_offsets_cpu);
-        eprintln!("[E2E]   sumk={}, num_tiles_k={}", sumk_val, num_tiles_k);
+        let sumk_val = allocation_to_vec::<B, u32>(&sumk_buf)[0] as usize;
+        eprintln!("[E2E]   sumk={}", sumk_val);
 
         // For multi-token tests with large d_ff, verify gather output (x_perm)
         if t > 1 && d_ff >= 256 {
-            let x_perm_cpu =
-                unsafe { std::slice::from_raw_parts(x_perm_buf.cpu_ptr().as_ptr() as *const bf16, sumk_val * d_model) };
+            let x_perm_cpu = allocation_prefix_to_vec::<B, bf16>(&x_perm_buf, sumk_val * d_model);
             eprintln!("[E2E] x_perm diagnostics (sumk={}):", sumk_val);
-            eprintln!("[E2E]   Row 0 [0:8]: {:?}", &x_perm_cpu[0..8].iter().map(|&v| f32::from(v)).collect::<Vec<_>>());
+            eprintln!("[E2E]   Row 0 [0:8]: {:?}", x_perm_cpu[0..8].iter().map(|&v| f32::from(v)).collect::<Vec<_>>());
             if sumk_val > 1 {
                 eprintln!(
                     "[E2E]   Row 1 [{}:{}]: {:?}",
                     d_model,
                     d_model + 8,
-                    &x_perm_cpu[d_model..d_model + 8].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
+                    x_perm_cpu[d_model..d_model + 8].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
                 );
             }
 
-            // Check tile_map for first few tiles
-            let tile_map_cpu = unsafe {
-                std::slice::from_raw_parts(tile_map_buf.cpu_ptr().as_ptr() as *const u32, 12.min(max_tiles * 3))
-            };
-            eprintln!("[E2E] tile_map (first 4 tiles): {:?}", &tile_map_cpu);
-
             // CRITICAL: Check tok2row mapping for multi-token tests
-            let tok2row_cpu =
-                unsafe { std::slice::from_raw_parts(tok2row_buf.cpu_ptr().as_ptr() as *const i32, t * k) };
-            eprintln!("[E2E] tok2row[0..{}]: {:?}", t * k, &tok2row_cpu);
+            let tok2row_cpu = allocation_prefix_to_vec::<B, i32>(&tok2row_buf, t * k);
+            eprintln!("[E2E] tok2row[0..{}]: {:?}", t * k, tok2row_cpu);
             eprintln!(
                 "[E2E]   Expected: token 0→row {}, token 1→row {}",
                 0,
@@ -526,16 +470,14 @@ fn run_moe_parity_test_internal<B: Backend>(
             );
 
             // Check y_partial at specific indices where finalize reads for token 1
-            let y_partial_full = unsafe {
-                std::slice::from_raw_parts(y_partial_buf.cpu_ptr().as_ptr() as *const bf16, sumk_val * d_model)
-            };
+            let y_partial_full = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, sumk_val * d_model);
             eprintln!("[E2E] y_partial spot check:");
             eprintln!("[E2E]   y_partial[48] (row 0, col 48) = {:.6}", f32::from(y_partial_full[48]));
             if sumk_val > 1 {
                 // Check positions where mismatches occur (odd indices near tile boundaries)
                 eprintln!("[E2E]   Row 1 positions (even=working, odd=corrupted?):");
                 for &pos in &[48, 56, 57, 58, 59, 60, 61, 62, 63, 64, 120, 121, 122, 123, 124, 125, 126, 127, 128] {
-                    let idx = 1 * d_model + pos;
+                    let idx = d_model + pos;
                     if idx < y_partial_full.len() {
                         eprintln!("[E2E]     y_partial[row1, col {}] = {:.3}", pos, f32::from(y_partial_full[idx]));
                     }
@@ -612,20 +554,19 @@ fn run_moe_parity_test_internal<B: Backend>(
 
     // Debug: print some sample values from intermediate buffers
     eprintln!("[E2E] === DEBUG: Intermediate values ===");
-    let topk_ids_gpu = unsafe { std::slice::from_raw_parts(topk_ids_buf.cpu_ptr().as_ptr() as *const i32, t * k) };
-    let topk_probs_gpu = unsafe { std::slice::from_raw_parts(topk_probs_buf.cpu_ptr().as_ptr() as *const bf16, t * k) };
+    let topk_ids_gpu = allocation_prefix_to_vec::<B, i32>(&topk_ids_buf, t * k);
+    let topk_probs_gpu = allocation_prefix_to_vec::<B, bf16>(&topk_probs_buf, t * k);
     eprintln!("[E2E] TopK IDs: {:?}", topk_ids_gpu);
     eprintln!("[E2E] TopK Probs: {:?}", topk_probs_gpu.iter().map(|&v| f32::from(v)).collect::<Vec<_>>());
 
-    let y_partial_gpu =
-        unsafe { std::slice::from_raw_parts(y_partial_buf.cpu_ptr().as_ptr() as *const bf16, max_sumk * d_model) };
-    let sumk_actual = unsafe { *(sumk_buf.cpu_ptr().as_ptr() as *const u32) } as usize;
+    let y_partial_gpu = allocation_prefix_to_vec::<B, bf16>(&y_partial_buf, max_sumk * d_model);
+    let sumk_actual = allocation_to_vec::<B, u32>(&sumk_buf)[0] as usize;
     eprintln!("[E2E] sumk={}", sumk_actual);
     let sample_size = 16.min(sumk_actual * d_model);
     eprintln!(
         "[E2E] y_partial sample (first {}): {:?}",
         sample_size,
-        &y_partial_gpu[..sample_size].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
+        y_partial_gpu[..sample_size].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
     );
 
     // For multi-row debugging: print both rows
@@ -634,16 +575,13 @@ fn run_moe_parity_test_internal<B: Backend>(
             "[E2E] y_partial row 1 [{}-{}]: {:?}",
             d_model,
             d_model + 16,
-            &y_partial_gpu[d_model..d_model + 16].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
+            y_partial_gpu[d_model..d_model + 16].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
         );
     }
     let out_sample_size = 16.min(t * d_model);
     eprintln!("[E2E] y_out sample (token 0): {:?}", &y_out_gpu[..out_sample_size]);
     if t > 1 && d_model >= 512 {
-        eprintln!(
-            "[E2E] y_out sample (token 1, first 32): {:?}",
-            &y_out_gpu[d_model..d_model + 32].iter().map(|&v| f32::from(v)).collect::<Vec<_>>()
-        );
+        eprintln!("[E2E] y_out sample (token 1, first 32): {:?}", y_out_gpu[d_model..d_model + 32].to_vec());
     }
     eprintln!("[E2E] CPU ref sample (token 0): {:?}", &y_cpu[..out_sample_size]);
     if t > 1 && d_model >= 512 {
@@ -655,14 +593,14 @@ fn run_moe_parity_test_internal<B: Backend>(
         eprintln!("[E2E] Token 1 detailed comparison:");
         for i in [0, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17, 18, 48, 64, 121, 128].iter() {
             if *i < d_model {
-                let diff = (f32::from(gpu_t1[*i]) - cpu_t1[*i]).abs();
-                eprintln!("[E2E]   [{}]: GPU={:.6}, CPU={:.6}, diff={:.6}", i, f32::from(gpu_t1[*i]), cpu_t1[*i], diff);
+                let diff = (gpu_t1[*i] - cpu_t1[*i]).abs();
+                eprintln!("[E2E]   [{}]: GPU={:.6}, CPU={:.6}, diff={:.6}", i, gpu_t1[*i], cpu_t1[*i], diff);
             }
         }
     }
 
-    let k0_iters = (d_model + 31) / 32;
-    let ff0_iters = (d_ff + 31) / 32;
+    let k0_iters = d_model.div_ceil(32);
+    let ff0_iters = d_ff.div_ceil(32);
     let product = k0_iters * ff0_iters;
     let sqrt_product = (product as f32).sqrt();
 
@@ -682,6 +620,9 @@ fn run_moe_parity_test_internal<B: Backend>(
     }
 
     eprintln!("[{}] ✓ PASSED (GPU matches CPU reference)", test_name);
+    drop(x_perm_buf);
+    drop(y_partial_buf);
+    drop(completed);
 }
 
 // Test 1: Minimal (K=1, small dims, no clipping, alpha=1.0)

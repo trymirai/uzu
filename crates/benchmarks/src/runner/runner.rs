@@ -8,16 +8,13 @@ use backend_uzu::{
     session::{
         ChatSession,
         config::{DecodingConfig, RunConfig},
-        parameter::{ContextLength, PrefillStepSize, SamplingMethod, SamplingPolicy},
+        parameter::{PrefillStepSize, SamplingMethod, SamplingPolicy},
         types::{Input, Output},
     },
 };
 use sysinfo::System;
 
-use crate::runner::{
-    helpers::get_memory_usage,
-    types::{Device, Result as TaskResult, Task},
-};
+use crate::runner::types::{Device, Result as TaskResult, Task};
 
 pub struct Runner {
     pub task: Task,
@@ -38,20 +35,6 @@ impl Runner {
         }
     }
 
-    fn minimal_context_length(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let input = Input::Messages(self.task.messages.clone());
-        let mut session = ChatSession::new(PathBuf::from(self.model_path.clone()), DecodingConfig::default())?;
-        let run_config = RunConfig::default().tokens_limit(1);
-        let output = session.run(
-            input.clone(),
-            run_config,
-            Some(|_: Output| {
-                return true;
-            }),
-        )?;
-        return Ok(output.stats.total_stats.tokens_count_input as usize + self.task.tokens_limit as usize);
-    }
-
     pub fn run<F>(
         &self,
         mut progress: Option<F>,
@@ -59,27 +42,20 @@ impl Runner {
     where
         F: FnMut(f64),
     {
-        let context_length = self.minimal_context_length()?;
-
-        let mut decoding_config = DecodingConfig::default().with_context_length(ContextLength::Custom(context_length));
+        let mut decoding_config = DecodingConfig::default();
         if let Some(prefill_step_size) = self.prefill_step_size {
             decoding_config = decoding_config.with_prefill_step_size(PrefillStepSize::Custom(prefill_step_size));
         }
 
         let mut session = ChatSession::new(PathBuf::from(self.model_path.clone()), decoding_config)?;
-
-        let precision = session
-            .model_metadata
-            .model_config
-            .as_language_model()
-            .map(|config| config.model_config.transformer_config.output_norm_config.scale_precision);
+        let data_type = session.activation_data_type();
 
         let device = self.get_device_info();
 
         let input = Input::Messages(self.task.messages.clone());
 
         let warmup_config = RunConfig::default().tokens_limit(1);
-        session.run(input.clone(), warmup_config, Some(|_: Output| true))?;
+        session.run(input.clone(), warmup_config, Option::<fn(Output) -> bool>::None)?;
 
         let mut results: Vec<TaskResult> = Vec::new();
         for run_index in 0..self.task.number_of_runs {
@@ -91,22 +67,16 @@ impl Runner {
                     value: SamplingMethod::Greedy,
                 });
             }
-            let output = session.run(
-                input.clone(),
-                run_config,
-                Some(|_: Output| {
-                    return true;
-                }),
-            )?;
+            let output = session.run(input.clone(), run_config, Option::<fn(Output) -> bool>::None)?;
 
-            let memory_used = get_memory_usage();
+            let memory_used = session.peak_memory_usage();
 
             let result = TaskResult {
                 task: self.task.clone(),
                 device: device.clone(),
                 engine_version: VERSION.to_string(),
                 timestamp,
-                precision,
+                data_type,
                 memory_used,
                 tokens_count_input: output.stats.total_stats.tokens_count_input,
                 tokens_count_output: output.stats.total_stats.tokens_count_output,
@@ -135,12 +105,10 @@ impl Runner {
         let cpu_name = system_info.cpus().first().map(|cpu| cpu.brand().to_string());
         let memory_total = system_info.total_memory();
 
-        let device = Device {
+        Device {
             os_name,
             cpu_name,
             memory_total,
-        };
-
-        device
+        }
     }
 }

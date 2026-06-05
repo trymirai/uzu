@@ -14,7 +14,7 @@ using namespace uzu::trie;
 
 template <typename T, uint HEAD_DIM>
 VARIANTS(T, float, half, bfloat)
-VARIANTS(HEAD_DIM, 64, 128, 256)
+VARIANTS(HEAD_DIM, 64, 128, 256, 512)
 PUBLIC KERNEL(AttentionSinglePass)(
     const device T* queries,
     const device T* keys,
@@ -30,7 +30,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
     const constant float& scale,
     const device TrieNode* trie OPTIONAL(is_trie),
     const constant uint& sliding_window_size OPTIONAL(is_sliding_window),
-    const device float* sinks OPTIONAL(has_sinks),
+    const device T* sinks OPTIONAL(has_sinks),
     const constant uint& num_heads,
     const constant uint& suffix_length,
     threadgroup float shared_max_scores[SEQUENCE_BLOCK_SIZE * HEAD_BLOCK_SIZE],
@@ -74,16 +74,16 @@ PUBLIC KERNEL(AttentionSinglePass)(
                                       : suffix_position + q_seq_idx;
 
   queries += q_offset * HEAD_DIM +
-             thread_context.simdgroup_index * qk_elements_per_thread;
+             thread_context.simd_lane_id * qk_elements_per_thread;
   keys += kv_head_idx * k_head_stride +
-          thread_context.threadgroup_index * k_seq_stride +
-          thread_context.simdgroup_index * qk_elements_per_thread;
+          thread_context.simdgroup_index * k_seq_stride +
+          thread_context.simd_lane_id * qk_elements_per_thread;
   values += kv_head_idx * v_head_stride +
-            thread_context.threadgroup_index * v_seq_stride +
-            thread_context.simdgroup_index * value_elements_per_thread;
+            thread_context.simdgroup_index * v_seq_stride +
+            thread_context.simd_lane_id * value_elements_per_thread;
 
   out += o_offset * value_dim +
-         thread_context.threadgroup_index * value_elements_per_thread;
+         thread_context.simdgroup_index * value_elements_per_thread;
 
   // Read the query and 0 the output accumulator
   for (int i = 0; i < qk_elements_per_thread; i++) {
@@ -95,7 +95,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
 
   U max_score = -INFINITY;
   U sum_exp_score = 0;
-  if (has_sinks && thread_context.threadgroup_index == 0) {
+  if (has_sinks && thread_context.simdgroup_index == 0) {
     const int num_q_heads = static_cast<int>(num_heads);
     int q_head_idx = head_idx % num_q_heads;
     max_score = static_cast<U>(sinks[q_head_idx]);
@@ -103,7 +103,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
   }
 
   // For each key
-  for (uint i = thread_context.threadgroup_index; i < sequence_length;
+  for (uint i = thread_context.simdgroup_index; i < sequence_length;
        i += SEQUENCE_BLOCK_SIZE) {
     if (should_use_key(
             ring_params,
@@ -151,27 +151,27 @@ PUBLIC KERNEL(AttentionSinglePass)(
   }
 
   // Each thread has a partial part of the output so we need to combine them.
-  if (thread_context.simdgroup_index == 0) {
-    shared_max_scores[thread_context.threadgroup_index] = max_score;
-    shared_sum_exp_scores[thread_context.threadgroup_index] = sum_exp_score;
+  if (thread_context.simd_lane_id == 0) {
+    shared_max_scores[thread_context.simdgroup_index] = max_score;
+    shared_sum_exp_scores[thread_context.simdgroup_index] = sum_exp_score;
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  max_score = shared_max_scores[thread_context.simdgroup_index];
+  max_score = shared_max_scores[thread_context.simd_lane_id];
   U new_max = simd_max(max_score);
   U factor = fast::exp(max_score - new_max);
   sum_exp_score =
-      simd_sum(shared_sum_exp_scores[thread_context.simdgroup_index] * factor);
+      simd_sum(shared_sum_exp_scores[thread_context.simd_lane_id] * factor);
 
   // Now we need to aggregate all the outputs
   for (int i = 0; i < value_elements_per_thread; i++) {
     shared_outputs
-        [thread_context.simdgroup_index * HEAD_BLOCK_SIZE +
-         thread_context.threadgroup_index] = o[i];
+        [thread_context.simd_lane_id * HEAD_BLOCK_SIZE +
+         thread_context.simdgroup_index] = o[i];
     threadgroup_barrier(mem_flags::mem_threadgroup);
     o[i] = simd_sum(
                shared_outputs
-                   [thread_context.threadgroup_index * HEAD_BLOCK_SIZE +
-                    thread_context.simdgroup_index] *
+                   [thread_context.simdgroup_index * HEAD_BLOCK_SIZE +
+                    thread_context.simd_lane_id] *
                factor
            ) /
            sum_exp_score;
@@ -179,7 +179,7 @@ PUBLIC KERNEL(AttentionSinglePass)(
   }
 
   // And write the output
-  if (thread_context.simdgroup_index == 0) {
+  if (thread_context.simd_lane_id == 0) {
     for (int i = 0; i < value_elements_per_thread; i++) {
       out[i] = static_cast<T>(o[i]);
     }

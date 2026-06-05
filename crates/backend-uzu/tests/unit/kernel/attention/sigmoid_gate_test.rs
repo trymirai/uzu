@@ -1,7 +1,7 @@
-use std::{fmt::Debug, ops::DerefMut};
+use std::fmt::Debug;
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
         cpu::Cpu,
@@ -28,20 +28,15 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     let kernel = <<B as Backend>::Kernels as Kernels>::SigmoidGateKernel::new(&context, T::data_type())
         .expect("Failed to create SigmoidGateKernel");
 
-    let gate_array = context.create_array_from(&[size], &gate_data.to_vec().into_boxed_slice(), "gate");
-    let output_array = context.create_array_from(&[size], &output_data.to_vec().into_boxed_slice(), "output");
+    let gate_array = context.create_array_from(&[size], &gate_data.to_vec().into_boxed_slice());
+    let mut output = context.create_array_from(&[size], &output_data.to_vec().into_boxed_slice()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     let total_elements = config.suffix_length * config.num_heads * config.head_dim;
-    kernel.encode(
-        &*gate_array.buffer().borrow(),
-        output_array.buffer().borrow_mut().deref_mut(),
-        total_elements,
-        &mut encoder,
-    );
+    kernel.encode(gate_array.allocation(), &mut output, total_elements, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 fn run_test<T: ArrayElement + Float + Debug>(config: &Config) {

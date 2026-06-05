@@ -1,14 +1,12 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::SSDUpdateKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -96,29 +94,29 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     let y_size = bsz * h * dh;
     let ns_size = bsz * h * dh * n;
 
-    let x_array = context.create_array_from(&[input.x.len()], &input.x, "x");
-    let dt_array = context.create_array_from(&[input.dt.len()], &input.dt, "dt");
-    let b_array = context.create_array_from(&[input.b.len()], &input.b, "b");
-    let c_array = context.create_array_from(&[input.c.len()], &input.c, "c");
-    let d_array = context.create_array_from(&[input.d.len()], &input.d, "d");
-    let z_array = context.create_array_from(&[input.z.len()], &input.z, "z");
+    let x_array = context.create_array_from(&[input.x.len()], &input.x);
+    let dt_array = context.create_array_from(&[input.dt.len()], &input.dt);
+    let b_array = context.create_array_from(&[input.b.len()], &input.b);
+    let c_array = context.create_array_from(&[input.c.len()], &input.c);
+    let d_array = context.create_array_from(&[input.d.len()], &input.d);
+    let z_array = context.create_array_from(&[input.z.len()], &input.z);
 
-    let y_array = context.create_array_uninitialized(&[y_size], T::data_type(), "y");
+    let mut y = context.create_array_uninitialized(&[y_size], T::data_type()).into_allocation();
 
     if input.state_in_place {
-        let ns_array = context.create_array_from(&[ns_size], &input.state, "next_state");
+        let mut next_state = context.create_array_from(&[ns_size], &input.state).into_allocation();
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(
-            x_array.buffer().borrow().deref(),
-            dt_array.buffer().borrow().deref(),
-            b_array.buffer().borrow().deref(),
-            c_array.buffer().borrow().deref(),
-            d_array.buffer().borrow().deref(),
-            z_array.buffer().borrow().deref(),
-            None::<&<B as Backend>::DenseBuffer>,
-            y_array.buffer().borrow_mut().deref_mut(),
-            ns_array.buffer().borrow_mut().deref_mut(),
+            x_array.allocation(),
+            dt_array.allocation(),
+            b_array.allocation(),
+            c_array.allocation(),
+            d_array.allocation(),
+            z_array.allocation(),
+            None::<&backend_uzu::backends::common::Allocation<B>>,
+            &mut y,
+            &mut next_state,
             (h / g) as u32,
             input.n,
             &x_strides,
@@ -133,24 +131,24 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: y_array.as_slice().to_vec(),
-            next_state: ns_array.as_slice().to_vec(),
+            y: crate::common::helpers::allocation_to_vec(&y),
+            next_state: crate::common::helpers::allocation_to_vec(&next_state),
         }
     } else {
-        let state_array = context.create_array_from(&[ns_size], &input.state, "state");
-        let ns_array = context.create_array_uninitialized(&[ns_size], T::data_type(), "next_state");
+        let state_array = context.create_array_from(&[ns_size], &input.state);
+        let mut next_state = context.create_array_uninitialized(&[ns_size], T::data_type()).into_allocation();
 
         let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
         kernel.encode(
-            x_array.buffer().borrow().deref(),
-            dt_array.buffer().borrow().deref(),
-            b_array.buffer().borrow().deref(),
-            c_array.buffer().borrow().deref(),
-            d_array.buffer().borrow().deref(),
-            z_array.buffer().borrow().deref(),
-            Some(state_array.buffer().borrow().deref()),
-            y_array.buffer().borrow_mut().deref_mut(),
-            ns_array.buffer().borrow_mut().deref_mut(),
+            x_array.allocation(),
+            dt_array.allocation(),
+            b_array.allocation(),
+            c_array.allocation(),
+            d_array.allocation(),
+            z_array.allocation(),
+            Some(state_array.allocation()),
+            &mut y,
+            &mut next_state,
             (h / g) as u32,
             input.n,
             &x_strides,
@@ -165,8 +163,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: y_array.as_slice().to_vec(),
-            next_state: ns_array.as_slice().to_vec(),
+            y: crate::common::helpers::allocation_to_vec(&y),
+            next_state: crate::common::helpers::allocation_to_vec(&next_state),
         }
     }
 }

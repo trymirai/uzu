@@ -83,7 +83,7 @@ impl MetalStd {
 
     pub fn min_os(&self) -> &'static str {
         match self {
-            Self::Metal4_0 => "26.0",
+            Self::Metal4_0 => "26.4",
         }
     }
 }

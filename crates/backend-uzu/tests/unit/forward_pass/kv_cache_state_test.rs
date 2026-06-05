@@ -1,11 +1,15 @@
 #![cfg(metal_backend)]
 
+use backend_uzu::forward_pass::kv_cache_layer::KVCacheLayerTrait;
+
 use crate::{
-    ArrayContextExt, DataType,
     backends::{
-        common::{Backend, Context, Encoder, kernel::kv_cache_update::KVCacheUpdate},
+        common::{Backend, Context, Encoder},
         metal::Metal,
     },
+    common::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec, sparse_buffer_write},
+    data_type::DataType,
+    encodable_block::KVCacheUpdate,
     forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
 };
 
@@ -24,12 +28,12 @@ struct Scenario {
     expected_prefix_segment_length: usize,
 }
 
-fn make_test_layer(
-    context: &<Metal as Backend>::Context,
+fn make_test_layer<B: Backend>(
+    context: &B::Context,
     state: KVCacheLayerState,
     prefix_capacity: usize,
     suffix_capacity: usize,
-) -> KVCacheLayer<Metal> {
+) -> (KVCacheLayer<B, B::SparseBuffer>, [usize; 3]) {
     let total_len = match &state {
         KVCacheLayerState::Full {
             ..
@@ -40,31 +44,49 @@ fn make_test_layer(
         } => window_length + suffix_capacity,
     };
     let shape = [total_len.max(1), 1, 1];
-    let keys = context.create_array_zeros(&shape, DataType::F32, "kv_cache_keys");
-    let values = context.create_array_zeros(&shape, DataType::F32, "kv_cache_values");
 
-    KVCacheLayer {
+    let zeroes = vec![0.0_f32; shape.iter().product()];
+    let keys = sparse_buffer_create_with::<B, f32>(context, &zeroes);
+    let values = sparse_buffer_create_with::<B, f32>(context, &zeroes);
+    let layer = KVCacheLayer {
         state,
         keys,
         values,
-    }
+        shape,
+        data_type: DataType::F32,
+    };
+    (layer, shape)
 }
 
-fn fill_arrays(layer: &mut KVCacheLayer<Metal>) -> (Vec<f32>, Vec<f32>) {
+fn overwrite_sparse_buffer<B: Backend>(
+    context: &B::Context,
+    buffer: &mut B::SparseBuffer,
+    elements_count: usize,
+    updates: &[(usize, f32)],
+) {
+    let mut data: Vec<f32> = sparse_buffer_read_vec::<B, f32>(context, buffer, elements_count);
+    for (index, value) in updates {
+        data[*index] = *value;
+    }
+    sparse_buffer_write::<B, f32>(context, buffer, &data);
+}
+
+fn fill_arrays<B: Backend>(
+    context: &B::Context,
+    layer: &mut KVCacheLayer<B, B::SparseBuffer>,
+) -> (Vec<f32>, Vec<f32>) {
     let initial_keys = {
-        let slice = layer.keys.as_slice_mut::<f32>();
-        for (idx, value) in slice.iter_mut().enumerate() {
-            *value = 1_000.0 + idx as f32;
-        }
-        slice.to_vec()
+        let len = layer.shape.iter().product();
+        let data: Vec<f32> = (0..len).map(|idx| 1_000.0 + idx as f32).collect();
+        sparse_buffer_write::<B, f32>(context, &mut layer.keys, &data);
+        data
     };
 
     let initial_values = {
-        let slice = layer.values.as_slice_mut::<f32>();
-        for (idx, value) in slice.iter_mut().enumerate() {
-            *value = 2_000.0 + idx as f32;
-        }
-        slice.to_vec()
+        let len = layer.shape.iter().product();
+        let data: Vec<f32> = (0..len).map(|idx| 2_000.0 + idx as f32).collect();
+        sparse_buffer_write::<B, f32>(context, &mut layer.values, &data);
+        data
     };
 
     (initial_keys, initial_values)
@@ -110,16 +132,16 @@ fn expected_after_update(
     expected
 }
 
-fn run_scenario(
-    context: &<Metal as Backend>::Context,
+fn run_scenario<B: Backend>(
+    context: &B::Context,
     scenario: &Scenario,
 ) {
-    let mut layer =
+    let (mut layer, _) =
         make_test_layer(context, scenario.state.clone(), scenario.prefix_capacity, scenario.suffix_capacity);
 
     let state_before_update = layer.state.clone();
 
-    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+    let (initial_keys, initial_values) = fill_arrays::<B>(context, &mut layer);
 
     let expected_keys = expected_after_update(&state_before_update, &scenario.accepted_suffix_indices, &initial_keys);
     let expected_values =
@@ -146,6 +168,7 @@ fn run_scenario(
     layer.update_after_acceptance(
         &scenario.accepted_suffix_indices,
         scenario.suffix_start,
+        context,
         &mut encoder,
         &kv_cache_update,
     );
@@ -154,10 +177,10 @@ fn run_scenario(
 
     layer.register_accepted_tokens(scenario.number_of_accepted_tokens);
 
-    let actual_keys = layer.keys.as_slice::<f32>().to_vec();
+    let actual_keys: Vec<f32> = sparse_buffer_read_vec::<B, f32>(context, &layer.keys, expected_keys.len());
     assert_eq!(actual_keys, expected_keys, "{}: key buffer mismatch", scenario.name);
 
-    let actual_values = layer.values.as_slice::<f32>().to_vec();
+    let actual_values: Vec<f32> = sparse_buffer_read_vec::<B, f32>(context, &layer.values, expected_values.len());
     assert_eq!(actual_values, expected_values, "{}: value buffer mismatch", scenario.name);
 
     match &layer.state {
@@ -266,7 +289,7 @@ fn kv_cache_state_scenarios() {
     ];
 
     for scenario in &scenarios {
-        run_scenario(&context, scenario);
+        run_scenario::<Metal>(&context, scenario);
     }
 }
 
@@ -276,7 +299,7 @@ fn kv_cache_slice_apply_contiguous_window() {
         return;
     };
 
-    let mut layer = make_test_layer(
+    let (mut layer, shape) = make_test_layer::<Metal>(
         &context,
         KVCacheLayerState::Windowed {
             ring_offset: 1,
@@ -286,21 +309,23 @@ fn kv_cache_slice_apply_contiguous_window() {
         4,
         0,
     );
-    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+    let (initial_keys, initial_values) = fill_arrays::<Metal>(&context, &mut layer);
 
-    let slice = layer.slice(&context, 0..2).expect("slice should exist");
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    let slice = layer.slice(&context, &mut encoder, 0..2).expect("slice should exist");
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
+
     // Mutate the captured slots.
-    {
-        layer.keys.as_slice_mut::<f32>()[0] = -1.0;
-        layer.keys.as_slice_mut::<f32>()[1] = -2.0;
-        layer.values.as_slice_mut::<f32>()[0] = -3.0;
-        layer.values.as_slice_mut::<f32>()[1] = -4.0;
-    }
+    let elements_count = shape.iter().product();
+    overwrite_sparse_buffer::<Metal>(&context, &mut layer.keys, elements_count, &[(0, -1.0), (1, -2.0)]);
+    overwrite_sparse_buffer::<Metal>(&context, &mut layer.values, elements_count, &[(0, -3.0), (1, -4.0)]);
 
-    layer.apply_slice(&slice, None);
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    layer.apply_slice(&context, &mut encoder, &slice, None);
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
-    let keys_after = layer.keys.as_slice::<f32>().to_vec();
-    let values_after = layer.values.as_slice::<f32>().to_vec();
+    let keys_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
+    let values_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for contiguous slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for contiguous slice");
 }
@@ -311,7 +336,7 @@ fn kv_cache_slice_apply_wrap_window() {
         return;
     };
 
-    let mut layer = make_test_layer(
+    let (mut layer, shape) = make_test_layer::<Metal>(
         &context,
         KVCacheLayerState::Windowed {
             ring_offset: 3,
@@ -321,21 +346,23 @@ fn kv_cache_slice_apply_wrap_window() {
         4,
         0,
     );
-    let (initial_keys, initial_values) = fill_arrays(&mut layer);
+    let (initial_keys, initial_values) = fill_arrays::<Metal>(&context, &mut layer);
 
-    let slice = layer.slice(&context, 2..4).expect("slice should exist");
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    let slice = layer.slice(&context, &mut encoder, 2..4).expect("slice should exist");
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
+
     // Captured slots are expected to wrap; mutate them.
-    {
-        layer.keys.as_slice_mut::<f32>()[2] = -11.0;
-        layer.keys.as_slice_mut::<f32>()[3] = -12.0;
-        layer.values.as_slice_mut::<f32>()[2] = -13.0;
-        layer.values.as_slice_mut::<f32>()[3] = -14.0;
-    }
+    let elements_count = shape.iter().product();
+    overwrite_sparse_buffer::<Metal>(&context, &mut layer.keys, elements_count, &[(2, -11.0), (3, -12.0)]);
+    overwrite_sparse_buffer::<Metal>(&context, &mut layer.values, elements_count, &[(2, -13.0), (3, -14.0)]);
 
-    layer.apply_slice(&slice, None);
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    layer.apply_slice(&context, &mut encoder, &slice, None);
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
-    let keys_after = layer.keys.as_slice::<f32>().to_vec();
-    let values_after = layer.values.as_slice::<f32>().to_vec();
+    let keys_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.keys, elements_count);
+    let values_after: Vec<f32> = sparse_buffer_read_vec::<Metal, f32>(&context, &layer.values, elements_count);
     assert_eq!(keys_after[0..4], initial_keys[0..4], "keys restored for wrapped slice");
     assert_eq!(values_after[0..4], initial_values[0..4], "values restored for wrapped slice");
 }
@@ -346,7 +373,7 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         return;
     };
 
-    let mut layer = make_test_layer(
+    let (mut layer, _) = make_test_layer::<Metal>(
         &context,
         KVCacheLayerState::Full {
             prefix_len: 3,
@@ -355,7 +382,9 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         0,
     );
 
-    let slice = layer.slice(&context, 0..2).expect("full slice exists");
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    let slice = layer.slice(&context, &mut encoder, 0..2).expect("full slice exists");
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     // Mutate metadata.
     if let KVCacheLayerState::Full {
@@ -365,7 +394,9 @@ fn kv_cache_slice_apply_full_restores_metadata() {
         *prefix_len = 1;
     }
 
-    layer.apply_slice(&slice, None);
+    let mut encoder = Encoder::<Metal>::new(&context).expect("Failed to create encoder");
+    layer.apply_slice(&context, &mut encoder, &slice, None);
+    encoder.end_encoding().submit().wait_until_completed().expect("Failed to end and wait encoder");
 
     if let KVCacheLayerState::Full {
         prefix_len,

@@ -2,33 +2,52 @@
 #[cfg(test)]
 extern crate self as backend_uzu;
 
-mod array;
+#[cfg(test)]
+#[macro_use]
+#[path = "../tests/common/mod.rs"]
+mod common;
+
+pub mod array;
 mod audio;
 mod classifier;
 mod config;
-mod data_type;
+pub mod data_type;
 mod encodable_block;
 mod forward_pass;
-pub mod inference;
 mod language_model;
-mod parameters;
+pub mod parameters;
 mod speculators;
-#[cfg(feature = "tracing")]
-mod tracer;
 mod trie;
 mod utils;
 
 pub mod backends;
+pub mod inference;
 pub mod prelude;
 pub mod session;
 
-pub use array::{Array, ArrayContextExt};
 #[cfg(metal_backend)]
 pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
-pub use config::ConfigDataType;
-pub use data_type::{ArrayElement, DataType};
 pub use language_model::gumbel::{gumbel_float, revidx};
-pub use parameters::{ParameterLoader, read_safetensors_metadata};
-#[cfg(feature = "tracing")]
-pub use tracer::TraceValidator;
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
+
+#[doc(hidden)]
+pub mod _benchmarks {
+    pub use crate::{
+        config::model::language_model::LanguageModelConfig,
+        language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
+        trie::{TrieCreationConfig, TrieNode},
+    };
+}
+
+#[cfg(feature = "tracing")]
+pub mod _private {
+    pub use crate::{
+        classifier::Classifier,
+        config::model::AnyModelConfig,
+        encodable_block::{DecoderDecodeInput, Sampling},
+        forward_pass::{
+            cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
+        },
+        language_model::language_model_generator_context::LanguageModelGeneratorContext,
+    };
+}

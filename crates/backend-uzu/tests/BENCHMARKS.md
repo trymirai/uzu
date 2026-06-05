@@ -24,16 +24,21 @@ baselines side by side.
 
 ## Available benchmark groups
 
-| Group id                       | Filter                         |
-| ------------------------------ | ------------------------------ |
-| `Metal/Kernel/Matmul/GEMM_MPP` | `Metal/Kernel/Matmul/GEMM_MPP` |
-| `Metal/Kernel/RMSNorm`         | `Metal/Kernel/RMSNorm`         |
-| `Metal/Kernel/Sampling/Argmax` | `Metal/Kernel/Sampling/Argmax` |
+| Group id                          | Filter                            |
+| --------------------------------- | --------------------------------- |
+| `Metal/Kernel/Matmul/GEMM`        | `Metal/Kernel/Matmul/GEMM`        |
+| `Metal/Kernel/Matmul/GEMM_MXU`    | `Metal/Kernel/Matmul/GEMM_MXU`    |
+| `Metal/Kernel/QmmTransposed/...`  | `Metal/Kernel/QmmTransposed`      |
+| `Metal/Kernel/QmvFast/...`        | `Metal/Kernel/QmvFast`            |
+| `Metal/Kernel/RMSNorm`            | `Metal/Kernel/RMSNorm`            |
+| `Metal/Kernel/Sampling/Argmax`    | `Metal/Kernel/Sampling/Argmax`    |
+
+The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass.
 
 ## Output layout
 
 Every run writes into `target/criterion/<label>/…`, where `<label>` is a
-free-form name you choose (e.g. `m2_max`, `a18`). The Criterion baseline
+free-form name you choose (e.g. `m2_max`, `a19`). The Criterion baseline
 you saved lives at `target/criterion/<label>/<benchmark-path>/<baseline-name>/`.
 
 ## Running on macOS
@@ -43,9 +48,9 @@ resolve relative to the package dir:
 
 ```bash
 CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
-  -p uzu \
-  --bench kernel -- "Metal/Kernel/RMSNorm" \
-  --save-baseline rms_norm_baseline_m2_max
+  -p backend-uzu \
+  --bench kernel -- "Metal/Kernel/Matmul" \
+  --save-baseline matmul_baseline_m2_max
 ```
 
 ## Running on iPhone (via `cargo-dinghy`)
@@ -55,9 +60,9 @@ app.
 
 Key flags:
 
-- `-e CRITERION_HOME=target/criterion/a18` — on-device env var. Path is
+- `-e CRITERION_HOME=target/criterion/a19` — on-device env var. Path is
   relative to the app's cwd (`Documents/`), so this becomes
-  `Documents/target/criterion/a18/` on device.
+  `Documents/target/criterion/a19/` on device.
 - `--copy-back "Documents/target=$(pwd)/target"` — after the run,
   `cargo-dinghy` pulls `Documents/target` from the device into your
   repo's `target/`. `$(pwd)` is required (absolute DST) because the
@@ -69,15 +74,15 @@ DEVICE=<DEVICE_ID>
 
 cargo dinghy \
   -d "$DEVICE" \
-  -e CRITERION_HOME=target/criterion/a18 \
+  -e CRITERION_HOME=target/criterion/a19 \
   --copy-back "Documents/target=$(pwd)/target" \
-  bench -p uzu --bench kernel -- \
-    "Metal/Kernel/Matmul/GEMM_MPP" \
-    --save-baseline matmul_gemm_mpp_baseline_a18
+  bench -p backend-uzu --bench kernel -- \
+    "Metal/Kernel/Matmul" \
+    --save-baseline matmul_baseline_a19
 ```
 
 After the run completes you'll have
-`target/criterion/a18/Metal/Kernel/Matmul/GEMM_MPP/…/matmul_gemm_mpp_baseline_a18/`
+`target/criterion/a19/Metal/Kernel/Matmul/<GEMM|GEMM_MXU>/…/matmul_baseline_a19/`
 on the host, next to any `m2_max/` baselines.
 
 ## Viewing reports
@@ -92,5 +97,5 @@ To inspect a specific label only:
 
 ```bash
 open target/criterion/m2_max/report/index.html
-open target/criterion/a18/report/index.html
+open target/criterion/a19/report/index.html
 ```

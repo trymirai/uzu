@@ -1,327 +1,25 @@
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    sync::OnceLock,
-};
+pub mod gemm;
+pub mod gemv;
 
+pub use self::gemm::{GemmDispatchPath, GemmKernel};
+use self::gemv::{GemvDispatch, GemvSpecialization};
 use crate::{
-    DataType,
     backends::{
         common::{
-            Encoder,
-            gpu_types::GemmParams,
-            kernel::{
-                TensorAddBiasKernel,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
-            },
+            AsBufferRangeRef, Buffer, Encoder,
+            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulQuantCombo},
         },
-        metal::{
-            Metal,
-            context::MetalContext,
-            kernel::{
-                MatmulGemmMetalKernel, MatmulGemmMppMetalKernel, MatmulGemvMetalKernel, TensorAddBiasMetalKernel,
-            },
-            metal_extensions::DeviceExt,
-        },
+        metal::{Metal, context::MetalContext, error::MetalError},
     },
+    data_type::DataType,
 };
 
-mod gemm;
-mod gemm_mpp;
-mod gemv;
-
 pub struct MatmulMetalKernel {
-    data_type: DataType,
-    gemv_kernels: HashMap<gemv::GemvSpecialization, MatmulGemvMetalKernel>,
-    gemm_kernels: HashMap<gemm::GemmSpecialization, MatmulGemmMetalKernel>,
-    gemm_mpp_kernels: HashMap<gemm_mpp::GemmMppSpecialization, MatmulGemmMppMetalKernel>,
-    bias_add: TensorAddBiasMetalKernel,
-}
-
-const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
-
-static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
-
-fn max_gemv_batch_threshold() -> u32 {
-    *GEMV_MAX_BATCH.get_or_init(|| {
-        std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
-    })
-}
-
-impl MatmulMetalKernel {
-    fn is_mpp_eligible(
-        &self,
-        context: &MetalContext,
-    ) -> bool {
-        context.device.supports_mxu() && matches!(self.data_type, DataType::F16 | DataType::BF16)
-    }
-
-    fn get_or_create_gemv(
-        &mut self,
-        context: &MetalContext,
-        specialization: gemv::GemvSpecialization,
-    ) -> Result<&MatmulGemvMetalKernel, MatmulError<Metal>> {
-        match self.gemv_kernels.entry(specialization) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                let kernel = MatmulGemvMetalKernel::new(
-                    context,
-                    self.data_type,
-                    specialization.threadgroup_rows,
-                    specialization.threadgroup_cols,
-                    specialization.threads_per_simdgroup_row,
-                    specialization.threads_per_simdgroup_col,
-                    specialization.elements_per_thread_row,
-                    specialization.elements_per_thread_col,
-                    specialization.is_accumulate,
-                    specialization.is_bias,
-                )
-                .map_err(MatmulError::BackendError)?;
-                Ok(entry.insert(kernel))
-            },
-        }
-    }
-
-    fn get_or_create_gemm(
-        &mut self,
-        context: &MetalContext,
-        specialization: gemm::GemmSpecialization,
-    ) -> Result<&MatmulGemmMetalKernel, MatmulError<Metal>> {
-        match self.gemm_kernels.entry(specialization) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                let kernel = MatmulGemmMetalKernel::new(
-                    context,
-                    self.data_type,
-                    specialization.block_rows as u32,
-                    specialization.block_cols as u32,
-                    specialization.block_depth as u32,
-                    specialization.simdgroups_per_row as u32,
-                    specialization.simdgroups_per_column as u32,
-                    specialization.align_mn,
-                    specialization.align_k,
-                    specialization.is_accumulate,
-                )
-                .map_err(MatmulError::BackendError)?;
-                Ok(entry.insert(kernel))
-            },
-        }
-    }
-
-    fn get_or_create_gemm_mpp(
-        &mut self,
-        context: &MetalContext,
-        specialization: gemm_mpp::GemmMppSpecialization,
-    ) -> Result<&MatmulGemmMppMetalKernel, MatmulError<Metal>> {
-        match self.gemm_mpp_kernels.entry(specialization) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                let kernel = MatmulGemmMppMetalKernel::new(
-                    context,
-                    self.data_type,
-                    specialization.block_rows,
-                    specialization.block_cols,
-                    specialization.simdgroups_per_row,
-                    specialization.simdgroups_per_column,
-                    specialization.align_m,
-                    specialization.align_n,
-                    specialization.align_k,
-                    specialization.apply_ab_scale,
-                    specialization.is_accumulate,
-                )
-                .map_err(MatmulError::BackendError)?;
-                Ok(entry.insert(kernel))
-            },
-        }
-    }
-
-    fn encode_gemv(
-        &mut self,
-        context: &MetalContext,
-        encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
-        let (is_accumulate, output_bias) = match arguments.c {
-            MatmulArgumentC::Accumulate => (true, None),
-            MatmulArgumentC::Bias(bias) => (false, Some(bias)),
-            MatmulArgumentC::None => (false, None),
-        };
-
-        let specialization = gemv::GemvSpecialization::select(
-            arguments.input_dim,
-            arguments.output_dim,
-            is_accumulate,
-            output_bias.is_some(),
-        );
-
-        self.get_or_create_gemv(context, specialization)?.encode(
-            arguments.b,
-            (arguments.a, arguments.a_offset as usize),
-            output_bias,
-            arguments.d,
-            arguments.input_dim,
-            arguments.output_dim,
-            arguments.input_dim,
-            arguments.ab_scale,
-            arguments.batch_dim,
-            specialization.output_rows_per_threadgroup(),
-            encoder,
-        );
-
-        Ok(())
-    }
-
-    fn encode_gemm(
-        &mut self,
-        context: &MetalContext,
-        encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
-        let specialization = gemm::GemmSpecialization::select(context, self.data_type, &arguments);
-
-        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
-        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
-
-        let params = GemmParams {
-            M: arguments.batch_dim,
-            N: arguments.output_dim,
-            K: arguments.input_dim,
-            leading_dimension_a: arguments.input_dim,
-            leading_dimension_b: arguments.input_dim,
-            leading_dimension_d: arguments.output_dim,
-            threadgroups_per_row,
-            threadgroups_per_column,
-            swizzle_log: 0,
-            aligned_inner_iterations: arguments.input_dim / specialization.block_depth,
-            use_morton: false,
-        };
-
-        let kernel = self.get_or_create_gemm(context, specialization)?;
-
-        kernel.encode(
-            (arguments.a, arguments.a_offset as usize),
-            arguments.b,
-            &mut *arguments.d,
-            std::slice::from_ref(&params),
-            threadgroups_per_row,
-            threadgroups_per_column,
-            arguments.ab_scale,
-            encoder,
-        );
-
-        if let MatmulArgumentC::Bias(bias) = arguments.c {
-            self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::DenseBuffer>,
-                bias,
-                arguments.d,
-                arguments.output_dim,
-                arguments.batch_dim * arguments.output_dim,
-                encoder,
-            );
-        }
-
-        Ok(())
-    }
-
-    fn encode_gemm_mpp(
-        &mut self,
-        context: &MetalContext,
-        encoder: &mut Encoder<Metal>,
-        arguments: MatmulArguments<Metal>,
-    ) -> Result<(), MatmulError<Metal>> {
-        let is_accumulate = matches!(arguments.c, MatmulArgumentC::Accumulate);
-        let specialization = gemm_mpp::GemmMppSpecialization::select(
-            arguments.batch_dim,
-            arguments.output_dim,
-            arguments.input_dim,
-            is_accumulate,
-            arguments.ab_scale != 1.0,
-        );
-
-        let threadgroups_per_row = arguments.output_dim.div_ceil(specialization.block_cols);
-        let threadgroups_per_column = arguments.batch_dim.div_ceil(specialization.block_rows);
-
-        let max_threadgroups_per_dim = threadgroups_per_row.max(threadgroups_per_column);
-        let min_threadgroups_per_dim = threadgroups_per_row.min(threadgroups_per_column);
-        let morton_dim = max_threadgroups_per_dim.next_power_of_two();
-        let morton_total = morton_dim.saturating_mul(morton_dim);
-        let actual_total = threadgroups_per_row.saturating_mul(threadgroups_per_column);
-        // Morton ordering improves cache locality but requires padding to a square power-of-two grid.
-        // Allow up to 4x overhead (idle threadgroups) before the padding cost outweighs the benefit.
-        let use_morton = min_threadgroups_per_dim > 1 && morton_total <= 4_u32.saturating_mul(actual_total);
-
-        let params = GemmParams {
-            M: arguments.batch_dim,
-            N: arguments.output_dim,
-            K: arguments.input_dim,
-            leading_dimension_a: arguments.input_dim,
-            leading_dimension_b: arguments.input_dim,
-            leading_dimension_d: arguments.output_dim,
-            threadgroups_per_row,
-            threadgroups_per_column,
-            swizzle_log: 0,
-            aligned_inner_iterations: 0,
-            use_morton,
-        };
-
-        let (group_count_x, group_count_y) = if use_morton {
-            (morton_total, 1_u32)
-        } else {
-            (threadgroups_per_row, threadgroups_per_column)
-        };
-
-        let kernel = self.get_or_create_gemm_mpp(context, specialization)?;
-        kernel.encode(
-            (arguments.a, arguments.a_offset as usize),
-            arguments.b,
-            &mut *arguments.d,
-            std::slice::from_ref(&params),
-            group_count_x,
-            group_count_y,
-            arguments.ab_scale,
-            encoder,
-        );
-
-        if let MatmulArgumentC::Bias(bias) = arguments.c {
-            self.bias_add.encode(
-                None::<&<Metal as crate::backends::common::Backend>::DenseBuffer>,
-                bias,
-                arguments.d,
-                arguments.output_dim,
-                arguments.batch_dim * arguments.output_dim,
-                encoder,
-            );
-        }
-
-        Ok(())
-    }
-}
-
-/// Explicit dispatch paths for testing individual kernels independent of production routing.
-#[derive(Debug, Clone, Copy)]
-pub enum MatmulDispatchPath {
-    Auto,
-    Gemv,
-    Gemm,
-    GemmMpp,
-}
-
-impl MatmulMetalKernel {
-    pub fn encode_with_path(
-        &mut self,
-        context: &MetalContext,
-        arguments: MatmulArguments<Metal>,
-        encoder: &mut Encoder<Metal>,
-        path: MatmulDispatchPath,
-    ) {
-        match path {
-            MatmulDispatchPath::Auto => self.encode(context, arguments, encoder),
-            MatmulDispatchPath::Gemv => self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV"),
-            MatmulDispatchPath::Gemm => self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM"),
-            MatmulDispatchPath::GemmMpp => {
-                self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP")
-            },
-        }
-    }
+    gemv: GemvDispatch,
+    pub gemm: GemmKernel,
+    weights_data_type: DataType,
+    input_data_type: DataType,
+    output_data_type: DataType,
 }
 
 impl MatmulKernel for MatmulMetalKernel {
@@ -329,49 +27,51 @@ impl MatmulKernel for MatmulMetalKernel {
 
     fn new(
         context: &MetalContext,
-        data_type: DataType,
-    ) -> Result<Self, MatmulError<Metal>> {
-        if !matches!(data_type, DataType::F16 | DataType::BF16 | DataType::F32) {
-            return Err(MatmulError::UnsupportedDataType(data_type));
-        }
-
-        let bias_add = TensorAddBiasMetalKernel::new(context, data_type, true).map_err(MatmulError::BackendError)?;
-
-        let mut kernel = Self {
-            data_type,
-            gemv_kernels: HashMap::new(),
-            gemm_kernels: HashMap::new(),
-            gemm_mpp_kernels: HashMap::new(),
-            bias_add,
-        };
-
-        for &config in gemv::GemvSpecialization::precompile_configs(data_type) {
-            kernel.get_or_create_gemv(context, config)?;
-        }
-        for &config in gemm::GemmSpecialization::precompile_configs(data_type) {
-            kernel.get_or_create_gemm(context, config)?;
-        }
-        if context.device.supports_mxu() {
-            for &config in gemm_mpp::GemmMppSpecialization::precompile_configs(data_type) {
-                kernel.get_or_create_gemm_mpp(context, config)?;
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+    ) -> Result<Self, MetalError> {
+        for data_type in [weights_data_type, input_data_type, output_data_type] {
+            if !matches!(data_type, DataType::BF16 | DataType::F32) {
+                return Err(MatmulError::<Metal>::UnsupportedDataType(data_type).into());
             }
         }
 
-        Ok(kernel)
+        let gemm = GemmKernel::new(context, weights_data_type, input_data_type, output_data_type)?;
+        let gemv = GemvDispatch::new(context, weights_data_type, input_data_type, output_data_type)
+            .map_err(MetalError::from)?;
+
+        Ok(Self {
+            gemv,
+            gemm,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+        })
     }
 
-    fn encode(
+    fn encode<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        arguments: MatmulArguments<Metal, TB>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        match GemvSpecialization::select(
+            &arguments,
+            self.weights_data_type,
+            self.input_data_type,
+            self.output_data_type,
+        ) {
+            Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
+            None => self.gemm.encode(arguments, encoder),
+        }
+    }
+
+    fn preheat_quant_combo(
         &mut self,
         context: &MetalContext,
-        arguments: MatmulArguments<Metal>,
-        encoder: &mut Encoder<Metal>,
-    ) {
-        if arguments.batch_dim <= max_gemv_batch_threshold() {
-            self.encode_gemv(context, encoder, arguments).expect("Failed to encode GEMV kernel");
-        } else if self.is_mpp_eligible(context) {
-            self.encode_gemm_mpp(context, encoder, arguments).expect("Failed to encode GEMM MPP kernel");
-        } else {
-            self.encode_gemm(context, encoder, arguments).expect("Failed to encode GEMM kernel");
-        }
+        combo: MatmulQuantCombo,
+    ) -> Result<(), MetalError> {
+        self.gemv.preheat_quant_combo(context, combo).map_err(MetalError::from)?;
+        self.gemm.preheat_quant_combo(context, combo)
     }
 }

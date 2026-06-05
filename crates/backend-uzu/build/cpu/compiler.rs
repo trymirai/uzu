@@ -14,8 +14,11 @@ use walkdir::WalkDir;
 use crate::common::{
     codegen::write_tokens,
     compiler::Compiler,
+    enum_paths::EnumPaths,
     gpu_types::GpuTypes,
+    identifiers::{ArgumentName, KernelName, KernelPath},
     kernel::{Kernel, KernelArgument, KernelArgumentType, KernelBufferAccess, KernelParameter, KernelParameterType},
+    utils::get_generic_name_stream,
 };
 
 #[derive(PartialEq, Debug)]
@@ -34,26 +37,25 @@ pub struct FunctionArgument {
 }
 
 impl FunctionArgument {
-    fn to_kernel_argument(&self) -> Option<KernelArgument> {
+    fn to_kernel_argument(
+        &self,
+        enum_paths: &EnumPaths,
+    ) -> Option<KernelArgument> {
         Some(KernelArgument {
-            name: self.name.to_string().into_boxed_str(),
+            name: ArgumentName::from(self.name.to_string()),
             conditional: self.conditional.is_some(),
             ty: match &self.ty {
                 FunctionArgumentType::Buffer(access) => KernelArgumentType::Buffer(access.clone()),
                 FunctionArgumentType::Constant(ty, None) => KernelArgumentType::Constant(
-                    format!("&[{}]", ty.to_token_stream().to_string().replace(" :: ", "::")).into_boxed_str(),
+                    format!("&[{}]", canonicalize_type_text(ty, enum_paths)).into_boxed_str(),
                 ),
-                FunctionArgumentType::Constant(ty, Some(sz)) => KernelArgumentType::Constant(
-                    format!(
-                        "&[{}; {}]",
-                        ty.to_token_stream().to_string().replace(" :: ", "::"),
-                        sz.to_token_stream().to_string(),
-                    )
-                    .into_boxed_str(),
+                FunctionArgumentType::Constant(ty, Some(size)) => KernelArgumentType::Constant(
+                    format!("&[{}; {}]", canonicalize_type_text(ty, enum_paths), size.to_token_stream(),)
+                        .into_boxed_str(),
                 ),
-                FunctionArgumentType::Scalar(ty) => KernelArgumentType::Constant(
-                    ty.to_token_stream().to_string().replace(" :: ", "::").into_boxed_str(),
-                ),
+                FunctionArgumentType::Scalar(ty) => {
+                    KernelArgumentType::Constant(canonicalize_type_text(ty, enum_paths).into_boxed_str())
+                },
                 FunctionArgumentType::Specialization(_) => {
                     return None;
                 },
@@ -61,12 +63,15 @@ impl FunctionArgument {
         })
     }
 
-    fn to_kernel_parameter(&self) -> Option<KernelParameter> {
+    fn to_kernel_parameter(
+        &self,
+        enum_paths: &EnumPaths,
+    ) -> Option<KernelParameter> {
         Some(KernelParameter {
             name: self.name.to_string().into_boxed_str(),
             ty: match &self.ty {
                 FunctionArgumentType::Specialization(ty) => {
-                    KernelParameterType::Value(ty.to_token_stream().to_string().into_boxed_str())
+                    KernelParameterType::Value(canonicalize_type_text(ty, enum_paths).into_boxed_str())
                 },
                 _ => {
                     return None;
@@ -74,6 +79,15 @@ impl FunctionArgument {
             },
         })
     }
+}
+
+fn canonicalize_type_text(
+    ty: &Type,
+    enum_paths: &EnumPaths,
+) -> String {
+    let mut canonicalized = ty.clone();
+    enum_paths.canonicalize_type(&mut canonicalized);
+    canonicalized.to_token_stream().to_string().replace(" :: ", "::")
 }
 
 #[derive(PartialEq, Debug)]
@@ -89,13 +103,16 @@ pub struct FunctionParameter {
 }
 
 impl FunctionParameter {
-    fn to_kernel_parameter(&self) -> KernelParameter {
+    fn to_kernel_parameter(
+        &self,
+        enum_paths: &EnumPaths,
+    ) -> KernelParameter {
         KernelParameter {
             name: self.name.to_string().into_boxed_str(),
             ty: match &self.ty {
                 FunctionParameterType::Type => KernelParameterType::Type,
                 FunctionParameterType::Value(ty) => {
-                    KernelParameterType::Value(ty.to_token_stream().to_string().into_boxed_str())
+                    KernelParameterType::Value(canonicalize_type_text(ty, enum_paths).into_boxed_str())
                 },
             },
         }
@@ -124,8 +141,9 @@ impl CpuCompiler {
     fn compile(
         &self,
         source_path: PathBuf,
-    ) -> anyhow::Result<(Box<[Box<str>]>, Box<[Kernel]>)> {
-        let src_rel_path: Box<[Box<str>]> = source_path
+        enum_paths: &EnumPaths,
+    ) -> anyhow::Result<(KernelPath, Box<[Kernel]>)> {
+        let src_rel_path: KernelPath = source_path
             .strip_prefix(&self.src_dir)
             .context("source is not in src_dir")?
             .with_extension("")
@@ -133,7 +151,7 @@ impl CpuCompiler {
             .to_str()
             .unwrap()
             .split("/")
-            .map(|s| s.to_string().into_boxed_str())
+            .map(|s| s.to_string())
             .collect();
 
         let source_contents = fs::read_to_string(&source_path).context("cannot read the source file")?;
@@ -146,7 +164,7 @@ impl CpuCompiler {
                 if let Item::Fn(ifn) = item
                     && ifn.attrs.iter().any(|attr| attr.path().is_ident("kernel"))
                 {
-                    Some(self.compile_kernel(ifn))
+                    Some(self.compile_kernel(ifn, enum_paths))
                 } else {
                     None
                 }
@@ -159,6 +177,7 @@ impl CpuCompiler {
     fn compile_kernel(
         &self,
         ifn: ItemFn,
+        enum_paths: &EnumPaths,
     ) -> anyhow::Result<Kernel> {
         let mut kernel_ident = None;
         let mut function_variants = Vec::new();
@@ -189,7 +208,7 @@ impl CpuCompiler {
                     let expr = attr.parse_args::<Expr>().context("cannot parse constraint attribute")?;
                     function_constraints.push(expr);
                 },
-                _ => bail!("Unexpected attr {attr:?}"),
+                _ => {},
             }
         }
 
@@ -247,7 +266,7 @@ impl CpuCompiler {
                         bail!("conditional argument type path must have one segment");
                     }
                     let seg = &ty.path.segments[0];
-                    if seg.ident.to_string() != "Option" {
+                    if seg.ident != "Option" {
                         bail!("conditional argument type must be Option<...>");
                     }
                     let PathArguments::AngleBracketed(option_arguments) = &seg.arguments else {
@@ -275,12 +294,14 @@ impl CpuCompiler {
 
         let kernel_parameters = function_parameters
             .iter()
-            .map(|p| p.to_kernel_parameter())
-            .chain(function_arguments.iter().flat_map(|p| p.to_kernel_parameter()))
+            .map(|parameter| parameter.to_kernel_parameter(enum_paths))
+            .chain(function_arguments.iter().flat_map(|argument| argument.to_kernel_parameter(enum_paths)))
             .collect::<Box<[KernelParameter]>>();
 
-        let kernel_arguments =
-            function_arguments.iter().flat_map(|p| p.to_kernel_argument()).collect::<Box<[KernelArgument]>>();
+        let kernel_arguments = function_arguments
+            .iter()
+            .flat_map(|argument| argument.to_kernel_argument(enum_paths))
+            .collect::<Box<[KernelArgument]>>();
 
         if function_parameters.len() != function_variants.len() {
             bail!(
@@ -292,11 +313,7 @@ impl CpuCompiler {
 
         for (parameter, (variant_name, _)) in std::iter::zip(function_parameters.iter(), function_variants.iter()) {
             if &parameter.name != variant_name {
-                bail!(
-                    "Parameter name doesn't match variant name: {} | {}",
-                    parameter.name.to_string(),
-                    variant_name.to_string(),
-                );
+                bail!("Parameter name doesn't match variant name: {} | {}", parameter.name, variant_name,);
             }
         }
 
@@ -311,7 +328,7 @@ impl CpuCompiler {
                 let ident = &parameter.name;
 
                 let ty = match &parameter.ty {
-                    FunctionParameterType::Type => quote! { crate::DataType },
+                    FunctionParameterType::Type => quote! { crate::data_type::DataType },
                     FunctionParameterType::Value(ty) => quote! { #ty },
                 };
 
@@ -334,7 +351,9 @@ impl CpuCompiler {
                 let parameter_ident: Ident = syn::parse_str(parameter.name.as_ref())?;
 
                 Ok(match &parameter.ty {
-                    KernelParameterType::Type => quote! { #[allow(non_snake_case)] #parameter_ident: crate::DataType },
+                    KernelParameterType::Type => {
+                        quote! { #[allow(non_snake_case)] #parameter_ident: crate::data_type::DataType }
+                    },
                     KernelParameterType::Value(ty) => {
                         let ty: syn::Type = syn::parse_str(ty.as_ref()).unwrap();
                         quote! { #[allow(non_snake_case)] #parameter_ident: #ty }
@@ -343,85 +362,93 @@ impl CpuCompiler {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let (encode_generics, encode_args_defs): (Vec<_>, Vec<_>) = kernel_arguments
-            .iter()
-            .map(|argument| {
-                let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
+        let (encode_lifetimes, buffer_generics, mut encode_args_defs): (Vec<_>, Vec<_>, Vec<_>) = kernel_arguments
+			.iter()
+			.map(|argument| {
+				let argument_ident: Ident = syn::parse_str(argument.name.as_ref()).context("cannot parse ident")?;
 
-                let (generic, mut ty) = match &argument.ty {
-                    KernelArgumentType::Buffer(access) => {
-                        let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
-                        (
-                            Some(quote! { #buffer_lifetime }),
-                            match access {
-                                KernelBufferAccess::Read => quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, std::cell::UnsafeCell<std::pin::Pin<Box<[u8]>>>> },
-                                KernelBufferAccess::ReadWrite => quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, std::cell::UnsafeCell<std::pin::Pin<Box<[u8]>>>> },
-                            },
-                        )
-                    },
-                    KernelArgumentType::Constant(ty) => {
-                        let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
-                        (None, quote! { #ty })
-                    },
-                };
+				let (lifetime, generic, mut ty) = match &argument.ty {
+					KernelArgumentType::Buffer(access) => {
+						let buffer_lifetime = Lifetime::new(&format!("'{}", argument.name.as_ref()), Span::call_site());
+						let buffer_type = get_generic_name_stream(argument.name.as_ref());
+						(
+							Some(quote! { #buffer_lifetime }),
+							Some(quote! { #buffer_type }),
+							match access {
+								KernelBufferAccess::Read => {
+									quote! { impl crate::backends::common::kernel::BufferArg<#buffer_lifetime, #buffer_type> }
+								}
+								KernelBufferAccess::ReadWrite => {
+									quote! { impl crate::backends::common::kernel::BufferArgMut<#buffer_lifetime, #buffer_type> }
+								}
+							},
+						)
+					}
+					KernelArgumentType::Constant(ty) => {
+						let ty: Type = syn::parse_str(ty.as_ref()).context("cannot parse type")?;
+						(None, None, quote! { #ty })
+					}
+				};
 
-                if argument.conditional {
-                    ty = quote! { Option<#ty> };
-                }
+				if argument.conditional {
+					ty = quote! { Option<#ty> };
+				}
 
-                Ok((generic, quote! { #argument_ident: #ty }))
-            })
-            .collect::<anyhow::Result<_>>()?;
+				Ok((lifetime, generic, quote! { #argument_ident: #ty }))
+			})
+			.collect::<anyhow::Result<_>>()?;
 
-        let encode_generics = encode_generics.into_iter().flatten().collect::<Vec<_>>();
+        let mut encode_lifetimes = encode_lifetimes.into_iter().flatten().collect::<Vec<_>>();
+        let buffer_generics = buffer_generics.into_iter().flatten().collect::<Vec<_>>();
 
         let argument_copies = function_arguments
-            .iter()
-            .flat_map(|argument| {
-                let argument_ident = &argument.name;
-                match &argument.ty {
-                    FunctionArgumentType::Buffer(access) => {
-                        let (buffer_ptr, buffer_ptr_wrapper) = match access {
-                            KernelBufferAccess::Read => {
-                                (quote! { (&*__dsl_buffer.get()).as_ptr() }, quote! { crate::utils::pointers::SendPtr })
-                            },
-                            KernelBufferAccess::ReadWrite => (
-                                quote! { (&mut *__dsl_buffer.get()).as_mut_ptr() },
-                                quote! { crate::utils::pointers::SendPtrMut },
-                            ),
-                        };
+			.iter()
+			.flat_map(|argument| {
+				let argument_ident = &argument.name;
+				match &argument.ty {
+					FunctionArgumentType::Buffer(access) => {
+						let (buffer_ptr, buffer_ptr_wrapper) = match access {
+							KernelBufferAccess::Read => (
+								quote! { (&*crate::backends::cpu::buffer::BufferDowncastExt::downcast(__dsl_buffer).get()).as_ptr() },
+								quote! { crate::utils::pointers::SendPtr }
+							),
+							KernelBufferAccess::ReadWrite => (
+								quote! { (&mut *crate::backends::cpu::buffer::BufferDowncastExt::downcast(__dsl_buffer).get()).as_mut_ptr() },
+								quote! { crate::utils::pointers::SendPtrMut },
+							),
+						};
 
-                        if argument.conditional.is_some() {
-                            Some(quote! {
+						if argument.conditional.is_some() {
+							Some(quote! {
                                 let #argument_ident = #argument_ident.map(|__dsl_buffer_impl| unsafe {
                                     let (__dsl_buffer, __dsl_offset, _) = __dsl_buffer_impl.into_parts();
 
                                     #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
                                 });
                             })
-                        } else {
-                            Some(quote! {
+						} else {
+							Some(quote! {
                                 let #argument_ident = unsafe {
                                     let (__dsl_buffer, __dsl_offset, _) = #argument_ident.into_parts();
 
                                     #buffer_ptr_wrapper(#buffer_ptr.byte_add(__dsl_offset))
                                 };
                             })
-                        }
-                    },
-                    FunctionArgumentType::Constant(_, None) => {
-                        Some(quote! { let #argument_ident = #argument_ident.to_vec().into_boxed_slice(); })
-                    },
-                    FunctionArgumentType::Constant(_, Some(_)) => {
-                        Some(quote! { let #argument_ident = Box::new(*#argument_ident); })
-                    },
-                    FunctionArgumentType::Scalar(_) => None,
-                    FunctionArgumentType::Specialization(_) => {
-                        Some(quote! { let #argument_ident = self.#argument_ident; })
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
+						}
+					}
+					FunctionArgumentType::Constant(_, None) => {
+						Some(quote! { let #argument_ident = #argument_ident.to_vec().into_boxed_slice(); })
+					}
+					FunctionArgumentType::Constant(_, Some(_)) => {
+						Some(quote! { let #argument_ident = Box::new(*#argument_ident); })
+					}
+					FunctionArgumentType::Scalar(_) => None,
+					FunctionArgumentType::Specialization(_) => {
+						Some(quote! { let #argument_ident = self.#argument_ident; })
+					}
+				}
+			})
+			.collect::<Vec<_>>();
 
         let make_encode = |generics: TokenStream| -> TokenStream {
             let monomorphized_function = if !generics.is_empty() {
@@ -461,7 +488,7 @@ impl CpuCompiler {
             }
         };
 
-        let encode_body = if function_parameters.len() > 0 {
+        let encode_body = if !function_parameters.is_empty() {
             let mut parameter_idents = function_parameters.iter().map(|p| p.name.clone()).fold(quote! {}, |a, b| {
                 if !a.is_empty() {
                     quote! {#a , self.#b}
@@ -474,7 +501,12 @@ impl CpuCompiler {
                 parameter_idents = quote! { (#parameter_idents) };
             }
 
-            let rhai_engine = (!function_constraints.is_empty()).then(rhai::Engine::new);
+            let variant_value_strs: Vec<String> = function_variants
+                .iter()
+                .flat_map(|(_, variants)| variants.iter().map(|v| v.to_token_stream().to_string()))
+                .collect();
+            let evaluator = (!function_constraints.is_empty())
+                .then(|| crate::common::constraints::Evaluator::new(variant_value_strs.iter().map(|s| s.as_str())));
             let constraint_strs: Vec<String> =
                 function_constraints.iter().map(|c| c.to_token_stream().to_string()).collect();
 
@@ -488,7 +520,7 @@ impl CpuCompiler {
                                 FunctionParameterType::Type => {
                                     let dtype =
                                         format_ident!("{}", variant.to_token_stream().to_string().to_uppercase());
-                                    quote! { crate::DataType::#dtype }
+                                    quote! { crate::data_type::DataType::#dtype }
                                 },
                                 FunctionParameterType::Value(_) => quote! { #variant },
                             },
@@ -498,7 +530,7 @@ impl CpuCompiler {
                 })
                 .multi_cartesian_product()
                 .filter(|variants| {
-                    let Some(engine) = &rhai_engine else {
+                    let Some(evaluator) = &evaluator else {
                         return true;
                     };
                     let bindings: Vec<(String, String)> = function_parameters
@@ -506,7 +538,7 @@ impl CpuCompiler {
                         .enumerate()
                         .map(|(i, p)| (p.name.to_string(), variants[i].1.to_string()))
                         .collect();
-                    crate::common::constraints::satisfied(engine, &bindings, &constraint_strs)
+                    evaluator.satisfied(&bindings, &constraint_strs)
                 })
                 .map(|variants| {
                     let (match_variants, generic_variants): (Vec<TokenStream>, Vec<TokenStream>) =
@@ -548,22 +580,43 @@ impl CpuCompiler {
             make_encode(quote! {})
         };
 
+        encode_lifetimes.push(quote! { 'encoder });
+        encode_args_defs
+            .push(quote! { encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu> });
+
+        let mut encode_generics: Vec<&TokenStream> = Vec::new();
+        encode_generics.extend(&encode_lifetimes);
+        encode_generics.extend(&buffer_generics);
+
+        let where_generics = buffer_generics
+            .iter()
+            .map(|generic| {
+                quote! { #generic: crate::backends::common::Buffer<Backend = crate::backends::cpu::Cpu> }
+            })
+            .collect::<Vec<_>>();
+        let where_block = if where_generics.is_empty() {
+            quote! {}
+        } else {
+            quote! { where #(#where_generics),* }
+        };
+
         let tokens = quote! {
             #[allow(non_snake_case)]
             pub struct #struct_ident {
                 #(#struct_fields_defs ,)*
             }
 
+            #[allow(clippy::style, clippy::complexity, clippy::perf)]
             impl crate::backends::common::kernel::#trait_ident for #struct_ident {
                 type Backend = crate::backends::cpu::Cpu;
 
-                fn new(context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
+                fn new(#[allow(unused)] context: &crate::backends::cpu::context::CpuContext #(, #parameter_args)*) -> Result<Self, crate::backends::cpu::error::CpuError> {
                     Ok(Self {
                         #(#struct_fields_sets ,)*
                     })
                 }
 
-                fn encode<#(#encode_generics ,)* 'encoder>(&self, #(#encode_args_defs, )* encoder: &'encoder mut crate::backends::common::Encoder<crate::backends::cpu::Cpu>) {
+                fn encode<#(#encode_generics),*>(&self, #(#encode_args_defs),*)#where_block {
                     #(#argument_copies)*
                     #encode_body
                 }
@@ -574,7 +627,7 @@ impl CpuCompiler {
         write_tokens(tokens, &out_path).context("cannot write bindings")?;
 
         Ok(Kernel {
-            name: kernel_ident.to_string().into_boxed_str(),
+            name: KernelName::from(kernel_ident.to_string()),
             parameters: kernel_parameters,
             arguments: kernel_arguments,
         })
@@ -590,16 +643,16 @@ impl CpuCompiler {
             Type::Reference(ty) => match *ty.elem {
                 Type::Slice(ty) => FunctionArgumentType::Constant(*ty.elem, None),
                 Type::Array(ty) => FunctionArgumentType::Constant(*ty.elem, Some(ty.len)),
-                ty => bail!("unsupported reference type: {} ({:?})", ty.to_token_stream().to_string(), ty),
+                ty => bail!("unsupported reference type: {} ({:?})", ty.to_token_stream(), ty),
             },
             Type::Path(ty) => FunctionArgumentType::Scalar(Type::Path(ty)),
-            ty => bail!("unsupported type: {} ({:?})", ty.to_token_stream().to_string(), ty),
+            ty => bail!("unsupported type: {} ({:?})", ty.to_token_stream(), ty),
         })
     }
 
     fn bindgen<'a>(
         &self,
-        objects: impl IntoIterator<Item = &'a (Box<[Box<str>]>, Box<[Kernel]>)> + Clone,
+        objects: impl IntoIterator<Item = &'a (KernelPath, Box<[Kernel]>)> + Clone,
     ) -> anyhow::Result<()> {
         let out_path = self.build_dir.join("dsl.rs");
 
@@ -613,12 +666,10 @@ impl CpuCompiler {
         });
 
         let tokens = quote! {
-            pub struct CpuKernels;
-
-            impl crate::backends::common::kernel::Kernels for CpuKernels {
-                type Backend = crate::backends::cpu::Cpu;
-
-                #(#associated_types)*
+            macro_rules! autogen_kernels {
+                () => {
+                    #(#associated_types)*
+                }
             }
         };
 
@@ -633,13 +684,16 @@ impl Compiler for CpuCompiler {
     async fn build(
         &self,
         _gpu_types: &GpuTypes,
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+        enum_paths: &EnumPaths,
+    ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         let objects = WalkDir::new(&self.src_dir)
             .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("rs"))
-            .map(|e| self.compile(e.into_path()))
-            .collect::<anyhow::Result<Vec<(Box<[Box<str>]>, Box<[Kernel]>)>>>()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("rs")
+            })
+            .map(|entry| self.compile(entry.into_path(), enum_paths))
+            .collect::<anyhow::Result<Vec<(KernelPath, Box<[Kernel]>)>>>()
             .context("cannot compile cpu sources")?;
 
         self.bindgen(&objects).context("cannot generate bindings")?;

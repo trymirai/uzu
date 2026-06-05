@@ -11,10 +11,7 @@ impl OutputParser {
         let regex = match regex_str {
             Some(regex_str) => {
                 let regex_str = Self::preprocess_regex_string(regex_str);
-                let re = RegexBuilder::new(&regex_str)
-                    .dot_matches_new_line(true)
-                    .build()
-                    .map_err(|_| Error::UnableToBuildOutputParserRegex)?;
+                let re = RegexBuilder::new(&regex_str).dot_matches_new_line(true).build()?;
                 Some(re)
             },
             None => None,

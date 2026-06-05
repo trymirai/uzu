@@ -1,14 +1,12 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::ShortConvPackKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -30,18 +28,18 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPackKernel::new(&context, T::data_type())
         .expect("Failed to create ShortConvPackKernel");
 
-    let state_in_array = context.create_array_from(&[input.state_in.len()], &input.state_in, "");
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
+    let state_in_array = context.create_array_from(&[input.state_in.len()], &input.state_in);
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
 
     let padded_rows = (input.state_stride + input.suffix_len) as usize;
     let padded_size = padded_rows * input.model_dim as usize;
-    let padded_array = context.create_array_uninitialized(&[padded_size], T::data_type(), "");
+    let mut padded = context.create_array_uninitialized(&[padded_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        state_in_array.buffer().borrow().deref(),
-        in_proj_array.buffer().borrow().deref(),
-        padded_array.buffer().borrow_mut().deref_mut(),
+        state_in_array.allocation(),
+        in_proj_array.allocation(),
+        &mut padded,
         input.state_stride,
         input.suffix_len,
         input.in_proj_stride,
@@ -50,7 +48,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    padded_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&padded)
 }
 
 /// Build test input for ShortConvPack.

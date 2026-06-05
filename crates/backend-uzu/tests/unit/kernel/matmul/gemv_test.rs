@@ -1,25 +1,26 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
-            Backend, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
-                ManualKernels,
-                matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+                Kernels,
+                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
             },
         },
         cpu::Cpu,
     },
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
+use rstest::rstest;
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::common::{
+    assert::assert_eq_float,
+    helpers::{alloc_allocation_with_data, allocation_to_vec},
+};
 
 struct Input<T: ArrayElement + Float> {
     a: Box<[T]>,
@@ -56,40 +57,39 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     let k = input.k as u32;
     let n = input.n as u32;
 
-    let a_array = context.create_array_from(&[input.m, input.k], &input.a, "");
-    let b_array = context.create_array_from(&[input.n, input.k], &input.b, "");
-    let d_array = context.create_array_uninitialized(&[input.m, input.n], T::data_type(), "");
+    let b_array = context.create_array_from(&[input.n, input.k], &input.b);
+    let a_allocation = alloc_allocation_with_data::<B, T>(&context, &input.a);
+    let mut d_allocation = context
+        .create_allocation(input.m * input.n * std::mem::size_of::<T>(), AllocationType::Global)
+        .expect("Failed to create allocation");
 
-    let a_buf = a_array.buffer();
-    let a_ref = a_buf.borrow();
-    let b_buf = b_array.buffer();
-    let b_ref = b_buf.borrow();
-    let d_buf = d_array.buffer();
-    let mut d_ref = d_buf.borrow_mut();
-
-    let mut kernel = <B::Kernels as ManualKernels>::MatmulKernel::new(&context, T::data_type())
-        .expect("Failed to create MatmulKernel");
+    let mut kernel =
+        <B::Kernels as Kernels>::MatmulKernel::new(&context, T::data_type(), T::data_type(), T::data_type())
+            .expect("Failed to create MatmulKernel");
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(
-        &context,
-        MatmulArguments {
-            a: a_ref.deref(),
-            a_offset: 0,
-            b: b_ref.deref(),
-            ab_scale: 1.0,
-            c: MatmulArgumentC::None,
-            d: d_ref.deref_mut(),
-            batch_dim: m,
-            input_dim: k,
-            output_dim: n,
-        },
-        &mut encoder,
-    );
+    kernel
+        .encode(
+            MatmulArguments {
+                a: &a_allocation,
+                a_offset: 0,
+                b: MatmulB::FullPrecision {
+                    b: b_array.allocation(),
+                },
+                b_offset: 0,
+                b_leading_dimension: None,
+                b_transpose: true,
+                d: &mut d_allocation,
+                d_transform: MatmulDOps::none(),
+                m,
+                n,
+                k,
+            },
+            &mut encoder,
+        )
+        .expect("encode failed");
     encoder.end_encoding().submit().wait_until_completed().unwrap();
-
-    drop(d_ref);
-    d_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&d_allocation)
 }
 
 fn test<T: ArrayElement + Float + Debug + Display>(
@@ -105,107 +105,34 @@ fn test<T: ArrayElement + Float + Debug + Display>(
     });
 }
 
-#[uzu_test]
-fn test_f32_m1() {
-    test::<f32>(1, 128, 64, 0.01);
+#[rstest]
+#[case::m1(1, 128, 64)]
+#[case::batched(4, 128, 64)]
+#[case::max_batch(8, 128, 64)]
+#[case::unaligned_k(1, 33, 64)]
+#[case::unaligned_n(1, 128, 11)]
+#[case::large(1, 4096, 2048)]
+#[case::small_n(1, 128, 3)]
+fn gemv_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+) {
+    test::<bf16>(m, k, n, 0.1);
 }
 
-#[uzu_test]
-fn test_f16_m1() {
-    test::<f16>(1, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_m1() {
-    test::<bf16>(1, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_batched() {
-    test::<f32>(4, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_batched() {
-    test::<f16>(4, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_batched() {
-    test::<bf16>(4, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_max_batch() {
-    test::<f32>(8, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_max_batch() {
-    test::<f16>(8, 128, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_max_batch() {
-    test::<bf16>(8, 128, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_unaligned_k() {
-    test::<f32>(1, 33, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_unaligned_k() {
-    test::<f16>(1, 33, 64, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_unaligned_k() {
-    test::<bf16>(1, 33, 64, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_unaligned_n() {
-    test::<f32>(1, 128, 11, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_unaligned_n() {
-    test::<f16>(1, 128, 11, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_unaligned_n() {
-    test::<bf16>(1, 128, 11, 0.1);
-}
-
-#[uzu_test]
-fn test_f32_large() {
-    test::<f32>(1, 4096, 2048, 0.05);
-}
-
-#[uzu_test]
-fn test_f16_large() {
-    test::<f16>(1, 4096, 2048, 0.5);
-}
-
-#[uzu_test]
-fn test_bf16_large() {
-    test::<bf16>(1, 4096, 2048, 1.0);
-}
-
-#[uzu_test]
-fn test_f32_small_n() {
-    test::<f32>(1, 128, 3, 0.01);
-}
-
-#[uzu_test]
-fn test_f16_small_n() {
-    test::<f16>(1, 128, 3, 0.01);
-}
-
-#[uzu_test]
-fn test_bf16_small_n() {
-    test::<bf16>(1, 128, 3, 0.1);
+#[rstest]
+#[case::m1(1, 128, 64)]
+#[case::batched(4, 128, 64)]
+#[case::max_batch(8, 128, 64)]
+#[case::unaligned_k(1, 33, 64)]
+#[case::unaligned_n(1, 128, 11)]
+#[case::large(1, 4096, 2048)]
+#[case::small_n(1, 128, 3)]
+fn gemv_f32(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+) {
+    test::<f32>(m, k, n, 0.01);
 }

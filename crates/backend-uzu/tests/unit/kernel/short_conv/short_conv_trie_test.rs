@@ -1,14 +1,12 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::ShortConvTrieKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -17,8 +15,8 @@ use crate::{common::assert::assert_eq_float, uzu_test};
 
 struct Input<T: ArrayElement + Float> {
     in_proj: Box<[T]>,
-    w: Box<[T]>,
-    b: Option<Box<[T]>>,
+    w: Box<[f32]>,
+    b: Option<Box<[f32]>>,
     base_state: Box<[T]>,
     parents: Box<[i32]>,
     suffix_len: u32,
@@ -32,44 +30,46 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let context = B::Context::new().expect("Failed to create Context");
 
     let has_bias = input.b.is_some();
-    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(&context, T::data_type(), has_bias)
-        .expect("Failed to create ShortConvTrieKernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvTrieKernel::new(
+        &context,
+        T::data_type(),
+        DataType::F32,
+        has_bias,
+    )
+    .expect("Failed to create ShortConvTrieKernel");
 
-    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj, "");
-    let w_array = context.create_array_from(&[input.w.len()], &input.w, "");
-    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b, ""));
+    let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
+    let w_array = context.create_array_from(&[input.w.len()], &input.w);
+    let b_array = input.b.as_ref().map(|b| context.create_array_from(&[b.len()], b));
 
     let out_size = input.suffix_len as usize * input.model_dim as usize;
-    let out_array = context.create_array_uninitialized(&[out_size], T::data_type(), "");
+    let mut out = context.create_array_uninitialized(&[out_size], T::data_type()).into_allocation();
 
     let state_stride = input.state_stride as usize;
     let model_dim = input.model_dim as usize;
     let suffix_len = input.suffix_len as usize;
 
     let base_state_size = model_dim * state_stride;
-    let base_state_array = if base_state_size > 0 {
-        context.create_array_from(&[base_state_size], &input.base_state, "")
-    } else {
-        context.create_array_uninitialized(&[1], T::data_type(), "")
-    };
+    let base_state_allocation_size = base_state_size.max(1);
+    let base_state_data: Vec<T> =
+        input.base_state.iter().copied().chain(std::iter::repeat(T::zero())).take(base_state_allocation_size).collect();
+    let base_state_array = context.create_array_from(&[base_state_allocation_size], &base_state_data);
 
-    let parents_array = context.create_array_from(&[input.parents.len()], &input.parents, "");
+    let parents_array = context.create_array_from(&[input.parents.len()], &input.parents);
 
     let suffix_state_size = suffix_len * model_dim * state_stride;
-    let suffix_state_array = context.create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type(), "");
-
-    let bias_buf_rc = b_array.as_ref().map(|b| b.buffer());
-    let bias_buf_borrow = bias_buf_rc.as_ref().map(|rc| rc.borrow());
+    let mut suffix_state =
+        context.create_array_uninitialized(&[suffix_state_size.max(1)], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        in_proj_array.buffer().borrow().deref(),
-        w_array.buffer().borrow().deref(),
-        bias_buf_borrow.as_deref(),
-        base_state_array.buffer().borrow().deref(),
-        parents_array.buffer().borrow().deref(),
-        out_array.buffer().borrow_mut().deref_mut(),
-        suffix_state_array.buffer().borrow_mut().deref_mut(),
+        in_proj_array.allocation(),
+        w_array.allocation(),
+        b_array.as_ref().map(|bias| bias.allocation()),
+        base_state_array.allocation(),
+        parents_array.allocation(),
+        &mut out,
+        &mut suffix_state,
         input.suffix_len,
         input.kernel_size,
         input.in_proj_stride,
@@ -79,7 +79,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (out_array.as_slice().to_vec(), suffix_state_array.as_slice().to_vec())
+    (crate::common::helpers::allocation_to_vec(&out), crate::common::helpers::allocation_to_vec(&suffix_state))
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.
@@ -104,11 +104,11 @@ fn get_test_data_basic<T: ArrayElement + Float>(
         }
     }
 
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.1 * (tap as f32) - 0.01 * (ch as f32) + 0.5;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
@@ -128,9 +128,9 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.01 * (ch as f32) + 0.1).unwrap();
+            bias[ch] = 0.01 * (ch as f32) + 0.1;
         }
         Some(bias.into_boxed_slice())
     } else {
@@ -176,11 +176,11 @@ fn get_test_data_branching<T: ArrayElement + Float>(
         }
     }
 
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.15 * (tap as f32) - 0.02 * (ch as f32) + 0.4;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
@@ -196,9 +196,9 @@ fn get_test_data_branching<T: ArrayElement + Float>(
     let parents = vec![-1i32, 0, 0];
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.02 * (ch as f32) + 0.05).unwrap();
+            bias[ch] = 0.02 * (ch as f32) + 0.05;
         }
         Some(bias.into_boxed_slice())
     } else {
@@ -242,11 +242,11 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         in_proj[2 * model_dim + ch] = T::from(x_in).unwrap();
     }
 
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.25 * (tap as f32) + 0.1;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
@@ -261,9 +261,9 @@ fn get_test_data_edge<T: ArrayElement + Float>(
     let parents = vec![-1i32];
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.005 * (ch as f32) + 0.01).unwrap();
+            bias[ch] = 0.005 * (ch as f32) + 0.01;
         }
         Some(bias.into_boxed_slice())
     } else {

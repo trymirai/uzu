@@ -3,11 +3,11 @@ use std::rc::Rc;
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::Metal;
 use backend_uzu::{
-    DataType,
     backends::{
         common::{Backend, Context},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use proptest::prelude::*;
 
@@ -74,16 +74,3 @@ impl<T: ComparableTestResults> TestResults<T> {
         Ok(())
     }
 }
-
-macro_rules! dispatch_dtype {
-    (|()| $body:expr) => { $body };
-    (|($T:ident : $dt:expr $(, $rest_T:ident : $rest_dt:expr)*)| $body:expr) => {
-        match $dt {
-            backend_uzu::DataType::F16 => { type $T = half::f16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            backend_uzu::DataType::BF16 => { type $T = half::bf16; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            backend_uzu::DataType::F32 => { type $T = f32; dispatch_dtype!(|($($rest_T : $rest_dt),*)| $body) }
-            other => panic!("unsupported dtype in test: {:?}", other),
-        }
-    };
-}
-pub(crate) use dispatch_dtype;

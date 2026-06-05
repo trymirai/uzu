@@ -1,10 +1,7 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
             Backend, Context, Encoder, Kernels,
@@ -12,6 +9,7 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
@@ -100,27 +98,27 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     )
     .expect("Failed to create AttentionTwoPass1Kernel");
 
-    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries, "");
-    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys, "");
-    let values_array = context.create_array_from(&[input.values.len()], &input.values, "");
+    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries);
+    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys);
+    let values_array = context.create_array_from(&[input.values.len()], &input.values);
 
     let total_offsets = (input.suffix_length * input.num_heads) as usize;
     let partials_size = total_offsets * TOTAL_BLOCKS_COUNT as usize * input.head_dim as usize;
     let sums_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
     let maxs_size = total_offsets * TOTAL_BLOCKS_COUNT as usize;
 
-    let partials_array = context.create_array_uninitialized(&[partials_size], DataType::F32, "");
-    let sums_array = context.create_array_uninitialized(&[sums_size], DataType::F32, "");
-    let maxs_array = context.create_array_uninitialized(&[maxs_size], DataType::F32, "");
+    let mut partials = context.create_array_uninitialized(&[partials_size], DataType::F32).into_allocation();
+    let mut sums = context.create_array_uninitialized(&[sums_size], DataType::F32).into_allocation();
+    let mut maxs = context.create_array_uninitialized(&[maxs_size], DataType::F32).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        queries_array.buffer().borrow().deref(),
-        keys_array.buffer().borrow().deref(),
-        values_array.buffer().borrow().deref(),
-        partials_array.buffer().borrow_mut().deref_mut(),
-        sums_array.buffer().borrow_mut().deref_mut(),
-        maxs_array.buffer().borrow_mut().deref_mut(),
+        queries_array.allocation(),
+        keys_array.allocation(),
+        values_array.allocation(),
+        &mut partials,
+        &mut sums,
+        &mut maxs,
         input.gqa_factor,
         input.sequence_length,
         input.sequence_length * input.head_dim,
@@ -131,17 +129,17 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
         input.scale,
         input.num_heads,
         input.suffix_length,
-        None::<&B::DenseBuffer>,
+        None::<&backend_uzu::backends::common::Allocation<B>>,
         None,
-        None::<&B::DenseBuffer>,
+        None::<&backend_uzu::backends::common::Allocation<B>>,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     FirstPassOutput {
-        partials: partials_array.as_slice().to_vec(),
-        sums: sums_array.as_slice().to_vec(),
-        maxs: maxs_array.as_slice().to_vec(),
+        partials: crate::common::helpers::allocation_to_vec(&partials),
+        sums: crate::common::helpers::allocation_to_vec(&sums),
+        maxs: crate::common::helpers::allocation_to_vec(&maxs),
     }
 }
 
@@ -199,26 +197,26 @@ fn get_second_pass_output<T: ArrayElement + Float, B: Backend>(input: &SecondPas
         <<B as Backend>::Kernels as Kernels>::AttentionTwoPass2Kernel::new(&context, T::data_type(), input.head_dim)
             .expect("Failed to create AttentionTwoPass2Kernel");
 
-    let partials_array = context.create_array_from(&[input.partials.len()], &input.partials, "");
-    let sums_array = context.create_array_from(&[input.sums.len()], &input.sums, "");
-    let maxs_array = context.create_array_from(&[input.maxs.len()], &input.maxs, "");
+    let partials_array = context.create_array_from(&[input.partials.len()], &input.partials);
+    let sums_array = context.create_array_from(&[input.sums.len()], &input.sums);
+    let maxs_array = context.create_array_from(&[input.maxs.len()], &input.maxs);
 
     let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
-    let output_array = context.create_array_uninitialized(&[output_size], T::data_type(), "");
+    let mut output = context.create_array_uninitialized(&[output_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        partials_array.buffer().borrow().deref(),
-        sums_array.buffer().borrow().deref(),
-        maxs_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        partials_array.allocation(),
+        sums_array.allocation(),
+        maxs_array.allocation(),
+        &mut output,
         input.num_heads,
         input.suffix_length,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&output)
 }
 
 // --- First pass tests ---
@@ -280,8 +278,8 @@ fn test_first_pass_gqa<T: ArrayElement + Float + Debug + Display>() {
     test_first_pass_internal(&input, &expected);
 }
 
-fn test_first_pass_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_first_pass_input::<T>(4, 4, 8, 2, 128, true);
+fn test_first_pass_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: u32) {
+    let input = get_first_pass_input::<T>(4, 4, 8, 2, head_dim, true);
     let expected = get_first_pass_output::<T, Cpu>(&input);
     test_first_pass_internal(&input, &expected);
 }
@@ -321,8 +319,8 @@ fn test_second_pass_basic<T: ArrayElement + Float + Debug + Display>() {
     test_second_pass_internal::<T>(&input, &expected);
 }
 
-fn test_second_pass_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_second_pass_input(4, 2, 128);
+fn test_second_pass_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: u32) {
+    let input = get_second_pass_input(4, 2, head_dim);
     let expected = get_second_pass_output::<T, Cpu>(&input);
     test_second_pass_internal::<T>(&input, &expected);
 }
@@ -376,17 +374,32 @@ fn test_first_pass_gqa_bf16() {
 
 #[uzu_test]
 fn test_first_pass_head_dim_128_f32() {
-    test_first_pass_head_dim_128::<f32>();
+    test_first_pass_head_dim::<f32>(128);
 }
 
 #[uzu_test]
 fn test_first_pass_head_dim_128_f16() {
-    test_first_pass_head_dim_128::<f16>();
+    test_first_pass_head_dim::<f16>(128);
 }
 
 #[uzu_test]
 fn test_first_pass_head_dim_128_bf16() {
-    test_first_pass_head_dim_128::<bf16>();
+    test_first_pass_head_dim::<bf16>(128);
+}
+
+#[uzu_test]
+fn test_first_pass_head_dim_512_f32() {
+    test_first_pass_head_dim::<f32>(512);
+}
+
+#[uzu_test]
+fn test_first_pass_head_dim_512_f16() {
+    test_first_pass_head_dim::<f16>(512);
+}
+
+#[uzu_test]
+fn test_first_pass_head_dim_512_bf16() {
+    test_first_pass_head_dim::<bf16>(512);
 }
 
 // --- Second pass test entries ---
@@ -408,15 +421,30 @@ fn test_second_pass_basic_bf16() {
 
 #[uzu_test]
 fn test_second_pass_head_dim_128_f32() {
-    test_second_pass_head_dim_128::<f32>();
+    test_second_pass_head_dim::<f32>(128);
 }
 
 #[uzu_test]
 fn test_second_pass_head_dim_128_f16() {
-    test_second_pass_head_dim_128::<f16>();
+    test_second_pass_head_dim::<f16>(128);
 }
 
 #[uzu_test]
 fn test_second_pass_head_dim_128_bf16() {
-    test_second_pass_head_dim_128::<bf16>();
+    test_second_pass_head_dim::<bf16>(128);
+}
+
+#[uzu_test]
+fn test_second_pass_head_dim_512_f32() {
+    test_second_pass_head_dim::<f32>(512);
+}
+
+#[uzu_test]
+fn test_second_pass_head_dim_512_f16() {
+    test_second_pass_head_dim::<f16>(512);
+}
+
+#[uzu_test]
+fn test_second_pass_head_dim_512_bf16() {
+    test_second_pass_head_dim::<bf16>(512);
 }

@@ -17,11 +17,11 @@ using namespace metal;
 template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(DeltaNetConvScan)(
-    device const T* conv_padded,
-    device const T* conv_weight,
-    device const T* bias OPTIONAL(has_bias),
+    device const float* conv_padded,
+    device const float* conv_weight,
+    device const float* bias OPTIONAL(has_bias),
     device T* in_proj,
-    device T* state_out,
+    device float* state_out,
     constant const uint& suffix_len,
     constant const uint& kernel_size,
     constant const uint& row_stride,
@@ -33,14 +33,14 @@ PUBLIC KERNEL(DeltaNetConvScan)(
     const uint channel_idx AXIS(conv_dim, 32)
 ) {
   if (token_idx < suffix_len) {
-    const device T* weight_row = conv_weight + channel_idx * kernel_size;
+    const device float* weight_row = conv_weight + channel_idx * kernel_size;
 
     float acc = has_bias ? float(bias[channel_idx]) : 0.0f;
 
     for (uint tap = 0; tap < kernel_size; ++tap) {
       const uint padded_row = token_idx + tap;
       const uint padded_index = padded_row * row_stride + channel_idx;
-      acc += float(weight_row[tap]) * float(conv_padded[padded_index]);
+      acc += float(weight_row[tap]) * conv_padded[padded_index];
     }
 
     const size_t dst = size_t(token_idx) * out_stride + channel_idx;

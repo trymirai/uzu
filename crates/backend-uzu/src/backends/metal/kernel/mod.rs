@@ -1,13 +1,22 @@
+use crate::backends::{
+    common::{
+        Kernels,
+        gpu_types::gemm::{gemm_tiling_simdgroups_per_column, gemm_tiling_simdgroups_per_row},
+    },
+    metal::Metal,
+};
+
 pub mod matmul;
 
-use crate::backends::common::kernel::ManualKernels;
+pub const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
 
 include!(concat!(env!("OUT_DIR"), "/dsl.rs"));
 
-pub mod quant_matmul_nf4_bench;
+pub struct MetalKernels;
 
-pub(super) const MTLB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/default.metallib"));
+impl Kernels for MetalKernels {
+    type Backend = Metal;
 
-impl ManualKernels for MetalKernels {
+    autogen_kernels!();
     type MatmulKernel = matmul::MatmulMetalKernel;
 }

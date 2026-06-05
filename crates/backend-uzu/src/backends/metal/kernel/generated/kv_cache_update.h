@@ -1,4 +1,4 @@
-// Auto-generated from gpu_types/kv_cache_update.rs - do not edit manually
+// Auto-generated from gpu_types/kv_cache_update - do not edit manually
 #pragma once
 
 #include <metal_stdlib>

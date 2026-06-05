@@ -1,9 +1,9 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
 };
 
@@ -11,7 +11,7 @@ const TOTAL_BLOCKS_COUNT: u32 = 32;
 
 #[kernel(AttentionTwoPass1)]
 #[variants(T, f32, f16, bf16)]
-#[variants(HEAD_DIM, 64, 128, 256)]
+#[variants(HEAD_DIM, 64, 128, 256, 512)]
 pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     queries: *const T,
     keys: *const T,
@@ -31,13 +31,16 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
     suffix_length: u32,
     #[optional(is_trie)] trie: Option<*const TrieNode>,
     #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
-    #[optional(has_sinks)] sinks: Option<*const f32>,
+    #[optional(has_sinks)] sinks: Option<*const T>,
     #[specialize] has_sinks: bool,
     #[specialize] is_kv_cache_ring: bool,
     #[specialize] is_causal: bool,
     #[specialize] is_trie: bool,
     #[specialize] is_sliding_window: bool,
 ) {
+    assert_eq!(ring_params.is_some(), is_kv_cache_ring);
+    assert_eq!(sliding_window_size.is_some(), is_sliding_window);
+
     let value_dim = HEAD_DIM;
     let mut q = vec![0.0f32; HEAD_DIM as usize];
     let mut o = vec![0.0f32; HEAD_DIM as usize];
@@ -79,7 +82,7 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
                 let mut sum_exp_score = 0.0f32;
 
                 if has_sinks && block_idx == 0 {
-                    max_score = unsafe { *sinks.unwrap().add(head_idx as usize) };
+                    max_score = unsafe { *sinks.unwrap().add(head_idx as usize) }.to_f32().unwrap();
                     sum_exp_score = 1.0;
                 }
 
@@ -139,7 +142,7 @@ pub fn attention_two_pass1<T: ArrayElement + Float, const HEAD_DIM: u32>(
 
 #[kernel(AttentionTwoPass2)]
 #[variants(T, f32, f16, bf16)]
-#[variants(HEAD_DIM, 64, 128, 256)]
+#[variants(HEAD_DIM, 64, 128, 256, 512)]
 pub fn attention_two_pass2<T: ArrayElement + Float, const HEAD_DIM: u32>(
     partials: *const f32,
     sums: *const f32,

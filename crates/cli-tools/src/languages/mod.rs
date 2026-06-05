@@ -41,7 +41,7 @@ pub trait LanguageBackend {
     fn language(&self) -> Language;
 
     fn expects_prebuild_for_run(&self) -> bool {
-        return true;
+        true
     }
 
     fn install(&self) -> Result<()> {
@@ -161,14 +161,14 @@ pub trait LanguageBackend {
                 let backend = self.config().backend_for_target(target.clone())?;
                 let resolved_capabilities =
                     self.config().capabilities_for_target(target.clone(), capabilities.clone())?;
-                let features = vec![
+                let features = [
                     vec![backend.feature()],
                     resolved_capabilities.iter().map(|capability| capability.feature()).collect::<Vec<_>>(),
                     bindings.iter().map(|binding| binding.feature()).collect::<Vec<_>>(),
                 ]
                 .iter()
                 .flatten()
-                .map(|feature| feature.clone())
+                .cloned()
                 .collect::<Vec<_>>();
 
                 println!("Backend: {}", format!("{:?}", backend).green());

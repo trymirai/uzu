@@ -1,19 +1,23 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::ArrayElement,
     backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::AttentionSinglePassKernel},
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::AttentionSinglePassKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
 use half::{bf16, f16};
 use num_traits::Float;
 
-use crate::{common::assert::assert_eq_float, uzu_test};
+use crate::{
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
+    uzu_test,
+};
 
 struct Input<T: ArrayElement + Float> {
     queries: Box<[T]>,
@@ -90,19 +94,19 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     )
     .expect("Failed to create AttentionSinglePassKernel");
 
-    let queries_array = context.create_array_from(&[input.queries.len()], &input.queries, "");
-    let keys_array = context.create_array_from(&[input.keys.len()], &input.keys, "");
-    let values_array = context.create_array_from(&[input.values.len()], &input.values, "");
+    let queries_allocation = alloc_allocation_with_data::<B, T>(&context, &input.queries);
+    let keys_allocation = alloc_allocation_with_data::<B, T>(&context, &input.keys);
+    let values_allocation = alloc_allocation_with_data::<B, T>(&context, &input.values);
 
     let output_size = (input.suffix_length * input.num_heads * input.head_dim) as usize;
-    let output_array = context.create_array_uninitialized(&[output_size], T::data_type(), "");
+    let mut output_allocation = alloc_allocation::<B, T>(&context, output_size);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        queries_array.buffer().borrow().deref(),
-        keys_array.buffer().borrow().deref(),
-        values_array.buffer().borrow().deref(),
-        output_array.buffer().borrow_mut().deref_mut(),
+        &queries_allocation,
+        &keys_allocation,
+        &values_allocation,
+        &mut output_allocation,
         input.gqa_factor,
         input.sequence_length,
         input.sequence_length * input.head_dim,
@@ -111,16 +115,16 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
         input.head_dim,
         None,
         input.scale,
-        None::<&B::DenseBuffer>,
+        None::<&Allocation<B>>,
         None,
-        None::<&B::DenseBuffer>,
+        None::<&Allocation<B>>,
         input.num_heads,
         input.suffix_length,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    output_array.as_slice().to_vec()
+    allocation_to_vec::<B, T>(&output_allocation)
 }
 
 fn test_internal<T: ArrayElement + Float + Debug + Display>(
@@ -184,8 +188,8 @@ fn test_gqa<T: ArrayElement + Float + Debug + Display>() {
     test_internal(&input, &expected);
 }
 
-fn test_head_dim_128<T: ArrayElement + Float + Debug + Display>() {
-    let input = get_input::<T>(4, 4, 8, 2, 128, true);
+fn test_head_dim<T: ArrayElement + Float + Debug + Display>(head_dim: u32) {
+    let input = get_input::<T>(4, 4, 8, 2, head_dim, true);
     let expected = get_output::<T, Cpu>(&input);
     test_internal(&input, &expected);
 }
@@ -241,15 +245,30 @@ fn test_gqa_bf16() {
 // Head dim 128
 #[uzu_test]
 fn test_head_dim_128_f32() {
-    test_head_dim_128::<f32>();
+    test_head_dim::<f32>(128);
 }
 
 #[uzu_test]
 fn test_head_dim_128_f16() {
-    test_head_dim_128::<f16>();
+    test_head_dim::<f16>(128);
 }
 
 #[uzu_test]
 fn test_head_dim_128_bf16() {
-    test_head_dim_128::<bf16>();
+    test_head_dim::<bf16>(128);
+}
+
+#[uzu_test]
+fn test_head_dim_512_f32() {
+    test_head_dim::<f32>(512);
+}
+
+#[uzu_test]
+fn test_head_dim_512_f16() {
+    test_head_dim::<f16>(512);
+}
+
+#[uzu_test]
+fn test_head_dim_512_bf16() {
+    test_head_dim::<bf16>(512);
 }

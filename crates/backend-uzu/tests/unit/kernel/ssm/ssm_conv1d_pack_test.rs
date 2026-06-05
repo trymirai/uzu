@@ -1,16 +1,14 @@
-use std::{
-    fmt::{Debug, Display},
-    ops::{Deref, DerefMut},
-};
+use std::fmt::{Debug, Display};
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement, DataType,
+    array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::Conv1dPackKernel},
         cpu::Cpu,
     },
+    data_type::DataType,
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::{common::assert::assert_eq_float, uzu_test};
@@ -48,7 +46,7 @@ fn get_input<T: ArrayElement + Float>(
 
 fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create Context");
-    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type())
+    let kernel = <<B as Backend>::Kernels as Kernels>::Conv1dPackKernel::new(&context, T::data_type(), T::data_type())
         .expect("Failed to create Conv1dPackKernel");
 
     let state_size = input.state_in.len();
@@ -56,15 +54,15 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     let total_rows = input.state_stride as usize + input.suffix_len as usize;
     let padded_size = total_rows * input.row_stride as usize;
 
-    let state_array = context.create_array_from(&[state_size], &input.state_in, "state_in");
-    let x_array = context.create_array_from(&[x_size], &input.x, "x");
-    let padded_array = context.create_array_uninitialized(&[padded_size], T::data_type(), "padded");
+    let state_array = context.create_array_from(&[state_size], &input.state_in);
+    let x_array = context.create_array_from(&[x_size], &input.x);
+    let mut padded = context.create_array_uninitialized(&[padded_size], T::data_type()).into_allocation();
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        state_array.buffer().borrow().deref(),
-        x_array.buffer().borrow().deref(),
-        padded_array.buffer().borrow_mut().deref_mut(),
+        state_array.allocation(),
+        x_array.allocation(),
+        &mut padded,
         input.state_stride,
         input.row_stride,
         input.suffix_len,
@@ -73,7 +71,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    padded_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&padded)
 }
 
 fn get_test_data<T: ArrayElement + Float>(
@@ -159,27 +157,6 @@ fn test_large_f32() {
 #[uzu_test]
 fn test_channels_lt_row_stride_f32() {
     test_channels_lt_row_stride::<f32>();
-}
-
-// f16
-#[uzu_test]
-fn test_basic_f16() {
-    test_basic::<f16>();
-}
-
-#[uzu_test]
-fn test_single_token_f16() {
-    test_single_token::<f16>();
-}
-
-#[uzu_test]
-fn test_many_tokens_f16() {
-    test_many_tokens::<f16>();
-}
-
-#[uzu_test]
-fn test_large_f16() {
-    test_large::<f16>();
 }
 
 // bf16

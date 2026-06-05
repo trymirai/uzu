@@ -4,7 +4,7 @@ use anyhow::Context;
 use futures::future::try_join_all;
 
 mod common;
-use common::{compiler::Compiler, envs, gpu_types::GpuTypes, traitgen::traitgen_all};
+use common::{compiler::Compiler, enum_paths::EnumPaths, envs, gpu_types::GpuTypes, traitgen::traitgen_all};
 
 mod cpu;
 
@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     println!("cargo::rerun-if-changed=.");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") && env::var("IPHONEOS_DEPLOYMENT_TARGET").is_err() {
-        println!("cargo::rustc-env=IPHONEOS_DEPLOYMENT_TARGET=26.0");
+        println!("cargo::rustc-env=IPHONEOS_DEPLOYMENT_TARGET=26.4");
     }
 
     if envs::build_always() {
@@ -52,16 +52,17 @@ async fn main() -> anyhow::Result<()> {
     let gpu_types = GpuTypes::scan().context("Failed to scan gpu types")?;
     debug_log!("gpu_types scan done");
 
-    let mut compilers: Vec<Box<dyn Compiler>> = Vec::new();
+    let enum_paths = EnumPaths::from_gpu_types(&gpu_types).context("Failed to build enum path map")?;
 
-    compilers.push(Box::new(cpu::CpuCompiler::new()?));
+    #[allow(unused_mut)]
+    let mut compilers: Vec<Box<dyn Compiler>> = vec![Box::new(cpu::CpuCompiler::new()?)];
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
     if metal_backend {
         compilers.push(Box::new(metal::MetalCompiler::new()?));
     }
 
-    let backends_kernels = try_join_all(compilers.iter().map(|c| c.build(&gpu_types))).await?;
+    let backends_kernels = try_join_all(compilers.iter().map(|c| c.build(&gpu_types, &enum_paths))).await?;
 
     debug_log!("backend build end");
 

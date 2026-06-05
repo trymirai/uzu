@@ -513,14 +513,14 @@ fn render_factory(factory: &Factory) -> String {
     let swift_method = AsLowerCamelCase(&factory.method_name).to_string();
     let free_function = format!(
         "{}{}",
-        AsLowerCamelCase(AsSnakeCase(&factory.type_name).to_string()).to_string(),
+        AsLowerCamelCase(AsSnakeCase(&factory.type_name).to_string()),
         capitalize_first(&swift_method),
     );
 
     let args_signature = factory
         .arguments
         .iter()
-        .map(|arg| format!("{label}: {ty}", label = AsLowerCamelCase(&arg.name).to_string(), ty = arg.swift_type,))
+        .map(|arg| format!("{label}: {ty}", label = AsLowerCamelCase(&arg.name), ty = arg.swift_type,))
         .collect::<Vec<_>>()
         .join(", ");
 

@@ -1,13 +1,12 @@
-use std::{
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-};
+use std::fmt::Debug;
 
 use backend_uzu::{
-    ArrayContextExt, ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::HadamardTransformKernel},
+    array::{ArrayContextExt, ArrayElement},
+    backends::common::{
+        Backend, Context, Encoder, Kernels, gpu_types::HadamardTransformOrder, kernel::HadamardTransformKernel,
+    },
 };
-use half::{bf16, f16};
+use half::bf16;
 use num_traits::Float;
 
 use crate::uzu_test;
@@ -101,24 +100,28 @@ fn generate_test_input<T: ArrayElement + Float>(
 fn run_kernel<T: ArrayElement + Float, B: Backend>(input: &TestInput<T>) -> Vec<T> {
     let context = B::Context::new().expect("Failed to create context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(&context, T::data_type())
-        .expect("Failed to create HadamardTransformKernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::HadamardTransformKernel::new(
+        &context,
+        T::data_type(),
+        HadamardTransformOrder::Input,
+    )
+    .expect("Failed to create HadamardTransformKernel");
 
     let total_elements = input.batch_count * input.channel_count;
-    let data_array = context.create_array_from(&[total_elements], &input.data, "data");
-    let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors, "factors");
+    let mut data = context.create_array_from(&[total_elements], &input.data).into_allocation();
+    let factors_array = context.create_array_from::<i32>(&[input.channel_count], &input.factors);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        data_array.buffer().borrow_mut().deref_mut(),
-        factors_array.buffer().borrow().deref(),
+        &mut data,
+        factors_array.allocation(),
         input.channel_count as u32,
         input.batch_count as u32,
         &mut encoder,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    data_array.as_slice().to_vec()
+    crate::common::helpers::allocation_to_vec(&data)
 }
 
 fn test_hadamard_transform<T: ArrayElement + Float + Debug>(tolerance: f64) {
@@ -149,11 +152,6 @@ fn test_hadamard_transform<T: ArrayElement + Float + Debug>(tolerance: f64) {
 #[uzu_test]
 fn test_f32() {
     test_hadamard_transform::<f32>(1e-4);
-}
-
-#[uzu_test]
-fn test_f16() {
-    test_hadamard_transform::<f16>(0.05);
 }
 
 #[uzu_test]

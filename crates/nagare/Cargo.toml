@@ -56,6 +56,8 @@ shoji.workspace = true
 hanashi.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
 indexmap.workspace = true
 reqwest.workspace = true
@@ -78,3 +80,6 @@ tsify = { workspace = true, optional = true }
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
 pyo3-build-config = { workspace = true, optional = true }
+
+[lints]
+workspace = true

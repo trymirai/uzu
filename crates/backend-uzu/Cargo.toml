@@ -10,12 +10,15 @@ license.workspace = true
 build = "build/main.rs"
 
 [dependencies]
-dsl.workspace = true
+proc-macros.workspace = true
+bitflags.workspace = true
+derive_more.workspace = true
 shoji.workspace = true
 half.workspace = true
 ndarray.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+monostate.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 rangemap.workspace = true
@@ -26,6 +29,7 @@ memmap2.workspace = true
 num-traits.workspace = true
 regex.workspace = true
 libc.workspace = true
+libm.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
 rand.workspace = true
@@ -54,14 +58,18 @@ criterion.workspace = true
 criterion-macro.workspace = true
 rand_distr.workspace = true
 is_close.workspace = true
-serde_json5.workspace = true
 schemars.workspace = true
 comfy-table.workspace = true
 indicatif.workspace = true
+rstest.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# for getting gpu temperature
+macmon.workspace = true
 
 [build-dependencies]
 anyhow.workspace = true
@@ -69,6 +77,7 @@ async-trait.workspace = true
 bindgen.workspace = true
 walkdir.workspace = true
 depfile.workspace = true
+derive_more.workspace = true
 tempfile.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["unbounded_depth"] }
@@ -100,6 +109,9 @@ metal = [
 grammar = ["dep:xgrammar"]
 tracing = []
 
+[lints]
+workspace = true
+
 [[test]]
 name = "integration"
 path = "tests/integration/mod.rs"
@@ -108,10 +120,14 @@ path = "tests/integration/mod.rs"
 name = "kernel"
 path = "tests/unit/kernel/test_entry.rs"
 
-[[bench]]
-name = "kernel"
-path = "tests/unit/kernel/bench_entry.rs"
-
 [[test]]
 name = "performance"
 path = "tests/performance/mod.rs"
+
+[[bench]]
+name = "benchmarks"
+path = "tests/performance/bench_entry.rs"
+
+[[bench]]
+name = "kernel"
+path = "tests/performance/kernel/bench_entry.rs"
