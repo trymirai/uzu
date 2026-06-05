@@ -91,3 +91,7 @@ impl GrammarConfig {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/session/config/grammar_config.rs"]
+mod tests;
