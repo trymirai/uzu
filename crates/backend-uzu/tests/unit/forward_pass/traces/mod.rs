@@ -1,7 +1,5 @@
-#![cfg(feature = "tracing")]
-
 #[macro_use]
-#[path = "../common/mod.rs"]
+#[path = "../../../common/mod.rs"]
 mod common;
 
 mod trace_validator;

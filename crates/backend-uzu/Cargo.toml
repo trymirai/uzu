@@ -120,10 +120,6 @@ path = "tests/unit/kernel/test_entry.rs"
 name = "performance"
 path = "tests/performance/mod.rs"
 
-[[test]]
-name = "tracer"
-path = "tests/tracer/mod.rs"
-
 [[bench]]
 name = "benchmarks"
 path = "tests/performance/bench_entry.rs"

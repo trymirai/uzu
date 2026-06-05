@@ -11,7 +11,7 @@ use test_tag::tag;
 use crate::{
     backends::common::{Backend, Context},
     data_type::DataType,
-    parameters::{ParameterLoader, read_safetensors_metadata},
+    parameters::{ParameterLoader, safetensors_metadata::read_metadata},
 };
 
 const EMBEDDING_PATH: &str = "decoder.embedding.embedding.weights";
@@ -20,7 +20,7 @@ const EMBEDDING_TREE_PATH: &str = "decoder.embedding.embedding";
 fn check_tree_api<B: Backend>(context: &B::Context) {
     let weights_path = get_test_weights_path();
     let file = File::open(&weights_path).expect("Weights file not found; run download script");
-    let (_header_len, metadata) = read_safetensors_metadata(&file).expect("read weights metadata");
+    let (_header_len, metadata) = read_metadata(&file).expect("read weights metadata");
     let embedding_shape = metadata.tensors.get(EMBEDDING_PATH).expect("weights embeddings metadata").shape.clone();
     assert_eq!(embedding_shape.len(), 2);
 

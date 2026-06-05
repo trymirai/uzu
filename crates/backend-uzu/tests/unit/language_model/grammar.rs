@@ -1,4 +1,4 @@
-#![cfg(all(feature = "capability-grammar"))]
+#![cfg(feature = "grammar")]
 
 use backend_uzu::{
     array::Array,
@@ -9,6 +9,7 @@ use backend_uzu::{
     data_type::DataType,
 };
 use metal::MTLDevice;
+use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;

@@ -13,26 +13,27 @@ use std::{
     rc::Rc,
 };
 
-use backend_uzu::{
-    _private::{
-        ActivationTrace, AnyModelConfig, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
-        LanguageModelGeneratorContext, TokenInputs,
-    },
+use half::{bf16, f16};
+use ndarray::{ArrayView, IxDyn, s};
+use num_traits::NumCast;
+
+use crate::{
     array::{Array, ArrayElement},
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
+    classifier::{ActivationTrace, Classifier},
+    common,
+    config::model::AnyModelConfig,
     data_type::DataType,
-    parameters::{ParameterLoader, ParameterLoaderError, ParameterTree, read_safetensors_metadata},
+    encodable_block::DecoderDecodeInput,
+    forward_pass::{cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs},
+    language_model::language_model_generator_context::LanguageModelGeneratorContext,
+    parameters::{ParameterLoader, ParameterLoaderError, ParameterTree, read_metadata},
     session::{
         config::{DecodingConfig, SpeculatorConfig},
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
         types::Error,
     },
 };
-use half::{bf16, f16};
-use ndarray::{ArrayView, IxDyn, s};
-use num_traits::NumCast;
-
-use crate::common;
 
 fn argmax<T: ArrayElement>(input: &[T]) -> usize {
     input
@@ -296,7 +297,7 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Result<TracerValidationResults, Error> {
         let traces_file = File::open(traces_path).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let (_header_len, traces_metadata) =
-            read_safetensors_metadata(&traces_file).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+            read_metadata(&traces_file).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let trace_shapes: HashMap<String, Vec<usize>> =
             traces_metadata.tensors.iter().map(|(name, tensor)| (name.clone(), tensor.shape.clone())).collect();
         let token_shape = Self::trace_shape(&trace_shapes, "activation_trace.token_ids");
@@ -538,7 +539,7 @@ impl<B: Backend> TraceValidator<B> {
     ) -> Result<TracerValidationResults, Error> {
         let traces_file = File::open(traces_path).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let (_header_len, traces_metadata) =
-            read_safetensors_metadata(&traces_file).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+            read_metadata(&traces_file).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let trace_shapes: HashMap<String, Vec<usize>> =
             traces_metadata.tensors.iter().map(|(name, tensor)| (name.clone(), tensor.shape.clone())).collect();
         let context = classifier.context.context.clone();
@@ -997,7 +998,7 @@ impl<B: Backend> TraceValidator<B> {
         let traces_path = model_path.join("traces.safetensors");
         let file = File::open(&traces_path).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let (_header_len, metadata) =
-            read_safetensors_metadata(&file).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+            read_metadata(&file).map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let token_shape =
             metadata.tensors.get("activation_trace.token_ids").map(|tensor| tensor.shape.as_slice()).ok_or_else(
                 || Error::InvalidModelConfig("missing required trace tensor activation_trace.token_ids".to_string()),

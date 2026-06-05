@@ -100,3 +100,7 @@ impl<B: Backend> ActivationTrace<B> {
         self.output_pooling.as_mut().expect("output_pooling is only available for classifier traces")
     }
 }
+
+#[cfg(all(test, feature = "tracing"))]
+#[path = "../../tests/unit/forward_pass/traces/mod.rs"]
+mod tests;
