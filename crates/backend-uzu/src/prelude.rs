@@ -14,7 +14,6 @@ pub use crate::backends::metal::MetalContext;
 #[cfg(metal_backend)]
 pub use crate::session::TtsSession;
 pub use crate::{
-    TOOLCHAIN_VERSION, VERSION,
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
     classifier::{ClassificationOutput, ClassificationStats},
     parameters::{HeaderLoadingError, ParameterLeaf, ParameterLoaderError, ParameterTree},
@@ -31,4 +30,5 @@ pub use crate::{
         ngram_speculator::NGramSpeculator, prompt_lookup_speculator::PromptLookupSpeculator, speculator::Speculator,
         token_finder::TokenFinder,
     },
+    utils::{TOOLCHAIN_VERSION, VERSION},
 };
