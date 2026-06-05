@@ -1,14 +1,14 @@
 use std::fmt::Debug;
 
-use backend_uzu::{
-    array::ArrayElement,
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
-};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
 
-use crate::common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
+use crate::{
+    array::ArrayElement,
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddBiasKernel},
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+};
 
 struct Input<T: ArrayElement + Float> {
     input: Box<[T]>,

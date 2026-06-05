@@ -1,7 +1,5 @@
 #![cfg(metal_backend)]
 
-use backend_uzu::forward_pass::kv_cache_layer::KVCacheLayerTrait;
-
 use crate::{
     backends::{
         common::{Backend, Context, Encoder},
@@ -10,7 +8,7 @@ use crate::{
     common::helpers::{sparse_buffer_create_with, sparse_buffer_read_vec, sparse_buffer_write},
     data_type::DataType,
     encodable_block::KVCacheUpdate,
-    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
+    forward_pass::kv_cache_layer::{KVCacheLayer, KVCacheLayerState, KVCacheLayerTrait},
 };
 
 #[derive(Debug)]

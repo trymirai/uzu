@@ -3,20 +3,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::{
-        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
-        cpu::Cpu,
-    },
-    data_type::DataType,
-};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-use crate::common::assert::assert_eq_float;
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::{
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
+        cpu::Cpu,
+    },
+    common::assert::assert_eq_float,
+    data_type::DataType,
+};
 
 static BOOL_ALL: &[bool] = &[true, false];
 static BOOL_FALSE: &[bool] = &[false];

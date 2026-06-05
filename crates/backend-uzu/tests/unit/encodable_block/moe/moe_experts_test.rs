@@ -6,13 +6,6 @@
 //! - Intermediate buffer correctness (row maps, tiles, dispatch args)
 //! - Numerical correctness against CPU reference
 
-use backend_uzu::{
-    backends::common::{
-        Encoder,
-        gpu_types::{ActivationType, activation_silu_alpha},
-    },
-    data_type::DataType,
-};
 use half::bf16;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
@@ -20,9 +13,16 @@ use super::{
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, cpu_tile_counts,
     cpu_tile_scan,
 };
-use crate::common::{
-    assert::assert_eq_float,
-    helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
+use crate::{
+    backends::common::{
+        Encoder,
+        gpu_types::{ActivationType, activation_silu_alpha},
+    },
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
+    },
+    data_type::DataType,
 };
 
 /// Test data for MoE experts

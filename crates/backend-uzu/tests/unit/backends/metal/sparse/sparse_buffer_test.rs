@@ -1,11 +1,12 @@
 use std::ops::Range;
 
-use backend_uzu::backends::{
-    common::{Backend, SparseBuffer},
-    metal::Metal,
+use crate::{
+    backends::{
+        common::{Backend, SparseBuffer},
+        metal::Metal,
+    },
+    common::helpers::{create_context, sparse_buffer_create},
 };
-
-use crate::common::helpers::{create_context, sparse_buffer_create};
 
 /// Capacity sized to fit `heap_count` worth of heaps.
 fn buffer_capacity(

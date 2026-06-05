@@ -1,6 +1,9 @@
 #![cfg(metal_backend)]
 
-use backend_uzu::{
+use half::bf16;
+use proc_macros::uzu_test;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
@@ -15,8 +18,6 @@ use backend_uzu::{
     },
     data_type::DataType,
 };
-use half::bf16;
-use proc_macros::uzu_test;
 
 fn run_conv_update<B: Backend>(
     in_proj: &[f32],

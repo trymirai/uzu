@@ -1,6 +1,10 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
+use half::{bf16, f16};
+use num_traits::Float;
+use proc_macros::uzu_test;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
@@ -10,13 +14,9 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    common::assert::assert_eq_float,
     data_type::DataType,
 };
-use half::{bf16, f16};
-use num_traits::Float;
-use proc_macros::uzu_test;
-
-use crate::common::assert::assert_eq_float;
 
 struct Input<T: ArrayElement + Float> {
     token_ids: Box<[u64]>,
@@ -288,7 +288,7 @@ fn test_symmetric_u8<T: ArrayElement + Float + Debug + Display>() {
 
 #[cfg(metal_backend)]
 fn test_zero_point_group16_hadamard_constructor<T: ArrayElement + Float + Debug + Display>() {
-    use backend_uzu::backends::metal::Metal;
+    use crate::backends::metal::Metal;
 
     let context = <Metal as Backend>::Context::new().expect("Metal context");
     <<Metal as Backend>::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(

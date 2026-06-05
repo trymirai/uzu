@@ -1,12 +1,13 @@
-use backend_uzu::{
+use proc_macros::uzu_test;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
         cpu::Cpu,
     },
 };
-use proc_macros::uzu_test;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 fn gen_random_topk_ids(
     t: usize,

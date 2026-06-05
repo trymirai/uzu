@@ -1,14 +1,15 @@
 use std::fmt::Debug;
 
-use backend_uzu::{
+use half::bf16;
+use num_traits::Float;
+use proc_macros::uzu_test;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::common::{
         Backend, Context, Encoder, Kernels, gpu_types::HadamardTransformOrder, kernel::HadamardTransformKernel,
     },
 };
-use half::bf16;
-use num_traits::Float;
-use proc_macros::uzu_test;
 
 const BLOCK_SIZE: usize = 32;
 

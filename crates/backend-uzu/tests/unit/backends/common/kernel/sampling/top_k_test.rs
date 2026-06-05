@@ -1,6 +1,11 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
+use half::{bf16, f16};
+use num_traits::Float;
+use proc_macros::uzu_test;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::TopKKernel},
@@ -8,10 +13,6 @@ use backend_uzu::{
     },
     data_type::DataType,
 };
-use half::{bf16, f16};
-use num_traits::Float;
-use proc_macros::uzu_test;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,

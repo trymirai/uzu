@@ -1,17 +1,17 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
+use half::bf16;
+use num_traits::Float;
+use proc_macros::uzu_test;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::QkUnpackKernel},
         cpu::Cpu,
     },
+    common::assert::assert_eq_float,
 };
-use half::bf16;
-use num_traits::Float;
-use proc_macros::uzu_test;
-
-use crate::common::assert::assert_eq_float;
 
 fn run<T: ArrayElement + Float + Debug + Display, B: Backend>(
     num_heads: u32,

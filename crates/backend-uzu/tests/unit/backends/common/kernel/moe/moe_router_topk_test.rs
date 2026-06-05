@@ -1,19 +1,19 @@
 use std::fmt::Debug;
 
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::{
-        common::{Backend, Encoder, Kernels, kernel::MoeRouterTopKKernel},
-        cpu::Cpu,
-    },
-    data_type::DataType,
-};
 use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::common::helpers::create_context;
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::{
+        common::{Backend, Encoder, Kernels, kernel::MoeRouterTopKKernel},
+        cpu::Cpu,
+    },
+    common::helpers::create_context,
+    data_type::DataType,
+};
 
 fn get_output<B: Backend, T: ArrayElement + Float>(
     input: &[T],

@@ -1,18 +1,18 @@
-use backend_uzu::{
-    array::ArrayElement,
-    backends::{
-        common::{Backend, Encoder},
-        cpu::Cpu,
-    },
-};
 use half::bf16;
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::MoeGather;
-use crate::common::{
-    assert::assert_eq_float,
-    helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
+use crate::{
+    array::ArrayElement,
+    backends::{
+        common::{Backend, Encoder},
+        cpu::Cpu,
+    },
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {

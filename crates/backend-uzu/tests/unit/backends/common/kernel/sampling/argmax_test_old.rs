@@ -1,6 +1,10 @@
 use std::{fmt::Display, mem::size_of};
 
-use backend_uzu::{
+use half::{bf16, f16};
+use num_traits::Float;
+use proc_macros::uzu_test;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::common::{
         Backend, Context, Encoder, Kernels,
@@ -9,9 +13,6 @@ use backend_uzu::{
     },
     data_type::DataType,
 };
-use half::{bf16, f16};
-use num_traits::Float;
-use proc_macros::uzu_test;
 
 struct Input<T: ArrayElement + Float> {
     logits: Box<[T]>,

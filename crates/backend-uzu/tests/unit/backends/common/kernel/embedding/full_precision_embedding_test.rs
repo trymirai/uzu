@@ -1,12 +1,13 @@
 use std::fmt::Debug;
 
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::common::{Backend, Context, Encoder, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
-};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
+
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::common::{Backend, Context, Encoder, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
+};
 
 struct Input<T: ArrayElement + Float> {
     token_ids: Box<[u64]>,

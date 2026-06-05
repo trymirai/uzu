@@ -1,17 +1,17 @@
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::{
-        common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
-        cpu::Cpu,
-    },
-    data_type::DataType,
-};
 use half::bf16;
 use num_traits::Float;
 use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::common::{assert::assert_eq_float, helpers::create_context};
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::{
+        common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
+        cpu::Cpu,
+    },
+    common::{assert::assert_eq_float, helpers::create_context},
+    data_type::DataType,
+};
 
 struct Input<T: ArrayElement + Float> {
     tok2row: Box<[i32]>,

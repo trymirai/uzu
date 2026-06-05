@@ -1,15 +1,16 @@
 use std::fmt::Debug;
 
-use backend_uzu::{
+use half::{bf16, f16};
+use num_traits::Float;
+use proc_macros::uzu_test;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
         cpu::Cpu,
     },
 };
-use half::{bf16, f16};
-use num_traits::Float;
-use proc_macros::uzu_test;
 
 struct Config {
     num_heads: u32,

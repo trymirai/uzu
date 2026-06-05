@@ -1,20 +1,20 @@
 use std::fmt::Display;
 
-use backend_uzu::{
+use half::bf16;
+use num_traits::Float;
+use proc_macros::uzu_test;
+
+use crate::{
     array::ArrayElement,
     backends::{
         common::{Backend, Context, Encoder, Kernels, kernel::LogitSoftCapKernel},
         cpu::Cpu,
     },
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
     data_type::DataType,
-};
-use half::bf16;
-use num_traits::Float;
-use proc_macros::uzu_test;
-
-use crate::common::{
-    assert::assert_eq_float,
-    helpers::{alloc_allocation_with_data, allocation_to_vec},
 };
 
 fn get_output<T: ArrayElement + Float, B: Backend>(

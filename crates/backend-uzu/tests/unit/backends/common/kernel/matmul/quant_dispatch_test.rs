@@ -5,7 +5,12 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use backend_uzu::{
+use half::bf16;
+use num_traits::Float;
+use proc_macros::uzu_test;
+use rstest::rstest;
+
+use crate::{
     array::ArrayElement,
     backends::{
         common::{
@@ -19,15 +24,10 @@ use backend_uzu::{
         cpu::Cpu,
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-};
-use half::bf16;
-use num_traits::Float;
-use proc_macros::uzu_test;
-use rstest::rstest;
-
-use crate::common::{
-    helpers::allocation_to_vec,
-    matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+    common::{
+        helpers::allocation_to_vec,
+        matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+    },
 };
 
 fn check_tolerance(

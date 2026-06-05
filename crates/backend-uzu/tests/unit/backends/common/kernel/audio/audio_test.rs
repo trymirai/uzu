@@ -1,6 +1,8 @@
 #![cfg(metal_backend)]
 
-use backend_uzu::{
+use proc_macros::uzu_test;
+
+use crate::{
     array::ArrayContextExt,
     backends::{
         common::{
@@ -14,20 +16,18 @@ use backend_uzu::{
         },
         metal::Metal,
     },
-    data_type::DataType,
-};
-use proc_macros::uzu_test;
-
-use crate::common::{
-    audio::{
-        fsq_reference::{fsq_decode_reference, fsq_encode_reference},
-        ops_reference::{
-            CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
-            causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference, causal_conv1d_reference,
-            conv1d_reference, half_snake_reference,
+    common::{
+        audio::{
+            fsq_reference::{fsq_decode_reference, fsq_encode_reference},
+            ops_reference::{
+                CausalConv1dSpec, CausalConvTranspose1dSpec, Conv1dSpec, HalfSnakeSpec, PadMode,
+                causal_conv_transpose1d_causal_pad_reference, causal_conv_transpose1d_reference,
+                causal_conv1d_reference, conv1d_reference, half_snake_reference,
+            },
         },
+        helpers::allocation_to_vec,
     },
-    helpers::allocation_to_vec,
+    data_type::DataType,
 };
 
 macro_rules! borrow_array_buffer {

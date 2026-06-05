@@ -2,7 +2,11 @@
 
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
+use half::bf16;
+use num_traits::Float;
+use rstest::rstest;
+
+use crate::{
     array::ArrayElement,
     backends::{
         common::{
@@ -11,14 +15,10 @@ use backend_uzu::{
         },
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-};
-use half::bf16;
-use num_traits::Float;
-use rstest::rstest;
-
-use crate::common::{
-    assert::assert_eq_float,
-    matmul::{Case, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
+    common::{
+        assert::assert_eq_float,
+        matmul::{Case, all_correctness_shapes, cpu_reference, deterministic_input, run_metal},
+    },
 };
 
 fn gemm_paths_for_hw(context: &MetalContext) -> Vec<GemmDispatchPath> {

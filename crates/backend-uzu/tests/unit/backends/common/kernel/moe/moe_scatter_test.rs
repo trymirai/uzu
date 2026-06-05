@@ -1,4 +1,9 @@
-use backend_uzu::{
+use half::bf16;
+use num_traits::Float;
+use proc_macros::uzu_test;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
@@ -10,14 +15,9 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    common::helpers::create_context,
     data_type::DataType,
 };
-use half::bf16;
-use num_traits::Float;
-use proc_macros::uzu_test;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
-
-use crate::common::helpers::create_context;
 
 fn cpu_expert_buckets<T: ArrayElement + Float>(
     topk_ids: &[i32],

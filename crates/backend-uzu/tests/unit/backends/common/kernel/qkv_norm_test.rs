@@ -1,18 +1,18 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::{
-        common::{Backend, Context, Encoder, Kernels, kernel::QKVNormKernel},
-        cpu::Cpu,
-    },
-    data_type::DataType,
-};
 use half::{bf16, f16};
 use num_traits::Float;
 use proc_macros::uzu_test;
 
-use crate::common::assert::assert_eq_float;
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::{
+        common::{Allocation, Backend, Context, Encoder, Kernels, kernel::QKVNormKernel},
+        cpu::Cpu,
+    },
+    common::assert::assert_eq_float,
+    data_type::DataType,
+};
 
 struct Input<InputT: ArrayElement + Float, ScaleT: ArrayElement + Float, OutputT: ArrayElement + Float> {
     qkv: Box<[OutputT]>,
@@ -140,7 +140,7 @@ fn get_output<
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
     kernel.encode(
-        None::<&backend_uzu::backends::common::Allocation<B>>,
+        None::<&Allocation<B>>,
         scales,
         &mut qkv,
         input.batch_size,

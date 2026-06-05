@@ -1,20 +1,20 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
+use half::{bf16, f16};
+use num_traits::Float;
+
+use super::{AttentionGemmArguments, AttentionGemmBlock};
+use crate::{
     array::ArrayElement,
     backends::{
         common::{Allocation, Backend, Context, Encoder},
         cpu::Cpu,
     },
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
     data_type::DataType,
-};
-use half::{bf16, f16};
-use num_traits::Float;
-
-use super::{AttentionGemmArguments, AttentionGemmBlock};
-use crate::common::{
-    assert::assert_eq_float,
-    helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
 struct Input<T: ArrayElement + Float> {

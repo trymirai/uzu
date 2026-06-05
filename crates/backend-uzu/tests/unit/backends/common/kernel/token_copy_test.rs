@@ -1,10 +1,12 @@
-use backend_uzu::backends::common::{
-    Backend, Context, Encoder, Kernels,
-    kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
-};
 use proc_macros::uzu_test;
 
-use crate::common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
+use crate::{
+    backends::common::{
+        Backend, Context, Encoder, Kernels,
+        kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
+    },
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+};
 
 fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {
     let context = B::Context::new().expect("Failed to create Context");

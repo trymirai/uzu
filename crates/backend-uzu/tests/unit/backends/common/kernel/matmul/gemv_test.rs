@@ -1,6 +1,10 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
+use half::bf16;
+use num_traits::Float;
+use rstest::rstest;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
@@ -12,14 +16,10 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
-};
-use half::bf16;
-use num_traits::Float;
-use rstest::rstest;
-
-use crate::common::{
-    assert::assert_eq_float,
-    helpers::{alloc_allocation_with_data, allocation_to_vec},
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {

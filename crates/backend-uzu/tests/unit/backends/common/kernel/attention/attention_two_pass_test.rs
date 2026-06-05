@@ -1,6 +1,10 @@
 use std::fmt::{Debug, Display};
 
-use backend_uzu::{
+use half::{bf16, f16};
+use num_traits::Float;
+use proc_macros::uzu_test;
+
+use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
@@ -9,13 +13,9 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    common::assert::assert_eq_float,
     data_type::DataType,
 };
-use half::{bf16, f16};
-use num_traits::Float;
-use proc_macros::uzu_test;
-
-use crate::common::assert::assert_eq_float;
 
 const TOTAL_BLOCKS_COUNT: u32 = 32;
 

@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-use backend_uzu::{
+use proc_macros::uzu_test;
+
+use crate::{
     backends::common::Backend, common::path::get_test_model_path,
     forward_pass::traces::tests::trace_validator::TraceValidator,
 };
-use proc_macros::uzu_test;
 
 const TRACES_FILE_NAME: &str = "traces.safetensors";
 

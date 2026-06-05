@@ -1,10 +1,10 @@
-use backend_uzu::backends::common::{
-    Backend, Encoder, Kernels,
-    kernel::{MoeTileCountsKernel, MoeTileScanKernel},
-};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::{
+    backends::common::{
+        Backend, Encoder, Kernels,
+        kernel::{MoeTileCountsKernel, MoeTileScanKernel},
+    },
     common::helpers::{
         alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
     },

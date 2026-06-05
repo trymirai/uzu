@@ -1,4 +1,8 @@
-use backend_uzu::{
+use half::bf16;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather};
+use crate::{
     backends::common::{
         Backend, Encoder, Kernels,
         gpu_types::{ActivationType, activation_silu_alpha},
@@ -7,14 +11,10 @@ use backend_uzu::{
             MoeScatterBucketsMapKernel,
         },
     },
+    common::helpers::{
+        alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
+    },
     data_type::DataType,
-};
-use half::bf16;
-use rand::{RngExt, SeedableRng, rngs::StdRng};
-
-use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassPrefillBlock, MoeGather};
-use crate::common::helpers::{
-    alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
 };
 
 fn moe_cpu_reference(

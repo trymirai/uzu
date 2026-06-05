@@ -3,21 +3,21 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::{
-        common::{AllocationType, Backend, Context, Encoder, Kernels, kernel::TopPKernel},
-        cpu::Cpu,
-    },
-    data_type::DataType,
-    session::parameter::{SamplingMethod, SamplingProcessingOrder},
-};
 use half::{bf16, f16};
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use super::SamplingBlock;
-use crate::common::helpers::{alloc_allocation_with_data, allocation_to_vec};
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::{
+        common::{AllocationType, Backend, Context, Encoder, Kernels, kernel::TopPKernel},
+        cpu::Cpu,
+    },
+    common::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    data_type::DataType,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
+};
 
 const TEST_SAMPLING_SEED: u64 = 42;
 

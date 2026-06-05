@@ -1,4 +1,7 @@
-use backend_uzu::{
+use half::bf16;
+use proc_macros::uzu_test;
+
+use crate::{
     backends::{
         common::{
             Allocation, Backend, Context, Encoder, Kernels,
@@ -10,14 +13,11 @@ use backend_uzu::{
         },
         cpu::Cpu,
     },
+    common::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
     data_type::DataType,
-};
-use half::bf16;
-use proc_macros::uzu_test;
-
-use crate::common::{
-    assert::assert_eq_float,
-    helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
 };
 
 const NUM_HEADS: u32 = 4;

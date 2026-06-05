@@ -1,24 +1,24 @@
 use std::mem::{MaybeUninit, size_of};
 
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::common::{
-        AllocationType, Backend, Context, Encoder, Kernels,
-        gpu_types::ArgmaxPair,
-        kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
-    },
-    data_type::DataType,
-    dispatch_dtype,
-};
 use num_traits::{Float, NumCast};
 use proc_macros::uzu_test;
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
 
-use crate::common::{
-    for_each_context,
-    proptest::{ComparableTestResults, TestContextes, kernel_data_type},
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    backends::common::{
+        AllocationType, Backend, Context, Encoder, Kernels,
+        gpu_types::ArgmaxPair,
+        kernel::{ArgmaxFinalKernel, ArgmaxMainKernel, ArgmaxSingleKernel},
+    },
+    common::{
+        for_each_context,
+        proptest::{ComparableTestResults, TestContextes, kernel_data_type},
+    },
+    data_type::DataType,
+    dispatch_dtype,
 };
 
 struct ArgmaxTestResults(Box<[u32]>);

@@ -1,13 +1,5 @@
 #![cfg(feature = "grammar")]
 
-use backend_uzu::{
-    array::Array,
-    backends::{
-        common::{AllocationType, Backend, Context},
-        metal::Metal,
-    },
-    data_type::DataType,
-};
 use metal::MTLDevice;
 use proc_macros::uzu_test;
 use schemars::JsonSchema;
@@ -15,7 +7,15 @@ use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 
-use crate::common::path::get_test_model_path;
+use crate::{
+    array::Array,
+    backends::{
+        common::{AllocationType, Backend, Context},
+        metal::Metal,
+    },
+    common::path::get_test_model_path,
+    data_type::DataType,
+};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Person {

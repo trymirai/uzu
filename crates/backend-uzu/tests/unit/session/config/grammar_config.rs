@@ -2,14 +2,13 @@
 
 use std::sync::Arc;
 
-use backend_uzu::common::repeat_speculator::RepeatSpeculator;
 use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use test_tag::tag;
 
 use crate::{
-    common::path::get_test_model_path,
+    common::{path::get_test_model_path, repeat_speculator::RepeatSpeculator},
     session::{
         Session,
         config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig},
