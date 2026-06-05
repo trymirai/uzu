@@ -22,6 +22,10 @@ pub fn get_test_model_path() -> PathBuf {
     path
 }
 
+pub fn get_test_weights_path() -> PathBuf {
+    get_test_model_path().join(MODEL_FILE_NAME)
+}
+
 #[cfg(target_os = "ios")]
 pub fn ios_set_current_dir() {
     use objc2_foundation::{NSSearchPathDirectory, NSSearchPathDomainMask, NSSearchPathForDirectoriesInDomains};

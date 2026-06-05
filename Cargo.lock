@@ -7432,7 +7432,6 @@ dependencies = [
  "fancy-regex 0.17.0",
  "futures",
  "futures-util",
- "half",
  "indexmap 2.14.0",
  "indicatif",
  "indoc 2.0.7",
@@ -7440,7 +7439,6 @@ dependencies = [
  "iocraft",
  "keyring-core",
  "mock-registry",
- "mtl-rs",
  "nagare",
  "napi",
  "napi-build",
@@ -7465,7 +7463,6 @@ dependencies = [
  "tempfile",
  "test-tag",
  "thiserror 2.0.18",
- "tokenizers",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -7478,7 +7475,6 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "xgrammar-rs",
 ]
 
 [[package]]
