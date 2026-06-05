@@ -33,13 +33,22 @@ pub enum LinearMatmulError<B: Backend> {
 enum Mode<B: Backend> {
     FullPrecision,
     Quantized {
-        method: QuantizationMethod,
         mode: QuantizationMode,
         group_size: u32,
         scales: Allocation<B>,
-        zero_points_or_biases: Option<Allocation<B>>,
+        dequantization: QuantizedDequantization<B>,
         output_hadamard_factors: Option<Allocation<B>>,
     },
+}
+
+enum QuantizedDequantization<B: Backend> {
+    ScaleBias {
+        biases: Allocation<B>,
+    },
+    ScaleZeroPoint {
+        zero_points: Allocation<B>,
+    },
+    ScaleSymmetric,
 }
 
 pub struct LinearMatmul<B: Backend> {
@@ -152,20 +161,23 @@ impl<B: Backend> LinearMatmul<B> {
             .validate(&[output_dim, input_dim / packing_divisor], storage_type)?
             .read_allocation()?;
         let scales = weights_tree.leaf("scales")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?;
-        let zero_points_or_biases = match quantization_method {
-            QuantizationMethod::ScaleBias => {
-                Some(weights_tree.leaf("biases")?.validate(&[output_dim, k_g], weights_data_type)?.read_allocation()?)
+        let dequantization = match quantization_method {
+            QuantizationMethod::ScaleBias => QuantizedDequantization::ScaleBias {
+                biases: weights_tree
+                    .leaf("biases")?
+                    .validate(&[output_dim, k_g], weights_data_type)?
+                    .read_allocation()?,
             },
             QuantizationMethod::ScaleZeroPoint => {
                 let expected_zero_points_entries = k_g.div_ceil(packing_divisor);
-                Some(
-                    weights_tree
+                QuantizedDequantization::ScaleZeroPoint {
+                    zero_points: weights_tree
                         .leaf("zero_points")?
                         .validate(&[output_dim, expected_zero_points_entries], storage_type)?
                         .read_allocation()?,
-                )
+                }
             },
-            QuantizationMethod::ScaleSymmetric => None,
+            QuantizationMethod::ScaleSymmetric => QuantizedDequantization::ScaleSymmetric,
             QuantizationMethod::LloydMax => {
                 return Err(LinearMatmulError::UnsupportedConfiguration(
                     "Lloyd-Max linear matmul loading is not implemented".to_string(),
@@ -197,11 +209,10 @@ impl<B: Backend> LinearMatmul<B> {
             output_dim,
             output_data_type,
             mode: Mode::Quantized {
-                method: quantization_method,
                 mode: weight_quantization_mode,
                 group_size: group_size as u32,
                 scales,
-                zero_points_or_biases,
+                dequantization,
                 output_hadamard_factors,
             },
         })
@@ -239,36 +250,36 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                 b: &self.weights,
             },
             Mode::Quantized {
-                method,
                 mode,
                 group_size,
                 scales,
-                zero_points_or_biases,
+                dequantization,
                 ..
-            } => match method {
-                QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+            } => match dequantization {
+                QuantizedDequantization::ScaleBias {
+                    biases,
+                } => MatmulB::ScaleBiasDequant {
                     b: &self.weights,
                     scales,
-                    biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
+                    biases,
                     mode: *mode,
                     group_size: *group_size,
                 },
-                QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+                QuantizedDequantization::ScaleZeroPoint {
+                    zero_points,
+                } => MatmulB::ScaleZeroPointDequant {
                     b: &self.weights,
                     scales,
-                    zero_points: zero_points_or_biases
-                        .as_ref()
-                        .expect("ScaleZeroPoint quantization requires zero_points"),
+                    zero_points,
                     mode: *mode,
                     group_size: *group_size,
                 },
-                QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+                QuantizedDequantization::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
                     b: &self.weights,
                     scales,
                     mode: *mode,
                     group_size: *group_size,
                 },
-                QuantizationMethod::LloydMax => unreachable!("Lloyd-Max linear matmul loading is not implemented"),
             },
         };
 
