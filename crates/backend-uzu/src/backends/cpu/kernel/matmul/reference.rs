@@ -18,13 +18,24 @@ pub(super) enum WeightData {
     Quantized {
         weights: SendPtr<u8>,
         scales: SendPtr<u8>,
-        zero_points: Option<SendPtr<u8>>,
-        biases: Option<SendPtr<u8>>,
-        codebook: Option<SendPtr<u8>>,
-        bias_indices: Option<SendPtr<u8>>,
-        bias_codebook: Option<SendPtr<u8>>,
+        dequantization: QuantizedDequantization,
         bits: usize,
         group_size: usize,
+    },
+}
+
+pub(super) enum QuantizedDequantization {
+    ScaleBias {
+        biases: SendPtr<u8>,
+    },
+    ScaleZeroPoint {
+        zero_points: SendPtr<u8>,
+    },
+    ScaleSymmetric,
+    LloydMax {
+        codebook: SendPtr<u8>,
+        bias_indices: SendPtr<u8>,
+        bias_codebook: SendPtr<u8>,
     },
 }
 
@@ -72,11 +83,9 @@ impl WeightData {
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
-                zero_points: None,
-                biases: Some(alloc_ptr(biases)),
-                codebook: None,
-                bias_indices: None,
-                bias_codebook: None,
+                dequantization: QuantizedDequantization::ScaleBias {
+                    biases: alloc_ptr(biases),
+                },
                 bits: bits_of(mode),
                 group_size: group_size as usize,
             },
@@ -89,11 +98,9 @@ impl WeightData {
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
-                zero_points: Some(alloc_ptr(zero_points)),
-                biases: None,
-                codebook: None,
-                bias_indices: None,
-                bias_codebook: None,
+                dequantization: QuantizedDequantization::ScaleZeroPoint {
+                    zero_points: alloc_ptr(zero_points),
+                },
                 bits: bits_of(mode),
                 group_size: group_size as usize,
             },
@@ -105,11 +112,7 @@ impl WeightData {
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
-                zero_points: None,
-                biases: None,
-                codebook: None,
-                bias_indices: None,
-                bias_codebook: None,
+                dequantization: QuantizedDequantization::ScaleSymmetric,
                 bits: bits_of(mode),
                 group_size: group_size as usize,
             },
@@ -124,11 +127,11 @@ impl WeightData {
             } => WeightData::Quantized {
                 weights: alloc_ptr(weights),
                 scales: alloc_ptr(scales),
-                zero_points: None,
-                biases: None,
-                codebook: Some(alloc_ptr(codebook)),
-                bias_indices: Some(alloc_ptr(bias_indices)),
-                bias_codebook: Some(alloc_ptr(bias_codebook)),
+                dequantization: QuantizedDequantization::LloydMax {
+                    codebook: alloc_ptr(codebook),
+                    bias_indices: alloc_ptr(bias_indices),
+                    bias_codebook: alloc_ptr(bias_codebook),
+                },
                 bits: bits_of(mode),
                 group_size: group_size as usize,
             },
