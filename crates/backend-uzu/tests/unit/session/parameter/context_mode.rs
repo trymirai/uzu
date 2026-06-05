@@ -1,22 +1,17 @@
-#![cfg(metal_backend)]
-
-use std::path::PathBuf;
-
-use backend_uzu::session::{
-    Session,
-    config::{DecodingConfig, RunConfig, SpeculatorConfig},
-    parameter::{
-        AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingMethod, SamplingPolicy, SamplingSeed,
-    },
-    types::{Input, Message, Output},
-};
+use proc_macros::uzu_test;
 use test_tag::tag;
 
-use crate::common::path::get_test_model_path;
-
-fn build_model_path() -> PathBuf {
-    get_test_model_path()
-}
+use crate::{
+    common::path::get_test_model_path,
+    session::{
+        Session,
+        config::{DecodingConfig, RunConfig, SpeculatorConfig},
+        parameter::{
+            AsyncBatchSize, ContextLength, ContextMode, PrefillStepSize, SamplingMethod, SamplingPolicy, SamplingSeed,
+        },
+        types::{Input, Message, Output},
+    },
+};
 
 fn build_decoding_config() -> DecodingConfig {
     DecodingConfig::new(
@@ -77,7 +72,7 @@ fn is_unknown_answer(response: &str) -> bool {
 #[uzu_test]
 fn test_context_mode_none() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::None);
-    let mut session = Session::new(build_model_path(), decoding_config).unwrap();
+    let mut session = Session::new(get_test_model_path(), decoding_config).unwrap();
 
     let tokens_limit = 48;
     let input_text = "What is Alice's occupation?".to_string();
@@ -111,7 +106,7 @@ fn test_context_mode_static() {
             ),
         ]),
     });
-    let mut session = Session::new(build_model_path(), decoding_config).unwrap();
+    let mut session = Session::new(get_test_model_path(), decoding_config).unwrap();
 
     let tokens_limit = 48;
     let response_occupation = request(&mut session, format!("What is {}'s occupation?", parameter_name), tokens_limit);
@@ -132,7 +127,7 @@ fn test_context_mode_static() {
 #[ignore = "Flaky test - depends on LLM output which varies even with fixed seed"]
 fn test_context_mode_dynamic() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::Dynamic);
-    let mut session = Session::new(build_model_path(), decoding_config).unwrap();
+    let mut session = Session::new(get_test_model_path(), decoding_config).unwrap();
 
     let update = |session: &mut Session, input_text: String| request(session, input_text, 0);
     let ask = |session: &mut Session, input_text: String| request(session, input_text, 48);
@@ -174,7 +169,7 @@ fn test_context_mode_dynamic() {
 #[uzu_test]
 fn test_context_mode_dynamic_scenario() {
     let decoding_config = build_decoding_config().with_context_mode(ContextMode::Dynamic);
-    let mut session = Session::new(build_model_path(), decoding_config).unwrap();
+    let mut session = Session::new(get_test_model_path(), decoding_config).unwrap();
 
     let user_prompts = vec![String::from("Tell about London"), String::from("Compare with New York")];
 
