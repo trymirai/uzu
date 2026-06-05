@@ -25,8 +25,6 @@ pub mod inference;
 pub mod prelude;
 pub mod session;
 
-#[cfg(metal_backend)]
-pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
