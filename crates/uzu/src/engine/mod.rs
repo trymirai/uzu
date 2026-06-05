@@ -79,7 +79,7 @@ impl Engine {
 
         let telemetry = SharedAccess::new({
             let client_config = ClientConfig::new(
-                "https://sdk.trymirai.com/api/v1".to_string(),
+                "https://sdk.trymirai.com/api/v2".to_string(),
                 Duration::from_secs(10),
                 IndexMap::new(),
             );
