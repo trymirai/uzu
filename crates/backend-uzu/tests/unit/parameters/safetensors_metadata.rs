@@ -1,8 +1,8 @@
 use std::fs::File;
 
-use backend_uzu::parameters::read_safetensors_metadata;
+use proc_macros::uzu_test;
 
-use crate::common::path::get_test_weights_path;
+use crate::{common::path::get_test_weights_path, parameters::read_safetensors_metadata};
 
 #[uzu_test]
 fn test_metadata_loading() {

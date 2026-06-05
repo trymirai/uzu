@@ -15,7 +15,7 @@ pub mod data_type;
 mod encodable_block;
 mod forward_pass;
 mod language_model;
-pub mod parameters;
+mod parameters;
 mod speculators;
 mod trie;
 mod utils;
