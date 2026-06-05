@@ -1,7 +1,6 @@
-use serde_json::Value;
 use tokio::sync::mpsc;
 
-use super::{endpoint::TelemetryEndpoint, record::TelemetryRecord};
+use super::{TelemetryContext, endpoint::TelemetryEndpoint, record::TelemetryRecord};
 use crate::api::{Client, Error};
 
 const MAX_RETRIES: u32 = 4;
@@ -11,7 +10,7 @@ const MAX_BACKOFF_MS: u64 = 16_000;
 pub(super) async fn run(
     client: Client,
     path: String,
-    context: Value,
+    context: TelemetryContext,
     mut receiver: mpsc::Receiver<TelemetryRecord>,
 ) {
     while let Some(record) = receiver.recv().await {
@@ -28,7 +27,7 @@ enum Disposition {
 async fn send_with_retry(
     client: &Client,
     path: &str,
-    context: &Value,
+    context: &TelemetryContext,
     record: &TelemetryRecord,
 ) {
     let endpoint = TelemetryEndpoint::new(path.to_string(), context, record);

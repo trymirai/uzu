@@ -77,6 +77,9 @@ serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+uuid.workspace = true
+
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
 pyo3-build-config = { workspace = true, optional = true }
