@@ -1,6 +1,12 @@
 use std::sync::Arc;
 
-use backend_uzu::{
+use proc_macros::uzu_test;
+use shoji::types::basic::Feature;
+use test_tag::tag;
+use tokenizers::Tokenizer;
+
+use crate::{
+    common::path::get_test_model_path,
     prelude::{FixedTokensSpeculator, PromptLookupSpeculator, SpeculatorConfig},
     session::{
         Session,
@@ -9,11 +15,6 @@ use backend_uzu::{
         types::{Input, Message, Output},
     },
 };
-use shoji::types::basic::Feature;
-use test_tag::tag;
-use tokenizers::Tokenizer;
-
-use crate::common::path::get_test_model_path;
 
 fn build_decoding_config() -> DecodingConfig {
     DecodingConfig::default().with_sampling_seed(SamplingSeed::Custom(42))

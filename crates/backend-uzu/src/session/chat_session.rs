@@ -643,3 +643,7 @@ impl ChatSession {
         self.llm.peak_memory_usage()
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/session/chat_session.rs"]
+mod tests;
