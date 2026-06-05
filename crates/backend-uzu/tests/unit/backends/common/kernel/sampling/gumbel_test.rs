@@ -10,7 +10,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::GumbelKernel},
         cpu::Cpu,
     },
-    gumbel_float, revidx,
+    language_model::gumbel::{gumbel_float, revidx},
 };
 
 struct Input<T: ArrayElement + Float> {
