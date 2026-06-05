@@ -1,13 +1,16 @@
 [[language]]
 name = "c"
+scope = "scope.c"
 file-types = []
 
 [[language]]
 name = "cpp"
+scope = "scope.cpp"
 file-types = []
 
 [[language]]
 name = "metal"
+scope = "scope.metal"
 file-types = ["metal", "h"]
 
 [language-server.rust-analyzer.config.check]
