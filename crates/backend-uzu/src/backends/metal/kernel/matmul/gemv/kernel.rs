@@ -21,12 +21,35 @@ use crate::{
 const FP_BLOCK: u32 = 128;
 const QMV_RESULTS_PER_SIMDGROUP: u32 = 4;
 
+/// Quantized GEMV uses 2 (instead of 8) simdgroups per threadgroup when the
+/// output is narrow (`n < QUANT_SMALL_N`, so 8 simdgroups would launch too few
+/// threadgroups to fill the GPU) AND the reduction is long enough
+/// (`k >= QUANT_LARGE_K`) that the per-dispatch work amortizes the 4x larger
+/// threadgroup count. GPU-counter traces (clock-controlled) show this lifts
+/// compute occupancy and is ~20% faster for large-k/small-n decode (e.g.
+/// k=14336,n=4096), while small-k/small-n (e.g. k=4096,n=4096) is the opposite
+/// — the kernel is too short and the extra threadgroup launches dominate
+/// (~1.7x slower), so it stays at 8 simdgroups. See `select`.
+const QUANT_SMALL_N: u32 = 8192;
+const QUANT_LARGE_K: u32 = 8192;
+
 const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
 static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
 
 fn max_gemv_batch_threshold() -> u32 {
     *GEMV_MAX_BATCH.get_or_init(|| {
         std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
+    })
+}
+
+static GEMV_QUANT_SIMDGROUPS: OnceLock<Option<u32>> = OnceLock::new();
+
+/// Optional override for the quantized-GEMV simdgroups-per-threadgroup choice
+/// (must be 2 or 8). Used for tuning; `None` falls back to the [`QUANT_SMALL_N`]
+/// heuristic in `select`.
+fn quant_simdgroups_override() -> Option<u32> {
+    *GEMV_QUANT_SIMDGROUPS.get_or_init(|| {
+        std::env::var("UZU_GEMV_QUANT_SIMDGROUPS").ok().and_then(|s| s.parse().ok()).filter(|&v| v == 2 || v == 8)
     })
 }
 
@@ -88,7 +111,25 @@ impl GemvSpecialization {
         };
         let input_aligned = args.k.is_multiple_of(block_size);
         let has_rht = args.d_transform.rht_factors.is_some();
-        let num_simdgroups = 8;
+        // Quantized GEMV is K_SPLIT-locked, so the only parallelism knob is the
+        // threadgroup count = ceil(n / (num_simdgroups * RESULTS_PER_SIMDGROUP)).
+        // GPU-counter traces show small-n quant decode is occupancy-bound (~17%
+        // compute occupancy, buffer-read limiter only ~66%) because 8 simdgroups
+        // per threadgroup yields too few threadgroups to fill the GPU and hide
+        // memory latency. Dropping to 2 simdgroups quadruples the threadgroup
+        // count (matching MLX's qmv granularity), lifting occupancy until the
+        // kernel becomes memory-bound. The 8-simdgroup layout stays for large n
+        // (already memory-bound) and for RHT (its epilogue needs the 32-row /
+        // 8-simdgroup block).
+        let num_simdgroups = if is_quant && !has_rht {
+            quant_simdgroups_override().unwrap_or(if args.n < QUANT_SMALL_N && args.k >= QUANT_LARGE_K {
+                2
+            } else {
+                8
+            })
+        } else {
+            8
+        };
         let k_split = if is_quant || has_rht {
             1
         } else {
@@ -130,6 +171,20 @@ impl GemvSpecialization {
                     k_split: 1,
                     num_simdgroups: 8,
                 });
+                // Narrow-output decode routes non-RHT quant GEMV to the
+                // 2-simdgroup layout (see `select`); preheat it too so the
+                // first such dispatch doesn't pay a pipeline-compile stall.
+                if !output_transform.contains(GemmDTransform::RHT) {
+                    out.push(GemvSpecialization {
+                        b_prologue,
+                        group_size,
+                        bits,
+                        output_transform,
+                        input_aligned,
+                        k_split: 1,
+                        num_simdgroups: 2,
+                    });
+                }
             }
         }
         out
