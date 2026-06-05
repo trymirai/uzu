@@ -25,6 +25,8 @@ pub mod inference;
 pub mod prelude;
 pub mod session;
 
+pub use utils::{TOOLCHAIN_VERSION, VERSION};
+
 #[doc(hidden)]
 pub mod _benchmarks {
     pub use crate::{

@@ -24,16 +24,24 @@ baselines side by side.
 
 ## Available benchmark groups
 
-| Group id                         | Filter                         |
-|----------------------------------|--------------------------------|
-| `Metal/Kernel/Matmul/GEMM`       | `Metal/Kernel/Matmul/GEMM`     |
-| `Metal/Kernel/Matmul/GEMM_MXU`   | `Metal/Kernel/Matmul/GEMM_MXU` |
-| `Metal/Kernel/QmmTransposed/...` | `Metal/Kernel/QmmTransposed`   |
-| `Metal/Kernel/QmvFast/...`       | `Metal/Kernel/QmvFast`         |
-| `Metal/Kernel/RMSNorm`           | `Metal/Kernel/RMSNorm`         |
-| `Metal/Kernel/Sampling/Argmax`   | `Metal/Kernel/Sampling/Argmax` |
+The Cargo bench target is `main`. Its source lives at
+`crates/backend-uzu/benches/main.rs`.
+
+| Group id                                | Filter                              |
+|-----------------------------------------|-------------------------------------|
+| `Metal/Kernel/Matmul/GEMM`              | `Metal/Kernel/Matmul/GEMM`          |
+| `Metal/Kernel/Matmul/GEMM_MXU`          | `Metal/Kernel/Matmul/GEMM_MXU`      |
+| `Metal/Kernel/UnifiedQuantizedGemm/...` | `Metal/Kernel/UnifiedQuantizedGemm` |
+| `Metal/Kernel/Gemv/...`                 | `Metal/Kernel/Gemv`                 |
+| `Metal/Kernel/Qwen3Layers/...`          | `Metal/Kernel/Qwen3Layers`          |
+| `Metal/Kernel/RMSNorm`                  | `Metal/Kernel/RMSNorm`              |
+| `Metal/Kernel/Sampling/Argmax`          | `Metal/Kernel/Sampling/Argmax`      |
+| `ChatSession run`                       | `ChatSession run`                   |
+| `Forward pass`                          | `Forward pass`                      |
 
 The prefix `Metal/Kernel/Matmul` runs both `GEMM` and `GEMM_MXU` in one pass.
+The session and language-model groups require the test model path configured by
+the test helpers.
 
 ## Output layout
 
@@ -49,7 +57,7 @@ resolve relative to the package dir:
 ```bash
 CRITERION_HOME="$PWD/target/criterion/m2_max" cargo bench \
   -p backend-uzu \
-  --bench benchmarks -- "Metal/Kernel/Matmul" \
+  --bench main -- "Metal/Kernel/Matmul" \
   --save-baseline matmul_baseline_m2_max
 ```
 
@@ -76,7 +84,7 @@ cargo dinghy \
   -d "$DEVICE" \
   -e CRITERION_HOME=target/criterion/a19 \
   --copy-back "Documents/target=$(pwd)/target" \
-  bench -p backend-uzu --bench benchmarks -- \
+  bench -p backend-uzu --bench main -- \
     "Metal/Kernel/Matmul" \
     --save-baseline matmul_baseline_a19
 ```
