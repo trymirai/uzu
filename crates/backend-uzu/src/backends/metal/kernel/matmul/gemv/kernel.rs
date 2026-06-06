@@ -6,15 +6,12 @@ use std::{
 use crate::{
     backends::{
         common::{
-            Allocation, AsBufferRangeRef, Backend, Buffer, Encoder,
+            Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::{
                 QuantizationMethod,
                 gemm::{GemmBPrologueKind, GemmDTransform},
             },
-            kernel::{
-                Kernels, QuantizedMatmulQmvLloydMaxKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
-            },
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
         },
         metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
     },
@@ -173,8 +170,6 @@ pub(crate) struct GemvDispatch {
     input_data_type: DataType,
     output_data_type: DataType,
     pipelines: HashMap<GemvSpecialization, GemvMetalKernel>,
-    lloyd_max_pipelines:
-        HashMap<GemvSpecialization, <<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel>,
 }
 
 impl GemvDispatch {
@@ -189,7 +184,6 @@ impl GemvDispatch {
             input_data_type,
             output_data_type,
             pipelines: HashMap::new(),
-            lloyd_max_pipelines: HashMap::new(),
         })
     }
 
@@ -234,27 +228,6 @@ impl GemvDispatch {
         }
     }
 
-    fn get_or_create_lloyd_max(
-        &mut self,
-        context: &MetalContext,
-        specialization: GemvSpecialization,
-    ) -> Result<&<<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel, MatmulError<Metal>> {
-        match self.lloyd_max_pipelines.entry(specialization) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                let kernel =
-                    <<<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel as QuantizedMatmulQmvLloydMaxKernel>::new(
-                        context,
-                        self.input_data_type,
-                        specialization.group_size,
-                        specialization.bits,
-                    )
-                    .map_err(MatmulError::BackendError)?;
-                Ok(entry.insert(kernel))
-            },
-        }
-    }
-
     pub(crate) fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
         &mut self,
         arguments: MatmulArguments<'a, Metal, TB>,
@@ -279,27 +252,6 @@ impl GemvDispatch {
         let group_count_x = n.div_ceil(rows_per_threadgroup(specialization.k_split, specialization.num_simdgroups));
 
         let context = encoder.context();
-        if specialization.b_prologue == GemmBPrologueKind::LloydMaxDequant
-            && specialization.output_transform.is_empty()
-            && matches!(specialization.group_size, 32 | 64 | 128)
-            && self.weights_data_type == self.input_data_type
-            && self.input_data_type == self.output_data_type
-        {
-            if let MatmulB::LloydMaxDequant {
-                b: weights,
-                scales,
-                codebook,
-                bias_indices,
-                bias_codebook,
-                ..
-            } = b
-            {
-                let pipeline = self.get_or_create_lloyd_max(context, specialization)?;
-                pipeline.encode(weights, scales, codebook, bias_indices, bias_codebook, a, &mut *d, k, n, m, encoder);
-                return Ok(());
-            }
-        }
-
         let pipeline = self.get_or_create(context, specialization)?;
 
         match b {

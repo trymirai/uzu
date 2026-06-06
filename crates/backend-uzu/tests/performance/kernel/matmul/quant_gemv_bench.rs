@@ -1,12 +1,9 @@
 use backend_uzu::{
     array::ArrayElement,
-    backends::{
-        common::{
-            Backend, Context,
-            gpu_types::QuantizationMethod,
-            kernel::{Kernels, QuantizedMatmulQmvLloydMaxKernel, matmul::MatmulKernel},
-        },
-        metal::Metal,
+    backends::common::{
+        Backend, Context,
+        gpu_types::QuantizationMethod,
+        kernel::{Kernels, matmul::MatmulKernel},
     },
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
@@ -56,6 +53,11 @@ fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
     }
 }
 
+fn bench_lloyd_max_shapes() -> impl Iterator<Item = Shape> {
+    [Shape::new(1, 4096, 4096), Shape::new(2, 4096, 4096), Shape::new(3, 4096, 4096), Shape::new(4, 4096, 4096)]
+        .into_iter()
+}
+
 fn bench_lloyd_max_typed<B: Backend, T: ArrayElement + Float>(
     c: &mut Criterion,
     context: &B::Context,
@@ -64,7 +66,7 @@ fn bench_lloyd_max_typed<B: Backend, T: ArrayElement + Float>(
 ) {
     let mut group = c.benchmark_group(format!("{}/Kernel/Gemv/{}", type_short_name::<B>(), label));
 
-    for shape in bench_quant_gemv_shapes(4) {
+    for shape in bench_lloyd_max_shapes() {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = LloydMaxQuantInput::<T>::new(m, k, n, group_size);
         let mut buffers = LloydMaxQuantBuffers::<B, T>::allocate(context, &input);
@@ -86,63 +88,6 @@ fn bench_lloyd_max_typed<B: Backend, T: ArrayElement + Float>(
     }
 }
 
-fn bench_lloyd_max_direct_metal<T: ArrayElement + Float>(
-    c: &mut Criterion,
-    context: &<Metal as Backend>::Context,
-    label: &str,
-    group_size: u32,
-    fused: bool,
-) {
-    let mut group = c.benchmark_group(format!("Metal/Kernel/Gemv/{label}"));
-    let shapes = [1usize, 2, 3, 4].map(|m| Shape::new(m, 4096, 4096));
-
-    for shape in shapes {
-        let input = LloydMaxQuantInput::<T>::new(shape.m, shape.k, shape.n, group_size);
-        let mut buffers = LloydMaxQuantBuffers::<Metal, T>::allocate(context, &input);
-        let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
-            context,
-            T::data_type(),
-            T::data_type(),
-            T::data_type(),
-        )
-        .expect("MatmulMetalKernel");
-
-        group.throughput(Throughput::Elements((shape.m * shape.n * shape.k) as u64));
-        group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
-            if fused {
-                iter_encode_loop::<Metal, _>(context, b, |encoder| {
-                    let arguments = lloyd_max_quant_arguments(&mut buffers, &input);
-                    matmul.encode(arguments, encoder).expect("encode production Lloyd-Max path");
-                });
-            } else {
-                let kernel =
-                    <<<Metal as Backend>::Kernels as Kernels>::QuantizedMatmulQmvLloydMaxKernel as QuantizedMatmulQmvLloydMaxKernel>::new(
-                        context,
-                        T::data_type(),
-                        group_size,
-                        4,
-                    )
-                    .expect("QuantizedMatmulQmvLloydMaxMetalKernel");
-                iter_encode_loop::<Metal, _>(context, b, |encoder| {
-                    kernel.encode(
-                        &buffers.w,
-                        &buffers.scales,
-                        &buffers.codebook,
-                        &buffers.bias_indices,
-                        &buffers.bias_codebook,
-                        &buffers.x,
-                        &mut buffers.y,
-                        input.k,
-                        input.n,
-                        input.m,
-                        encoder,
-                    );
-                });
-            }
-        });
-    }
-}
-
 #[uzu_bench]
 fn bench_gemv(c: &mut Criterion) {
     for_each_backend!(|B| {
@@ -156,8 +101,4 @@ fn bench_gemv(c: &mut Criterion) {
         bench_gemv_typed::<B, bf16>(c, &context, "ZP_BF16_gs64_8b", 64, 8, QuantizationMethod::ScaleZeroPoint);
         bench_lloyd_max_typed::<B, bf16>(c, &context, "LloydMax_BF16_gs64", 64);
     });
-
-    let context = <Metal as Backend>::Context::new().unwrap();
-    bench_lloyd_max_direct_metal::<bf16>(c, &context, "LloydMaxIndependent_BF16_gs64", 64, false);
-    bench_lloyd_max_direct_metal::<bf16>(c, &context, "LloydMaxFused_BF16_gs64", 64, true);
 }
