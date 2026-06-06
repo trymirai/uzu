@@ -105,7 +105,10 @@ impl GemvSpecialization {
         })
     }
 
-    fn quant_combo_specs(combo: MatmulQuantCombo) -> Vec<GemvSpecialization> {
+    fn quant_combo_specs(
+        combo: MatmulQuantCombo,
+        k: u32,
+    ) -> Vec<GemvSpecialization> {
         let bits = DataType::from(combo.mode).size_in_bits() as u32;
         let group_size = combo.group_size;
         let b_prologue = match combo.method {
@@ -113,26 +116,24 @@ impl GemvSpecialization {
             QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
             QuantizationMethod::ScaleSymmetric => GemmBPrologueKind::ScaleSymmetricDequant,
         };
-        let mut out = Vec::new();
-        for output_transform in [
-            GemmDTransform::empty(),
-            GemmDTransform::BIAS,
-            GemmDTransform::RHT,
-            GemmDTransform::BIAS | GemmDTransform::RHT,
-        ] {
-            for input_aligned in [true, false] {
-                out.push(GemvSpecialization {
-                    b_prologue,
-                    group_size,
-                    bits,
-                    output_transform,
-                    input_aligned,
-                    k_split: 1,
-                    num_simdgroups: 8,
-                });
-            }
-        }
-        out
+        let block_size = if bits == 4 {
+            512
+        } else {
+            256
+        };
+        let input_aligned = k.is_multiple_of(block_size);
+        [GemmDTransform::empty(), GemmDTransform::BIAS, GemmDTransform::RHT]
+            .into_iter()
+            .map(|output_transform| GemvSpecialization {
+                b_prologue,
+                group_size,
+                bits,
+                output_transform,
+                input_aligned,
+                k_split: 1,
+                num_simdgroups: 8,
+            })
+            .collect()
     }
 }
 
@@ -185,11 +186,12 @@ impl GemvDispatch {
         &mut self,
         context: &MetalContext,
         combo: MatmulQuantCombo,
+        k: u32,
     ) -> Result<(), MatmulError<Metal>> {
         if self.weights_data_type != DataType::BF16 {
             return Ok(());
         }
-        for specialization in GemvSpecialization::quant_combo_specs(combo) {
+        for specialization in GemvSpecialization::quant_combo_specs(combo, k) {
             self.get_or_create(context, specialization)?;
         }
         Ok(())
