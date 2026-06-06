@@ -137,6 +137,35 @@ cargo run --release -p cli -- bench ./workspace/models/{{ version }}/{MODEL_NAME
 
 `benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.
 
+## Server
+
+You can also run `uzu` as an OpenAI-compatible HTTP server:
+
+```bash
+cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M
+```
+
+The model is loaded on startup (and downloaded first if needed). By default the server listens on `127.0.0.1:8000`; override the address with `--host` and `--port`:
+
+```bash
+cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M --host 0.0.0.0 --port 8080
+```
+
+It exposes the following endpoints, available both at the root and under `/v1`:
+
+- `POST /v1/chat/completions` — chat completions, with streaming when `"stream": true`. Honors `temperature`, `top_p`, `top_k`, and `max_tokens`.
+- `GET /v1/models` — lists the loaded model.
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "trymirai/Qwen3.5-4B-M",
+        "messages": [{"role": "user", "content": "Hello!"}],
+        "stream": true
+    }'
+```
+
 {% endif %}
 
 ## Troubleshooting
