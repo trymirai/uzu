@@ -34,24 +34,12 @@ PUBLIC KERNEL(TopK)(
   for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
     float logit_value = float(logits[batch_start + i]);
     local_max = fmax(local_max, logit_value);
-    local_min = select(
-        local_min,
-        fmin(local_min, logit_value),
-        logit_value > -INFINITY
-    );
+    local_min = select(local_min, fmin(local_min, logit_value), logit_value > -INFINITY);
   }
   float max_logit =
-      threadgroup_cooperative_reduce<SimdReduceMax<float>, BLOCK_SIZE>(
-          local_max,
-          shared_reduce_buffer,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceMax<float>, BLOCK_SIZE>(local_max, shared_reduce_buffer, thread_context);
   float min_logit =
-      threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(
-          local_min,
-          shared_reduce_buffer,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(local_min, shared_reduce_buffer, thread_context);
   // Do the binary search on the threshold
   float low = min_logit;
   float high = max_logit;
@@ -65,12 +53,11 @@ PUBLIC KERNEL(TopK)(
       float logit_value = float(logits[batch_start + i]);
       local_num_above_threshold += select(0, 1, logit_value >= threshold);
     }
-    uint num_above_threshold =
-        threadgroup_cooperative_reduce<SimdReduceSum<uint>, BLOCK_SIZE>(
-            local_num_above_threshold,
-            (threadgroup uint*)shared_reduce_buffer,
-            thread_context
-        );
+    uint num_above_threshold = threadgroup_cooperative_reduce<SimdReduceSum<uint>, BLOCK_SIZE>(
+        local_num_above_threshold,
+        (threadgroup uint*)shared_reduce_buffer,
+        thread_context
+    );
 
     // Update binary search
     if (num_above_threshold == top_k) {
@@ -89,7 +76,6 @@ PUBLIC KERNEL(TopK)(
 #pragma unroll(4)
   for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
     T logit_value = logits[batch_start + i];
-    processed_logits[batch_start + i] =
-        select(T(-INFINITY), logit_value, logit_value >= t_threshold);
+    processed_logits[batch_start + i] = select(T(-INFINITY), logit_value, logit_value >= t_threshold);
   }
 }

@@ -8,10 +8,7 @@ namespace gemm {
 
 template <typename BT, typename U, GemmBPrologueKind B_PROLOGUE, uint BITS>
 struct QuantRowOffsets {
-  static_assert(
-      BITS == 4 || BITS == 8,
-      "QuantRowOffsets supports 4- and 8-bit only"
-  );
+  static_assert(BITS == 4 || BITS == 8, "QuantRowOffsets supports 4- and 8-bit only");
   const device BT* scales = nullptr;
   const device BT* biases = nullptr;
   const device uint8_t* zps = nullptr;
@@ -30,15 +27,8 @@ struct QuantRowOffsets {
       offset[1] = static_cast<U>(biases[group_stride]);
       offset[2] = static_cast<U>(biases[2 * group_stride]);
       offset[3] = static_cast<U>(biases[3 * group_stride]);
-    } else if constexpr (
-        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-    ) {
-      uchar4 zp_bytes = uchar4(
-          zps[0],
-          zps[zp_stride],
-          zps[2 * zp_stride],
-          zps[3 * zp_stride]
-      );
+    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
+      uchar4 zp_bytes = uchar4(zps[0], zps[zp_stride], zps[2 * zp_stride], zps[3 * zp_stride]);
       uchar4 zp_nibbles;
       if constexpr (BITS == 4) {
         const uint8_t shift = high_nibble ? 4u : 0u;
@@ -63,9 +53,7 @@ struct QuantRowOffsets {
     scales += groups;
     if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleBiasDequant) {
       biases += groups;
-    } else if constexpr (
-        B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant
-    ) {
+    } else if constexpr (B_PROLOGUE == GemmBPrologueKind::ScaleZeroPointDequant) {
       constexpr uint zps_per_byte = get_pack_factor<BITS, 8>();
       zps += groups / zps_per_byte;
     }

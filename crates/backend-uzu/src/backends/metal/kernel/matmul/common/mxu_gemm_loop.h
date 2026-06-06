@@ -43,9 +43,7 @@ METAL_FUNC auto gemm_loop(
   constexpr ushort RIGHT_TILE_ROWS = transpose_b ? TILES_N : TILES_K;
   constexpr ushort RIGHT_TILE_COLS = transpose_b ? TILES_K : TILES_N;
 
-  Fragment<AccumulatorType, TILES_M, TILES_N, MxuFragmentOps> accumulator(
-      thread_context
-  );
+  Fragment<AccumulatorType, TILES_M, TILES_N, MxuFragmentOps> accumulator(thread_context);
   accumulator.clear();
 
   METAL_PRAGMA_NO_UNROLL
@@ -54,53 +52,31 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < BLOCK_K; inner_k += SIMDGROUP_BLOCK_K) {
-      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(
-          thread_context
-      );
-      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(
-          thread_context
-      );
+      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(thread_context);
+      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(thread_context);
 
       volatile int mxu_iteration_fence;
 
-      const int left_offset =
-          transpose_a ? inner_k * leading_dimension_a : inner_k;
-      const int right_offset =
-          transpose_b ? inner_k : inner_k * leading_dimension_b;
+      const int left_offset = transpose_a ? inner_k * leading_dimension_a : inner_k;
+      const int right_offset = transpose_b ? inner_k : inner_k * leading_dimension_b;
 
       if constexpr (aligned_m) {
         left_tile.load(left_ptr + left_offset, leading_dimension_a);
       } else {
-        const short row_limit =
-            transpose_a ? SIMDGROUP_BLOCK_K : simdgroup_limit_m;
-        const short col_limit =
-            transpose_a ? simdgroup_limit_m : SIMDGROUP_BLOCK_K;
-        left_tile.load_safe(
-            left_ptr + left_offset,
-            leading_dimension_a,
-            short2(col_limit, row_limit)
-        );
+        const short row_limit = transpose_a ? SIMDGROUP_BLOCK_K : simdgroup_limit_m;
+        const short col_limit = transpose_a ? simdgroup_limit_m : SIMDGROUP_BLOCK_K;
+        left_tile.load_safe(left_ptr + left_offset, leading_dimension_a, short2(col_limit, row_limit));
       }
 
       if constexpr (aligned_n) {
         right_tile.load(right_ptr + right_offset, leading_dimension_b);
       } else {
-        const short row_limit =
-            transpose_b ? simdgroup_limit_n : SIMDGROUP_BLOCK_K;
-        const short col_limit =
-            transpose_b ? SIMDGROUP_BLOCK_K : simdgroup_limit_n;
-        right_tile.load_safe(
-            right_ptr + right_offset,
-            leading_dimension_b,
-            short2(col_limit, row_limit)
-        );
+        const short row_limit = transpose_b ? simdgroup_limit_n : SIMDGROUP_BLOCK_K;
+        const short col_limit = transpose_b ? SIMDGROUP_BLOCK_K : simdgroup_limit_n;
+        right_tile.load_safe(right_ptr + right_offset, leading_dimension_b, short2(col_limit, row_limit));
       }
 
-      MxuFragmentOps::template tile_matmul<transpose_a, transpose_b>(
-          accumulator,
-          left_tile,
-          right_tile
-      );
+      MxuFragmentOps::template tile_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
 
       (void)mxu_iteration_fence;
     }
@@ -116,40 +92,21 @@ METAL_FUNC auto gemm_loop(
 
     METAL_PRAGMA_NO_UNROLL
     for (int inner_k = 0; inner_k < remaining_k; inner_k += SIMDGROUP_BLOCK_K) {
-      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(
-          thread_context
-      );
-      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(
-          thread_context
-      );
+      Fragment<AT, LEFT_TILE_ROWS, LEFT_TILE_COLS, MxuFragmentOps> left_tile(thread_context);
+      Fragment<BT, RIGHT_TILE_ROWS, RIGHT_TILE_COLS, MxuFragmentOps> right_tile(thread_context);
 
       const short safe_k = max(short(0), short(remaining_k - inner_k));
 
-      const short2 left_limits = transpose_a
-                                     ? short2(simdgroup_limit_m, safe_k)
-                                     : short2(safe_k, simdgroup_limit_m);
-      const short2 right_limits = transpose_b
-                                      ? short2(safe_k, simdgroup_limit_n)
-                                      : short2(simdgroup_limit_n, safe_k);
+      const short2 left_limits = transpose_a ? short2(simdgroup_limit_m, safe_k) : short2(safe_k, simdgroup_limit_m);
+      const short2 right_limits = transpose_b ? short2(safe_k, simdgroup_limit_n) : short2(simdgroup_limit_n, safe_k);
 
-      const int left_offset =
-          transpose_a ? inner_k * leading_dimension_a : inner_k;
-      const int right_offset =
-          transpose_b ? inner_k : inner_k * leading_dimension_b;
+      const int left_offset = transpose_a ? inner_k * leading_dimension_a : inner_k;
+      const int right_offset = transpose_b ? inner_k : inner_k * leading_dimension_b;
 
-      left_tile
-          .load_safe(left_ptr + left_offset, leading_dimension_a, left_limits);
-      right_tile.load_safe(
-          right_ptr + right_offset,
-          leading_dimension_b,
-          right_limits
-      );
+      left_tile.load_safe(left_ptr + left_offset, leading_dimension_a, left_limits);
+      right_tile.load_safe(right_ptr + right_offset, leading_dimension_b, right_limits);
 
-      MxuFragmentOps::template tile_matmul<transpose_a, transpose_b>(
-          accumulator,
-          left_tile,
-          right_tile
-      );
+      MxuFragmentOps::template tile_matmul<transpose_a, transpose_b>(accumulator, left_tile, right_tile);
     }
   }
 

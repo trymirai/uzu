@@ -54,15 +54,5 @@ PUBLIC KERNEL(AudioHalfSnake)(
     uint c AXIS(channels, 1),
     uint b AXIS(batch_size, 1)
 ) {
-  half_snake<T>(
-      input,
-      alpha,
-      output,
-      channels,
-      seq_len,
-      snake_channels,
-      negative_slope,
-      eps,
-      uint3(t, c, b)
-  );
+  half_snake<T>(input, alpha, output, channels, seq_len, snake_channels, negative_slope, eps, uint3(t, c, b));
 }

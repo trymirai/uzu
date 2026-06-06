@@ -29,10 +29,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     const uint hk_idx GROUPS(num_k_heads),
     const uint lane THREADS(METAL_SIMD_SIZE)
 ) {
-  static_assert(
-      HEAD_K_DIM % METAL_SIMD_SIZE == 0,
-      "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE"
-  );
+  static_assert(HEAD_K_DIM % METAL_SIMD_SIZE == 0, "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE");
   constexpr uint elems_per_thread = HEAD_K_DIM / METAL_SIMD_SIZE;
 
   const uint conv_dim = 2 * key_dim + value_dim;
@@ -86,8 +83,7 @@ PUBLIC KERNEL(DeltaNetPrefillPrep)(
     float beta_raw = float(in_proj[tok_offset + conv_dim + value_dim + hv]);
     float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
 
-    float a_raw =
-        float(in_proj[tok_offset + conv_dim + value_dim + num_v_heads + hv]);
+    float a_raw = float(in_proj[tok_offset + conv_dim + value_dim + num_v_heads + hv]);
     float sp = activate_softplus(a_raw + float(dt_bias[hv]));
     float decay = fast::exp(-fast::exp(float(a_log[hv])) * sp);
 
