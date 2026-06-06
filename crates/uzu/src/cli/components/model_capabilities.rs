@@ -6,7 +6,6 @@ use shoji::types::{basic::ReasoningEffort, model::Model};
 use super::preferences::{ThinkingPreference, cycle};
 use crate::engine::Engine;
 
-/// Discrete reasoning effort levels, in the order presented to the user.
 const LEVELS: [ReasoningEffort; 5] = [
     ReasoningEffort::Default,
     ReasoningEffort::Low,
@@ -25,20 +24,11 @@ fn level_label(effort: ReasoningEffort) -> &'static str {
     }
 }
 
-/// What kind of reasoning control the loaded model supports, plus its current value.
-///
-/// The variant is fixed by the model's capability; the value carried in `Levels`
-/// / `Toggle` is the active selection, projected from the persisted
-/// [`ThinkingPreference`] via [`ThinkingSupport::with_preference`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingSupport {
-    /// Remote backends expose discrete effort levels.
     Levels(ReasoningEffort),
-    /// Local hybrid models whose template honors `enable_thinking`.
     Toggle(bool),
-    /// Local models that always emit reasoning and cannot be turned off.
     AlwaysOn,
-    /// Models without any reasoning support.
     Unsupported,
 }
 
@@ -53,7 +43,6 @@ impl ThinkingSupport {
         matches!(self, Self::Levels(_) | Self::Toggle(_))
     }
 
-    /// Replace the carried value with the user's persisted intent for this model.
     pub fn with_preference(
         self,
         preference: &ThinkingPreference,
@@ -65,7 +54,6 @@ impl ThinkingSupport {
         }
     }
 
-    /// Advance the carried value (cycle the level, or flip the toggle).
     pub fn cycled(
         self,
         delta: i64,
@@ -77,7 +65,6 @@ impl ThinkingSupport {
         }
     }
 
-    /// Persist the carried value back into the model-agnostic preference.
     pub fn write_back(
         self,
         preference: &mut ThinkingPreference,
@@ -99,8 +86,6 @@ impl ThinkingSupport {
         }
     }
 
-    /// Reasoning effort to attach to the next message, or `None` to leave the
-    /// model's own default in place.
     pub fn reasoning_effort(self) -> Option<ReasoningEffort> {
         match self {
             Self::Levels(ReasoningEffort::Default) | Self::Toggle(true) => None,

@@ -5,10 +5,6 @@ use crate::settings::{SettingKind, Settings, SettingsError};
 
 const SETTINGS_PREFERENCES: &str = "cli_preferences";
 
-/// Model-agnostic, persisted thinking intent. Each loaded model projects this
-/// onto the variant it actually supports (see `ThinkingSupport`):
-/// `level` drives models that expose discrete reasoning effort, `enabled`
-/// drives models that only support an on/off toggle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThinkingPreference {
     pub level: ReasoningEffort,
