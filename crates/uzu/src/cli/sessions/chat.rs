@@ -136,8 +136,10 @@ pub async fn run_session(
 ) {
     let mut state = state;
     let preferences = state.read().preferences;
+    let thinking_support =
+        state.read().model_state.as_ref().map(|model_state| model_state.capabilities.thinking).unwrap_or_default();
     let mut user_message = ChatMessage::user().with_text(text);
-    if let Some(reasoning_effort) = preferences.reasoning_effort() {
+    if let Some(reasoning_effort) = thinking_support.with_preference(&preferences.thinking).reasoning_effort() {
         user_message = user_message.with_reasoning_effort(reasoning_effort);
     }
     let reply_config = ChatReplyConfig::default().with_sampling_policy(preferences.sampling_policy());

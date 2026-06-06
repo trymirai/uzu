@@ -5,45 +5,21 @@ use crate::settings::{SettingKind, Settings, SettingsError};
 
 const SETTINGS_PREFERENCES: &str = "cli_preferences";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ThinkingMode {
-    #[default]
-    ModelDefault,
-    Off,
-    Low,
-    Medium,
-    High,
+/// Model-agnostic, persisted thinking intent. Each loaded model projects this
+/// onto the variant it actually supports (see `ThinkingSupport`):
+/// `level` drives models that expose discrete reasoning effort, `enabled`
+/// drives models that only support an on/off toggle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThinkingPreference {
+    pub level: ReasoningEffort,
+    pub enabled: bool,
 }
 
-impl ThinkingMode {
-    pub const ALL: [ThinkingMode; 5] = [Self::ModelDefault, Self::Off, Self::Low, Self::Medium, Self::High];
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::ModelDefault => "model default",
-            Self::Off => "off",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
-
-    pub fn next(self) -> Self {
-        cycle(&Self::ALL, self, 1)
-    }
-
-    pub fn previous(self) -> Self {
-        cycle(&Self::ALL, self, -1)
-    }
-
-    pub fn reasoning_effort(self) -> Option<ReasoningEffort> {
-        match self {
-            Self::ModelDefault => None,
-            Self::Off => Some(ReasoningEffort::Disabled),
-            Self::Low => Some(ReasoningEffort::Low),
-            Self::Medium => Some(ReasoningEffort::Medium),
-            Self::High => Some(ReasoningEffort::High),
+impl Default for ThinkingPreference {
+    fn default() -> Self {
+        Self {
+            level: ReasoningEffort::Default,
+            enabled: true,
         }
     }
 }
@@ -154,7 +130,7 @@ impl SamplingPreferences {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct Preferences {
-    pub thinking: ThinkingMode,
+    pub thinking: ThinkingPreference,
     pub sampling: SamplingPreferences,
 }
 
@@ -176,16 +152,12 @@ impl Preferences {
         settings.save(SettingKind::Config, SETTINGS_PREFERENCES.to_string(), Some(raw))
     }
 
-    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
-        self.thinking.reasoning_effort()
-    }
-
     pub fn sampling_policy(&self) -> SamplingPolicy {
         self.sampling.policy()
     }
 }
 
-fn cycle<T: Copy + PartialEq>(
+pub(super) fn cycle<T: Copy + PartialEq>(
     values: &[T],
     current: T,
     delta: isize,

@@ -1,7 +1,7 @@
 use iocraft::prelude::*;
 
 use crate::cli::{
-    components::{ApplicationState, Preferences, SamplingMode, Theme},
+    components::{ApplicationState, ModelSamplingDefaults, Preferences, SamplingMode, Theme, ThinkingSupport},
     flows::{Flow, FlowEvent},
 };
 
@@ -35,8 +35,15 @@ enum Field {
     MinP,
 }
 
-fn visible_fields(preferences: &Preferences) -> Vec<Field> {
-    let mut fields = vec![Field::Thinking, Field::SamplingMode];
+fn visible_fields(
+    preferences: &Preferences,
+    support: ThinkingSupport,
+) -> Vec<Field> {
+    let mut fields = Vec::new();
+    if support.is_adjustable() {
+        fields.push(Field::Thinking);
+    }
+    fields.push(Field::SamplingMode);
     if preferences.sampling.mode == SamplingMode::Stochastic {
         fields.extend([Field::Temperature, Field::TopK, Field::TopP, Field::MinP]);
     }
@@ -47,34 +54,33 @@ fn adjust(
     preferences: &mut Preferences,
     field: Field,
     delta: i64,
+    support: ThinkingSupport,
 ) {
-    let sampling = &mut preferences.sampling;
     match field {
         Field::Thinking => {
-            preferences.thinking = if delta >= 0 {
-                preferences.thinking.next()
-            } else {
-                preferences.thinking.previous()
-            };
+            support.with_preference(&preferences.thinking).cycled(delta).write_back(&mut preferences.thinking);
         },
         Field::SamplingMode => {
-            sampling.mode = if delta >= 0 {
-                sampling.mode.next()
+            preferences.sampling.mode = if delta >= 0 {
+                preferences.sampling.mode.next()
             } else {
-                sampling.mode.previous()
+                preferences.sampling.mode.previous()
             };
         },
         Field::Temperature => {
-            sampling.temperature = step_f64(sampling.temperature, delta, TEMPERATURE_STEP, 0.0, TEMPERATURE_MAX);
+            preferences.sampling.temperature =
+                step_f64(preferences.sampling.temperature, delta, TEMPERATURE_STEP, 0.0, TEMPERATURE_MAX);
         },
         Field::TopK => {
-            sampling.top_k = (sampling.top_k + delta * TOP_K_STEP).clamp(TOP_K_MIN, TOP_K_MAX);
+            preferences.sampling.top_k = (preferences.sampling.top_k + delta * TOP_K_STEP).clamp(TOP_K_MIN, TOP_K_MAX);
         },
         Field::TopP => {
-            sampling.top_p = step_f64(sampling.top_p, delta, PROBABILITY_STEP, 0.0, PROBABILITY_MAX);
+            preferences.sampling.top_p =
+                step_f64(preferences.sampling.top_p, delta, PROBABILITY_STEP, 0.0, PROBABILITY_MAX);
         },
         Field::MinP => {
-            sampling.min_p = step_f64(sampling.min_p, delta, PROBABILITY_STEP, 0.0, PROBABILITY_MAX);
+            preferences.sampling.min_p =
+                step_f64(preferences.sampling.min_p, delta, PROBABILITY_STEP, 0.0, PROBABILITY_MAX);
         },
     }
 }
@@ -82,15 +88,15 @@ fn adjust(
 fn toggle(
     preferences: &mut Preferences,
     field: Field,
+    support: ThinkingSupport,
 ) {
-    let sampling = &mut preferences.sampling;
     match field {
-        Field::Thinking => preferences.thinking = preferences.thinking.next(),
-        Field::SamplingMode => sampling.mode = sampling.mode.next(),
-        Field::Temperature => sampling.temperature_enabled = !sampling.temperature_enabled,
-        Field::TopK => sampling.top_k_enabled = !sampling.top_k_enabled,
-        Field::TopP => sampling.top_p_enabled = !sampling.top_p_enabled,
-        Field::MinP => sampling.min_p_enabled = !sampling.min_p_enabled,
+        Field::Thinking => adjust(preferences, Field::Thinking, 1, support),
+        Field::SamplingMode => preferences.sampling.mode = preferences.sampling.mode.next(),
+        Field::Temperature => preferences.sampling.temperature_enabled = !preferences.sampling.temperature_enabled,
+        Field::TopK => preferences.sampling.top_k_enabled = !preferences.sampling.top_k_enabled,
+        Field::TopP => preferences.sampling.top_p_enabled = !preferences.sampling.top_p_enabled,
+        Field::MinP => preferences.sampling.min_p_enabled = !preferences.sampling.min_p_enabled,
     }
 }
 
@@ -103,6 +109,32 @@ fn step_f64(
 ) -> f64 {
     let next = (value + delta as f64 * step).clamp(min, max);
     (next * 100.0).round() / 100.0
+}
+
+fn seed_defaults(
+    preferences: &mut Preferences,
+    defaults: ModelSamplingDefaults,
+) {
+    if !preferences.sampling.temperature_enabled
+        && let Some(value) = defaults.temperature
+    {
+        preferences.sampling.temperature = value;
+    }
+    if !preferences.sampling.top_k_enabled
+        && let Some(value) = defaults.top_k
+    {
+        preferences.sampling.top_k = value;
+    }
+    if !preferences.sampling.top_p_enabled
+        && let Some(value) = defaults.top_p
+    {
+        preferences.sampling.top_p = value;
+    }
+    if !preferences.sampling.min_p_enabled
+        && let Some(value) = defaults.min_p
+    {
+        preferences.sampling.min_p = value;
+    }
 }
 
 #[derive(Default, Props)]
@@ -118,11 +150,20 @@ fn SettingsFlowView(
     let on_event = std::mem::take(&mut props.on_event);
     let state = *hooks.use_context::<State<ApplicationState>>();
 
-    let mut draft = hooks.use_state(|| state.read().preferences);
+    let capabilities =
+        state.read().model_state.as_ref().map(|model_state| model_state.capabilities).unwrap_or_default();
+    let support = capabilities.thinking;
+    let defaults = capabilities.sampling_defaults;
+
+    let mut draft = hooks.use_state(|| {
+        let mut preferences = state.read().preferences;
+        seed_defaults(&mut preferences, defaults);
+        preferences
+    });
     let mut selected_index = hooks.use_state(|| 0usize);
 
     let current = draft.get();
-    let fields = visible_fields(&current);
+    let fields = visible_fields(&current, support);
     if selected_index.get() >= fields.len() {
         selected_index.set(fields.len().saturating_sub(1));
     }
@@ -141,7 +182,7 @@ fn SettingsFlowView(
         }
 
         let preferences = draft.get();
-        let fields = visible_fields(&preferences);
+        let fields = visible_fields(&preferences, support);
         if fields.is_empty() {
             return;
         }
@@ -167,24 +208,27 @@ fn SettingsFlowView(
             },
             KeyCode::Left => {
                 let mut preferences = draft.get();
-                adjust(&mut preferences, field, -1);
+                adjust(&mut preferences, field, -1, support);
                 draft.set(preferences);
             },
             KeyCode::Right => {
                 let mut preferences = draft.get();
-                adjust(&mut preferences, field, 1);
+                adjust(&mut preferences, field, 1, support);
                 draft.set(preferences);
             },
             KeyCode::Char(' ') => {
                 let mut preferences = draft.get();
-                toggle(&mut preferences, field);
+                toggle(&mut preferences, field, support);
                 draft.set(preferences);
             },
             KeyCode::Enter => {
                 let mut state = state;
                 let preferences = draft.get();
-                let summary =
-                    format!("thinking {} · sampling {}", preferences.thinking.label(), preferences.sampling.summary());
+                let summary = format!(
+                    "thinking {} · sampling {}",
+                    thinking_summary(support, &preferences),
+                    preferences.sampling.summary()
+                );
                 let result = match state.read().settings.clone() {
                     Some(settings) => match preferences.save(&settings) {
                         Ok(()) => format!("Settings saved ({})", summary),
@@ -204,17 +248,24 @@ fn SettingsFlowView(
     let selected = fields.get(selected_index.get().min(fields.len().saturating_sub(1))).copied();
     let padding = theme.padding();
 
-    let mut rows: Vec<AnyElement<'static>> = vec![
-        section_header("Thinking", &theme),
-        field_row(Field::Thinking, &preferences, selected, &theme),
-        section_header("Sampling", &theme),
-        field_row(Field::SamplingMode, &preferences, selected, &theme),
-    ];
-    if preferences.sampling.mode == SamplingMode::Stochastic {
-        rows.push(field_row(Field::Temperature, &preferences, selected, &theme));
-        rows.push(field_row(Field::TopK, &preferences, selected, &theme));
-        rows.push(field_row(Field::TopP, &preferences, selected, &theme));
-        rows.push(field_row(Field::MinP, &preferences, selected, &theme));
+    let mut rows: Vec<AnyElement<'static>> = vec![section_header("Thinking", &theme)];
+    if support.is_adjustable() {
+        rows.push(field_row(Field::Thinking, &preferences, selected, &theme, support));
+    } else {
+        rows.push(info_row("Thinking", &support.value_label(), &theme));
+    }
+
+    rows.push(section_header("Sampling", &theme));
+    rows.push(field_row(Field::SamplingMode, &preferences, selected, &theme, support));
+    match preferences.sampling.mode {
+        SamplingMode::ModelDefault => rows.push(info_row("", &format!("uses {}", defaults.summary()), &theme)),
+        SamplingMode::Greedy => {},
+        SamplingMode::Stochastic => {
+            rows.push(field_row(Field::Temperature, &preferences, selected, &theme, support));
+            rows.push(field_row(Field::TopK, &preferences, selected, &theme, support));
+            rows.push(field_row(Field::TopP, &preferences, selected, &theme, support));
+            rows.push(field_row(Field::MinP, &preferences, selected, &theme, support));
+        },
     }
 
     element! {
@@ -229,6 +280,13 @@ fn SettingsFlowView(
     }
 }
 
+fn thinking_summary(
+    support: ThinkingSupport,
+    preferences: &Preferences,
+) -> String {
+    support.with_preference(&preferences.thinking).value_label()
+}
+
 fn section_header(
     title: &str,
     theme: &Theme,
@@ -241,11 +299,29 @@ fn section_header(
     .into()
 }
 
+fn info_row(
+    label: &str,
+    value: &str,
+    theme: &Theme,
+) -> AnyElement<'static> {
+    element! {
+        View(flex_direction: FlexDirection::Row, column_gap: 1u16) {
+            Text(content: " ", color: Some(theme.subtitle_color))
+            View(width: LABEL_WIDTH) {
+                Text(content: label.to_string(), color: Some(theme.subtitle_color))
+            }
+            Text(content: value.to_string(), color: Some(theme.subtitle_color))
+        }
+    }
+    .into()
+}
+
 fn field_row(
     field: Field,
     preferences: &Preferences,
     selected: Option<Field>,
     theme: &Theme,
+    support: ThinkingSupport,
 ) -> AnyElement<'static> {
     let is_selected = selected == Some(field);
     let marker = if is_selected {
@@ -260,7 +336,10 @@ fn field_row(
     };
 
     let (label, control): (&str, AnyElement<'static>) = match field {
-        Field::Thinking => ("Thinking", cycle_control(preferences.thinking.label(), value_color, theme)),
+        Field::Thinking => (
+            "Thinking",
+            cycle_control(&support.with_preference(&preferences.thinking).value_label(), value_color, theme),
+        ),
         Field::SamplingMode => ("Sampling", cycle_control(preferences.sampling.mode.label(), value_color, theme)),
         Field::Temperature => (
             "Temperature",
@@ -353,11 +432,14 @@ fn toggle_control(
     } else {
         Some(theme.subtitle_color)
     };
+    let hint: Option<AnyElement<'static>> =
+        (!enabled).then(|| element! { Text(content: "(default)", color: Some(theme.subtitle_color)) }.into());
 
     element! {
         View(flex_direction: FlexDirection::Row, column_gap: 1u16) {
             Text(content: checkbox, color: checkbox_color)
             Text(content: value, color: value_color, weight: Weight::Bold)
+            #(hint.into_iter())
         }
     }
     .into()

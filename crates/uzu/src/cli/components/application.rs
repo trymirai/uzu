@@ -3,7 +3,9 @@ use shoji::types::model::Model;
 
 use crate::{
     cli::{
-        components::{CommandInput, HistoryCell, HistoryCellType, Logo, Preferences, SelectedModel, Theme},
+        components::{
+            CommandInput, HistoryCell, HistoryCellType, Logo, ModelCapabilities, Preferences, SelectedModel, Theme,
+        },
         flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
         sessions::{self, SessionState},
@@ -28,6 +30,7 @@ pub struct ModelState {
     pub model: Model,
     pub download_state: DownloadState,
     pub session_state: Option<Box<dyn SessionState>>,
+    pub capabilities: ModelCapabilities,
 }
 
 pub struct ApplicationState {
@@ -86,6 +89,7 @@ pub fn Application(
                         model,
                         download_state: DownloadState::not_downloaded(0),
                         session_state: None,
+                        capabilities: ModelCapabilities::default(),
                     });
                     state.write().history.push(HistoryCellType::CommandResult {
                         result: summary,
