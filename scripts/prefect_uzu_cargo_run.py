@@ -29,8 +29,10 @@ POOL_DEPLOYMENTS: dict[PoolName, str] = {
     PoolName.MACOS_M1: "run-uzu-cargo-command-worker-flow/run-uzu-cargo-command-m1",
     PoolName.MACOS_M2: "run-uzu-cargo-command-worker-flow/run-uzu-cargo-command-m2",
     PoolName.MACOS_M2_PRO: "run-uzu-cargo-command-worker-flow/run-uzu-cargo-command-m2-pro",
+    PoolName.MACOS_M3_MAX: "run-uzu-cargo-command-worker-flow/run-uzu-cargo-command-m3-max",
     PoolName.MACOS_M4: "run-uzu-cargo-command-worker-flow/run-uzu-cargo-command-m4",
     PoolName.MACOS_M4_PRO: "run-uzu-cargo-command-worker-flow/run-uzu-cargo-command-m4-pro",
+    PoolName.MACOS_M4_MAX: "run-uzu-cargo-command-worker-flow/run-uzu-cargo-command-m4-max",
 }
 
 
