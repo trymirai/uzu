@@ -68,7 +68,7 @@ jobs:
       ${{ matrix.tracing && ' (tracing)' || '' }}
       ${{ matrix.grammar && ' (grammar)' || '' }}
       ${{ matrix.target != '' && format(' ({0})', matrix.target) || '' }}
-    runs-on: ${{ matrix.host == 'linux' && 'ubuntu-latest' || fromJSON('["self-hosted","macos","mac","arm64"]') }}
+    runs-on: ${{ matrix.host == 'linux' && 'ubuntu-latest' || fromJSON('["self-hosted","macos","arm64"]') }}
 
     strategy:
       matrix:
@@ -126,7 +126,7 @@ jobs:
 
   validate-bindings:
     name: validate-bindings
-    runs-on: [ self-hosted, macos, mac, arm64 ]
+    runs-on: [ self-hosted, macos, arm64 ]
 
     steps:
       - uses: actions/checkout@v6

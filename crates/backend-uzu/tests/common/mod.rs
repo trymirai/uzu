@@ -4,6 +4,7 @@ pub mod assert;
 pub mod audio;
 pub mod helpers;
 pub mod matmul;
+pub mod metrics;
 pub mod path;
 pub mod perf;
 pub mod proptest;

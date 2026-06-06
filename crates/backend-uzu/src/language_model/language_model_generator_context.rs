@@ -12,7 +12,7 @@ use crate::{
     config::{decoder::DecoderConfig, model::language_model::LanguageModelConfig},
     data_type::DataType,
     encodable_block::{Decoder, KVCacheUpdate, Sampling},
-    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape},
     language_model::rng::PRng,
     parameters::ParameterLoader,
     prelude::ContextLength,
@@ -96,7 +96,6 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub shared_buffers: Rc<SharedBuffers<B>>,
 
     pub model_config: LanguageModelConfig,
     pub model_shape: ModelShape,
@@ -133,10 +132,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             loader.tree().subtree("decoder").map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let model_shape = ModelShape::from_decoder_config(&model_config.decoder_config, DataType::BF16);
 
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &model_config.decoder_config, &model_shape);
-        shared_buffers.update_data(&root_loader_view)?;
-        let shared_buffers = Rc::new(shared_buffers);
-
         let executables = Decoder::new(context.as_ref(), &model_config.decoder_config, &root_loader_view, &model_shape)
             .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
 
@@ -171,7 +166,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         Ok(Self {
             context,
             cache_layers,
-            shared_buffers,
             model_config: model_config.clone(),
             model_shape,
             executables,

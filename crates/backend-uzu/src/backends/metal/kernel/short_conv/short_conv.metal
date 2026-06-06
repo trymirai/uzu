@@ -32,13 +32,14 @@ PUBLIC KERNEL(ShortConvPack)(
   }
 }
 
-template <typename T>
+template <typename T, typename WeightT>
 VARIANTS(T, float, half, bfloat)
+VARIANTS(WeightT, float)
 PUBLIC KERNEL(ShortConvPrefill)(
     device const T* padded,
     device const T* in_proj,
-    device const T* w,
-    device const T* b OPTIONAL(has_bias),
+    device const WeightT* w,
+    device const WeightT* b OPTIONAL(has_bias),
     device T* out,
     device T* state_out,
     constant const uint& suffix_len,
@@ -51,7 +52,7 @@ PUBLIC KERNEL(ShortConvPrefill)(
     const uint channel_idx AXIS(model_dim, 256)
 ) {
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
-  const device T* w_row = w + channel_idx * kernel_size;
+  const device WeightT* w_row = w + channel_idx * kernel_size;
 
   // Threads [0..suffix_len-1]: Compute outputs
   if (token_idx < suffix_len) {
@@ -93,12 +94,13 @@ PUBLIC KERNEL(ShortConvPrefill)(
   }
 }
 
-template <typename T>
+template <typename T, typename WeightT>
 VARIANTS(T, float, half, bfloat)
+VARIANTS(WeightT, float)
 PUBLIC KERNEL(ShortConvDecode)(
     device const T* in_proj,
-    device const T* w,
-    device const T* b OPTIONAL(has_bias),
+    device const WeightT* w,
+    device const WeightT* b OPTIONAL(has_bias),
     device const T* state OPTIONAL(!state_in_place),
     device T* out,
     device T* next_state,
@@ -118,7 +120,7 @@ PUBLIC KERNEL(ShortConvDecode)(
 
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
   const uint state_offset = channel_idx * state_stride;
-  const device T* w_row = w + channel_idx * kernel_size;
+  const device WeightT* w_row = w + channel_idx * kernel_size;
 
   uint in_proj_idx = token_idx * in_proj_stride + channel_idx;
   float pre_conv_gate = float(in_proj[in_proj_idx]);
@@ -152,12 +154,13 @@ PUBLIC KERNEL(ShortConvDecode)(
   }
 }
 
-template <typename T>
+template <typename T, typename WeightT>
 VARIANTS(T, float, half, bfloat)
+VARIANTS(WeightT, float)
 PUBLIC KERNEL(ShortConvTrie)(
     device const T* in_proj,
-    device const T* w,
-    device const T* b OPTIONAL(has_bias),
+    device const WeightT* w,
+    device const WeightT* b OPTIONAL(has_bias),
     device const T* base_state,
     device const int* parents,
     device T* out,
@@ -171,7 +174,7 @@ PUBLIC KERNEL(ShortConvTrie)(
     const uint channel_idx AXIS(model_dim, 256)
 ) {
   const uint tap_count = kernel_size > 0 ? kernel_size - 1 : 0u;
-  const device T* w_row = w + channel_idx * kernel_size;
+  const device WeightT* w_row = w + channel_idx * kernel_size;
   const uint base_state_offset = channel_idx * state_stride;
 
   for (uint node = 0; node < suffix_len; ++node) {

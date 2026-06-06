@@ -11,5 +11,7 @@ pub trait Backend: Debug + Clone + 'static {
     type Error: Error + Debug;
 
     const MIN_ALLOCATION_ALIGNMENT: usize;
+    const MAX_ALLOCATION_ALIGNMENT: usize;
+    const ALLOCATION_GRANULARITY: usize;
     const MAX_INLINE_BYTES: usize;
 }

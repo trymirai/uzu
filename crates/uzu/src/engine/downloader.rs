@@ -118,7 +118,7 @@ impl Downloader {
             return Ok(DownloaderStream::empty(self.identifier.clone()));
         }
         let stream = self.storage.lock().await.subscribe();
-        Ok(DownloaderStream::new(self.identifier.clone(), stream))
+        Ok(DownloaderStream::new(self.identifier.clone(), stream, self.storage.clone()))
     }
 }
 
@@ -127,16 +127,19 @@ impl Downloader {
 pub struct DownloaderStream {
     identifier: String,
     stream: SharedAccess<Option<BroadcastStream<(String, DownloadState)>>>,
+    storage: Option<SharedAccess<Storage>>,
 }
 
 impl DownloaderStream {
     pub(crate) fn new(
         identifier: String,
         stream: BroadcastStream<(String, DownloadState)>,
+        storage: SharedAccess<Storage>,
     ) -> Self {
         Self {
             identifier,
             stream: SharedAccess::new(Some(stream)),
+            storage: Some(storage),
         }
     }
 
@@ -144,7 +147,29 @@ impl DownloaderStream {
         Self {
             identifier,
             stream: SharedAccess::new(None),
+            storage: None,
         }
+    }
+
+    /// A transient non-`Downloading` phase (for example a momentary `Paused`
+    /// while a download is being resumed) is superseded by `Downloading` almost
+    /// immediately, whereas a real pause/stop persists. Poll the canonical state
+    /// briefly to tell them apart so a blip does not permanently end the stream.
+    async fn download_has_settled(&self) -> bool {
+        let Some(storage) = self.storage.as_ref() else {
+            return true;
+        };
+        for _ in 0..10 {
+            match storage.lock().await.state(&self.identifier).await {
+                Some(state) if matches!(state.phase, DownloadPhase::Downloading {} | DownloadPhase::Downloaded {}) => {
+                    return false;
+                },
+                Some(_) => {},
+                None => return true,
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        true
     }
 }
 
@@ -162,7 +187,23 @@ impl DownloaderStream {
                             bytes_total: state.total_bytes,
                             bytes_downloaded: state.downloaded_bytes,
                         };
-                        if !Downloader::is_progress_streaming_phase(&state.phase) {
+                        let stream_ended = match state.phase {
+                            // Still actively downloading: keep streaming.
+                            DownloadPhase::Downloading {} => false,
+                            // Terminal: the download is over either way.
+                            DownloadPhase::Downloaded {}
+                            | DownloadPhase::Error {
+                                ..
+                            } => true,
+                            // Possibly a transient blip while (re)starting. End the
+                            // stream only if the model has genuinely stopped, so a
+                            // momentary state change does not cut off progress for a
+                            // download that is still on its way to completion.
+                            DownloadPhase::Paused {} | DownloadPhase::NotDownloaded {} | DownloadPhase::Locked {} => {
+                                self.download_has_settled().await
+                            },
+                        };
+                        if stream_ended {
                             *stream_guard = None;
                         }
                         return Some(update);

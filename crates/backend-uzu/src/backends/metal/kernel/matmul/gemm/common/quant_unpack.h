@@ -80,28 +80,21 @@ inline void dequantize<bfloat, 8, 4>(
     bfloat bias,
     threadgroup bfloat* w_local
 ) {
-  const device uint32_t* w_ptr = reinterpret_cast<const device uint32_t*>(w);
-  uint32_t packed = *w_ptr;
+  const uint32_t packed = *reinterpret_cast<const device uint32_t*>(w);
+  const bfloat4 lo =
+      bfloat4(as_type<uchar4>(packed & 0x0f0f0f0fu)) * scale + bias;
+  const bfloat4 hi = bfloat4(as_type<uchar4>(packed & 0xf0f0f0f0u)) *
+                         (scale * bfloat(0.0625f)) +
+                     bias;
 
-  bfloat4 v0, v1;
-
-  v0.x = static_cast<bfloat>(packed & 0xF);
-  v0.y = static_cast<bfloat>((packed >> 4) & 0xF);
-  v0.z = static_cast<bfloat>((packed >> 8) & 0xF);
-  v0.w = static_cast<bfloat>((packed >> 12) & 0xF);
-
-  v1.x = static_cast<bfloat>((packed >> 16) & 0xF);
-  v1.y = static_cast<bfloat>((packed >> 20) & 0xF);
-  v1.z = static_cast<bfloat>((packed >> 24) & 0xF);
-  v1.w = static_cast<bfloat>((packed >> 28) & 0xF);
-
-  v0 = v0 * scale + bias;
-  v1 = v1 * scale + bias;
-
-  threadgroup bfloat4* out_ptr =
-      reinterpret_cast<threadgroup bfloat4*>(w_local);
-  out_ptr[0] = v0;
-  out_ptr[1] = v1;
+  w_local[0] = lo.x;
+  w_local[1] = hi.x;
+  w_local[2] = lo.y;
+  w_local[3] = hi.y;
+  w_local[4] = lo.z;
+  w_local[5] = hi.z;
+  w_local[6] = lo.w;
+  w_local[7] = hi.w;
 }
 
 } // namespace gemm

@@ -96,12 +96,14 @@ KERNEL(Gemm)(
     const constant uzu::matmul::GemmParams* params,
     const constant uint& group_count_x,
     const constant uint& group_count_y,
+    const constant uint& group_count_z,
     const GemmDTransform output_transform SPECIALIZE,
     const GemmAlignment alignment SPECIALIZE,
     threadgroup AT a_shared[GEMM_TGA_ELEMENTS],
     threadgroup BT b_shared[GEMM_TGB_ELEMENTS],
     const uint group_x GROUPS(group_count_x),
     const uint group_y GROUPS(group_count_y),
+    const uint group_z GROUPS(group_count_z),
     const uint thread_x THREADS(METAL_SIMD_SIZE),
     const uint thread_y THREADS(gemm_tiling_simdgroups_per_column(GEMM_TILING)),
     const uint thread_z THREADS(gemm_tiling_simdgroups_per_row(GEMM_TILING)),
@@ -109,6 +111,7 @@ KERNEL(Gemm)(
 ) {
   (void)group_x;
   (void)group_y;
+  (void)group_z;
   (void)thread_x;
   (void)thread_y;
   (void)thread_z;

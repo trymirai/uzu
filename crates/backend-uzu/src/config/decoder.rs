@@ -11,7 +11,6 @@ pub struct DecoderConfig {
     pub transformer_config: TransformerConfig,
 
     pub vocab_size: usize,
-    pub pard_token: Option<u64>,
     pub ple_model_config: Option<PLEModelConfig>,
 }
 

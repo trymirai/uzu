@@ -3,17 +3,7 @@
 
 fn bench_runner(benches: &[&dyn Fn()]) {
     #[cfg(target_os = "ios")]
-    {
-        use objc2_foundation::{NSSearchPathDirectory, NSSearchPathDomainMask, NSSearchPathForDirectoriesInDomains};
-        let paths = NSSearchPathForDirectoriesInDomains(
-            NSSearchPathDirectory(9),  // NSDocumentDirectory
-            NSSearchPathDomainMask(1), // NSUserDomainMask
-            true,
-        );
-        if let Some(docs) = paths.firstObject() {
-            let _ = std::env::set_current_dir(docs.to_string());
-        }
-    }
+    crate::common::path::ios_set_current_dir();
     criterion::runner(benches);
 }
 

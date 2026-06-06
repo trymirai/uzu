@@ -8,7 +8,7 @@ use gemm::{AttentionGemmArguments, AttentionGemmBlock};
 use itertools::iproduct;
 use thiserror::Error;
 
-use super::{Linear, QKVNorm, QkUnpack, Rope, linear::LinearBlockError, qkv_norm::QKVNormError};
+use super::{Linear, PrecalculatedRope, QKVNorm, QkUnpack, Rope, linear::LinearBlockError, qkv_norm::QKVNormError};
 use crate::{
     array::size_for_shape,
     backends::common::{
@@ -26,7 +26,6 @@ use crate::{
     forward_pass::{
         cache_layers::LayerCacheAccess,
         kv_cache_layer::{KVCacheLayer, KVCacheLayerState},
-        state::RopeBuffers,
     },
     parameters::{ParameterLoaderError, ParameterTree},
 };
@@ -99,15 +98,22 @@ impl<B: Backend> Attention<B> {
         rope: Rc<Rope<B>>,
         qk_unpack: Rc<QkUnpack<B>>,
         extract_input_hadamard: bool,
+        is_kv_sharing: bool,
     ) -> Result<(Self, Option<Allocation<B>>), AttentionError<B>> {
         let q_dim = config.num_heads * config.head_dim;
         let kv_dim = config.num_groups * config.head_dim;
+        // KV-sharing layers reuse the source layer's K/V: project queries only, with no key/value norm.
+        let (qkv_output_dim, key_norm_config, value_norm_config, kv_norm_groups) = if is_kv_sharing {
+            (q_dim, None, None, 0)
+        } else {
+            (q_dim + 2 * kv_dim, config.key_norm_config.clone(), config.value_norm_config(), config.num_groups)
+        };
 
         let qkv_projection_tree = parameter_tree.subtree("qkv_projection")?;
         let (qkv_projection, input_hadamard_factors) = if extract_input_hadamard {
             <dyn Linear<B>>::new_extracting_input_hadamard(
                 model_dim,
-                [q_dim, kv_dim, kv_dim],
+                [qkv_output_dim],
                 config.has_qkv_biases,
                 context,
                 data_type,
@@ -117,7 +123,7 @@ impl<B: Backend> Attention<B> {
             (
                 <dyn Linear<B>>::new(
                     model_dim,
-                    [q_dim, kv_dim, kv_dim],
+                    [qkv_output_dim],
                     config.has_qkv_biases,
                     context,
                     data_type,
@@ -136,23 +142,22 @@ impl<B: Backend> Attention<B> {
             })
             .transpose()?;
 
-        let value_norm_config = config.value_norm_config();
-        let qkv_norm =
-            if config.query_norm_config.is_some() || config.key_norm_config.is_some() || value_norm_config.is_some() {
-                Some(QKVNorm::new(
-                    context,
-                    data_type,
-                    config.query_norm_config.clone(),
-                    config.key_norm_config.clone(),
-                    value_norm_config,
-                    parameter_tree,
-                    config.num_heads,
-                    config.num_groups,
-                    config.head_dim,
-                )?)
-            } else {
-                None
-            };
+        let qkv_norm = if config.query_norm_config.is_some() || key_norm_config.is_some() || value_norm_config.is_some()
+        {
+            Some(QKVNorm::new(
+                context,
+                data_type,
+                config.query_norm_config.clone(),
+                key_norm_config,
+                value_norm_config,
+                parameter_tree,
+                config.num_heads,
+                kv_norm_groups,
+                config.head_dim,
+            )?)
+        } else {
+            None
+        };
 
         let out_projection_tree = parameter_tree.subtree("out_projection")?;
         let out_projection =
@@ -324,9 +329,8 @@ impl<B: Backend> Attention<B> {
 
     pub fn encode(
         &self,
-        token_positions: &Allocation<B>,
         token_subtrie_ranges: Option<&Allocation<B>>,
-        rope_buffers: Option<&RopeBuffers<B>>,
+        rope: Option<&PrecalculatedRope<B>>,
         cache_access: Option<LayerCacheAccess<B>>,
         hidden: Allocation<B>,
         suffix_length: usize,
@@ -346,22 +350,20 @@ impl<B: Backend> Attention<B> {
         if let Some(qkv_norm) = &self.qkv_norm {
             qkv_norm.encode(&mut qkv, suffix_length, encoder)?;
         }
-        let (queries, rotated_keys) = match rope_buffers {
-            Some(rope_buffers) => self.rope.encode(
-                &qkv,
-                token_positions,
-                &rope_buffers.cosines,
-                &rope_buffers.sines,
-                suffix_length,
-                self.num_heads,
-                self.num_groups,
-                self.head_dim,
-                rope_buffers.max_sequence_length(),
-                rope_buffers.dim(),
-                encoder,
-            )?,
+        let (queries, rotated_keys) = match rope {
+            Some(rope) => {
+                self.rope.encode(&qkv, rope, suffix_length, self.num_heads, self.num_groups, self.head_dim, encoder)?
+            },
             None => {
-                self.qk_unpack.encode(&qkv, suffix_length, self.num_heads, self.num_groups, self.head_dim, encoder)?
+                let (queries, keys) = self.qk_unpack.encode(
+                    &qkv,
+                    suffix_length,
+                    self.num_heads,
+                    self.num_groups,
+                    self.head_dim,
+                    encoder,
+                )?;
+                (queries, Some(keys))
             },
         };
         let attention_output = self.encode_core(
@@ -383,7 +385,7 @@ impl<B: Backend> Attention<B> {
         cache_access: Option<LayerCacheAccess<B>>,
         qkv: &Allocation<B>,
         queries: &Allocation<B>,
-        mut rotated_keys: Allocation<B>,
+        mut rotated_keys: Option<Allocation<B>>,
         gate: Option<&Allocation<B>>,
         suffix_length: usize,
         encoder: &mut Encoder<B>,
@@ -453,7 +455,7 @@ impl<B: Backend> Attention<B> {
                 self.update_kv_cache_inplace_kernel.encode(
                     None::<&Allocation<B>>,
                     qkv,
-                    &mut rotated_keys,
+                    rotated_keys.as_mut().expect("classifier attention requires rotated keys"),
                     &mut values,
                     self.num_groups as u32,
                     self.num_heads as u32,
@@ -528,7 +530,7 @@ impl<B: Backend> Attention<B> {
                     let layer = entry.as_transformer_mut().expect("Attention layer expects transformer cache");
                     if let Some(layer) = layer.as_any_mut().downcast_mut::<KVCacheLayer<B, B::SparseBuffer>>() {
                         self.update_kv_cache_kernel.encode(
-                            Some(&rotated_keys),
+                            rotated_keys.as_ref(),
                             qkv,
                             &mut layer.keys,
                             &mut layer.values,
@@ -543,7 +545,7 @@ impl<B: Backend> Attention<B> {
                         encode_cached_attention!(&layer.keys, &layer.values)
                     } else if let Some(layer) = layer.as_any_mut().downcast_mut::<KVCacheLayer<B, B::DenseBuffer>>() {
                         self.update_kv_cache_kernel.encode(
-                            Some(&rotated_keys),
+                            rotated_keys.as_ref(),
                             qkv,
                             &mut layer.keys,
                             &mut layer.values,
@@ -575,7 +577,8 @@ impl<B: Backend> Attention<B> {
             }
         } else {
             let values = extracted_values.as_ref().expect("Missing extracted values for classifier attention");
-            encode_cached_attention!(&rotated_keys, values)
+            let rotated_keys = rotated_keys.as_ref().expect("classifier attention requires rotated keys");
+            encode_cached_attention!(rotated_keys, values)
         };
 
         if let Some(gate_kernel) = &self.gate_kernel {

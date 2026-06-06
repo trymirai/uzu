@@ -10,11 +10,11 @@ using namespace metal;
 
 template <typename T>
 void norm_ncs(
-    device const T* input,     // [B, C, T]
-    device const T* scales,    // [C]
-    device const T* bias,      // [C]
-    device T* output,          // [B, C, T]
-    device const int* lengths, // [B]
+    device const T* input,      // [B, C, T]
+    device const float* scales, // [C]
+    device const float* bias,   // [C]
+    device T* output,           // [B, C, T]
+    device const int* lengths,  // [B]
     const constant int& channels,
     const constant int& seq_len,
     const constant float& epsilon,
@@ -83,8 +83,8 @@ template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(AudioNormNcs)(
     device const T* input,
-    device const T* scales,
-    device const T* bias,
+    device const float* scales,
+    device const float* bias,
     device T* output,
     device const int* lengths,
     const constant int& channels,

@@ -26,3 +26,16 @@ pub fn home_path() -> Option<PathBuf> {
     }
     dirs::home_dir()
 }
+
+#[allow(unreachable_code)]
+pub fn is_environment_sandboxed() -> bool {
+    #[cfg(target_os = "ios")]
+    {
+        return true;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some();
+    }
+    false
+}
