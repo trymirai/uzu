@@ -11,12 +11,6 @@ use uzu::{
 
 use crate::server::{ServerState, handle_chat_completions, handle_models};
 
-/// Start an OpenAI-compatible HTTP server for a single model.
-///
-/// `model` is a registry identifier (e.g. `Qwen/Qwen3-0.6B`, downloaded on
-/// demand) or a path to a local model folder. The model is resolved, downloaded
-/// if necessary, and a [`ChatSession`](uzu::session::chat::ChatSession) is held
-/// for the lifetime of the server.
 pub async fn run_server(
     model: String,
     host: String,

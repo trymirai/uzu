@@ -29,10 +29,6 @@ use uzu::{
 
 use crate::server::ServerState;
 
-// ---------------------------------------------------------------------------
-// OpenAI-compatible request / response types
-// ---------------------------------------------------------------------------
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OaiMessage {
     pub role: String,
@@ -110,10 +106,6 @@ struct ChatCompletionChunk {
     usage: Option<ChatCompletionUsage>,
 }
 
-// ---------------------------------------------------------------------------
-// Responder: either a JSON body or an SSE stream
-// ---------------------------------------------------------------------------
-
 pub enum ChatCompletionResult {
     Json(Json<ChatCompletionResponse>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
@@ -130,10 +122,6 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Mapping helpers
-// ---------------------------------------------------------------------------
 
 fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
@@ -153,12 +141,10 @@ fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
     let token_limit = request.max_completion_tokens.or(request.max_tokens);
     let config = ChatReplyConfig::default().with_token_limit(token_limit);
 
-    // temperature <= 0 -> deterministic greedy decoding.
     if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
         return config.with_sampling_method(SamplingMethod::Greedy {});
     }
 
-    // Any sampling parameter present -> stochastic; otherwise keep the model default.
     if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
         return config.with_sampling_method(SamplingMethod::Stochastic {
             temperature: request.temperature,
@@ -237,10 +223,6 @@ fn chunk_json(
     serde_json::to_string(&chunk).unwrap_or_default()
 }
 
-// ---------------------------------------------------------------------------
-// Generation
-// ---------------------------------------------------------------------------
-
 async fn run_blocking(
     session: Arc<Mutex<ChatSession>>,
     messages: Vec<ChatMessage>,
@@ -307,7 +289,6 @@ async fn run_stream(
         return;
     }
 
-    // Initial chunk announcing the assistant role.
     let _ = sender.send(Event::data(chunk_json(
         &id,
         &model,
@@ -335,7 +316,6 @@ async fn run_stream(
                     continue;
                 };
                 let text = reply.message.text().unwrap_or_default();
-                // Stream chunks carry cumulative text; emit only the new, char-boundary-safe tail.
                 let start = (emitted..=text.len()).find(|&index| text.is_char_boundary(index)).unwrap_or(text.len());
                 if text.len() > start {
                     let delta = text[start..].to_string();
@@ -352,7 +332,7 @@ async fn run_stream(
                         None,
                     )));
                     if sent.is_err() {
-                        return; // client disconnected
+                        return;
                     }
                 }
                 if let Some(reason) = &reply.finish_reason {
@@ -395,10 +375,6 @@ async fn run_stream(
     }
     let _ = sender.send(Event::data("[DONE]"));
 }
-
-// ---------------------------------------------------------------------------
-// Route
-// ---------------------------------------------------------------------------
 
 #[allow(private_interfaces)]
 #[post("/chat/completions", format = "json", data = "<request>")]
