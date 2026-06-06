@@ -5,14 +5,11 @@ use crate::settings::{SettingKind, Settings, SettingsError};
 
 const SETTINGS_PREFERENCES: &str = "cli_preferences";
 
-/// How much reasoning ("thinking") the model is asked to perform before answering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingMode {
-    /// Leave the decision to the model's chat template.
     #[default]
     ModelDefault,
-    /// Explicitly disable reasoning.
     Off,
     Low,
     Medium,
@@ -40,8 +37,6 @@ impl ThinkingMode {
         cycle(&Self::ALL, self, -1)
     }
 
-    /// Reasoning effort to attach to a chat message, or `None` to leave the
-    /// template default untouched.
     pub fn reasoning_effort(self) -> Option<ReasoningEffort> {
         match self {
             Self::ModelDefault => None,
@@ -53,16 +48,12 @@ impl ThinkingMode {
     }
 }
 
-/// Which sampling strategy is used when generating replies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SamplingMode {
-    /// Use whatever the backend considers default.
     #[default]
     ModelDefault,
-    /// Always pick the most likely token.
     Greedy,
-    /// Sample from the distribution shaped by the parameters below.
     Stochastic,
 }
 
@@ -133,7 +124,6 @@ impl SamplingPreferences {
         }
     }
 
-    /// Short, human-readable summary of the active sampling configuration.
     pub fn summary(&self) -> String {
         match self.mode {
             SamplingMode::ModelDefault => "default".to_string(),
@@ -173,7 +163,6 @@ impl Preferences {
         let Some(raw) = settings.load(SettingKind::Config, SETTINGS_PREFERENCES.to_string())? else {
             return Ok(Self::default());
         };
-        // Tolerate older / partially-written payloads by falling back to defaults.
         Ok(serde_json::from_str(&raw).unwrap_or_default())
     }
 

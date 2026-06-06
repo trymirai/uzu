@@ -85,7 +85,6 @@ fn toggle(
 ) {
     let sampling = &mut preferences.sampling;
     match field {
-        // Cycle controls treat space as "advance to the next option".
         Field::Thinking => preferences.thinking = preferences.thinking.next(),
         Field::SamplingMode => sampling.mode = sampling.mode.next(),
         Field::Temperature => sampling.temperature_enabled = !sampling.temperature_enabled,

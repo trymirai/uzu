@@ -8,7 +8,6 @@ pub type FlowFactory = Arc<dyn Fn() -> Box<dyn Flow> + Send + Sync>;
 pub struct Command {
     pub name: String,
     pub description: String,
-    /// Whether the command can only be used once a model has been loaded.
     pub requires_model: bool,
     pub factory: FlowFactory,
 }
