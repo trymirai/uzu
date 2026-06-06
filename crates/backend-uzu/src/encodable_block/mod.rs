@@ -39,5 +39,5 @@ pub use qk_unpack::QkUnpack;
 pub use qkv_norm::QKVNorm;
 pub use rms_norm::{PostLayerScalar, RMSNorm, RMSNormError};
 pub use rope::{PrecalculatedRope, Rope};
-pub use sampling::{Sampling, SamplingArguments, SamplingInputs};
+pub use sampling::Sampling;
 pub use short_conv_mixer::{ShortConvArguments, ShortConvMixer, ShortConvMixerError};
