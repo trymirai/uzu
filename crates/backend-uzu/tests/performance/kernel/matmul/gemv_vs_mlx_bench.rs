@@ -1,34 +1,8 @@
-//! Head-to-head GEMV perf: uzu's Metal kernels vs Apple MLX (`pmetal-mlx-rs`).
-//!
-//! GEMV (matrix-vector / small-batch matmul, `M <= 8`) is the hot path of
-//! autoregressive decode: every generated token is one `[M, K] x [N, K]^T`
-//! product. This bench runs the exact same shapes through both engines so
-//! their kernels can be compared directly.
-//!
-//! Measurement is symmetric and amortized so the comparison reflects *kernel
-//! throughput* rather than host submission overhead. Each timed unit submits a
-//! fixed [`CHUNK`] of GEMVs in a single GPU submission and waits for it. uzu
-//! encodes `CHUNK` dispatches into one command buffer; they all write the same
-//! output, so the hazard tracker serializes them and the measured time is
-//! `CHUNK` back-to-back kernels. MLX builds `CHUNK` result arrays and `eval`s
-//! them in one call. Both pay one submit + one wait per `CHUNK`, so the
-//! ~hundreds-of-µs fixed cost per submission is divided away identically and
-//! what's left is the kernel. (Measuring a single op per submission instead
-//! makes that fixed cost dominate the small shapes and masks the kernel
-//! difference.) criterion divides the total time by the op count, so the
-//! reported `time`/`thrpt` is per single GEMV. Pipelines/graphs are warmed once
-//! before timing.
-//!
-//! Two precisions are covered, matching how uzu actually dispatches GEMV:
-//!
-//! - `FP_BF16`: full-precision bf16 weights (`MatmulB::FullPrecision` vs
-//!   `mlx::ops::matmul`).
-//! - `Quant4_BF16_gs64`: 4-bit affine (scale+bias) weights, group size 64
-//!   (`MatmulB::ScaleBiasDequant` vs `mlx::ops::quantized_matmul`). MLX's
-//!   default affine quantization is the scale+bias scheme uzu calls
-//!   `ScaleBias`.
-//!
-//! Only macOS builds the MLX dependency, so the whole module is gated on it.
+//! Head-to-head GEMV perf: uzu Metal kernels vs Apple MLX (`pmetal-mlx-rs`).
+//! Same shapes through both engines for FP bf16 and 4-bit affine quant, under a
+//! symmetric amortized measurement (CHUNK GEMVs per GPU submission, so per-op
+//! kernel throughput dominates submission overhead). macOS-only (MLX dep).
+//! Methodology: docs/gemv-quant-simdgroups.md.
 #![cfg(all(metal_backend, target_os = "macos"))]
 
 use std::time::{Duration, Instant};

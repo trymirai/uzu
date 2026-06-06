@@ -1,16 +1,6 @@
-//! Focused GEMV profiling harness for `gpu_trace` (no criterion, no MLX).
-//!
-//! Hammers a single GEMV specialization in sustained batches so the GPU stays
-//! at its maximum performance state for the whole capture window — unlike a
-//! criterion run, whose startup/setup leaves the GPU idle (Minimum clock) and
-//! produces empty/garbage counter traces.
-//!
-//! Usage:
-//!   gemv_profile <quant|fp> <m> <k> <n> [gs] [bits] [batches]
-//! Defaults to the quant decode shape uzu trails MLX on: quant 1 14336 4096 64 4.
-//!
-//! Run under the tracer:
-//!   gpu-trace run --gpu-counters -- target/release/examples/gemv_profile quant 1 14336 4096
+//! GEMV profiling harness (no criterion, no MLX): runs one GEMV specialization
+//! in sustained batches at max GPU clock and prints the best per-dispatch
+//! gpu time. Usage: gemv_profile <quant|fp> <m> <k> <n> [gs] [bits] [batches] [simdgroups].
 
 #![cfg(all(metal_backend, target_os = "macos"))]
 

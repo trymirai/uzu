@@ -21,24 +21,8 @@ use crate::{
 const FP_BLOCK: u32 = 128;
 const QMV_RESULTS_PER_SIMDGROUP: u32 = 4;
 
-/// Quantized GEMV uses 2 (instead of 8) simdgroups per threadgroup when the
-/// 8-simdgroup launch would UNDER-FILL the GPU — i.e. it produces fewer than
-/// [`MIN_SG8_TGS_PER_CORE`] threadgroups per GPU core — AND the reduction is
-/// long enough (`k >= QUANT_LARGE_K`) to amortize the 4x larger threadgroup
-/// count. Dropping to 2 simdgroups quadruples the threadgroup count (matching
-/// MLX's qmv granularity), lifting compute occupancy until the kernel becomes
-/// memory-bound.
-///
-/// Both gates are essential and were validated by GPU-counter traces +
-/// cross-chip runs (M1/M2/M2-Pro/M4/M4-Pro/M4-Max via ssh). Core-count gate:
-/// the win is real only on high-core GPUs (M2-Pro 19c −6%, M2-Max 38c / M4-Max
-/// 40c −9..14%); on ≤10-core parts (M1/M2/M4) sg8 already fills the GPU so 2
-/// simdgroups only add launch overhead. Because the threadgroup count scales
-/// with the batch m, this gate also keeps m>=2 (already enough threadgroups) at
-/// 8 simdgroups everywhere. Large-k gate: short reductions (e.g. k=4096) can't
-/// amortize the 4x threadgroups — sg2 is up to ~1.7x SLOWER there (M2-Max
-/// trace). RHT keeps 8 simdgroups (its epilogue needs the 32-row block). See
-/// `select`.
+/// Thresholds for the quant-GEMV 2-simdgroup path (see `select`); tuned in
+/// docs/gemv-quant-simdgroups.md.
 const QUANT_LARGE_K: u32 = 8192;
 const MIN_SG8_TGS_PER_CORE: u32 = 8;
 
@@ -53,9 +37,7 @@ fn max_gemv_batch_threshold() -> u32 {
 
 static GEMV_QUANT_SIMDGROUPS: OnceLock<Option<u32>> = OnceLock::new();
 
-/// Optional override for the quantized-GEMV simdgroups-per-threadgroup choice
-/// (must be 2 or 8). Used for tuning; `None` falls back to the core-count
-/// heuristic in `select`.
+/// Tuning override (2 or 8); `None` falls back to the heuristic in `select`.
 fn quant_simdgroups_override() -> Option<u32> {
     *GEMV_QUANT_SIMDGROUPS.get_or_init(|| {
         std::env::var("UZU_GEMV_QUANT_SIMDGROUPS").ok().and_then(|s| s.parse().ok()).filter(|&v| v == 2 || v == 8)
@@ -121,22 +103,12 @@ impl GemvSpecialization {
         };
         let input_aligned = args.k.is_multiple_of(block_size);
         let has_rht = args.d_transform.rht_factors.is_some();
-        // Quantized GEMV is K_SPLIT-locked, so the only parallelism knob is the
-        // threadgroup count = ceil(n / (num_simdgroups * RESULTS_PER_SIMDGROUP)).
-        // GPU-counter traces show small-n quant decode is occupancy-bound (~17%
-        // compute occupancy, buffer-read limiter only ~66%) because 8 simdgroups
-        // per threadgroup yields too few threadgroups to fill the GPU and hide
-        // memory latency. Dropping to 2 simdgroups quadruples the threadgroup
-        // count (matching MLX's qmv granularity), lifting occupancy until the
-        // kernel becomes memory-bound. The 8-simdgroup layout stays for large n
-        // (already memory-bound) and for RHT (its epilogue needs the 32-row /
-        // 8-simdgroup block).
+        // Quant GEMV is K_SPLIT-locked; the only parallelism knob is the
+        // threadgroup count (= m * ceil(n / (num_simdgroups * RESULTS))). Use 2
+        // simdgroups (4x more threadgroups) for narrow-n / long-k decode that
+        // would otherwise under-fill the GPU; keep 8 elsewhere and for RHT.
         let num_simdgroups = if is_quant && !has_rht {
             quant_simdgroups_override().unwrap_or_else(|| {
-                // 8 simdgroups → rows_per_threadgroup = 8*4 = 32, so the launch
-                // is m * ceil(n/32) threadgroups. Switch to 2 simdgroups only
-                // when that under-fills the GPU and the reduction is long
-                // enough to pay for 4x more threadgroups (see consts above).
                 let tg_count_sg8 = args.m * args.n.div_ceil(8 * QMV_RESULTS_PER_SIMDGROUP);
                 let underfilled = tg_count_sg8 < gpu_core_count.saturating_mul(MIN_SG8_TGS_PER_CORE);
                 if args.k >= QUANT_LARGE_K && underfilled {
@@ -189,9 +161,7 @@ impl GemvSpecialization {
                     k_split: 1,
                     num_simdgroups: 8,
                 });
-                // Narrow-output decode routes non-RHT quant GEMV to the
-                // 2-simdgroup layout (see `select`); preheat it too so the
-                // first such dispatch doesn't pay a pipeline-compile stall.
+                // Preheat the 2-simdgroup variant `select` may pick for non-RHT quant.
                 if !output_transform.contains(GemmDTransform::RHT) {
                     out.push(GemvSpecialization {
                         b_prologue,

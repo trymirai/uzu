@@ -1,11 +1,7 @@
 #![cfg(metal_backend)]
 
-//! Full-precision (bf16) GEMV GPU-time bench. Mirrors `quant_gemv_bench` but
-//! exercises the `MatmulB::FullPrecision` path through `kernel.encode` (which
-//! auto-selects the GEMV kernel for small M). Uses `iter_encode_loop` so it
-//! reports pure `gpu_execution_time`, which is far more stable run-to-run than
-//! wall-clock — the right oracle for tuning the GEMV dispatch (K_SPLIT /
-//! threadgroup count) on small-N shapes.
+//! Full-precision (bf16) GEMV GPU-time bench (mirrors `quant_gemv_bench` for the
+//! `MatmulB::FullPrecision` path), reporting `gpu_execution_time`.
 
 use backend_uzu::{
     array::{ArrayContextExt, ArrayElement},
