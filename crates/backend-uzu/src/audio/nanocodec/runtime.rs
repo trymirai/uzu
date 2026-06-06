@@ -24,6 +24,7 @@ use crate::{
         decoder::DecoderConfig,
         embedding::{AnyEmbeddingConfig, untied_embedding::UntiedEmbeddingConfig},
         normalization::NormalizationConfig,
+        rope::AnyRoPEConfig,
         tts::{
             TTSConfig,
             audio_decoder::{AnyTTSAudioDecoderConfig, descript_audio_codec::DescriptAudioCodecConfig},
@@ -31,7 +32,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{Decoder, LayerExecutables, RMSNorm},
-    forward_pass::{model_shape::ModelShape, state::SharedBuffers},
+    forward_pass::model_shape::ModelShape,
     parameters::ParameterLoader,
 };
 

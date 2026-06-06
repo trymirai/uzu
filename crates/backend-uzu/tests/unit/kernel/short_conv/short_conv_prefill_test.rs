@@ -16,8 +16,8 @@ use crate::{common::assert::assert_eq_float, uzu_test};
 struct Input<T: ArrayElement + Float> {
     padded: Box<[T]>,
     in_proj: Box<[T]>,
-    w: Box<[T]>,
-    b: Option<Box<[T]>>,
+    w: Box<[f32]>,
+    b: Option<Box<[f32]>>,
     suffix_len: u32,
     kernel_size: u32,
     in_proj_stride: u32,
@@ -29,8 +29,13 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     let context = B::Context::new().expect("Failed to create Context");
 
     let has_bias = input.b.is_some();
-    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPrefillKernel::new(&context, T::data_type(), has_bias)
-        .expect("Failed to create ShortConvPrefillKernel");
+    let kernel = <<B as Backend>::Kernels as Kernels>::ShortConvPrefillKernel::new(
+        &context,
+        T::data_type(),
+        DataType::F32,
+        has_bias,
+    )
+    .expect("Failed to create ShortConvPrefillKernel");
 
     let padded_array = context.create_array_from(&[input.padded.len()], &input.padded);
     let in_proj_array = context.create_array_from(&[input.in_proj.len()], &input.in_proj);
@@ -93,18 +98,18 @@ fn get_test_data_basic<T: ArrayElement + Float>(
     }
 
     // w[channel * kernel_size + tap]
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.1 * (tap as f32) - 0.01 * (ch as f32) + 0.5;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.01 * (ch as f32) + 0.1).unwrap();
+            bias[ch] = 0.01 * (ch as f32) + 0.1;
         }
         Some(bias.into_boxed_slice())
     } else {
@@ -153,18 +158,18 @@ fn get_test_data_edge<T: ArrayElement + Float>(
         }
     }
 
-    let mut w = vec![T::zero(); model_dim * kernel_size];
+    let mut w = vec![0.0f32; model_dim * kernel_size];
     for ch in 0..model_dim {
         for tap in 0..kernel_size {
             let val = 0.25 * (tap as f32) + 0.1;
-            w[ch * kernel_size + tap] = T::from(val).unwrap();
+            w[ch * kernel_size + tap] = val;
         }
     }
 
     let b = if has_bias {
-        let mut bias = vec![T::zero(); model_dim];
+        let mut bias = vec![0.0f32; model_dim];
         for ch in 0..model_dim {
-            bias[ch] = T::from(0.005 * (ch as f32) + 0.01).unwrap();
+            bias[ch] = 0.005 * (ch as f32) + 0.01;
         }
         Some(bias.into_boxed_slice())
     } else {

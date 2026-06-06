@@ -20,6 +20,7 @@ pub struct ApplicationProps {
     pub engine: Option<Engine>,
     pub settings: Option<Settings>,
     pub theme: Option<Theme>,
+    pub model: Option<String>,
 }
 
 pub struct ModelState {
@@ -65,6 +66,36 @@ pub fn Application(
         model_state: None,
     });
     let (width, _) = hooks.use_terminal_size();
+
+    hooks.use_future({
+        let engine = state.read().engine.clone();
+        let initial_model = props.model.clone();
+        let mut state = state;
+        async move {
+            let Some(identifier) = initial_model else {
+                return;
+            };
+            match engine.model(identifier.clone()).await {
+                Ok(Some(model)) => {
+                    let summary = format!("Model: {}", model.name());
+                    state.write().model_state = Some(ModelState {
+                        model,
+                        download_state: DownloadState::not_downloaded(0),
+                        session_state: None,
+                    });
+                    state.write().history.push(HistoryCellType::CommandResult {
+                        result: summary,
+                    });
+                },
+                Ok(None) => state.write().history.push(HistoryCellType::CommandResult {
+                    result: format!("Unknown model: {}", identifier),
+                }),
+                Err(error) => state.write().history.push(HistoryCellType::CommandResult {
+                    result: format!("Failed to load model {}: {}", identifier, error),
+                }),
+            }
+        }
+    });
 
     let on_command = hooks.use_async_handler(move |text: String| async move {
         let mut state = state;

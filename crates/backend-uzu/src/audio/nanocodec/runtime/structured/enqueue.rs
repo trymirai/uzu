@@ -358,10 +358,11 @@ pub(super) fn norm_ncs_enqueue<B: Backend>(
             actual_lengths: lengths.len(),
         });
     }
-    if norm.scales.size() != size_for_shape(&[channels], data_type) {
+    let norm_data_type = DataType::F32;
+    if norm.scales.size() != size_for_shape(&[channels], norm_data_type) {
         return Err(AudioError::Runtime(format!("norm scale shape mismatch: expected [{channels}]")));
     }
-    if norm.bias.size() != size_for_shape(&[channels], data_type) {
+    if norm.bias.size() != size_for_shape(&[channels], norm_data_type) {
         return Err(AudioError::Runtime(format!("norm bias shape mismatch: expected [{channels}]")));
     }
 

@@ -39,18 +39,11 @@ impl CliApplication {
             engine,
         }
     }
-}
 
-#[bindings::export(Implementation)]
-impl CliApplication {
-    #[bindings::export(Method(Factory))]
-    pub async fn create(config: EngineConfig) -> Result<Self, CliError> {
-        let engine = Engine::new(config).await?;
-        Ok(Self::new(engine))
-    }
-
-    #[bindings::export(Method)]
-    pub async fn run(&self) -> Result<(), CliError> {
+    pub async fn run_with_model(
+        &self,
+        model: Option<String>,
+    ) -> Result<(), CliError> {
         if !std::io::stdout().is_terminal() {
             return Err(CliError::RenderingError {
                 message: "stdout is not a terminal".to_string(),
@@ -64,7 +57,7 @@ impl CliApplication {
         };
 
         element! {
-            Application(engine: Some(self.engine.clone()), settings: settings, theme: Some(theme))
+            Application(engine: Some(self.engine.clone()), settings: settings, theme: Some(theme), model: model)
         }
         .render_loop()
         .await
@@ -73,5 +66,19 @@ impl CliApplication {
         })?;
 
         Ok(())
+    }
+}
+
+#[bindings::export(Implementation)]
+impl CliApplication {
+    #[bindings::export(Method(Factory))]
+    pub async fn create(config: EngineConfig) -> Result<Self, CliError> {
+        let engine = Engine::new(config).await?;
+        Ok(Self::new(engine))
+    }
+
+    #[bindings::export(Method)]
+    pub async fn run(&self) -> Result<(), CliError> {
+        self.run_with_model(None).await
     }
 }

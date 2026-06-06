@@ -3,12 +3,13 @@ use std::{fs::File, path::Path, rc::Rc};
 use crate::{
     backends::common::{Backend, Context},
     classifier::ClassifierError,
-    config::{decoder::DecoderConfig, model::classifier_model::ClassifierModelConfig},
+    config::{decoder::DecoderConfig, model::classifier_model::ClassifierModelConfig, rope::AnyRoPEConfig},
     data_type::DataType,
     encodable_block::{
-        ClassifierLayer, ClassifierPredictionHead, Embedding, Linear, Normalization, Pooling, QkUnpack, Rope,
+        ClassifierLayer, ClassifierPredictionHead, Embedding, LayerRopeKind, Linear, Normalization, Pooling, QkUnpack,
+        Rope,
     },
-    forward_pass::{model_shape::ModelShape, state::SharedBuffers},
+    forward_pass::model_shape::ModelShape,
     parameters::ParameterLoader,
     session::types::Error,
 };
@@ -16,9 +17,8 @@ use crate::{
 pub struct ClassifierContext<B: Backend> {
     pub context: Rc<B::Context>,
 
-    pub shared_buffers: Rc<SharedBuffers<B>>,
-
     pub model_config: ClassifierModelConfig,
+    pub rope_configs: Box<[AnyRoPEConfig]>,
     #[cfg(feature = "tracing")]
     pub model_shape: ModelShape,
 
@@ -44,7 +44,6 @@ impl<B: Backend> ClassifierContext<B> {
             embedding_config: classifier_config.embedding_config.clone(),
             transformer_config: classifier_config.transformer_config.clone(),
             vocab_size: classifier_config.vocab_size,
-            pard_token: None,
             ple_model_config: None,
         });
 
@@ -57,12 +56,30 @@ impl<B: Backend> ClassifierContext<B> {
 
         let model_shape = ModelShape::from_decoder_config(&decoder_config, DataType::BF16);
 
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &decoder_config, &model_shape);
-        shared_buffers.update_data(&root_loader_view)?;
-        let shared_buffers = Rc::new(shared_buffers);
-
         let transformer_tree =
             root_loader_view.subtree("transformer").map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
+        let mut rope_configs = Vec::<(AnyRoPEConfig, usize)>::new();
+        let layer_rope_kinds: Box<[LayerRopeKind]> = classifier_config
+            .transformer_config
+            .layer_configs
+            .iter()
+            .map(|layer_config| {
+                let Some(rope_config) = &layer_config.rope_config else {
+                    return LayerRopeKind::NoKernel;
+                };
+                let head_dim = *rope_config.head_dim();
+                let index = rope_configs
+                    .iter()
+                    .position(|(existing_config, existing_head_dim)| {
+                        existing_config == rope_config && *existing_head_dim == head_dim
+                    })
+                    .unwrap_or_else(|| {
+                        rope_configs.push((rope_config.clone(), head_dim));
+                        rope_configs.len() - 1
+                    });
+                LayerRopeKind::Indexed(index)
+            })
+            .collect();
 
         let output_norm_tree =
             transformer_tree.subtree("output_norm").map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
@@ -105,6 +122,8 @@ impl<B: Backend> ClassifierContext<B> {
                     context.as_ref(),
                     &classifier_config.transformer_config,
                     layer_config,
+                    layer_index,
+                    layer_rope_kinds[layer_index],
                     &layer_tree,
                     rope.clone(),
                     qk_unpack.clone(),
@@ -207,8 +226,8 @@ impl<B: Backend> ClassifierContext<B> {
 
         Ok(Self {
             context,
-            shared_buffers,
             model_config: model_config.clone(),
+            rope_configs: rope_configs.into_iter().map(|(config, _)| config).collect(),
             logits_data_type: model_shape.data_type,
             #[cfg(feature = "tracing")]
             model_shape,

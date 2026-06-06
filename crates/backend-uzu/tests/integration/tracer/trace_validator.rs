@@ -322,7 +322,6 @@ impl<B: Backend> TraceValidator<B> {
             None,
             &token_positions,
             None,
-            None,
             /*sampling_start=*/ 0,
             /*sampling_length=*/ suffix_length,
         );
@@ -333,7 +332,6 @@ impl<B: Backend> TraceValidator<B> {
         {
             let mut cache_layers = ctx.cache_layers.borrow_mut();
             let decoder_arguments = token_inputs.decoder_arguments(
-                ctx.shared_buffers.as_ref(),
                 Some(&mut *cache_layers),
                 suffix_length,
                 /*sampling_start=*/ 0,

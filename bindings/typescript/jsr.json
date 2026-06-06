@@ -1,6 +1,6 @@
 {
     "name": "@trymirai/uzu",
-    "version": "0.5.3",
+    "version": "0.5.8",
     "exports": {
         ".": "./index.ts"
     },
