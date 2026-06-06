@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
+mod server;
 
 #[derive(Parser)]
 #[command(name = "cli", bin_name = "cli")]
@@ -20,6 +21,18 @@ enum Commands {
         task_path: String,
         output_path: String,
     },
+    /// Start an OpenAI-compatible HTTP server for a single model.
+    Server {
+        /// Model identifier (e.g. "Qwen/Qwen3-0.6B") or path to a local model folder.
+        #[arg(long, value_name = "MODEL")]
+        model: String,
+        /// Port to listen on.
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+        /// Host address to bind to.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
 }
 
 #[tokio::main]
@@ -32,6 +45,11 @@ async fn main() -> Result<()> {
             task_path,
             output_path,
         }) => bench::run_bench(model_path, task_path, output_path)?,
+        Some(Commands::Server {
+            model,
+            port,
+            host,
+        }) => server::run_server(model, host, port).await?,
         None => run_interactive(cli.model).await?,
     }
 
