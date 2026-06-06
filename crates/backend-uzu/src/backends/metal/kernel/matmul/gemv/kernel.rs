@@ -105,9 +105,6 @@ impl GemvSpecialization {
         })
     }
 
-    /// The GEMV specializations decode dispatches for a quantized layer with input dim `k`:
-    /// `input_aligned` is fixed by K, so only the three possible output transforms vary.
-    /// Mirrors `select` for the quant decode path (`k_split == 1`, `num_simdgroups == 8`).
     fn quant_combo_specs(
         combo: MatmulQuantCombo,
         k: u32,

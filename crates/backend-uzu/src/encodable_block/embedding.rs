@@ -787,7 +787,6 @@ fn quantized_readout<B: Backend>(
                 mode,
                 group_size: group_size as u32,
             },
-            // Readout matmul is `hidden @ weights^T`: N = vocab_size, K = model_dim.
             vocab_size,
             model_dim,
         )

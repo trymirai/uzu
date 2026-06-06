@@ -241,7 +241,6 @@ mod tests {
     fn mxu_path_emits_only_mxu_tilings() {
         let specs = GemmSpecialization::quant_combo_specs(DataType::BF16, combo(), 3584, 1024, true);
         assert!(!specs.is_empty());
-        // 3 MXU tilings (m≥256 / 64≤m<256 / m<64) × 3 transforms × 2 align_m.
         assert!(specs.len() <= 20, "expected a tight preheat set, got {}", specs.len());
         for spec in &specs {
             assert!(spec.use_mxu);
