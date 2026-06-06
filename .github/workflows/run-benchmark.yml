@@ -12,12 +12,20 @@ on:
           - macos-m1-pool
           - macos-m2-pool
           - macos-m2-pro-pool
+          - macos-m3-max-pool
           - macos-m4-pool
           - macos-m4-pro-pool
+          - macos-m4-max-pool
+
       benchmark_args:
         description: 'JSON array passed after `uv run benchmarks`'
         required: true
         type: string
+      upload_metrics:
+        description: "Upload benchmark results to the metrics API"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -39,6 +47,7 @@ jobs:
       GITHUB_TRIGGERING_ACTOR_NAME: ${{ github.triggering_actor }}
       POOL_NAME: ${{ inputs.pool }}
       PREFECT_API_URL: ${{ vars.PREFECT_API_URL }}
+      UPLOAD_METRICS: ${{ inputs.upload_metrics }}
 
     steps:
       - uses: actions/checkout@v6
@@ -52,13 +61,18 @@ jobs:
           PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
         run: |
           ARTIFACT_DIR="$RUNNER_TEMP/prefect-benchmark"
+          UPLOAD_METRICS_ARGS=()
+          if [[ "$UPLOAD_METRICS" == "true" ]]; then
+            UPLOAD_METRICS_ARGS+=(--upload-metrics)
+          fi
           python3 scripts/prefect_benchmark_run.py \
             --api-url "$PREFECT_API_URL" \
             --pool "$POOL_NAME" \
             --benchmark-args "$BENCHMARK_ARGS_JSON" \
             --output-dir "$ARTIFACT_DIR" \
             --actor "$GITHUB_ACTOR_NAME" \
-            --triggering-actor "$GITHUB_TRIGGERING_ACTOR_NAME"
+            --triggering-actor "$GITHUB_TRIGGERING_ACTOR_NAME" \
+            "${UPLOAD_METRICS_ARGS[@]}"
 
       - name: Upload Prefect benchmark artifacts
         if: ${{ always() }}
