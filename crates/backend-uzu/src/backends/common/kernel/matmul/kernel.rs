@@ -26,6 +26,8 @@ pub trait MatmulKernel: Sized {
         &mut self,
         _context: &<Self::Backend as Backend>::Context,
         _combo: MatmulQuantCombo,
+        _output_dim: u32,
+        _input_dim: u32,
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         Ok(())
     }
