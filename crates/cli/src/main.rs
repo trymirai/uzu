@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
+mod server;
 
 #[derive(Parser)]
 #[command(name = "cli", bin_name = "cli")]
@@ -20,6 +21,14 @@ enum Commands {
         task_path: String,
         output_path: String,
     },
+    Server {
+        #[arg(long, value_name = "MODEL")]
+        model: String,
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
 }
 
 #[tokio::main]
@@ -32,6 +41,11 @@ async fn main() -> Result<()> {
             task_path,
             output_path,
         }) => bench::run_bench(model_path, task_path, output_path)?,
+        Some(Commands::Server {
+            model,
+            port,
+            host,
+        }) => server::run_server(model, host, port).await?,
         None => run_interactive(cli.model).await?,
     }
 
