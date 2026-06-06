@@ -36,12 +36,8 @@ pub fn gpu_type_gen_option_set(option_set: &GpuTypeOptionSet) -> anyhow::Result<
          \x20 constexpr {name}() thread : raw_value(0) {{}}\n\
          \x20 constexpr {name}({underlying_c} __dsl_v) thread : raw_value(__dsl_v) {{}}\n\
          {variants}\
-         \x20 constexpr bool contains({underlying_c} flag) const thread {{\n\
-         \x20\x20\x20 return (raw_value & flag) != 0;\n\
-         \x20 }}\n\
-         \x20 constexpr bool contains({underlying_c} flag) const constant {{\n\
-         \x20\x20\x20 return (raw_value & flag) != 0;\n\
-         \x20 }}\n\
+         \x20 constexpr bool contains({underlying_c} flag) const thread {{ return (raw_value & flag) != 0; }}\n\
+         \x20 constexpr bool contains({underlying_c} flag) const constant {{ return (raw_value & flag) != 0; }}\n\
          \x20 constexpr {underlying_c} bits() const thread {{ return raw_value; }}\n\
          \x20 constexpr {underlying_c} bits() const constant {{ return raw_value; }}\n\
          }};"
