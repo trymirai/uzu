@@ -135,7 +135,12 @@ pub async fn run_session(
     text: String,
 ) {
     let mut state = state;
-    let user_message = ChatMessage::user().with_text(text);
+    let preferences = state.read().preferences;
+    let mut user_message = ChatMessage::user().with_text(text);
+    if let Some(reasoning_effort) = preferences.reasoning_effort() {
+        user_message = user_message.with_reasoning_effort(reasoning_effort);
+    }
+    let reply_config = ChatReplyConfig::default().with_sampling_policy(preferences.sampling_policy());
     {
         let mut state = state.write();
         if let Some(chat_state) = chat_state_mut(&mut state) {
@@ -145,7 +150,7 @@ pub async fn run_session(
         }
     }
 
-    let stream = session.reply_with_stream(vec![user_message], ChatReplyConfig::default()).await;
+    let stream = session.reply_with_stream(vec![user_message], reply_config).await;
     let mut latest_reply: Option<ChatReply> = None;
     {
         let mut state = state.write();

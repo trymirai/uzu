@@ -153,6 +153,7 @@ pub fn SelectedModel(
     });
 
     let theme = state.read().theme.clone();
+    let preferences = state.read().preferences;
     let model_data = state.read().model_state.as_ref().map(|model_state| {
         let session_status = model_state.session_state.as_deref().and_then(|session_state| session_state.status_text());
         (model_state.model.clone(), model_state.download_state.clone(), session_status)
@@ -184,6 +185,8 @@ pub fn SelectedModel(
             );
             let padding = theme.padding();
             let padding_wide = theme.padding_wide();
+            let chat_indicator = (model.is_chat_capable() && (is_downloaded || !model.is_downloadable()))
+                .then(|| format!("think {} · {}", preferences.thinking.label(), preferences.sampling.mode.label()));
 
             element! {
                 View(
@@ -208,6 +211,12 @@ pub fn SelectedModel(
                     }))
                     #((!is_downloading).then(|| element! {
                         View(flex_grow: 1.0f32)
+                    }))
+                    #(chat_indicator.map(|indicator| element! {
+                        View(flex_direction: FlexDirection::Row) {
+                            Text(content: indicator, color: theme.subtitle_color)
+                            View(width: padding_wide as u32)
+                        }
                     }))
                     #(session_status.map(|status| element! {
                         Text(content: status, color: theme.subtitle_color)
