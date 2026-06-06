@@ -70,11 +70,6 @@ impl GemvSpecialization {
             if args.n < QMV_RESULTS_PER_SIMDGROUP || args.m >= 5 {
                 return None;
             }
-            if matches!(args.b, MatmulB::LloydMaxDequant { .. })
-                && (!args.k.is_multiple_of(512) || !args.n.is_multiple_of(32) || args.d_transform.rht_factors.is_some())
-            {
-                return None;
-            }
         } else {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);

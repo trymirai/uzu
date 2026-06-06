@@ -53,11 +53,6 @@ fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
     }
 }
 
-fn bench_lloyd_max_shapes() -> impl Iterator<Item = Shape> {
-    [Shape::new(1, 4096, 4096), Shape::new(2, 4096, 4096), Shape::new(3, 4096, 4096), Shape::new(4, 4096, 4096)]
-        .into_iter()
-}
-
 fn bench_lloyd_max_typed<B: Backend, T: ArrayElement + Float>(
     c: &mut Criterion,
     context: &B::Context,
@@ -66,7 +61,9 @@ fn bench_lloyd_max_typed<B: Backend, T: ArrayElement + Float>(
 ) {
     let mut group = c.benchmark_group(format!("{}/Kernel/Gemv/{}", type_short_name::<B>(), label));
 
-    for shape in bench_lloyd_max_shapes() {
+    for shape in
+        [Shape::new(1, 4096, 4096), Shape::new(2, 4096, 4096), Shape::new(3, 4096, 4096), Shape::new(4, 4096, 4096)]
+    {
         let (m, k, n) = (shape.m, shape.k, shape.n);
         let input = LloydMaxQuantInput::<T>::new(m, k, n, group_size);
         let mut buffers = LloydMaxQuantBuffers::<B, T>::allocate(context, &input);

@@ -105,11 +105,7 @@ METAL_FUNC U qdot(
   return scale * accumulator + sum * bias;
 }
 
-// Lloyd-Max dequant: weight = (codebook[w_code] - bias) * scale.
-// Algebraic identity: sum_i x_i * (codebook[c_i] - bias) * scale
-//                   = scale * (dot(x, codebook[c]) - bias * sum_i x_i).
-// Folding the bias subtraction out of the per-weight critical path keeps the
-// dot as a tight FMA chain.
+// Fold Lloyd-Max bias subtraction out of the per-weight dot path.
 template <typename U, int VALUES_PER_THREAD, int BITS>
 METAL_FUNC U qdot_lloyd_max(
     const device uint8_t* w,
@@ -139,19 +135,6 @@ METAL_FUNC U qdot_lloyd_max(
   }
 
   return scale * (codebook_acc - bias * sum_x);
-}
-
-template <typename T, typename U, int RESULTS_PER_SIMDGROUP>
-inline void qmv_write_direct_results(
-    const thread U* result,
-    device T* output,
-    uint simd_lane
-) {
-  if (simd_lane == 0) {
-    for (uint row = 0; row < RESULTS_PER_SIMDGROUP; row++) {
-      output[row] = static_cast<T>(result[row]);
-    }
-  }
 }
 
 template <typename U, int VALUES_PER_THREAD, int BITS>

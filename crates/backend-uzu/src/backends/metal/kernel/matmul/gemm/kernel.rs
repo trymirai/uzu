@@ -168,11 +168,7 @@ impl GemmKernel {
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
         if matches!(arguments.b, MatmulB::LloydMaxDequant { .. }) {
-            return Err(MatmulError::UnsupportedFeature {
-                feature: "Lloyd-Max GEMM",
-                reason: "Lloyd-Max GEMM is not implemented",
-            }
-            .into());
+            return Err(unsupported_lloyd_max_gemm());
         }
 
         if matches!(path, GemmDispatchPath::Mxu) {
@@ -454,11 +450,7 @@ impl GemmKernel {
             MatmulB::LloydMaxDequant {
                 ..
             } => {
-                return Err(MatmulError::UnsupportedFeature {
-                    feature: "Lloyd-Max GEMM",
-                    reason: "Lloyd-Max GEMM is not implemented",
-                }
-                .into());
+                return Err(unsupported_lloyd_max_gemm());
             },
         }
 
@@ -720,4 +712,12 @@ fn select_quant_tiling(
     } else {
         GemmTiling::Tile32x32x32_Simdgroups2x2
     }
+}
+
+fn unsupported_lloyd_max_gemm() -> MetalError {
+    MatmulError::<Metal>::UnsupportedFeature {
+        feature: "Lloyd-Max GEMM",
+        reason: "Lloyd-Max GEMM is not implemented",
+    }
+    .into()
 }

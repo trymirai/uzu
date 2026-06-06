@@ -68,8 +68,10 @@ KERNEL(Gemv)(
     const constant uint& group_count_x,
     const GemmDTransform output_transform SPECIALIZE,
     threadgroup float shared_results[NUM_SIMDGROUPS * 4],
-    threadgroup half codebook_values[NUM_SIMDGROUPS * 16],
-    threadgroup half bias_codebook_values[NUM_SIMDGROUPS * 16],
+    threadgroup half codebook_values
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::LloydMaxDequant)[NUM_SIMDGROUPS * 16],
+    threadgroup half bias_codebook_values
+        OPTIONAL(B_PROLOGUE == GemmBPrologueKind::LloydMaxDequant)[NUM_SIMDGROUPS * 16],
     const uint batch_idx GROUPS(batch_size),
     const uint out_block_idx GROUPS(group_count_x),
     const uint simd_lane THREADS(32),

@@ -295,14 +295,14 @@ fn lloyd_max_qmv_unsupported_config_returns_matmul_error(
     let error = matmul.encode(args, &mut encoder).expect_err("expected unsupported Lloyd-Max QMV configuration");
     let matmul = matmul_error_source(&error);
     assert!(
-        matches!(matmul, MatmulError::UnsupportedGroupSize(96))
-            || matches!(
-                matmul,
-                MatmulError::UnsupportedFeature {
+        matches!(
+            matmul,
+            MatmulError::UnsupportedGroupSize(96)
+                | MatmulError::UnsupportedFeature {
                     feature: "Lloyd-Max QMV",
                     ..
                 }
-            ),
+        ),
         "got {matmul:?}"
     );
 }

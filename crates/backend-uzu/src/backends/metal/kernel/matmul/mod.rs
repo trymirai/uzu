@@ -91,11 +91,7 @@ fn validate_lloyd_max_qmv<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>
     };
 
     if *mode != QuantizationMode::U4 {
-        return Err(MatmulError::<Metal>::UnsupportedFeature {
-            feature: "Lloyd-Max QMV",
-            reason: "only U4 quantization mode is supported",
-        }
-        .into());
+        return Err(unsupported_lloyd_max("only U4 quantization mode is supported"));
     }
 
     if !matches!(*group_size, 16 | 32 | 64 | 128) {
@@ -110,36 +106,28 @@ fn validate_lloyd_max_qmv<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>
     }
 
     if arguments.d_transform.rht_factors.is_some() {
-        return Err(MatmulError::<Metal>::UnsupportedFeature {
-            feature: "Lloyd-Max QMV",
-            reason: "RHT output transform is not implemented",
-        }
-        .into());
+        return Err(unsupported_lloyd_max("RHT output transform is not implemented"));
     }
 
     if arguments.m >= 5 {
-        return Err(MatmulError::<Metal>::UnsupportedFeature {
-            feature: "Lloyd-Max QMV",
-            reason: "only decode batches with m < 5 are supported",
-        }
-        .into());
+        return Err(unsupported_lloyd_max("only decode batches with m < 5 are supported"));
     }
 
     if arguments.n < 4 || !arguments.n.is_multiple_of(32) {
-        return Err(MatmulError::<Metal>::UnsupportedFeature {
-            feature: "Lloyd-Max QMV",
-            reason: "output width must be at least 4 and a multiple of 32",
-        }
-        .into());
+        return Err(unsupported_lloyd_max("output width must be at least 4 and a multiple of 32"));
     }
 
     if !arguments.k.is_multiple_of(512) {
-        return Err(MatmulError::<Metal>::UnsupportedFeature {
-            feature: "Lloyd-Max QMV",
-            reason: "input width must be a multiple of 512",
-        }
-        .into());
+        return Err(unsupported_lloyd_max("input width must be a multiple of 512"));
     }
 
     Ok(())
+}
+
+fn unsupported_lloyd_max(reason: &'static str) -> MetalError {
+    MatmulError::<Metal>::UnsupportedFeature {
+        feature: "Lloyd-Max QMV",
+        reason,
+    }
+    .into()
 }

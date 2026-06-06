@@ -20,6 +20,28 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use super::super::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
 
+const LLOYD_MAX_CODEBOOK: [f32; 16] = [
+    -1.0,
+    -0.696_192_8,
+    -0.525_073_05,
+    -0.394_917_5,
+    -0.284_441_38,
+    -0.184_773_43,
+    -0.091_050_04,
+    0.0,
+    0.079_580_3,
+    0.160_930_2,
+    0.246_112_3,
+    0.337_915_24,
+    0.440_709_83,
+    0.562_617,
+    0.722_956_84,
+    1.0,
+];
+const LLOYD_MAX_BIAS_CODEBOOK: [f32; 16] = [
+    -0.045, -0.039, -0.033, -0.026, -0.020, -0.013, -0.007, 0.0, 0.007, 0.013, 0.020, 0.026, 0.033, 0.039, 0.045, 0.052,
+];
+
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
     pub scales: Vec<T>,
@@ -34,52 +56,15 @@ pub struct QuantInput<T: ArrayElement + Float> {
     pub mode: QuantizationMode,
 }
 
-pub const LLOYD_MAX_CODEBOOK_SIZE: usize = 16;
-
-pub fn lloyd_max_codebook() -> [f16; LLOYD_MAX_CODEBOOK_SIZE] {
-    [
-        -1.0f32,
-        -0.696_192_8,
-        -0.525_073_05,
-        -0.394_917_5,
-        -0.284_441_38,
-        -0.184_773_43,
-        -0.091_050_04,
-        0.0,
-        0.079_580_3,
-        0.160_930_2,
-        0.246_112_3,
-        0.337_915_24,
-        0.440_709_83,
-        0.562_617,
-        0.722_956_84,
-        1.0,
-    ]
-    .map(f16::from_f32)
-}
-
-pub const BIAS_CODEBOOK_SIZE: usize = 16;
-
-pub fn lloyd_max_bias_codebook() -> [f16; BIAS_CODEBOOK_SIZE] {
-    [
-        -0.045f32, -0.039, -0.033, -0.026, -0.020, -0.013, -0.007, 0.0, 0.007, 0.013, 0.020, 0.026, 0.033, 0.039,
-        0.045, 0.052,
-    ]
-    .map(f16::from_f32)
-}
-
 pub struct LloydMaxQuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,
     pub scales: Vec<T>,
-    pub codebook: [f16; LLOYD_MAX_CODEBOOK_SIZE],
     pub bias_indices: Vec<u8>,
-    pub bias_codebook: [f16; BIAS_CODEBOOK_SIZE],
     pub x: Vec<T>,
     pub k: u32,
     pub n: u32,
     pub m: u32,
     pub group_size: u32,
-    pub mode: QuantizationMode,
 }
 
 fn mode_for_bits(bits: u32) -> QuantizationMode {
@@ -88,52 +73,6 @@ fn mode_for_bits(bits: u32) -> QuantizationMode {
         8 => QuantizationMode::I8,
         _ => unreachable!("unsupported bits: {bits}"),
     }
-}
-
-fn deterministic_packed_u4_weights(
-    output_size: usize,
-    input_size: usize,
-) -> Vec<u32> {
-    (0..(output_size * input_size / 8)).map(|word_index| word_index.wrapping_mul(2_654_435_761) as u32).collect()
-}
-
-fn lloyd_max_scale_value(
-    output_index: usize,
-    group_index: usize,
-) -> f32 {
-    0.07 + 0.013 * ((output_index + 5 * group_index) % 13) as f32
-}
-
-fn lloyd_max_scales<T: ArrayElement + Float>(
-    output_size: usize,
-    group_count: usize,
-) -> Vec<T> {
-    (0..output_size)
-        .flat_map(|output_index| {
-            (0..group_count).map(move |group_index| T::from(lloyd_max_scale_value(output_index, group_index)).unwrap())
-        })
-        .collect()
-}
-
-fn lloyd_max_bias_indices(
-    output_size: usize,
-    group_count: usize,
-) -> Vec<u8> {
-    let bias_stride = group_count.div_ceil(2);
-    (0..(output_size * bias_stride)).map(|byte_index| byte_index.wrapping_mul(2_246_822_519) as u8).collect()
-}
-
-fn lloyd_max_input_values<T: ArrayElement + Float>(
-    batch_size: usize,
-    input_size: usize,
-) -> Vec<T> {
-    (0..batch_size)
-        .flat_map(|batch_index| {
-            (0..input_size).map(move |input_index| {
-                T::from((((batch_index * 11 + input_index * 7) % 23) as f32 - 11.0) * 0.022).unwrap()
-            })
-        })
-        .collect()
 }
 
 impl<T: ArrayElement + Float> QuantInput<T> {
@@ -195,22 +134,30 @@ impl<T: ArrayElement + Float> LloydMaxQuantInput<T> {
         group_size: u32,
     ) -> Self {
         let num_groups_k = k / group_size as usize;
-        let w_packed = deterministic_packed_u4_weights(n, k);
-        let scales = lloyd_max_scales(n, num_groups_k);
-        let bias_indices = lloyd_max_bias_indices(n, num_groups_k);
-        let x = lloyd_max_input_values(m, k);
+        let bias_stride = num_groups_k.div_ceil(2);
         Self {
-            w_packed,
-            scales,
-            codebook: lloyd_max_codebook(),
-            bias_indices,
-            bias_codebook: lloyd_max_bias_codebook(),
-            x,
+            w_packed: (0..(n * k / 8)).map(|word_index| word_index.wrapping_mul(2_654_435_761) as u32).collect(),
+            scales: (0..n)
+                .flat_map(|output_index| {
+                    (0..num_groups_k).map(move |group_index| {
+                        T::from(0.07 + 0.013 * ((output_index + 5 * group_index) % 13) as f32).unwrap()
+                    })
+                })
+                .collect(),
+            bias_indices: (0..(n * bias_stride))
+                .map(|byte_index| byte_index.wrapping_mul(2_246_822_519) as u8)
+                .collect(),
+            x: (0..m)
+                .flat_map(|batch_index| {
+                    (0..k).map(move |input_index| {
+                        T::from((((batch_index * 11 + input_index * 7) % 23) as f32 - 11.0) * 0.022).unwrap()
+                    })
+                })
+                .collect(),
             k: k as u32,
             n: n as u32,
             m: m as u32,
             group_size,
-            mode: QuantizationMode::U4,
         }
     }
 }
@@ -231,12 +178,14 @@ impl<B: Backend, T: ArrayElement + Float> LloydMaxQuantBuffers<B, T> {
         context: &B::Context,
         input: &LloydMaxQuantInput<T>,
     ) -> Self {
+        let codebook = LLOYD_MAX_CODEBOOK.map(f16::from_f32);
+        let bias_codebook = LLOYD_MAX_BIAS_CODEBOOK.map(f16::from_f32);
         Self {
             w: alloc_allocation_with_data::<B, u32>(context, &input.w_packed),
             scales: alloc_allocation_with_data::<B, T>(context, &input.scales),
-            codebook: alloc_allocation_with_data::<B, f16>(context, &input.codebook),
+            codebook: alloc_allocation_with_data::<B, f16>(context, &codebook),
             bias_indices: alloc_allocation_with_data::<B, u8>(context, &input.bias_indices),
-            bias_codebook: alloc_allocation_with_data::<B, f16>(context, &input.bias_codebook),
+            bias_codebook: alloc_allocation_with_data::<B, f16>(context, &bias_codebook),
             x: alloc_allocation_with_data::<B, T>(context, &input.x),
             y: alloc_allocation::<B, T>(context, (input.m as usize) * (input.n as usize)),
             _t: std::marker::PhantomData,
@@ -257,7 +206,7 @@ pub fn lloyd_max_quant_arguments<'a, B: Backend, T: ArrayElement + Float>(
             codebook: &buffers.codebook,
             bias_indices: &buffers.bias_indices,
             bias_codebook: &buffers.bias_codebook,
-            mode: input.mode,
+            mode: QuantizationMode::U4,
             group_size: input.group_size,
         },
         b_offset: 0,
