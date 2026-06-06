@@ -29,7 +29,7 @@ use crate::common::{
     helpers::allocation_to_vec,
     matmul::{
         LloydMaxQuantBuffers, LloydMaxQuantInput, QuantBuffers, QuantInput, lloyd_max_quant_arguments, quant_arguments,
-        run_lloyd_max_cpu, run_lloyd_max_metal, run_quant_cpu, run_quant_metal,
+        run_quant_cpu, run_quant_metal,
     },
 };
 
@@ -158,6 +158,40 @@ fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
         rel_tol,
         abs_tol,
     );
+}
+
+fn run_lloyd_max_cpu<T: ArrayElement + Float>(input: &LloydMaxQuantInput<T>) -> Vec<T> {
+    let context = <Cpu as Backend>::Context::new().expect("Cpu context");
+    let mut buffers = LloydMaxQuantBuffers::<Cpu, T>::allocate(&context, input);
+    let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulCpuKernel");
+    let mut encoder = Encoder::<Cpu>::new(&context).expect("encoder");
+    matmul.encode(lloyd_max_quant_arguments(&mut buffers, input), &mut encoder).expect("encode CPU Lloyd-Max quant");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<Cpu, T>(&buffers.y)
+}
+
+fn run_lloyd_max_metal<T: ArrayElement + Float>(
+    context: &MetalContext,
+    input: &LloydMaxQuantInput<T>,
+) -> Vec<T> {
+    let mut buffers = LloydMaxQuantBuffers::<Metal, T>::allocate(context, input);
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulMetalKernel");
+    let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
+    matmul.encode(lloyd_max_quant_arguments(&mut buffers, input), &mut encoder).expect("matmul encode failed");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<Metal, T>(&buffers.y)
 }
 
 #[rstest]
