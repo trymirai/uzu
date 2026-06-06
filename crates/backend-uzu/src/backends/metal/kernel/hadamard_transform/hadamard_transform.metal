@@ -23,16 +23,10 @@ PUBLIC KERNEL(HadamardTransform)(
   uint element_index = batch_index * hidden_dim + factor_index;
 
   if (transform_order == HadamardTransformOrder::Input) {
-    data[element_index] = simdgroup_input_random_hadamard_transform(
-        lane_index,
-        data[element_index],
-        factors[factor_index]
-    );
+    data[element_index] =
+        simdgroup_input_random_hadamard_transform(lane_index, data[element_index], factors[factor_index]);
   } else {
-    data[element_index] = simdgroup_output_random_hadamard_transform(
-        lane_index,
-        data[element_index],
-        factors[factor_index]
-    );
+    data[element_index] =
+        simdgroup_output_random_hadamard_transform(lane_index, data[element_index], factors[factor_index]);
   }
 }

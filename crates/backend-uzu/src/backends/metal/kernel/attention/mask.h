@@ -35,8 +35,7 @@ static inline bool should_use_key(
       key_position = suffix_position + key_trie.height;
 
       if (is_causal) {
-        use_key &=
-            q_seq_idx >= key_trie.trie_start && q_seq_idx <= key_trie.trie_end;
+        use_key &= q_seq_idx >= key_trie.trie_start && q_seq_idx <= key_trie.trie_end;
       }
     } else {
       // Non-trie, position equals index in the suffix
@@ -51,8 +50,7 @@ static inline bool should_use_key(
     // We're in the prefix
     if (is_kv_cache_ring) {
       // Ring, calculate position in the ring
-      key_position =
-          (prefix_length + i - ring_params.ring_offset) % prefix_length;
+      key_position = (prefix_length + i - ring_params.ring_offset) % prefix_length;
       // Ring also skips entries that aren't filled yet
       use_key &= key_position < ring_params.ring_length;
     } else {
@@ -63,8 +61,7 @@ static inline bool should_use_key(
 
   if (is_sliding_window) {
     if (is_causal) {
-      use_key &= key_position <= query_position &&
-                 (query_position - key_position) < sliding_window_size;
+      use_key &= key_position <= query_position && (query_position - key_position) < sliding_window_size;
     } else {
       if (key_position <= query_position) {
         use_key &= (query_position - key_position) <= (sliding_window_size / 2);

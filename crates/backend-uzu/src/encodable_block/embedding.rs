@@ -190,6 +190,8 @@ impl<B: Backend> Embedding<B> {
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
+                            vocab_size,
+                            model_dim,
                         )?;
 
                         (
@@ -254,6 +256,8 @@ impl<B: Backend> Embedding<B> {
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
+                            vocab_size,
+                            model_dim,
                         )?;
 
                         (
@@ -385,6 +389,8 @@ impl<B: Backend> Embedding<B> {
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
+                            vocab_size,
+                            model_dim,
                         )?;
 
                         UntiedEmbeddingReadoutType::Quantized {
@@ -768,6 +774,8 @@ fn quantized_readout<B: Backend>(
     mode: QuantizationMode,
     method: QuantizationMethod,
     group_size: usize,
+    vocab_size: u32,
+    model_dim: u32,
 ) -> Result<(RefCell<<B::Kernels as Kernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
     let mut readout = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
         .map_err(EmbeddingError::BackendError)?;
@@ -779,6 +787,8 @@ fn quantized_readout<B: Backend>(
                 mode,
                 group_size: group_size as u32,
             },
+            vocab_size,
+            model_dim,
         )
         .map_err(EmbeddingError::BackendError)?;
     Ok((

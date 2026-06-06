@@ -32,8 +32,7 @@ PUBLIC KERNEL(Gumbel) (
   uint grain_offset = batch_start + grain_offset_in_batch;
 
   uint64_t rng_seed = batch_seeds[batch_seeds_offset + batch_idx];
-  uint64_t rng_offset = (group_idx * BLOCK_SIZE + thread_idx) *
-                        (GRAIN_SIZE + WORDS_PER_OFFSET - 1) / WORDS_PER_OFFSET;
+  uint64_t rng_offset = (group_idx * BLOCK_SIZE + thread_idx) * (GRAIN_SIZE + WORDS_PER_OFFSET - 1) / WORDS_PER_OFFSET;
   PhiloxState rng;
   philox_init(&rng, rng_seed, rng_offset);
 
@@ -41,8 +40,7 @@ PUBLIC KERNEL(Gumbel) (
   for (uint i = 0; i < GRAIN_SIZE; i++) {
     uint global_idx = grain_offset + i * BLOCK_SIZE;
     if (global_idx < batch_end) {
-      processed_logits[global_idx] =
-          logits[global_idx] + T(-fast::log(-fast::log(uniform_float(&rng))));
+      processed_logits[global_idx] = logits[global_idx] + T(-fast::log(-fast::log(uniform_float(&rng))));
     }
   }
 }

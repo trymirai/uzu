@@ -71,21 +71,18 @@ PUBLIC KERNEL(SSDPrefill64)(
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val =
-        fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
+    const float decay_val = fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
 
     float contrib = 0.0f;
-    const float new_state0 =
-        decay_val * state0 + dt_scaled_input * float(b[cb_idx0]);
+    const float new_state0 = decay_val * state0 + dt_scaled_input * float(b[cb_idx0]);
     state0 = new_state0;
     contrib += new_state0 * float(c[cb_idx0]);
     cb_idx0 += cb_token_stride;
 
-    const float new_state1 =
-        decay_val * state1 + dt_scaled_input * float(b[cb_idx1]);
+    const float new_state1 = decay_val * state1 + dt_scaled_input * float(b[cb_idx1]);
     state1 = new_state1;
     contrib += new_state1 * float(c[cb_idx1]);
     cb_idx1 += cb_token_stride;
@@ -149,8 +146,7 @@ PUBLIC KERNEL(SSDPrefill)(
   const float d_scalar = float(d[h_idx]);
 
   const int max_chunks = SSM_PREFILL_MAX_STATE / thread_context.simdgroup_size;
-  const int chunk_count = (state_dim + int(thread_context.simdgroup_size) - 1) /
-                          int(thread_context.simdgroup_size);
+  const int chunk_count = (state_dim + int(thread_context.simdgroup_size) - 1) / int(thread_context.simdgroup_size);
   if (state_dim <= 0 || chunk_count > max_chunks) {
     return;
   }
@@ -173,8 +169,7 @@ PUBLIC KERNEL(SSDPrefill)(
     const uint dt_idx = token * dt_token_stride + dt_base;
 
     const float x_val = float(x[x_idx]);
-    const float decay_val =
-        fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
+    const float decay_val = fast::exp(-float(activate_softplus(float(dt_raw[dt_idx]))));
     const float gate = float(activate_silu(z[x_idx]));
     const float skip = d_scalar * x_val;
     const float dt_scaled_input = x_val;
@@ -182,13 +177,10 @@ PUBLIC KERNEL(SSDPrefill)(
     float contrib_sum = 0.0f;
 #pragma unroll
     for (int chunk = 0; chunk < chunk_count; ++chunk) {
-      const int idx =
-          chunk * int(thread_context.simdgroup_size) + int(lane_idx);
+      const int idx = chunk * int(thread_context.simdgroup_size) + int(lane_idx);
       if (idx < state_dim) {
-        const uint cb_idx = cb_group_base + uint(idx) * cb_state_stride +
-                            token * cb_token_stride;
-        const float new_state =
-            decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
+        const uint cb_idx = cb_group_base + uint(idx) * cb_state_stride + token * cb_token_stride;
+        const float new_state = decay_val * lane_states[chunk] + dt_scaled_input * float(b[cb_idx]);
         lane_states[chunk] = new_state;
         contrib_sum += new_state * float(c[cb_idx]);
       }
@@ -235,12 +227,10 @@ PUBLIC KERNEL(SSDPrefillSequential)(
 ) {
   const uint safe_group = max(group_size, 1u);
   const uint group_idx = h_idx / safe_group;
-  device T* state_row = state + size_t(h_idx) * state_strides[0] +
-                        size_t(dh_idx) * state_strides[1];
+  device T* state_row = state + size_t(h_idx) * state_strides[0] + size_t(dh_idx) * state_strides[1];
 
   for (uint token = 0; token < suffix_len; ++token) {
-    const uint x_idx =
-        token * x_strides[0] + h_idx * x_strides[1] + dh_idx * x_strides[2];
+    const uint x_idx = token * x_strides[0] + h_idx * x_strides[1] + dh_idx * x_strides[2];
     const uint dt_idx = token * dt_strides[0] + h_idx * dt_strides[1];
     const uint cb_base = token * cb_strides[0] + group_idx * cb_strides[1];
 
@@ -258,8 +248,7 @@ PUBLIC KERNEL(SSDPrefillSequential)(
     for (; s < vec_bound; s += 4) {
       const uint state_idx = s * state_strides[2];
       const uint cb_idx = cb_base + s * cb_strides[2];
-      auto prev_state =
-          *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx);
+      auto prev_state = *reinterpret_cast<device vec<T, 4>*>(state_row + state_idx);
       auto b_vec = *reinterpret_cast<device const vec<T, 4>*>(b + cb_idx);
       auto c_vec = *reinterpret_cast<device const vec<T, 4>*>(c + cb_idx);
       vec<T, 4> new_state = prev_state * this_decay + b_vec * dt_scaled_input;

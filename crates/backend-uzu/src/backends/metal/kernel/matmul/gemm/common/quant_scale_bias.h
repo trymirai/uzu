@@ -22,28 +22,18 @@ template <
     short GROUP_SIZE,
     short BITS>
 struct QuantizedBlockLoaderScaleBias {
-  static_assert(
-      THREADGROUP_TILE_COLS <= GROUP_SIZE,
-      "Group size should be larger than columns"
-  );
-  static_assert(
-      GROUP_SIZE % THREADGROUP_TILE_COLS == 0,
-      "Group size should be divisible by columns"
-  );
+  static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
+  static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
   METAL_CONST short pack_factor = get_pack_factor<BITS, 8>();
   METAL_CONST short bytes_per_pack = get_bytes_per_pack<BITS>();
-  METAL_CONST short THREADGROUP_TILE_COLS_PACKED =
-      THREADGROUP_TILE_COLS / pack_factor;
-  METAL_CONST short READS_PER_THREAD =
-      (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
-          ? 1
-          : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) /
-                THREADGROUP_SIZE;
+  METAL_CONST short THREADGROUP_TILE_COLS_PACKED = THREADGROUP_TILE_COLS / pack_factor;
+  METAL_CONST short READS_PER_THREAD = (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
+                                           ? 1
+                                           : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
   METAL_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
-  METAL_CONST bool TILE_HAS_IDLE_THREADS =
-      THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
+  METAL_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
 
   const int src_leading_dim;
   const int tile_stride;
@@ -71,23 +61,14 @@ struct QuantizedBlockLoaderScaleBias {
       : src_leading_dim(src_leading_dim_),
         tile_stride(
             REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS_PACKED * bytes_per_pack
-                                : THREADGROUP_TILE_ROWS * src_leading_dim_ *
-                                      bytes_per_pack / pack_factor
+                                : THREADGROUP_TILE_ROWS * src_leading_dim_ * bytes_per_pack / pack_factor
         ),
-        group_step_counter(0),
-        group_stride(THREADGROUP_TILE_ROWS * src_leading_dim_ / GROUP_SIZE),
+        group_step_counter(0), group_stride(THREADGROUP_TILE_ROWS * src_leading_dim_ / GROUP_SIZE),
         thread_index(simd_group_id * 32 + simd_lane_id),
-        tile_row_index(
-            READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED
-        ),
-        tile_col_index(
-            (READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED
-        ),
-        dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION +
-            tile_col_index * pack_factor),
-        src(src_ +
-            tile_row_index * src_leading_dim_ * bytes_per_pack / pack_factor +
-            tile_col_index * bytes_per_pack),
+        tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
+        tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
+        dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * pack_factor),
+        src(src_ + tile_row_index * src_leading_dim_ * bytes_per_pack / pack_factor + tile_col_index * bytes_per_pack),
         scales(scales_ + tile_row_index * src_leading_dim_ / GROUP_SIZE),
         biases(biases_ + tile_row_index * src_leading_dim_ / GROUP_SIZE) {}
 
@@ -101,12 +82,7 @@ struct QuantizedBlockLoaderScaleBias {
     T scale = *scales;
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(
-          src + i * bytes_per_pack,
-          scale,
-          bias,
-          dst + i * pack_factor
-      );
+      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
     }
   }
 
@@ -136,12 +112,7 @@ struct QuantizedBlockLoaderScaleBias {
     T scale = *scales;
     T bias = *biases;
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(
-          src + i * bytes_per_pack,
-          scale,
-          bias,
-          dst + i * pack_factor
-      );
+      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
     }
   }
 

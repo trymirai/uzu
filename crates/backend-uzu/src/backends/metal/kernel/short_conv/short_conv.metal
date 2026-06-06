@@ -187,10 +187,8 @@ PUBLIC KERNEL(ShortConvTrie)(
 
     // Select parent state (root uses base_state)
     const int parent = parents[node];
-    const device T* parent_state =
-        (parent < 0) ? (base_state + base_state_offset)
-                     : (suffix_state +
-                        (parent * model_dim + channel_idx) * state_stride);
+    const device T* parent_state = (parent < 0) ? (base_state + base_state_offset)
+                                                : (suffix_state + (parent * model_dim + channel_idx) * state_stride);
 
     float acc = 0.0f;
     if (has_bias) {
@@ -212,8 +210,7 @@ PUBLIC KERNEL(ShortConvTrie)(
 
     // Write post-state for this node
     if (tap_count > 0) {
-      device T* dst_state =
-          suffix_state + (node * model_dim + channel_idx) * state_stride;
+      device T* dst_state = suffix_state + (node * model_dim + channel_idx) * state_stride;
       for (uint tap = 0; tap < tap_count - 1; ++tap) {
         dst_state[tap] = parent_state[tap + 1];
       }

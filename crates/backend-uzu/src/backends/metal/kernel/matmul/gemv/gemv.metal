@@ -68,36 +68,24 @@ KERNEL(Gemv)(
   thread U result[RESULTS_PER_SIMDGROUP] = {0};
 
   OutputTile<K_SPLIT, NUM_SIMDGROUPS> tile =
-      OutputTile<K_SPLIT, NUM_SIMDGROUPS>::make(
-          out_block_idx,
-          simd_group,
-          out_vec_size
-      );
+      OutputTile<K_SPLIT, NUM_SIMDGROUPS>::make(out_block_idx, simd_group, out_vec_size);
   d += batch_idx * out_vec_size + tile.out_row;
 
-  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, INPUT_ALIGNED>::
-      accumulate(
-          result,
-          b,
-          scales,
-          zero_points,
-          biases,
-          a,
-          in_vec_size,
-          tile.out_row,
-          batch_idx,
-          simd_lane,
-          tile.k_slice
-      );
-
-  Reduce<U, K_SPLIT, NUM_SIMDGROUPS>::run(
+  BSource<BT, AT, U, B_PROLOGUE, GROUP_SIZE, BITS, K_SPLIT, INPUT_ALIGNED>::accumulate(
       result,
-      shared_results,
-      simd_group,
+      b,
+      scales,
+      zero_points,
+      biases,
+      a,
+      in_vec_size,
+      tile.out_row,
+      batch_idx,
       simd_lane,
-      tile.row_group,
       tile.k_slice
   );
+
+  Reduce<U, K_SPLIT, NUM_SIMDGROUPS>::run(result, shared_results, simd_group, simd_lane, tile.row_group, tile.k_slice);
 
   Epilogue<BT, DT, U>::store(
       result,

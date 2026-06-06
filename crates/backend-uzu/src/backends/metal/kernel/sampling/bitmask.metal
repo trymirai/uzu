@@ -23,8 +23,7 @@ PUBLIC KERNEL(Bitmask) (
   }
 
   uint bitmask_size = (vocab_size + (BITS_IN_U32 - 1)) / BITS_IN_U32;
-  uint base_idx =
-      batch_idx * vocab_size + group_idx * BLOCK_SIZE * GRAIN_SIZE + thread_idx;
+  uint base_idx = batch_idx * vocab_size + group_idx * BLOCK_SIZE * GRAIN_SIZE + thread_idx;
   uint batch_end = batch_idx * vocab_size + vocab_size;
 
 #pragma unroll(4)
@@ -34,8 +33,7 @@ PUBLIC KERNEL(Bitmask) (
       uint token_idx = global_idx - batch_idx * vocab_size;
       uint bitmask_idx = batch_idx * bitmask_size + (token_idx / BITS_IN_U32);
       bool mask = (bitmask[bitmask_idx] >> (token_idx % BITS_IN_U32)) & 0b1;
-      processed_logits[global_idx] =
-          select(T(-INFINITY), logits[global_idx], mask);
+      processed_logits[global_idx] = select(T(-INFINITY), logits[global_idx], mask);
     }
   }
 }

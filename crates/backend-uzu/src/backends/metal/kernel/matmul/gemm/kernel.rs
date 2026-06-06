@@ -73,8 +73,15 @@ impl GemmKernel {
         &mut self,
         context: &MetalContext,
         combo: MatmulQuantCombo,
+        n: u32,
+        k: u32,
     ) -> Result<(), MetalError> {
-        for specialization in GemmSpecialization::quant_combo_specs(self.weights_data_type, combo) {
+        let all_float = [self.weights_data_type, self.input_data_type, self.output_data_type]
+            .into_iter()
+            .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32));
+        let use_mxu = context.device.supports_mxu() && all_float && k.is_multiple_of(select_mxu_tiling(n, n).block_k());
+
+        for specialization in GemmSpecialization::quant_combo_specs(self.weights_data_type, combo, n, k, use_mxu) {
             self.get_or_create(context, specialization)?;
         }
         Ok(())
@@ -668,7 +675,7 @@ fn select_mxu_tiling(
     }
 }
 
-fn select_mxu_quant_tiling(
+pub(crate) fn select_mxu_quant_tiling(
     m: u32,
     n: u32,
     group_size: u32,
@@ -684,7 +691,7 @@ fn select_mxu_quant_tiling(
     }
 }
 
-fn select_quant_tiling(
+pub(crate) fn select_quant_tiling(
     m: u32,
     n: u32,
     group_size: u32,

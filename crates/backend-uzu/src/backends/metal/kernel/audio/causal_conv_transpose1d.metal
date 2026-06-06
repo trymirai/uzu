@@ -54,16 +54,14 @@ void causal_conv_transpose1d(
 
     // Weight layout: [Cout, Cin_per_group, K]
     const uint ic_local = (uint)(ic - ic_begin);
-    const uint w_base =
-        ((uint)oc * (uint)cin_per_group + ic_local) * (uint)(2 * stride);
+    const uint w_base = ((uint)oc * (uint)cin_per_group + ic_local) * (uint)(2 * stride);
 
     // Contribution from input[q] with k=r
     acc += float(weight[w_base + (uint)r]) * float(input[in_base + (uint)q]);
 
     // Contribution from input[q-1] with k=stride+r
     if (q > 0) {
-      acc += float(weight[w_base + (uint)(stride + r)]) *
-             float(input[in_base + (uint)(q - 1)]);
+      acc += float(weight[w_base + (uint)(stride + r)]) * float(input[in_base + (uint)(q - 1)]);
     }
   }
 
@@ -89,18 +87,6 @@ PUBLIC KERNEL(AudioCausalConvTranspose1d)(
     uint oc AXIS(cout, 1),
     uint b AXIS(batch_size, 1)
 ) {
-  causal_conv_transpose1d<T>(
-      input,
-      weight,
-      bias,
-      output,
-      lengths,
-      cin,
-      cout,
-      seq_len_in,
-      seq_len_out,
-      stride,
-      groups,
-      uint3(t_out, oc, b)
-  );
+  causal_conv_transpose1d<
+      T>(input, weight, bias, output, lengths, cin, cout, seq_len_in, seq_len_out, stride, groups, uint3(t_out, oc, b));
 }

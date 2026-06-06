@@ -25,8 +25,7 @@ void layer_norm_core(
   AccumT partial_sum = static_cast<AccumT>(0.0f);
 
   // Compute mean: sum all elements
-  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
-       base_i += BLOCK_SIZE * GRAIN_SIZE) {
+  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count; base_i += BLOCK_SIZE * GRAIN_SIZE) {
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
       if (i < element_count) {
@@ -37,17 +36,12 @@ void layer_norm_core(
 
   // Reduce to get total mean
   AccumT total_sum =
-      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
-          partial_sum,
-          shared_mean,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(partial_sum, shared_mean, thread_context);
   AccumT mean = total_sum / static_cast<AccumT>(element_count);
 
   // Compute variance: sum of squared deviations
   AccumT partial_var_sum = static_cast<AccumT>(0.0f);
-  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
-       base_i += BLOCK_SIZE * GRAIN_SIZE) {
+  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count; base_i += BLOCK_SIZE * GRAIN_SIZE) {
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
       if (i < element_count) {
@@ -58,27 +52,23 @@ void layer_norm_core(
   }
 
   // Reduce to get total variance
-  AccumT total_var =
-      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
-          partial_var_sum,
-          shared_variance,
-          thread_context
-      );
+  AccumT total_var = threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
+      partial_var_sum,
+      shared_variance,
+      thread_context
+  );
   AccumT variance = total_var / static_cast<AccumT>(element_count);
   AccumT inv_std = rsqrt(variance + static_cast<AccumT>(epsilon));
 
   // Apply normalization and scaling
-  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count;
-       base_i += BLOCK_SIZE * GRAIN_SIZE) {
+  for (uint base_i = thread_in_row * GRAIN_SIZE; base_i < element_count; base_i += BLOCK_SIZE * GRAIN_SIZE) {
     AccumT vals[GRAIN_SIZE];
     AccumT scaled_vals[GRAIN_SIZE];
 
     // Load and center
     for (uint j = 0; j < GRAIN_SIZE; ++j) {
       uint i = base_i + j;
-      vals[j] = (i < element_count)
-                    ? (static_cast<AccumT>(input_data[i]) - mean)
-                    : 0.0f;
+      vals[j] = (i < element_count) ? (static_cast<AccumT>(input_data[i]) - mean) : 0.0f;
     }
 
     // Normalize and scale
@@ -91,15 +81,12 @@ void layer_norm_core(
       AccumT normalized_high = vals[j] * inv_std;
 
       if (full_layer) {
-        AccumT scale_value_high = static_cast<AccumT>(scales_data[i]) +
-                                  static_cast<AccumT>(scale_offset);
+        AccumT scale_value_high = static_cast<AccumT>(scales_data[i]) + static_cast<AccumT>(scale_offset);
         scaled_vals[j] = normalized_high * scale_value_high;
       } else {
         OutputT normalized_low = static_cast<OutputT>(normalized_high);
-        OutputT scale_value_low = static_cast<OutputT>(
-            static_cast<AccumT>(scales_data[i]) +
-            static_cast<AccumT>(scale_offset)
-        );
+        OutputT scale_value_low =
+            static_cast<OutputT>(static_cast<AccumT>(scales_data[i]) + static_cast<AccumT>(scale_offset));
         OutputT product_low = normalized_low * scale_value_low;
         scaled_vals[j] = static_cast<AccumT>(product_low);
       }

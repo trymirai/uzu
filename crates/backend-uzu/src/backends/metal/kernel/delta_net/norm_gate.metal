@@ -42,18 +42,13 @@ PUBLIC KERNEL(DeltaNetNormGate)(
   // RMSNorm: cooperative sum of squares
   float o_sq = active ? o_i * o_i : 0.0f;
   float o_sumsq =
-      threadgroup_cooperative_reduce<SimdReduceSum<float>, HEAD_V_DIM>(
-          o_sq,
-          shared_scratch,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, HEAD_V_DIM>(o_sq, shared_scratch, thread_context);
   float inv_rms = rsqrt(o_sumsq / float(head_v_dim) + norm_epsilon);
 
   // Apply norm + SiLU gate (in-place)
   if (active) {
     float nw = float(norm_weight[tid]);
-    uint z_idx =
-        token_idx * total_proj_dim + conv_dim + hv_idx * head_v_dim + tid;
+    uint z_idx = token_idx * total_proj_dim + conv_dim + hv_idx * head_v_dim + tid;
     float z_silu = activate_silu(float(in_proj[z_idx]));
     in_out[base + tid] = static_cast<T>(o_i * inv_rms * nw * z_silu);
   }

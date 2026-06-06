@@ -1,0 +1,13 @@
+[check]
+command = "clippy"
+
+[cargo.buildScripts]
+overrideCommand = [
+  "cargo",
+  "clippy",
+  "--quiet",
+  "--workspace",
+  "--message-format=json",
+  "--all-targets",
+  "--keep-going",
+]

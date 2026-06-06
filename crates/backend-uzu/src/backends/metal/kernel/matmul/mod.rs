@@ -70,8 +70,10 @@ impl MatmulKernel for MatmulMetalKernel {
         &mut self,
         context: &MetalContext,
         combo: MatmulQuantCombo,
+        output_dim: u32,
+        input_dim: u32,
     ) -> Result<(), MetalError> {
-        self.gemv.preheat_quant_combo(context, combo).map_err(MetalError::from)?;
-        self.gemm.preheat_quant_combo(context, combo)
+        self.gemv.preheat_quant_combo(context, combo, input_dim).map_err(MetalError::from)?;
+        self.gemm.preheat_quant_combo(context, combo, output_dim, input_dim)
     }
 }

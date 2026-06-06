@@ -46,8 +46,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
   const ulong bias_base = (ulong)expert_u * (ulong)(2 * d_ff);
 
   device const T* w_up_row = w13_all + w13_base + (ulong)h_idx * (ulong)d_model;
-  device const T* w_gate_row =
-      w13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
+  device const T* w_gate_row = w13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
 
   float acc_up = 0.0f;
   float acc_gate = 0.0f;
@@ -58,16 +57,14 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
     uint base_idx = i * 128 + thread_context.simd_lane_id * 4;
 
     device const T* x_vec2 = reinterpret_cast<device const T*>(x + base_idx);
-    device const T* w_up_vec2 =
-        reinterpret_cast<device const T*>(w_up_row + base_idx);
+    device const T* w_up_vec2 = reinterpret_cast<device const T*>(w_up_row + base_idx);
     acc_up += float(x_vec2[0]) * float(w_up_vec2[0]);
     acc_up += float(x_vec2[1]) * float(w_up_vec2[1]);
     acc_up += float(x_vec2[2]) * float(w_up_vec2[2]);
     acc_up += float(x_vec2[3]) * float(w_up_vec2[3]);
 
     if (gating_sel > 1) {
-      device const T* w_gate_vec2 =
-          reinterpret_cast<device const T*>(w_gate_row + base_idx);
+      device const T* w_gate_vec2 = reinterpret_cast<device const T*>(w_gate_row + base_idx);
       acc_gate += float(x_vec2[0]) * float(w_gate_vec2[0]);
       acc_gate += float(x_vec2[1]) * float(w_gate_vec2[1]);
       acc_gate += float(x_vec2[2]) * float(w_gate_vec2[2]);
@@ -90,25 +87,14 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassA)(
   }
 
   if (thread_context.simd_lane_id == 0) {
-    float up_val = clamp(
-        acc_up + float(biases[bias_base + h_idx]),
-        up_clip_min,
-        up_clip_max
-    );
+    float up_val = clamp(acc_up + float(biases[bias_base + h_idx]), up_clip_min, up_clip_max);
 
     float activated;
     if (gating_sel <= 1) {
-      activated = (gating_sel == 0) ? activate_gelu(up_val)
-                                    : activate_silu_alpha(up_val, silu_alpha);
+      activated = (gating_sel == 0) ? activate_gelu(up_val) : activate_silu_alpha(up_val, silu_alpha);
     } else {
-      float gate_val = clamp(
-          acc_gate + float(biases[bias_base + d_ff + h_idx]),
-          gate_clip_min,
-          gate_clip_max
-      );
-      float gate_act = (gating_sel == 2)
-                           ? activate_silu_alpha(gate_val, silu_alpha)
-                           : activate_gelu(gate_val);
+      float gate_val = clamp(acc_gate + float(biases[bias_base + d_ff + h_idx]), gate_clip_min, gate_clip_max);
+      float gate_act = (gating_sel == 2) ? activate_silu_alpha(gate_val, silu_alpha) : activate_gelu(gate_val);
       activated = gate_act * up_val;
     }
 
@@ -153,8 +139,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
     const float prob = float(topk_probs[k]);
 
     device const float* hidden_ptr = hidden + (ulong)k * (ulong)d_ff;
-    device const T* w2_ptr = w2_all + (ulong)expert_u * w2_expert_stride +
-                             (ulong)my_col * (ulong)d_ff;
+    device const T* w2_ptr = w2_all + (ulong)expert_u * w2_expert_stride + (ulong)my_col * (ulong)d_ff;
 
     float acc = 0.0f;
 
@@ -162,10 +147,8 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
     for (uint i = 0; i < vec_iters; ++i) {
       uint base_idx = i * 128 + thread_context.simd_lane_id * 4;
 
-      float4 h_vec =
-          *reinterpret_cast<device const float4*>(hidden_ptr + base_idx);
-      device const T* w_vec2 =
-          reinterpret_cast<device const T*>(w2_ptr + base_idx);
+      float4 h_vec = *reinterpret_cast<device const float4*>(hidden_ptr + base_idx);
+      device const T* w_vec2 = reinterpret_cast<device const T*>(w2_ptr + base_idx);
       acc += h_vec.x * float(w_vec2[0]);
       acc += h_vec.y * float(w_vec2[1]);
       acc += h_vec.z * float(w_vec2[2]);
@@ -173,8 +156,7 @@ PUBLIC KERNEL(MoeExpertsDecodeSinglePassB)(
     }
 
     // Remainder
-    for (uint idx = vec_iters * 128 + thread_context.simd_lane_id; idx < d_ff;
-         idx += 32) {
+    for (uint idx = vec_iters * 128 + thread_context.simd_lane_id; idx < d_ff; idx += 32) {
       acc += hidden_ptr[idx] * float(w2_ptr[idx]);
     }
 

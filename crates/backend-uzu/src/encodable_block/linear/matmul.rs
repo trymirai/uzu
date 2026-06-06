@@ -181,6 +181,8 @@ impl<B: Backend> LinearMatmul<B> {
                     mode: weight_quantization_mode,
                     group_size: group_size as u32,
                 },
+                output_dim as u32,
+                input_dim as u32,
             )
             .map_err(LinearMatmulError::BackendError)?;
 

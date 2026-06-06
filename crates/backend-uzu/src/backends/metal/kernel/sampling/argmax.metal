@@ -17,19 +17,14 @@ bool argmax_is_better(ArgmaxPair a, ArgmaxPair b) {
   return a.value > b.value || (a.value == b.value && a.index < b.index);
 }
 
-ArgmaxPair argmax_combine(ArgmaxPair a, ArgmaxPair b) {
-  return argmax_is_better(a, b) ? a : b;
-}
+ArgmaxPair argmax_combine(ArgmaxPair a, ArgmaxPair b) { return argmax_is_better(a, b) ? a : b; }
 
 struct SimdReduceArgmax {
   using value_type = ArgmaxPair;
   static constant constexpr ArgmaxPair identity = ARGMAX_INIT;
   static ArgmaxPair simd_reduce(ArgmaxPair x) {
     for (ushort offset = 16; offset > 0; offset /= 2) {
-      ArgmaxPair other = {
-          simd_shuffle_down(x.value, offset),
-          simd_shuffle_down(x.index, offset)
-      };
+      ArgmaxPair other = {simd_shuffle_down(x.value, offset), simd_shuffle_down(x.index, offset)};
       x = argmax_combine(x, other);
     }
     return x;
@@ -37,9 +32,7 @@ struct SimdReduceArgmax {
 };
 
 template <ushort GRAIN_SIZE_PARAM>
-static inline ArgmaxPair thread_argmax_reduce(
-    thread ArgmaxPair (&values)[GRAIN_SIZE_PARAM]
-) {
+static inline ArgmaxPair thread_argmax_reduce(thread ArgmaxPair (&values)[GRAIN_SIZE_PARAM]) {
   ArgmaxPair result = values[0];
   for (ushort i = 1; i < GRAIN_SIZE_PARAM; i++) {
     result = argmax_combine(result, values[i]);
@@ -70,11 +63,7 @@ static void load_blocked_argmax_batched(
 }
 
 template <ushort BLOCK_SIZE_PARAM>
-static ArgmaxPair threadgroup_raking_argmax(
-    ArgmaxPair value,
-    threadgroup ArgmaxPair* shared,
-    const ushort lid
-) {
+static ArgmaxPair threadgroup_raking_argmax(ArgmaxPair value, threadgroup ArgmaxPair* shared, const ushort lid) {
   shared[lid] = value;
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -90,17 +79,11 @@ static ArgmaxPair threadgroup_raking_argmax(
     ArgmaxPair simd_result = thread_result;
 
     for (ushort offset = 16; offset > 0; offset /= 2) {
-      ArgmaxPair other = {
-          simd_shuffle_down(simd_result.value, offset),
-          simd_shuffle_down(simd_result.index, offset)
-      };
+      ArgmaxPair other = {simd_shuffle_down(simd_result.value, offset), simd_shuffle_down(simd_result.index, offset)};
       simd_result = argmax_combine(simd_result, other);
     }
 
-    ArgmaxPair final_result = {
-        simd_broadcast(simd_result.value, 0),
-        simd_broadcast(simd_result.index, 0)
-    };
+    ArgmaxPair final_result = {simd_broadcast(simd_result.value, 0), simd_broadcast(simd_result.index, 0)};
 
     for (ushort i = first_index; i < first_index + values_per_thread; i++) {
       shared[i] = final_result;
@@ -132,23 +115,14 @@ PUBLIC KERNEL(ArgmaxSingle)(
   const uint elements_per_tile = BLOCK_SIZE * GRAIN_SIZE;
   ArgmaxPair best = ARGMAX_INIT;
 
-  for (uint vocab_offset = 0; vocab_offset < vocab_size;
-       vocab_offset += elements_per_tile) {
+  for (uint vocab_offset = 0; vocab_offset < vocab_size; vocab_offset += elements_per_tile) {
     ArgmaxPair buf[GRAIN_SIZE];
-    load_blocked_argmax_batched<GRAIN_SIZE>(
-        buf,
-        logits_data,
-        local_id,
-        batch_idx,
-        vocab_offset,
-        vocab_size
-    );
+    load_blocked_argmax_batched<GRAIN_SIZE>(buf, logits_data, local_id, batch_idx, vocab_offset, vocab_size);
     ArgmaxPair tile_best = thread_argmax_reduce<GRAIN_SIZE>(buf);
     best = argmax_combine(best, tile_best);
   }
 
-  ArgmaxPair group_best =
-      threadgroup_raking_argmax<BLOCK_SIZE>(best, shared, local_id);
+  ArgmaxPair group_best = threadgroup_raking_argmax<BLOCK_SIZE>(best, shared, local_id);
 
   if (local_id == 0) {
     final_tokens[batch_idx] = group_best.index;
@@ -178,26 +152,14 @@ PUBLIC KERNEL(ArgmaxMain)(
   const uint vocab_offset = vocab_group_idx * elements_per_group;
 
   ArgmaxPair values[GRAIN_SIZE];
-  load_blocked_argmax_batched<GRAIN_SIZE>(
-      values,
-      logits_data,
-      local_id,
-      batch_idx,
-      vocab_offset,
-      vocab_size
-  );
+  load_blocked_argmax_batched<GRAIN_SIZE>(values, logits_data, local_id, batch_idx, vocab_offset, vocab_size);
 
   ArgmaxPair thread_result = thread_argmax_reduce<GRAIN_SIZE>(values);
   ArgmaxPair group_result =
-      threadgroup_cooperative_reduce<SimdReduceArgmax, BLOCK_SIZE>(
-          thread_result,
-          shared,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceArgmax, BLOCK_SIZE>(thread_result, shared, thread_context);
 
   if (local_id == 0) {
-    uint vocab_groups_per_batch =
-        (vocab_size + elements_per_group - 1) / elements_per_group;
+    uint vocab_groups_per_batch = (vocab_size + elements_per_group - 1) / elements_per_group;
     uint partial_idx = batch_idx * vocab_groups_per_batch + vocab_group_idx;
     partial_results[partial_idx] = group_result;
   }
@@ -218,23 +180,17 @@ PUBLIC KERNEL(ArgmaxFinal)(
     return;
 
   const uint elements_per_group = BLOCK_SIZE * GRAIN_SIZE;
-  const uint vocab_groups_per_batch =
-      (vocab_size + elements_per_group - 1) / elements_per_group;
+  const uint vocab_groups_per_batch = (vocab_size + elements_per_group - 1) / elements_per_group;
   const uint partial_offset = batch_idx * vocab_groups_per_batch;
 
   ArgmaxPair thread_result = ARGMAX_INIT;
 
   for (uint i = local_id; i < vocab_groups_per_batch; i += BLOCK_SIZE) {
-    thread_result =
-        argmax_combine(thread_result, partial_results[partial_offset + i]);
+    thread_result = argmax_combine(thread_result, partial_results[partial_offset + i]);
   }
 
   ArgmaxPair result =
-      threadgroup_cooperative_reduce<SimdReduceArgmax, BLOCK_SIZE>(
-          thread_result,
-          shared,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceArgmax, BLOCK_SIZE>(thread_result, shared, thread_context);
 
   if (local_id == 0) {
     final_tokens[batch_idx] = result.index;
