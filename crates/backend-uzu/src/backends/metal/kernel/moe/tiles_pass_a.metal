@@ -108,8 +108,7 @@ PUBLIC KERNEL(MoePassABuildTileMap)(
   const uint expert_idx = row_expert_map[row_idx];
   const uint row_start = expert_offsets[expert_idx];
   const uint row_in_expert = row_idx - row_start;
-  const uint tile_base =
-      tile_offsets[expert_idx] + row_in_expert * h_blocks + h_block;
+  const uint tile_base = tile_offsets[expert_idx] + row_in_expert * h_blocks + h_block;
 
   tile_map[tile_base * 3 + 0] = h_block;
   tile_map[tile_base * 3 + 1] = expert_idx;
@@ -119,9 +118,8 @@ PUBLIC KERNEL(MoePassABuildTileMap)(
 // Write dispatch args for indirect dispatch (reusable from tiled version)
 PUBLIC KERNEL(MoePassAWriteDispatchArgs)(
     device const uint* total_tiles, // [1]
-    device uint*
-        dispatch_args, // [3] - MTLDispatchThreadgroupsIndirectArguments
-    constant uint& num_tiles_y, // usually 1 for Pass A
+    device uint* dispatch_args,     // [3] - MTLDispatchThreadgroupsIndirectArguments
+    constant uint& num_tiles_y,     // usually 1 for Pass A
     uint tid AXIS(1, 1)
 ) {
   dispatch_args[0] = total_tiles[0]; // x dimension = total tiles

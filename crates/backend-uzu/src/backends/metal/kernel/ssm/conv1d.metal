@@ -87,8 +87,7 @@ PUBLIC KERNEL(Conv1dDecode)(
     const uint dst = token_idx * proj_dim + (channel_idx - inner_dim);
     b_out[dst] = activated;
   } else if (channel_idx < inner_dim + 2 * proj_dim) {
-    const uint dst =
-        token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
+    const uint dst = token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
     c_out[dst] = activated;
   }
 
@@ -153,8 +152,7 @@ PUBLIC KERNEL(Conv1dScan)(
       const uint dst = token_idx * proj_dim + (channel_idx - inner_dim);
       b_out[dst] = activated;
     } else if (channel_idx < inner_dim + 2 * proj_dim) {
-      const uint dst =
-          token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
+      const uint dst = token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
       c_out[dst] = activated;
     }
   } else if (tap_count > 0) {

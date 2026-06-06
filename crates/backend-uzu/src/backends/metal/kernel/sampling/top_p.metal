@@ -35,42 +35,22 @@ PUBLIC KERNEL(TopP) (
   for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
     float logit_value = float(logits[batch_start + i]);
     local_max = fmax(local_max, logit_value);
-    local_min = select(
-        local_min,
-        fmin(local_min, logit_value),
-        logit_value > -INFINITY
-    );
+    local_min = select(local_min, fmin(local_min, logit_value), logit_value > -INFINITY);
   }
   float max_logit =
-      threadgroup_cooperative_reduce<SimdReduceMax<float>, BLOCK_SIZE>(
-          local_max,
-          shared_reduce_buffer,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceMax<float>, BLOCK_SIZE>(local_max, shared_reduce_buffer, thread_context);
   float min_logit =
-      threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(
-          local_min,
-          shared_reduce_buffer,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(local_min, shared_reduce_buffer, thread_context);
 
   // Find denominator for softmax
   float local_sum = 0.0f;
 #pragma unroll(4)
   for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
     float logit_value = float(logits[batch_start + i]);
-    local_sum += select(
-        0.0,
-        fast::exp(logit_value - max_logit),
-        logit_value > -INFINITY
-    );
+    local_sum += select(0.0, fast::exp(logit_value - max_logit), logit_value > -INFINITY);
   }
   float total_sum =
-      threadgroup_cooperative_reduce<SimdReduceSum<float>, BLOCK_SIZE>(
-          local_sum,
-          shared_reduce_buffer,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, BLOCK_SIZE>(local_sum, shared_reduce_buffer, thread_context);
 
   // Do the binary search on the threshold
   float target_mass = top_p * total_sum;
@@ -87,29 +67,23 @@ PUBLIC KERNEL(TopP) (
     for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
       float logit_value = float(logits[batch_start + i]);
       float logit_mass = fast::exp(logit_value - max_logit);
-      local_sum_above_threshold +=
-          select(0.0, logit_mass, logit_value >= threshold);
-      local_min_above_threshold = fmin(
-          local_min_above_threshold,
-          select(INFINITY, logit_mass, logit_value >= threshold)
-      );
+      local_sum_above_threshold += select(0.0, logit_mass, logit_value >= threshold);
+      local_min_above_threshold =
+          fmin(local_min_above_threshold, select(INFINITY, logit_mass, logit_value >= threshold));
     }
-    float sum_above_threshold =
-        threadgroup_cooperative_reduce<SimdReduceSum<float>, BLOCK_SIZE>(
-            local_sum_above_threshold,
-            shared_reduce_buffer,
-            thread_context
-        );
-    float min_above_threshold =
-        threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(
-            local_min_above_threshold,
-            shared_reduce_buffer,
-            thread_context
-        );
+    float sum_above_threshold = threadgroup_cooperative_reduce<SimdReduceSum<float>, BLOCK_SIZE>(
+        local_sum_above_threshold,
+        shared_reduce_buffer,
+        thread_context
+    );
+    float min_above_threshold = threadgroup_cooperative_reduce<SimdReduceMin<float>, BLOCK_SIZE>(
+        local_min_above_threshold,
+        shared_reduce_buffer,
+        thread_context
+    );
 
     // Early exit
-    if (sum_above_threshold >= target_mass &&
-        sum_above_threshold - min_above_threshold < target_mass) {
+    if (sum_above_threshold >= target_mass && sum_above_threshold - min_above_threshold < target_mass) {
       break;
     }
     // Update binary search
@@ -127,7 +101,6 @@ PUBLIC KERNEL(TopP) (
 #pragma unroll(4)
   for (uint i = thread_idx; i < vocab_size; i += BLOCK_SIZE) {
     T logit_value = logits[batch_start + i];
-    processed_logits[batch_start + i] =
-        select(T(-INFINITY), logit_value, logit_value >= t_threshold);
+    processed_logits[batch_start + i] = select(T(-INFINITY), logit_value, logit_value >= t_threshold);
   }
 }

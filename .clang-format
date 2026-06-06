@@ -1,7 +1,7 @@
 BasedOnStyle: LLVM
 IndentWidth: 2
 ContinuationIndentWidth: 4
-ColumnLimit: 80
+ColumnLimit: 120
 
 # Keep return type with function name
 AlwaysBreakAfterReturnType: None

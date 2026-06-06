@@ -35,14 +35,9 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     const uint hv_idx GROUPS(num_v_heads),
     const uint tid THREADS(UPDATE_THREADS)
 ) {
-  static_assert(
-      HEAD_K_DIM % METAL_SIMD_SIZE == 0,
-      "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE"
-  );
-  constexpr uint ELEMS =
-      HEAD_K_DIM / METAL_SIMD_SIZE; // Dk per lane (128/32 = 4)
-  constexpr uint NUM_SG =
-      UPDATE_THREADS / METAL_SIMD_SIZE; // simd groups / tg (16)
+  static_assert(HEAD_K_DIM % METAL_SIMD_SIZE == 0, "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE");
+  constexpr uint ELEMS = HEAD_K_DIM / METAL_SIMD_SIZE;      // Dk per lane (128/32 = 4)
+  constexpr uint NUM_SG = UPDATE_THREADS / METAL_SIMD_SIZE; // simd groups / tg (16)
 
   const uint lane = tid % METAL_SIMD_SIZE;
   const uint sg = tid / METAL_SIMD_SIZE;
@@ -78,8 +73,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
   // beta / decay (scalar per head)
   const float beta_raw = float(in_proj[conv_dim + value_dim + hv_idx]);
   const float beta = 1.0f / (1.0f + fast::exp(-beta_raw));
-  const float a_raw =
-      float(in_proj[conv_dim + value_dim + num_v_heads + hv_idx]);
+  const float a_raw = float(in_proj[conv_dim + value_dim + num_v_heads + hv_idx]);
   const float sp = activate_softplus(a_raw + float(dt_bias[hv_idx]));
   const float decay = fast::exp(-fast::exp(float(a_log[hv_idx])) * sp);
 
@@ -122,11 +116,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
     o_sq += o * o;
   }
   const float o_sumsq =
-      threadgroup_cooperative_reduce<SimdReduceSum<float>, UPDATE_THREADS>(
-          o_sq,
-          shared_scratch,
-          thread_context
-      );
+      threadgroup_cooperative_reduce<SimdReduceSum<float>, UPDATE_THREADS>(o_sq, shared_scratch, thread_context);
   const float inv_rms = rsqrt(o_sumsq / float(head_v_dim) + norm_epsilon);
 
   for (uint dv = sg; dv < head_v_dim; dv += NUM_SG) {
@@ -134,8 +124,7 @@ PUBLIC KERNEL(DeltaNetUpdate)(
       const float nw = float(norm_weight[dv]);
       const float z_i = float(in_proj[conv_dim + hv_idx * head_v_dim + dv]);
       const float z_silu = activate_silu(z_i);
-      out[hv_idx * head_v_dim + dv] =
-          static_cast<T>(shared_o[dv] * inv_rms * nw * z_silu);
+      out[hv_idx * head_v_dim + dv] = static_cast<T>(shared_o[dv] * inv_rms * nw * z_silu);
     }
   }
 }

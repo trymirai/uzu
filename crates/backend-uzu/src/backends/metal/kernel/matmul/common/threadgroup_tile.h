@@ -29,52 +29,27 @@ template <
     typename Epilogue = TransformNone<DT, AccumulatorType>>
 struct ThreadgroupTile {
   METAL_CONST ushort SIMDGROUP_BLOCK_SIZE = 8;
-  using SimdgroupMultiplyAccumulateType = SimdgroupMultiplyAccumulate<
-      AccumulatorType,
-      SIMDGROUP_BLOCK_SIZE,
-      SIMDGROUP_BLOCK_SIZE>;
+  using SimdgroupMultiplyAccumulateType =
+      SimdgroupMultiplyAccumulate<AccumulatorType, SIMDGROUP_BLOCK_SIZE, SIMDGROUP_BLOCK_SIZE>;
 
-  METAL_CONST ushort TILE_ROW_STRIDE =
-      SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
-  METAL_CONST ushort TILE_COL_STRIDE =
-      SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+  METAL_CONST ushort TILE_ROW_STRIDE = SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
+  METAL_CONST ushort TILE_COL_STRIDE = SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
 
-  METAL_CONST ushort TILE_ROWS =
-      BLOCK_ROWS / (SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW);
-  METAL_CONST ushort TILE_COLS =
-      BLOCK_COLS / (SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN);
+  METAL_CONST ushort TILE_ROWS = BLOCK_ROWS / (SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW);
+  METAL_CONST ushort TILE_COLS = BLOCK_COLS / (SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN);
 
-  METAL_CONST ushort A_STRIDE_ROW =
-      transpose_a ? 1 : THREADGROUP_LEADING_DIMENSION_A;
-  METAL_CONST ushort A_STRIDE_INNER =
-      transpose_a ? THREADGROUP_LEADING_DIMENSION_A : 1;
+  METAL_CONST ushort A_STRIDE_ROW = transpose_a ? 1 : THREADGROUP_LEADING_DIMENSION_A;
+  METAL_CONST ushort A_STRIDE_INNER = transpose_a ? THREADGROUP_LEADING_DIMENSION_A : 1;
 
-  METAL_CONST ushort B_STRIDE_INNER =
-      transpose_b ? 1 : THREADGROUP_LEADING_DIMENSION_B;
-  METAL_CONST ushort B_STRIDE_COL =
-      transpose_b ? THREADGROUP_LEADING_DIMENSION_B : 1;
+  METAL_CONST ushort B_STRIDE_INNER = transpose_b ? 1 : THREADGROUP_LEADING_DIMENSION_B;
+  METAL_CONST ushort B_STRIDE_COL = transpose_b ? THREADGROUP_LEADING_DIMENSION_B : 1;
 
   METAL_CONST ushort TILE_STRIDE_A = SIMDGROUP_BLOCK_SIZE * A_STRIDE_INNER;
   METAL_CONST ushort TILE_STRIDE_B = SIMDGROUP_BLOCK_SIZE * B_STRIDE_INNER;
 
-  SimdgroupFragment<
-      AccumulatorType,
-      TILE_ROWS,
-      1,
-      SimdgroupMultiplyAccumulateType>
-      a_fragment;
-  SimdgroupFragment<
-      AccumulatorType,
-      1,
-      TILE_COLS,
-      SimdgroupMultiplyAccumulateType>
-      b_fragment;
-  SimdgroupFragment<
-      AccumulatorType,
-      TILE_ROWS,
-      TILE_COLS,
-      SimdgroupMultiplyAccumulateType>
-      c_fragment;
+  SimdgroupFragment<AccumulatorType, TILE_ROWS, 1, SimdgroupMultiplyAccumulateType> a_fragment;
+  SimdgroupFragment<AccumulatorType, 1, TILE_COLS, SimdgroupMultiplyAccumulateType> b_fragment;
+  SimdgroupFragment<AccumulatorType, TILE_ROWS, TILE_COLS, SimdgroupMultiplyAccumulateType> c_fragment;
 
   ushort simdgroup_row_offset;
   ushort simdgroup_col_offset;
@@ -83,53 +58,30 @@ struct ThreadgroupTile {
   ushort b_shared_offset;
 
   METAL_FUNC ThreadgroupTile(const thread ThreadContext& thread_context) {
-    ushort tile_row_base =
-        SIMDGROUP_BLOCK_SIZE *
-        (thread_context.simdgroup_index / SIMDGROUPS_PER_COLUMN);
-    ushort tile_col_base =
-        SIMDGROUP_BLOCK_SIZE *
-        (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
+    ushort tile_row_base = SIMDGROUP_BLOCK_SIZE * (thread_context.simdgroup_index / SIMDGROUPS_PER_COLUMN);
+    ushort tile_col_base = SIMDGROUP_BLOCK_SIZE * (thread_context.simdgroup_index % SIMDGROUPS_PER_COLUMN);
 
-    const ushort2 simdgroup_coordinates = ushort2(
-        SimdgroupMultiplyAccumulateType::get_lane_coordinates(
-            thread_context.simd_lane_id
-        )
-    );
+    const ushort2 simdgroup_coordinates =
+        ushort2(SimdgroupMultiplyAccumulateType::get_lane_coordinates(thread_context.simd_lane_id));
     simdgroup_row_offset = simdgroup_coordinates.y;
     simdgroup_col_offset = simdgroup_coordinates.x;
 
-    a_shared_offset = (tile_row_base + simdgroup_row_offset) * A_STRIDE_ROW +
-                      (simdgroup_col_offset)*A_STRIDE_INNER;
-    b_shared_offset = (simdgroup_row_offset)*B_STRIDE_INNER +
-                      (tile_col_base + simdgroup_col_offset) * B_STRIDE_COL;
+    a_shared_offset = (tile_row_base + simdgroup_row_offset) * A_STRIDE_ROW + (simdgroup_col_offset)*A_STRIDE_INNER;
+    b_shared_offset = (simdgroup_row_offset)*B_STRIDE_INNER + (tile_col_base + simdgroup_col_offset) * B_STRIDE_COL;
 
     simdgroup_row_offset += tile_row_base;
     simdgroup_col_offset += tile_col_base;
   }
 
-  METAL_FUNC void multiply_accumulate(
-      const threadgroup AT* a_shared,
-      const threadgroup BT* b_shared
-  ) {
+  METAL_FUNC void multiply_accumulate(const threadgroup AT* a_shared, const threadgroup BT* b_shared) {
     a_shared += a_shared_offset;
     b_shared += b_shared_offset;
 
     METAL_PRAGMA_UNROLL
-    for (ushort k_block_index = 0; k_block_index < BLOCK_DEPTH;
-         k_block_index += SIMDGROUP_BLOCK_SIZE) {
-      a_fragment.template load<
-          AT,
-          SIMDGROUPS_PER_ROW,
-          1,
-          A_STRIDE_ROW,
-          A_STRIDE_INNER>(a_shared);
+    for (ushort k_block_index = 0; k_block_index < BLOCK_DEPTH; k_block_index += SIMDGROUP_BLOCK_SIZE) {
+      a_fragment.template load<AT, SIMDGROUPS_PER_ROW, 1, A_STRIDE_ROW, A_STRIDE_INNER>(a_shared);
 
-      b_fragment.template load<
-          BT,
-          1,
-          SIMDGROUPS_PER_COLUMN,
-          B_STRIDE_INNER,
-          B_STRIDE_COL>(b_shared);
+      b_fragment.template load<BT, 1, SIMDGROUPS_PER_COLUMN, B_STRIDE_INNER, B_STRIDE_COL>(b_shared);
 
       tile_multiply_accumulate(c_fragment, a_fragment, b_fragment, c_fragment);
 
@@ -146,36 +98,26 @@ struct ThreadgroupTile {
 
     D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
 
-    c_fragment.template store<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(
-        D,
-        leading_dimension_d
-    );
+    c_fragment.template store<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(D, leading_dimension_d);
   }
 
-  METAL_FUNC void store_result_safe(
-      device DT* D,
-      const int leading_dimension_d,
-      short2 destination_tile_dimensions
-  ) {
+  METAL_FUNC void store_result_safe(device DT* D, const int leading_dimension_d, short2 destination_tile_dimensions) {
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < decltype(c_fragment)::ELEMENTS_PER_FRAGMENT; i++) {
       c_fragment.elements()[i] = Epilogue::apply(c_fragment.elements()[i]);
     }
 
     D += simdgroup_row_offset * leading_dimension_d + simdgroup_col_offset;
-    destination_tile_dimensions -=
-        short2(simdgroup_col_offset, simdgroup_row_offset);
+    destination_tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
 
-    if (destination_tile_dimensions.x <= 0 ||
-        destination_tile_dimensions.y <= 0)
+    if (destination_tile_dimensions.x <= 0 || destination_tile_dimensions.y <= 0)
       return;
 
-    c_fragment
-        .template store_safe<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(
-            D,
-            leading_dimension_d,
-            destination_tile_dimensions
-        );
+    c_fragment.template store_safe<DT, SIMDGROUPS_PER_ROW, SIMDGROUPS_PER_COLUMN>(
+        D,
+        leading_dimension_d,
+        destination_tile_dimensions
+    );
   }
 
   template <typename EpilogueOp>
@@ -185,9 +127,8 @@ struct ThreadgroupTile {
       const int column_stride_c,
       thread const EpilogueOp& epilogue_operation
   ) {
-    const device DT* c_pointer = C +
-                                 simdgroup_row_offset * leading_dimension_c +
-                                 simdgroup_col_offset * column_stride_c;
+    const device DT* c_pointer =
+        C + simdgroup_row_offset * leading_dimension_c + simdgroup_col_offset * column_stride_c;
 
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < TILE_ROWS; i++) {
@@ -195,20 +136,11 @@ struct ThreadgroupTile {
       for (ushort j = 0; j < TILE_COLS; j++) {
         thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
         METAL_PRAGMA_UNROLL
-        for (ushort k = 0;
-             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
-             k++) {
-          const ushort row_offset =
-              i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
-          const ushort col_offset =
-              j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
-          DT c_value = c_pointer
-              [row_offset * leading_dimension_c + col_offset * column_stride_c +
-               k];
-          block_data[k] = epilogue_operation.apply(
-              block_data[k],
-              static_cast<AccumulatorType>(c_value)
-          );
+        for (ushort k = 0; k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE; k++) {
+          const ushort row_offset = i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
+          const ushort col_offset = j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+          DT c_value = c_pointer[row_offset * leading_dimension_c + col_offset * column_stride_c + k];
+          block_data[k] = epilogue_operation.apply(block_data[k], static_cast<AccumulatorType>(c_value));
         }
       }
     }
@@ -222,9 +154,8 @@ struct ThreadgroupTile {
       short2 tile_dimensions,
       thread const EpilogueOp& epilogue_operation
   ) {
-    const device DT* c_pointer = C +
-                                 simdgroup_row_offset * leading_dimension_c +
-                                 simdgroup_col_offset * column_stride_c;
+    const device DT* c_pointer =
+        C + simdgroup_row_offset * leading_dimension_c + simdgroup_col_offset * column_stride_c;
     tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
 
     METAL_PRAGMA_UNROLL
@@ -233,21 +164,12 @@ struct ThreadgroupTile {
       for (ushort j = 0; j < TILE_COLS; j++) {
         thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
         const ushort row_offset = i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
-        const ushort col_offset =
-            j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+        const ushort col_offset = j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
         METAL_PRAGMA_UNROLL
-        for (ushort k = 0;
-             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
-             k++) {
-          if (row_offset < tile_dimensions.y &&
-              col_offset + k < tile_dimensions.x) {
-            DT c_value = c_pointer
-                [row_offset * leading_dimension_c +
-                 col_offset * column_stride_c + k];
-            block_data[k] = epilogue_operation.apply(
-                block_data[k],
-                static_cast<AccumulatorType>(c_value)
-            );
+        for (ushort k = 0; k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE; k++) {
+          if (row_offset < tile_dimensions.y && col_offset + k < tile_dimensions.x) {
+            DT c_value = c_pointer[row_offset * leading_dimension_c + col_offset * column_stride_c + k];
+            block_data[k] = epilogue_operation.apply(block_data[k], static_cast<AccumulatorType>(c_value));
           }
         }
       }
@@ -262,23 +184,16 @@ struct ThreadgroupTile {
       METAL_PRAGMA_UNROLL
       for (ushort j = 0; j < TILE_COLS; j++) {
         thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
-        const ushort col_offset =
-            j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+        const ushort col_offset = j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
         METAL_PRAGMA_UNROLL
-        for (ushort k = 0;
-             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
-             k++) {
-          block_data[k] +=
-              static_cast<AccumulatorType>(bias_pointer[col_offset + k]);
+        for (ushort k = 0; k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE; k++) {
+          block_data[k] += static_cast<AccumulatorType>(bias_pointer[col_offset + k]);
         }
       }
     }
   }
 
-  METAL_FUNC void apply_bias_safe(
-      const device BT* bias,
-      short2 tile_dimensions
-  ) {
+  METAL_FUNC void apply_bias_safe(const device BT* bias, short2 tile_dimensions) {
     const device BT* bias_pointer = bias + simdgroup_col_offset;
     tile_dimensions -= short2(simdgroup_col_offset, simdgroup_row_offset);
 
@@ -288,16 +203,11 @@ struct ThreadgroupTile {
       for (ushort j = 0; j < TILE_COLS; j++) {
         thread auto& block_data = c_fragment.multiply_accumulate_at(i, j);
         const ushort row_offset = i * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_ROW;
-        const ushort col_offset =
-            j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
+        const ushort col_offset = j * SIMDGROUP_BLOCK_SIZE * SIMDGROUPS_PER_COLUMN;
         METAL_PRAGMA_UNROLL
-        for (ushort k = 0;
-             k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE;
-             k++) {
-          if (row_offset < tile_dimensions.y &&
-              col_offset + k < tile_dimensions.x) {
-            block_data[k] +=
-                static_cast<AccumulatorType>(bias_pointer[col_offset + k]);
+        for (ushort k = 0; k < decltype(c_fragment)::ELEMENTS_PER_MULTIPLY_ACCUMULATE; k++) {
+          if (row_offset < tile_dimensions.y && col_offset + k < tile_dimensions.x) {
+            block_data[k] += static_cast<AccumulatorType>(bias_pointer[col_offset + k]);
           }
         }
       }

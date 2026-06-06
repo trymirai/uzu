@@ -45,11 +45,7 @@ inline void moe_scatter_buckets_impl(
     // Zero counts and bases for active tile
     for (uint te = lid; te < tile_e; te += BLOCK_SIZE) {
       for (uint sg = 0; sg < NUM_SG; ++sg) {
-        atomic_store_explicit(
-            &sg_counts[sg * TILE_E + te],
-            0u,
-            memory_order_relaxed
-        );
+        atomic_store_explicit(&sg_counts[sg * TILE_E + te], 0u, memory_order_relaxed);
         sg_base[sg * TILE_E + te] = 0u;
       }
     }
@@ -78,14 +74,12 @@ inline void moe_scatter_buckets_impl(
     // Phase 2: compute per-sg bases via prefix across sgs with capacity clamp
     for (uint te = lid; te < tile_e; te += BLOCK_SIZE) {
       const uint tile_id = e0 / TILE_E;
-      const uint base_idx_block =
-          (block_id * num_tiles + tile_id) * TILE_E + te;
+      const uint base_idx_block = (block_id * num_tiles + tile_id) * TILE_E + te;
       const uint alloc_total = block_alloc[base_idx_block];
       uint prefix = 0u;
       for (uint sg = 0; sg < NUM_SG; ++sg) {
         const uint idx = sg * TILE_E + te;
-        const uint c =
-            atomic_load_explicit(&sg_counts[idx], memory_order_relaxed);
+        const uint c = atomic_load_explicit(&sg_counts[idx], memory_order_relaxed);
         const uint room = (prefix < alloc_total) ? (alloc_total - prefix) : 0u;
         const uint take = min(c, room);
         sg_base[idx] = prefix;
@@ -93,11 +87,7 @@ inline void moe_scatter_buckets_impl(
       }
       // Reuse sg_counts as write indices: reset to zero
       for (uint sg = 0; sg < NUM_SG; ++sg) {
-        atomic_store_explicit(
-            &sg_counts[sg * TILE_E + te],
-            0u,
-            memory_order_relaxed
-        );
+        atomic_store_explicit(&sg_counts[sg * TILE_E + te], 0u, memory_order_relaxed);
       }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -115,19 +105,12 @@ inline void moe_scatter_buckets_impl(
               if (ue >= e0 && ue < e0 + tile_e) {
                 const uint te = ue - e0;
                 const uint tile_id = e0 / TILE_E;
-                const uint base_idx_block =
-                    (block_id * num_tiles + tile_id) * TILE_E + te;
-                const uint idx_sg_te =
-                    thread_context.simdgroup_index * TILE_E + te;
-                const uint local = atomic_fetch_add_explicit(
-                    &sg_counts[idx_sg_te],
-                    1u,
-                    memory_order_relaxed
-                );
+                const uint base_idx_block = (block_id * num_tiles + tile_id) * TILE_E + te;
+                const uint idx_sg_te = thread_context.simdgroup_index * TILE_E + te;
+                const uint local = atomic_fetch_add_explicit(&sg_counts[idx_sg_te], 1u, memory_order_relaxed);
                 const uint base_s = sg_base[idx_sg_te];
 
-                const uint slot =
-                    offsets[ue] + block_bases[base_idx_block] + base_s + local;
+                const uint slot = offsets[ue] + block_bases[base_idx_block] + base_s + local;
                 out_ids[slot] = (int)t;
                 out_probs[slot] = topk_probs[base + k];
                 if (tok2row_opt != nullptr) {
@@ -167,10 +150,7 @@ PUBLIC KERNEL(MoeBlockBasesFromPartials)(
   for (uint b = 0; b < num_blocks; ++b) {
     const uint idx = (b * num_tiles + tile_id) * TILE_E + te;
     const uint p = partials[idx];
-    const uint alloc = clamp ? (running < capacity_per_expert
-                                    ? min(p, capacity_per_expert - running)
-                                    : 0u)
-                             : p;
+    const uint alloc = clamp ? (running < capacity_per_expert ? min(p, capacity_per_expert - running) : 0u) : p;
     block_bases[idx] = running;
     block_alloc[idx] = alloc;
     running += alloc;

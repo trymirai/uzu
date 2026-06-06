@@ -10,10 +10,7 @@ using namespace metal;
 #define PREFILL_THREADS 128
 #define DV_PER_SIMDGROUP 4
 
-static_assert(
-    PREFILL_THREADS % METAL_SIMD_SIZE == 0,
-    "PREFILL_THREADS must be a multiple of METAL_SIMD_SIZE"
-);
+static_assert(PREFILL_THREADS % METAL_SIMD_SIZE == 0, "PREFILL_THREADS must be a multiple of METAL_SIMD_SIZE");
 
 template <typename T, uint HEAD_K_DIM>
 VARIANTS(T, float, half, bfloat)
@@ -37,10 +34,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     const uint dv_group GROUPS(num_dv_groups),
     const uint tid THREADS(PREFILL_THREADS)
 ) {
-  static_assert(
-      HEAD_K_DIM % METAL_SIMD_SIZE == 0,
-      "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE"
-  );
+  static_assert(HEAD_K_DIM % METAL_SIMD_SIZE == 0, "HEAD_K_DIM must be a multiple of METAL_SIMD_SIZE");
   constexpr uint ELEMS = HEAD_K_DIM / METAL_SIMD_SIZE;
   constexpr uint NUM_SG = PREFILL_THREADS / METAL_SIMD_SIZE;
   static_assert(ELEMS == 4, "float4 prefill requires ELEMS == 4");
@@ -66,8 +60,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
   // State layout: [Hv, Dv, Dk], contiguous along Dk (HEAD_K_DIM floats/row).
   // Unrolled by hand: METAL_PRAGMA_UNROLL is ignored under metal4.0 -O2, so a
   // loop over s[i] keeps the array in an alloca and reloads it every token.
-  device const float* s_in =
-      state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
+  device const float* s_in = state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
   float4 s[DV_PER_SIMDGROUP];
   s[0] = *reinterpret_cast<device const float4*>(s_in + 0 * HEAD_K_DIM);
   s[1] = *reinterpret_cast<device const float4*>(s_in + 1 * HEAD_K_DIM);
@@ -84,16 +77,10 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     s[1] *= decay;
     s[2] *= decay;
     s[3] *= decay;
-    float4 kv_mem =
-        float4(dot(s[0], k), dot(s[1], k), dot(s[2], k), dot(s[3], k));
+    float4 kv_mem = float4(dot(s[0], k), dot(s[1], k), dot(s[2], k), dot(s[3], k));
     kv_mem = simd_sum(kv_mem);
 
-    float4 v_val = float4(
-        float(v_row[0]),
-        float(v_row[1]),
-        float(v_row[2]),
-        float(v_row[3])
-    );
+    float4 v_val = float4(float(v_row[0]), float(v_row[1]), float(v_row[2]), float(v_row[3]));
     float4 delta = beta * (v_val - kv_mem);
     s[0] += k * delta[0];
     s[1] += k * delta[1];
@@ -117,8 +104,7 @@ PUBLIC KERNEL(DeltaNetPrefill)(
     out_row += value_dim;
   }
 
-  device float* s_out =
-      state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
+  device float* s_out = state + (hv_idx * head_v_dim + dv_idx) * HEAD_K_DIM + dk_base;
   *reinterpret_cast<device float4*>(s_out + 0 * HEAD_K_DIM) = s[0];
   *reinterpret_cast<device float4*>(s_out + 1 * HEAD_K_DIM) = s[1];
   *reinterpret_cast<device float4*>(s_out + 2 * HEAD_K_DIM) = s[2];

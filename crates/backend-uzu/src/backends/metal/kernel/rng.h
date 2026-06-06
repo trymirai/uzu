@@ -43,11 +43,7 @@ inline void philox4x32bumpkey(thread uint* key) {
   key[1] += PHILOX_W32_1;
 }
 
-inline void curand_philox4x32_10(
-    thread uint* ctr,
-    thread uint* key,
-    thread uint* out
-) {
+inline void curand_philox4x32_10(thread uint* ctr, thread uint* key, thread uint* out) {
   uint local_ctr[4] = {ctr[0], ctr[1], ctr[2], ctr[3]};
   uint local_key[2] = {key[0], key[1]};
 
@@ -90,11 +86,7 @@ inline void philox_state_incr(thread PhiloxState* s) {
   ++s->ctr[3];
 }
 
-inline void philox_init(
-    thread PhiloxState* state,
-    uint64_t seed,
-    uint64_t offset
-) {
+inline void philox_init(thread PhiloxState* state, uint64_t seed, uint64_t offset) {
   // Initialize key from seed
   state->key[0] = uint(seed);
   state->key[1] = uint(seed >> 32);
