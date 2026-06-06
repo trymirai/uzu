@@ -46,10 +46,12 @@ pub fn SelectedModel(
 
             let mut stream = engine.storage_subscribe().await;
 
-            if let Some(initial) = downloader.state().await
-                && let Some(model_state) = state.write().model_state.as_mut()
-            {
-                model_state.download_state = initial;
+            let mut was_downloaded = false;
+            if let Some(initial) = downloader.state().await {
+                was_downloaded = matches!(initial.phase, DownloadPhase::Downloaded {});
+                if let Some(model_state) = state.write().model_state.as_mut() {
+                    model_state.download_state = initial;
+                }
             }
 
             if downloader.resume().await.is_err() {
@@ -73,7 +75,8 @@ pub fn SelectedModel(
                     last_progress_rendered_at = None;
                 }
 
-                let became_downloaded = matches!(event_state.phase, DownloadPhase::Downloaded {});
+                let became_downloaded = !was_downloaded && matches!(event_state.phase, DownloadPhase::Downloaded {});
+                was_downloaded = matches!(event_state.phase, DownloadPhase::Downloaded {});
                 if let Some(model_state) = state.write().model_state.as_mut() {
                     model_state.download_state = event_state;
                 }

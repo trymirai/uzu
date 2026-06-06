@@ -111,29 +111,27 @@ fn step_f64(
     (next * 100.0).round() / 100.0
 }
 
-fn seed_defaults(
-    preferences: &mut Preferences,
-    defaults: ModelSamplingDefaults,
-) {
-    if !preferences.sampling.temperature_enabled
-        && let Some(value) = defaults.temperature
-    {
-        preferences.sampling.temperature = value;
+fn float_value(
+    enabled: bool,
+    value: f64,
+    default: Option<f64>,
+) -> String {
+    if enabled {
+        format!("{value:.2}")
+    } else {
+        default.map(|value| format!("{value:.2}")).unwrap_or_else(|| "—".to_string())
     }
-    if !preferences.sampling.top_k_enabled
-        && let Some(value) = defaults.top_k
-    {
-        preferences.sampling.top_k = value;
-    }
-    if !preferences.sampling.top_p_enabled
-        && let Some(value) = defaults.top_p
-    {
-        preferences.sampling.top_p = value;
-    }
-    if !preferences.sampling.min_p_enabled
-        && let Some(value) = defaults.min_p
-    {
-        preferences.sampling.min_p = value;
+}
+
+fn int_value(
+    enabled: bool,
+    value: i64,
+    default: Option<i64>,
+) -> String {
+    if enabled {
+        value.to_string()
+    } else {
+        default.map(|value| value.to_string()).unwrap_or_else(|| "—".to_string())
     }
 }
 
@@ -155,15 +153,11 @@ fn SettingsFlowView(
     let support = capabilities.thinking;
     let defaults = capabilities.sampling_defaults;
 
-    let mut draft = hooks.use_state(|| {
-        let mut preferences = state.read().preferences;
-        seed_defaults(&mut preferences, defaults);
-        preferences
-    });
+    let mut draft = hooks.use_state(|| state.read().preferences);
     let mut selected_index = hooks.use_state(|| 0usize);
 
-    let current = draft.get();
-    let fields = visible_fields(&current, support);
+    let preferences = draft.get();
+    let fields = visible_fields(&preferences, support);
     if selected_index.get() >= fields.len() {
         selected_index.set(fields.len().saturating_sub(1));
     }
@@ -244,27 +238,26 @@ fn SettingsFlowView(
     });
 
     let theme = state.read().theme.clone();
-    let preferences = current;
     let selected = fields.get(selected_index.get().min(fields.len().saturating_sub(1))).copied();
     let padding = theme.padding();
 
     let mut rows: Vec<AnyElement<'static>> = vec![section_header("Thinking", &theme)];
     if support.is_adjustable() {
-        rows.push(field_row(Field::Thinking, &preferences, selected, &theme, support));
+        rows.push(field_row(Field::Thinking, &preferences, selected, &theme, support, defaults));
     } else {
-        rows.push(info_row("Thinking", &support.value_label(), &theme));
+        rows.push(info_row("Thinking", support.value_label(), &theme));
     }
 
     rows.push(section_header("Sampling", &theme));
-    rows.push(field_row(Field::SamplingMode, &preferences, selected, &theme, support));
+    rows.push(field_row(Field::SamplingMode, &preferences, selected, &theme, support, defaults));
     match preferences.sampling.mode {
         SamplingMode::ModelDefault => rows.push(info_row("", &format!("uses {}", defaults.summary()), &theme)),
         SamplingMode::Greedy => {},
         SamplingMode::Stochastic => {
-            rows.push(field_row(Field::Temperature, &preferences, selected, &theme, support));
-            rows.push(field_row(Field::TopK, &preferences, selected, &theme, support));
-            rows.push(field_row(Field::TopP, &preferences, selected, &theme, support));
-            rows.push(field_row(Field::MinP, &preferences, selected, &theme, support));
+            rows.push(field_row(Field::Temperature, &preferences, selected, &theme, support, defaults));
+            rows.push(field_row(Field::TopK, &preferences, selected, &theme, support, defaults));
+            rows.push(field_row(Field::TopP, &preferences, selected, &theme, support, defaults));
+            rows.push(field_row(Field::MinP, &preferences, selected, &theme, support, defaults));
         },
     }
 
@@ -283,7 +276,7 @@ fn SettingsFlowView(
 fn thinking_summary(
     support: ThinkingSupport,
     preferences: &Preferences,
-) -> String {
+) -> &'static str {
     support.with_preference(&preferences.thinking).value_label()
 }
 
@@ -322,6 +315,7 @@ fn field_row(
     selected: Option<Field>,
     theme: &Theme,
     support: ThinkingSupport,
+    defaults: ModelSamplingDefaults,
 ) -> AnyElement<'static> {
     let is_selected = selected == Some(field);
     let marker = if is_selected {
@@ -338,14 +332,18 @@ fn field_row(
     let (label, control): (&str, AnyElement<'static>) = match field {
         Field::Thinking => (
             "Thinking",
-            cycle_control(&support.with_preference(&preferences.thinking).value_label(), value_color, theme),
+            cycle_control(support.with_preference(&preferences.thinking).value_label(), value_color, theme),
         ),
         Field::SamplingMode => ("Sampling", cycle_control(preferences.sampling.mode.label(), value_color, theme)),
         Field::Temperature => (
             "Temperature",
             toggle_control(
                 preferences.sampling.temperature_enabled,
-                format!("{:.2}", preferences.sampling.temperature),
+                float_value(
+                    preferences.sampling.temperature_enabled,
+                    preferences.sampling.temperature,
+                    defaults.temperature,
+                ),
                 is_selected,
                 theme,
             ),
@@ -354,7 +352,7 @@ fn field_row(
             "Top K",
             toggle_control(
                 preferences.sampling.top_k_enabled,
-                preferences.sampling.top_k.to_string(),
+                int_value(preferences.sampling.top_k_enabled, preferences.sampling.top_k, defaults.top_k),
                 is_selected,
                 theme,
             ),
@@ -363,7 +361,7 @@ fn field_row(
             "Top P",
             toggle_control(
                 preferences.sampling.top_p_enabled,
-                format!("{:.2}", preferences.sampling.top_p),
+                float_value(preferences.sampling.top_p_enabled, preferences.sampling.top_p, defaults.top_p),
                 is_selected,
                 theme,
             ),
@@ -372,7 +370,7 @@ fn field_row(
             "Min P",
             toggle_control(
                 preferences.sampling.min_p_enabled,
-                format!("{:.2}", preferences.sampling.min_p),
+                float_value(preferences.sampling.min_p_enabled, preferences.sampling.min_p, defaults.min_p),
                 is_selected,
                 theme,
             ),

@@ -6,6 +6,7 @@ use crate::settings::{SettingKind, Settings, SettingsError};
 const SETTINGS_PREFERENCES: &str = "cli_preferences";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ThinkingPreference {
     pub level: ReasoningEffort,
     pub enabled: bool,
@@ -50,6 +51,7 @@ impl SamplingMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SamplingPreferences {
     pub mode: SamplingMode,
     pub temperature_enabled: bool,
@@ -125,6 +127,7 @@ impl SamplingPreferences {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct Preferences {
     pub thinking: ThinkingPreference,
     pub sampling: SamplingPreferences,

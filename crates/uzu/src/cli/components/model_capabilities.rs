@@ -24,18 +24,13 @@ fn level_label(effort: ReasoningEffort) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThinkingSupport {
     Levels(ReasoningEffort),
     Toggle(bool),
     AlwaysOn,
+    #[default]
     Unsupported,
-}
-
-impl Default for ThinkingSupport {
-    fn default() -> Self {
-        Self::Toggle(true)
-    }
 }
 
 impl ThinkingSupport {
@@ -76,13 +71,13 @@ impl ThinkingSupport {
         }
     }
 
-    pub fn value_label(self) -> String {
+    pub fn value_label(self) -> &'static str {
         match self {
-            Self::Levels(effort) => level_label(effort).to_string(),
-            Self::Toggle(true) => "on".to_string(),
-            Self::Toggle(false) => "off".to_string(),
-            Self::AlwaysOn => "always on".to_string(),
-            Self::Unsupported => "not supported".to_string(),
+            Self::Levels(effort) => level_label(effort),
+            Self::Toggle(true) => "on",
+            Self::Toggle(false) => "off",
+            Self::AlwaysOn => "always on",
+            Self::Unsupported => "not supported",
         }
     }
 
@@ -144,15 +139,15 @@ impl ModelCapabilities {
                 sampling_defaults: ModelSamplingDefaults::default(),
             };
         }
-        match engine.model_path(model).await {
-            Some(path) => Self::from_dir(Path::new(&path)).unwrap_or_default(),
-            None => Self::default(),
-        }
+        let Some(path) = engine.model_path(model).await else {
+            return Self::default();
+        };
+        let raw = tokio::fs::read_to_string(Path::new(&path).join("config.json")).await.ok();
+        raw.and_then(|raw| Self::from_config(&raw)).unwrap_or_default()
     }
 
-    fn from_dir(directory: &Path) -> Option<Self> {
-        let raw = std::fs::read_to_string(directory.join("config.json")).ok()?;
-        let json: Value = serde_json::from_str(&raw).ok()?;
+    fn from_config(raw: &str) -> Option<Self> {
+        let json: Value = serde_json::from_str(raw).ok()?;
 
         let codec = json.get("token_codec_config");
         let template = codec.and_then(|codec| codec.get("prompt_template")).and_then(Value::as_str).unwrap_or_default();
