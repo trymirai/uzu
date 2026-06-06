@@ -1,6 +1,6 @@
 use super::{
     error::GemmSpecializationError,
-    kernel::{select_mxu_quant_tiling, select_quant_tiling},
+    kernel::{select_mxu_quant_tiling, select_mxu_tiling, select_quant_tiling, select_simdgroup_tiling},
 };
 use crate::{
     backends::common::{
@@ -63,68 +63,58 @@ impl GemmSpecialization {
         Ok(())
     }
 
-    pub(crate) fn precompile_configs(weights_data_type: DataType) -> Vec<Self> {
+    pub(crate) fn full_precision_combo_specs(
+        weights_data_type: DataType,
+        n: u32,
+        k: u32,
+        output_transform: GemmDTransform,
+        use_mxu: bool,
+    ) -> Vec<Self> {
+        let tiling_supported = if use_mxu {
+            !mxu_tiling_set(weights_data_type).is_empty()
+        } else {
+            !simdgroup_tiling_set(weights_data_type).is_empty()
+        };
+        if !tiling_supported {
+            return Vec::new();
+        }
+
+        let mut tilings: Vec<GemmTiling> = Vec::new();
+        for &m in &QUANT_PREHEAT_PROBE_MS {
+            let tiling = if use_mxu {
+                select_mxu_tiling(m, n)
+            } else {
+                select_simdgroup_tiling(m, n, k)
+            };
+            if !tilings.contains(&tiling) {
+                tilings.push(tiling);
+            }
+        }
+
+        let mut transforms = vec![GemmDTransform::empty()];
+        if !output_transform.is_empty() {
+            transforms.push(output_transform);
+        }
+
         let mut out = Vec::new();
-        for &tiling in simdgroup_tiling_set(weights_data_type) {
-            for align_mn in [true, false] {
-                for output_transform in [
-                    GemmDTransform::empty(),
-                    GemmDTransform::BIAS,
-                    GemmDTransform::RHT,
-                    GemmDTransform::BIAS | GemmDTransform::RHT,
-                ] {
-                    out.push(Self {
+        for tiling in tilings {
+            let align_n = n.is_multiple_of(tiling.block_n());
+            let align_k = k.is_multiple_of(tiling.block_k());
+            for &output_transform in &transforms {
+                for align_m in [true, false] {
+                    let spec = Self {
                         weights_data_type,
                         tiling,
-                        use_mxu: false,
+                        use_mxu,
                         output_transform,
-                        alignment: GemmAlignment::new(align_mn, align_mn, true),
+                        alignment: GemmAlignment::new(align_m, align_n, align_k),
                         transpose_b: true,
                         b_prologue: GemmBPrologueKind::FullPrecision,
                         bits_per_b: None,
                         group_size: None,
-                    });
-                }
-            }
-        }
-
-        for &tiling in mxu_tiling_set(weights_data_type) {
-            for align_m in [true, false] {
-                for align_n in [true, false] {
-                    for align_k in [true, false] {
-                        for output_transform in [
-                            GemmDTransform::empty(),
-                            GemmDTransform::SCALE,
-                            GemmDTransform::ACCUMULATE,
-                            GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::BIAS,
-                            GemmDTransform::BIAS | GemmDTransform::SCALE,
-                            GemmDTransform::BIAS | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::BIAS | GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::RHT,
-                            GemmDTransform::RHT | GemmDTransform::SCALE,
-                            GemmDTransform::RHT | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::RHT | GemmDTransform::SCALE | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::BIAS | GemmDTransform::RHT,
-                            GemmDTransform::BIAS | GemmDTransform::RHT | GemmDTransform::SCALE,
-                            GemmDTransform::BIAS | GemmDTransform::RHT | GemmDTransform::ACCUMULATE,
-                            GemmDTransform::BIAS
-                                | GemmDTransform::RHT
-                                | GemmDTransform::SCALE
-                                | GemmDTransform::ACCUMULATE,
-                        ] {
-                            out.push(Self {
-                                weights_data_type,
-                                tiling,
-                                use_mxu: true,
-                                output_transform,
-                                alignment: GemmAlignment::new(align_m, align_n, align_k),
-                                transpose_b: true,
-                                b_prologue: GemmBPrologueKind::FullPrecision,
-                                bits_per_b: None,
-                                group_size: None,
-                            });
-                        }
+                    };
+                    if spec.validate().is_ok() {
+                        out.push(spec);
                     }
                 }
             }
@@ -242,6 +232,39 @@ mod tests {
         let specs = GemmSpecialization::quant_combo_specs(DataType::BF16, combo(), 3584, 1024, true);
         assert!(!specs.is_empty());
         assert!(specs.len() <= 20, "expected a tight preheat set, got {}", specs.len());
+        for spec in &specs {
+            assert!(spec.use_mxu);
+            assert!(spec.tiling.is_mxu_variant());
+            assert!(spec.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn full_precision_specs_are_shape_specific_and_tight() {
+        let plain =
+            GemmSpecialization::full_precision_combo_specs(DataType::BF16, 3584, 1024, GemmDTransform::empty(), false);
+        assert!(!plain.is_empty());
+        assert!(plain.len() <= 16, "expected a tight preheat set, got {}", plain.len());
+        for spec in &plain {
+            assert!(!spec.use_mxu);
+            assert_eq!(spec.b_prologue, GemmBPrologueKind::FullPrecision);
+            assert_eq!(spec.output_transform, GemmDTransform::empty());
+            assert!(spec.validate().is_ok());
+        }
+
+        let biased =
+            GemmSpecialization::full_precision_combo_specs(DataType::BF16, 3584, 1024, GemmDTransform::BIAS, false);
+        let transforms: std::collections::HashSet<_> = biased.iter().map(|spec| spec.output_transform).collect();
+        assert!(transforms.contains(&GemmDTransform::empty()));
+        assert!(transforms.contains(&GemmDTransform::BIAS));
+        assert_eq!(transforms.len(), 2, "only empty + the layer transform should be preheated");
+    }
+
+    #[test]
+    fn full_precision_mxu_emits_only_mxu_tilings() {
+        let specs =
+            GemmSpecialization::full_precision_combo_specs(DataType::BF16, 3584, 1024, GemmDTransform::BIAS, true);
+        assert!(!specs.is_empty());
         for spec in &specs {
             assert!(spec.use_mxu);
             assert!(spec.tiling.is_mxu_variant());

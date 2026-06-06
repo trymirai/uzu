@@ -31,4 +31,14 @@ pub trait MatmulKernel: Sized {
     ) -> Result<(), <Self::Backend as Backend>::Error> {
         Ok(())
     }
+
+    fn preheat_full_precision(
+        &mut self,
+        _context: &<Self::Backend as Backend>::Context,
+        _output_dim: u32,
+        _input_dim: u32,
+        _has_bias: bool,
+    ) -> Result<(), <Self::Backend as Backend>::Error> {
+        Ok(())
+    }
 }

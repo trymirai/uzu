@@ -54,7 +54,7 @@ impl GemmKernel {
             output_data_type,
             HadamardTransformOrder::Output,
         )?;
-        let mut kernel = Self {
+        let kernel = Self {
             weights_data_type,
             input_data_type,
             output_data_type,
@@ -63,10 +63,26 @@ impl GemmKernel {
             hadamard,
             split_k_reduce: HashMap::new(),
         };
-        for specialization in GemmSpecialization::precompile_configs(weights_data_type) {
-            kernel.get_or_create(context, specialization)?;
-        }
         Ok(kernel)
+    }
+
+    pub fn preheat_full_precision(
+        &mut self,
+        context: &MetalContext,
+        n: u32,
+        k: u32,
+        output_transform: GemmDTransform,
+    ) -> Result<(), MetalError> {
+        let all_float = [self.weights_data_type, self.input_data_type, self.output_data_type]
+            .into_iter()
+            .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32));
+        let use_mxu = context.device.supports_mxu() && all_float;
+        for specialization in
+            GemmSpecialization::full_precision_combo_specs(self.weights_data_type, n, k, output_transform, use_mxu)
+        {
+            self.get_or_create(context, specialization)?;
+        }
+        Ok(())
     }
 
     pub fn preheat_quant_combo(
@@ -648,7 +664,7 @@ fn select_split_k(
     split_k
 }
 
-fn select_simdgroup_tiling(
+pub(crate) fn select_simdgroup_tiling(
     m: u32,
     n: u32,
     k: u32,
@@ -660,7 +676,7 @@ fn select_simdgroup_tiling(
     }
 }
 
-fn select_mxu_tiling(
+pub(crate) fn select_mxu_tiling(
     m: u32,
     n: u32,
 ) -> GemmTiling {

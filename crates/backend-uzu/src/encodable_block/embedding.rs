@@ -143,15 +143,17 @@ impl<B: Backend> Embedding<B> {
                             model_shape.data_type,
                         )
                         .map_err(EmbeddingError::BackendError)?;
-                        let readout = RefCell::new(
-                            <B::Kernels as Kernels>::MatmulKernel::new(
-                                context,
-                                model_shape.data_type,
-                                model_shape.data_type,
-                                model_shape.data_type,
-                            )
-                            .map_err(EmbeddingError::BackendError)?,
-                        );
+                        let mut readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
+                            context,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        readout_kernel
+                            .preheat_full_precision(context, vocab_size, model_dim, false)
+                            .map_err(EmbeddingError::BackendError)?;
+                        let readout = RefCell::new(readout_kernel);
 
                         (
                             TiedEmbeddingType::FullPrecision {
@@ -356,15 +358,17 @@ impl<B: Backend> Embedding<B> {
                             .leaf("weights")?
                             .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
                             .read_allocation()?;
-                        let readout = RefCell::new(
-                            <B::Kernels as Kernels>::MatmulKernel::new(
-                                context,
-                                model_shape.data_type,
-                                model_shape.data_type,
-                                model_shape.data_type,
-                            )
-                            .map_err(EmbeddingError::BackendError)?,
-                        );
+                        let mut readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
+                            context,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        readout_kernel
+                            .preheat_full_precision(context, vocab_size, model_dim, false)
+                            .map_err(EmbeddingError::BackendError)?;
+                        let readout = RefCell::new(readout_kernel);
 
                         UntiedEmbeddingReadoutType::FullPrecision {
                             weights,
