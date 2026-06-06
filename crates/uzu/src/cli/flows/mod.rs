@@ -5,6 +5,7 @@ mod model_families;
 mod model_registries;
 mod models;
 mod registry;
+mod settings;
 mod theme;
 
 pub use auth::AuthFlow;
@@ -14,6 +15,7 @@ pub use model_families::ModelFamiliesFlow;
 pub use model_registries::ModelRegistriesFlow;
 pub use models::ModelsFlow;
 pub use registry::{Command, FlowRegistry};
+pub use settings::SettingsFlow;
 pub use theme::ThemeFlow;
 
 pub struct FlowEvent {
