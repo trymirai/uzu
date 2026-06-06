@@ -12,8 +12,11 @@ on:
           - macos-m1-pool
           - macos-m2-pool
           - macos-m2-pro-pool
+          - macos-m3-max-pool
           - macos-m4-pool
           - macos-m4-pro-pool
+          - macos-m4-max-pool
+
       benchmark_args:
         description: 'JSON array passed after `uv run benchmarks`'
         required: true

@@ -29,8 +29,10 @@ POOL_DEPLOYMENTS: dict[PoolName, str] = {
     PoolName.MACOS_M1: "run-benchmark-worker-flow/run-benchmark-m1",
     PoolName.MACOS_M2: "run-benchmark-worker-flow/run-benchmark-m2",
     PoolName.MACOS_M2_PRO: "run-benchmark-worker-flow/run-benchmark-m2-pro",
+    PoolName.MACOS_M3_MAX: "run-benchmark-worker-flow/run-benchmark-m3-max",
     PoolName.MACOS_M4: "run-benchmark-worker-flow/run-benchmark-m4",
     PoolName.MACOS_M4_PRO: "run-benchmark-worker-flow/run-benchmark-m4-pro",
+    PoolName.MACOS_M4_MAX: "run-benchmark-worker-flow/run-benchmark-m4-max",
 }
 
 
@@ -233,7 +235,7 @@ def parse_cli_args(argv: list[str] | None = None) -> CliConfig:
     parser.add_argument(
         "--pool",
         required=True,
-        choices=[pool.value for pool in PoolName],
+        choices=[pool.value for pool in POOL_DEPLOYMENTS],
         help="Benchmark worker pool to target.",
     )
     parser.add_argument(

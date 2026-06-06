@@ -212,7 +212,7 @@ def parse_cli_args(argv: list[str] | None = None) -> CliConfig:
     parser.add_argument(
         "--pool",
         required=True,
-        choices=[pool.value for pool in PoolName],
+        choices=[pool.value for pool in POOL_DEPLOYMENTS],
         help="MacOS pool to target.",
     )
     parser.add_argument(

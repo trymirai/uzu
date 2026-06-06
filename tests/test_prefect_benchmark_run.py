@@ -9,7 +9,8 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR / "scripts"))
 
-from prefect_benchmark_run import PrefectApiClient  # noqa: E402
+from prefect_benchmark_run import PrefectApiClient, deployment_name_for_pool  # noqa: E402
+from prefect_flow_run_common import PoolName  # noqa: E402
 
 
 class RecordingPrefectApiClient(PrefectApiClient):
@@ -32,6 +33,18 @@ class RecordingPrefectApiClient(PrefectApiClient):
 
 
 class PrefectBenchmarkRunTests(unittest.TestCase):
+    def test_new_max_pools_route_to_worker_deployments(self) -> None:
+        self.assertIn("macos-m3-max-pool", {pool.value for pool in PoolName})
+        self.assertIn("macos-m4-max-pool", {pool.value for pool in PoolName})
+        self.assertEqual(
+            deployment_name_for_pool(PoolName("macos-m3-max-pool")),
+            "run-benchmark-worker-flow/run-benchmark-m3-max",
+        )
+        self.assertEqual(
+            deployment_name_for_pool(PoolName("macos-m4-max-pool")),
+            "run-benchmark-worker-flow/run-benchmark-m4-max",
+        )
+
     def test_create_flow_run_sends_worker_flow_parameters(self) -> None:
         client = RecordingPrefectApiClient()
 
