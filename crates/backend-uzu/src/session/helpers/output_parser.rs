@@ -26,24 +26,21 @@ impl OutputParser {
         text: String,
         enable_thinking: bool,
     ) -> Text {
-        if !enable_thinking {
-            return Text {
-                original: text.clone(),
-                parsed: ParsedText {
-                    chain_of_thought: None,
-                    response: Some(text),
-                },
-            };
-        }
-
         let parsed_text = match &self.regex {
             Some(regex) => match regex.captures(&text) {
                 Some(captures) => {
                     let chain_of_thought = captures.name("chain_of_thought").map(|m| m.as_str().to_string());
                     let response = captures.name("response").map(|m| m.as_str().to_string());
-                    ParsedText {
-                        chain_of_thought,
-                        response,
+                    if !enable_thinking {
+                        ParsedText {
+                            chain_of_thought: None,
+                            response: Some(response.unwrap_or_else(|| text.clone())),
+                        }
+                    } else {
+                        ParsedText {
+                            chain_of_thought,
+                            response,
+                        }
                     }
                 },
                 None => ParsedText {
@@ -95,6 +92,14 @@ mod tests {
     fn thinking_disabled_keeps_answer_as_response() {
         let parser = OutputParser::new(Some(QWEN_REGEX.to_string())).unwrap();
         let parsed = parser.parse("2 + 2 equals 4.".to_string(), false).parsed;
+        assert_eq!(parsed.chain_of_thought, None);
+        assert_eq!(parsed.response.as_deref(), Some("2 + 2 equals 4."));
+    }
+
+    #[test]
+    fn thinking_disabled_strips_emitted_reasoning_tags() {
+        let parser = OutputParser::new(Some(QWEN_REGEX.to_string())).unwrap();
+        let parsed = parser.parse("<think>wait, reconsider</think>2 + 2 equals 4.".to_string(), false).parsed;
         assert_eq!(parsed.chain_of_thought, None);
         assert_eq!(parsed.response.as_deref(), Some("2 + 2 equals 4."));
     }
