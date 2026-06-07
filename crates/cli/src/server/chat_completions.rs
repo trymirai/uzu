@@ -163,6 +163,8 @@ enum ResponseFormatError {
     JsonSchemaSerializationFailed,
 }
 
+const JSON_OBJECT_SCHEMA: &str = r#"{"type":"object"}"#;
+
 impl ResponseFormatError {
     fn message(&self) -> &'static str {
         match self {
@@ -206,7 +208,12 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
     }
 
     config = match &request.response_format {
-        Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
+        Some(ResponseFormat::JsonObject) => with_response_format_grammar(
+            config,
+            Grammar::JsonSchema {
+                schema: JSON_OBJECT_SCHEMA.to_string(),
+            },
+        )?,
         Some(ResponseFormat::JsonSchema {
             json_schema,
         }) => {
@@ -293,6 +300,44 @@ fn chunk_json(
         usage,
     };
     serde_json::to_string(&chunk).unwrap_or_default()
+}
+
+fn stream_error_response(
+    id: String,
+    model: String,
+    created: i64,
+    message: &str,
+) -> ChatCompletionResult {
+    let (sender, receiver) = mpsc::unbounded_channel::<Event>();
+    let _ = sender.send(Event::data(chunk_json(
+        &id,
+        &model,
+        created,
+        StreamDelta {
+            role: None,
+            content: Some(format!("Error: {message}")),
+        },
+        Some("stop".to_string()),
+        None,
+    )));
+    let _ = sender.send(Event::data("[DONE]"));
+    let body: Pin<Box<dyn Stream<Item = Event> + Send>> = Box::pin(UnboundedReceiverStream::new(receiver));
+    ChatCompletionResult::Stream(EventStream::from(body))
+}
+
+fn response_format_error_response(
+    id: String,
+    model: String,
+    created: i64,
+    is_stream: bool,
+    error: ResponseFormatError,
+) -> ChatCompletionResult {
+    let message = error.message();
+    if is_stream {
+        stream_error_response(id, model, created, message)
+    } else {
+        ChatCompletionResult::Json(Json(error_response(id, model, created, message)))
+    }
 }
 
 async fn run_blocking(
@@ -462,7 +507,7 @@ pub async fn handle_chat_completions(
 
     let config = match build_reply_config(&request) {
         Ok(config) => config,
-        Err(error) => return ChatCompletionResult::Json(Json(error_response(id, model, created, error.message()))),
+        Err(error) => return response_format_error_response(id, model, created, is_stream, error),
     };
     let messages = to_chat_messages(&request.messages);
 
@@ -505,10 +550,12 @@ mod tests {
 
         #[cfg(feature = "capability-grammar")]
         {
-            // "json_object" constrains to any valid JSON.
+            // "json_object" constrains to a top-level JSON object.
             assert_eq!(
                 reply_config(r#"{"messages":[],"response_format":{"type":"json_object"}}"#).grammar,
-                Some(Grammar::JsonAny {})
+                Some(Grammar::JsonSchema {
+                    schema: JSON_OBJECT_SCHEMA.to_string(),
+                })
             );
 
             // Strict "json_schema" forwards the schema verbatim as a JSON string.
@@ -557,13 +604,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn response_format_errors_match_requested_response_shape() {
+        match response_format_error_response(
+            "chatcmpl-test".to_string(),
+            "model".to_string(),
+            0,
+            false,
+            ResponseFormatError::GrammarUnsupported,
+        ) {
+            ChatCompletionResult::Json(_) => {},
+            ChatCompletionResult::Stream(_) => panic!("non-stream errors should return JSON responses"),
+        }
+
+        match response_format_error_response(
+            "chatcmpl-test".to_string(),
+            "model".to_string(),
+            0,
+            true,
+            ResponseFormatError::GrammarUnsupported,
+        ) {
+            ChatCompletionResult::Stream(_) => {},
+            ChatCompletionResult::Json(_) => panic!("stream errors should return streaming responses"),
+        }
+    }
+
     #[cfg(feature = "capability-grammar")]
     #[test]
     fn response_format_composes_with_sampling_options() {
         let stochastic = reply_config(
             r#"{"messages":[],"temperature":0.7,"top_p":0.9,"top_k":40,"response_format":{"type":"json_object"}}"#,
         );
-        assert_eq!(stochastic.grammar, Some(Grammar::JsonAny {}));
+        assert_eq!(
+            stochastic.grammar,
+            Some(Grammar::JsonSchema {
+                schema: JSON_OBJECT_SCHEMA.to_string(),
+            })
+        );
         assert_eq!(
             stochastic.sampling_policy,
             uzu::types::basic::SamplingPolicy::Custom {
@@ -577,7 +654,12 @@ mod tests {
         );
 
         let greedy = reply_config(r#"{"messages":[],"temperature":0,"response_format":{"type":"json_object"}}"#);
-        assert_eq!(greedy.grammar, Some(Grammar::JsonAny {}));
+        assert_eq!(
+            greedy.grammar,
+            Some(Grammar::JsonSchema {
+                schema: JSON_OBJECT_SCHEMA.to_string(),
+            })
+        );
         assert_eq!(
             greedy.sampling_policy,
             uzu::types::basic::SamplingPolicy::Custom {
