@@ -1,12 +1,11 @@
 #pragma once
 
 #include "../../../hadamard_transform/hadamard_transform.h"
-#include "gemv_common.h"
 
 namespace uzu {
 namespace gemm {
 
-template <typename BT, typename DT, typename U>
+template <typename BT, typename DT, typename U, uint RESULTS_PER_SIMDGROUP>
 struct Epilogue {
   static METAL_FUNC void store(
       thread U (&result)[RESULTS_PER_SIMDGROUP],

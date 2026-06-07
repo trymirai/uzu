@@ -215,6 +215,7 @@ impl GemvDispatch {
                     specialization.bits,
                     specialization.k_split,
                     specialization.input_aligned,
+                    QMV_RESULTS_PER_SIMDGROUP,
                     specialization.num_simdgroups,
                     specialization.output_transform,
                 )
