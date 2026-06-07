@@ -22,7 +22,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::SamplingMethod,
+        basic::{Grammar, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -52,8 +52,25 @@ pub struct ChatCompletionRequest {
     #[serde(default)]
     pub top_k: Option<i64>,
     #[serde(default)]
+    pub response_format: Option<ResponseFormat>,
+    #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text,
+    JsonObject,
+    JsonSchema {
+        json_schema: JsonSchemaFormat,
+    },
+}
+
+#[derive(Deserialize)]
+pub struct JsonSchemaFormat {
+    pub schema: serde_json::Value,
 }
 
 #[derive(Serialize, Clone)]
@@ -139,20 +156,31 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
 
 fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
     let token_limit = request.max_completion_tokens.or(request.max_tokens);
-    let config = ChatReplyConfig::default().with_token_limit(token_limit);
+    let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
 
     if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
-        return config.with_sampling_method(SamplingMethod::Greedy {});
-    }
-
-    if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
-        return config.with_sampling_method(SamplingMethod::Stochastic {
+        config = config.with_sampling_method(SamplingMethod::Greedy {});
+    } else if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
+        config = config.with_sampling_method(SamplingMethod::Stochastic {
             temperature: request.temperature,
             top_k: request.top_k,
             top_p: request.top_p,
             min_p: None,
         });
     }
+
+    config = match &request.response_format {
+        Some(ResponseFormat::JsonObject) => config.with_grammar(Some(Grammar::JsonAny {})),
+        Some(ResponseFormat::JsonSchema {
+            json_schema,
+        }) => match serde_json::to_string(&json_schema.schema) {
+            Ok(schema) => config.with_grammar(Some(Grammar::JsonSchema {
+                schema,
+            })),
+            Err(_) => config,
+        },
+        Some(ResponseFormat::Text) | None => config,
+    };
 
     config
 }
@@ -401,5 +429,69 @@ pub async fn handle_chat_completions(
         let session = Arc::clone(&state.session);
         let response = run_blocking(session, messages, config, id, model, created).await;
         ChatCompletionResult::Json(Json(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(json: &str) -> ChatCompletionRequest {
+        serde_json::from_str(json).expect("valid request json")
+    }
+
+    #[test]
+    fn response_format_maps_to_grammar() {
+        // Absent response_format leaves generation unconstrained.
+        assert!(build_reply_config(&request(r#"{"messages":[]}"#)).grammar.is_none());
+
+        // "text" is the OpenAI default: also unconstrained.
+        assert!(build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"text"}}"#)).grammar.is_none());
+
+        // "json_object" constrains to any valid JSON.
+        assert_eq!(
+            build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"json_object"}}"#)).grammar,
+            Some(Grammar::JsonAny {})
+        );
+
+        // "json_schema" forwards the schema verbatim as a JSON string.
+        let config = build_reply_config(&request(
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"p","schema":{"type":"object"}}}}"#,
+        ));
+        assert_eq!(
+            config.grammar,
+            Some(Grammar::JsonSchema {
+                schema: r#"{"type":"object"}"#.to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn response_format_composes_with_sampling_options() {
+        let stochastic = build_reply_config(&request(
+            r#"{"messages":[],"temperature":0.7,"top_p":0.9,"top_k":40,"response_format":{"type":"json_object"}}"#,
+        ));
+        assert_eq!(stochastic.grammar, Some(Grammar::JsonAny {}));
+        assert_eq!(
+            stochastic.sampling_policy,
+            uzu::types::basic::SamplingPolicy::Custom {
+                method: SamplingMethod::Stochastic {
+                    temperature: Some(0.7),
+                    top_k: Some(40),
+                    top_p: Some(0.9),
+                    min_p: None,
+                },
+            }
+        );
+
+        let greedy =
+            build_reply_config(&request(r#"{"messages":[],"temperature":0,"response_format":{"type":"json_object"}}"#));
+        assert_eq!(greedy.grammar, Some(Grammar::JsonAny {}));
+        assert_eq!(
+            greedy.sampling_policy,
+            uzu::types::basic::SamplingPolicy::Custom {
+                method: SamplingMethod::Greedy {},
+            }
+        );
     }
 }
