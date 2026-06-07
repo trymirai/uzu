@@ -1,5 +1,5 @@
 use backend_uzu::backends::common::{
-    Backend, Context, Encoder, Kernels,
+    Allocation, Backend, Context, Encoder, Kernels,
     kernel::{TokenCopySampledKernel, TokenCopyToResultsKernel},
 };
 
@@ -11,14 +11,14 @@ use crate::{
 fn test_token_copy_sampled_impl<B: Backend>(src_value: u32) {
     let context = B::Context::new().expect("Failed to create Context");
 
-    let kernel = <<B as Backend>::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
+    let kernel = <<B as Backend>::Kernels as Kernels>::TokenCopySampledKernel::new(&context, false)
         .expect("Failed to create TokenCopySampledKernel");
 
     let src_allocation = alloc_allocation_with_data::<B, u32>(&context, &[src_value]);
     let mut dst_allocation = alloc_allocation::<B, u64>(&context, 1);
 
     let mut encoder = Encoder::new(context.as_ref()).expect("Failed to create encoder");
-    kernel.encode(&src_allocation, &mut dst_allocation, &mut encoder);
+    kernel.encode(&src_allocation, &mut dst_allocation, None::<&mut Allocation<B>>, None, &mut encoder);
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     let output = allocation_to_vec::<B, u64>(&dst_allocation);

@@ -46,8 +46,8 @@ impl<B: Backend> TokenDecoderLoadedModel<B> {
         )
         .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
         let sampler = GpuSampling::new(model_shape.data_type, decoder_config.vocab_size);
-        let token_copy_sampled =
-            <B::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref()).map_err(unable_to_create_context)?;
+        let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(context.as_ref(), false)
+            .map_err(unable_to_create_context)?;
 
         Ok(Self {
             executables,
@@ -281,7 +281,7 @@ impl<B: Backend> TokenDecoderRunner<B> {
         let sampling_bitmask = bitmask_index.map(|index| &pending_sampling_allocations[index]);
         self.ctx
             .sampler
-            .encode(logits, Some(sampling_seeds), sampling_bitmask, sampling_method, batch_size, encoder)
+            .encode(logits, Some(sampling_seeds), sampling_bitmask, None, None, sampling_method, batch_size, encoder)
             .map_err(|err| Error::EncodeFailed(Box::new(err)))
     }
 
@@ -482,7 +482,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
             let token_ids_data_type = DataType::U64;
             let mut next_token_ids =
                 self.ctx.context.create_array_uninitialized(&token_ids_shape, token_ids_data_type).into_allocation();
-            self.ctx.token_copy_sampled.encode(&sampling_output, &mut next_token_ids, encoder);
+            self.ctx.token_copy_sampled.encode(
+                &sampling_output,
+                &mut next_token_ids,
+                None::<&mut Allocation<B>>,
+                None,
+                encoder,
+            );
             Some(unsafe { Array::from_allocation(next_token_ids, 0, &token_ids_shape, token_ids_data_type) })
         } else {
             None
@@ -588,7 +594,13 @@ impl<B: Backend> TokenDecoderRunner<B> {
                         .context
                         .create_array_uninitialized(&token_ids_shape, token_ids_data_type)
                         .into_allocation();
-                    self.ctx.token_copy_sampled.encode(&sampling_output, &mut updated_token_ids, encoder);
+                    self.ctx.token_copy_sampled.encode(
+                        &sampling_output,
+                        &mut updated_token_ids,
+                        None::<&mut Allocation<B>>,
+                        None,
+                        encoder,
+                    );
                     next_token_ids = Some(unsafe {
                         Array::from_allocation(updated_token_ids, 0, &token_ids_shape, token_ids_data_type)
                     });

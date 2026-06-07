@@ -155,6 +155,8 @@ fn build_sampling_policy(sampling_policy: &ShojiSamplingPolicy) -> SamplingPolic
                     top_k: top_k.map(|value| value.max(0) as u32),
                     top_p: top_p.map(|value| value as f32),
                     min_p: min_p.map(|value| value as f32),
+                    repetition_penalty: None,
+                    suffix_repetition_length: None,
                     processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
             },

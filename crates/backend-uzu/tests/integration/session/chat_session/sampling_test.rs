@@ -48,6 +48,8 @@ fn stochastic(temperature: f32) -> SamplingPolicy {
             top_k: None,
             top_p: None,
             min_p: None,
+            repetition_penalty: None,       // TODO
+            suffix_repetition_length: None, // TODO
             processing_order: SamplingProcessingOrder::TemperatureThenFilters,
         },
     }

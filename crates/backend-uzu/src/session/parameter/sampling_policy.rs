@@ -14,6 +14,8 @@ pub enum SamplingMethod {
         top_k: Option<u32>,
         top_p: Option<f32>,
         min_p: Option<f32>,
+        repetition_penalty: Option<f32>,
+        suffix_repetition_length: Option<usize>,
         processing_order: SamplingProcessingOrder,
     },
 }
@@ -38,6 +40,8 @@ impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod> for SamplingPoli
                 top_k: generation_config.top_k,
                 top_p: generation_config.top_p,
                 min_p: generation_config.min_p,
+                repetition_penalty: generation_config.repetition_penalty,
+                suffix_repetition_length: generation_config.suffix_repetition_length,
                 processing_order: SamplingProcessingOrder::TemperatureThenFilters,
             },
             SamplingPolicy::Custom {
