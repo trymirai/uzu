@@ -1,7 +1,6 @@
 use crate::{
     backends::common::{
-        AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
-        kernel::matmul::{arguments::MatmulArguments, quant_combo::MatmulQuantCombo},
+        AsBufferRangeRef, Backend, Buffer, Encoder, Kernels, kernel::matmul::arguments::MatmulArguments,
     },
     data_type::DataType,
 };
@@ -21,24 +20,4 @@ pub trait MatmulKernel: Sized {
         arguments: MatmulArguments<Self::Backend, TB>,
         encoder: &mut Encoder<Self::Backend>,
     ) -> Result<(), <Self::Backend as Backend>::Error>;
-
-    fn preheat_quant_combo(
-        &mut self,
-        _context: &<Self::Backend as Backend>::Context,
-        _combo: MatmulQuantCombo,
-        _output_dim: u32,
-        _input_dim: u32,
-    ) -> Result<(), <Self::Backend as Backend>::Error> {
-        Ok(())
-    }
-
-    fn preheat_full_precision(
-        &mut self,
-        _context: &<Self::Backend as Backend>::Context,
-        _output_dim: u32,
-        _input_dim: u32,
-        _has_bias: bool,
-    ) -> Result<(), <Self::Backend as Backend>::Error> {
-        Ok(())
-    }
 }

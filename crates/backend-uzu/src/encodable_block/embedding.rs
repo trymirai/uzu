@@ -9,7 +9,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulQuantCombo},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::{
@@ -143,16 +143,13 @@ impl<B: Backend> Embedding<B> {
                             model_shape.data_type,
                         )
                         .map_err(EmbeddingError::BackendError)?;
-                        let mut readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
+                        let readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
                             context,
                             model_shape.data_type,
                             model_shape.data_type,
                             model_shape.data_type,
                         )
                         .map_err(EmbeddingError::BackendError)?;
-                        readout_kernel
-                            .preheat_full_precision(context, vocab_size, model_dim, false)
-                            .map_err(EmbeddingError::BackendError)?;
                         let readout = RefCell::new(readout_kernel);
 
                         (
@@ -192,8 +189,6 @@ impl<B: Backend> Embedding<B> {
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
-                            vocab_size,
-                            model_dim,
                         )?;
 
                         (
@@ -258,8 +253,6 @@ impl<B: Backend> Embedding<B> {
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
-                            vocab_size,
-                            model_dim,
                         )?;
 
                         (
@@ -358,16 +351,13 @@ impl<B: Backend> Embedding<B> {
                             .leaf("weights")?
                             .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
                             .read_allocation()?;
-                        let mut readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
+                        let readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
                             context,
                             model_shape.data_type,
                             model_shape.data_type,
                             model_shape.data_type,
                         )
                         .map_err(EmbeddingError::BackendError)?;
-                        readout_kernel
-                            .preheat_full_precision(context, vocab_size, model_dim, false)
-                            .map_err(EmbeddingError::BackendError)?;
                         let readout = RefCell::new(readout_kernel);
 
                         UntiedEmbeddingReadoutType::FullPrecision {
@@ -393,8 +383,6 @@ impl<B: Backend> Embedding<B> {
                             embedding_quantization_mode,
                             quantization_method,
                             group_size,
-                            vocab_size,
-                            model_dim,
                         )?;
 
                         UntiedEmbeddingReadoutType::Quantized {
@@ -778,22 +766,8 @@ fn quantized_readout<B: Backend>(
     mode: QuantizationMode,
     method: QuantizationMethod,
     group_size: usize,
-    vocab_size: u32,
-    model_dim: u32,
 ) -> Result<(RefCell<<B::Kernels as Kernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
-    let mut readout = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
-        .map_err(EmbeddingError::BackendError)?;
-    readout
-        .preheat_quant_combo(
-            context,
-            MatmulQuantCombo {
-                method,
-                mode,
-                group_size: group_size as u32,
-            },
-            vocab_size,
-            model_dim,
-        )
+    let readout = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
         .map_err(EmbeddingError::BackendError)?;
     Ok((
         RefCell::new(readout),
