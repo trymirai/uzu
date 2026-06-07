@@ -11,7 +11,7 @@ use crate::{
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
+                matmul::{MatmulArguments, MatmulB, MatmulError},
             },
         },
         metal::{
@@ -64,43 +64,6 @@ impl GemmKernel {
             split_k_reduce: HashMap::new(),
         };
         Ok(kernel)
-    }
-
-    pub fn preheat_full_precision(
-        &mut self,
-        context: &MetalContext,
-        n: u32,
-        k: u32,
-        output_transform: GemmDTransform,
-    ) -> Result<(), MetalError> {
-        let all_float = [self.weights_data_type, self.input_data_type, self.output_data_type]
-            .into_iter()
-            .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32));
-        let use_mxu = context.device.supports_mxu() && all_float;
-        for specialization in
-            GemmSpecialization::full_precision_combo_specs(self.weights_data_type, n, k, output_transform, use_mxu)
-        {
-            self.get_or_create(context, specialization)?;
-        }
-        Ok(())
-    }
-
-    pub fn preheat_quant_combo(
-        &mut self,
-        context: &MetalContext,
-        combo: MatmulQuantCombo,
-        n: u32,
-        k: u32,
-    ) -> Result<(), MetalError> {
-        let all_float = [self.weights_data_type, self.input_data_type, self.output_data_type]
-            .into_iter()
-            .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32));
-        let use_mxu = context.device.supports_mxu() && all_float && k.is_multiple_of(select_mxu_tiling(n, n).block_k());
-
-        for specialization in GemmSpecialization::quant_combo_specs(self.weights_data_type, combo, n, k, use_mxu) {
-            self.get_or_create(context, specialization)?;
-        }
-        Ok(())
     }
 
     fn get_or_create(

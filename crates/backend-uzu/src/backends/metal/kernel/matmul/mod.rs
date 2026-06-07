@@ -7,8 +7,7 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
-            gpu_types::gemm::GemmDTransform,
-            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulQuantCombo},
+            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
@@ -65,31 +64,5 @@ impl MatmulKernel for MatmulMetalKernel {
             Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
             None => self.gemm.encode(arguments, encoder),
         }
-    }
-
-    fn preheat_quant_combo(
-        &mut self,
-        context: &MetalContext,
-        combo: MatmulQuantCombo,
-        output_dim: u32,
-        input_dim: u32,
-    ) -> Result<(), MetalError> {
-        self.gemv.preheat_quant_combo(context, combo, input_dim).map_err(MetalError::from)?;
-        self.gemm.preheat_quant_combo(context, combo, output_dim, input_dim)
-    }
-
-    fn preheat_full_precision(
-        &mut self,
-        context: &MetalContext,
-        output_dim: u32,
-        input_dim: u32,
-        has_bias: bool,
-    ) -> Result<(), MetalError> {
-        let output_transform = if has_bias {
-            GemmDTransform::BIAS
-        } else {
-            GemmDTransform::empty()
-        };
-        self.gemm.preheat_full_precision(context, output_dim, input_dim, output_transform)
     }
 }
