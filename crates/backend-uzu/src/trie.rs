@@ -97,6 +97,7 @@ impl TrieNode {
         seed: &PRng,
         mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         speculator: &dyn Speculator,
+        vocab_size: usize,
         creation_config: &TrieCreationConfig,
         max_length: usize,
     ) -> Self {
@@ -119,7 +120,9 @@ impl TrieNode {
 
         while length < max_length {
             // Guuumbel speculator trick: both speculator and llm sample via gumbel max trick using the same noise for increased acceptance rate
-            if let Some(next_speculated_token) = speculator_sample(cur_node.seed(), &cur_node_speculator_weights) {
+            if let Some(next_speculated_token) =
+                speculator_sample(cur_node.seed(), vocab_size, &cur_node_speculator_weights)
+            {
                 // Add speculated token to the trie
                 let mask = if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
                     if compiled_grammar.accept_token(next_speculated_token).is_err() {

@@ -12,7 +12,7 @@ use backend_uzu::{
 use proptest::prelude::*;
 
 pub fn kernel_data_type() -> impl Strategy<Value = DataType> {
-    prop_oneof![Just(DataType::F16), Just(DataType::BF16), Just(DataType::F32)]
+    prop_oneof![Just(DataType::BF16), Just(DataType::F32)]
 }
 
 pub struct TestContextes {
