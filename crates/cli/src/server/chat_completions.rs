@@ -71,6 +71,8 @@ pub enum ResponseFormat {
 #[derive(Deserialize)]
 pub struct JsonSchemaFormat {
     pub schema: serde_json::Value,
+    #[serde(default)]
+    pub strict: Option<bool>,
 }
 
 #[derive(Serialize, Clone)]
@@ -154,7 +156,41 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
+#[derive(Debug, PartialEq, Eq)]
+enum ResponseFormatError {
+    GrammarUnsupported,
+    NonStrictJsonSchemaUnsupported,
+    JsonSchemaSerializationFailed,
+}
+
+impl ResponseFormatError {
+    fn message(&self) -> &'static str {
+        match self {
+            ResponseFormatError::GrammarUnsupported => {
+                "response_format with JSON constraints requires building mirai server with capability-grammar"
+            },
+            ResponseFormatError::NonStrictJsonSchemaUnsupported => {
+                "response_format json_schema requires json_schema.strict=true; non-strict JSON schemas are not supported"
+            },
+            ResponseFormatError::JsonSchemaSerializationFailed => {
+                "response_format json_schema.schema could not be serialized"
+            },
+        }
+    }
+}
+
+fn with_response_format_grammar(
+    config: ChatReplyConfig,
+    grammar: Grammar,
+) -> Result<ChatReplyConfig, ResponseFormatError> {
+    if !cfg!(feature = "capability-grammar") {
+        return Err(ResponseFormatError::GrammarUnsupported);
+    }
+
+    Ok(config.with_grammar(Some(grammar)))
+}
+
+fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig, ResponseFormatError> {
     let token_limit = request.max_completion_tokens.or(request.max_tokens);
     let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
 
@@ -170,19 +206,27 @@ fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
     }
 
     config = match &request.response_format {
-        Some(ResponseFormat::JsonObject) => config.with_grammar(Some(Grammar::JsonAny {})),
+        Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
         Some(ResponseFormat::JsonSchema {
             json_schema,
-        }) => match serde_json::to_string(&json_schema.schema) {
-            Ok(schema) => config.with_grammar(Some(Grammar::JsonSchema {
-                schema,
-            })),
-            Err(_) => config,
+        }) => {
+            if json_schema.strict != Some(true) {
+                return Err(ResponseFormatError::NonStrictJsonSchemaUnsupported);
+            }
+
+            let schema = serde_json::to_string(&json_schema.schema)
+                .map_err(|_| ResponseFormatError::JsonSchemaSerializationFailed)?;
+            with_response_format_grammar(
+                config,
+                Grammar::JsonSchema {
+                    schema,
+                },
+            )?
         },
         Some(ResponseFormat::Text) | None => config,
     };
 
-    config
+    Ok(config)
 }
 
 fn map_finish_reason(finish_reason: &ChatReplyFinishReason) -> String {
@@ -416,8 +460,11 @@ pub async fn handle_chat_completions(
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
 
+    let config = match build_reply_config(&request) {
+        Ok(config) => config,
+        Err(error) => return ChatCompletionResult::Json(Json(error_response(id, model, created, error.message()))),
+    };
     let messages = to_chat_messages(&request.messages);
-    let config = build_reply_config(&request);
 
     if is_stream {
         let session = Arc::clone(&state.session);
@@ -440,37 +487,82 @@ mod tests {
         serde_json::from_str(json).expect("valid request json")
     }
 
-    #[test]
-    fn response_format_maps_to_grammar() {
-        // Absent response_format leaves generation unconstrained.
-        assert!(build_reply_config(&request(r#"{"messages":[]}"#)).grammar.is_none());
+    fn reply_config(json: &str) -> ChatReplyConfig {
+        build_reply_config(&request(json)).expect("valid reply config")
+    }
 
-        // "text" is the OpenAI default: also unconstrained.
-        assert!(build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"text"}}"#)).grammar.is_none());
-
-        // "json_object" constrains to any valid JSON.
-        assert_eq!(
-            build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"json_object"}}"#)).grammar,
-            Some(Grammar::JsonAny {})
-        );
-
-        // "json_schema" forwards the schema verbatim as a JSON string.
-        let config = build_reply_config(&request(
-            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"p","schema":{"type":"object"}}}}"#,
-        ));
-        assert_eq!(
-            config.grammar,
-            Some(Grammar::JsonSchema {
-                schema: r#"{"type":"object"}"#.to_string(),
-            })
-        );
+    fn reply_config_error(json: &str) -> ResponseFormatError {
+        build_reply_config(&request(json)).expect_err("invalid reply config")
     }
 
     #[test]
+    fn response_format_maps_to_grammar() {
+        // Absent response_format leaves generation unconstrained.
+        assert!(reply_config(r#"{"messages":[]}"#).grammar.is_none());
+
+        // "text" is the OpenAI default: also unconstrained.
+        assert!(reply_config(r#"{"messages":[],"response_format":{"type":"text"}}"#).grammar.is_none());
+
+        #[cfg(feature = "capability-grammar")]
+        {
+            // "json_object" constrains to any valid JSON.
+            assert_eq!(
+                reply_config(r#"{"messages":[],"response_format":{"type":"json_object"}}"#).grammar,
+                Some(Grammar::JsonAny {})
+            );
+
+            // Strict "json_schema" forwards the schema verbatim as a JSON string.
+            let config = reply_config(
+                r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"p","strict":true,"schema":{"type":"object"}}}}"#,
+            );
+            assert_eq!(
+                config.grammar,
+                Some(Grammar::JsonSchema {
+                    schema: r#"{"type":"object"}"#.to_string(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn response_format_rejects_grammar_without_capability() {
+        #[cfg(not(feature = "capability-grammar"))]
+        {
+            assert_eq!(
+                reply_config_error(r#"{"messages":[],"response_format":{"type":"json_object"}}"#),
+                ResponseFormatError::GrammarUnsupported
+            );
+            assert_eq!(
+                reply_config_error(
+                    r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"strict":true,"schema":{"type":"object"}}}}"#
+                ),
+                ResponseFormatError::GrammarUnsupported
+            );
+        }
+    }
+
+    #[test]
+    fn response_format_rejects_non_strict_json_schema() {
+        assert_eq!(
+            reply_config_error(
+                r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}"#
+            ),
+            ResponseFormatError::NonStrictJsonSchemaUnsupported
+        );
+        assert_eq!(
+            reply_config_error(
+                r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"strict":false,"schema":{"type":"object"}}}}"#
+            ),
+            ResponseFormatError::NonStrictJsonSchemaUnsupported
+        );
+    }
+
+    #[cfg(feature = "capability-grammar")]
+    #[test]
     fn response_format_composes_with_sampling_options() {
-        let stochastic = build_reply_config(&request(
+        let stochastic = reply_config(
             r#"{"messages":[],"temperature":0.7,"top_p":0.9,"top_k":40,"response_format":{"type":"json_object"}}"#,
-        ));
+        );
         assert_eq!(stochastic.grammar, Some(Grammar::JsonAny {}));
         assert_eq!(
             stochastic.sampling_policy,
@@ -484,8 +576,7 @@ mod tests {
             }
         );
 
-        let greedy =
-            build_reply_config(&request(r#"{"messages":[],"temperature":0,"response_format":{"type":"json_object"}}"#));
+        let greedy = reply_config(r#"{"messages":[],"temperature":0,"response_format":{"type":"json_object"}}"#);
         assert_eq!(greedy.grammar, Some(Grammar::JsonAny {}));
         assert_eq!(
             greedy.sampling_policy,
