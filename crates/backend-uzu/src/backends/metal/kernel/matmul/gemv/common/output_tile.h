@@ -1,11 +1,9 @@
 #pragma once
 
-#include "gemv_common.h"
-
 namespace uzu {
 namespace gemm {
 
-template <uint K_SPLIT, uint NUM_SIMDGROUPS>
+template <uint K_SPLIT, uint NUM_SIMDGROUPS, uint RESULTS_PER_SIMDGROUP>
 struct OutputTile {
   uint out_row;
   uint row_group;

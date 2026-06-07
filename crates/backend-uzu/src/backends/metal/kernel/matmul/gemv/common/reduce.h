@@ -1,11 +1,9 @@
 #pragma once
 
-#include "gemv_common.h"
-
 namespace uzu {
 namespace gemm {
 
-template <typename U, uint K_SPLIT, uint NUM_SIMDGROUPS>
+template <typename U, uint K_SPLIT, uint NUM_SIMDGROUPS, uint RESULTS_PER_SIMDGROUP>
 struct Reduce {
   static METAL_FUNC void run(
       thread U (&result)[RESULTS_PER_SIMDGROUP],
