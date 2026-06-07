@@ -76,9 +76,12 @@ impl<B: Backend> LinearMatmul<B> {
         let biases =
             load_biases(weights_data_type, output_data_type, output_dim, has_biases.then_some(parameter_tree))?;
 
-        let kernel =
+        let mut kernel =
             <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)
                 .map_err(LinearMatmulError::BackendError)?;
+        kernel
+            .preheat_full_precision(context, output_dim as u32, input_dim as u32, biases.is_some())
+            .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),
