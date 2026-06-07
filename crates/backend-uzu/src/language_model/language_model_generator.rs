@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     iter::repeat_n,
+    mem::size_of,
     ops::Range,
     path::Path,
     time::{Duration, Instant},
@@ -462,6 +463,20 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             .create_allocation(std::mem::size_of_val(&sampling_seed), AllocationType::Global)
             .expect("Failed to create sampling seed allocation");
         sampling_seeds.copyin(&sampling_seed);
+        let repetition_penalty = Self::repetition_penalty_config(sampling_method);
+        if pass_idx == 0
+            && let Some((_, suffix_repetition_length)) = repetition_penalty
+        {
+            let capacity = self.context.async_buffers.repetition_context_ring_capacity;
+            Self::copy_repetition_context_ring(
+                &mut self.context.async_buffers.repetition_context_ring,
+                &self.tokens,
+                suffix_repetition_length,
+                capacity,
+            );
+        }
+        let sampling_context_ring =
+            repetition_penalty.as_ref().map(|_| &self.context.async_buffers.repetition_context_ring);
 
         let is_first_decode = !is_continuation;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
@@ -488,6 +503,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             Some(sampling_method),
             Some(sampling_seeds),
             None,
+            sampling_context_ring,
         )?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -501,11 +517,23 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             (async_token_ids_buffer_range.buffer().cpu_ptr().as_ptr() as *const u64)
                 .add(async_token_ids_range.start / std::mem::size_of::<u64>())
         });
-        self.context.token_copy_sampled.encode(
-            resources.sampling_output.as_ref().expect("Sampling output must exist"),
-            &mut async_token_ids_allocation,
-            &mut encoder,
-        );
+        if let Some((_, suffix_repetition_length)) = repetition_penalty {
+            self.context.token_copy_sampled_context_ring.encode(
+                resources.sampling_output.as_ref().expect("Sampling output must exist"),
+                &mut async_token_ids_allocation,
+                Some(&mut self.context.async_buffers.repetition_context_ring),
+                Some(suffix_repetition_length as u32),
+                &mut encoder,
+            );
+        } else {
+            self.context.token_copy_sampled.encode(
+                resources.sampling_output.as_ref().expect("Sampling output must exist"),
+                &mut async_token_ids_allocation,
+                None::<&mut Allocation<B>>,
+                None,
+                &mut encoder,
+            );
+        }
         self.async_token_ids = Some(unsafe {
             Array::from_allocation(async_token_ids_allocation, 0, &token_ids_shape, token_ids_data_type)
         });
@@ -662,6 +690,35 @@ impl<B: Backend> LanguageModelGenerator<B> {
         })
     }
 
+    fn repetition_penalty_config(sampling_method: SamplingMethod) -> Option<(f32, usize)> {
+        match sampling_method {
+            SamplingMethod::Stochastic {
+                repetition_penalty: Some(repetition_penalty),
+                suffix_repetition_length,
+                ..
+            } => Some((
+                repetition_penalty,
+                suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty"),
+            )),
+            _ => None,
+        }
+    }
+
+    fn copy_repetition_context_ring(
+        context_ring: &mut Allocation<B>,
+        tokens: &[u64],
+        suffix_repetition_length: usize,
+        capacity: usize,
+    ) {
+        let ring_length = tokens.len().min(suffix_repetition_length);
+        let mut packed_ring = vec![0u32; 2 + capacity];
+        packed_ring[1] = ring_length as u32;
+        for (index, token) in tokens[tokens.len() - ring_length..].iter().enumerate() {
+            packed_ring[2 + index] = *token as u32;
+        }
+        context_ring.copyin(&packed_ring);
+    }
+
     pub fn get_generate_task(
         &self,
         flat_trie: &FlatTrie,
@@ -727,6 +784,27 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let batch_dim = task.active_row_count;
         let sampling_start = task.sampling_start;
         let sampling_length = task.sampling_length;
+        let repetition_penalty = if sample {
+            Self::repetition_penalty_config(sampling_method)
+        } else {
+            None
+        };
+        let sampling_context_ring = if let Some((_, suffix_repetition_length)) = repetition_penalty {
+            let mut allocation = self
+                .context
+                .context
+                .create_allocation((2 + suffix_repetition_length) * size_of::<u32>(), AllocationType::Global)
+                .map_err(|e| Error::UnableToCreateContext(e.into()))?;
+            Self::copy_repetition_context_ring(
+                &mut allocation,
+                &self.tokens,
+                suffix_repetition_length,
+                suffix_repetition_length,
+            );
+            Some(allocation)
+        } else {
+            None
+        };
         let (sampling_seeds, sampling_bitmask) = if sample {
             let seeds = &task.token_seeds[task.sampling_start..task.sampling_start + task.sampling_length];
             let mut seed_allocation = self
@@ -778,6 +856,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             sample.then_some(sampling_method),
             sampling_seeds,
             sampling_bitmask,
+            sampling_context_ring.as_ref(),
         )?;
 
         let pending = encoder.end_encoding().submit();
@@ -820,6 +899,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_method: Option<SamplingMethod>,
         sampling_seeds: Option<Allocation<B>>,
         sampling_bitmask: Option<Allocation<B>>,
+        sampling_context_ring: Option<&Allocation<B>>,
     ) -> Result<ForwardPassResources<B>, Error> {
         let mut sampling_output = None;
         let mut logits = None;
@@ -859,6 +939,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 &retained_logits,
                 Some(sampling_seeds),
                 sampling_bitmask.as_ref(),
+                sampling_context_ring,
+                Some(token_inputs.token_ids()),
                 sampling_method.expect("Sampling requires method"),
                 sampling_length,
                 encoder,

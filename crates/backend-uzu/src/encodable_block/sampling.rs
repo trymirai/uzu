@@ -5,7 +5,10 @@ use std::{
 };
 
 use crate::{
-    backends::common::{Allocation, AllocationType, Backend, Context, Encoder, Kernels, kernel::UnifiedSamplingKernel},
+    backends::common::{
+        Allocation, AllocationType, AsBufferRangeRef, Backend, Context, Encoder, Kernels,
+        kernel::{RepetitionPenaltyKernel, TensorCopyKernel, UnifiedSamplingKernel},
+    },
     data_type::DataType,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
@@ -44,18 +47,31 @@ impl<B: Backend> Sampling<B> {
         logits: &Allocation<B>,
         seeds: Option<&Allocation<B>>,
         bitmask: Option<&Allocation<B>>,
+        context_ring: Option<&Allocation<B>>,
+        token_ids: Option<&Allocation<B>>,
         sampling_method: SamplingMethod,
         batch_size: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error> {
         // TODO: reject seeds with greedy
-        let (seeds, temperature, temperature_after_filters, top_k, top_p, min_p) = match sampling_method {
-            SamplingMethod::Greedy => (None, None, false, None, None, None),
+        let (
+            seeds,
+            temperature,
+            temperature_after_filters,
+            top_k,
+            top_p,
+            min_p,
+            repetition_penalty,
+            suffix_repetition_length,
+        ) = match sampling_method {
+            SamplingMethod::Greedy => (None, None, false, None, None, None, None, None),
             SamplingMethod::Stochastic {
                 temperature,
                 top_k,
                 top_p,
                 min_p,
+                repetition_penalty,
+                suffix_repetition_length,
                 processing_order,
             } => (
                 Some(seeds.unwrap()),
@@ -67,6 +83,8 @@ impl<B: Backend> Sampling<B> {
                 top_k,
                 top_p,
                 min_p,
+                repetition_penalty,
+                suffix_repetition_length,
             ),
         };
 
@@ -79,6 +97,33 @@ impl<B: Backend> Sampling<B> {
             has_top_p: top_p.is_some(),
             has_min_p: min_p.is_some(),
         };
+
+        let penalized_logits = if let Some(repetition_penalty) = repetition_penalty {
+            let suffix_repetition_length =
+                suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty");
+            assert_eq!(batch_size, 1, "repetition_penalty currently only supports batch_size == 1");
+
+            let mut logits_copy = encoder.allocate_scratch(logits.as_buffer_range_ref().range().len())?;
+            let tensor_copy = <B::Kernels as Kernels>::TensorCopyKernel::new(encoder.context(), self.data_type)?;
+            tensor_copy.encode(logits, &mut logits_copy, (self.vocab_size * batch_size) as u32, encoder);
+
+            let repetition_penalty_kernel =
+                <B::Kernels as Kernels>::RepetitionPenaltyKernel::new(encoder.context(), self.data_type)?;
+            repetition_penalty_kernel.encode(
+                logits,
+                &mut logits_copy,
+                context_ring.expect("context_ring is required for repetition_penalty"),
+                token_ids.expect("token_ids is required for repetition_penalty"),
+                repetition_penalty,
+                suffix_repetition_length as u32,
+                encoder,
+            );
+            Some(logits_copy)
+        } else {
+            None
+        };
+        let logits = penalized_logits.as_ref().unwrap_or(logits);
+
         let mut unified_kernels = self.unified_kernels.borrow_mut();
         let entry = unified_kernels.entry(key);
         let kernel = match entry {

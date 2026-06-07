@@ -70,6 +70,8 @@ fn do_sampling_backend<B: Backend, T: ArrayElement + Float>(
             &logits_allocation,
             seeds_allocation.as_ref(),
             bitmask_allocation.as_ref(),
+            None, // TODO
+            None, // TODO
             method,
             batch_size,
             &mut encoder,
@@ -147,6 +149,8 @@ fn sampling_case() -> impl Strategy<Value = SamplingCase> {
                             top_k,
                             top_p,
                             min_p,
+                            repetition_penalty: None,       // TODO
+                            suffix_repetition_length: None, // TODO
                             processing_order,
                         }
                     },
