@@ -40,7 +40,8 @@ METAL_FUNC void load_vector_unscaled(const device T* x, thread U* x_thread) {
   thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
   METAL_PRAGMA_UNROLL
   for (int index = 0; index < VALUES_PER_THREAD / 4; index++) {
-    x_vec4[index] = U4(x[4 * index], x[4 * index + 1], x[4 * index + 2], x[4 * index + 3]);
+    x_vec4[index] =
+        U4(x[4 * index], x[4 * index + 1], x[4 * index + 2], x[4 * index + 3]);
   }
 }
 

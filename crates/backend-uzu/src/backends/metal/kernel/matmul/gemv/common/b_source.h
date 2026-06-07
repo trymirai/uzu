@@ -163,22 +163,62 @@ struct BSource {
           const uint8_t shift = bias_high_nibble ? 4u : 0u;
           uchar4 codes = (bias_bytes >> shift) & uchar4(0x0F);
           result[0] += qdot_lloyd_max<U, values_per_thread, BITS>(
-              wl0, x_thread, codebook, scale[0], static_cast<U>(bias_codebook[codes.x])
+              wl0,
+              x_thread,
+              codebook,
+              scale[0],
+              static_cast<U>(bias_codebook[codes.x])
           );
           result[1] += qdot_lloyd_max<U, values_per_thread, BITS>(
-              wl1, x_thread, codebook, scale[1], static_cast<U>(bias_codebook[codes.y])
+              wl1,
+              x_thread,
+              codebook,
+              scale[1],
+              static_cast<U>(bias_codebook[codes.y])
           );
           result[2] += qdot_lloyd_max<U, values_per_thread, BITS>(
-              wl2, x_thread, codebook, scale[2], static_cast<U>(bias_codebook[codes.z])
+              wl2,
+              x_thread,
+              codebook,
+              scale[2],
+              static_cast<U>(bias_codebook[codes.z])
           );
           result[3] += qdot_lloyd_max<U, values_per_thread, BITS>(
-              wl3, x_thread, codebook, scale[3], static_cast<U>(bias_codebook[codes.w])
+              wl3,
+              x_thread,
+              codebook,
+              scale[3],
+              static_cast<U>(bias_codebook[codes.w])
           );
         } else {
-          result[0] += qdot<U, values_per_thread, BITS>(wl0, x_thread, scale[0], offset[0], sum);
-          result[1] += qdot<U, values_per_thread, BITS>(wl1, x_thread, scale[1], offset[1], sum);
-          result[2] += qdot<U, values_per_thread, BITS>(wl2, x_thread, scale[2], offset[2], sum);
-          result[3] += qdot<U, values_per_thread, BITS>(wl3, x_thread, scale[3], offset[3], sum);
+          result[0] += qdot<U, values_per_thread, BITS>(
+              wl0,
+              x_thread,
+              scale[0],
+              offset[0],
+              sum
+          );
+          result[1] += qdot<U, values_per_thread, BITS>(
+              wl1,
+              x_thread,
+              scale[1],
+              offset[1],
+              sum
+          );
+          result[2] += qdot<U, values_per_thread, BITS>(
+              wl2,
+              x_thread,
+              scale[2],
+              offset[2],
+              sum
+          );
+          result[3] += qdot<U, values_per_thread, BITS>(
+              wl3,
+              x_thread,
+              scale[3],
+              offset[3],
+              sum
+          );
         }
 
         ws += block_size * bytes_per_pack / pack_factor;
