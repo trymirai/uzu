@@ -83,8 +83,9 @@ impl ThinkingSupport {
 
     pub fn reasoning_effort(self) -> Option<ReasoningEffort> {
         match self {
-            Self::Levels(ReasoningEffort::Default) | Self::Toggle(true) => None,
+            Self::Levels(ReasoningEffort::Default) => None,
             Self::Levels(effort) => Some(effort),
+            Self::Toggle(true) => Some(ReasoningEffort::Default),
             Self::Toggle(false) => Some(ReasoningEffort::Disabled),
             Self::AlwaysOn | Self::Unsupported => None,
         }
@@ -174,5 +175,40 @@ impl ModelCapabilities {
             thinking,
             sampling_defaults,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::components::preferences::ThinkingPreference;
+
+    #[test]
+    fn toggle_emits_explicit_effort_each_state() {
+        assert_eq!(ThinkingSupport::Toggle(true).reasoning_effort(), Some(ReasoningEffort::Default));
+        assert_eq!(ThinkingSupport::Toggle(false).reasoning_effort(), Some(ReasoningEffort::Disabled));
+    }
+
+    #[test]
+    fn toggle_round_trips_through_preference() {
+        let support = ThinkingSupport::Toggle(true);
+        let enabled = ThinkingPreference {
+            enabled: true,
+            ..ThinkingPreference::default()
+        };
+        let disabled = ThinkingPreference {
+            enabled: false,
+            ..ThinkingPreference::default()
+        };
+        assert_eq!(support.with_preference(&enabled).reasoning_effort(), Some(ReasoningEffort::Default));
+        assert_eq!(support.with_preference(&disabled).reasoning_effort(), Some(ReasoningEffort::Disabled));
+    }
+
+    #[test]
+    fn non_adjustable_support_emits_no_effort() {
+        assert_eq!(ThinkingSupport::AlwaysOn.reasoning_effort(), None);
+        assert_eq!(ThinkingSupport::Unsupported.reasoning_effort(), None);
+        assert_eq!(ThinkingSupport::Levels(ReasoningEffort::Default).reasoning_effort(), None);
+        assert_eq!(ThinkingSupport::Levels(ReasoningEffort::High).reasoning_effort(), Some(ReasoningEffort::High));
     }
 }

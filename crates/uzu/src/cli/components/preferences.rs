@@ -166,3 +166,62 @@ pub(super) fn cycle<T: Copy + PartialEq>(
     let next = (index + delta).rem_euclid(length) as usize;
     values[next]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_default_maps_to_default_policy() {
+        let prefs = SamplingPreferences {
+            mode: SamplingMode::ModelDefault,
+            ..SamplingPreferences::default()
+        };
+        assert!(matches!(prefs.policy(), SamplingPolicy::Default {}));
+    }
+
+    #[test]
+    fn greedy_maps_to_greedy_method() {
+        let prefs = SamplingPreferences {
+            mode: SamplingMode::Greedy,
+            ..SamplingPreferences::default()
+        };
+        assert!(matches!(
+            prefs.policy(),
+            SamplingPolicy::Custom {
+                method: SamplingMethod::Greedy {},
+            }
+        ));
+    }
+
+    #[test]
+    fn stochastic_only_forwards_enabled_parameters() {
+        let prefs = SamplingPreferences {
+            mode: SamplingMode::Stochastic,
+            temperature_enabled: true,
+            temperature: 0.7,
+            top_k_enabled: false,
+            top_p_enabled: true,
+            top_p: 0.9,
+            min_p_enabled: false,
+            ..SamplingPreferences::default()
+        };
+        match prefs.policy() {
+            SamplingPolicy::Custom {
+                method:
+                    SamplingMethod::Stochastic {
+                        temperature,
+                        top_k,
+                        top_p,
+                        min_p,
+                    },
+            } => {
+                assert_eq!(temperature, Some(0.7));
+                assert_eq!(top_k, None);
+                assert_eq!(top_p, Some(0.9));
+                assert_eq!(min_p, None);
+            },
+            _ => panic!("stochastic mode must map to a custom stochastic policy"),
+        }
+    }
+}

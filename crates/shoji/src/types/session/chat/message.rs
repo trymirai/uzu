@@ -214,10 +214,43 @@ pub trait ChatMessageList {
 
 impl ChatMessageList for Vec<ChatMessage> {
     fn reasoning_effort(&self) -> Option<ReasoningEffort> {
-        self.iter().find_map(|message| message.reasoning_effort())
+        self.iter().rev().find_map(|message| message.reasoning_effort())
     }
 
     fn tool_namespaces(&self) -> Vec<ToolNamespace> {
         self.iter().flat_map(|message| message.tool_namespaces()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user(reasoning_effort: ReasoningEffort) -> ChatMessage {
+        ChatMessage::user().with_text("hi".to_string()).with_reasoning_effort(reasoning_effort)
+    }
+
+    #[test]
+    fn list_reasoning_effort_uses_most_recent_turn() {
+        let reenabled = vec![
+            user(ReasoningEffort::Disabled),
+            ChatMessage::assistant().with_text("ok".to_string()),
+            user(ReasoningEffort::Default),
+        ];
+        assert_eq!(reenabled.reasoning_effort(), Some(ReasoningEffort::Default));
+
+        let redisabled = vec![
+            user(ReasoningEffort::Default),
+            ChatMessage::assistant().with_text("ok".to_string()),
+            user(ReasoningEffort::Disabled),
+        ];
+        assert_eq!(redisabled.reasoning_effort(), Some(ReasoningEffort::Disabled));
+    }
+
+    #[test]
+    fn list_reasoning_effort_none_when_absent() {
+        let messages =
+            vec![ChatMessage::user().with_text("a".to_string()), ChatMessage::assistant().with_text("b".to_string())];
+        assert_eq!(messages.reasoning_effort(), None);
     }
 }

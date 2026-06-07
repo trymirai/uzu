@@ -31,6 +31,7 @@ fn run_generator<B: Backend>(
         &generator.context.seed,
         None,
         speculator.as_ref(),
+        1024, // greedy, doesn't matter
         &TrieCreationConfig::default(),
         suffix_length,
     );
