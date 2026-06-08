@@ -70,7 +70,6 @@ impl MetalContext {
         }
 
         let pipeline = self.library.compute_pipeline_state(function_name, constants)?;
-
         self.pipeline_cache.borrow_mut().insert(cache_key.to_string(), pipeline.clone());
 
         Ok(pipeline)
