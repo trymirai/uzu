@@ -3,7 +3,7 @@
 use proc_macros::uzu_test;
 
 use crate::{
-    audio::{NanoCodecFsqRuntime, nanocodec::runtime::NanoCodecFsqRuntimeConfig},
+    audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig},
     backends::metal::Metal,
     common::audio::fsq_reference::{fsq_decode_reference, fsq_encode_reference},
     prelude::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid},

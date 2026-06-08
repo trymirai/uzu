@@ -1,15 +1,12 @@
-#[path = "../../tests/common/mod.rs"]
-mod common;
-
 use std::fs::File;
 
-use common::path::get_test_weights_path;
 use half::bf16;
 use proc_macros::uzu_test;
 use test_tag::tag;
 
 use crate::{
     backends::common::{Backend, Context},
+    common::path::get_test_weights_path,
     data_type::DataType,
     parameters::{ParameterLoader, safetensors_metadata::read_metadata},
 };

@@ -9,4 +9,6 @@ pub use codec::AudioCodecRuntime;
 pub use context::AudioGenerationContext;
 #[cfg(metal_backend)]
 pub use nanocodec::NanoCodecFsqRuntime;
+#[cfg(all(metal_backend, test))]
+pub use nanocodec::NanoCodecFsqRuntimeConfig;
 pub use types::{AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid};
