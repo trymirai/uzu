@@ -12,7 +12,7 @@ use num_traits::Float;
 
 use crate::{
     common::{
-        matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop, quant_arguments},
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop_named, quant_arguments},
         type_short_name,
     },
     uzu_bench,
@@ -26,7 +26,8 @@ fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
     bits: u32,
     quant_method: QuantizationMethod,
 ) {
-    let mut group = c.benchmark_group(format!("{}/Kernel/Gemv/{}", type_short_name::<B>(), label));
+    let group_path = format!("{}/Kernel/Gemv/{}", type_short_name::<B>(), label);
+    let mut group = c.benchmark_group(group_path.clone());
 
     for shape in bench_quant_gemv_shapes(bits) {
         let (m, k, n) = (shape.m, shape.k, shape.n);
@@ -42,7 +43,8 @@ fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(
 
         group.throughput(Throughput::Elements((m * n * k) as u64));
         group.bench_function(BenchmarkId::from_parameter(shape.to_string()), |b| {
-            iter_encode_loop::<B, _>(context, b, |encoder| {
+            let benchmark_path = format!("{group_path}/{shape}");
+            iter_encode_loop_named::<B, _>(context, b, &benchmark_path, |encoder| {
                 let args = quant_arguments(&mut buffers, &input);
                 matmul.encode(args, encoder).expect("encode failed");
             });
