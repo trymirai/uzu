@@ -1,4 +1,6 @@
-use super::reference::{WeightData, read_f32, write_f32};
+use half::f16;
+
+use super::reference::{QuantizedDequantization, WeightData, read_f32, write_f32};
 use crate::{
     backends::{
         common::{
@@ -143,8 +145,7 @@ impl MatmulKernel for MatmulCpuKernel {
                                 WeightData::Quantized {
                                     weights,
                                     scales,
-                                    zero_points,
-                                    biases,
+                                    dequantization,
                                     bits,
                                     group_size,
                                 } => {
@@ -164,26 +165,58 @@ impl MatmulKernel for MatmulCpuKernel {
                                     let group_index = inner / group_size;
                                     let scale =
                                         read_f32(scales.as_ptr(), weights_data_type, col * num_groups_k + group_index);
-                                    let bias_term = if let Some(zp) = zero_points {
-                                        let zero_point = if *bits == 4 {
-                                            let byte_index = col * zero_point_stride + (group_index >> 1);
-                                            let byte_value = *zp.as_ptr().add(byte_index);
-                                            if (group_index & 1) == 0 {
-                                                (byte_value & 0x0F) as f32
+                                    let b_value = match dequantization {
+                                        QuantizedDequantization::LloydMax {
+                                            codebook,
+                                            bias_indices,
+                                            bias_codebook,
+                                        } => {
+                                            let codebook_value = (*(codebook.as_ptr() as *const f16)
+                                                .add(quantized_value as usize))
+                                            .to_f32();
+                                            let bias_byte_index = col * zero_point_stride + (group_index >> 1);
+                                            let bias_byte = *bias_indices.as_ptr().add(bias_byte_index);
+                                            let bias_code = if (group_index & 1) == 0 {
+                                                (bias_byte & 0x0F) as usize
                                             } else {
-                                                ((byte_value >> 4) & 0x0F) as f32
-                                            }
-                                        } else {
-                                            *zp.as_ptr().add(col * zero_point_stride + group_index) as f32
-                                        };
-                                        -scale * zero_point
-                                    } else if let Some(b) = biases {
-                                        read_f32(b.as_ptr(), weights_data_type, col * num_groups_k + group_index)
-                                    } else {
-                                        let midpoint = (1u32 << (bits - 1)) as f32;
-                                        -scale * midpoint
+                                                ((bias_byte >> 4) & 0x0F) as usize
+                                            };
+                                            let bias_value =
+                                                (*(bias_codebook.as_ptr() as *const f16).add(bias_code)).to_f32();
+                                            scale * (codebook_value - bias_value)
+                                        },
+                                        QuantizedDequantization::ScaleZeroPoint {
+                                            zero_points,
+                                        } => {
+                                            let zero_point = if *bits == 4 {
+                                                let byte_index = col * zero_point_stride + (group_index >> 1);
+                                                let byte_value = *zero_points.as_ptr().add(byte_index);
+                                                if (group_index & 1) == 0 {
+                                                    (byte_value & 0x0F) as f32
+                                                } else {
+                                                    ((byte_value >> 4) & 0x0F) as f32
+                                                }
+                                            } else {
+                                                *zero_points.as_ptr().add(col * zero_point_stride + group_index) as f32
+                                            };
+                                            scale * quantized_value + -scale * zero_point
+                                        },
+                                        QuantizedDequantization::ScaleBias {
+                                            biases,
+                                        } => {
+                                            scale * quantized_value
+                                                + read_f32(
+                                                    biases.as_ptr(),
+                                                    weights_data_type,
+                                                    col * num_groups_k + group_index,
+                                                )
+                                        },
+                                        QuantizedDequantization::ScaleSymmetric => {
+                                            let midpoint = (1u32 << (bits - 1)) as f32;
+                                            scale * quantized_value + -scale * midpoint
+                                        },
                                     };
-                                    scale * quantized_value + bias_term
+                                    b_value
                                 },
                             };
                             accumulator += a_value * b_value;

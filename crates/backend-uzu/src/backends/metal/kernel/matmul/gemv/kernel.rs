@@ -211,6 +211,9 @@ impl GemvDispatch {
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
                     None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
+                    None::<&Allocation<Metal>>,
                     (a, a_offset),
                     &mut *d,
                     output_bias,
@@ -231,25 +234,36 @@ impl GemvDispatch {
             }
             | MatmulB::ScaleSymmetricDequant {
                 ..
+            }
+            | MatmulB::LloydMaxDequant {
+                ..
             }) => {
-                let (weights, scales, zero_points, biases) = match quant_b {
+                let (weights, scales, zero_points, biases, codebook, bias_indices, bias_codebook) = match quant_b {
                     MatmulB::ScaleBiasDequant {
                         b: w,
                         scales,
                         biases,
                         ..
-                    } => (w, scales, None, Some(biases)),
+                    } => (w, scales, None, Some(biases), None, None, None),
                     MatmulB::ScaleZeroPointDequant {
                         b: w,
                         scales,
                         zero_points,
                         ..
-                    } => (w, scales, Some(zero_points), None),
+                    } => (w, scales, Some(zero_points), None, None, None, None),
                     MatmulB::ScaleSymmetricDequant {
                         b: w,
                         scales,
                         ..
-                    } => (w, scales, None, None),
+                    } => (w, scales, None, None, None, None, None),
+                    MatmulB::LloydMaxDequant {
+                        b: w,
+                        scales,
+                        codebook,
+                        bias_indices,
+                        bias_codebook,
+                        ..
+                    } => (w, scales, None, None, Some(codebook), Some(bias_indices), Some(bias_codebook)),
                     MatmulB::FullPrecision {
                         ..
                     } => unreachable!(),
@@ -259,6 +273,9 @@ impl GemvDispatch {
                     Some(scales),
                     zero_points,
                     biases,
+                    codebook,
+                    bias_indices,
+                    bias_codebook,
                     (a, a_offset),
                     &mut *d,
                     output_bias,

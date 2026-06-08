@@ -9,5 +9,6 @@ enum class QuantizationMethod : uint32_t {
   ScaleBias = 0,
   ScaleZeroPoint = 1,
   ScaleSymmetric = 2,
+  LloydMax = 3,
 };
 } // namespace uzu::quantization_method

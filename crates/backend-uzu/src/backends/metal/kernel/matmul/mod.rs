@@ -7,7 +7,8 @@ use crate::{
     backends::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
-            kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
+            gpu_types::QuantizationMode,
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
@@ -55,6 +56,7 @@ impl MatmulKernel for MatmulMetalKernel {
         arguments: MatmulArguments<Metal, TB>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        validate_lloyd_max_qmv(&arguments)?;
         match GemvSpecialization::select(
             &arguments,
             self.weights_data_type,
@@ -65,4 +67,58 @@ impl MatmulKernel for MatmulMetalKernel {
             None => self.gemm.encode(arguments, encoder),
         }
     }
+}
+
+fn validate_lloyd_max_qmv<TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+    arguments: &MatmulArguments<Metal, TB>
+) -> Result<(), MetalError> {
+    let MatmulB::LloydMaxDequant {
+        mode,
+        group_size,
+        ..
+    } = &arguments.b
+    else {
+        return Ok(());
+    };
+
+    if *mode != QuantizationMode::U4 {
+        return Err(unsupported_lloyd_max("only U4 quantization mode is supported"));
+    }
+
+    if !matches!(*group_size, 16 | 32 | 64 | 128) {
+        return Err(MatmulError::<Metal>::UnsupportedGroupSize(*group_size as usize).into());
+    }
+
+    if !arguments.b_transpose || arguments.b_offset != 0 || arguments.b_leading_dimension.is_some() {
+        return Err(MatmulError::<Metal>::UnsupportedLayout {
+            path: "Lloyd-Max QMV",
+        }
+        .into());
+    }
+
+    if arguments.d_transform.rht_factors.is_some() {
+        return Err(unsupported_lloyd_max("RHT output transform is not implemented"));
+    }
+
+    if arguments.m >= 5 {
+        return Err(unsupported_lloyd_max("only decode batches with m < 5 are supported"));
+    }
+
+    if arguments.n < 4 || !arguments.n.is_multiple_of(32) {
+        return Err(unsupported_lloyd_max("output width must be at least 4 and a multiple of 32"));
+    }
+
+    if !arguments.k.is_multiple_of(512) {
+        return Err(unsupported_lloyd_max("input width must be a multiple of 512"));
+    }
+
+    Ok(())
+}
+
+fn unsupported_lloyd_max(reason: &'static str) -> MetalError {
+    MatmulError::<Metal>::UnsupportedFeature {
+        feature: "Lloyd-Max QMV",
+        reason,
+    }
+    .into()
 }

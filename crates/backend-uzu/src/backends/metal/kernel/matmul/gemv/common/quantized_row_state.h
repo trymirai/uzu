@@ -36,6 +36,8 @@ struct QuantizedOffsetState<BT, U, GemmBPrologueKind::ScaleBiasDequant, BITS> {
   QuantizedOffsetState(
       const device uint8_t*,
       const device BT* biases_base,
+      const device uint8_t*,
+      const threadgroup half*,
       uint out_row,
       uint group_count,
       uint group_offset
@@ -56,6 +58,8 @@ struct QuantizedOffsetState<BT, U, GemmBPrologueKind::ScaleZeroPointDequant, BIT
   QuantizedOffsetState(
       const device uint8_t* zero_points_base,
       const device BT*,
+      const device uint8_t*,
+      const threadgroup half*,
       uint out_row,
       uint group_count,
       uint group_offset
@@ -86,7 +90,15 @@ struct QuantizedOffsetState<BT, U, GemmBPrologueKind::ScaleZeroPointDequant, BIT
 
 template <typename BT, typename U, uint BITS>
 struct QuantizedOffsetState<BT, U, GemmBPrologueKind::ScaleSymmetricDequant, BITS> {
-  QuantizedOffsetState(const device uint8_t*, const device BT*, uint, uint, uint) {}
+  QuantizedOffsetState(
+      const device uint8_t*,
+      const device BT*,
+      const device uint8_t*,
+      const threadgroup half*,
+      uint,
+      uint,
+      uint
+  ) {}
 
   METAL_FUNC U value(uint, U scale) const {
     constexpr U midpoint = U(1u << (BITS - 1));
@@ -107,12 +119,21 @@ struct QuantizedRowState {
       const device BT* scales_base,
       const device uint8_t* zero_points_base,
       const device BT* biases_base,
+      const device uint8_t* bias_indices_base,
+      const threadgroup half* bias_codebook_base,
       uint out_row,
       uint group_count,
       uint group_offset
   )
-      : scale_rows(scales_base, out_row, group_count, group_offset),
-        offset_state(zero_points_base, biases_base, out_row, group_count, group_offset) {}
+      : scale_rows(scales_base, out_row, group_count, group_offset), offset_state(
+                                                                         zero_points_base,
+                                                                         biases_base,
+                                                                         bias_indices_base,
+                                                                         bias_codebook_base,
+                                                                         out_row,
+                                                                         group_count,
+                                                                         group_offset
+                                                                     ) {}
 
   void load(thread Params& params) const {
     METAL_PRAGMA_UNROLL

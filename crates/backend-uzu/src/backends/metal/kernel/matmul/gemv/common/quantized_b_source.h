@@ -23,6 +23,9 @@ struct QuantizedBSource {
       const device BT* scales,
       const device uint8_t* zero_points,
       const device BT* biases,
+      const device uint8_t* bias_indices,
+      const threadgroup half* codebook,
+      const threadgroup half* bias_codebook,
       const device AT* a,
       uint in_vec_size,
       uint out_row,
@@ -44,7 +47,7 @@ struct QuantizedBSource {
     const device uint8_t* weights = reinterpret_cast<const device uint8_t*>(b);
     weights += out_row * weights_row_stride + simd_lane * packs_per_thread * bytes_per_pack;
 
-    RowState row_state(scales, zero_points, biases, out_row, group_count, group_offset);
+    RowState row_state(scales, zero_points, biases, bias_indices, bias_codebook, out_row, group_count, group_offset);
 
     const device AT* input = a + batch_idx * in_vec_size + simd_lane * values_per_thread;
     thread U input_values[values_per_thread];
@@ -95,6 +98,116 @@ struct QuantizedBSource {
           );
         }
       }
+    }
+  }
+};
+
+template <
+    typename BT,
+    typename AT,
+    typename U,
+    uint GROUP_SIZE,
+    uint BITS,
+    uint RESULTS_PER_SIMDGROUP,
+    bool INPUT_ALIGNED>
+struct QuantizedBSource<
+    BT,
+    AT,
+    U,
+    GemmBPrologueKind::LloydMaxDequant,
+    GROUP_SIZE,
+    BITS,
+    RESULTS_PER_SIMDGROUP,
+    INPUT_ALIGNED> {
+  static METAL_FUNC void accumulate(
+      thread U (&result)[RESULTS_PER_SIMDGROUP],
+      const device uint32_t* b,
+      const device BT* scales,
+      const device uint8_t*,
+      const device BT*,
+      const device uint8_t* bias_indices,
+      const threadgroup half* codebook,
+      const threadgroup half* bias_codebook,
+      const device AT* a,
+      uint in_vec_size,
+      uint out_row,
+      uint batch_idx,
+      uint simd_lane
+  ) {
+    static_assert(BITS == 4, "Only int4 Lloyd-Max QMV is supported");
+    static_assert(RESULTS_PER_SIMDGROUP == 4, "Lloyd-Max QMV expects four results per simdgroup");
+    static_assert(INPUT_ALIGNED, "Lloyd-Max QMV requires aligned input");
+
+    constexpr uint pack_factor = get_pack_factor<BITS, 32>();
+    constexpr uint bytes_per_pack = get_bytes_per_pack<BITS, 32>();
+    constexpr uint packs_per_thread = 2;
+    constexpr uint values_per_thread = pack_factor * packs_per_thread;
+    constexpr uint block_size = values_per_thread * METAL_SIMD_SIZE;
+    constexpr uint scale_step_per_thread = GROUP_SIZE / values_per_thread;
+
+    const uint weights_row_stride = in_vec_size * bytes_per_pack / pack_factor;
+    const uint group_count = (in_vec_size + GROUP_SIZE - 1) / GROUP_SIZE;
+    const uint group_offset = simd_lane / scale_step_per_thread;
+    const uint bias_stride = (group_count + 1) / 2;
+
+    const device uint8_t* weights = reinterpret_cast<const device uint8_t*>(b);
+    weights += out_row * weights_row_stride + simd_lane * packs_per_thread * bytes_per_pack;
+    QuantizedGroupRows<BT, U> scale_rows(scales, out_row, group_count, group_offset);
+    const device uint8_t* bias_codes = bias_indices + out_row * bias_stride + group_offset / 2;
+    const uint8_t bias_shift = (group_offset & 1) ? 4u : 0u;
+
+    const device AT* input = a + batch_idx * in_vec_size + simd_lane * values_per_thread;
+    thread U input_values[values_per_thread];
+
+    for (uint k = 0; k + block_size <= in_vec_size; k += block_size) {
+      load_vector_unscaled<AT, U, values_per_thread>(input, input_values);
+
+      const device uint8_t* weight_row0 = weights;
+      const device uint8_t* weight_row1 = weights + weights_row_stride;
+      const device uint8_t* weight_row2 = weights + 2 * weights_row_stride;
+      const device uint8_t* weight_row3 = weights + 3 * weights_row_stride;
+
+      const U scale0 = scale_rows.value(0);
+      const U scale1 = scale_rows.value(1);
+      const U scale2 = scale_rows.value(2);
+      const U scale3 = scale_rows.value(3);
+      uchar4 bias_bytes =
+          uchar4(bias_codes[0], bias_codes[bias_stride], bias_codes[2 * bias_stride], bias_codes[3 * bias_stride]);
+      uchar4 codes = (bias_bytes >> bias_shift) & uchar4(0x0F);
+
+      result[0] += qdot_lloyd_max<U, values_per_thread, BITS>(
+          weight_row0,
+          input_values,
+          codebook,
+          scale0,
+          static_cast<U>(bias_codebook[codes.x])
+      );
+      result[1] += qdot_lloyd_max<U, values_per_thread, BITS>(
+          weight_row1,
+          input_values,
+          codebook,
+          scale1,
+          static_cast<U>(bias_codebook[codes.y])
+      );
+      result[2] += qdot_lloyd_max<U, values_per_thread, BITS>(
+          weight_row2,
+          input_values,
+          codebook,
+          scale2,
+          static_cast<U>(bias_codebook[codes.z])
+      );
+      result[3] += qdot_lloyd_max<U, values_per_thread, BITS>(
+          weight_row3,
+          input_values,
+          codebook,
+          scale3,
+          static_cast<U>(bias_codebook[codes.w])
+      );
+
+      weights += block_size * bytes_per_pack / pack_factor;
+      scale_rows.advance(block_size / GROUP_SIZE);
+      bias_codes += (block_size / GROUP_SIZE) / 2;
+      input += block_size;
     }
   }
 };

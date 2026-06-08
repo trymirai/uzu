@@ -130,6 +130,9 @@ impl GemmKernel {
                     && arguments.b_offset == 0
                     && arguments.k.is_multiple_of(select_mxu_tiling(arguments.m, arguments.n).block_k())
             },
+            MatmulB::LloydMaxDequant {
+                ..
+            } => false,
         };
         let path = if encoder.context().device.supports_mxu()
             && [self.weights_data_type, self.input_data_type, self.output_data_type]
@@ -150,6 +153,10 @@ impl GemmKernel {
         path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
+        if matches!(arguments.b, MatmulB::LloydMaxDequant { .. }) {
+            return Err(unsupported_lloyd_max_gemm());
+        }
+
         if matches!(path, GemmDispatchPath::Mxu) {
             assert!(
                 encoder.context().device.supports_mxu(),
@@ -426,6 +433,11 @@ impl GemmKernel {
                     encoder,
                 );
             },
+            MatmulB::LloydMaxDequant {
+                ..
+            } => {
+                return Err(unsupported_lloyd_max_gemm());
+            },
         }
 
         Ok(())
@@ -686,4 +698,12 @@ pub(crate) fn select_quant_tiling(
     } else {
         GemmTiling::Tile32x32x32_Simdgroups2x2
     }
+}
+
+fn unsupported_lloyd_max_gemm() -> MetalError {
+    MatmulError::<Metal>::UnsupportedFeature {
+        feature: "Lloyd-Max GEMM",
+        reason: "Lloyd-Max GEMM is not implemented",
+    }
+    .into()
 }

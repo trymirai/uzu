@@ -10,7 +10,7 @@ use backend_uzu::{
     backends::{
         common::{
             Backend, Context, Encoder,
-            gpu_types::{QuantizationMethod, gemm::GemmDTransform},
+            gpu_types::{QuantizationMethod, QuantizationMode, gemm::GemmDTransform},
             kernel::{
                 Kernels,
                 matmul::{MatmulDOps, MatmulError, MatmulKernel},
@@ -27,7 +27,10 @@ use rstest::rstest;
 
 use crate::common::{
     helpers::allocation_to_vec,
-    matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+    matmul::{
+        LloydMaxQuantBuffers, LloydMaxQuantInput, QuantBuffers, QuantInput, lloyd_max_quant_arguments, quant_arguments,
+        run_quant_cpu, run_quant_metal,
+    },
 };
 
 fn check_tolerance(
@@ -61,6 +64,10 @@ fn assert_parity<T: ArrayElement + Float + Debug + Display>(
         }
     }
     assert_eq!(errors, 0, "{label}: {errors} mismatches");
+}
+
+fn matmul_error_source(error: &dyn StdError) -> &MatmulError<Metal> {
+    error.source().and_then(|source| source.downcast_ref::<MatmulError<Metal>>()).expect("expected MatmulError source")
 }
 
 fn run_parity<T: ArrayElement + Float + Debug + Display>(
@@ -153,6 +160,40 @@ fn run_parity_gemv<T: ArrayElement + Float + Debug + Display>(
     );
 }
 
+fn run_lloyd_max_cpu<T: ArrayElement + Float>(input: &LloydMaxQuantInput<T>) -> Vec<T> {
+    let context = <Cpu as Backend>::Context::new().expect("Cpu context");
+    let mut buffers = LloydMaxQuantBuffers::<Cpu, T>::allocate(&context, input);
+    let mut matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulCpuKernel");
+    let mut encoder = Encoder::<Cpu>::new(&context).expect("encoder");
+    matmul.encode(lloyd_max_quant_arguments(&mut buffers, input), &mut encoder).expect("encode CPU Lloyd-Max quant");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<Cpu, T>(&buffers.y)
+}
+
+fn run_lloyd_max_metal<T: ArrayElement + Float>(
+    context: &MetalContext,
+    input: &LloydMaxQuantInput<T>,
+) -> Vec<T> {
+    let mut buffers = LloydMaxQuantBuffers::<Metal, T>::allocate(context, input);
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        context,
+        T::data_type(),
+        T::data_type(),
+        T::data_type(),
+    )
+    .expect("MatmulMetalKernel");
+    let mut encoder = Encoder::<Metal>::new(context).expect("encoder");
+    matmul.encode(lloyd_max_quant_arguments(&mut buffers, input), &mut encoder).expect("matmul encode failed");
+    encoder.end_encoding().submit().wait_until_completed().unwrap();
+    allocation_to_vec::<Metal, T>(&buffers.y)
+}
+
 #[rstest]
 #[case::m1_gs32_4bit_mlx(1, 256, 64, 32, 4, QuantizationMethod::ScaleBias)]
 #[case::m1_gs64_4bit_mlx(1, 256, 64, 64, 4, QuantizationMethod::ScaleBias)]
@@ -173,6 +214,97 @@ fn parity_gemv_bf16(
     #[case] method: QuantizationMethod,
 ) {
     run_parity_gemv::<bf16>(m, k, n, gs, bits, method, 0.05, 0.4);
+}
+
+#[rstest]
+#[case::m1_gs64(1, 512, 64, 64)]
+#[case::m2_gs64(2, 512, 64, 64)]
+#[case::m3_gs64(3, 512, 64, 64)]
+#[case::m4_gs64(4, 512, 64, 64)]
+fn parity_gemv_lloyd_max_bf16(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] group_size: u32,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    let input = LloydMaxQuantInput::<bf16>::new(m, k, n, group_size);
+    let reference = run_lloyd_max_cpu::<bf16>(&input);
+    let actual = run_lloyd_max_metal::<bf16>(&context, &input);
+    assert_parity::<bf16>("gemv_lloyd_max", &reference, &actual, 0.05, 0.4);
+}
+
+#[rstest]
+#[case::u8_mode(1, 512, 64, 64, Some(QuantizationMode::U8), false)]
+#[case::group_size96(1, 512, 64, 96, None, false)]
+#[case::m5_batch(5, 512, 64, 64, None, false)]
+#[case::n12_width(1, 512, 12, 64, None, false)]
+#[case::k768_width(1, 768, 64, 64, None, false)]
+#[case::rht(1, 512, 64, 64, None, true)]
+fn lloyd_max_qmv_unsupported_config_returns_matmul_error(
+    #[case] m: usize,
+    #[case] k: usize,
+    #[case] n: usize,
+    #[case] group_size: u32,
+    #[case] mode_override: Option<QuantizationMode>,
+    #[case] use_rht: bool,
+) {
+    let context = MetalContext::new().expect("Metal context");
+    let input = LloydMaxQuantInput::<bf16>::new(m, k, n, group_size);
+    let mut buffers = LloydMaxQuantBuffers::<Metal, bf16>::allocate(&context, &input);
+    let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
+        &context,
+        bf16::data_type(),
+        bf16::data_type(),
+        bf16::data_type(),
+    )
+    .expect("MatmulMetalKernel");
+
+    let rht = use_rht.then(|| {
+        (0..n)
+            .map(|index| {
+                if index % 2 == 0 {
+                    1
+                } else {
+                    -1
+                }
+            })
+            .collect::<Vec<i32>>()
+    });
+    let rht_buffer =
+        rht.as_ref().map(|factors| crate::common::helpers::alloc_allocation_with_data::<Metal, i32>(&context, factors));
+
+    let mut encoder = Encoder::<Metal>::new(&context).expect("encoder");
+    let mut args = lloyd_max_quant_arguments(&mut buffers, &input);
+    if let Some(mode) = mode_override {
+        if let backend_uzu::backends::common::kernel::matmul::MatmulB::LloydMaxDequant {
+            mode: matmul_mode,
+            ..
+        } = &mut args.b
+        {
+            *matmul_mode = mode;
+        }
+    }
+    args.d_transform = MatmulDOps {
+        ab_scale: 1.0,
+        accumulate: false,
+        bias: None,
+        rht_factors: rht_buffer.as_ref(),
+    };
+
+    let error = matmul.encode(args, &mut encoder).expect_err("expected unsupported Lloyd-Max QMV configuration");
+    let matmul = matmul_error_source(&error);
+    assert!(
+        matches!(
+            matmul,
+            MatmulError::UnsupportedGroupSize(96)
+                | MatmulError::UnsupportedFeature {
+                    feature: "Lloyd-Max QMV",
+                    ..
+                }
+        ),
+        "got {matmul:?}"
+    );
 }
 
 #[uzu_test]

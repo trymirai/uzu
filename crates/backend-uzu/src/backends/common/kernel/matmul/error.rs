@@ -20,6 +20,11 @@ pub enum MatmulError<B: Backend> {
     UnsupportedLayout {
         path: &'static str,
     },
+    #[error("Unsupported matmul feature {feature}: {reason}")]
+    UnsupportedFeature {
+        feature: &'static str,
+        reason: &'static str,
+    },
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
 }

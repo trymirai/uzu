@@ -497,6 +497,7 @@ impl<B: Backend> Embedding<B> {
                     QuantizationMethod::ScaleBias => (None, zero_points_or_biases.as_ref()),
                     QuantizationMethod::ScaleZeroPoint => (zero_points_or_biases.as_ref(), None),
                     QuantizationMethod::ScaleSymmetric => (None, None),
+                    QuantizationMethod::LloydMax => unreachable!("Lloyd-Max embedding lookup is not implemented"),
                 };
                 lookup.encode(
                     token_ids,
@@ -615,6 +616,7 @@ impl<B: Backend> Embedding<B> {
                         mode: readout_config.mode,
                         group_size: readout_config.group_size,
                     },
+                    QuantizationMethod::LloydMax => unreachable!("Lloyd-Max embedding readout is not implemented"),
                 };
                 readout
                     .borrow_mut()
@@ -753,6 +755,11 @@ fn load_quantized_embedding_parts<B: Backend>(
                     .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
                     .read_allocation()?,
             )
+        },
+        QuantizationMethod::LloydMax => {
+            return Err(EmbeddingError::UnsupportedConfiguration(
+                "Lloyd-Max embedding loading is not implemented".to_string(),
+            ));
         },
         QuantizationMethod::ScaleSymmetric => None,
     };

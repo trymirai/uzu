@@ -6,6 +6,7 @@ pub enum QuantizationMethod {
     ScaleBias,
     ScaleZeroPoint,
     ScaleSymmetric,
+    LloydMax,
 }
 
 impl fmt::Display for QuantizationMethod {

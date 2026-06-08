@@ -8,6 +8,7 @@ pub enum GemmBPrologueKind {
     ScaleBiasDequant,
     ScaleZeroPointDequant,
     ScaleSymmetricDequant,
+    LloydMaxDequant,
 }
 
 bitflags! {

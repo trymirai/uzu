@@ -30,6 +30,15 @@ pub enum MatmulB<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>> {
         mode: QuantizationMode,
         group_size: u32,
     },
+    LloydMaxDequant {
+        b: &'a Allocation<B>,
+        scales: &'a Allocation<B>,
+        codebook: &'a Allocation<B>,
+        bias_indices: &'a Allocation<B>,
+        bias_codebook: &'a Allocation<B>,
+        mode: QuantizationMode,
+        group_size: u32,
+    },
 }
 
 impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
@@ -47,6 +56,9 @@ impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
             Self::ScaleSymmetricDequant {
                 ..
             } => GemmBPrologueKind::ScaleSymmetricDequant,
+            Self::LloydMaxDequant {
+                ..
+            } => GemmBPrologueKind::LloydMaxDequant,
         }
     }
 
@@ -64,6 +76,10 @@ impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
                 ..
             }
             | Self::ScaleSymmetricDequant {
+                mode,
+                ..
+            }
+            | Self::LloydMaxDequant {
                 mode,
                 ..
             } => Some(DataType::from(*mode).size_in_bits() as u32),
@@ -84,6 +100,10 @@ impl<B: Backend, TB: AsBufferRangeRef> MatmulB<'_, B, TB> {
                 ..
             }
             | Self::ScaleSymmetricDequant {
+                group_size,
+                ..
+            }
+            | Self::LloydMaxDequant {
                 group_size,
                 ..
             } => Some(*group_size),

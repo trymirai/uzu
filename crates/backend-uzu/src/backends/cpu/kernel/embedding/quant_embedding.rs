@@ -118,6 +118,7 @@ pub fn quantized_embedding_lookup<T: ArrayElement + Float>(
                         let midpoint = 1 << (DataType::from(quantization_mode).size_in_bits() - 1);
                         -scale.to_f32().unwrap() * midpoint as f32
                     },
+                    QuantizationMethod::LloydMax => unreachable!("Lloyd-Max embedding lookup is not implemented"),
                 };
 
                 let out_f = scale.to_f32().unwrap() * quantized_value as f32 + bias;
