@@ -64,6 +64,7 @@ fn test_trie_from_speculator_sprout() {
         &rng,
         None,
         &speculator,
+        1024,
         &TrieCreationConfig {
             width: 5,
         },
@@ -135,6 +136,7 @@ fn test_trie_from_speculator_stick() {
         &rng,
         None,
         &speculator,
+        1024,
         &TrieCreationConfig {
             width: 1,
         },
@@ -203,6 +205,7 @@ fn test_trie_from_speculator_bush() {
         &rng,
         None,
         &speculator,
+        1024,
         &TrieCreationConfig {
             width: 3,
         },

@@ -23,28 +23,18 @@ template <
     short BITS,
     bool SCALE_SYMMETRIC = false>
 struct QuantizedBlockLoaderScaleZeroPoint {
-  static_assert(
-      THREADGROUP_TILE_COLS <= GROUP_SIZE,
-      "Group size should be larger than columns"
-  );
-  static_assert(
-      GROUP_SIZE % THREADGROUP_TILE_COLS == 0,
-      "Group size should be divisible by columns"
-  );
+  static_assert(THREADGROUP_TILE_COLS <= GROUP_SIZE, "Group size should be larger than columns");
+  static_assert(GROUP_SIZE % THREADGROUP_TILE_COLS == 0, "Group size should be divisible by columns");
   static_assert(BITS == 4 || BITS == 8, "Only int4 and int8 supported");
 
   METAL_CONST short pack_factor = get_pack_factor<BITS, 8>();
   METAL_CONST short bytes_per_pack = get_bytes_per_pack<BITS>();
-  METAL_CONST short THREADGROUP_TILE_COLS_PACKED =
-      THREADGROUP_TILE_COLS / pack_factor;
-  METAL_CONST short READS_PER_THREAD =
-      (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
-          ? 1
-          : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) /
-                THREADGROUP_SIZE;
+  METAL_CONST short THREADGROUP_TILE_COLS_PACKED = THREADGROUP_TILE_COLS / pack_factor;
+  METAL_CONST short READS_PER_THREAD = (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE)
+                                           ? 1
+                                           : (THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS) / THREADGROUP_SIZE;
   METAL_CONST short GROUP_STEPS_PER_BLOCK = GROUP_SIZE / THREADGROUP_TILE_COLS;
-  METAL_CONST bool TILE_HAS_IDLE_THREADS =
-      THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
+  METAL_CONST bool TILE_HAS_IDLE_THREADS = THREADGROUP_TILE_COLS_PACKED * THREADGROUP_TILE_ROWS < THREADGROUP_SIZE;
 
   const int src_leading_dim;
   const int groups_per_row;
@@ -76,48 +66,25 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       : src_leading_dim(src_leading_dim_), groups_per_row(groups_per_row_),
         tile_stride(
             REDUCTION_DIMENSION ? THREADGROUP_TILE_COLS_PACKED * bytes_per_pack
-                                : THREADGROUP_TILE_ROWS * src_leading_dim_ *
-                                      bytes_per_pack / pack_factor
+                                : THREADGROUP_TILE_ROWS * src_leading_dim_ * bytes_per_pack / pack_factor
         ),
-        group_step_counter(0), k_base(0),
-        group_stride(THREADGROUP_TILE_ROWS * groups_per_row_),
+        group_step_counter(0), k_base(0), group_stride(THREADGROUP_TILE_ROWS * groups_per_row_),
         thread_index(simd_group_id * 32 + simd_lane_id),
-        tile_row_index(
-            READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED
-        ),
-        tile_col_index(
-            (READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED
-        ),
-        dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION +
-            tile_col_index * pack_factor),
-        src(src_ +
-            tile_row_index * src_leading_dim_ * bytes_per_pack / pack_factor +
-            tile_col_index * bytes_per_pack),
-        scales(
-            REDUCTION_DIMENSION == 1
-                ? (scales_ + tile_row_index * groups_per_row_)
-                : scales_
-        ),
-        scales_row_start(
-            REDUCTION_DIMENSION == 1
-                ? (scales_ + tile_row_index * groups_per_row_)
-                : scales_
-        ),
+        tile_row_index(READS_PER_THREAD * thread_index / THREADGROUP_TILE_COLS_PACKED),
+        tile_col_index((READS_PER_THREAD * thread_index) % THREADGROUP_TILE_COLS_PACKED),
+        dst(dst_ + tile_row_index * DESTINATION_LEADING_DIMENSION + tile_col_index * pack_factor),
+        src(src_ + tile_row_index * src_leading_dim_ * bytes_per_pack / pack_factor + tile_col_index * bytes_per_pack),
+        scales(REDUCTION_DIMENSION == 1 ? (scales_ + tile_row_index * groups_per_row_) : scales_),
+        scales_row_start(REDUCTION_DIMENSION == 1 ? (scales_ + tile_row_index * groups_per_row_) : scales_),
         zero_points_row_start(
-            SCALE_SYMMETRIC
-                ? nullptr
-                : (REDUCTION_DIMENSION == 1
-                       ? (zero_points_row_start_ +
-                          tile_row_index * (BITS == 4
-                                                ? ((groups_per_row_ + 1) / 2)
-                                                : groups_per_row_))
-                       : zero_points_row_start_)
+            SCALE_SYMMETRIC ? nullptr
+                            : (REDUCTION_DIMENSION == 1
+                                   ? (zero_points_row_start_ +
+                                      tile_row_index * (BITS == 4 ? ((groups_per_row_ + 1) / 2) : groups_per_row_))
+                                   : zero_points_row_start_)
         ) {}
 
-  inline void current_scale_bias(
-      thread T& out_scale,
-      thread T& out_bias
-  ) const {
+  inline void current_scale_bias(thread T& out_scale, thread T& out_bias) const {
     uint zero_point_value;
     T scale_value;
     int group_index;
@@ -131,11 +98,9 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     if constexpr (SCALE_SYMMETRIC) {
       zero_point_value = 1u << (BITS - 1);
     } else if constexpr (BITS == 4) {
-      const device uint8_t* zero_point_ptr =
-          zero_points_row_start + (group_index >> 1);
+      const device uint8_t* zero_point_ptr = zero_points_row_start + (group_index >> 1);
       uint8_t zero_point_byte = *zero_point_ptr;
-      zero_point_value =
-          (uint(zero_point_byte) >> (uint(group_index & 1) * 4u)) & 0x0Fu;
+      zero_point_value = (uint(zero_point_byte) >> (uint(group_index & 1) * 4u)) & 0x0Fu;
     } else {
       zero_point_value = zero_points_row_start[group_index];
     }
@@ -154,12 +119,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
     T bias;
     current_scale_bias(scale, bias);
     for (int i = 0; i < READS_PER_THREAD; i++) {
-      dequantize<T, pack_factor, BITS>(
-          src + i * bytes_per_pack,
-          scale,
-          bias,
-          dst + i * pack_factor
-      );
+      dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
     }
   }
 
@@ -187,12 +147,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       for (int i = 0; i < READS_PER_THREAD; i++) {
         int pack_index = tile_col_index + i;
         if (pack_index < valid_packs) {
-          dequantize<T, pack_factor, BITS>(
-              src + i * bytes_per_pack,
-              scale,
-              bias,
-              dst + i * pack_factor
-          );
+          dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
 
           if (pack_index == valid_packs - 1) {
             int remaining = valid_cols - pack_index * pack_factor;
@@ -221,12 +176,7 @@ struct QuantizedBlockLoaderScaleZeroPoint {
       T bias;
       current_scale_bias(scale, bias);
       for (int i = 0; i < READS_PER_THREAD; i++) {
-        dequantize<T, pack_factor, BITS>(
-            src + i * bytes_per_pack,
-            scale,
-            bias,
-            dst + i * pack_factor
-        );
+        dequantize<T, pack_factor, BITS>(src + i * bytes_per_pack, scale, bias, dst + i * pack_factor);
       }
     }
   }

@@ -15,7 +15,6 @@ mod qk_unpack_test;
 mod qkv_norm_test;
 mod rms_norm_test;
 mod rope_test;
-mod sampling;
 mod short_conv;
 mod ssm;
 mod tensor_add_bias_test;

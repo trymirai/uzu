@@ -8,7 +8,7 @@ use crate::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
             gpu_types::QuantizationMode,
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel, MatmulQuantCombo},
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulKernel},
         },
         metal::{Metal, context::MetalContext, error::MetalError},
     },
@@ -66,15 +66,6 @@ impl MatmulKernel for MatmulMetalKernel {
             Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
             None => self.gemm.encode(arguments, encoder),
         }
-    }
-
-    fn preheat_quant_combo(
-        &mut self,
-        context: &MetalContext,
-        combo: MatmulQuantCombo,
-    ) -> Result<(), MetalError> {
-        self.gemv.preheat_quant_combo(context, combo).map_err(MetalError::from)?;
-        self.gemm.preheat_quant_combo(context, combo)
     }
 }
 

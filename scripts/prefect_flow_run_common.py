@@ -20,8 +20,10 @@ class PoolName(str, Enum):
     MACOS_M1 = "macos-m1-pool"
     MACOS_M2 = "macos-m2-pool"
     MACOS_M2_PRO = "macos-m2-pro-pool"
+    MACOS_M3_MAX = "macos-m3-max-pool"
     MACOS_M4 = "macos-m4-pool"
     MACOS_M4_PRO = "macos-m4-pro-pool"
+    MACOS_M4_MAX = "macos-m4-max-pool"
 
 
 class FlowRunStateType(str, Enum):

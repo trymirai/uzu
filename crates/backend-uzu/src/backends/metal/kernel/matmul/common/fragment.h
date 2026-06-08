@@ -28,8 +28,7 @@ struct Fragment {
       "Ops must expose positive FRAGMENT_ROWS/FRAGMENT_COLS"
   );
   static_assert(
-      Ops::ELEMENTS_PER_THREAD ==
-          (Ops::FRAGMENT_ROWS * Ops::FRAGMENT_COLS) / METAL_SIMD_SIZE,
+      Ops::ELEMENTS_PER_THREAD == (Ops::FRAGMENT_ROWS * Ops::FRAGMENT_COLS) / METAL_SIMD_SIZE,
       "Ops::ELEMENTS_PER_THREAD must equal "
       "(FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE"
   );
@@ -51,26 +50,20 @@ struct Fragment {
   ThreadVectorType fragment_data[NUM_FRAGS];
   ThreadContext thread_context;
 
-  METAL_FUNC Fragment(const thread ThreadContext& thread_context) thread
-      : thread_context(thread_context) {}
+  METAL_FUNC Fragment(const thread ThreadContext& thread_context) thread : thread_context(thread_context) {}
 
   // Lane origin (row, col) within a single FRAGMENT_ROWS x FRAGMENT_COLS
   // sub-tile. The mapping depends only on Ops::THREAD_ELEMENT_COLS, so it is
   // identical for every Fragment sharing that Ops type.
-  METAL_FUNC static constexpr short2 get_position(
-      const thread ThreadContext& thread_context
-  ) {
+  METAL_FUNC static constexpr short2 get_position(const thread ThreadContext& thread_context) {
     const ushort simd_lane_id = ushort(thread_context.simd_lane_id);
     const short quad = simd_lane_id / 4;
     const short row = (quad & 4) + (simd_lane_id / 2) % 4;
-    const short col =
-        ((quad & 2) + simd_lane_id % 2) * Ops::THREAD_ELEMENT_COLS;
+    const short col = ((quad & 2) + simd_lane_id % 2) * Ops::THREAD_ELEMENT_COLS;
     return short2{col, row};
   }
 
-  METAL_FUNC short2 get_position() const thread {
-    return get_position(thread_context);
-  }
+  METAL_FUNC short2 get_position() const thread { return get_position(thread_context); }
 
   METAL_FUNC constexpr void clear() {
     METAL_PRAGMA_UNROLL
@@ -79,10 +72,7 @@ struct Fragment {
     }
   }
 
-  METAL_FUNC constexpr thread ThreadVectorType& fragment_at(
-      const ushort row_index,
-      const ushort col_index
-  ) {
+  METAL_FUNC constexpr thread ThreadVectorType& fragment_at(const ushort row_index, const ushort col_index) {
     return fragment_data[row_index * TILE_COLS + col_index];
   }
 
@@ -99,9 +89,7 @@ struct Fragment {
     }
   }
 
-  METAL_FUNC thread ElementType* elements() {
-    return reinterpret_cast<thread ElementType*>(fragment_data);
-  }
+  METAL_FUNC thread ElementType* elements() { return reinterpret_cast<thread ElementType*>(fragment_data); }
 
   // Unsafe load: copy a (TILE_ROWS * FRAGMENT_ROWS) x (TILE_COLS *
   // FRAGMENT_COLS) block from device memory into fragment registers. ColStride
@@ -121,22 +109,11 @@ struct Fragment {
       TileRowStride tile_row_stride = {},
       TileColStride tile_col_stride = {}
   ) thread {
-    transfer<LOAD, UNSAFE>(
-        source,
-        row_stride,
-        col_stride,
-        Int<0>{},
-        Int<0>{},
-        tile_row_stride,
-        tile_col_stride
-    );
+    transfer<LOAD, UNSAFE>(source, row_stride, col_stride, Int<0>{}, Int<0>{}, tile_row_stride, tile_col_stride);
   }
 
   // Safe load: col_stride is implicitly 1; out-of-bounds elements become T(0).
-  template <
-      class Ptr,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
+  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
   METAL_FUNC void load_safe(
       Ptr source,
       const int leading_dimension,
@@ -169,22 +146,11 @@ struct Fragment {
       TileRowStride tile_row_stride = {},
       TileColStride tile_col_stride = {}
   ) thread {
-    transfer<STORE, UNSAFE>(
-        destination,
-        row_stride,
-        col_stride,
-        Int<0>{},
-        Int<0>{},
-        tile_row_stride,
-        tile_col_stride
-    );
+    transfer<STORE, UNSAFE>(destination, row_stride, col_stride, Int<0>{}, Int<0>{}, tile_row_stride, tile_col_stride);
   }
 
   // Safe store: col_stride is implicitly 1; out-of-bounds elements are skipped.
-  template <
-      class Ptr,
-      class TileRowStride = Int<1>,
-      class TileColStride = Int<1>>
+  template <class Ptr, class TileRowStride = Int<1>, class TileColStride = Int<1>>
   METAL_FUNC void store_safe(
       Ptr destination,
       const int leading_dimension,
@@ -212,9 +178,7 @@ private:
   template <class Fn>
   METAL_FUNC void for_each_fragment(Fn fn) thread {
     const_for_loop<0, TILE_ROWS, 1>([&](auto row_index) {
-      const_for_loop<0, TILE_COLS, 1>([&](auto col_index) {
-        fn(row_index, col_index);
-      });
+      const_for_loop<0, TILE_COLS, 1>([&](auto col_index) { fn(row_index, col_index); });
     });
   }
 
@@ -266,16 +230,12 @@ private:
         for (ushort j = 0; j < Ops::THREAD_ELEMENT_COLS; j++) {
           const ushort element_index = i * Ops::THREAD_ELEMENT_COLS + j;
           const auto col = col_base + j;
-          const auto offset = col_stride_is_one
-                                  ? (row * row_stride + col)
-                                  : (row * row_stride + col * col_stride);
+          const auto offset = col_stride_is_one ? (row * row_stride + col) : (row * row_stride + col * col_stride);
 
           if constexpr (IS_LOAD) {
             if constexpr (IS_SAFE) {
-              const bool in_bounds =
-                  (row < local_row_limit) && (col < local_col_limit);
-              frag[element_index] =
-                  in_bounds ? static_cast<T>(ptr[offset]) : T(0);
+              const bool in_bounds = (row < local_row_limit) && (col < local_col_limit);
+              frag[element_index] = in_bounds ? static_cast<T>(ptr[offset]) : T(0);
             } else {
               frag[element_index] = static_cast<T>(ptr[offset]);
             }

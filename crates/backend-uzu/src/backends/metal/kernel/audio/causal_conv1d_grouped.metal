@@ -71,9 +71,7 @@ void causal_conv1d_grouped_ncs(
     const bool full_tile = valid_count == (int)AUDIO_TIME_TILE;
     for (int ic_local = 0; ic_local < cin_per_group; ++ic_local) {
       const uint w_base =
-          ((group_idx * cout_per_group + oc_in_group) * (uint)cin_per_group +
-           (uint)ic_local) *
-          (uint)kernel_size;
+          ((group_idx * cout_per_group + oc_in_group) * (uint)cin_per_group + (uint)ic_local) * (uint)kernel_size;
       const int ic = in_begin + ic_local;
       const uint x_base_ncs = (b * (uint)cin + (uint)ic) * (uint)seq_len;
 
@@ -216,16 +214,13 @@ void causal_conv1d_grouped_nsc(
     for (int ic_local = 0; ic_local < cin_per_group; ++ic_local) {
       const int ic = in_begin + ic_local;
       const uint w_base =
-          ((group_idx * cout_per_group + oc_in_group) * (uint)cin_per_group +
-           (uint)ic_local) *
-          (uint)kernel_size;
+          ((group_idx * cout_per_group + oc_in_group) * (uint)cin_per_group + (uint)ic_local) * (uint)kernel_size;
 
       for (int k = 0; k < kernel_size; ++k) {
         const float w = float(weight[w_base + (uint)k]);
         const int x_t = (int)t + k * dilation - pad;
         if (full_tile && x_t >= 0 && x_t + 7 < seq_len) {
-          const uint x_idx0 =
-              (b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic;
+          const uint x_idx0 = (b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic;
           acc0 += w * float(input[x_idx0]);
           acc1 += w * float(input[x_idx0 + (uint)cin]);
           acc2 += w * float(input[x_idx0 + (uint)(2 * cin)]);
@@ -237,43 +232,35 @@ void causal_conv1d_grouped_nsc(
           continue;
         }
         if (valid_count > 0 && x_t >= 0 && x_t < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)x_t) * (uint)cin + (uint)ic;
           acc0 += w * float(input[x_idx]);
         }
         if (valid_count > 1 && x_t + 1 >= 0 && x_t + 1 < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)(x_t + 1)) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)(x_t + 1)) * (uint)cin + (uint)ic;
           acc1 += w * float(input[x_idx]);
         }
         if (valid_count > 2 && x_t + 2 >= 0 && x_t + 2 < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)(x_t + 2)) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)(x_t + 2)) * (uint)cin + (uint)ic;
           acc2 += w * float(input[x_idx]);
         }
         if (valid_count > 3 && x_t + 3 >= 0 && x_t + 3 < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)(x_t + 3)) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)(x_t + 3)) * (uint)cin + (uint)ic;
           acc3 += w * float(input[x_idx]);
         }
         if (valid_count > 4 && x_t + 4 >= 0 && x_t + 4 < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)(x_t + 4)) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)(x_t + 4)) * (uint)cin + (uint)ic;
           acc4 += w * float(input[x_idx]);
         }
         if (valid_count > 5 && x_t + 5 >= 0 && x_t + 5 < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)(x_t + 5)) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)(x_t + 5)) * (uint)cin + (uint)ic;
           acc5 += w * float(input[x_idx]);
         }
         if (valid_count > 6 && x_t + 6 >= 0 && x_t + 6 < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)(x_t + 6)) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)(x_t + 6)) * (uint)cin + (uint)ic;
           acc6 += w * float(input[x_idx]);
         }
         if (valid_count > 7 && x_t + 7 >= 0 && x_t + 7 < seq_len) {
-          const uint x_idx =
-              (b * (uint)seq_len + (uint)(x_t + 7)) * (uint)cin + (uint)ic;
+          const uint x_idx = (b * (uint)seq_len + (uint)(x_t + 7)) * (uint)cin + (uint)ic;
           acc7 += w * float(input[x_idx]);
         }
       }
@@ -327,34 +314,10 @@ PUBLIC KERNEL(AudioCausalConv1dGrouped)(
     uint b AXIS(batch_size, 1)
 ) {
   if (input_layout == AUDIO_LAYOUT_NCS) {
-    causal_conv1d_grouped_ncs<T>(
-        input,
-        weight,
-        bias,
-        output,
-        lengths,
-        cin,
-        cout,
-        seq_len,
-        kernel_size,
-        dilation,
-        groups,
-        uint3(t, oc, b)
-    );
+    causal_conv1d_grouped_ncs<
+        T>(input, weight, bias, output, lengths, cin, cout, seq_len, kernel_size, dilation, groups, uint3(t, oc, b));
   } else {
-    causal_conv1d_grouped_nsc<T>(
-        input,
-        weight,
-        bias,
-        output,
-        lengths,
-        cin,
-        cout,
-        seq_len,
-        kernel_size,
-        dilation,
-        groups,
-        uint3(t, oc, b)
-    );
+    causal_conv1d_grouped_nsc<
+        T>(input, weight, bias, output, lengths, cin, cout, seq_len, kernel_size, dilation, groups, uint3(t, oc, b));
   }
 }

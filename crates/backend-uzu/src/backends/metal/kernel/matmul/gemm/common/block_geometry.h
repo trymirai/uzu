@@ -20,16 +20,10 @@ static METAL_FUNC uint morton_expand_bits(uint x) {
 // Morton-unpacks a 1D dispatch index (`fp.rs` sets `group_count_y = 1`) into
 // 2D.
 static METAL_FUNC uint2 morton_tile_id(uint2 threadgroup_position) {
-  return uint2(
-      morton_expand_bits(threadgroup_position.x),
-      morton_expand_bits(threadgroup_position.x >> 1)
-  );
+  return uint2(morton_expand_bits(threadgroup_position.x), morton_expand_bits(threadgroup_position.x >> 1));
 }
 
-static METAL_FUNC uint2 tile_id(
-    uint2 threadgroup_position,
-    const constant uzu::matmul::GemmParams* params
-) {
+static METAL_FUNC uint2 tile_id(uint2 threadgroup_position, const constant uzu::matmul::GemmParams* params) {
   if (params->use_morton) {
     return morton_tile_id(threadgroup_position);
   }
@@ -44,12 +38,11 @@ struct ThreadgroupTileGeometry {
   uint block_col_start;
   bool out_of_bounds;
 
-  static METAL_FUNC ThreadgroupTileGeometry
-  compute(uint2 tile_id, const constant uzu::matmul::GemmParams* params) {
+  static METAL_FUNC ThreadgroupTileGeometry compute(uint2 tile_id, const constant uzu::matmul::GemmParams* params) {
     ThreadgroupTileGeometry geometry;
     geometry.tile_id = tile_id;
-    geometry.out_of_bounds = (tile_id.x >= params->threadgroups_per_row) ||
-                             (tile_id.y >= params->threadgroups_per_column);
+    geometry.out_of_bounds =
+        (tile_id.x >= params->threadgroups_per_row) || (tile_id.y >= params->threadgroups_per_column);
     geometry.block_row_start = tile_id.y * THREADGROUP_BLOCK_M;
     geometry.block_col_start = tile_id.x * THREADGROUP_BLOCK_N;
     return geometry;

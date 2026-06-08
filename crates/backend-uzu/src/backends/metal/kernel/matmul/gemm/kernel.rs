@@ -11,7 +11,7 @@ use crate::{
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulQuantCombo},
+                matmul::{MatmulArguments, MatmulB, MatmulError},
             },
         },
         metal::{
@@ -54,7 +54,7 @@ impl GemmKernel {
             output_data_type,
             HadamardTransformOrder::Output,
         )?;
-        let mut kernel = Self {
+        let kernel = Self {
             weights_data_type,
             input_data_type,
             output_data_type,
@@ -63,21 +63,7 @@ impl GemmKernel {
             hadamard,
             split_k_reduce: HashMap::new(),
         };
-        for specialization in GemmSpecialization::precompile_configs(weights_data_type) {
-            kernel.get_or_create(context, specialization)?;
-        }
         Ok(kernel)
-    }
-
-    pub fn preheat_quant_combo(
-        &mut self,
-        context: &MetalContext,
-        combo: MatmulQuantCombo,
-    ) -> Result<(), MetalError> {
-        for specialization in GemmSpecialization::quant_combo_specs(self.weights_data_type, combo) {
-            self.get_or_create(context, specialization)?;
-        }
-        Ok(())
     }
 
     fn get_or_create(
@@ -653,7 +639,7 @@ fn select_split_k(
     split_k
 }
 
-fn select_simdgroup_tiling(
+pub(crate) fn select_simdgroup_tiling(
     m: u32,
     n: u32,
     k: u32,
@@ -665,7 +651,7 @@ fn select_simdgroup_tiling(
     }
 }
 
-fn select_mxu_tiling(
+pub(crate) fn select_mxu_tiling(
     m: u32,
     n: u32,
 ) -> GemmTiling {
@@ -680,7 +666,7 @@ fn select_mxu_tiling(
     }
 }
 
-fn select_mxu_quant_tiling(
+pub(crate) fn select_mxu_quant_tiling(
     m: u32,
     n: u32,
     group_size: u32,
@@ -696,7 +682,7 @@ fn select_mxu_quant_tiling(
     }
 }
 
-fn select_quant_tiling(
+pub(crate) fn select_quant_tiling(
     m: u32,
     n: u32,
     group_size: u32,

@@ -29,10 +29,8 @@ PUBLIC KERNEL(GatedActMul) (
     value = act_operand[base + gated_idx];
     activated = activate(act_operand[base + gated_dim + gated_idx], act_type);
   } else {
-    activated =
-        activate(act_operand[batch_idx * gated_dim + gated_idx], act_type);
-    value =
-        value_operand[batch_idx * value_row_stride + value_offset + gated_idx];
+    activated = activate(act_operand[batch_idx * gated_dim + gated_idx], act_type);
+    value = value_operand[batch_idx * value_row_stride + value_offset + gated_idx];
   }
   T result = value * activated;
 

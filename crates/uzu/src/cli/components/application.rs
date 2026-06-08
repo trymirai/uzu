@@ -3,8 +3,10 @@ use shoji::types::model::Model;
 
 use crate::{
     cli::{
-        components::{CommandInput, HistoryCell, HistoryCellType, Logo, SelectedModel, Theme},
-        flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, ThemeFlow},
+        components::{
+            CommandInput, HistoryCell, HistoryCellType, Logo, ModelCapabilities, Preferences, SelectedModel, Theme,
+        },
+        flows::{AuthFlow, ExitFlow, Flow, FlowEvent, FlowRegistry, ModelRegistriesFlow, SettingsFlow, ThemeFlow},
         helpers::SYMBOL_COMMAND,
         sessions::{self, SessionState},
     },
@@ -20,6 +22,7 @@ pub struct ApplicationProps {
     pub engine: Option<Engine>,
     pub settings: Option<Settings>,
     pub theme: Option<Theme>,
+    pub preferences: Option<Preferences>,
     pub model: Option<String>,
 }
 
@@ -27,12 +30,14 @@ pub struct ModelState {
     pub model: Model,
     pub download_state: DownloadState,
     pub session_state: Option<Box<dyn SessionState>>,
+    pub capabilities: ModelCapabilities,
 }
 
 pub struct ApplicationState {
     pub engine: Engine,
     pub settings: Option<Settings>,
     pub theme: Theme,
+    pub preferences: Preferences,
     pub flow: Option<Box<dyn Flow>>,
     pub history: Vec<HistoryCellType>,
     pub registry: FlowRegistry,
@@ -56,13 +61,15 @@ pub fn Application(
         engine,
         settings: props.settings.clone(),
         theme: props.theme.clone().unwrap_or_default(),
+        preferences: props.preferences.unwrap_or_default(),
         flow: None,
         history: Vec::new(),
         registry: FlowRegistry::default()
-            .register("auth", "Add models from a specific provider", || Box::new(AuthFlow))
-            .register("theme", "Choose the theme", || Box::new(ThemeFlow))
-            .register("model", "Choose the model", || Box::new(ModelRegistriesFlow))
-            .register("exit", "Exit the CLI", || Box::new(ExitFlow)),
+            .register("auth", "Add models from a specific provider", false, || Box::new(AuthFlow))
+            .register("model", "Choose the model", false, || Box::new(ModelRegistriesFlow))
+            .register("settings", "Configure thinking and sampling", true, || Box::new(SettingsFlow))
+            .register("theme", "Choose the theme", false, || Box::new(ThemeFlow))
+            .register("exit", "Exit the CLI", false, || Box::new(ExitFlow)),
         model_state: None,
     });
     let (width, _) = hooks.use_terminal_size();
@@ -82,6 +89,7 @@ pub fn Application(
                         model,
                         download_state: DownloadState::not_downloaded(0),
                         session_state: None,
+                        capabilities: ModelCapabilities::default(),
                     });
                     state.write().history.push(HistoryCellType::CommandResult {
                         result: summary,
@@ -105,8 +113,14 @@ pub fn Application(
                 name: name.to_string(),
             });
             let registry = state.read().registry.clone();
-            match registry.create(name) {
-                Some(flow) => state.write().flow = Some(flow),
+            let model_loaded = state.read().model_state.is_some();
+            match registry.command(name) {
+                Some(command) if command.requires_model && !model_loaded => {
+                    state.write().history.push(HistoryCellType::CommandResult {
+                        result: "Load a model first to open settings".to_string(),
+                    })
+                },
+                Some(command) => state.write().flow = Some((command.factory)()),
                 None => state.write().history.push(HistoryCellType::CommandResult {
                     result: format!("Unknown command: /{}", name),
                 }),

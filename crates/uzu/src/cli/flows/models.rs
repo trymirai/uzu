@@ -5,7 +5,7 @@ use shoji::types::model::Model;
 
 use crate::{
     cli::{
-        components::{ApplicationState, Loading, ModelState, Selector, SelectorItem, SelectorStyle},
+        components::{ApplicationState, Loading, ModelCapabilities, ModelState, Selector, SelectorItem, SelectorStyle},
         flows::{Flow, FlowEvent},
     },
     storage::types::DownloadState,
@@ -115,6 +115,7 @@ fn Models(
                             model: model.clone(),
                             download_state: DownloadState::not_downloaded(0),
                             session_state: None,
+                            capabilities: ModelCapabilities::default(),
                         });
                         on_event(FlowEvent::finish(summary));
                     }

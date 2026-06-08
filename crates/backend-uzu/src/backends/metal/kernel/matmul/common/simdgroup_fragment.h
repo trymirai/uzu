@@ -15,17 +15,13 @@ template <
     typename T,
     int GRID_ROWS_,
     int GRID_COLS_,
-    class SimdgroupMultiplyAccumulateOps_ =
-        SimdgroupMultiplyAccumulate<T, 8, 8>>
+    class SimdgroupMultiplyAccumulateOps_ = SimdgroupMultiplyAccumulate<T, 8, 8>>
 struct SimdgroupFragment {
   using SimdgroupMultiplyAccumulateOpsType = SimdgroupMultiplyAccumulateOps_;
   using ElementType = T;
-  METAL_CONST int MULTIPLY_ACCUMULATE_ROWS =
-      SimdgroupMultiplyAccumulateOpsType::ROWS;
-  METAL_CONST int MULTIPLY_ACCUMULATE_COLS =
-      SimdgroupMultiplyAccumulateOpsType::COLS;
-  METAL_CONST int ELEMENTS_PER_MULTIPLY_ACCUMULATE =
-      SimdgroupMultiplyAccumulateOpsType::THREAD_ELEMENT_COUNT;
+  METAL_CONST int MULTIPLY_ACCUMULATE_ROWS = SimdgroupMultiplyAccumulateOpsType::ROWS;
+  METAL_CONST int MULTIPLY_ACCUMULATE_COLS = SimdgroupMultiplyAccumulateOpsType::COLS;
+  METAL_CONST int ELEMENTS_PER_MULTIPLY_ACCUMULATE = SimdgroupMultiplyAccumulateOpsType::THREAD_ELEMENT_COUNT;
 
   METAL_CONST int GRID_ROWS = GRID_ROWS_;
   METAL_CONST int GRID_COLS = GRID_COLS_;
@@ -34,17 +30,12 @@ struct SimdgroupFragment {
   METAL_CONST int TOTAL_COLS = GRID_COLS * MULTIPLY_ACCUMULATE_COLS;
 
   METAL_CONST int MULTIPLY_ACCUMULATE_COUNT = GRID_ROWS * GRID_COLS;
-  METAL_CONST int ELEMENTS_PER_FRAGMENT =
-      MULTIPLY_ACCUMULATE_COUNT * ELEMENTS_PER_MULTIPLY_ACCUMULATE;
+  METAL_CONST int ELEMENTS_PER_FRAGMENT = MULTIPLY_ACCUMULATE_COUNT * ELEMENTS_PER_MULTIPLY_ACCUMULATE;
 
-  typedef typename SimdgroupMultiplyAccumulateOpsType::SimdgroupMatrixType
-      SimdgroupMatrixType;
-  typedef typename SimdgroupMultiplyAccumulateOpsType::ThreadDataType
-      ThreadDataType;
+  typedef typename SimdgroupMultiplyAccumulateOpsType::SimdgroupMatrixType SimdgroupMatrixType;
+  typedef typename SimdgroupMultiplyAccumulateOpsType::ThreadDataType ThreadDataType;
 
-  ThreadDataType multiply_accumulate_data[MULTIPLY_ACCUMULATE_COUNT] = {
-      ThreadDataType(0)
-  };
+  ThreadDataType multiply_accumulate_data[MULTIPLY_ACCUMULATE_COUNT] = {ThreadDataType(0)};
 
   METAL_FUNC SimdgroupFragment() thread {}
 
@@ -55,36 +46,21 @@ struct SimdgroupFragment {
     }
   }
 
-  METAL_FUNC constexpr thread ThreadDataType& multiply_accumulate_at(
-      const ushort i,
-      const ushort j
-  ) {
+  METAL_FUNC constexpr thread ThreadDataType& multiply_accumulate_at(const ushort i, const ushort j) {
     return multiply_accumulate_data[i * GRID_COLS + j];
   }
 
-  METAL_FUNC constexpr const thread ThreadDataType& multiply_accumulate_at(
-      const ushort i,
-      const ushort j
-  ) const {
+  METAL_FUNC constexpr const thread ThreadDataType& multiply_accumulate_at(const ushort i, const ushort j) const {
     return multiply_accumulate_data[i * GRID_COLS + j];
   }
 
-  METAL_FUNC thread ElementType* elements() {
-    return reinterpret_cast<thread ElementType*>(multiply_accumulate_data);
-  }
+  METAL_FUNC thread ElementType* elements() { return reinterpret_cast<thread ElementType*>(multiply_accumulate_data); }
 
   METAL_FUNC const thread ElementType* elements() const {
-    return reinterpret_cast<const thread ElementType*>(
-        multiply_accumulate_data
-    );
+    return reinterpret_cast<const thread ElementType*>(multiply_accumulate_data);
   }
 
-  template <
-      typename U,
-      int SIMDGROUP_STRIDE_X,
-      int SIMDGROUP_STRIDE_Y,
-      int STRIDE_X,
-      int STRIDE_Y>
+  template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y, int STRIDE_X, int STRIDE_Y>
   METAL_FUNC void load(const threadgroup U* source) {
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < GRID_ROWS; ++i) {
@@ -93,10 +69,8 @@ struct SimdgroupFragment {
         SimdgroupMultiplyAccumulateOpsType::load(
             multiply_accumulate_at(i, j),
             &(source
-                  [(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
-                       STRIDE_X +
-                   (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y *
-                       STRIDE_Y]),
+                  [(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X * STRIDE_X +
+                   (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y * STRIDE_Y]),
             STRIDE_X,
             STRIDE_Y
         );
@@ -105,10 +79,7 @@ struct SimdgroupFragment {
   }
 
   template <typename U, int SIMDGROUP_STRIDE_X, int SIMDGROUP_STRIDE_Y>
-  METAL_FUNC void store(
-      device U* destination,
-      const int leading_dimension
-  ) const {
+  METAL_FUNC void store(device U* destination, const int leading_dimension) const {
     METAL_PRAGMA_UNROLL
     for (ushort i = 0; i < GRID_ROWS; ++i) {
       METAL_PRAGMA_UNROLL
@@ -116,8 +87,7 @@ struct SimdgroupFragment {
         SimdgroupMultiplyAccumulateOpsType::store(
             multiply_accumulate_at(i, j),
             &(destination
-                  [(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X *
-                       leading_dimension +
+                  [(i * MULTIPLY_ACCUMULATE_ROWS) * SIMDGROUP_STRIDE_X * leading_dimension +
                    (j * MULTIPLY_ACCUMULATE_COLS) * SIMDGROUP_STRIDE_Y]),
             leading_dimension,
             1
@@ -169,13 +139,12 @@ METAL_FUNC void tile_multiply_accumulate(
       const ushort column_serpentine = (m % 2) ? (N - 1 - n) : n;
       METAL_PRAGMA_UNROLL
       for (ushort k = 0; k < K; ++k) {
-        SimdgroupFragment<T, M, N>::SimdgroupMultiplyAccumulateOpsType::
-            multiply_accumulate(
-                D.multiply_accumulate_at(m, column_serpentine),
-                A.multiply_accumulate_at(m, k),
-                B.multiply_accumulate_at(k, column_serpentine),
-                C.multiply_accumulate_at(m, column_serpentine)
-            );
+        SimdgroupFragment<T, M, N>::SimdgroupMultiplyAccumulateOpsType::multiply_accumulate(
+            D.multiply_accumulate_at(m, column_serpentine),
+            A.multiply_accumulate_at(m, k),
+            B.multiply_accumulate_at(k, column_serpentine),
+            C.multiply_accumulate_at(m, column_serpentine)
+        );
       }
     }
   }
