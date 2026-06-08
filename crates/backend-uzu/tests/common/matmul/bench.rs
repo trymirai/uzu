@@ -12,21 +12,33 @@ use crate::common::env_var_enabled;
 
 static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);
 
-fn capture_path(benchmark_path: &str) -> Option<PathBuf> {
-    if !env_var_enabled("UZU_CAPTURE_BENCH")
-        || !benchmark_path.starts_with("Metal/")
-        || env::var("UZU_CAPTURE_BENCH_FILTER").is_ok_and(|filter| !benchmark_path.contains(&filter))
-        || CAPTURE_TAKEN.load(Ordering::Acquire)
-    {
-        return None;
-    }
+fn should_capture_benchmark(benchmark_path: &str) -> bool {
+    env_var_enabled("UZU_CAPTURE_BENCH")
+        && benchmark_path.starts_with("Metal/")
+        && env::var("UZU_CAPTURE_BENCH_FILTER").map_or(true, |filter| benchmark_path.contains(&filter))
+        && !CAPTURE_TAKEN.swap(true, Ordering::AcqRel)
+}
+
+fn benchmark_capture_path() -> PathBuf {
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock before Unix epoch").as_secs();
-    Some(
-        env::var("UZU_CAPTURE_BENCH_DIR")
-            .map(PathBuf::from)
-            .unwrap_or(env::current_dir().unwrap())
-            .join(format!("uzu_bench-{timestamp}.gputrace")),
-    )
+    env::var("UZU_CAPTURE_BENCH_DIR")
+        .map(PathBuf::from)
+        .unwrap_or(env::current_dir().unwrap())
+        .join(format!("uzu_bench-{timestamp}.gputrace"))
+}
+
+fn start_benchmark_capture<B: Backend>(
+    context: &B::Context,
+    benchmark_path: &str,
+) -> bool {
+    if !should_capture_benchmark(benchmark_path) {
+        return false;
+    }
+
+    let path = benchmark_capture_path();
+    context.start_capture(&path).expect("failed to start benchmark GPU capture");
+    println!("GPU benchmark capture started for {benchmark_path}: {path:?}");
+    true
 }
 
 pub fn iter_encode_loop<B: Backend, F>(
@@ -48,21 +60,13 @@ pub fn iter_encode_loop_named<B: Backend, F>(
     F: FnMut(&mut Encoder<B>),
 {
     bencher.iter_custom(|n_iters| {
-        let capture = capture_path(benchmark_path).and_then(|path| {
-            context.start_capture(&path).expect("failed to start benchmark GPU capture");
-            if CAPTURE_TAKEN.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
-                context.stop_capture().expect("failed to stop duplicate benchmark GPU capture");
-                return None;
-            }
-            println!("GPU benchmark capture started for {benchmark_path}: {path:?}");
-            Some(path)
-        });
+        let capture = start_benchmark_capture::<B>(context, benchmark_path);
         let mut encoder = Encoder::<B>::new(context).unwrap();
         for _ in 0..n_iters {
             encode(&mut encoder);
         }
         let completed = encoder.end_encoding().submit().wait_until_completed().unwrap();
-        if capture.is_some() {
+        if capture {
             context.stop_capture().expect("failed to stop benchmark GPU capture");
         }
         completed.gpu_execution_time()
