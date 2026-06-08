@@ -8,9 +8,10 @@ use std::{
 use rocket::{
     Request, State,
     futures::Stream,
+    http::Status,
     post,
     response::{
-        Responder,
+        Responder, status,
         stream::{Event, EventStream},
     },
     serde::json::Json,
@@ -22,7 +23,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::SamplingMethod,
+        basic::{Grammar, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -51,9 +52,21 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
+    // Captured as a raw value (not a typed `ResponseFormat`) so the handler can reject it with an
+    // OpenAI-style 400 — both unrecognized/malformed objects and the recognized-but-unsupported
+    // `json_schema` form — instead of failing Rocket's request extraction with a 422.
+    #[serde(default)]
+    pub response_format: Option<serde_json::Value>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text,
+    JsonObject,
 }
 
 #[derive(Serialize, Clone)]
@@ -106,9 +119,24 @@ struct ChatCompletionChunk {
     usage: Option<ChatCompletionUsage>,
 }
 
+#[derive(Serialize)]
+pub struct OaiErrorResponse {
+    error: OaiError,
+}
+
+#[derive(Serialize)]
+struct OaiError {
+    message: String,
+    #[serde(rename = "type")]
+    kind: String,
+    param: Option<String>,
+    code: Option<String>,
+}
+
 pub enum ChatCompletionResult {
     Json(Json<ChatCompletionResponse>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
+    Error(status::Custom<Json<OaiErrorResponse>>),
 }
 
 impl<'r> Responder<'r, 'r> for ChatCompletionResult {
@@ -119,6 +147,7 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
         match self {
             ChatCompletionResult::Json(json) => json.respond_to(request),
             ChatCompletionResult::Stream(stream) => stream.respond_to(request),
+            ChatCompletionResult::Error(error) => error.respond_to(request),
         }
     }
 }
@@ -137,16 +166,73 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
-    let token_limit = request.max_completion_tokens.or(request.max_tokens);
-    let config = ChatReplyConfig::default().with_token_limit(token_limit);
+#[derive(Debug, PartialEq, Eq)]
+enum ResponseFormatError {
+    GrammarUnsupported,
+    /// A recognized OpenAI response_format type that this server does not implement yet (e.g.
+    /// `json_schema`). Distinct from `InvalidResponseFormat`: the request is well-formed.
+    UnsupportedResponseFormat(&'static str),
+    InvalidResponseFormat(String),
+}
 
-    if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
-        return config.with_sampling_method(SamplingMethod::Greedy {});
+impl ResponseFormatError {
+    fn message(&self) -> String {
+        match self {
+            ResponseFormatError::GrammarUnsupported => {
+                "response_format with JSON constraints requires building mirai server with capability-grammar"
+                    .to_string()
+            },
+            ResponseFormatError::UnsupportedResponseFormat(kind) => {
+                format!("response_format type `{kind}` is recognized but not supported yet")
+            },
+            ResponseFormatError::InvalidResponseFormat(detail) => {
+                format!("response_format is not a recognized object: {detail}")
+            },
+        }
     }
 
-    if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
-        return config.with_sampling_method(SamplingMethod::Stochastic {
+    fn code(&self) -> &'static str {
+        match self {
+            ResponseFormatError::GrammarUnsupported => "unsupported_response_format",
+            ResponseFormatError::UnsupportedResponseFormat(_) => "unsupported_response_format",
+            ResponseFormatError::InvalidResponseFormat(_) => "invalid_response_format",
+        }
+    }
+}
+
+fn request_error_response(error: ResponseFormatError) -> ChatCompletionResult {
+    ChatCompletionResult::Error(status::Custom(
+        Status::BadRequest,
+        Json(OaiErrorResponse {
+            error: OaiError {
+                message: error.message(),
+                kind: "invalid_request_error".to_string(),
+                param: Some("response_format".to_string()),
+                code: Some(error.code().to_string()),
+            },
+        }),
+    ))
+}
+
+fn with_response_format_grammar(
+    config: ChatReplyConfig,
+    grammar: Grammar,
+) -> Result<ChatReplyConfig, ResponseFormatError> {
+    if !cfg!(feature = "capability-grammar") {
+        return Err(ResponseFormatError::GrammarUnsupported);
+    }
+
+    Ok(config.with_grammar(Some(grammar)))
+}
+
+fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig, ResponseFormatError> {
+    let token_limit = request.max_completion_tokens.or(request.max_tokens);
+    let mut config = ChatReplyConfig::default().with_token_limit(token_limit);
+
+    if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
+        config = config.with_sampling_method(SamplingMethod::Greedy {});
+    } else if request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some() {
+        config = config.with_sampling_method(SamplingMethod::Stochastic {
             temperature: request.temperature,
             top_k: request.top_k,
             top_p: request.top_p,
@@ -154,7 +240,45 @@ fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
         });
     }
 
-    config
+    // Interpret the raw value as a typed response_format here (rather than at extraction) so an
+    // unrecognized object surfaces as our 400, not Rocket's 422. Only `text` and `json_object` are
+    // supported. The `json_schema` form is recognized but rejected as unsupported (not malformed):
+    // xgrammar silently ignores schema keywords it cannot enforce (multipleOf, not, external $ref,
+    // multi-entry allOf), so accepting it as-is would violate OpenAI's strict guarantee. Enforcing
+    // it correctly (reject those keywords up front, thread `strict` through `shoji::Grammar`) is
+    // left to a follow-up.
+    let response_format = match &request.response_format {
+        Some(value) => {
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("json_schema") {
+                return Err(ResponseFormatError::UnsupportedResponseFormat("json_schema"));
+            }
+            Some(
+                serde_json::from_value::<ResponseFormat>(value.clone())
+                    .map_err(|error| ResponseFormatError::InvalidResponseFormat(error.to_string()))?,
+            )
+        },
+        None => None,
+    };
+
+    config = match response_format {
+        // Map json_object to xgrammar's builtin JSON grammar, whose root is a JSON object or array
+        // (it does not accept scalar roots like `42` or `"text"`). This fixes the earlier
+        // object-only behavior so a root array is allowed.
+        //
+        // Completeness contract: the grammar masks the stop token until the value is complete, so a
+        // response that ends naturally (finish_reason=stop) is guaranteed to be complete, valid
+        // JSON; a response truncated by the token limit (finish_reason=length) may be partial — the
+        // client must check finish_reason, exactly as with OpenAI.
+        //
+        // Deliberate divergence from OpenAI: we do not require the messages to mention "json".
+        // OpenAI uses that prompt guard to steer unconstrained sampling; here the grammar already
+        // governs validity, so the guard is a prompt-quality nicety, not a correctness requirement,
+        // and omitting it avoids rejecting otherwise-valid requests.
+        Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
+        Some(ResponseFormat::Text) | None => config,
+    };
+
+    Ok(config)
 }
 
 fn map_finish_reason(finish_reason: &ChatReplyFinishReason) -> String {
@@ -388,8 +512,11 @@ pub async fn handle_chat_completions(
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
 
+    let config = match build_reply_config(&request) {
+        Ok(config) => config,
+        Err(error) => return request_error_response(error),
+    };
     let messages = to_chat_messages(&request.messages);
-    let config = build_reply_config(&request);
 
     if is_stream {
         let session = Arc::clone(&state.session);
@@ -401,5 +528,150 @@ pub async fn handle_chat_completions(
         let session = Arc::clone(&state.session);
         let response = run_blocking(session, messages, config, id, model, created).await;
         ChatCompletionResult::Json(Json(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(json: &str) -> ChatCompletionRequest {
+        serde_json::from_str(json).expect("valid request json")
+    }
+
+    fn reply_config(json: &str) -> ChatReplyConfig {
+        build_reply_config(&request(json)).expect("valid reply config")
+    }
+
+    #[cfg(not(feature = "capability-grammar"))]
+    fn reply_config_error(json: &str) -> ResponseFormatError {
+        build_reply_config(&request(json)).expect_err("invalid reply config")
+    }
+
+    #[test]
+    fn response_format_maps_to_grammar() {
+        assert!(reply_config(r#"{"messages":[]}"#).grammar.is_none());
+        assert!(reply_config(r#"{"messages":[],"response_format":{"type":"text"}}"#).grammar.is_none());
+
+        #[cfg(feature = "capability-grammar")]
+        assert_eq!(
+            reply_config(r#"{"messages":[],"response_format":{"type":"json_object"}}"#).grammar,
+            Some(Grammar::JsonAny {})
+        );
+    }
+
+    #[test]
+    fn response_format_rejects_grammar_without_capability() {
+        #[cfg(not(feature = "capability-grammar"))]
+        assert_eq!(
+            reply_config_error(r#"{"messages":[],"response_format":{"type":"json_object"}}"#),
+            ResponseFormatError::GrammarUnsupported
+        );
+    }
+
+    #[test]
+    fn response_format_unrecognized_is_invalid() {
+        // An object that is not a recognized response_format type must surface as our request error
+        // (400 invalid_response_format), not as Rocket's request-extraction failure (422). This
+        // holds regardless of capability-grammar, since the value is interpreted before gating.
+        let error = build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#))
+            .expect_err("unrecognized response_format should be rejected");
+        assert!(
+            matches!(error, ResponseFormatError::InvalidResponseFormat(_)),
+            "expected InvalidResponseFormat, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn response_format_json_schema_is_unsupported_not_invalid() {
+        // json_schema is a recognized OpenAI form, so it must be reported as unsupported (not as a
+        // malformed/unrecognized object), rather than silently under-enforced. Holds regardless of
+        // capability-grammar, since it is detected before gating.
+        let error = build_reply_config(&request(
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}"#,
+        ))
+        .expect_err("json_schema should be rejected as unsupported");
+        assert_eq!(error, ResponseFormatError::UnsupportedResponseFormat("json_schema"));
+        assert_eq!(error.code(), "unsupported_response_format");
+    }
+
+    #[test]
+    fn response_format_validation_errors_are_request_errors() {
+        match request_error_response(ResponseFormatError::GrammarUnsupported) {
+            ChatCompletionResult::Error(_) => {},
+            ChatCompletionResult::Json(_) | ChatCompletionResult::Stream(_) => {
+                panic!("response_format validation errors should be request errors")
+            },
+        }
+    }
+
+    #[test]
+    fn malformed_response_format_passes_json_extraction() {
+        // The raw-value field is what keeps a malformed response_format out of Rocket's `Json` data
+        // guard (which would answer 422). It must deserialize so the request reaches our handler,
+        // where it is turned into a 400 instead.
+        for body in [
+            r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#,
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{}}}}"#,
+            r#"{"messages":[],"response_format":"not-even-an-object"}"#,
+        ] {
+            serde_json::from_str::<ChatCompletionRequest>(body)
+                .unwrap_or_else(|error| panic!("expected {body} to pass extraction, got {error}"));
+        }
+    }
+
+    // Test-only route returning a response_format validation error, used to exercise the actual
+    // Rocket response layer. Defined at module level so the `rocket::get` macro stays local.
+    #[rocket::get("/err")]
+    fn err_route() -> ChatCompletionResult {
+        request_error_response(ResponseFormatError::InvalidResponseFormat("bad".to_string()))
+    }
+
+    #[test]
+    fn error_responder_yields_http_400_with_openai_body() {
+        // A response_format validation error must come back as HTTP 400 with an OpenAI-shaped error
+        // body, not Rocket's default 422/500 pages.
+        let client = rocket::local::blocking::Client::tracked(rocket::build().mount("/", rocket::routes![err_route]))
+            .expect("rocket client");
+        let response = client.get("/err").dispatch();
+
+        assert_eq!(response.status(), Status::BadRequest);
+        let body: serde_json::Value = response.into_json().expect("json error body");
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+        assert_eq!(body["error"]["param"], "response_format");
+        assert_eq!(body["error"]["code"], "invalid_response_format");
+        assert!(
+            body["error"]["message"].as_str().is_some_and(|message| !message.is_empty()),
+            "expected a non-empty error message, got {body}"
+        );
+    }
+
+    #[cfg(feature = "capability-grammar")]
+    #[test]
+    fn response_format_composes_with_sampling_options() {
+        let stochastic = reply_config(
+            r#"{"messages":[],"temperature":0.7,"top_p":0.9,"top_k":40,"response_format":{"type":"json_object"}}"#,
+        );
+        assert_eq!(stochastic.grammar, Some(Grammar::JsonAny {}));
+        assert_eq!(
+            stochastic.sampling_policy,
+            uzu::types::basic::SamplingPolicy::Custom {
+                method: SamplingMethod::Stochastic {
+                    temperature: Some(0.7),
+                    top_k: Some(40),
+                    top_p: Some(0.9),
+                    min_p: None,
+                },
+            }
+        );
+
+        let greedy = reply_config(r#"{"messages":[],"temperature":0,"response_format":{"type":"json_object"}}"#);
+        assert_eq!(greedy.grammar, Some(Grammar::JsonAny {}));
+        assert_eq!(
+            greedy.sampling_policy,
+            uzu::types::basic::SamplingPolicy::Custom {
+                method: SamplingMethod::Greedy {},
+            }
+        );
     }
 }
