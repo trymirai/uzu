@@ -262,8 +262,8 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
 
     config = match response_format {
         // Map json_object to xgrammar's builtin JSON grammar, whose root is a JSON object or array
-        // (it does not accept scalar roots like `42` or `"text"`). This fixes the earlier
-        // object-only behavior so a root array is allowed.
+        // (it does not accept scalar roots like `42` or `"text"`), so a root array is allowed and
+        // not just an object.
         //
         // Completeness contract: the grammar masks the stop token until the value is complete, so a
         // response that ends naturally (finish_reason=stop) is guaranteed to be complete, valid
