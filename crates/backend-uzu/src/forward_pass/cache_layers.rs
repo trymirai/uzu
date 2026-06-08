@@ -303,14 +303,26 @@ impl<B: Backend> CacheLayers<B> {
     }
 
     pub fn iter_layers(&self) -> impl Iterator<Item = (usize, &CacheLayer<B>)> {
-        self.bindings.iter().enumerate().filter_map(|(index, binding)| match binding {
+        self.bindings.iter().enumerate().map(|(index, binding)| match binding {
             LayerCacheBinding::Owned {
                 entry,
-            } => Some((index, &self.entries[entry.index])),
+            } => (index, &self.entries[entry.index]),
             LayerCacheBinding::Shared {
-                ..
-            } => None,
+                source,
+            } => (index, &self.entries[source.index]),
         })
+    }
+
+    pub fn commit_short_conv_suffix_states(
+        &mut self,
+        commit_index: usize,
+        encoder: &mut Encoder<B>,
+    ) {
+        for layer in self.entries.iter_mut() {
+            if let Some(layer) = layer.as_short_conv_mut() {
+                layer.commit_from_suffix_state_if_valid(commit_index, encoder);
+            }
+        }
     }
 
     pub fn clear(
@@ -671,6 +683,97 @@ impl<B: Backend> CacheLayers<B> {
         };
         cloned.copy_from(self, context);
         cloned
+    }
+}
+
+#[cfg(test)]
+mod short_conv_suffix_state_tests {
+    use std::cell::Cell;
+
+    use crate::{
+        array::ArrayContextExt,
+        backends::{
+            common::{Backend, Context, Encoder},
+            cpu::Cpu,
+        },
+        data_type::DataType,
+        forward_pass::{
+            cache_layers::{CacheEntryIndex, CacheLayer, CacheLayers, LayerCacheBinding},
+            short_conv_layer::ShortConvLayer,
+        },
+    };
+
+    #[test]
+    fn test_commit_short_conv_suffix_states_commits_selected_suffix_row() {
+        let context = <Cpu as Backend>::Context::new().expect("create CPU context");
+        let conv_state = context.create_array_zeros(&[2, 2], DataType::F32).into_allocation();
+        let suffix_state = context
+            .create_array_from(&[3, 2, 2], &[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0])
+            .into_allocation();
+        let short_conv = ShortConvLayer {
+            conv_state,
+            conv_shape: [2, 2],
+            suffix_state,
+            suffix_shape: [3, 2, 2],
+            data_type: DataType::F32,
+            suffix_state_valid_start: Cell::new(1),
+            suffix_state_valid_len: Cell::new(2),
+        };
+        let mut cache_layers = CacheLayers {
+            max_suffix_length: 3,
+            max_prefix_length: 0,
+            entries: Box::new([CacheLayer::ShortConv(short_conv)]),
+            bindings: Box::new([LayerCacheBinding::Owned {
+                entry: CacheEntryIndex {
+                    index: 0,
+                },
+            }]),
+        };
+        let mut encoder = Encoder::<Cpu>::new(context.as_ref()).expect("create encoder");
+
+        cache_layers.commit_short_conv_suffix_states(2, &mut encoder);
+        encoder.end_encoding().submit().wait_until_completed().expect("commit short conv suffix state");
+
+        let (_, layer) = cache_layers.iter_layers().next().expect("short conv layer");
+        assert_eq!(
+            layer.as_short_conv().expect("short conv layer").conv_state.copyout::<f32>(),
+            &[9.0, 10.0, 11.0, 12.0]
+        );
+    }
+
+    #[test]
+    fn test_iter_layers_includes_shared_bindings() {
+        let context = <Cpu as Backend>::Context::new().expect("create CPU context");
+        let short_conv = ShortConvLayer {
+            conv_state: context.create_array_zeros(&[2, 2], DataType::F32).into_allocation(),
+            conv_shape: [2, 2],
+            suffix_state: context.create_array_zeros(&[1, 2, 2], DataType::F32).into_allocation(),
+            suffix_shape: [1, 2, 2],
+            data_type: DataType::F32,
+            suffix_state_valid_start: Cell::new(0),
+            suffix_state_valid_len: Cell::new(0),
+        };
+        let cache_layers = CacheLayers {
+            max_suffix_length: 1,
+            max_prefix_length: 0,
+            entries: Box::new([CacheLayer::ShortConv(short_conv)]),
+            bindings: Box::new([
+                LayerCacheBinding::Owned {
+                    entry: CacheEntryIndex {
+                        index: 0,
+                    },
+                },
+                LayerCacheBinding::Shared {
+                    source: CacheEntryIndex {
+                        index: 0,
+                    },
+                },
+            ]),
+        };
+
+        let layer_indices = cache_layers.iter_layers().map(|(index, _)| index).collect::<Vec<_>>();
+
+        assert_eq!(layer_indices, &[0, 1]);
     }
 }
 

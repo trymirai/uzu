@@ -43,7 +43,7 @@ pub mod _benchmarks {
 pub mod _private {
     pub use crate::{
         classifier::Classifier,
-        config::model::AnyModelConfig,
+        config::{model::AnyModelConfig, token_codec::AnyTokenCodecConfig, transformer_layer::TransformerLayerConfig},
         encodable_block::{DecoderDecodeInput, Sampling},
         forward_pass::{
             cache_layers::CacheLayers, kv_cache_layer::KVCacheLayer, token_inputs::TokenInputs, traces::ActivationTrace,
