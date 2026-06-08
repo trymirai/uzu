@@ -49,5 +49,5 @@ impl Speculator for FixedTokensSpeculator {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/speculators/fixed_token_speculator.rs"]
+#[path = "../../unit/speculators/fixed_token_speculator.rs"]
 mod tests;

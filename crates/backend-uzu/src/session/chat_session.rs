@@ -647,5 +647,5 @@ impl ChatSession {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/session/chat_session.rs"]
+#[path = "../../unit/session/chat_session.rs"]
 mod tests;

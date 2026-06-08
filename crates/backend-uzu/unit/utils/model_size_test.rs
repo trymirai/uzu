@@ -6,9 +6,9 @@ pub const MODEL_DIR_NAME: &str = "Llama-3.2-1B-Instruct";
 
 pub fn get_test_model_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("workspace")
+        .join("../../../../..")
+        .join("../../../../..")
+        .join("../../../../workspace")
         .join("models")
         .join(VERSION)
         .join(MODEL_DIR_NAME);

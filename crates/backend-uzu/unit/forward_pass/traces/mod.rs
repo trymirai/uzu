@@ -1,5 +1,5 @@
 #[macro_use]
-#[path = "../../../common/mod.rs"]
+#[path = "../../../tests/common/mod.rs"]
 mod common;
 
 mod trace_validator;

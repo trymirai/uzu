@@ -102,5 +102,5 @@ impl<B: Backend> ActivationTrace<B> {
 }
 
 #[cfg(all(test, feature = "tracing"))]
-#[path = "../../tests/unit/forward_pass/traces/mod.rs"]
+#[path = "../../unit/forward_pass/traces/mod.rs"]
 mod tests;

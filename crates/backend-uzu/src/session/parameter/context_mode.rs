@@ -11,5 +11,5 @@ pub enum ContextMode {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/session/parameter/context_mode.rs"]
+#[path = "../../../unit/session/parameter/context_mode.rs"]
 mod tests;

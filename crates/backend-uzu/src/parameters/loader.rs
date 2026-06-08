@@ -275,5 +275,5 @@ impl<'loader, B: Backend> ParameterTree<'loader, B> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/parameters/loader.rs"]
+#[path = "../../unit/parameters/loader.rs"]
 mod tests;

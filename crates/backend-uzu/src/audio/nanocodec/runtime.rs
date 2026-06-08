@@ -768,5 +768,5 @@ impl<B: Backend> AudioCodecRuntime for NanoCodecFsqRuntime<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/audio/nanocodec/runtime.rs"]
+#[path = "../../../unit/audio/nanocodec/runtime.rs"]
 mod tests;

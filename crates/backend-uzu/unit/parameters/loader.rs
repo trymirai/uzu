@@ -1,4 +1,4 @@
-#[path = "../../common/mod.rs"]
+#[path = "../../tests/common/mod.rs"]
 mod common;
 
 use std::fs::File;

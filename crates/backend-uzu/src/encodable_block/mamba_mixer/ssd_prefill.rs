@@ -139,5 +139,5 @@ impl<B: Backend> SSDPrefillBlock<B> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/encodable_block/mamba_mixer/ssd_prefill_test.rs"]
+#[path = "../../../unit/encodable_block/mamba_mixer/ssd_prefill_test.rs"]
 mod tests;

@@ -5,10 +5,10 @@ use super::{
 };
 
 mod moe_block_e2e_test;
-#[path = "../../../performance/encodable_block/moe/moe_experts_perf_test.rs"]
+#[path = "../../../tests/performance/encodable_block/moe/moe_experts_perf_test.rs"]
 mod moe_experts_perf_test;
 mod moe_experts_test;
-#[path = "../../../performance/encodable_block/moe/moe_perf_test.rs"]
+#[path = "../../../tests/performance/encodable_block/moe/moe_perf_test.rs"]
 mod moe_perf_test;
 mod moe_tiles_test;
 

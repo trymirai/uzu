@@ -45,5 +45,5 @@ pub fn create_compiled_grammar(
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/language_model/grammar.rs"]
+#[path = "../../../unit/language_model/grammar.rs"]
 mod tests;

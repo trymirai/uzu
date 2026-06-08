@@ -221,5 +221,5 @@ impl AudioTokenGrid {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/audio/types_test.rs"]
+#[path = "../../unit/audio/types_test.rs"]
 mod tests;
