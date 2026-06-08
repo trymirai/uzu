@@ -52,9 +52,8 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
-    // Captured as a raw value (not a typed `ResponseFormat`) so the handler can reject it with an
-    // OpenAI-style 400 — both unrecognized/malformed objects and the recognized-but-unsupported
-    // `json_schema` form — instead of failing Rocket's request extraction with a 422.
+    // Raw value, not a typed `ResponseFormat`, so a bad response_format becomes our OpenAI 400
+    // rather than Rocket's 422 at request extraction.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
     #[serde(default)]
@@ -169,8 +168,8 @@ fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
 #[derive(Debug, PartialEq, Eq)]
 enum ResponseFormatError {
     GrammarUnsupported,
-    /// A recognized OpenAI response_format type that this server does not implement yet (e.g.
-    /// `json_schema`). Distinct from `InvalidResponseFormat`: the request is well-formed.
+    /// A recognized OpenAI response_format type this server does not support (e.g. `json_schema`).
+    /// Distinct from `InvalidResponseFormat`: the request is well-formed.
     UnsupportedResponseFormat(&'static str),
     InvalidResponseFormat(String),
 }
@@ -240,13 +239,9 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
         });
     }
 
-    // Interpret the raw value as a typed response_format here (rather than at extraction) so an
-    // unrecognized object surfaces as our 400, not Rocket's 422. Only `text` and `json_object` are
-    // supported. The `json_schema` form is recognized but rejected as unsupported (not malformed):
-    // xgrammar silently ignores schema keywords it cannot enforce (multipleOf, not, external $ref,
-    // multi-entry allOf), so accepting it as-is would violate OpenAI's strict guarantee. Enforcing
-    // it correctly (reject those keywords up front, thread `strict` through `shoji::Grammar`) is
-    // left to a follow-up.
+    // Interpret the raw value here so an unrecognized object surfaces as our 400, not Rocket's 422.
+    // `json_schema` is recognized but rejected as unsupported: xgrammar silently ignores schema
+    // keywords it cannot enforce, so accepting it would violate OpenAI's strict guarantee.
     let response_format = match &request.response_format {
         Some(value) => {
             if value.get("type").and_then(serde_json::Value::as_str) == Some("json_schema") {
@@ -261,19 +256,10 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
     };
 
     config = match response_format {
-        // Map json_object to xgrammar's builtin JSON grammar, whose root is a JSON object or array
-        // (it does not accept scalar roots like `42` or `"text"`), so a root array is allowed and
-        // not just an object.
-        //
-        // Completeness contract: the grammar masks the stop token until the value is complete, so a
-        // response that ends naturally (finish_reason=stop) is guaranteed to be complete, valid
-        // JSON; a response truncated by the token limit (finish_reason=length) may be partial — the
-        // client must check finish_reason, exactly as with OpenAI.
-        //
-        // Deliberate divergence from OpenAI: we do not require the messages to mention "json".
-        // OpenAI uses that prompt guard to steer unconstrained sampling; here the grammar already
-        // governs validity, so the guard is a prompt-quality nicety, not a correctness requirement,
-        // and omitting it avoids rejecting otherwise-valid requests.
+        // json_object maps to xgrammar's builtin JSON grammar (root is an object or array, not a
+        // scalar). The grammar masks the stop token until the value closes, so finish_reason=stop
+        // means complete valid JSON and finish_reason=length means possibly truncated — the client
+        // checks finish_reason, as with OpenAI.
         Some(ResponseFormat::JsonObject) => with_response_format_grammar(config, Grammar::JsonAny {})?,
         Some(ResponseFormat::Text) | None => config,
     };
@@ -571,9 +557,7 @@ mod tests {
 
     #[test]
     fn response_format_unrecognized_is_invalid() {
-        // An object that is not a recognized response_format type must surface as our request error
-        // (400 invalid_response_format), not as Rocket's request-extraction failure (422). This
-        // holds regardless of capability-grammar, since the value is interpreted before gating.
+        // An unrecognized object becomes our 400 (invalid_response_format), not Rocket's 422.
         let error = build_reply_config(&request(r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#))
             .expect_err("unrecognized response_format should be rejected");
         assert!(
@@ -584,9 +568,7 @@ mod tests {
 
     #[test]
     fn response_format_json_schema_is_unsupported_not_invalid() {
-        // json_schema is a recognized OpenAI form, so it must be reported as unsupported (not as a
-        // malformed/unrecognized object), rather than silently under-enforced. Holds regardless of
-        // capability-grammar, since it is detected before gating.
+        // json_schema is a recognized form, so it is reported as unsupported, not as a bad object.
         let error = build_reply_config(&request(
             r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}"#,
         ))
@@ -607,9 +589,8 @@ mod tests {
 
     #[test]
     fn malformed_response_format_passes_json_extraction() {
-        // The raw-value field is what keeps a malformed response_format out of Rocket's `Json` data
-        // guard (which would answer 422). It must deserialize so the request reaches our handler,
-        // where it is turned into a 400 instead.
+        // The raw-value field keeps a malformed response_format out of Rocket's 422 path so the
+        // request reaches our handler and becomes a 400.
         for body in [
             r#"{"messages":[],"response_format":{"type":"totally-bogus"}}"#,
             r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"schema":{}}}}"#,
@@ -629,8 +610,7 @@ mod tests {
 
     #[test]
     fn error_responder_yields_http_400_with_openai_body() {
-        // A response_format validation error must come back as HTTP 400 with an OpenAI-shaped error
-        // body, not Rocket's default 422/500 pages.
+        // A validation error must come back as HTTP 400 with an OpenAI-shaped body.
         let client = rocket::local::blocking::Client::tracked(rocket::build().mount("/", rocket::routes![err_route]))
             .expect("rocket client");
         let response = client.get("/err").dispatch();
