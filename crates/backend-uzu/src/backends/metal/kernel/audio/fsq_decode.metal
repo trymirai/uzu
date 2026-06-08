@@ -69,15 +69,5 @@ PUBLIC KERNEL(AudioFsqDecode)(
     uint gd AXIS(num_groups * codebook_dim, 1),
     uint b AXIS(batch_size, 1)
 ) {
-  fsq_decode<T>(
-      tokens,
-      out,
-      lengths,
-      num_groups,
-      seq_len,
-      codebook_dim,
-      num_levels,
-      dim_base_index,
-      uint3(t, gd, b)
-  );
+  fsq_decode<T>(tokens, out, lengths, num_groups, seq_len, codebook_dim, num_levels, dim_base_index, uint3(t, gd, b));
 }

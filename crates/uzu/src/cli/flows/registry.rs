@@ -8,6 +8,7 @@ pub type FlowFactory = Arc<dyn Fn() -> Box<dyn Flow> + Send + Sync>;
 pub struct Command {
     pub name: String,
     pub description: String,
+    pub requires_model: bool,
     pub factory: FlowFactory,
 }
 
@@ -21,6 +22,7 @@ impl FlowRegistry {
         mut self,
         name: impl Into<String>,
         description: impl Into<String>,
+        requires_model: bool,
         factory: F,
     ) -> Self
     where
@@ -30,17 +32,18 @@ impl FlowRegistry {
         let command = Command {
             name: name.clone(),
             description: description.into(),
+            requires_model,
             factory: Arc::new(factory),
         };
         self.commands.insert(name, command);
         self
     }
 
-    pub fn create(
+    pub fn command(
         &self,
         name: &str,
-    ) -> Option<Box<dyn Flow>> {
-        self.commands.get(name).map(|command| (command.factory)())
+    ) -> Option<Command> {
+        self.commands.get(name).cloned()
     }
 
     pub fn commands(&self) -> Vec<Command> {

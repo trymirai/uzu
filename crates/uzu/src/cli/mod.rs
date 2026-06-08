@@ -5,7 +5,7 @@ mod sessions;
 
 use std::io::IsTerminal;
 
-use components::{Application, Theme};
+use components::{Application, Preferences, Theme};
 use iocraft::prelude::*;
 
 use crate::{
@@ -55,9 +55,19 @@ impl CliApplication {
             Some(settings) => Theme::load(settings)?.unwrap_or_default(),
             None => Theme::default(),
         };
+        let preferences = match &settings {
+            Some(settings) => Preferences::load(settings)?,
+            None => Preferences::default(),
+        };
 
         element! {
-            Application(engine: Some(self.engine.clone()), settings: settings, theme: Some(theme), model: model)
+            Application(
+                engine: Some(self.engine.clone()),
+                settings: settings,
+                theme: Some(theme),
+                preferences: Some(preferences),
+                model: model,
+            )
         }
         .render_loop()
         .await

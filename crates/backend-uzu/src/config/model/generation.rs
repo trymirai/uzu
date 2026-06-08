@@ -10,8 +10,8 @@ pub struct GenerationConfig {
     pub top_p: Option<f32>,
     pub min_p: Option<f32>,
     pub banned_tokens: Option<Unsupported>,
-    pub repetition_penalty: Option<Unsupported>,
+    pub repetition_penalty: Option<f32>,
     pub presence_penalty: Option<Unsupported>,
     pub frequency_penalty: Option<Unsupported>,
-    pub suffix_repetition_length: Option<Unsupported>,
+    pub suffix_repetition_length: Option<usize>,
 }

@@ -29,8 +29,10 @@ POOL_DEPLOYMENTS: dict[PoolName, str] = {
     PoolName.MACOS_M1: "run-benchmark-worker-flow/run-benchmark-m1",
     PoolName.MACOS_M2: "run-benchmark-worker-flow/run-benchmark-m2",
     PoolName.MACOS_M2_PRO: "run-benchmark-worker-flow/run-benchmark-m2-pro",
+    PoolName.MACOS_M3_MAX: "run-benchmark-worker-flow/run-benchmark-m3-max",
     PoolName.MACOS_M4: "run-benchmark-worker-flow/run-benchmark-m4",
     PoolName.MACOS_M4_PRO: "run-benchmark-worker-flow/run-benchmark-m4-pro",
+    PoolName.MACOS_M4_MAX: "run-benchmark-worker-flow/run-benchmark-m4-max",
 }
 
 
@@ -44,6 +46,7 @@ class BenchmarkRunResult:
     benchmark_args: tuple[str, ...] = ()
     actor: str | None = None
     triggering_actor: str | None = None
+    upload_metrics: bool = False
 
     @property
     def succeeded(self) -> bool:
@@ -56,6 +59,7 @@ class CliConfig:
     api_key: str
     pool: PoolName
     benchmark_args: tuple[str, ...]
+    upload_metrics: bool
     output_dir: Path
     poll_interval_seconds: int
     timeout_seconds: int
@@ -71,6 +75,7 @@ class PrefectClientProtocol(Protocol):
         self,
         deployment_id: str,
         benchmark_args: tuple[str, ...],
+        upload_metrics: bool = False,
     ) -> FlowRun:
         ...
 
@@ -86,17 +91,40 @@ class PrefectApiClient(BasePrefectApiClient):
         self,
         deployment_id: str,
         benchmark_args: tuple[str, ...],
+        upload_metrics: bool = False,
     ) -> FlowRun:
+        parameters: dict[str, str | bool] = parse_benchmark_run_parameters(benchmark_args)
+        parameters["upload_metrics"] = upload_metrics
         response = self._request_json(
             method="POST",
             path=f"/deployments/{urllib.parse.quote(deployment_id, safe='')}/create_flow_run",
             body={
-                "parameters": {
-                    "benchmark_args": list(benchmark_args),
-                }
+                "parameters": parameters,
             },
         )
         return parse_flow_run(response, self.ui_base_url)
+
+
+def parse_benchmark_run_parameters(benchmark_args: tuple[str, ...]) -> dict[str, str]:
+    parser = argparse.ArgumentParser(
+        prog="uv run benchmarks",
+        description="Parse benchmark CLI arguments into Prefect worker flow parameters.",
+        allow_abbrev=False,
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    run_parser = subparsers.add_parser("run", allow_abbrev=False)
+    run_parser.add_argument("identifier")
+    run_parser.add_argument("--task", required=True)
+    run_parser.add_argument("--profile", required=True)
+    run_parser.add_argument("--uzu-branch", "--uzu-ref", dest="uzu_ref", default="main")
+
+    parsed_args = parser.parse_args(list(benchmark_args))
+    return {
+        "identifier": parsed_args.identifier,
+        "task": parsed_args.task,
+        "profile": parsed_args.profile,
+        "uzu_ref": parsed_args.uzu_ref,
+    }
 
 
 def parse_benchmark_args_json(raw_value: str) -> tuple[str, ...]:
@@ -114,6 +142,7 @@ def execute_benchmark_run(
     client: PrefectClientProtocol,
     pool: PoolName,
     benchmark_args: tuple[str, ...],
+    upload_metrics: bool,
     ui_base_url: str,
     poll_interval_seconds: int,
     timeout_seconds: int,
@@ -124,7 +153,11 @@ def execute_benchmark_run(
 ) -> BenchmarkRunResult:
     deployment_name = deployment_name_for_pool(pool)
     deployment_id = client.read_deployment_id(deployment_name)
-    created_run = client.create_flow_run_from_deployment(deployment_id, benchmark_args)
+    created_run = client.create_flow_run_from_deployment(
+        deployment_id,
+        benchmark_args,
+        upload_metrics=upload_metrics,
+    )
     observed_run = observe_flow_run(
         client=client,
         created_run=created_run,
@@ -142,6 +175,7 @@ def execute_benchmark_run(
         logs=observed_run.logs,
         failure_reason=observed_run.failure_reason,
         benchmark_args=benchmark_args,
+        upload_metrics=upload_metrics,
         actor=actor,
         triggering_actor=triggering_actor,
     )
@@ -171,6 +205,7 @@ def build_summary_payload(result: BenchmarkRunResult) -> dict[str, Any]:
         "pool": result.pool.value,
         "succeeded": result.succeeded,
         "triggering_actor": result.triggering_actor,
+        "upload_metrics": result.upload_metrics,
     }
 
 
@@ -187,6 +222,7 @@ def build_summary_markdown(result: BenchmarkRunResult) -> str:
         f"- actor: `{result.actor or 'unknown'}`",
         f"- triggering actor: `{result.triggering_actor or result.actor or 'unknown'}`",
         f"- benchmark args: `{json.dumps(list(result.benchmark_args))}`",
+        f"- upload metrics: `{'true' if result.upload_metrics else 'false'}`",
     ]
     if result.failure_reason is not None:
         lines.append(f"- failure reason: `{result.failure_reason}`")
@@ -199,7 +235,7 @@ def parse_cli_args(argv: list[str] | None = None) -> CliConfig:
     parser.add_argument(
         "--pool",
         required=True,
-        choices=[pool.value for pool in PoolName],
+        choices=[pool.value for pool in POOL_DEPLOYMENTS],
         help="Benchmark worker pool to target.",
     )
     parser.add_argument(
@@ -208,6 +244,12 @@ def parse_cli_args(argv: list[str] | None = None) -> CliConfig:
         help='JSON array of argv passed after "uv run benchmarks".',
     )
     parser.add_argument("--output-dir", required=True, help="Directory for summary and log artifacts.")
+    parser.add_argument(
+        "--upload-metrics",
+        action="store_true",
+        default=False,
+        help="Upload benchmark results to the metrics API after the benchmark completes.",
+    )
     parser.add_argument("--poll-interval-seconds", type=int, default=15, help="Polling interval for flow run state.")
     parser.add_argument("--timeout-seconds", type=int, default=21600, help="Overall timeout for waiting on the flow run.")
     parser.add_argument("--actor", default=None, help="GitHub actor that started the workflow.")
@@ -224,6 +266,7 @@ def parse_cli_args(argv: list[str] | None = None) -> CliConfig:
         api_key=api_key,
         pool=PoolName(parsed_args.pool),
         benchmark_args=parse_benchmark_args_json(parsed_args.benchmark_args),
+        upload_metrics=parsed_args.upload_metrics,
         output_dir=Path(parsed_args.output_dir),
         poll_interval_seconds=parsed_args.poll_interval_seconds,
         timeout_seconds=parsed_args.timeout_seconds,
@@ -243,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         client=client,
         pool=config.pool,
         benchmark_args=config.benchmark_args,
+        upload_metrics=config.upload_metrics,
         ui_base_url=client.ui_base_url,
         poll_interval_seconds=config.poll_interval_seconds,
         timeout_seconds=config.timeout_seconds,

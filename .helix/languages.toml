@@ -30,6 +30,3 @@ unit = "  "
 
 [language-server.metal-analyzer]
 command = "metal-analyzer"
-
-[language-server.rust-analyzer.config.check]
-command = "clippy"

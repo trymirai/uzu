@@ -42,7 +42,7 @@ pub fn bridge_messages_to_harmony(messages: &[ChatMessage]) -> Result<Vec<Extern
                             value,
                         } => {
                             system_filled = true;
-                            system_content.reasoning_effort = Some(value.clone().to_harmony()?);
+                            system_content.reasoning_effort = Some((*value).to_harmony()?);
                         },
                         ChatContentBlock::ConversationStartDate {
                             value,

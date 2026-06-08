@@ -10,7 +10,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulQuantCombo},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -170,19 +170,9 @@ impl<B: Backend> LinearMatmul<B> {
 
         let biases = load_biases(weights_data_type, output_data_type, output_dim, bias_tree)?;
 
-        let mut kernel =
+        let kernel =
             <B::Kernels as Kernels>::MatmulKernel::new(context, weights_data_type, input_data_type, output_data_type)
                 .map_err(LinearMatmulError::BackendError)?;
-        kernel
-            .preheat_quant_combo(
-                context,
-                MatmulQuantCombo {
-                    method: quantization_method,
-                    mode: weight_quantization_mode,
-                    group_size: group_size as u32,
-                },
-            )
-            .map_err(LinearMatmulError::BackendError)?;
 
         Ok(Self {
             kernel: RefCell::new(kernel),

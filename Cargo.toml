@@ -23,7 +23,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-version = "0.5.8"
+version = "0.5.12"
 authors = ["Mirai Tech Inc. <contact@getmirai.co>"]
 description = "A high-performance inference engine for AI models"
 readme = "README.md"

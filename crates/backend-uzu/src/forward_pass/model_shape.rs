@@ -8,7 +8,7 @@ pub struct ModelShape {
     pub data_type: DataType,
     pub rope_data_type: DataType,
 
-    vocabulary_size: usize,
+    pub vocabulary_size: usize,
     model_dim: usize,
 
     num_groups: usize,

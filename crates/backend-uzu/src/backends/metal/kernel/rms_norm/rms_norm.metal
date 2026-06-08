@@ -61,8 +61,7 @@ PUBLIC KERNEL(RMSNorm)(
       if (residual_add) {
         val += shortcut[i];
         if (scale_residual_sum) {
-          val =
-              static_cast<InputT>(static_cast<float>(val) * post_layer_scalar);
+          val = static_cast<InputT>(static_cast<float>(val) * post_layer_scalar);
         }
       }
       shortcut[i] = val;
@@ -72,18 +71,14 @@ PUBLIC KERNEL(RMSNorm)(
   }
 
   // Step 2 - threads reduce their partial sums of squares
-  AccumT total_sum_of_squares =
-      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
-          thread_sum_of_squares,
-          shared_sum,
-          thread_context
-      );
+  AccumT total_sum_of_squares = threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
+      thread_sum_of_squares,
+      shared_sum,
+      thread_context
+  );
 
   // And pre-calculate rms_inv
-  AccumT rms_inv = rsqrt(
-      total_sum_of_squares / static_cast<AccumT>(element_count) +
-      static_cast<AccumT>(epsilon)
-  );
+  AccumT rms_inv = rsqrt(total_sum_of_squares / static_cast<AccumT>(element_count) + static_cast<AccumT>(epsilon));
 
   // Step 3 - elementwise normalization
   for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
@@ -96,8 +91,7 @@ PUBLIC KERNEL(RMSNorm)(
       x = static_cast<AccumT>(input[i]);
     }
 
-    AccumT scale =
-        static_cast<AccumT>(scales[i]) + static_cast<AccumT>(scale_offset);
+    AccumT scale = static_cast<AccumT>(scales[i]) + static_cast<AccumT>(scale_offset);
 
     // If full_layer, normalize and scale in AccumT, cast to OutputT at the end
     // If not, cast to OutputT after normalize, scale in OutputT

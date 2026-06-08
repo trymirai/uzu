@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     iter::repeat_n,
+    mem::size_of,
     ops::Range,
     path::Path,
     time::{Duration, Instant},
@@ -17,12 +18,12 @@ use super::{
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{
-        Allocation, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
+        Allocation, AllocationType, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
         kernel::TokenCopySampledKernel,
     },
     config::model::language_model::LanguageModelConfig,
     data_type::DataType,
-    encodable_block::{DecoderDecodeInput, SamplingArguments, SamplingInputs},
+    encodable_block::DecoderDecodeInput,
     forward_pass::{cache_layers::CacheLayersSlice, kv_cache_layer::INVALID_POSITION, token_inputs::TokenInputs},
     language_model::grammar::CompiledGrammar,
     session::{
@@ -52,7 +53,8 @@ struct ForwardPassResources<B: Backend> {
     token_inputs: TokenInputs<B>,
     logits: Option<Allocation<B>>,
     sampling_output: Option<Allocation<B>>,
-    sampling_inputs: Option<SamplingInputs<B>>,
+    sampling_seeds: Option<Allocation<B>>,
+    sampling_bitmask: Option<Allocation<B>>,
 }
 
 struct InFlightForwardPass<B: Backend> {
@@ -174,6 +176,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
+            self.context.model_shape.vocabulary_size,
             &TrieCreationConfig::default(),
             suffix_length + 1,
         );
@@ -364,6 +367,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
+            self.context.model_shape.vocabulary_size,
             &TrieCreationConfig::default(),
             suffix_length,
         );
@@ -452,7 +456,27 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         } else {
             None
         };
-        let sampling_inputs = SamplingInputs::from_slices(self.context.context.as_ref(), &[token_seed], None, None);
+        let sampling_seed = [token_seed];
+        let mut sampling_seeds = self
+            .context
+            .context
+            .create_allocation(std::mem::size_of_val(&sampling_seed), AllocationType::Global)
+            .expect("Failed to create sampling seed allocation");
+        sampling_seeds.copyin(&sampling_seed);
+        let repetition_penalty = Self::repetition_penalty_config(sampling_method);
+        if pass_idx == 0
+            && let Some((_, suffix_repetition_length)) = repetition_penalty
+        {
+            let capacity = self.context.async_buffers.repetition_context_ring_capacity;
+            Self::copy_repetition_context_ring(
+                &mut self.context.async_buffers.repetition_context_ring,
+                &self.tokens,
+                suffix_repetition_length,
+                capacity,
+            );
+        }
+        let sampling_context_ring =
+            repetition_penalty.as_ref().map(|_| &self.context.async_buffers.repetition_context_ring);
 
         let is_first_decode = !is_continuation;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
@@ -477,7 +501,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             sampling_length,
             false,
             Some(sampling_method),
-            Some(sampling_inputs),
+            Some(sampling_seeds),
+            None,
+            sampling_context_ring,
         )?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -491,11 +517,23 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             (async_token_ids_buffer_range.buffer().cpu_ptr().as_ptr() as *const u64)
                 .add(async_token_ids_range.start / std::mem::size_of::<u64>())
         });
-        self.context.token_copy_sampled.encode(
-            resources.sampling_output.as_ref().expect("Sampling output must exist"),
-            &mut async_token_ids_allocation,
-            &mut encoder,
-        );
+        if let Some((_, suffix_repetition_length)) = repetition_penalty {
+            self.context.token_copy_sampled_context_ring.encode(
+                resources.sampling_output.as_ref().expect("Sampling output must exist"),
+                &mut async_token_ids_allocation,
+                Some(&mut self.context.async_buffers.repetition_context_ring),
+                Some(suffix_repetition_length as u32),
+                &mut encoder,
+            );
+        } else {
+            self.context.token_copy_sampled.encode(
+                resources.sampling_output.as_ref().expect("Sampling output must exist"),
+                &mut async_token_ids_allocation,
+                None::<&mut Allocation<B>>,
+                None,
+                &mut encoder,
+            );
+        }
         self.async_token_ids = Some(unsafe {
             Array::from_allocation(async_token_ids_allocation, 0, &token_ids_shape, token_ids_data_type)
         });
@@ -641,7 +679,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let context = LanguageModelGeneratorContext::new(model_path, &decoding_config, model_config)?;
 
-        Ok(Self {
+        let mut generator = Self {
             decoding_config,
             tokens: Vec::new(),
             context,
@@ -649,7 +687,60 @@ impl<B: Backend> LanguageModelGenerator<B> {
             async_token_ids: None,
             registered_prefix_len: 0,
             gpu_capture,
-        })
+        };
+        generator.warmup();
+        Ok(generator)
+    }
+
+    fn warmup(&mut self) {
+        if let Err(error) = self.run_warmup() {
+            eprintln!("uzu: model warmup skipped (kernels will compile on first use): {error}");
+        }
+        self.reset_state();
+    }
+
+    fn run_warmup(&mut self) -> Result<(), Error> {
+        let context_length = self.context.get_context_length(&self.decoding_config);
+        let first = 64.min(context_length.saturating_sub(1)).max(1);
+        self.prefill(vec![0u64; first], None, SamplingMethod::Greedy, 0, true)?;
+        self.generate(None, SamplingMethod::Greedy)?;
+        for &len in &[65usize, 16] {
+            let offset = self.tokens.len();
+            if offset + len >= context_length {
+                break;
+            }
+            self.prefill(vec![0u64; len], None, SamplingMethod::Greedy, offset, false)?;
+        }
+        Ok(())
+    }
+
+    fn repetition_penalty_config(sampling_method: SamplingMethod) -> Option<(f32, usize)> {
+        match sampling_method {
+            SamplingMethod::Stochastic {
+                repetition_penalty: Some(repetition_penalty),
+                suffix_repetition_length,
+                ..
+            } => Some((
+                repetition_penalty,
+                suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty"),
+            )),
+            _ => None,
+        }
+    }
+
+    fn copy_repetition_context_ring(
+        context_ring: &mut Allocation<B>,
+        tokens: &[u64],
+        suffix_repetition_length: usize,
+        capacity: usize,
+    ) {
+        let ring_length = tokens.len().min(suffix_repetition_length);
+        let mut packed_ring = vec![0u32; 2 + capacity];
+        packed_ring[1] = ring_length as u32;
+        for (index, token) in tokens[tokens.len() - ring_length..].iter().enumerate() {
+            packed_ring[2 + index] = *token as u32;
+        }
+        context_ring.copyin(&packed_ring);
     }
 
     pub fn get_generate_task(
@@ -717,14 +808,54 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let batch_dim = task.active_row_count;
         let sampling_start = task.sampling_start;
         let sampling_length = task.sampling_length;
-        let sampling_inputs = sample.then(|| {
-            self.create_sampling_inputs(
-                task.sampling_start,
-                task.sampling_length,
-                &task.token_seeds,
-                task.token_bitmask.as_deref(),
-            )
-        });
+        let repetition_penalty = if sample {
+            Self::repetition_penalty_config(sampling_method)
+        } else {
+            None
+        };
+        let sampling_context_ring = if let Some((_, suffix_repetition_length)) = repetition_penalty {
+            let mut allocation = self
+                .context
+                .context
+                .create_allocation((2 + suffix_repetition_length) * size_of::<u32>(), AllocationType::Global)
+                .map_err(|e| Error::UnableToCreateContext(e.into()))?;
+            Self::copy_repetition_context_ring(
+                &mut allocation,
+                &self.tokens,
+                suffix_repetition_length,
+                suffix_repetition_length,
+            );
+            Some(allocation)
+        } else {
+            None
+        };
+        let (sampling_seeds, sampling_bitmask) = if sample {
+            let seeds = &task.token_seeds[task.sampling_start..task.sampling_start + task.sampling_length];
+            let mut seed_allocation = self
+                .context
+                .context
+                .create_allocation(std::mem::size_of_val(seeds), AllocationType::Global)
+                .expect("Failed to create sampling seed allocation");
+            seed_allocation.copyin(seeds);
+
+            let bitmask_allocation = task.token_bitmask.as_deref().map(|mask| {
+                let row_len = self.context.model_shape.bitmask_shape(1)[1];
+                let start = task.sampling_start * row_len;
+                let end = start + task.sampling_length * row_len;
+                let bitmask = &mask[start..end];
+                let mut allocation = self
+                    .context
+                    .context
+                    .create_allocation(std::mem::size_of_val(bitmask), AllocationType::Global)
+                    .expect("Failed to create sampling bitmask allocation");
+                allocation.copyin(bitmask);
+                allocation
+            });
+
+            (Some(seed_allocation), bitmask_allocation)
+        } else {
+            (None, None)
+        };
 
         let is_first_decode = task.token_ids.len() == 1;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
@@ -747,7 +878,9 @@ impl<B: Backend> LanguageModelGenerator<B> {
             sampling_length,
             is_prefilling,
             sample.then_some(sampling_method),
-            sampling_inputs,
+            sampling_seeds,
+            sampling_bitmask,
+            sampling_context_ring.as_ref(),
         )?;
 
         let pending = encoder.end_encoding().submit();
@@ -758,9 +891,10 @@ impl<B: Backend> LanguageModelGenerator<B> {
             token_inputs,
             logits,
             sampling_output,
-            sampling_inputs,
+            sampling_seeds,
+            sampling_bitmask,
         } = resources;
-        drop((token_inputs, logits, sampling_inputs));
+        drop((token_inputs, logits, sampling_seeds, sampling_bitmask));
         drop(completed);
 
         let run_time = run_start.elapsed().as_secs_f64();
@@ -787,10 +921,11 @@ impl<B: Backend> LanguageModelGenerator<B> {
         sampling_length: usize,
         is_prefilling: bool,
         sampling_method: Option<SamplingMethod>,
-        sampling_inputs: Option<SamplingInputs<B>>,
+        sampling_seeds: Option<Allocation<B>>,
+        sampling_bitmask: Option<Allocation<B>>,
+        sampling_context_ring: Option<&Allocation<B>>,
     ) -> Result<ForwardPassResources<B>, Error> {
-        let mut sampling_output = sampling_method
-            .map(|_| context.context.create_array_uninitialized(&[sampling_length], DataType::U32).into_allocation());
+        let mut sampling_output = None;
         let mut logits = None;
         if is_prefilling {
             let mut cache_layers = context.cache_layers.borrow_mut();
@@ -818,25 +953,23 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 #[cfg(feature = "tracing")]
                 None,
             );
-            let mut retained_logits = context
+            let retained_logits = context
                 .executables
                 .encode_decode(decoder_arguments, DecoderDecodeInput::TokenIds(token_inputs.token_ids()), None, encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-            let sampling_inputs = sampling_inputs.as_ref().expect("Sampling requires sampling inputs");
-            let sampling_result = context.gpu_sampler.encode(
-                SamplingArguments {
-                    logits: &mut retained_logits,
-                    seeds: sampling_inputs.seeds.allocation(),
-                    bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
-                    output: sampling_output.as_mut().expect("Sampling requires output allocation"),
-                    sampling_method: sampling_method.expect("Sampling requires method"),
-                    batch_size: sampling_length,
-                    vocab_size: context.model_config.decoder_config.vocab_size,
-                },
+            let sampling_seeds = sampling_seeds.as_ref().expect("Sampling requires seeds");
+            let output = context.gpu_sampler.encode(
+                &retained_logits,
+                Some(sampling_seeds),
+                sampling_bitmask.as_ref(),
+                sampling_context_ring,
+                Some(token_inputs.token_ids()),
+                sampling_method.expect("Sampling requires method"),
+                sampling_length,
                 encoder,
             );
-            sampling_result.map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            sampling_output = Some(output.map_err(|e| Error::EncodeFailed(Box::new(e)))?);
             logits = Some(retained_logits);
         }
 
@@ -844,7 +977,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
             token_inputs,
             logits,
             sampling_output,
-            sampling_inputs,
+            sampling_seeds,
+            sampling_bitmask,
         })
     }
 
@@ -865,24 +999,6 @@ impl<B: Backend> LanguageModelGenerator<B> {
         )
     }
 
-    fn create_sampling_inputs(
-        &self,
-        sampling_start: usize,
-        sampling_length: usize,
-        token_seeds: &[u64],
-        token_bitmask: Option<&[u32]>,
-    ) -> SamplingInputs<B> {
-        let seeds = &token_seeds[sampling_start..sampling_start + sampling_length];
-        let bitmask_row_len = token_bitmask.map(|_| self.context.model_shape.bitmask_shape(1)[1]);
-        let bitmask = token_bitmask.map(|mask| {
-            let row_len = bitmask_row_len.expect("bitmask row length must exist");
-            let start = sampling_start * row_len;
-            let end = start + sampling_length * row_len;
-            &mask[start..end]
-        });
-        SamplingInputs::from_slices(self.context.context.as_ref(), seeds, bitmask, bitmask_row_len)
-    }
-
     fn read_sampling_output(
         &self,
         sampling_output: &Allocation<B>,
@@ -898,8 +1014,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) -> Result<(), Error> {
-        let mut encoder =
-            Encoder::<B>::new(&self.context.context).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();

@@ -36,11 +36,8 @@ PUBLIC KERNEL(AttentionFallbackScatterScores)(
   const uint head_index = group_index * gqa_factor + head_in_group;
 
   const uint prefix_length = sequence_length - suffix_length;
-  const uint suffix_position =
-      is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
-  const uint query_position = is_trie
-                                  ? suffix_position + trie[query_index].height
-                                  : suffix_position + query_index;
+  const uint suffix_position = is_kv_cache_ring ? uint(ring_params.ring_length) : prefix_length;
+  const uint query_position = is_trie ? suffix_position + trie[query_index].height : suffix_position + query_index;
 
   const bool use_key = should_use_key(
       ring_params,
@@ -57,10 +54,8 @@ PUBLIC KERNEL(AttentionFallbackScatterScores)(
       is_sliding_window
   );
 
-  scores
-      [(head_index * suffix_length + query_index) * sequence_length +
-       sequence_index] =
-          use_key ? group_scores[group_score_index] : T(-INFINITY);
+  scores[(head_index * suffix_length + query_index) * sequence_length + sequence_index] =
+      use_key ? group_scores[group_score_index] : T(-INFINITY);
 }
 
 template <typename T>
@@ -81,6 +76,5 @@ PUBLIC KERNEL(AttentionFallbackScatterValues)(
   const uint query_index = row_index % suffix_length;
   const uint head_in_group = row_index / suffix_length;
   const uint head_index = group_index * gqa_factor + head_in_group;
-  out[(query_index * num_heads + head_index) * head_dim + dim_index] =
-      group_output[group_output_index];
+  out[(query_index * num_heads + head_index) * head_dim + dim_index] = group_output[group_output_index];
 }

@@ -14,8 +14,7 @@ PUBLIC KERNEL(PoolingCls) (
     uint dim_idx AXIS(hidden_dim, 16),
     uint batch_idx AXIS(batch_size, 16)
 ) {
-  output[batch_idx * hidden_dim + dim_idx] =
-      input[batch_idx * seq_len * hidden_dim + dim_idx];
+  output[batch_idx * hidden_dim + dim_idx] = input[batch_idx * seq_len * hidden_dim + dim_idx];
 }
 
 // Mean pooling: Average across sequence [batch, seq_len, hidden_dim] → [batch,
@@ -33,9 +32,7 @@ PUBLIC KERNEL(PoolingMean) (
 ) {
   float sum = 0.0f;
   for (uint seq_idx = 0; seq_idx < seq_len; seq_idx++) {
-    sum += float(
-        input[batch_idx * seq_len * hidden_dim + seq_idx * hidden_dim + dim_idx]
-    );
+    sum += float(input[batch_idx * seq_len * hidden_dim + seq_idx * hidden_dim + dim_idx]);
   }
   output[batch_idx * hidden_dim + dim_idx] = T(sum / float(seq_len));
 }

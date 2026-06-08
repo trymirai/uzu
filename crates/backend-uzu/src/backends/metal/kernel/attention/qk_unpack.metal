@@ -20,14 +20,11 @@ PUBLIC KERNEL(QkUnpack)(
   const uint total_heads = num_heads + 2 * num_groups;
   const uint first_head_in_group = group_index * (num_heads / num_groups);
 
-  TensorView3D<const T> qkv_tensor_view =
-      TensorView3D<const T>(qkv).shaped(suffix_length, total_heads, head_dim);
+  TensorView3D<const T> qkv_tensor_view = TensorView3D<const T>(qkv).shaped(suffix_length, total_heads, head_dim);
   TensorView3D<T> unpacked_queries_tensor_view =
-      TensorView3D<T>(unpacked_queries)
-          .shaped(num_heads, suffix_length, head_dim);
+      TensorView3D<T>(unpacked_queries).shaped(num_heads, suffix_length, head_dim);
   TensorView3D<T> unpacked_keys_tensor_view =
-      TensorView3D<T>(unpacked_keys)
-          .shaped(num_groups, suffix_length, head_dim);
+      TensorView3D<T>(unpacked_keys).shaped(num_groups, suffix_length, head_dim);
 
   unpacked_queries_tensor_view(head_index, token_index, dimension_index) =
       qkv_tensor_view(token_index, head_index, dimension_index);
