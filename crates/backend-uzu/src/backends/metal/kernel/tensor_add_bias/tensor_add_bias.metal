@@ -18,7 +18,5 @@ PUBLIC KERNEL(TensorAddBias)(
   }
 
   uint col = position % num_cols;
-  output[position] = static_cast<T>(
-      static_cast<float>(input[position]) + static_cast<float>(bias[col])
-  );
+  output[position] = static_cast<T>(static_cast<float>(input[position]) + static_cast<float>(bias[col]));
 }

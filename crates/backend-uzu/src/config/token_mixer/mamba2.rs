@@ -16,7 +16,6 @@ pub struct Mamba2Config {
     pub num_groups: usize,
     pub head_dim: usize,
     pub state_dim: usize,
-    pub expansion_factor: usize,
 
     pub has_in_biases: bool,
     pub has_out_biases: bool,

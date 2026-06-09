@@ -151,7 +151,7 @@ impl<B: Backend> MambaMixer<B> {
             true,
         )
         .map_err(MambaMixerError::BackendError)?;
-        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, inner_data_type)
+        let conv_pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(context, inner_data_type, inner_data_type)
             .map_err(MambaMixerError::BackendError)?;
         let ssd_prefill = SSDPrefillBlock::new(context, inner_data_type).map_err(MambaMixerError::BackendError)?;
         let ssd_update = <B::Kernels as Kernels>::SSDUpdateKernel::new(context, inner_data_type, true)

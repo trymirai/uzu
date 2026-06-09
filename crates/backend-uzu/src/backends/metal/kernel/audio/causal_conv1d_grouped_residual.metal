@@ -80,9 +80,7 @@ void causal_conv1d_grouped_residual(
     for (int ic_local = 0; ic_local < cin_per_group; ++ic_local) {
       const int ic = in_begin + ic_local;
       const uint w_base =
-          ((group_idx * cout_per_group + oc_in_group) * (uint)cin_per_group +
-           (uint)ic_local) *
-          (uint)kernel_size;
+          ((group_idx * cout_per_group + oc_in_group) * (uint)cin_per_group + (uint)ic_local) * (uint)kernel_size;
       const uint x_base = (b * (uint)cin + (uint)ic) * (uint)seq_len;
 
       for (int k = 0; k < kernel_size; ++k) {

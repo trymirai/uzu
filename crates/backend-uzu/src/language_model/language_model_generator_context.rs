@@ -2,17 +2,18 @@ use std::{
     cell::{Cell, RefCell},
     cmp::min,
     fs::File,
+    mem::size_of,
     path::Path,
     rc::Rc,
 };
 
 use crate::{
     array::{Array, ArrayContextExt},
-    backends::common::{Backend, Context, Kernels, kernel::TokenCopySampledKernel},
+    backends::common::{Allocation, AllocationType, Backend, Context, Kernels, kernel::TokenCopySampledKernel},
     config::{decoder::DecoderConfig, model::language_model::LanguageModelConfig},
     data_type::DataType,
     encodable_block::{Decoder, KVCacheUpdate, Sampling},
-    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape},
     language_model::rng::PRng,
     parameters::ParameterLoader,
     prelude::ContextLength,
@@ -38,6 +39,9 @@ pub struct AsyncBuffers<B: Backend> {
     pub prefill_count: Cell<usize>,
     /// Batch size (number of passes to keep in flight)
     pub batch_size: usize,
+    /// Packed [ring_offset, ring_length, token...].
+    pub repetition_context_ring: Allocation<B>,
+    pub repetition_context_ring_capacity: usize,
 }
 
 impl<B: Backend> AsyncBuffers<B> {
@@ -48,6 +52,10 @@ impl<B: Backend> AsyncBuffers<B> {
     ) -> Self {
         let positions = context.create_array_uninitialized(&[max_tokens], DataType::I32);
         let seeds = context.create_array_uninitialized(&[max_tokens], DataType::U64);
+        let repetition_context_ring_capacity = max_tokens;
+        let repetition_context_ring = context
+            .create_allocation((2 + repetition_context_ring_capacity) * size_of::<u32>(), AllocationType::Global)
+            .expect("Failed to create repetition context ring allocation");
 
         Self {
             positions,
@@ -55,6 +63,8 @@ impl<B: Backend> AsyncBuffers<B> {
             counter: Cell::new(0),
             prefill_count: Cell::new(0),
             batch_size,
+            repetition_context_ring,
+            repetition_context_ring_capacity,
         }
     }
 
@@ -96,7 +106,6 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
     pub context: Rc<B::Context>,
 
     pub cache_layers: Rc<RefCell<CacheLayers<B>>>,
-    pub shared_buffers: Rc<SharedBuffers<B>>,
 
     pub model_config: LanguageModelConfig,
     pub model_shape: ModelShape,
@@ -107,6 +116,7 @@ pub struct LanguageModelGeneratorContext<B: Backend> {
 
     /// Kernels for copying sampled tokens in async pipeline
     pub token_copy_sampled: <B::Kernels as Kernels>::TokenCopySampledKernel,
+    pub token_copy_sampled_context_ring: <B::Kernels as Kernels>::TokenCopySampledKernel,
     /// Pre-allocated buffers for async generation
     pub async_buffers: AsyncBuffers<B>,
 }
@@ -133,10 +143,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             loader.tree().subtree("decoder").map_err(|error| Error::UnableToLoadWeights(Box::new(error)))?;
         let model_shape = ModelShape::from_decoder_config(&model_config.decoder_config, DataType::BF16);
 
-        let mut shared_buffers = SharedBuffers::new(context.as_ref(), &model_config.decoder_config, &model_shape);
-        shared_buffers.update_data(&root_loader_view)?;
-        let shared_buffers = Rc::new(shared_buffers);
-
         let executables = Decoder::new(context.as_ref(), &model_config.decoder_config, &root_loader_view, &model_shape)
             .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
 
@@ -152,10 +158,11 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
                 .map_err(|e| Error::UnableToCreateContext(e.into()))?,
         );
 
-        let gpu_sampler =
-            Sampling::<B>::new(&context, model_shape.data_type).map_err(|e| Error::UnableToCreateContext(e.into()))?;
+        let gpu_sampler = Sampling::<B>::new(model_shape.data_type, model_config.decoder_config.vocab_size);
 
-        let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context)
+        let token_copy_sampled = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context, false)
+            .map_err(|e| Error::UnableToCreateContext(e.into()))?;
+        let token_copy_sampled_context_ring = <B::Kernels as Kernels>::TokenCopySampledKernel::new(&context, true)
             .map_err(|e| Error::UnableToCreateContext(e.into()))?;
 
         let async_batch_size = decoding_config
@@ -171,7 +178,6 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         Ok(Self {
             context,
             cache_layers,
-            shared_buffers,
             model_config: model_config.clone(),
             model_shape,
             executables,
@@ -179,6 +185,7 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
             gpu_sampler,
             seed,
             token_copy_sampled,
+            token_copy_sampled_context_ring,
             async_buffers,
         })
     }

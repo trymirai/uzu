@@ -1,7 +1,5 @@
 use std::{
     any::Any,
-    fs::File,
-    io::BufReader,
     path::PathBuf,
     sync::{
         Arc,
@@ -45,6 +43,7 @@ struct RunContext {
     prefill_result: PrefillResult,
     prefill_duration: f64,
     prefill_suffix_length: usize,
+    enable_thinking: bool,
     run_start: Instant,
 }
 
@@ -81,10 +80,7 @@ impl ChatSession {
             return Err(Error::NotEnoughMemory);
         }
 
-        let config_path = model_path.join("config.json");
-        let config_file = File::open(&config_path)?;
-        let model_config: LanguageModelConfig = serde_json::from_reader(BufReader::new(config_file))?;
-
+        let model_config = LanguageModelConfig::new(&model_path)?;
         let layers = &model_config.decoder_config.transformer_config.layer_configs;
         let has_non_attention_mixer =
             layers.iter().any(|layer| !matches!(layer.mixer_config, AnyTokenMixerConfig::AttentionConfig(_)));
@@ -205,7 +201,7 @@ impl ChatSession {
         Ok((output, new_context))
     }
 
-    fn run_internal(
+    pub fn run_internal(
         &mut self,
         input: Input,
         config: RunConfig,
@@ -264,6 +260,7 @@ impl ChatSession {
             prefill_result: prefill_result.clone(),
             prefill_duration,
             prefill_suffix_length,
+            enable_thinking: config.enable_thinking,
             run_start,
         };
 
@@ -536,7 +533,7 @@ impl ChatSession {
         finish_reason: Option<FinishReason>,
     ) -> Result<Output, Error> {
         let text = Self::decode_generated_tokens(tokenizer, &run_context.prefill_result.tokens, generate_results)?;
-        let parsed = output_parser.parse(text);
+        let parsed = output_parser.parse(text, run_context.enable_thinking);
         let start_idx = run_context.prefix_len_before + run_context.input_tokens_len;
         let output_tokens = language_model_generator.tokens_len().saturating_sub(start_idx);
 

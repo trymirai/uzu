@@ -21,6 +21,18 @@ pub struct Allocation<B: Backend> {
 }
 
 impl<B: Backend> Allocation<B> {
+    pub fn copyin<T: ArrayElement>(
+        &mut self,
+        data: &[T],
+    ) {
+        let buffer_range = self.as_buffer_range_mut();
+        let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut((buffer.cpu_ptr().as_ptr() as *mut u8).add(range.start), range.len())
+        };
+        bytemuck::cast_slice_mut::<u8, T>(bytes).copy_from_slice(data);
+    }
+
     pub fn copyout<T: ArrayElement>(&self) -> Vec<T> {
         let buffer_range = self.as_buffer_range_ref();
         let (buffer, range) = (buffer_range.buffer(), buffer_range.range());
@@ -105,7 +117,8 @@ impl<B: Backend> Allocator<B> {
         allocation_type: AllocationType<B>,
     ) -> Result<Allocation<B>, B::Error> {
         assert!(size > 0, "allocation size must be greater than 0");
-        let alignment = usize::clamp(size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, 16_384);
+        let alignment =
+            usize::clamp(size.next_power_of_two(), B::MIN_ALLOCATION_ALIGNMENT, B::MAX_ALLOCATION_ALIGNMENT);
         let allocation_type = match allocation_type {
             AllocationType::Global => RangeAllocationType::Global,
             AllocationType::Pooled {
@@ -132,7 +145,7 @@ impl<B: Backend> Allocator<B> {
 
             (buffer, range)
         } else {
-            let new_allocator_buffer_size = usize::max(size, 268_435_456);
+            let new_allocator_buffer_size = usize::max(size, B::ALLOCATION_GRANULARITY);
 
             let mut allocator_buffer = AllocatorBuffer::<B> {
                 buffer: Box::pin(self.context.upgrade().unwrap().create_buffer(new_allocator_buffer_size)?), // Upgrade can never fail

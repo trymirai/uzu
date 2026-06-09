@@ -21,8 +21,7 @@ struct MxuFragmentOps {
   METAL_CONST ushort FRAGMENT_ROWS = 16;
   METAL_CONST ushort FRAGMENT_COLS = 16;
 
-  METAL_CONST ushort ELEMENTS_PER_THREAD =
-      (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
+  METAL_CONST ushort ELEMENTS_PER_THREAD = (FRAGMENT_ROWS * FRAGMENT_COLS) / METAL_SIMD_SIZE;
 
   METAL_CONST ushort THREAD_ELEMENT_ROWS = 2;
   METAL_CONST ushort THREAD_ELEMENT_COLS = 4;
@@ -41,13 +40,7 @@ struct MxuFragmentOps {
   // supplies a `marshal_inputs` callable that copies its fragments into the
   // cooperative left/right tensors; the descriptor and output marshalling are
   // shared between all call shapes.
-  template <
-      typename CType,
-      typename AType,
-      typename BType,
-      bool transpose_a,
-      bool transpose_b,
-      typename MarshalInputs>
+  template <typename CType, typename AType, typename BType, bool transpose_a, bool transpose_b, typename MarshalInputs>
   METAL_FUNC static void mma_impl(
       thread ThreadVector<CType>& output_0,
       thread ThreadVector<CType>& output_1,
@@ -65,17 +58,12 @@ struct MxuFragmentOps {
 
     mpp::tensor_ops::matmul2d<descriptor, metal::execution_simdgroup> matmul_op;
 
-    auto cooperative_left =
-        matmul_op
-            .template get_left_input_cooperative_tensor<AType, BType, CType>();
-    auto cooperative_right =
-        matmul_op
-            .template get_right_input_cooperative_tensor<AType, BType, CType>();
-    auto cooperative_output =
-        matmul_op.template get_destination_cooperative_tensor<
-            decltype(cooperative_left),
-            decltype(cooperative_right),
-            CType>();
+    auto cooperative_left = matmul_op.template get_left_input_cooperative_tensor<AType, BType, CType>();
+    auto cooperative_right = matmul_op.template get_right_input_cooperative_tensor<AType, BType, CType>();
+    auto cooperative_output = matmul_op.template get_destination_cooperative_tensor<
+        decltype(cooperative_left),
+        decltype(cooperative_right),
+        CType>();
 
     marshal_inputs(cooperative_left, cooperative_right);
 
@@ -95,12 +83,7 @@ struct MxuFragmentOps {
   }
 
   // N-paired: output is two columns, left is one fragment, right is two.
-  template <
-      typename CType,
-      typename AType,
-      typename BType,
-      bool transpose_a = false,
-      bool transpose_b = false>
+  template <typename CType, typename AType, typename BType, bool transpose_a = false, bool transpose_b = false>
   METAL_FUNC static void mma(
       thread ThreadVector<CType>& output_col_0,
       thread ThreadVector<CType>& output_col_1,
@@ -125,12 +108,7 @@ struct MxuFragmentOps {
   }
 
   // M-paired: output is two rows, left is two fragments, right is one.
-  template <
-      typename CType,
-      typename AType,
-      typename BType,
-      bool transpose_a = false,
-      bool transpose_b = false>
+  template <typename CType, typename AType, typename BType, bool transpose_a = false, bool transpose_b = false>
   METAL_FUNC static void mma(
       thread ThreadVector<CType>& output_row_0,
       thread ThreadVector<CType>& output_row_1,
@@ -154,41 +132,19 @@ struct MxuFragmentOps {
     );
   }
 
-  template <
-      bool transpose_a,
-      bool transpose_b,
-      class OutputTile,
-      class LeftTile,
-      class RightTile>
-  METAL_FUNC static void tile_matmul(
-      thread OutputTile& output,
-      thread LeftTile& left,
-      thread RightTile& right
-  ) {
-    constexpr ushort left_tile_m =
-        transpose_a ? LeftTile::TILE_COLS : LeftTile::TILE_ROWS;
+  template <bool transpose_a, bool transpose_b, class OutputTile, class LeftTile, class RightTile>
+  METAL_FUNC static void tile_matmul(thread OutputTile& output, thread LeftTile& left, thread RightTile& right) {
+    constexpr ushort left_tile_m = transpose_a ? LeftTile::TILE_COLS : LeftTile::TILE_ROWS;
     constexpr ushort tile_m = OutputTile::TILE_ROWS;
-    static_assert(
-        left_tile_m == tile_m,
-        "tile matmul: M dimensions do not match"
-    );
+    static_assert(left_tile_m == tile_m, "tile matmul: M dimensions do not match");
 
-    constexpr ushort right_tile_n =
-        transpose_b ? RightTile::TILE_ROWS : RightTile::TILE_COLS;
+    constexpr ushort right_tile_n = transpose_b ? RightTile::TILE_ROWS : RightTile::TILE_COLS;
     constexpr ushort tile_n = OutputTile::TILE_COLS;
-    static_assert(
-        right_tile_n == tile_n,
-        "tile matmul: N dimensions do not match"
-    );
+    static_assert(right_tile_n == tile_n, "tile matmul: N dimensions do not match");
 
-    constexpr ushort left_tile_k =
-        transpose_a ? LeftTile::TILE_ROWS : LeftTile::TILE_COLS;
-    constexpr ushort tile_k =
-        transpose_b ? RightTile::TILE_COLS : RightTile::TILE_ROWS;
-    static_assert(
-        left_tile_k == tile_k,
-        "tile matmul: K dimensions do not match"
-    );
+    constexpr ushort left_tile_k = transpose_a ? LeftTile::TILE_ROWS : LeftTile::TILE_COLS;
+    constexpr ushort tile_k = transpose_b ? RightTile::TILE_COLS : RightTile::TILE_ROWS;
+    static_assert(left_tile_k == tile_k, "tile matmul: K dimensions do not match");
 
     constexpr auto transpose_left = metal::bool_constant<transpose_a>{};
     constexpr auto transpose_right = metal::bool_constant<transpose_b>{};

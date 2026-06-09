@@ -4,13 +4,7 @@
 using namespace metal;
 
 template <typename T>
-void add_tensors(
-    device const T* a,
-    device const T* b,
-    device T* out,
-    const constant int& n,
-    const uint tid
-) {
+void add_tensors(device const T* a, device const T* b, device T* out, const constant int& n, const uint tid) {
   if ((int)tid >= n) {
     return;
   }

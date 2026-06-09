@@ -4,11 +4,11 @@ use std::{collections::HashMap, path::Path, time::Instant};
 use super::ActivationTrace;
 use super::{ClassificationOutput, ClassificationStats, ClassifierContext};
 use crate::{
-    backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
+    backends::common::{Allocation, AllocationType, AsBufferRangeRef, Backend, Context, Encoder},
     config::model::classifier_model::ClassifierModelConfig,
     data_type::DataType,
-    encodable_block::LayerArguments,
-    forward_pass::token_inputs::TokenInputs,
+    encodable_block::{LayerArguments, PrecalculatedRope},
+    forward_pass::{rope::precalculate_rope, token_inputs::TokenInputs},
     session::types::Error,
 };
 
@@ -134,22 +134,38 @@ impl<B: Backend> Classifier<B> {
         let mut shortcut = encoder
             .allocate_scratch(main.as_buffer_range_ref().range().len())
             .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
-        for (layer_index, layer) in self.context.layers.iter().enumerate() {
-            let rope_buffers = self.context.shared_buffers.rope_buffers_for_layer(layer_index);
+        let ropes = self
+            .context
+            .rope_configs
+            .iter()
+            .map(|rope_config| {
+                let (sines, cosines) = precalculate_rope(rope_config, token_inputs.token_positions());
+                let mut sines_allocation = encoder.allocate_constant(sines.len() * std::mem::size_of::<f32>())?;
+                sines_allocation.copyin(sines.as_ref());
+                let mut cosines_allocation = encoder.allocate_constant(cosines.len() * std::mem::size_of::<f32>())?;
+                cosines_allocation.copyin(cosines.as_ref());
+                Ok(PrecalculatedRope {
+                    cosines: cosines_allocation,
+                    sines: sines_allocation,
+                    dim: *rope_config.head_dim(),
+                })
+            })
+            .collect::<Result<Box<[_]>, B::Error>>()
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        for layer in self.context.layers.iter() {
             main = layer
                 .encode(
                     LayerArguments {
                         batch_dim,
-                        token_positions: token_inputs.token_positions(),
                         token_parents: token_inputs.token_parents(),
                         token_subtrie_ranges: None,
-                        rope_buffers,
+                        rope: layer.rope_kind.get(&ropes),
                         per_layer_inputs: None,
                         sampling_start: 0,
                         sampling_length: batch_dim,
                         cache_access: None,
                         #[cfg(feature = "tracing")]
-                        trace: trace.as_deref_mut().map(|traces| &mut traces.layer_results[layer_index]),
+                        trace: trace.as_deref_mut().map(|traces| &mut traces.layer_results[layer.layer_index]),
                     },
                     main,
                     &mut shortcut,
@@ -183,19 +199,26 @@ impl<B: Backend> Classifier<B> {
             encoder.encode_copy(&logits, .., trace.logits.allocation_mut(), ..);
         }
 
+        let mut logits_output = self
+            .context
+            .context
+            .create_allocation(logits.as_buffer_range_ref().range().len(), AllocationType::Global)
+            .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        encoder.encode_copy(&logits, .., &mut logits_output, ..);
+
+        drop(logits);
+        drop(main);
+        drop(shortcut);
+        drop(ropes);
+
         let completed = encoder
             .end_encoding()
             .submit()
             .wait_until_completed()
             .map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
-
-        let logits_result = self.copy_logits_from_allocation(&logits);
-        drop(logits);
-        drop(main);
-        drop(shortcut);
         drop(completed);
 
-        logits_result
+        self.copy_logits_from_allocation(&logits_output)
     }
 
     #[cfg(not(feature = "tracing"))]

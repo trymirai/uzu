@@ -6,11 +6,7 @@
 #include "../common/threadgroup_reduce.h"
 
 template <ushort BLOCK_SIZE, typename T>
-static T threadgroup_raking_prefix_exclusive_sum(
-    T value,
-    threadgroup T* shared,
-    const ushort lid
-) {
+static T threadgroup_raking_prefix_exclusive_sum(T value, threadgroup T* shared, const ushort lid) {
   shared[lid] = value;
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -48,16 +44,14 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
     device const int* topk_ids,
     device uint* offsets,   // output: exclusive scan [E+1]
     device uint* sum_k_out, // output: total count [1]
-    device uint*
-        partials, // output: partials [num_tiles * TILE_E] (for block_bases)
+    device uint* partials,  // output: partials [num_tiles * TILE_E] (for block_bases)
     constant uint& t_input,
     constant uint& e_input,
     constant uint& k_input,
     threadgroup _atomic<uint> tg_hist[TILE_E],
     threadgroup uint scan_shared[BLOCK_SIZE],
     threadgroup uint reduce_shared[BLOCK_SIZE],
-    threadgroup uint
-        counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
+    threadgroup uint counts_shared[BLOCK_SIZE], // Cache counts in threadgroup memory
     threadgroup uint& carry,
     const ThreadContext thread_context,
     const uint lid THREADS(128)
@@ -102,8 +96,7 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
 
     // Write final counts and partials for this tile
     for (uint e = lid; e < tile_e; e += BLOCK_SIZE) {
-      const uint count_val =
-          atomic_load_explicit(&tg_hist[e], memory_order_relaxed);
+      const uint count_val = atomic_load_explicit(&tg_hist[e], memory_order_relaxed);
       counts_shared[e0 + e] = count_val;
       partials[e0 + e] = count_val;
     }
@@ -124,22 +117,13 @@ PUBLIC KERNEL(MoeCountsOffsetsFused)(
 
     uint v = (lid < chunk_n) ? counts_shared[lid] : 0u;
 
-    uint prefix_local = threadgroup_raking_prefix_exclusive_sum<BLOCK_SIZE>(
-        v,
-        scan_shared,
-        (ushort)lid
-    );
+    uint prefix_local = threadgroup_raking_prefix_exclusive_sum<BLOCK_SIZE>(v, scan_shared, (ushort)lid);
     uint prefix_global = prefix_local + carry;
     if (lid < chunk_n) {
       offsets[base + lid] = prefix_global;
     }
 
-    uint block_sum =
-        threadgroup_cooperative_reduce<SimdReduceSum<uint>, BLOCK_SIZE>(
-            v,
-            reduce_shared,
-            thread_context
-        );
+    uint block_sum = threadgroup_cooperative_reduce<SimdReduceSum<uint>, BLOCK_SIZE>(v, reduce_shared, thread_context);
     if (lid == 0) {
       carry += block_sum;
     }

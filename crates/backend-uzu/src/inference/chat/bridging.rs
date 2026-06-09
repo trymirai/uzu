@@ -155,6 +155,8 @@ fn build_sampling_policy(sampling_policy: &ShojiSamplingPolicy) -> SamplingPolic
                     top_k: top_k.map(|value| value.max(0) as u32),
                     top_p: top_p.map(|value| value as f32),
                     min_p: min_p.map(|value| value as f32),
+                    repetition_penalty: None,
+                    suffix_repetition_length: None,
                     processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
             },
@@ -195,5 +197,42 @@ fn build_stats(stats: &Stats) -> ShojiStats {
         generate_tokens_per_second,
         tokens_count_input: Some(stats.total_stats.tokens_count_input as u32),
         tokens_count_output: Some(stats.total_stats.tokens_count_output as u32),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use shoji::types::session::chat::ChatMessage;
+
+    use super::*;
+
+    fn enable_thinking_for(messages: Vec<ChatMessage>) -> bool {
+        build_run_config(&messages, &ChatReplyConfig::default()).enable_thinking
+    }
+
+    fn user(reasoning_effort: ReasoningEffort) -> ChatMessage {
+        ChatMessage::user().with_text("hi".to_string()).with_reasoning_effort(reasoning_effort)
+    }
+
+    #[test]
+    fn enable_thinking_defaults_on_without_effort() {
+        assert!(enable_thinking_for(vec![ChatMessage::user().with_text("hi".to_string())]));
+    }
+
+    #[test]
+    fn enable_thinking_follows_latest_turn() {
+        let reenabled = vec![
+            user(ReasoningEffort::Disabled),
+            ChatMessage::assistant().with_text("ok".to_string()),
+            user(ReasoningEffort::Default),
+        ];
+        assert!(enable_thinking_for(reenabled));
+
+        let redisabled = vec![
+            user(ReasoningEffort::Default),
+            ChatMessage::assistant().with_text("ok".to_string()),
+            user(ReasoningEffort::Disabled),
+        ];
+        assert!(!enable_thinking_for(redisabled));
     }
 }

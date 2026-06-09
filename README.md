@@ -4,7 +4,7 @@
   </picture>
 </p>
 
-<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.3)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.3)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.3)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.3)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
+<a href="https://discord.com/invite/trymirai"><img src="https://img.shields.io/discord/1377764166764462120?label=Discord&color=brightgreen" alt="Discord"></a> <a href="mailto:contact@getmirai.co?subject=Interested%20in%20Mirai"><img src="https://img.shields.io/badge/Send-Email-brightgreen" alt="Contact us"></a> <a href="https://docs.trymirai.com"><img src="https://img.shields.io/badge/Read-Docs-brightgreen" alt="Read docs"></a> [![License](https://img.shields.io/badge/License-MIT-brightgreen)](LICENSE) [![Build](https://github.com/trymirai/uzu/actions/workflows/tests.yml/badge.svg)](https://github.com/trymirai/uzu/actions) [![Python](https://img.shields.io/badge/Python-orange)](bindings/python) [![Package](https://img.shields.io/pypi/v/uzu?color=orange&label=Package&v=0.5.12)](https://pypi.org/project/uzu/) [![Python](https://img.shields.io/pypi/pyversions/uzu?color=orange&label=Python&v=0.5.12)](https://pypi.org/project/uzu/) [![TypeScript](https://img.shields.io/badge/TypeScript-yellow)](bindings/typescript) [![Package](https://img.shields.io/npm/v/@trymirai/uzu?color=yellow&label=Package&v=0.5.12)](https://www.npmjs.com/package/@trymirai/uzu) [![Downloads](https://img.shields.io/npm/dm/@trymirai/uzu?color=yellow&label=Downloads&v=0.5.12)](https://www.npmjs.com/package/@trymirai/uzu) [![Swift](https://img.shields.io/badge/Swift-blue)](bindings/swift) [![SPM](https://img.shields.io/badge/SPM-compatible-blue)](Package.swift) [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS-blue)](Package.swift) [![Swift](https://img.shields.io/badge/Swift-5.9-blue)](https://swift.org) 
 
 # uzu
 
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Add the dependency:
 
 ```bash
-uv add uzu==0.5.3
+uv add uzu==0.5.12
 ```
 
 Run the code below:
@@ -132,7 +132,7 @@ Add the dependency:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.3")
+    .package(url: "https://github.com/trymirai/uzu.git", from: "0.5.12")
 ]
 ```
 
@@ -181,7 +181,7 @@ public func runQuickStart() async throws {
 Add the dependency:
 
 ```bash
-pnpm add @trymirai/uzu@0.5.3
+pnpm add @trymirai/uzu@0.5.12
 ```
 
 Run the code below:
@@ -1617,7 +1617,7 @@ uv run downloader list             # show the list of supported models
 uv run downloader download {REPO}  # download a specific model
 ```
 
-Models downloaded for development are stored at `./workspace/models/0.5.3/`.
+Models downloaded for development are stored at `./workspace/models/0.5.12/`.
 
 You can also export a model yourself with [lalamo](https://github.com/trymirai/lalamo):
 
@@ -1638,15 +1638,52 @@ cargo run --release -p cli
 
 This launches an interactive app where you can browse, download, and interact with models.
 
+You can also preselect a model with `--model`, passing its identifier or repository id:
+
+```bash
+cargo run --release -p cli -- --model trymirai/Qwen3.5-4B-M
+```
+
+If the model is not downloaded yet, the CLI starts downloading it automatically.
+
 ## Benchmarks
 
 To run benchmarks:
 
 ```bash
-cargo run --release -p cli -- bench ./workspace/models/0.5.3/{MODEL_NAME} ./workspace/models/0.5.3/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.5.3/{MODEL_NAME}/benchmark_result.json
+cargo run --release -p cli -- bench ./workspace/models/0.5.12/{MODEL_NAME} ./workspace/models/0.5.12/{MODEL_NAME}/benchmark_task.json ./workspace/models/0.5.12/{MODEL_NAME}/benchmark_result.json
 ```
 
 `benchmark_task.json` is automatically generated after the model is downloaded via `./tools/`.
+
+## Server
+
+You can also run `uzu` as an OpenAI-compatible HTTP server:
+
+```bash
+cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M
+```
+
+The model is loaded on startup (and downloaded first if needed). By default the server listens on `127.0.0.1:8000`; override the address with `--host` and `--port`:
+
+```bash
+cargo run --release -p cli -- server --model trymirai/Qwen3.5-4B-M --host 0.0.0.0 --port 8080
+```
+
+It exposes the following endpoints, available both at the root and under `/v1`:
+
+- `POST /v1/chat/completions` — chat completions, with streaming when `"stream": true`. Honors `temperature`, `top_p`, `top_k`, and `max_tokens`.
+- `GET /v1/models` — lists the loaded model.
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "trymirai/Qwen3.5-4B-M",
+        "messages": [{"role": "user", "content": "Hello!"}],
+        "stream": true
+    }'
+```
 
 
 

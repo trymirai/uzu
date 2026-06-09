@@ -1,4 +1,11 @@
-use std::{any::Any, iter::repeat_n, ops::Range, path::Path, time::Instant};
+use std::{
+    any::Any,
+    iter::repeat_n,
+    mem::size_of,
+    ops::Range,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use itertools::{Either, Itertools, izip};
 
@@ -11,12 +18,12 @@ use super::{
 use crate::{
     array::{Array, ArrayContextExt},
     backends::common::{
-        Allocation, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
+        Allocation, AllocationType, AsBufferRangeRef, Backend, CommandBuffer, Context, DenseBuffer, Encoder, Pending,
         kernel::TokenCopySampledKernel,
     },
     config::model::language_model::LanguageModelConfig,
     data_type::DataType,
-    encodable_block::{DecoderDecodeInput, SamplingArguments, SamplingInputs},
+    encodable_block::DecoderDecodeInput,
     forward_pass::{cache_layers::CacheLayersSlice, kv_cache_layer::INVALID_POSITION, token_inputs::TokenInputs},
     language_model::grammar::CompiledGrammar,
     session::{
@@ -25,51 +32,53 @@ use crate::{
         parameter::{ConfigResolvableValue, ResolvableValue, SamplingMethod},
         types::Error,
     },
-    trie::{TrieCreationConfig, TrieNode},
+    trie::{FlatTrie, TrieCreationConfig, TrieNode},
     utils::pointers::SendPtr,
 };
 
 #[derive(Debug, Clone)]
-struct Task<'a> {
-    token_ids: &'a [u64],
-    token_subtrie_ranges: Option<&'a [[u32; 3]]>,
-    token_positions: &'a [usize],
-    token_bitmask: Option<&'a [u32]>,
-    token_seeds: &'a [u64],
+pub struct Task {
+    token_ids: Box<[u64]>,
+    token_subtrie_ranges: Option<Box<[[u32; 3]]>>,
+    token_positions: Box<[usize]>,
+    token_bitmask: Option<Box<[u32]>>,
+    token_seeds: Box<[u64]>,
     active_row_count: usize,
-    pass: ForwardPassKind,
+    sampling_start: usize,
+    sampling_length: usize,
+    is_prefilling: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ForwardPassKind {
-    CacheOnly,
-    SampleFrom {
-        row_start: usize,
-        row_count: usize,
-    },
-    Decode {
-        row_count: usize,
-    },
+struct ForwardPassResources<B: Backend> {
+    token_inputs: TokenInputs<B>,
+    logits: Option<Allocation<B>>,
+    sampling_output: Option<Allocation<B>>,
+    sampling_seeds: Option<Allocation<B>>,
+    sampling_bitmask: Option<Allocation<B>>,
 }
 
-impl ForwardPassKind {
-    fn sampling(self) -> Option<(usize, usize)> {
-        match self {
-            Self::CacheOnly => None,
-            Self::SampleFrom {
-                row_start,
-                row_count,
-            } => Some((row_start, row_count)),
-            Self::Decode {
-                row_count,
-            } => Some((0, row_count)),
-        }
-    }
+struct InFlightForwardPass<B: Backend> {
+    resources: ForwardPassResources<B>,
+    pending: Pending<B>,
+}
+
+pub struct RunModelResult<B: Backend> {
+    pub sampling_output: Option<Allocation<B>>,
+    pub cpu_run_time: f64,
+    #[allow(unused)]
+    pub gpu_run_time: Duration,
+}
+
+struct PrefillStepRun<B: Backend> {
+    sampling_output: Option<Allocation<B>>,
+    run_time: f64,
+    sampling_rows_are_local: bool,
 }
 
 #[derive(Clone, Copy)]
 struct PrefillStepSchedule {
-    forward_pass: ForwardPassKind,
+    sampling_start: usize,
+    sampling_length: usize,
     accepted_prompt_rows: usize,
 }
 
@@ -84,36 +93,32 @@ impl PrefillStepSchedule {
         let step_end_token_index = std::cmp::min(tokens_end_index, tokens_length);
         let mut accepted_prompt_rows = step_end_token_index - tokens_start_index;
 
-        let forward_pass = if should_sample {
+        let (sampling_start, sampling_length) = if should_sample {
             let suffix_root_index_in_step = (tokens_length - 1).saturating_sub(tokens_start_index);
             let sampling_length = active_row_count.saturating_sub(suffix_root_index_in_step);
             debug_assert!(sampling_length > 0, "Expected at least one token to sample on the last prefill step");
             accepted_prompt_rows = accepted_prompt_rows.saturating_sub(1);
-            ForwardPassKind::SampleFrom {
-                row_start: suffix_root_index_in_step,
-                row_count: sampling_length,
-            }
+            (suffix_root_index_in_step, sampling_length)
         } else {
-            ForwardPassKind::CacheOnly
+            (0, 0)
         };
 
         Self {
-            forward_pass,
+            sampling_start,
+            sampling_length,
             accepted_prompt_rows,
         }
+    }
+
+    fn should_sample(self) -> bool {
+        self.sampling_length > 0
     }
 
     fn split_sampling_start(
         self,
         prefill_skips_trailing_layers: bool,
     ) -> Option<usize> {
-        match self.forward_pass {
-            ForwardPassKind::SampleFrom {
-                row_start,
-                ..
-            } if prefill_skips_trailing_layers && row_start > 0 => Some(row_start),
-            _ => None,
-        }
+        (prefill_skips_trailing_layers && self.sampling_start > 0).then_some(self.sampling_start)
     }
 }
 
@@ -132,24 +137,6 @@ fn rebase_sampling_subtrie_ranges(
             ]
         })
         .collect()
-}
-
-struct ForwardPassResources<B: Backend> {
-    token_inputs: TokenInputs<B>,
-    logits: Option<Allocation<B>>,
-    sampling_output: Option<Allocation<B>>,
-    sampling_inputs: Option<SamplingInputs<B>>,
-}
-
-struct InFlightForwardPass<B: Backend> {
-    resources: ForwardPassResources<B>,
-    pending: Pending<B>,
-}
-
-struct PrefillStepRun<B: Backend> {
-    sampling_output: Option<Allocation<B>>,
-    run_time: f64,
-    sampling_rows_are_local: bool,
 }
 
 pub struct LanguageModelGenerator<B: Backend> {
@@ -259,6 +246,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
+            self.context.model_shape.vocabulary_size,
             &TrieCreationConfig::default(),
             suffix_length + 1,
         );
@@ -299,19 +287,19 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let step_token_ids = step_token_ids.collect::<Box<[u64]>>();
             let step_token_subtrie_ranges = step_token_subtrie_ranges.collect::<Box<[Option<[u32; 3]>]>>();
             let step_token_subtrie_ranges: Option<Box<[[u32; 3]]>> =
-                step_token_subtrie_ranges.iter().position(|entry| entry.is_some()).map(|trie_start| {
+                step_token_subtrie_ranges.iter().position(|e| e.is_some()).map(|trie_start| {
                     step_token_subtrie_ranges
                         .iter()
                         .enumerate()
-                        .map(|(row, maybe_range)| {
-                            if let Some([subtrie_start, subtrie_end, height]) = maybe_range {
+                        .map(|(i, me)| {
+                            if let Some([subtrie_start, subtrie_end, height]) = me {
                                 [
                                     trie_start as u32 + subtrie_start,
                                     trie_start as u32 + subtrie_end,
                                     trie_start as u32 + height,
                                 ]
                             } else {
-                                [row as u32, step_token_subtrie_ranges.len() as u32 - 1, row as u32]
+                                [i as u32, step_token_subtrie_ranges.len() as u32 - 1, i as u32]
                             }
                         })
                         .collect()
@@ -328,7 +316,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 tokens_end_index,
                 active_row_count,
             );
-            let sampling_length = schedule.forward_pass.sampling().map_or(0, |(_, length)| length);
+            let sampling_length = schedule.sampling_length;
 
             let step_token_bitmask: Option<Box<[u32]>> = if has_grammar && sampling_length > 0 {
                 Some(
@@ -361,13 +349,15 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             let _ = last_sampling_output.take();
 
             let task = Task {
-                token_ids: &step_token_ids,
-                token_subtrie_ranges: step_token_subtrie_ranges.as_deref(),
-                token_positions: &step_token_positions,
-                token_bitmask: step_token_bitmask.as_deref(),
-                token_seeds: &step_token_seeds,
+                token_ids: step_token_ids,
+                token_subtrie_ranges: step_token_subtrie_ranges,
+                token_positions: step_token_positions,
+                token_bitmask: step_token_bitmask,
+                token_seeds: step_token_seeds,
                 active_row_count,
-                pass: schedule.forward_pass,
+                sampling_start: schedule.sampling_start,
+                sampling_length,
+                is_prefilling: !schedule.should_sample(),
             };
 
             let step_run = self.run_prefill_step(
@@ -377,7 +367,6 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
                 single_token_bitmask_size,
                 sampling_method,
             )?;
-
             if should_capture {
                 self.gpu_capture
                     .stop_capture(&self.context.context, "prefill")
@@ -428,71 +417,27 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         sampling_method: SamplingMethod,
     ) -> Result<GenerateResult, Error> {
         let speculator = &self.decoding_config.speculator_config.speculator;
-
         let suffix_length = self.decoding_config.generate_suffix_length();
         let suffix_root = TrieNode::from_speculator(
             &self.tokens,
             &self.context.seed,
             compiled_grammar.as_deref_mut(),
             speculator.as_ref(),
+            self.context.model_shape.vocabulary_size,
             &TrieCreationConfig::default(),
             suffix_length,
         );
-
         let flat_trie = suffix_root.linearize();
-        let active_row_count = flat_trie.len();
 
-        let token_ids =
-            flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
+        let task = self.get_generate_task(&flat_trie, compiled_grammar.is_some());
 
-        let token_subtrie_ranges = flat_trie
-            .token_subtrie_ranges()
-            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_row_count))
-            .collect::<Box<[[u32; 3]]>>();
-
-        let token_bitmask: Option<Box<[u32]>> = compiled_grammar.is_some().then(|| {
-            let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
-            flat_trie
-                .token_masks()
-                .chain(repeat_n(None, suffix_length - active_row_count))
-                .flat_map(|mask| match mask {
-                    Some(mask) => Either::Left(
-                        mask.iter()
-                            .copied()
-                            .take(single_token_bitmask_size)
-                            .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
-                    ),
-                    None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
-                })
-                .collect::<Box<[u32]>>()
-        });
-
-        let start_position = self.tokens.len() - 1;
-        let token_positions = flat_trie
-            .token_positions()
-            .map(|trie_position| start_position + trie_position)
-            .chain(repeat_n(INVALID_POSITION, suffix_length - active_row_count))
-            .collect::<Box<[usize]>>();
-
-        let token_seeds =
-            flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_row_count)).collect::<Box<[u64]>>();
-
-        let task = Task {
-            token_ids: &token_ids,
-            token_subtrie_ranges: Some(&token_subtrie_ranges),
-            token_positions: &token_positions,
-            token_bitmask: token_bitmask.as_deref(),
-            token_seeds: &token_seeds,
-            active_row_count,
-            pass: ForwardPassKind::Decode {
-                row_count: active_row_count,
-            },
-        };
-
-        let (_, sampling_length) = task.pass.sampling().expect("generate task must sample");
-        let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
-        let sampled_tokens =
-            self.read_sampling_output(sampling_output.as_ref().expect("sampling output must exist"), sampling_length)?;
+        let active_row_count = task.active_row_count;
+        let sampling_length = task.sampling_length;
+        let run_result = self.run_model(task, sampling_method)?;
+        let sampled_tokens = self.read_sampling_output(
+            run_result.sampling_output.as_ref().expect("sampling output must exist"),
+            sampling_length,
+        )?;
 
         let (accepted_tokens, accepted_token_indices) = flat_trie.accept(&sampled_tokens, compiled_grammar);
         let speculator_proposed = active_row_count.saturating_sub(1);
@@ -505,7 +450,7 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
 
         Ok(GenerateResult {
             tokens: accepted_tokens,
-            forwardpass_duration: run_time,
+            forwardpass_duration: run_result.cpu_run_time,
             speculator_proposed,
             speculator_accepted,
         })
@@ -551,15 +496,15 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         let token_seed = self.context.async_buffers.seeds.as_slice::<u64>()[pass_idx];
 
         let task = Task {
-            token_ids: &[last_token],
+            token_ids: Box::new([last_token]),
             token_subtrie_ranges: None,
-            token_positions: &[token_position],
+            token_positions: Box::new([token_position]),
             token_bitmask: None,
-            token_seeds: &[0], // Ignored, using async buffer
+            token_seeds: Box::new([0]), // Ignored, using async buffer
             active_row_count: 1,
-            pass: ForwardPassKind::Decode {
-                row_count: 1,
-            },
+            sampling_start: 0,
+            sampling_length: 1,
+            is_prefilling: false,
         };
 
         let token_ids_array = if pass_idx > 0 {
@@ -567,7 +512,27 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         } else {
             None
         };
-        let sampling_inputs = SamplingInputs::from_slices(self.context.context.as_ref(), &[token_seed], None, None);
+        let sampling_seed = [token_seed];
+        let mut sampling_seeds = self
+            .context
+            .context
+            .create_allocation(std::mem::size_of_val(&sampling_seed), AllocationType::Global)
+            .expect("Failed to create sampling seed allocation");
+        sampling_seeds.copyin(&sampling_seed);
+        let repetition_penalty = Self::repetition_penalty_config(sampling_method);
+        if pass_idx == 0
+            && let Some((_, suffix_repetition_length)) = repetition_penalty
+        {
+            let capacity = self.context.async_buffers.repetition_context_ring_capacity;
+            Self::copy_repetition_context_ring(
+                &mut self.context.async_buffers.repetition_context_ring,
+                &self.tokens,
+                suffix_repetition_length,
+                capacity,
+            );
+        }
+        let sampling_context_ring =
+            repetition_penalty.as_ref().map(|_| &self.context.async_buffers.repetition_context_ring);
 
         let is_first_decode = !is_continuation;
         let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
@@ -578,8 +543,9 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
         }
 
         let batch_dim = task.active_row_count;
-        let pass = task.pass;
-        let token_inputs = self.build_token_inputs(task, token_ids_array, None);
+        let sampling_start = task.sampling_start;
+        let sampling_length = task.sampling_length;
+        let token_inputs = self.build_token_inputs(task, token_ids_array);
         let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
             .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
         let resources = Self::encode_forward_pass_on(
@@ -587,9 +553,13 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             &mut encoder,
             token_inputs,
             batch_dim,
-            pass,
-            sampling_method,
-            Some(sampling_inputs),
+            sampling_start,
+            sampling_length,
+            false,
+            Some(sampling_method),
+            Some(sampling_seeds),
+            None,
+            sampling_context_ring,
         )?;
 
         // Copy sampled token: sampling_output → token_ids (for next pass)
@@ -603,11 +573,23 @@ impl<B: Backend> LanguageModelGeneratorTrait for LanguageModelGenerator<B> {
             (async_token_ids_buffer_range.buffer().cpu_ptr().as_ptr() as *const u64)
                 .add(async_token_ids_range.start / std::mem::size_of::<u64>())
         });
-        self.context.token_copy_sampled.encode(
-            resources.sampling_output.as_ref().expect("Sampling output must exist"),
-            &mut async_token_ids_allocation,
-            &mut encoder,
-        );
+        if let Some((_, suffix_repetition_length)) = repetition_penalty {
+            self.context.token_copy_sampled_context_ring.encode(
+                resources.sampling_output.as_ref().expect("Sampling output must exist"),
+                &mut async_token_ids_allocation,
+                Some(&mut self.context.async_buffers.repetition_context_ring),
+                Some(suffix_repetition_length as u32),
+                &mut encoder,
+            );
+        } else {
+            self.context.token_copy_sampled.encode(
+                resources.sampling_output.as_ref().expect("Sampling output must exist"),
+                &mut async_token_ids_allocation,
+                None::<&mut Allocation<B>>,
+                None,
+                &mut encoder,
+            );
+        }
         self.async_token_ids = Some(unsafe {
             Array::from_allocation(async_token_ids_allocation, 0, &token_ids_shape, token_ids_data_type)
         });
@@ -753,7 +735,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let context = LanguageModelGeneratorContext::new(model_path, &decoding_config, model_config)?;
 
-        Ok(Self {
+        let mut generator = Self {
             decoding_config,
             tokens: Vec::new(),
             context,
@@ -761,26 +743,179 @@ impl<B: Backend> LanguageModelGenerator<B> {
             async_token_ids: None,
             registered_prefix_len: 0,
             gpu_capture,
-        })
+        };
+        generator.warmup();
+        Ok(generator)
     }
 
-    fn run_model(
+    fn warmup(&mut self) {
+        if let Err(error) = self.run_warmup() {
+            eprintln!("uzu: model warmup skipped (kernels will compile on first use): {error}");
+        }
+        self.reset_state();
+    }
+
+    fn run_warmup(&mut self) -> Result<(), Error> {
+        let context_length = self.context.get_context_length(&self.decoding_config);
+        let first = 64.min(context_length.saturating_sub(1)).max(1);
+        self.prefill(vec![0u64; first], None, SamplingMethod::Greedy, 0, true)?;
+        self.generate(None, SamplingMethod::Greedy)?;
+        for &len in &[65usize, 16] {
+            let offset = self.tokens.len();
+            if offset + len >= context_length {
+                break;
+            }
+            self.prefill(vec![0u64; len], None, SamplingMethod::Greedy, offset, false)?;
+        }
+        Ok(())
+    }
+
+    fn repetition_penalty_config(sampling_method: SamplingMethod) -> Option<(f32, usize)> {
+        match sampling_method {
+            SamplingMethod::Stochastic {
+                repetition_penalty: Some(repetition_penalty),
+                suffix_repetition_length,
+                ..
+            } => Some((
+                repetition_penalty,
+                suffix_repetition_length.expect("suffix_repetition_length is required for repetition_penalty"),
+            )),
+            _ => None,
+        }
+    }
+
+    fn copy_repetition_context_ring(
+        context_ring: &mut Allocation<B>,
+        tokens: &[u64],
+        suffix_repetition_length: usize,
+        capacity: usize,
+    ) {
+        let ring_length = tokens.len().min(suffix_repetition_length);
+        let mut packed_ring = vec![0u32; 2 + capacity];
+        packed_ring[1] = ring_length as u32;
+        for (index, token) in tokens[tokens.len() - ring_length..].iter().enumerate() {
+            packed_ring[2 + index] = *token as u32;
+        }
+        context_ring.copyin(&packed_ring);
+    }
+
+    pub fn get_generate_task(
+        &self,
+        flat_trie: &FlatTrie,
+        has_grammar: bool,
+    ) -> Task {
+        let suffix_length = self.decoding_config.generate_suffix_length();
+        let active_row_count = flat_trie.len();
+
+        let token_ids = flat_trie.token_ids().chain(repeat_n(0, suffix_length - active_row_count)).collect();
+
+        let token_subtrie_ranges = flat_trie
+            .token_subtrie_ranges()
+            .chain(repeat_n([u32::MAX, u32::MAX, u32::MAX], suffix_length - active_row_count))
+            .collect();
+
+        let token_bitmask: Option<Box<[u32]>> = has_grammar.then(|| {
+            let single_token_bitmask_size = self.context.model_shape.bitmask_shape(1)[1];
+            flat_trie
+                .token_masks()
+                .chain(repeat_n(None, suffix_length - active_row_count))
+                .flat_map(|mask| match mask {
+                    Some(mask) => Either::Left(
+                        mask.iter()
+                            .copied()
+                            .take(single_token_bitmask_size)
+                            .chain(repeat_n(0u32, single_token_bitmask_size.saturating_sub(mask.len()))),
+                    ),
+                    None => Either::Right(repeat_n(u32::MAX, single_token_bitmask_size)),
+                })
+                .collect::<Box<[u32]>>()
+        });
+
+        let start_position = self.tokens.len() - 1;
+        let token_positions = flat_trie
+            .token_positions()
+            .map(|trie_position| start_position + trie_position)
+            .chain(repeat_n(INVALID_POSITION, suffix_length - active_row_count))
+            .collect();
+
+        let token_seeds = flat_trie.token_seeds().chain(repeat_n(0, suffix_length - active_row_count)).collect();
+
+        Task {
+            token_ids,
+            token_subtrie_ranges: Some(token_subtrie_ranges),
+            token_positions,
+            token_bitmask,
+            token_seeds,
+            active_row_count,
+            sampling_start: 0,
+            sampling_length: active_row_count,
+            is_prefilling: false,
+        }
+    }
+
+    pub fn run_model(
         &mut self,
         task: Task,
         sampling_method: SamplingMethod,
-    ) -> Result<(Option<Allocation<B>>, f64), Error> {
+    ) -> Result<RunModelResult<B>, Error> {
         let run_start = Instant::now();
-        let pass = task.pass;
+        let sample = !task.is_prefilling;
+        let is_prefilling = task.is_prefilling;
         let batch_dim = task.active_row_count;
-        let sampling = pass.sampling();
-        let sampling_inputs = sampling.map(|(sampling_start, sampling_length)| {
-            self.create_sampling_inputs(sampling_start, sampling_length, task.token_seeds, task.token_bitmask)
-        });
+        let sampling_start = task.sampling_start;
+        let sampling_length = task.sampling_length;
+        let repetition_penalty = if sample {
+            Self::repetition_penalty_config(sampling_method)
+        } else {
+            None
+        };
+        let sampling_context_ring = if let Some((_, suffix_repetition_length)) = repetition_penalty {
+            let mut allocation = self
+                .context
+                .context
+                .create_allocation((2 + suffix_repetition_length) * size_of::<u32>(), AllocationType::Global)
+                .map_err(|e| Error::UnableToCreateContext(e.into()))?;
+            Self::copy_repetition_context_ring(
+                &mut allocation,
+                &self.tokens,
+                suffix_repetition_length,
+                suffix_repetition_length,
+            );
+            Some(allocation)
+        } else {
+            None
+        };
+        let (sampling_seeds, sampling_bitmask) = if sample {
+            let seeds = &task.token_seeds[task.sampling_start..task.sampling_start + task.sampling_length];
+            let mut seed_allocation = self
+                .context
+                .context
+                .create_allocation(std::mem::size_of_val(seeds), AllocationType::Global)
+                .expect("Failed to create sampling seed allocation");
+            seed_allocation.copyin(seeds);
+
+            let bitmask_allocation = task.token_bitmask.as_deref().map(|mask| {
+                let row_len = self.context.model_shape.bitmask_shape(1)[1];
+                let start = task.sampling_start * row_len;
+                let end = start + task.sampling_length * row_len;
+                let bitmask = &mask[start..end];
+                let mut allocation = self
+                    .context
+                    .context
+                    .create_allocation(std::mem::size_of_val(bitmask), AllocationType::Global)
+                    .expect("Failed to create sampling bitmask allocation");
+                allocation.copyin(bitmask);
+                allocation
+            });
+
+            (Some(seed_allocation), bitmask_allocation)
+        } else {
+            (None, None)
+        };
 
         let is_first_decode = task.token_ids.len() == 1;
-        let should_capture =
-            matches!(pass, ForwardPassKind::Decode { .. }) && self.gpu_capture.should_capture_decode(is_first_decode);
-        let token_inputs = self.build_token_inputs(task, None, None);
+        let should_capture = self.gpu_capture.should_capture_decode(is_first_decode);
+        let token_inputs = self.build_token_inputs(task, None);
 
         if should_capture {
             self.gpu_capture
@@ -795,21 +930,27 @@ impl<B: Backend> LanguageModelGenerator<B> {
             &mut encoder,
             token_inputs,
             batch_dim,
-            pass,
-            sampling_method,
-            sampling_inputs,
+            sampling_start,
+            sampling_length,
+            is_prefilling,
+            sample.then_some(sampling_method),
+            sampling_seeds,
+            sampling_bitmask,
+            sampling_context_ring.as_ref(),
         )?;
 
         let pending = encoder.end_encoding().submit();
 
         let completed = pending.wait_until_completed().map_err(|e| Error::CommandBufferFailed(Box::new(e)))?;
+        let gpu_run_time = completed.gpu_execution_time();
         let ForwardPassResources {
             token_inputs,
             logits,
             sampling_output,
-            sampling_inputs,
+            sampling_seeds,
+            sampling_bitmask,
         } = resources;
-        drop((token_inputs, logits, sampling_inputs));
+        drop((token_inputs, logits, sampling_seeds, sampling_bitmask));
         drop(completed);
 
         let run_time = run_start.elapsed().as_secs_f64();
@@ -820,12 +961,16 @@ impl<B: Backend> LanguageModelGenerator<B> {
                 .map_err(|error| Error::CaptureFailed(Box::new(error)))?;
         }
 
-        Ok((sampling_output, run_time))
+        Ok(RunModelResult {
+            sampling_output,
+            cpu_run_time: run_time,
+            gpu_run_time,
+        })
     }
 
     fn run_prefill_step(
         &mut self,
-        task: Task<'_>,
+        task: Task,
         schedule: PrefillStepSchedule,
         prefix_start_token_index: usize,
         bitmask_row_len: usize,
@@ -834,52 +979,56 @@ impl<B: Backend> LanguageModelGenerator<B> {
         let Some(prompt_row_count) =
             schedule.split_sampling_start(self.context.model_shape.prefill_skips_trailing_layers())
         else {
-            let (sampling_output, run_time) = self.run_model(task, sampling_method)?;
+            let run_result = self.run_model(task, sampling_method)?;
             self.accept_prefilled_prompt_rows(
                 schedule.accepted_prompt_rows,
                 prefix_start_token_index + schedule.accepted_prompt_rows,
             )?;
             return Ok(PrefillStepRun {
-                sampling_output,
-                run_time,
+                sampling_output: run_result.sampling_output,
+                run_time: run_result.cpu_run_time,
                 sampling_rows_are_local: false,
             });
         };
 
         let prefix_task = Task {
-            token_ids: &task.token_ids[..prompt_row_count],
+            token_ids: task.token_ids[..prompt_row_count].to_vec().into_boxed_slice(),
             token_subtrie_ranges: None,
-            token_positions: &task.token_positions[..prompt_row_count],
+            token_positions: task.token_positions[..prompt_row_count].to_vec().into_boxed_slice(),
             token_bitmask: None,
-            token_seeds: &task.token_seeds[..prompt_row_count],
+            token_seeds: task.token_seeds[..prompt_row_count].to_vec().into_boxed_slice(),
             active_row_count: prompt_row_count,
-            pass: ForwardPassKind::CacheOnly,
+            sampling_start: 0,
+            sampling_length: 0,
+            is_prefilling: true,
         };
-        let (_, prefix_run_time) = self.run_model(prefix_task, sampling_method)?;
+        let prefix_run = self.run_model(prefix_task, sampling_method)?;
         self.accept_prefilled_prompt_rows(prompt_row_count, prefix_start_token_index + prompt_row_count)?;
 
-        let sampling_length = task.pass.sampling().expect("split prefill step must sample").1;
-        let suffix_token_ids = &task.token_ids[prompt_row_count..];
-        let suffix_token_bitmask = task.token_bitmask.map(|mask| &mask[prompt_row_count * bitmask_row_len..]);
+        let suffix_token_ids = task.token_ids[prompt_row_count..].to_vec().into_boxed_slice();
+        let suffix_token_bitmask = task
+            .token_bitmask
+            .as_ref()
+            .map(|mask| mask[prompt_row_count * bitmask_row_len..].to_vec().into_boxed_slice());
         let suffix_token_subtrie_ranges =
-            task.token_subtrie_ranges.map(|ranges| rebase_sampling_subtrie_ranges(ranges, prompt_row_count));
+            task.token_subtrie_ranges.as_ref().map(|ranges| rebase_sampling_subtrie_ranges(ranges, prompt_row_count));
+        let suffix_active_row_count = suffix_token_ids.len();
         let suffix_task = Task {
             token_ids: suffix_token_ids,
-            token_subtrie_ranges: suffix_token_subtrie_ranges.as_deref(),
-            token_positions: &task.token_positions[prompt_row_count..],
+            token_subtrie_ranges: suffix_token_subtrie_ranges,
+            token_positions: task.token_positions[prompt_row_count..].to_vec().into_boxed_slice(),
             token_bitmask: suffix_token_bitmask,
-            token_seeds: &task.token_seeds[prompt_row_count..],
-            active_row_count: suffix_token_ids.len(),
-            pass: ForwardPassKind::SampleFrom {
-                row_start: 0,
-                row_count: sampling_length,
-            },
+            token_seeds: task.token_seeds[prompt_row_count..].to_vec().into_boxed_slice(),
+            active_row_count: suffix_active_row_count,
+            sampling_start: 0,
+            sampling_length: schedule.sampling_length,
+            is_prefilling: false,
         };
-        let (sampling_output, suffix_run_time) = self.run_model(suffix_task, sampling_method)?;
+        let suffix_run = self.run_model(suffix_task, sampling_method)?;
 
         Ok(PrefillStepRun {
-            sampling_output,
-            run_time: prefix_run_time + suffix_run_time,
+            sampling_output: suffix_run.sampling_output,
+            run_time: prefix_run.cpu_run_time + suffix_run.cpu_run_time,
             sampling_rows_are_local: true,
         })
     }
@@ -889,66 +1038,68 @@ impl<B: Backend> LanguageModelGenerator<B> {
         encoder: &mut Encoder<B>,
         token_inputs: TokenInputs<B>,
         batch_dim: usize,
-        pass: ForwardPassKind,
-        sampling_method: SamplingMethod,
-        sampling_inputs: Option<SamplingInputs<B>>,
+        sampling_start: usize,
+        sampling_length: usize,
+        is_prefilling: bool,
+        sampling_method: Option<SamplingMethod>,
+        sampling_seeds: Option<Allocation<B>>,
+        sampling_bitmask: Option<Allocation<B>>,
+        sampling_context_ring: Option<&Allocation<B>>,
     ) -> Result<ForwardPassResources<B>, Error> {
-        let sampling = pass.sampling();
-        let (sampling_start, sampling_length) = sampling.unwrap_or((0, 0));
-        let mut logits = None;
         let mut sampling_output = None;
-        let mut cache_layers = context.cache_layers.borrow_mut();
-        cache_layers.prepare_for_forward_pass(&context.context, batch_dim);
-        let decoder_arguments = token_inputs.decoder_arguments(
-            context.shared_buffers.as_ref(),
-            Some(&mut *cache_layers),
-            batch_dim,
-            sampling_start,
-            sampling_length,
-            #[cfg(feature = "tracing")]
-            None,
-        );
-        if sampling.is_some() {
-            let mut retained_logits = context
+        let mut logits = None;
+        if is_prefilling {
+            let mut cache_layers = context.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(&context.context, batch_dim);
+            let decoder_arguments = token_inputs.decoder_arguments(
+                Some(&mut *cache_layers),
+                batch_dim,
+                sampling_start,
+                sampling_length,
+                #[cfg(feature = "tracing")]
+                None,
+            );
+            context
+                .executables
+                .encode_prefill(decoder_arguments, token_inputs.token_ids(), context.model_shape.prefill_layer_count(), encoder)
+                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+        } else {
+            let mut cache_layers = context.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(&context.context, batch_dim);
+            let decoder_arguments = token_inputs.decoder_arguments(
+                Some(&mut *cache_layers),
+                batch_dim,
+                sampling_start,
+                sampling_length,
+                #[cfg(feature = "tracing")]
+                None,
+            );
+            let retained_logits = context
                 .executables
                 .encode_decode(decoder_arguments, DecoderDecodeInput::TokenIds(token_inputs.token_ids()), None, encoder)
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
 
-            let sampling_inputs = sampling_inputs.as_ref().expect("Sampling requires sampling inputs");
-            let mut output =
-                context.context.create_array_uninitialized(&[sampling_length], DataType::U32).into_allocation();
-            let sampling_result = context.gpu_sampler.encode(
-                SamplingArguments {
-                    logits: &mut retained_logits,
-                    seeds: sampling_inputs.seeds.allocation(),
-                    bitmask: sampling_inputs.bitmask.as_ref().map(Array::allocation),
-                    output: &mut output,
-                    sampling_method,
-                    batch_size: sampling_length,
-                    vocab_size: context.model_config.decoder_config.vocab_size,
-                },
+            let sampling_seeds = sampling_seeds.as_ref().expect("Sampling requires seeds");
+            let output = context.gpu_sampler.encode(
+                &retained_logits,
+                Some(sampling_seeds),
+                sampling_bitmask.as_ref(),
+                sampling_context_ring,
+                Some(token_inputs.token_ids()),
+                sampling_method.expect("Sampling requires method"),
+                sampling_length,
                 encoder,
             );
-            sampling_result.map_err(|e| Error::EncodeFailed(Box::new(e)))?;
+            sampling_output = Some(output.map_err(|e| Error::EncodeFailed(Box::new(e)))?);
             logits = Some(retained_logits);
-            sampling_output = Some(output);
-        } else {
-            context
-                .executables
-                .encode_prefill(
-                    decoder_arguments,
-                    token_inputs.token_ids(),
-                    context.model_shape.prefill_layer_count(),
-                    encoder,
-                )
-                .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         }
 
         Ok(ForwardPassResources {
             token_inputs,
             logits,
             sampling_output,
-            sampling_inputs,
+            sampling_seeds,
+            sampling_bitmask,
         })
     }
 
@@ -956,38 +1107,17 @@ impl<B: Backend> LanguageModelGenerator<B> {
         &self,
         task: Task,
         token_ids_array: Option<Array<B>>,
-        token_positions_array: Option<Array<B>>,
     ) -> TokenInputs<B> {
-        let (sampling_start, sampling_length) = task.pass.sampling().unwrap_or((0, 0));
         TokenInputs::new_llm(
             self.context.context.as_ref(),
             &self.context.model_shape,
-            task.token_ids,
-            task.token_subtrie_ranges,
-            task.token_positions,
+            &task.token_ids,
+            task.token_subtrie_ranges.as_deref(),
+            &task.token_positions,
             token_ids_array,
-            token_positions_array,
-            sampling_start,
-            sampling_length,
+            task.sampling_start,
+            task.sampling_length,
         )
-    }
-
-    fn create_sampling_inputs(
-        &self,
-        sampling_start: usize,
-        sampling_length: usize,
-        token_seeds: &[u64],
-        token_bitmask: Option<&[u32]>,
-    ) -> SamplingInputs<B> {
-        let seeds = &token_seeds[sampling_start..sampling_start + sampling_length];
-        let bitmask_row_len = token_bitmask.map(|_| self.context.model_shape.bitmask_shape(1)[1]);
-        let bitmask = token_bitmask.map(|mask| {
-            let row_len = bitmask_row_len.expect("bitmask row length must exist");
-            let start = sampling_start * row_len;
-            let end = start + sampling_length * row_len;
-            &mask[start..end]
-        });
-        SamplingInputs::from_slices(self.context.context.as_ref(), seeds, bitmask, bitmask_row_len)
     }
 
     fn read_sampling_output(
@@ -1005,8 +1135,8 @@ impl<B: Backend> LanguageModelGenerator<B> {
         suffix_start: Option<usize>,
         wait_until_completed: bool,
     ) -> Result<(), Error> {
-        let mut encoder =
-            Encoder::<B>::new(&self.context.context).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
+        let mut encoder = Encoder::<B>::new(self.context.context.as_ref())
+            .map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
 
         {
             let mut cache_layers = self.context.cache_layers.borrow_mut();
@@ -1069,13 +1199,14 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ForwardPassKind, PrefillStepSchedule};
+    use super::PrefillStepSchedule;
 
     #[test]
     fn cache_only_prefill_step_accepts_prompt_rows_without_sampling() {
         let schedule = PrefillStepSchedule::new(false, 10, 8, 16, 8);
 
-        assert_eq!(schedule.forward_pass, ForwardPassKind::CacheOnly);
+        assert_eq!(schedule.sampling_start, 0);
+        assert_eq!(schedule.sampling_length, 0);
         assert_eq!(schedule.accepted_prompt_rows, 2);
     }
 
@@ -1083,13 +1214,8 @@ mod tests {
     fn sampling_prefill_step_keeps_suffix_root_for_sampling() {
         let schedule = PrefillStepSchedule::new(true, 10, 8, 16, 8);
 
-        assert_eq!(
-            schedule.forward_pass,
-            ForwardPassKind::SampleFrom {
-                row_start: 1,
-                row_count: 7
-            }
-        );
+        assert_eq!(schedule.sampling_start, 1);
+        assert_eq!(schedule.sampling_length, 7);
         assert_eq!(schedule.accepted_prompt_rows, 1);
     }
 
@@ -1097,13 +1223,8 @@ mod tests {
     fn sampling_prefill_step_on_chunk_boundary_keeps_final_prompt_row_for_sampling() {
         let schedule = PrefillStepSchedule::new(true, 16, 8, 16, 8);
 
-        assert_eq!(
-            schedule.forward_pass,
-            ForwardPassKind::SampleFrom {
-                row_start: 7,
-                row_count: 1
-            }
-        );
+        assert_eq!(schedule.sampling_start, 7);
+        assert_eq!(schedule.sampling_length, 1);
         assert_eq!(schedule.accepted_prompt_rows, 7);
     }
 }

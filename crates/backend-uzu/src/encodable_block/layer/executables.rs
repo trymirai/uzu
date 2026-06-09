@@ -12,10 +12,10 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         Attention, AttentionError, DeltaNetArguments, DeltaNetMixer, DeltaNetMixerError, MambaArguments, MambaMixer,
-        MambaMixerError, Mlp, MlpBlockError, PerLayerEmbeddingProjection, PostLayerScalar, QkUnpack, RMSNorm,
-        RMSNormError, Rope, ShortConvArguments, ShortConvMixer, ShortConvMixerError, layer::MixerExecutables,
+        MambaMixerError, Mlp, MlpBlockError, PerLayerEmbeddingProjection, PostLayerScalar, PrecalculatedRope, QkUnpack,
+        RMSNorm, RMSNormError, Rope, ShortConvArguments, ShortConvMixer, ShortConvMixerError, layer::MixerExecutables,
     },
-    forward_pass::{cache_layers::LayerCacheAccess, state::RopeBuffers},
+    forward_pass::cache_layers::LayerCacheAccess,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 #[cfg(feature = "tracing")]
@@ -51,13 +51,40 @@ pub enum LayerExecutablesError<B: Backend> {
     UnsupportedPostLayerScalarDataType {
         data_type: DataType,
     },
+    #[error(
+        "layer {layer_index} AttentionConfig.is_kv_sharing={attention_is_kv_sharing} does not match kv_source_layer_index presence={has_kv_source_layer}"
+    )]
+    AttentionKvSharingMismatch {
+        layer_index: usize,
+        attention_is_kv_sharing: bool,
+        has_kv_source_layer: bool,
+    },
     #[error("decoder layers require pre_mixer_norm_config")]
     MissingPreMixerNormConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerRopeKind {
+    NoKernel,
+    Indexed(usize),
+}
+
+impl LayerRopeKind {
+    pub fn get<B: Backend>(
+        self,
+        ropes: &[PrecalculatedRope<B>],
+    ) -> Option<&PrecalculatedRope<B>> {
+        match self {
+            LayerRopeKind::NoKernel => None,
+            LayerRopeKind::Indexed(index) => Some(&ropes[index]),
+        }
+    }
 }
 
 /// A single decoder layer with all its components.
 pub struct LayerExecutables<B: Backend> {
     pub layer_index: usize,
+    pub rope_kind: LayerRopeKind,
     #[cfg(feature = "tracing")]
     pub tensor_add: <B::Kernels as Kernels>::TensorAddBiasKernel,
     pub pre_mixer_norm: RMSNorm<B>,
@@ -77,6 +104,7 @@ impl<B: Backend> LayerExecutables<B> {
         transformer_config: &TransformerConfig,
         layer_config: &TransformerLayerConfig,
         layer_index: usize,
+        rope_kind: LayerRopeKind,
         parameter_tree: &ParameterTree<B>,
         rope: &Rc<Rope<B>>,
         qk_unpack: &Rc<QkUnpack<B>>,
@@ -119,6 +147,15 @@ impl<B: Backend> LayerExecutables<B> {
 
         let (mixer, mixer_hadamard_factors) = match &layer_config.mixer_config {
             AnyTokenMixerConfig::AttentionConfig(attention_config) => {
+                let has_kv_source_layer = layer_config.kv_source_layer_index.is_some();
+                if attention_config.is_kv_sharing != has_kv_source_layer {
+                    return Err(LayerExecutablesError::AttentionKvSharingMismatch {
+                        layer_index,
+                        attention_is_kv_sharing: attention_config.is_kv_sharing,
+                        has_kv_source_layer,
+                    });
+                }
+
                 let (attention, input_hadamard_factors) = Attention::new(
                     context,
                     transformer_config.model_dim,
@@ -128,7 +165,7 @@ impl<B: Backend> LayerExecutables<B> {
                     rope.clone(),
                     qk_unpack.clone(),
                     attention_config.gate_projection_config.is_none(),
-                    layer_config.kv_source_layer_index.is_some(),
+                    has_kv_source_layer,
                 )?;
 
                 (
@@ -261,6 +298,7 @@ impl<B: Backend> LayerExecutables<B> {
 
         Ok(Self {
             layer_index,
+            rope_kind,
             #[cfg(feature = "tracing")]
             tensor_add,
             pre_mixer_norm,
@@ -284,10 +322,9 @@ impl<B: Backend> LayerExecutables<B> {
     ) -> Result<Allocation<B>, B::Error> {
         let LayerArguments {
             batch_dim,
-            token_positions,
             token_parents,
             token_subtrie_ranges,
-            rope_buffers,
+            rope,
             per_layer_inputs,
             sampling_start,
             sampling_length,
@@ -308,15 +345,7 @@ impl<B: Backend> LayerExecutables<B> {
         hidden = match &self.mixer {
             MixerExecutables::Attention {
                 attention,
-            } => attention.encode(
-                token_positions,
-                token_subtrie_ranges,
-                rope_buffers,
-                cache_access,
-                hidden,
-                batch_dim,
-                encoder,
-            )?,
+            } => attention.encode(token_subtrie_ranges, rope, cache_access, hidden, batch_dim, encoder)?,
             MixerExecutables::StateSpace {
                 mixer,
             } => {
@@ -437,10 +466,9 @@ impl<B: Backend> LayerExecutables<B> {
 
 pub struct LayerArguments<'a, B: Backend> {
     pub batch_dim: usize,
-    pub token_positions: &'a Allocation<B>,
     pub token_parents: &'a Allocation<B>,
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
-    pub rope_buffers: Option<&'a RopeBuffers<B>>,
+    pub rope: Option<&'a PrecalculatedRope<B>>,
     pub per_layer_inputs: Option<&'a Allocation<B>>,
     pub sampling_start: usize,
     pub sampling_length: usize,

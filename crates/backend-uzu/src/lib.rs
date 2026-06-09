@@ -30,6 +30,15 @@ pub use audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig};
 pub use language_model::gumbel::{gumbel_float, revidx};
 pub use utils::{TOOLCHAIN_VERSION, VERSION};
 
+#[doc(hidden)]
+pub mod _benchmarks {
+    pub use crate::{
+        config::model::language_model::LanguageModelConfig,
+        language_model::{LanguageModelGenerator, language_model_generator::RunModelResult},
+        trie::{TrieCreationConfig, TrieNode},
+    };
+}
+
 #[cfg(feature = "tracing")]
 pub mod _private {
     pub use crate::{

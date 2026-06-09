@@ -256,7 +256,7 @@ impl<B: Backend> Mlp<B> for MoeBlock<B> {
         );
 
         let mut block_bases = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
-        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[num_blocks * num_tiles], DataType::U32))?;
+        let mut block_alloc = encoder.allocate_scratch(size_for_shape(&[scatter_entries], DataType::U32))?;
         let mut bucketed_ids = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;
         let mut bucketed_probs = encoder.allocate_scratch(size_for_shape(&[total_rows], self.data_type))?;
         let mut tok2row = encoder.allocate_scratch(size_for_shape(&[total_rows], DataType::I32))?;

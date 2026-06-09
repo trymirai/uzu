@@ -82,10 +82,8 @@ PUBLIC KERNEL(AttentionGemm)(
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.q_strides[2];
 
   const int kv_head_idx = int(head_idx) / params.gqa_factor;
-  k += batch_idx * params.k_strides[0] +
-       int64_t(kv_head_idx) * params.k_strides[1];
-  v += batch_idx * params.v_strides[0] +
-       int64_t(kv_head_idx) * params.v_strides[1];
+  k += batch_idx * params.k_strides[0] + int64_t(kv_head_idx) * params.k_strides[1];
+  v += batch_idx * params.v_strides[0] + int64_t(kv_head_idx) * params.v_strides[1];
 
   o += batch_idx * params.o_strides[0] + head_idx * params.o_strides[1] +
        q_tile_idx * int64_t(BLOCK_QUERY_ROWS) * params.o_strides[2];
@@ -119,31 +117,19 @@ PUBLIC KERNEL(AttentionGemm)(
       1,
       SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
 
-  using KeyLoader = ThreadgroupLoader<
-      T,
-      BK,
-      BD,
-      key_leading_dimension,
-      0,
-      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
+  using KeyLoader =
+      ThreadgroupLoader<T, BK, BD, key_leading_dimension, 0, SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
 
-  using ValueLoader = ThreadgroupLoader<
-      T,
-      BK,
-      BD,
-      value_leading_dimension,
-      0,
-      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
+  using ValueLoader =
+      ThreadgroupLoader<T, BK, BD, value_leading_dimension, 0, SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN * 32>;
 
   const int query_source_stride = int(params.q_strides[2]);
   const int key_source_stride = int(params.k_strides[2]);
   const int value_source_stride = int(params.v_strides[2]);
 
-  thread QueryLoader
-      query_loader(q, query_source_stride, query_shared, thread_context);
+  thread QueryLoader query_loader(q, query_source_stride, query_shared, thread_context);
   thread KeyLoader key_loader(k, key_source_stride, key_shared, thread_context);
-  thread ValueLoader
-      value_loader(v, value_source_stride, value_shared, thread_context);
+  thread ValueLoader value_loader(v, value_source_stride, value_shared, thread_context);
 
   TransformScale<T> ts(static_cast<T>(params.scale * M_LOG2E_F));
 
@@ -151,80 +137,47 @@ PUBLIC KERNEL(AttentionGemm)(
   // MMA tiles
   constexpr short SIMDGROUP_BLOCK_SIZE = 8;
   using AccumType = float;
-  using SimdgroupMultiplyAccumulateType = SimdgroupMultiplyAccumulate<
-      AccumType,
-      SIMDGROUP_BLOCK_SIZE,
-      SIMDGROUP_BLOCK_SIZE>;
+  using SimdgroupMultiplyAccumulateType =
+      SimdgroupMultiplyAccumulate<AccumType, SIMDGROUP_BLOCK_SIZE, SIMDGROUP_BLOCK_SIZE>;
 
-  constexpr int SIMDGROUPS_PER_THREADGROUP =
-      SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
+  constexpr int SIMDGROUPS_PER_THREADGROUP = SIMDGROUPS_PER_ROW * SIMDGROUPS_PER_COLUMN;
   static_assert(
       BLOCK_QUERY_ROWS >= (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE) &&
-          BLOCK_QUERY_ROWS %
-                  (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE) ==
-              0,
+          BLOCK_QUERY_ROWS % (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE) == 0,
       "Each simdgroup must host at least 1 simdgroup matrix along Q sequence."
   );
 
   // Q sequence multiply-accumulate blocks per simdgroup (QUERY_GRID_ROWS == 1
   // for the 32-row block layout)
-  constexpr int QUERY_GRID_ROWS =
-      BLOCK_QUERY_ROWS / (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE);
+  constexpr int QUERY_GRID_ROWS = BLOCK_QUERY_ROWS / (SIMDGROUPS_PER_THREADGROUP * SIMDGROUP_BLOCK_SIZE);
   constexpr int KEY_GRID_COLS = BK / SIMDGROUP_BLOCK_SIZE;
   constexpr int HEAD_DIM_GRID_COLS = BD / SIMDGROUP_BLOCK_SIZE;
 
   static_assert(QUERY_GRID_ROWS == 1, "Expected QUERY_GRID_ROWS == 1");
 
-  SimdgroupFragment<
-      AccumType,
-      QUERY_GRID_ROWS,
-      1,
-      SimdgroupMultiplyAccumulateType>
-      query_fragment;
-  SimdgroupFragment<
-      AccumType,
-      1,
-      KEY_GRID_COLS,
-      SimdgroupMultiplyAccumulateType>
-      key_fragment;
-  SimdgroupFragment<
-      AccumType,
-      QUERY_GRID_ROWS,
-      KEY_GRID_COLS,
-      SimdgroupMultiplyAccumulateType>
-      score_fragment;
-  SimdgroupFragment<AccumType, 1, 1, SimdgroupMultiplyAccumulateType>
-      value_fragment;
-  SimdgroupFragment<
-      AccumType,
-      QUERY_GRID_ROWS,
-      HEAD_DIM_GRID_COLS,
-      SimdgroupMultiplyAccumulateType>
-      output_fragment;
+  SimdgroupFragment<AccumType, QUERY_GRID_ROWS, 1, SimdgroupMultiplyAccumulateType> query_fragment;
+  SimdgroupFragment<AccumType, 1, KEY_GRID_COLS, SimdgroupMultiplyAccumulateType> key_fragment;
+  SimdgroupFragment<AccumType, QUERY_GRID_ROWS, KEY_GRID_COLS, SimdgroupMultiplyAccumulateType> score_fragment;
+  SimdgroupFragment<AccumType, 1, 1, SimdgroupMultiplyAccumulateType> value_fragment;
+  SimdgroupFragment<AccumType, QUERY_GRID_ROWS, HEAD_DIM_GRID_COLS, SimdgroupMultiplyAccumulateType> output_fragment;
 
   output_fragment.clear();
 
   // -------------------------------------------------------------------------
   // Lane coordinates and pointer offsets
-  const short2 lane_coordinates =
-      SimdgroupMultiplyAccumulateType::get_lane_coordinates(
-          thread_context.simd_lane_id
-      );
+  const short2 lane_coordinates = SimdgroupMultiplyAccumulateType::get_lane_coordinates(thread_context.simd_lane_id);
   const short lane_row = lane_coordinates.y;
   const short lane_col = lane_coordinates.x;
 
-  const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS *
-                                   short(thread_context.simdgroup_index);
+  const short simdgroup_row_base = SIMDGROUP_BLOCK_SIZE * QUERY_GRID_ROWS * short(thread_context.simdgroup_index);
 
-  const short query_shared_offset =
-      (simdgroup_row_base + lane_row) * query_leading_dimension + lane_col;
+  const short query_shared_offset = (simdgroup_row_base + lane_row) * query_leading_dimension + lane_col;
   constexpr short query_tile_stride = SIMDGROUP_BLOCK_SIZE;
 
   const short key_shared_offset = lane_col * key_leading_dimension + lane_row;
   constexpr short key_tile_stride = SIMDGROUP_BLOCK_SIZE;
 
-  const short value_shared_offset =
-      lane_row * value_leading_dimension + lane_col;
+  const short value_shared_offset = lane_row * value_leading_dimension + lane_col;
 
   // -------------------------------------------------------------------------
   // Load Q block once (and apply scaling)
@@ -256,17 +209,14 @@ PUBLIC KERNEL(AttentionGemm)(
     kb_lim = min(params.nk, kb_lim);
   }
 
-  const int q_rel = int(q_tile_idx) * BLOCK_QUERY_ROWS +
-                    int(simdgroup_row_base) + int(lane_row); // [0, q_len)
+  const int q_rel = int(q_tile_idx) * BLOCK_QUERY_ROWS + int(simdgroup_row_base) + int(lane_row); // [0, q_len)
 
   const int prefix_length = params.q_off;
 
-  const int suffix_position =
-      is_kv_cache_ring ? int(ring_params.ring_length) : prefix_length;
+  const int suffix_position = is_kv_cache_ring ? int(ring_params.ring_length) : prefix_length;
 
-  const int query_position = (is_trie && q_rel < params.q_len)
-                                 ? suffix_position + int(trie[q_rel].height)
-                                 : suffix_position + q_rel;
+  const int query_position =
+      (is_trie && q_rel < params.q_len) ? suffix_position + int(trie[q_rel].height) : suffix_position + q_rel;
 
   // Loop over KV blocks
   for (int kb = 0; kb < kb_lim; kb++) {
@@ -295,12 +245,7 @@ PUBLIC KERNEL(AttentionGemm)(
       );
 
       simdgroup_barrier(mem_flags::mem_none);
-      tile_multiply_accumulate(
-          score_fragment,
-          query_fragment,
-          key_fragment,
-          score_fragment
-      );
+      tile_multiply_accumulate(score_fragment, query_fragment, key_fragment, score_fragment);
     }
 
     // Mask out tail keys for the last (unaligned) K block
@@ -324,8 +269,7 @@ PUBLIC KERNEL(AttentionGemm)(
       METAL_PRAGMA_UNROLL
       for (short j = 0; j < KEY_GRID_COLS; j++) {
         thread auto& frag = score_fragment.multiply_accumulate_at(0, j);
-        const int col_base =
-            kb * BK + int(lane_col) + int(j) * SIMDGROUP_BLOCK_SIZE;
+        const int col_base = kb * BK + int(lane_col) + int(j) * SIMDGROUP_BLOCK_SIZE;
 
         const int k0 = col_base;
         const int k1 = col_base + 1;
@@ -426,8 +370,7 @@ PUBLIC KERNEL(AttentionGemm)(
         const short dd = id * SIMDGROUP_BLOCK_SIZE;
 
         value_fragment.template load<T, 1, 1, value_leading_dimension, 1>(
-            &value_shared
-                [value_shared_offset + kk * value_leading_dimension + dd]
+            &value_shared[value_shared_offset + kk * value_leading_dimension + dd]
         );
 
         if constexpr (BD == 128) {
@@ -461,22 +404,16 @@ PUBLIC KERNEL(AttentionGemm)(
   threadgroup_barrier(mem_flags::mem_none);
 
   // Store results (O is row-major with row-stride params.o_strides[2])
-  o += int64_t(simdgroup_row_base + lane_row) * params.o_strides[2] +
-       int64_t(lane_col);
+  o += int64_t(simdgroup_row_base + lane_row) * params.o_strides[2] + int64_t(lane_col);
 
   if (!align_q && int(q_tile_idx) == params.nq_aligned) {
-    const short2 dst_tile_dims =
-        short2(BD - lane_col, params.q_rem - (simdgroup_row_base + lane_row));
+    const short2 dst_tile_dims = short2(BD - lane_col, params.q_rem - (simdgroup_row_base + lane_row));
 
     if (dst_tile_dims.x <= 0 || dst_tile_dims.y <= 0) {
       return;
     }
 
-    output_fragment.template store_safe<T, 1, 1>(
-        o,
-        int(params.o_strides[2]),
-        dst_tile_dims
-    );
+    output_fragment.template store_safe<T, 1, 1>(o, int(params.o_strides[2]), dst_tile_dims);
   } else {
     output_fragment.template store<T, 1, 1>(o, int(params.o_strides[2]));
   }

@@ -105,7 +105,8 @@ fn chat_reply_component(
     padding: u16,
 ) -> AnyElement<'static> {
     let text = reply.message.text();
-    let reasoning = reply.message.reasoning();
+    let reasoning =
+        reply.message.reasoning().map(|content| content.trim().to_string()).filter(|content| !content.is_empty());
     let stats = reply.stats.clone();
 
     element! {

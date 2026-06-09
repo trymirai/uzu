@@ -37,6 +37,8 @@ impl TextSamplingState {
                 top_k: None,
                 top_p: Some(top_p),
                 min_p: None,
+                repetition_penalty: None,
+                suffix_repetition_length: None,
                 processing_order: SamplingProcessingOrder::FiltersThenTemperature,
             }
         };

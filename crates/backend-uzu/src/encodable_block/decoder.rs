@@ -8,13 +8,14 @@ use thiserror::Error;
 use crate::forward_pass::traces::ActivationTrace;
 use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder},
-    config::decoder::DecoderConfig,
+    config::{decoder::DecoderConfig, rope::AnyRoPEConfig},
     data_type::DataType,
     encodable_block::{
-        Embedding, LayerArguments, LayerExecutables, PerLayerEmbedding, PostLayerScalar, QkUnpack, RMSNorm,
-        RMSNormError, Rope, embedding::EmbeddingError, layer::LayerExecutablesError,
+        Embedding, LayerArguments, LayerExecutables, LayerRopeKind, PerLayerEmbedding, PostLayerScalar,
+        PrecalculatedRope, QkUnpack, RMSNorm, RMSNormError, Rope, embedding::EmbeddingError,
+        layer::LayerExecutablesError,
     },
-    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, state::SharedBuffers},
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape, rope::precalculate_rope},
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
@@ -37,16 +38,16 @@ pub enum DecoderError<B: Backend> {
 /// Full decoder executable with all layers and components.
 pub struct Decoder<B: Backend> {
     pub embed: Embedding<B>,
+    pub rope_configs: Box<[AnyRoPEConfig]>,
     pub layers: Box<[LayerExecutables<B>]>,
     pub norm: RMSNorm<B>,
     pub per_layer_embedding: Option<PerLayerEmbedding<B>>,
 }
 
 pub struct DecoderArguments<'a, B: Backend> {
-    pub token_positions: &'a Allocation<B>,
+    pub token_positions: &'a [usize],
     pub token_parents: &'a Allocation<B>,
     pub token_subtrie_ranges: Option<&'a Allocation<B>>,
-    pub shared_buffers: &'a SharedBuffers<B>,
     pub cache_layers: Option<&'a mut CacheLayers<B>>,
     pub batch_dim: usize,
     pub sampling_start: usize,
@@ -79,7 +80,7 @@ impl<B: Backend> Decoder<B> {
             model_shape,
         )?;
 
-        let (layers, norm) = Self::build_transformer_layers_and_norm(
+        let (rope_configs, layers, norm) = Self::build_transformer_layers_and_norm(
             context,
             decoder_config,
             root_weight_loader,
@@ -93,6 +94,7 @@ impl<B: Backend> Decoder<B> {
 
         Ok(Self {
             embed,
+            rope_configs,
             layers,
             norm,
             per_layer_embedding,
@@ -121,7 +123,7 @@ impl<B: Backend> Decoder<B> {
             model_shape,
         )?;
 
-        let (layers, norm) = Self::build_transformer_layers_and_norm(
+        let (rope_configs, layers, norm) = Self::build_transformer_layers_and_norm(
             context,
             decoder_config,
             root_weight_loader,
@@ -135,6 +137,7 @@ impl<B: Backend> Decoder<B> {
 
         Ok(Self {
             embed,
+            rope_configs,
             layers,
             norm,
             per_layer_embedding,
@@ -148,10 +151,35 @@ impl<B: Backend> Decoder<B> {
         transformer_subtree: &str,
         output_norm_hadamard_factors: Option<Allocation<B>>,
         model_shape: &ModelShape,
-    ) -> Result<(Box<[LayerExecutables<B>]>, RMSNorm<B>), DecoderError<B>> {
+    ) -> Result<(Box<[AnyRoPEConfig]>, Box<[LayerExecutables<B>]>, RMSNorm<B>), DecoderError<B>> {
         let decoder_weight_loader = root_weight_loader.subtree(transformer_subtree)?;
 
         let tf = &decoder_config.transformer_config;
+        let mut rope_configs = Vec::<(AnyRoPEConfig, usize)>::new();
+        let layer_rope_kinds: Box<[LayerRopeKind]> = tf
+            .layer_configs
+            .iter()
+            .map(|layer_config| {
+                if layer_config.mixer_config.as_attention().is_none() {
+                    return LayerRopeKind::NoKernel;
+                }
+                let Some(rope_config) = &layer_config.rope_config else {
+                    return LayerRopeKind::NoKernel;
+                };
+                let head_dim = *rope_config.head_dim();
+                let index = rope_configs
+                    .iter()
+                    .position(|(existing_config, existing_head_dim)| {
+                        existing_config == rope_config && *existing_head_dim == head_dim
+                    })
+                    .unwrap_or_else(|| {
+                        rope_configs.push((rope_config.clone(), head_dim));
+                        rope_configs.len() - 1
+                    });
+                LayerRopeKind::Indexed(index)
+            })
+            .collect();
+
         let rope = Rc::new(Rope::<B>::new(context, model_shape, false).map_err(DecoderError::BackendError)?);
         // Built only when some layer projects queries only (reuses an earlier layer's KV cache).
         let rope_query_only = if tf.layer_configs.iter().any(|l| l.kv_source_layer_index.is_some()) {
@@ -179,6 +207,7 @@ impl<B: Backend> Decoder<B> {
                     tf,
                     layer_config,
                     layer_index,
+                    layer_rope_kinds[layer_index],
                     &layer_loader,
                     layer_rope,
                     &qk_unpack,
@@ -200,7 +229,7 @@ impl<B: Backend> Decoder<B> {
             PostLayerScalar::None,
         )?;
 
-        Ok((layers.into_boxed_slice(), norm_block))
+        Ok((rope_configs.into_iter().map(|(config, _)| config).collect(), layers.into_boxed_slice(), norm_block))
     }
 
     fn build_per_layer_embedding(
@@ -256,7 +285,6 @@ impl<B: Backend> Decoder<B> {
             token_positions,
             token_parents,
             token_subtrie_ranges,
-            shared_buffers,
             mut cache_layers,
             batch_dim,
             sampling_start,
@@ -269,9 +297,25 @@ impl<B: Backend> Decoder<B> {
 
         let mut shortcut =
             encoder.allocate_scratch(main.as_buffer_range_ref().range().len()).map_err(DecoderError::BackendError)?;
+        let ropes = self
+            .rope_configs
+            .iter()
+            .map(|rope_config| {
+                let (sines, cosines) = precalculate_rope(rope_config, token_positions);
+                let mut sines_allocation = encoder.allocate_constant(sines.len() * std::mem::size_of::<f32>())?;
+                sines_allocation.copyin(sines.as_ref());
+                let mut cosines_allocation = encoder.allocate_constant(cosines.len() * std::mem::size_of::<f32>())?;
+                cosines_allocation.copyin(cosines.as_ref());
+                Ok(PrecalculatedRope {
+                    cosines: cosines_allocation,
+                    sines: sines_allocation,
+                    dim: *rope_config.head_dim(),
+                })
+            })
+            .collect::<Result<Box<[_]>, B::Error>>()
+            .map_err(DecoderError::BackendError)?;
 
         for layer in self.layers.iter().take(layer_count) {
-            let rope_buffers = shared_buffers.rope_buffers_for_layer(layer.layer_index);
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
 
@@ -281,10 +325,9 @@ impl<B: Backend> Decoder<B> {
                 .encode(
                     LayerArguments {
                         batch_dim,
-                        token_positions,
                         token_parents,
                         token_subtrie_ranges,
-                        rope_buffers,
+                        rope: layer.rope_kind.get(&ropes),
                         per_layer_inputs,
                         sampling_start,
                         sampling_length,
@@ -347,7 +390,6 @@ impl<B: Backend> Decoder<B> {
                 token_positions: args.token_positions,
                 token_parents: args.token_parents,
                 token_subtrie_ranges: args.token_subtrie_ranges,
-                shared_buffers: args.shared_buffers,
                 cache_layers: args.cache_layers,
                 batch_dim: args.batch_dim,
                 sampling_start,
