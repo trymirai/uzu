@@ -4,7 +4,10 @@ use half::bf16;
 use num_traits::Float;
 use proc_macros::kernel;
 
-use crate::{array::ArrayElement, gumbel_float, revidx};
+use crate::{
+    array::ArrayElement,
+    language_model::gumbel::{gumbel_float, revidx},
+};
 
 // NOTE: top_k + top_p combination is not exactly matching lalamo ("parallel" here, should be top-k then top-p)
 #[kernel(UnifiedSampling)]

@@ -24,7 +24,7 @@ use shoji::{
 };
 pub use text_to_speech::Instance as TextToSpeechInstance;
 
-use crate::TOOLCHAIN_VERSION;
+use crate::utils::TOOLCHAIN_VERSION;
 
 pub struct Backend;
 

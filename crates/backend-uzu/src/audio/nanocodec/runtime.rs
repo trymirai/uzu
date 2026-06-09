@@ -464,14 +464,6 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         )
     }
 
-    pub fn begin_decode_stream(
-        &self,
-        batch_size: usize,
-        codebooks: usize,
-    ) -> AudioResult<AudioDecodeStreamState> {
-        self.begin_decode_stream_with_options(batch_size, codebooks, 256)
-    }
-
     pub fn begin_decode_stream_with_options(
         &self,
         batch_size: usize,
@@ -774,3 +766,7 @@ impl<B: Backend> AudioCodecRuntime for NanoCodecFsqRuntime<B> {
         self.decoded_padded_to_pcm_batch(&decoded)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/audio/nanocodec/runtime.rs"]
+mod tests;

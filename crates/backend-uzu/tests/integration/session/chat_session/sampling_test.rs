@@ -8,6 +8,7 @@ use backend_uzu::session::{
     parameter::{SamplingMethod, SamplingPolicy, SamplingProcessingOrder, SamplingSeed},
     types::{Input, Message, Output},
 };
+use proc_macros::uzu_test;
 use test_tag::tag;
 
 fn model_path() -> Option<PathBuf> {
@@ -59,7 +60,7 @@ const PROMPT: &str = "Write one creative sentence about the ocean.";
 
 #[ignore = "requires THINKING_TEST_MODEL pointing at a downloaded model"]
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn greedy_sampling_is_deterministic() {
     let Some(path) = model_path() else {
         panic!("set THINKING_TEST_MODEL to a downloaded model directory");
@@ -72,7 +73,7 @@ fn greedy_sampling_is_deterministic() {
 
 #[ignore = "requires THINKING_TEST_MODEL pointing at a downloaded model"]
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn stochastic_sampling_varies_with_seed() {
     let Some(path) = model_path() else {
         panic!("set THINKING_TEST_MODEL to a downloaded model directory");

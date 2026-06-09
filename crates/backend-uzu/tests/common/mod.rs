@@ -9,6 +9,7 @@ pub mod metrics;
 pub mod path;
 pub mod perf;
 pub mod proptest;
+pub mod repeat_speculator;
 
 pub(crate) use proptest::for_each_context;
 

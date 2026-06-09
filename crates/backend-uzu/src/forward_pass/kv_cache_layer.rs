@@ -603,5 +603,5 @@ impl<B: Backend, Buf: Buffer<Backend = B>> KVCacheLayerTrait<B> for KVCacheLayer
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/forward_pass/kv_cache_state_test.rs"]
+#[path = "../../unit/forward_pass/kv_cache_state_test.rs"]
 mod tests;

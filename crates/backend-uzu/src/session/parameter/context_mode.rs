@@ -9,3 +9,7 @@ pub enum ContextMode {
     },
     Dynamic,
 }
+
+#[cfg(test)]
+#[path = "../../../unit/session/parameter/context_mode.rs"]
+mod tests;

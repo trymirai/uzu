@@ -8,6 +8,7 @@ use backend_uzu::session::{
     parameter::SamplingSeed,
     types::{Input, Message, Output},
 };
+use proc_macros::uzu_test;
 use test_tag::tag;
 
 fn model_path() -> Option<PathBuf> {
@@ -44,7 +45,7 @@ fn dump(
 
 #[ignore = "requires THINKING_TEST_MODEL pointing at a downloaded thinking model"]
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn thinking_toggle_end_to_end() {
     let Some(path) = model_path() else {
         panic!("set THINKING_TEST_MODEL to a downloaded thinking-model directory");
@@ -71,7 +72,7 @@ fn thinking_toggle_end_to_end() {
 
 #[ignore = "requires THINKING_TEST_MODEL pointing at a downloaded thinking model"]
 #[tag(heavy)]
-#[test]
+#[uzu_test]
 fn thinking_toggle_within_one_session() {
     let Some(path) = model_path() else {
         panic!("set THINKING_TEST_MODEL to a downloaded thinking-model directory");

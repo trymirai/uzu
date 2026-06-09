@@ -29,7 +29,7 @@ pub fn uzu_config(
 }
 
 #[proc_macro_attribute]
-pub fn __internal_uzu_test(
+pub fn uzu_test(
     args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
@@ -37,7 +37,7 @@ pub fn __internal_uzu_test(
 }
 
 #[proc_macro_attribute]
-pub fn __internal_uzu_bench(
+pub fn uzu_bench(
     args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
@@ -45,7 +45,7 @@ pub fn __internal_uzu_bench(
 }
 
 #[proc_macro_attribute]
-pub fn __internal_uzu_ignored(
+pub fn uzu_ignore(
     args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
