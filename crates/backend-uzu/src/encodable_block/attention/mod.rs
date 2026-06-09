@@ -21,7 +21,7 @@ use crate::{
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
-    config::token_mixer::attention::AttentionConfig,
+    config::token_mixer::attention::{AttentionConfig, AttentionProjectionMode},
     data_type::DataType,
     forward_pass::{
         cache_layers::LayerCacheAccess,
@@ -86,6 +86,10 @@ pub enum AttentionError<B: Backend> {
     QKVNormError(#[from] QKVNormError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
+    #[error("Unsupported attention projection mode: {projection_mode:?}")]
+    UnsupportedProjectionMode {
+        projection_mode: AttentionProjectionMode,
+    },
 }
 
 impl<B: Backend> Attention<B> {
@@ -98,15 +102,22 @@ impl<B: Backend> Attention<B> {
         rope: Rc<Rope<B>>,
         qk_unpack: Rc<QkUnpack<B>>,
         extract_input_hadamard: bool,
-        is_kv_sharing: bool,
     ) -> Result<(Self, Option<Allocation<B>>), AttentionError<B>> {
+        let projection_mode = &config.projection_mode;
+        if projection_mode == &AttentionProjectionMode::QkSharedValue {
+            return Err(AttentionError::UnsupportedProjectionMode {
+                projection_mode: projection_mode.clone(),
+            });
+        }
         let q_dim = config.num_heads * config.head_dim;
         let kv_dim = config.num_groups * config.head_dim;
-        // KV-sharing layers reuse the source layer's K/V: project queries only, with no key/value norm.
-        let (qkv_output_dim, key_norm_config, value_norm_config, kv_norm_groups) = if is_kv_sharing {
-            (q_dim, None, None, 0)
-        } else {
-            (q_dim + 2 * kv_dim, config.key_norm_config.clone(), config.value_norm_config(), config.num_groups)
+        // Borrowed-Q layers reuse the source layer's K/V: project queries only, with no key/value norm.
+        let (qkv_output_dim, key_norm_config, value_norm_config, kv_norm_groups) = match projection_mode {
+            AttentionProjectionMode::Qkv => {
+                (q_dim + 2 * kv_dim, config.key_norm_config.clone(), config.value_norm_config(), config.num_groups)
+            },
+            AttentionProjectionMode::BorrowedQ => (q_dim, None, None, 0),
+            AttentionProjectionMode::QkSharedValue => unreachable!(),
         };
 
         let qkv_projection_tree = parameter_tree.subtree("qkv_projection")?;

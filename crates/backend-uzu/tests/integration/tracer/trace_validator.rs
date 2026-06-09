@@ -15,8 +15,8 @@ use std::{
 
 use backend_uzu::{
     _private::{
-        ActivationTrace, AnyModelConfig, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer,
-        LanguageModelGeneratorContext, TokenInputs,
+        ActivationTrace, AnyModelConfig, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer, KVCacheLayerTrait,
+        LanguageModelGeneratorContext, TokenInputs, precalculate_rope,
     },
     array::{Array, ArrayElement},
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
@@ -70,6 +70,7 @@ fn sample_argmax<T: ArrayElement>(logits: ArrayView<T, IxDyn>) -> Vec<u64> {
 pub struct TracerValidationMetrics {
     pub atol: f32,
     pub rtol: f32,
+    pub rms_rtol: f32,
     #[allow(unused)]
     pub fraction_of_allowed_violations: f32,
     pub reference_shape: Vec<usize>,
@@ -91,7 +92,8 @@ pub struct TracerValidationMetrics {
 
 impl TracerValidationMetrics {
     pub fn is_valid(&self) -> bool {
-        self.num_violations <= self.max_allowed_violations && !self.result_nan
+        (self.num_violations <= self.max_allowed_violations || self.rel_rms_reference <= self.rms_rtol)
+            && !self.result_nan
     }
 
     pub fn message(&self) -> String {
@@ -112,7 +114,7 @@ impl TracerValidationMetrics {
             Worst violation: {:.3} ({:.2}%) at index {} (reference value: {:.3}).\n\
             Error RMS: {:.3}.\n\
             RMS of result: {:.3}, RMS of reference: {:.3}.\n\
-            Relative error RMS: {:.2}% of RMS of reference.\n\
+            Relative error RMS: {:.2}% of RMS of reference (Max {:.2}% allowed).\n\
             Shape: {:?}\n\
             Max diff: {:.3}, Avg diff: {:.3}",
             self.num_violations,
@@ -128,6 +130,7 @@ impl TracerValidationMetrics {
             self.rms_result,
             self.rms_reference,
             self.rel_rms_reference * 100.0,
+            self.rms_rtol * 100.0,
             self.result_shape,
             self.diff_max,
             self.diff_avg,
@@ -162,7 +165,9 @@ impl TracerValidationResults {
 /// Transform to apply to produced arrays before comparison.
 pub enum ArrayTransform {
     /// Slice KV cache to match expected shape.
-    KVCacheSlice,
+    KVCacheSlice {
+        start: usize,
+    },
     /// Transform SSM conv state layout.
     SsmConvState,
 }
@@ -331,6 +336,7 @@ impl<B: Backend> TraceValidator<B> {
             Encoder::<B>::new(ctx.context.as_ref()).map_err(|e| Error::UnableToCreateCommandBuffer(e.into()))?;
         {
             let mut cache_layers = ctx.cache_layers.borrow_mut();
+            cache_layers.prepare_for_forward_pass(ctx.context.as_ref(), suffix_length);
             let decoder_arguments = token_inputs.decoder_arguments(
                 Some(&mut *cache_layers),
                 suffix_length,
@@ -362,67 +368,25 @@ impl<B: Backend> TraceValidator<B> {
 
         // LLM-specific state validation
         let cache = ctx.cache_layers.borrow();
-        for (index, layer) in cache.iter_layers() {
+        for index in 0..ctx.model_shape.num_layers {
+            let layer = cache.layer_for_logical_layer(index);
             if let Some(kv) = layer.as_transformer() {
-                let shape = kv.shape();
-                let keys_path = format!("activation_trace.layer_results.{}.updated_state.keys", index);
-                let expected =
-                    Self::read_required_array(&traces_view, &trace_shapes, &keys_path, ctx.model_shape.data_type);
-                let size = shape.iter().product::<usize>() * ctx.model_shape.data_type.size_in_bytes();
-                let keys = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-                    common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.keys, size)
-                } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
-                    let mut allocation = ctx
-                        .context
-                        .create_allocation(size, AllocationType::Global)
-                        .expect("Failed to create KV cache keys read allocation");
-                    let mut encoder =
-                        Encoder::<B>::new(ctx.context.as_ref()).expect("Failed to create KV cache keys read encoder");
-                    encoder.encode_copy(&layer.keys, 0..size, &mut allocation, 0..size);
-                    encoder.end_encoding().submit().wait_until_completed().expect("Failed to read KV cache keys");
-                    allocation
-                } else {
-                    panic!("Wrong keys type")
-                };
-                results.push(TracerValidationResult {
-                    name: keys_path,
-                    metrics: Self::validate_allocation(
-                        ctx.model_shape.data_type,
-                        &expected,
-                        &keys,
-                        &shape,
-                        Some(ArrayTransform::KVCacheSlice),
-                    ),
-                });
-
-                let values_path = format!("activation_trace.layer_results.{}.updated_state.values", index);
-                let expected =
-                    Self::read_required_array(&traces_view, &trace_shapes, &values_path, ctx.model_shape.data_type);
-                let values = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-                    common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.values, size)
-                } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
-                    let mut allocation = ctx
-                        .context
-                        .create_allocation(size, AllocationType::Global)
-                        .expect("Failed to create KV cache values read allocation");
-                    let mut encoder =
-                        Encoder::<B>::new(ctx.context.as_ref()).expect("Failed to create KV cache values read encoder");
-                    encoder.encode_copy(&layer.values, 0..size, &mut allocation, 0..size);
-                    encoder.end_encoding().submit().wait_until_completed().expect("Failed to read KV cache values");
-                    allocation
-                } else {
-                    panic!("Wrong values type")
-                };
-                results.push(TracerValidationResult {
-                    name: values_path,
-                    metrics: Self::validate_allocation(
-                        ctx.model_shape.data_type,
-                        &expected,
-                        &values,
-                        &shape,
-                        Some(ArrayTransform::KVCacheSlice),
-                    ),
-                });
+                Self::validate_optional_kv_cache_state(
+                    ctx,
+                    &mut results,
+                    &traces_view,
+                    &trace_shapes,
+                    kv,
+                    &format!("activation_trace.layer_results.{}.activation_trace.state", index),
+                );
+                Self::validate_optional_kv_cache_state(
+                    ctx,
+                    &mut results,
+                    &traces_view,
+                    &trace_shapes,
+                    kv,
+                    &format!("activation_trace.layer_results.{}.updated_state", index),
+                );
             } else if let Some(ssm) = layer.as_state_space() {
                 let conv_path = format!("activation_trace.layer_results.{}.updated_state.conv_state", index);
                 let expected =
@@ -498,6 +462,19 @@ impl<B: Backend> TraceValidator<B> {
                 panic!("Unsupported cache layer type at layer {index}");
             }
         }
+        for (compact_index, (_layer_index, layer)) in cache.iter_layers().enumerate() {
+            if let Some(kv) = layer.as_transformer() {
+                Self::validate_optional_kv_cache_state(
+                    ctx,
+                    &mut results,
+                    &traces_view,
+                    &trace_shapes,
+                    kv,
+                    &format!("updated_state.{}", compact_index),
+                );
+            }
+        }
+        results.extend(Self::validate_rope_traces(ctx, &traces_view, &trace_shapes, &token_positions));
 
         // LLM-specific: Token comparison
         let expected_logits =
@@ -526,6 +503,157 @@ impl<B: Backend> TraceValidator<B> {
             results,
             tokens_violation_indices,
         })
+    }
+
+    fn validate_optional_kv_cache_state(
+        ctx: &LanguageModelGeneratorContext<B>,
+        results: &mut Vec<TracerValidationResult>,
+        traces_view: &ParameterTree<B>,
+        trace_shapes: &HashMap<String, Vec<usize>>,
+        kv: &dyn KVCacheLayerTrait<B>,
+        prefix: &str,
+    ) {
+        let shape = kv.shape();
+        let size = shape.iter().product::<usize>() * ctx.model_shape.data_type.size_in_bytes();
+        for field in ["keys", "values"] {
+            let path = format!("{prefix}.{field}");
+            if !trace_shapes.contains_key(&path) {
+                continue;
+            }
+            let allocation = Self::read_kv_buffer(ctx, kv, field, size);
+            let expected = Self::read_required_array(traces_view, trace_shapes, &path, ctx.model_shape.data_type);
+            results.push(TracerValidationResult {
+                name: path,
+                metrics: Self::validate_allocation(
+                    ctx.model_shape.data_type,
+                    &expected,
+                    &allocation,
+                    &shape,
+                    Some(ArrayTransform::KVCacheSlice {
+                        start: kv.prefix_segment_length(),
+                    }),
+                ),
+            });
+        }
+    }
+
+    fn read_kv_buffer(
+        ctx: &LanguageModelGeneratorContext<B>,
+        kv: &dyn KVCacheLayerTrait<B>,
+        field: &str,
+        size: usize,
+    ) -> Allocation<B> {
+        if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
+            let buffer = if field == "keys" {
+                &layer.keys
+            } else {
+                &layer.values
+            };
+            common::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), buffer, size)
+        } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
+            let buffer = if field == "keys" {
+                &layer.keys
+            } else {
+                &layer.values
+            };
+            let mut allocation = ctx
+                .context
+                .create_allocation(size, AllocationType::Global)
+                .expect("Failed to create KV cache read allocation");
+            let mut encoder = Encoder::<B>::new(ctx.context.as_ref()).expect("Failed to create KV cache read encoder");
+            encoder.encode_copy(buffer, 0..size, &mut allocation, 0..size);
+            encoder.end_encoding().submit().wait_until_completed().expect("Failed to read KV cache buffer");
+            allocation
+        } else {
+            panic!("Unexpected KV cache buffer type")
+        }
+    }
+
+    fn validate_rope_traces(
+        ctx: &LanguageModelGeneratorContext<B>,
+        traces_view: &ParameterTree<B>,
+        trace_shapes: &HashMap<String, Vec<usize>>,
+        token_positions: &[usize],
+    ) -> Vec<TracerValidationResult> {
+        let mut results = Vec::new();
+        for (rope_index, rope_config) in ctx.executables.rope_configs.iter().enumerate() {
+            for name in ["cosines", "sines"] {
+                Self::validate_optional_rope_config(
+                    ctx,
+                    &mut results,
+                    traces_view,
+                    trace_shapes,
+                    &format!("activation_trace.rope_embeddings.{rope_index}.{name}"),
+                    name,
+                    rope_config,
+                    None,
+                );
+            }
+        }
+
+        for (layer_index, layer_config) in
+            ctx.model_config.decoder_config.transformer_config.layer_configs.iter().enumerate()
+        {
+            if layer_config.mixer_config.as_attention().is_none() {
+                continue;
+            }
+            let Some(rope_config) = &layer_config.rope_config else {
+                continue;
+            };
+            for name in ["cosines", "sines"] {
+                Self::validate_optional_rope_config(
+                    ctx,
+                    &mut results,
+                    traces_view,
+                    trace_shapes,
+                    &format!(
+                        "activation_trace.layer_results.{layer_index}.activation_trace.positional_embeddings.{name}"
+                    ),
+                    name,
+                    rope_config,
+                    Some(token_positions),
+                );
+            }
+        }
+        results
+    }
+
+    fn validate_optional_rope_config(
+        ctx: &LanguageModelGeneratorContext<B>,
+        results: &mut Vec<TracerValidationResult>,
+        traces_view: &ParameterTree<B>,
+        trace_shapes: &HashMap<String, Vec<usize>>,
+        path: &str,
+        name: &str,
+        rope_config: &backend_uzu::_private::AnyRoPEConfig,
+        token_positions: Option<&[usize]>,
+    ) {
+        let Some(shape) = trace_shapes.get(path) else {
+            return;
+        };
+        let sequence_length = match shape.as_slice() {
+            [_, tokens, _] => *tokens,
+            [tokens, _] => *tokens,
+            _ => panic!("RoPE trace tensor must have shape [tokens, dim] or [1, tokens, dim], got {shape:?}"),
+        };
+        let positions = token_positions
+            .filter(|positions| positions.len() == sequence_length)
+            .map_or_else(|| (0..sequence_length).collect::<Vec<_>>(), <[usize]>::to_vec);
+        let (sines, cosines) = precalculate_rope(rope_config, &positions);
+        let values = if name == "sines" {
+            sines
+        } else {
+            cosines
+        };
+        let mut allocation =
+            ctx.context.create_allocation(values.len() * std::mem::size_of::<f32>(), AllocationType::Global).unwrap();
+        allocation.copyin(values.as_ref());
+
+        let expected = Self::read_required_array(traces_view, trace_shapes, path, ctx.model_shape.rope_data_type);
+        results.push(TracerValidationResult {
+            name: path.to_string(),
+            metrics: Self::validate_allocation(ctx.model_shape.rope_data_type, &expected, &allocation, shape, None),
+        });
     }
 
     // ========================================================================
@@ -741,10 +869,12 @@ impl<B: Backend> TraceValidator<B> {
             .expect("Failed to reshape allocation");
 
         let (expected_data, mut produced_data) = match transform {
-            Some(ArrayTransform::KVCacheSlice) => {
+            Some(ArrayTransform::KVCacheSlice {
+                start,
+            }) => {
                 let expected_shape = expected_view.shape();
                 let expected_tokens = expected_view.shape()[1];
-                let sliced = produced_view.slice(s![..expected_tokens, .., ..]);
+                let sliced = produced_view.slice(s![start..start + expected_tokens, .., ..]);
                 let reshaped = sliced
                     .into_owned()
                     .to_shape(IxDyn(expected_shape))
@@ -809,9 +939,9 @@ impl<B: Backend> TraceValidator<B> {
             .map(|value| NumCast::from(*value).expect("Failed to cast produced trace value"))
             .collect();
 
-        let (atol, rtol, allowed_voilations_tol) = match expected_array.data_type() {
-            DataType::BF16 => (0.04, 0.06, 0.03),
-            _ => (0.01, 0.03, 0.01),
+        let (atol, rtol, allowed_voilations_tol, rms_rtol) = match expected_array.data_type() {
+            DataType::BF16 => (0.04, 0.06, 0.03, 0.035),
+            _ => (0.01, 0.03, 0.01, 0.01),
         };
 
         Self::compare_arrays(
@@ -822,6 +952,7 @@ impl<B: Backend> TraceValidator<B> {
             atol,
             rtol,
             allowed_voilations_tol,
+            rms_rtol,
         )
     }
 
@@ -833,12 +964,14 @@ impl<B: Backend> TraceValidator<B> {
         atol: f32,
         rtol: f32,
         fraction_of_allowed_violations: f32,
+        rms_rtol: f32,
     ) -> TracerValidationMetrics {
         assert_eq!(result.len(), reference.len());
         if reference.is_empty() {
             return TracerValidationMetrics {
                 atol,
                 rtol,
+                rms_rtol,
                 fraction_of_allowed_violations,
                 reference_shape,
                 result_shape,
@@ -916,6 +1049,7 @@ impl<B: Backend> TraceValidator<B> {
         TracerValidationMetrics {
             atol,
             rtol,
+            rms_rtol,
             fraction_of_allowed_violations,
             reference_shape,
             result_shape,

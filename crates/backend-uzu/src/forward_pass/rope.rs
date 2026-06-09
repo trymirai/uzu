@@ -20,6 +20,14 @@ pub fn precalculate_rope(
         let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
         let inverse_frequency = match rope_config {
             AnyRoPEConfig::UnscaledRoPEConfig(_) => inverse_frequency,
+            AnyRoPEConfig::ProportionalRoPEConfig(config) => {
+                let rotary_pairs = (config.partial_rotary_factor * head_dim as f32 / 2.0).floor() as usize;
+                if pair_index >= rotary_pairs {
+                    0.0
+                } else {
+                    inverse_frequency
+                }
+            },
             AnyRoPEConfig::LinearScalingRoPEConfig(config) => inverse_frequency / config.scaling_factor,
             AnyRoPEConfig::LlamaRoPEConfig(config) => {
                 let low_frequency_wavelength = config.original_context_length as f32 / config.low_frequency_factor;

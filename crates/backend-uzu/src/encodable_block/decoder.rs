@@ -182,7 +182,7 @@ impl<B: Backend> Decoder<B> {
 
         let rope = Rc::new(Rope::<B>::new(context, model_shape, false).map_err(DecoderError::BackendError)?);
         // Built only when some layer projects queries only (reuses an earlier layer's KV cache).
-        let rope_query_only = if tf.layer_configs.iter().any(|l| l.kv_source_layer_index.is_some()) {
+        let rope_query_only = if (0..tf.layer_configs.len()).any(|i| tf.kv_source_layer_index(i).is_some()) {
             Some(Rc::new(Rope::<B>::new(context, model_shape, true).map_err(DecoderError::BackendError)?))
         } else {
             None
@@ -196,7 +196,7 @@ impl<B: Backend> Decoder<B> {
             .enumerate()
             .map(|(layer_index, layer_config)| {
                 let layer_loader = decoder_weight_loader.subtree(&format!("layers.{}", layer_index))?;
-                let layer_rope = if layer_config.kv_source_layer_index.is_some() {
+                let layer_rope = if tf.kv_source_layer_index(layer_index).is_some() {
                     rope_query_only.as_ref().expect("query-only rope is built whenever a layer shares KV")
                 } else {
                     &rope
@@ -278,6 +278,7 @@ impl<B: Backend> Decoder<B> {
         args: DecoderArguments<B>,
         mut main: Allocation<B>,
         per_layer_inputs: Option<&Allocation<B>>,
+        layer_count: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<(Allocation<B>, Allocation<B>), DecoderError<B>> {
         let DecoderArguments {
@@ -314,7 +315,7 @@ impl<B: Backend> Decoder<B> {
             .collect::<Result<Box<[_]>, B::Error>>()
             .map_err(DecoderError::BackendError)?;
 
-        for layer in self.layers.iter() {
+        for layer in self.layers.iter().take(layer_count) {
             #[cfg(feature = "tracing")]
             let layer_trace = trace.as_deref_mut().map(|trace| &mut trace.layer_results[layer.layer_index]);
 
@@ -348,11 +349,12 @@ impl<B: Backend> Decoder<B> {
         &self,
         args: DecoderArguments<B>,
         token_ids: &Allocation<B>,
+        layer_count: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, DecoderError<B>> {
         let main = self.embed.encode_lookup(token_ids, args.batch_dim, encoder)?;
         let per_layer_inputs = self.encode_per_layer_inputs(token_ids, &main, args.batch_dim, encoder)?;
-        let (main, _) = self.run_layers(args, main, per_layer_inputs.as_ref(), encoder)?;
+        let (main, _) = self.run_layers(args, main, per_layer_inputs.as_ref(), layer_count, encoder)?;
         Ok(main)
     }
 
@@ -397,6 +399,7 @@ impl<B: Backend> Decoder<B> {
             },
             main,
             per_layer_inputs.as_ref(),
+            self.layers.len(),
             encoder,
         )?;
 

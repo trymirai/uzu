@@ -25,6 +25,7 @@ impl ModelShape {
         let tf = &decoder_config.transformer_config;
         let layer_configs = &tf.layer_configs;
         let num_layers = layer_configs.len();
+        let kv_source_layers = tf.kv_source_layer_indices();
 
         let (num_heads, num_groups) =
             decoder_config.first_attention().map(|a| (a.num_heads, a.num_groups)).unwrap_or_default();
@@ -34,7 +35,6 @@ impl ModelShape {
         }
 
         let layer_mixers: Box<[AnyTokenMixerConfig]> = layer_configs.iter().map(|l| l.mixer_config.clone()).collect();
-        let kv_source_layers: Box<[Option<usize>]> = layer_configs.iter().map(|l| l.kv_source_layer_index).collect();
 
         Self {
             data_type,
@@ -58,6 +58,14 @@ impl ModelShape {
 
     pub fn kv_source_layers(&self) -> &[Option<usize>] {
         &self.kv_source_layers
+    }
+
+    pub fn prefill_layer_count(&self) -> usize {
+        self.kv_source_layers.iter().rposition(Option::is_none).map_or(self.num_layers, |layer_index| layer_index + 1)
+    }
+
+    pub fn prefill_skips_trailing_layers(&self) -> bool {
+        self.prefill_layer_count() < self.num_layers
     }
 
     pub fn layer_mixers(&self) -> &[AnyTokenMixerConfig] {

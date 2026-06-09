@@ -313,6 +313,20 @@ impl<B: Backend> CacheLayers<B> {
         })
     }
 
+    pub fn layer_for_logical_layer(
+        &self,
+        layer_index: usize,
+    ) -> &CacheLayer<B> {
+        match self.bindings[layer_index] {
+            LayerCacheBinding::Owned {
+                entry,
+            } => &self.entries[entry.index],
+            LayerCacheBinding::Shared {
+                source,
+            } => &self.entries[source.index],
+        }
+    }
+
     pub fn clear(
         &mut self,
         context: &B::Context,
