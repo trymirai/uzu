@@ -3,7 +3,7 @@ pub mod harness;
 pub mod quant;
 pub mod shape;
 
-pub use bench::iter_encode_loop;
+pub use bench::{iter_encode_loop, iter_encode_loop_named};
 #[cfg(metal_backend)]
 pub use harness::run_metal;
 pub use harness::{Case, cpu_reference, deterministic_input};

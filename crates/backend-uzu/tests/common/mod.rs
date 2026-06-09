@@ -2,6 +2,7 @@
 
 pub mod assert;
 pub mod audio;
+pub mod env_vars;
 pub mod helpers;
 pub mod matmul;
 pub mod metrics;
@@ -14,6 +15,14 @@ pub(crate) use proptest::for_each_context;
 
 pub fn type_short_name<T>() -> &'static str {
     std::any::type_name::<T>().rsplit("::").next().unwrap()
+}
+
+pub fn enable_benchmark_gpu_capture_if_requested() {
+    if env_vars::enabled(env_vars::UZU_CAPTURE_BENCH) {
+        unsafe {
+            std::env::set_var(env_vars::METAL_CAPTURE_ENABLED, "1");
+        }
+    }
 }
 
 #[cfg(metal_backend)]

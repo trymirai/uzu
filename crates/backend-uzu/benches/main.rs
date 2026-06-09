@@ -4,6 +4,7 @@
 fn bench_runner(benches: &[&dyn Fn()]) {
     #[cfg(target_os = "ios")]
     crate::common::path::ios_set_current_dir();
+    crate::common::enable_benchmark_gpu_capture_if_requested();
     criterion::runner(benches);
 }
 
