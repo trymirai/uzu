@@ -2,11 +2,13 @@ use proc_macros::uzu_config_abstract;
 
 pub mod linear_scaling_rope;
 pub mod llama_rope;
+pub mod proportional_rope;
 pub mod unscaled_rope;
 pub mod yarn_rope;
 
 #[uzu_config_abstract(
     unscaled_rope::UnscaledRoPEConfig,
+    proportional_rope::ProportionalRoPEConfig,
     llama_rope::LlamaRoPEConfig,
     yarn_rope::YARNRoPEConfig,
     linear_scaling_rope::LinearScalingRoPEConfig

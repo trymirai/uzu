@@ -1061,7 +1061,12 @@ impl<B: Backend> LanguageModelGenerator<B> {
             );
             context
                 .executables
-                .encode_prefill(decoder_arguments, token_inputs.token_ids(), context.model_shape.prefill_layer_count(), encoder)
+                .encode_prefill(
+                    decoder_arguments,
+                    token_inputs.token_ids(),
+                    context.model_shape.prefill_layer_count(),
+                    encoder,
+                )
                 .map_err(|e| Error::EncodeFailed(Box::new(e)))?;
         } else {
             let mut cache_layers = context.cache_layers.borrow_mut();

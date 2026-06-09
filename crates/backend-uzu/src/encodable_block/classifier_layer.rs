@@ -4,7 +4,10 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Allocation, AsBufferRangeRef, Backend, Encoder, Kernels, kernel::TensorAddSwapKernel},
-    config::{transformer::TransformerConfig, transformer_layer::TransformerLayerConfig},
+    config::{
+        token_mixer::attention::AttentionProjectionMode, transformer::TransformerConfig,
+        transformer_layer::TransformerLayerConfig,
+    },
     data_type::DataType,
     encodable_block::{
         Attention, AttentionError, LayerArguments, LayerRopeKind, Mlp, MlpBlockError, Normalization,
@@ -64,7 +67,9 @@ impl<B: Backend> ClassifierLayer<B> {
     ) -> Result<Self, ClassifierLayerError<B>> {
         let attention_config =
             layer_config.mixer_config.as_attention().ok_or(ClassifierLayerError::NonAttentionMixer)?;
-        if attention_config.is_kv_sharing || layer_config.kv_source_layer_index.is_some() {
+        if attention_config.projection_mode == AttentionProjectionMode::BorrowedQ
+            || transformer_config.kv_source_layer_index(layer_index).is_some()
+        {
             return Err(ClassifierLayerError::KvSharingAttentionUnsupported);
         }
 
@@ -88,7 +93,6 @@ impl<B: Backend> ClassifierLayer<B> {
             &layer_loader.subtree("mixer")?,
             rope,
             qk_unpack,
-            false,
             false,
         )?;
         if attention_hadamard_factors.is_some() {

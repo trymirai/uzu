@@ -16,7 +16,7 @@ use std::{
 use backend_uzu::{
     _private::{
         ActivationTrace, AnyModelConfig, CacheLayers, Classifier, DecoderDecodeInput, KVCacheLayer, KVCacheLayerTrait,
-        LanguageModelGeneratorContext, TokenInputs,
+        LanguageModelGeneratorContext, TokenInputs, precalculate_rope,
     },
     array::{Array, ArrayElement},
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
@@ -168,8 +168,6 @@ pub enum ArrayTransform {
     KVCacheSlice {
         start: usize,
     },
-    /// Gather rows by traced token positions.
-    PositionSlice(Vec<usize>),
     /// Transform SSM conv state layout.
     SsmConvState,
 }
@@ -578,66 +576,83 @@ impl<B: Backend> TraceValidator<B> {
         token_positions: &[usize],
     ) -> Vec<TracerValidationResult> {
         let mut results = Vec::new();
-        for (rope_index, rope) in ctx.shared_buffers.rope_buffers.iter().enumerate() {
-            for (name, allocation) in [("cosines", &rope.cosines), ("sines", &rope.sines)] {
-                Self::validate_optional_rope_tensor(
+        for (rope_index, rope_config) in ctx.executables.rope_configs.iter().enumerate() {
+            for name in ["cosines", "sines"] {
+                Self::validate_optional_rope_config(
+                    ctx,
                     &mut results,
                     traces_view,
                     trace_shapes,
                     &format!("activation_trace.rope_embeddings.{rope_index}.{name}"),
-                    allocation,
-                    &[rope.max_sequence_length(), rope.dim()],
-                    token_positions,
-                    ctx.model_shape.rope_data_type,
+                    name,
+                    rope_config,
+                    None,
                 );
             }
         }
 
-        for layer_index in 0..ctx.model_shape.num_layers {
-            let Some(rope) = ctx.shared_buffers.rope_buffers_for_layer(layer_index) else {
+        for (layer_index, layer_config) in
+            ctx.model_config.decoder_config.transformer_config.layer_configs.iter().enumerate()
+        {
+            if layer_config.mixer_config.as_attention().is_none() {
+                continue;
+            }
+            let Some(rope_config) = &layer_config.rope_config else {
                 continue;
             };
-            for (name, allocation) in [("cosines", &rope.cosines), ("sines", &rope.sines)] {
-                Self::validate_optional_rope_tensor(
+            for name in ["cosines", "sines"] {
+                Self::validate_optional_rope_config(
+                    ctx,
                     &mut results,
                     traces_view,
                     trace_shapes,
                     &format!(
                         "activation_trace.layer_results.{layer_index}.activation_trace.positional_embeddings.{name}"
                     ),
-                    allocation,
-                    &[rope.max_sequence_length(), rope.dim()],
-                    token_positions,
-                    ctx.model_shape.rope_data_type,
+                    name,
+                    rope_config,
+                    Some(token_positions),
                 );
             }
         }
         results
     }
 
-    fn validate_optional_rope_tensor(
+    fn validate_optional_rope_config(
+        ctx: &LanguageModelGeneratorContext<B>,
         results: &mut Vec<TracerValidationResult>,
         traces_view: &ParameterTree<B>,
         trace_shapes: &HashMap<String, Vec<usize>>,
         path: &str,
-        allocation: &Allocation<B>,
-        shape: &[usize],
-        token_positions: &[usize],
-        data_type: DataType,
+        name: &str,
+        rope_config: &backend_uzu::_private::AnyRoPEConfig,
+        token_positions: Option<&[usize]>,
     ) {
-        if !trace_shapes.contains_key(path) {
+        let Some(shape) = trace_shapes.get(path) else {
             return;
-        }
-        let expected = Self::read_required_array(traces_view, trace_shapes, path, data_type);
+        };
+        let sequence_length = match shape.as_slice() {
+            [_, tokens, _] => *tokens,
+            [tokens, _] => *tokens,
+            _ => panic!("RoPE trace tensor must have shape [tokens, dim] or [1, tokens, dim], got {shape:?}"),
+        };
+        let positions = token_positions
+            .filter(|positions| positions.len() == sequence_length)
+            .map_or_else(|| (0..sequence_length).collect::<Vec<_>>(), <[usize]>::to_vec);
+        let (sines, cosines) = precalculate_rope(rope_config, &positions);
+        let values = if name == "sines" {
+            sines
+        } else {
+            cosines
+        };
+        let mut allocation =
+            ctx.context.create_allocation(values.len() * std::mem::size_of::<f32>(), AllocationType::Global).unwrap();
+        allocation.copyin(values.as_ref());
+
+        let expected = Self::read_required_array(traces_view, trace_shapes, path, ctx.model_shape.rope_data_type);
         results.push(TracerValidationResult {
             name: path.to_string(),
-            metrics: Self::validate_allocation(
-                data_type,
-                &expected,
-                allocation,
-                shape,
-                Some(ArrayTransform::PositionSlice(token_positions.to_vec())),
-            ),
+            metrics: Self::validate_allocation(ctx.model_shape.rope_data_type, &expected, &allocation, shape, None),
         });
     }
 
@@ -866,32 +881,6 @@ impl<B: Backend> TraceValidator<B> {
                     .expect("Failed to reshape KV cache slice")
                     .to_owned();
                 (expected_view.to_owned(), reshaped)
-            },
-            Some(ArrayTransform::PositionSlice(positions)) => {
-                let produced_shape = produced_view.shape();
-                let [max_sequence_length, dim] = produced_shape else {
-                    panic!("PositionSlice requires produced shape [sequence, dim], got {produced_shape:?}");
-                };
-                for &position in &positions {
-                    assert!(
-                        position < *max_sequence_length,
-                        "traced token position {position} exceeds produced sequence length {max_sequence_length}"
-                    );
-                }
-
-                let expected_shape = expected_view.shape();
-                let gathered_shape = if expected_shape == [1, positions.len(), *dim] {
-                    vec![1, positions.len(), *dim]
-                } else {
-                    vec![positions.len(), *dim]
-                };
-                let mut gathered = Vec::with_capacity(positions.len() * *dim);
-                for position in positions {
-                    gathered.extend(produced_view.slice(s![position, ..]).iter().copied());
-                }
-                let produced_data = ndarray::ArrayD::from_shape_vec(IxDyn(&gathered_shape), gathered)
-                    .expect("Failed to reshape gathered position slice");
-                (expected_view.to_owned(), produced_data)
             },
             Some(ArrayTransform::SsmConvState) => {
                 let produced_shape = produced_view.shape();

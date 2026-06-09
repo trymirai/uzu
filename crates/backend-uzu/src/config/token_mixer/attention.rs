@@ -5,6 +5,14 @@ use crate::config::{
     normalization::{NormalizationConfig, UpcastMode},
 };
 
+#[uzu_config]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionProjectionMode {
+    Qkv,
+    QkSharedValue,
+    BorrowedQ,
+}
+
 #[uzu_config(super::TokenMixerConfig)]
 pub struct AttentionConfig {
     pub qkv_projection_config: LinearConfig,
@@ -26,7 +34,7 @@ pub struct AttentionConfig {
     pub has_out_biases: bool,
     pub gate_projection_config: Option<LinearConfig>,
     pub normalize_values: bool,
-    pub is_kv_sharing: bool,
+    pub projection_mode: AttentionProjectionMode,
 }
 
 impl AttentionConfig {
