@@ -1,4 +1,4 @@
-#![cfg(feature = "grammar")]
+#![cfg(all(metal_backend, grammar_xgrammar))]
 
 use metal::MTLDevice;
 use proc_macros::uzu_test;
