@@ -1,3 +1,4 @@
+#[cfg(metal_backend)]
 use std::num::{NonZeroU32, NonZeroUsize};
 
 use crate::{backends::common::Backend, parameters::ParameterLoaderError};
@@ -47,6 +48,7 @@ pub enum AudioError {
     Runtime(String),
 }
 
+#[cfg(metal_backend)]
 pub type AudioResult<T> = Result<T, AudioError>;
 
 impl<B: Backend> From<ParameterLoaderError<B>> for AudioError {
@@ -55,6 +57,7 @@ impl<B: Backend> From<ParameterLoaderError<B>> for AudioError {
     }
 }
 
+#[cfg(metal_backend)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioPcmBatch {
     samples: Box<[f32]>,
@@ -63,6 +66,7 @@ pub struct AudioPcmBatch {
     lengths: Box<[usize]>,
 }
 
+#[cfg(metal_backend)]
 impl AudioPcmBatch {
     pub fn new(
         samples: Box<[f32]>,
@@ -117,6 +121,7 @@ impl AudioPcmBatch {
     }
 }
 
+#[cfg(metal_backend)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioTokenGrid {
     tokens: Box<[u32]>,
@@ -126,6 +131,7 @@ pub struct AudioTokenGrid {
     lengths: Box<[usize]>,
 }
 
+#[cfg(metal_backend)]
 impl AudioTokenGrid {
     pub fn new(
         tokens: Box<[u32]>,
@@ -220,6 +226,6 @@ impl AudioTokenGrid {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(metal_backend, test))]
 #[path = "../../unit/audio/types_test.rs"]
 mod tests;

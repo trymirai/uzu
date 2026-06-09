@@ -17,8 +17,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::Sampling,
-    prelude::SamplingMethod,
-    session::parameter::SamplingProcessingOrder,
+    session::parameter::{SamplingMethod, SamplingProcessingOrder},
 };
 
 struct SamplingTestResults(Vec<u32>);

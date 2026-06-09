@@ -12,7 +12,7 @@ use crate::{
     session::{
         Session,
         config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig},
-        parameter::SamplingPolicy,
+        parameter::{SamplingPolicy, SamplingSeed},
         types::Input,
     },
 };
@@ -46,7 +46,7 @@ fn test_grammar(speculator_config: SpeculatorConfig) {
     }
 
     let decoding_config = DecodingConfig::default()
-        .with_sampling_seed(backend_uzu::prelude::SamplingSeed::Custom(42))
+        .with_sampling_seed(SamplingSeed::Custom(42))
         .with_speculator_config(speculator_config);
     let mut session = Session::new(model_dir, decoding_config).expect("Failed to create session");
 

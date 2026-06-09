@@ -2,8 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     language_model::rng::PRng,
-    prelude::Speculator,
-    speculators::empty_speculator::EmptySpeculator,
+    speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
     trie::{TrieCreationConfig, TrieNode},
 };
 

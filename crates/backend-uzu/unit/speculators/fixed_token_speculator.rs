@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use proc_macros::uzu_test;
 
-use crate::prelude::{FixedTokensSpeculator, Speculator};
+use crate::speculators::{fixed_token_speculator::FixedTokensSpeculator, speculator::Speculator};
 
 #[uzu_test]
 fn test_fixed_token_speculator_single() {

@@ -111,8 +111,7 @@ fn audio_conv1d_replicate_matches_reference_f32() {
         dilation,
         padding,
         pad_mode: PadMode::Replicate,
-    })
-    .expect("reference conv1d");
+    });
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
@@ -200,8 +199,7 @@ fn audio_causal_conv1d_matches_reference_f32() {
         seq_len,
         kernel_size,
         dilation,
-    })
-    .expect("reference causal conv1d");
+    });
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
@@ -290,8 +288,7 @@ fn audio_causal_conv_transpose1d_matches_reference_f32() {
         seq_len_out,
         stride,
         groups,
-    })
-    .expect("reference causal conv transpose1d");
+    });
 
     run_command_buffer(&context, |command_buffer| {
         borrow_array_buffer!(input_buffer = input);
@@ -367,8 +364,7 @@ fn audio_causal_conv_transpose1d_causal_pad_matches_reference_f32() {
         seq_len_out,
         stride,
         groups,
-    })
-    .expect("reference causal conv transpose lalamo");
+    });
 
     let mut input_values_nsc = vec![0.0_f32; input_len];
     for b in 0..batch_size {
@@ -594,8 +590,7 @@ fn audio_half_snake_matches_reference_f32() {
         snake_channels,
         negative_slope,
         eps,
-    })
-    .expect("reference half snake");
+    });
     for index in 0..n {
         let delta = (expected[index] - got[index]).abs();
         assert!(
@@ -760,8 +755,7 @@ fn audio_fsq_decode_matches_reference() {
     });
 
     let expected =
-        fsq_decode_reference(&[0, 7, 11, 3, 5, 9], &[2], batch_size, num_groups, seq_len, codebook_dim, &num_levels)
-            .expect("reference decode");
+        fsq_decode_reference(&[0, 7, 11, 3, 5, 9], &[2], batch_size, num_groups, seq_len, codebook_dim, &num_levels);
     let actual = allocation_to_vec::<Metal, f32>(&output);
 
     for (index, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
@@ -829,8 +823,7 @@ fn audio_fsq_encode_matches_reference() {
         &num_levels,
         &dim_base_index,
         eps,
-    )
-    .expect("reference encode");
+    );
     let actual = allocation_to_vec::<Metal, i32>(&tokens);
 
     assert_eq!(actual, expected);

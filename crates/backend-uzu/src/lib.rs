@@ -16,13 +16,12 @@ mod encodable_block;
 mod forward_pass;
 mod language_model;
 mod parameters;
-mod speculators;
+pub mod speculators;
 mod trie;
 mod utils;
 
 pub mod backends;
 pub mod inference;
-pub mod prelude;
 pub mod session;
 
 pub use utils::{TOOLCHAIN_VERSION, VERSION};

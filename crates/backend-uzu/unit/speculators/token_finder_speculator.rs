@@ -1,6 +1,6 @@
 use proc_macros::uzu_test;
 
-use crate::prelude::TokenFinder;
+use crate::speculators::token_finder::TokenFinder;
 
 #[uzu_test]
 fn test_find_candidate_pred_token_empty_sequence() {

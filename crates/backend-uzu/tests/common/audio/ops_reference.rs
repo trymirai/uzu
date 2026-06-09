@@ -1,40 +1,23 @@
-use backend_uzu::prelude::{AudioError, AudioResult};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PadMode {
     Zeros,
     Replicate,
 }
 
-fn checked_product(values: &[usize]) -> AudioResult<usize> {
-    values
-        .iter()
-        .try_fold(1usize, |acc, &value| acc.checked_mul(value))
-        .ok_or(AudioError::Runtime("dimension product overflow".to_string()))
+fn checked_product(values: &[usize]) -> usize {
+    values.iter().try_fold(1usize, |acc, &value| acc.checked_mul(value)).expect("dimension product overflow")
 }
 
 fn validate_lengths(
     lengths: &[i32],
     batch_size: usize,
     frames: usize,
-) -> AudioResult<()> {
-    if lengths.len() != batch_size {
-        return Err(AudioError::InvalidTokenLengths {
-            expected_lengths: batch_size,
-            actual_lengths: lengths.len(),
-        });
-    }
+) {
+    assert_eq!(lengths.len(), batch_size, "lengths count mismatch");
 
     for &length in lengths {
-        if length < 0 || length as usize > frames {
-            return Err(AudioError::InvalidTokenLengthValue {
-                length: length.max(0) as usize,
-                frames,
-            });
-        }
+        assert!(length >= 0 && length as usize <= frames, "invalid length {length} for {frames} frames");
     }
-
-    Ok(())
 }
 
 pub struct Conv1dSpec<'a> {
@@ -54,7 +37,7 @@ pub struct Conv1dSpec<'a> {
     pub pad_mode: PadMode,
 }
 
-pub fn conv1d_reference(spec: Conv1dSpec<'_>) -> AudioResult<Vec<f32>> {
+pub fn conv1d_reference(spec: Conv1dSpec<'_>) -> Vec<f32> {
     let Conv1dSpec {
         input,
         weight,
@@ -72,32 +55,12 @@ pub fn conv1d_reference(spec: Conv1dSpec<'_>) -> AudioResult<Vec<f32>> {
         pad_mode,
     } = spec;
 
-    validate_lengths(lengths, batch_size, seq_len_out)?;
+    validate_lengths(lengths, batch_size, seq_len_out);
+    assert_eq!(input.len(), checked_product(&[batch_size, cin, seq_len_in]), "input size mismatch");
+    assert_eq!(weight.len(), checked_product(&[cout, cin, kernel_size]), "weight size mismatch");
+    assert_eq!(bias.len(), cout, "bias size mismatch");
 
-    let expected_input = checked_product(&[batch_size, cin, seq_len_in])?;
-    if input.len() != expected_input {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_input,
-            actual_tokens: input.len(),
-        });
-    }
-
-    let expected_weight = checked_product(&[cout, cin, kernel_size])?;
-    if weight.len() != expected_weight {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_weight,
-            actual_tokens: weight.len(),
-        });
-    }
-
-    if bias.len() != cout {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: cout,
-            actual_tokens: bias.len(),
-        });
-    }
-
-    let output_len = checked_product(&[batch_size, cout, seq_len_out])?;
+    let output_len = checked_product(&[batch_size, cout, seq_len_out]);
     let mut output = vec![0.0_f32; output_len];
 
     for batch in 0..batch_size {
@@ -139,7 +102,7 @@ pub fn conv1d_reference(spec: Conv1dSpec<'_>) -> AudioResult<Vec<f32>> {
         }
     }
 
-    Ok(output)
+    output
 }
 
 pub struct CausalConv1dSpec<'a> {
@@ -155,7 +118,7 @@ pub struct CausalConv1dSpec<'a> {
     pub dilation: usize,
 }
 
-pub fn causal_conv1d_reference(spec: CausalConv1dSpec<'_>) -> AudioResult<Vec<f32>> {
+pub fn causal_conv1d_reference(spec: CausalConv1dSpec<'_>) -> Vec<f32> {
     let CausalConv1dSpec {
         input,
         weight,
@@ -169,32 +132,12 @@ pub fn causal_conv1d_reference(spec: CausalConv1dSpec<'_>) -> AudioResult<Vec<f3
         dilation,
     } = spec;
 
-    validate_lengths(lengths, batch_size, seq_len)?;
+    validate_lengths(lengths, batch_size, seq_len);
+    assert_eq!(input.len(), checked_product(&[batch_size, cin, seq_len]), "input size mismatch");
+    assert_eq!(weight.len(), checked_product(&[cout, cin, kernel_size]), "weight size mismatch");
+    assert_eq!(bias.len(), cout, "bias size mismatch");
 
-    let expected_input = checked_product(&[batch_size, cin, seq_len])?;
-    if input.len() != expected_input {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_input,
-            actual_tokens: input.len(),
-        });
-    }
-
-    let expected_weight = checked_product(&[cout, cin, kernel_size])?;
-    if weight.len() != expected_weight {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_weight,
-            actual_tokens: weight.len(),
-        });
-    }
-
-    if bias.len() != cout {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: cout,
-            actual_tokens: bias.len(),
-        });
-    }
-
-    let output_len = checked_product(&[batch_size, cout, seq_len])?;
+    let output_len = checked_product(&[batch_size, cout, seq_len]);
     let mut output = vec![0.0_f32; output_len];
     let pad = (kernel_size - 1) * dilation;
 
@@ -229,7 +172,7 @@ pub fn causal_conv1d_reference(spec: CausalConv1dSpec<'_>) -> AudioResult<Vec<f3
         }
     }
 
-    Ok(output)
+    output
 }
 
 pub struct CausalConvTranspose1dSpec<'a> {
@@ -246,7 +189,7 @@ pub struct CausalConvTranspose1dSpec<'a> {
     pub groups: usize,
 }
 
-pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) -> AudioResult<Vec<f32>> {
+pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) -> Vec<f32> {
     let CausalConvTranspose1dSpec {
         input,
         weight,
@@ -261,37 +204,19 @@ pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) ->
         groups,
     } = spec;
 
-    validate_lengths(lengths, batch_size, seq_len_out)?;
-    if groups == 0 || cin == 0 || cout == 0 || cin % groups != 0 || cout % groups != 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-
-    let expected_input = checked_product(&[batch_size, cin, seq_len_in])?;
-    if input.len() != expected_input {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_input,
-            actual_tokens: input.len(),
-        });
-    }
+    validate_lengths(lengths, batch_size, seq_len_out);
+    assert!(
+        groups != 0 && cin != 0 && cout != 0 && cin % groups == 0 && cout % groups == 0,
+        "invalid channel/group configuration"
+    );
+    assert_eq!(input.len(), checked_product(&[batch_size, cin, seq_len_in]), "input size mismatch");
 
     let kernel_size = 2 * stride;
     let cin_per_group = cin / groups;
-    let expected_weight = checked_product(&[cout, cin_per_group, kernel_size])?;
-    if weight.len() != expected_weight {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_weight,
-            actual_tokens: weight.len(),
-        });
-    }
+    assert_eq!(weight.len(), checked_product(&[cout, cin_per_group, kernel_size]), "weight size mismatch");
+    assert_eq!(bias.len(), cout, "bias size mismatch");
 
-    if bias.len() != cout {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: cout,
-            actual_tokens: bias.len(),
-        });
-    }
-
-    let output_len = checked_product(&[batch_size, cout, seq_len_out])?;
+    let output_len = checked_product(&[batch_size, cout, seq_len_out]);
     let mut output = vec![0.0_f32; output_len];
     let cout_per_group = cout / groups;
 
@@ -333,10 +258,10 @@ pub fn causal_conv_transpose1d_reference(spec: CausalConvTranspose1dSpec<'_>) ->
         }
     }
 
-    Ok(output)
+    output
 }
 
-pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dSpec<'_>) -> AudioResult<Vec<f32>> {
+pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dSpec<'_>) -> Vec<f32> {
     let CausalConvTranspose1dSpec {
         input,
         weight,
@@ -351,42 +276,23 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
         groups,
     } = spec;
 
-    validate_lengths(lengths, batch_size, seq_len_out)?;
-    if groups == 0 || stride == 0 || cin == 0 || cout == 0 || cin % groups != 0 || cout % groups != 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-
-    let expected_input = checked_product(&[batch_size, cin, seq_len_in])?;
-    if input.len() != expected_input {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_input,
-            actual_tokens: input.len(),
-        });
-    }
+    validate_lengths(lengths, batch_size, seq_len_out);
+    assert!(
+        groups != 0 && stride != 0 && cin != 0 && cout != 0 && cin % groups == 0 && cout % groups == 0,
+        "invalid channel/group configuration"
+    );
+    assert_eq!(input.len(), checked_product(&[batch_size, cin, seq_len_in]), "input size mismatch");
 
     let cout_per_group = cout / groups;
     let cin_per_group = cin / groups;
-    let weight_plane = checked_product(&[cout, cin_per_group])?;
-    if weight_plane == 0 || weight.len() % weight_plane != 0 {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: weight_plane,
-            actual_tokens: weight.len(),
-        });
-    }
+    let weight_plane = checked_product(&[cout, cin_per_group]);
+    assert!(weight_plane != 0 && weight.len() % weight_plane == 0, "weight size mismatch");
 
     let kernel_size = weight.len() / weight_plane;
-    if kernel_size == 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
+    assert_ne!(kernel_size, 0, "empty kernel");
+    assert_eq!(bias.len(), cout, "bias size mismatch");
 
-    if bias.len() != cout {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: cout,
-            actual_tokens: bias.len(),
-        });
-    }
-
-    let output_len = checked_product(&[batch_size, cout, seq_len_out])?;
+    let output_len = checked_product(&[batch_size, cout, seq_len_out]);
     let mut output = vec![0.0_f32; output_len];
     let seq_len_expanded = if seq_len_in == 0 {
         0
@@ -394,7 +300,7 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
         (seq_len_in - 1)
             .checked_mul(stride)
             .and_then(|value| value.checked_add(1))
-            .ok_or(AudioError::Runtime("expanded sequence length overflow".to_string()))?
+            .expect("expanded sequence length overflow")
     };
     let left_pad = kernel_size - 1;
 
@@ -444,7 +350,7 @@ pub fn causal_conv_transpose1d_causal_pad_reference(spec: CausalConvTranspose1dS
         }
     }
 
-    Ok(output)
+    output
 }
 
 pub struct HalfSnakeSpec<'a> {
@@ -458,7 +364,7 @@ pub struct HalfSnakeSpec<'a> {
     pub eps: f32,
 }
 
-pub fn half_snake_reference(spec: HalfSnakeSpec<'_>) -> AudioResult<Vec<f32>> {
+pub fn half_snake_reference(spec: HalfSnakeSpec<'_>) -> Vec<f32> {
     let HalfSnakeSpec {
         input,
         alpha,
@@ -470,24 +376,9 @@ pub fn half_snake_reference(spec: HalfSnakeSpec<'_>) -> AudioResult<Vec<f32>> {
         eps,
     } = spec;
 
-    if snake_channels > channels {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-
-    let expected_input = checked_product(&[batch_size, channels, seq_len])?;
-    if input.len() != expected_input {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_input,
-            actual_tokens: input.len(),
-        });
-    }
-
-    if alpha.len() != snake_channels {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: snake_channels,
-            actual_tokens: alpha.len(),
-        });
-    }
+    assert!(snake_channels <= channels, "snake channels exceed channel count");
+    assert_eq!(input.len(), checked_product(&[batch_size, channels, seq_len]), "input size mismatch");
+    assert_eq!(alpha.len(), snake_channels, "alpha size mismatch");
 
     let mut output = vec![0.0_f32; input.len()];
     for batch in 0..batch_size {
@@ -508,5 +399,5 @@ pub fn half_snake_reference(spec: HalfSnakeSpec<'_>) -> AudioResult<Vec<f32>> {
         }
     }
 
-    Ok(output)
+    output
 }

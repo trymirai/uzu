@@ -18,7 +18,7 @@ use crate::{
         Linear,
         linear::{LinearMatmul, LinearMatmulError},
     },
-    prelude::{ParameterLoaderError, ParameterTree},
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]

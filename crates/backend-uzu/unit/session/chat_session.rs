@@ -7,13 +7,13 @@ use tokenizers::Tokenizer;
 
 use crate::{
     common::path::get_test_model_path,
-    prelude::{FixedTokensSpeculator, PromptLookupSpeculator, SpeculatorConfig},
     session::{
         Session,
-        config::{DecodingConfig, RunConfig},
+        config::{DecodingConfig, RunConfig, SpeculatorConfig},
         parameter::{AsyncBatchSize, SamplingSeed},
         types::{Input, Message, Output},
     },
+    speculators::{fixed_token_speculator::FixedTokensSpeculator, prompt_lookup_speculator::PromptLookupSpeculator},
 };
 
 fn build_decoding_config() -> DecodingConfig {
