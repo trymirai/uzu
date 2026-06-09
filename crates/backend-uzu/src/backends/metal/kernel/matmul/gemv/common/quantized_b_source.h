@@ -160,7 +160,7 @@ struct QuantizedBSource<
     thread U input_values[values_per_thread];
 
     for (uint k = 0; k + block_size <= in_vec_size; k += block_size) {
-      load_vector_unscaled<AT, U, values_per_thread>(input, input_values);
+      U input_sum = load_vector_unscaled<AT, U, values_per_thread>(input, input_values);
 
       const device uint8_t* weight_row0 = weights;
       const device uint8_t* weight_row1 = weights + weights_row_stride;
@@ -180,28 +180,32 @@ struct QuantizedBSource<
           input_values,
           codebook,
           scale0,
-          static_cast<U>(bias_codebook[codes.x])
+          static_cast<U>(bias_codebook[codes.x]),
+          input_sum
       );
       result[1] += qdot_lloyd_max<U, values_per_thread, BITS>(
           weight_row1,
           input_values,
           codebook,
           scale1,
-          static_cast<U>(bias_codebook[codes.y])
+          static_cast<U>(bias_codebook[codes.y]),
+          input_sum
       );
       result[2] += qdot_lloyd_max<U, values_per_thread, BITS>(
           weight_row2,
           input_values,
           codebook,
           scale2,
-          static_cast<U>(bias_codebook[codes.z])
+          static_cast<U>(bias_codebook[codes.z]),
+          input_sum
       );
       result[3] += qdot_lloyd_max<U, values_per_thread, BITS>(
           weight_row3,
           input_values,
           codebook,
           scale3,
-          static_cast<U>(bias_codebook[codes.w])
+          static_cast<U>(bias_codebook[codes.w]),
+          input_sum
       );
 
       weights += block_size * bytes_per_pack / pack_factor;

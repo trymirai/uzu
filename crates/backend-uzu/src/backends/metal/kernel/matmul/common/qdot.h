@@ -31,13 +31,17 @@ METAL_FUNC U load_vector(const device T* x, thread U* x_thread) {
 }
 
 template <typename T, typename U, int VALUES_PER_THREAD>
-METAL_FUNC void load_vector_unscaled(const device T* x, thread U* x_thread) {
+METAL_FUNC U load_vector_unscaled(const device T* x, thread U* x_thread) {
   using U4 = vec<U, 4>;
+  U sum = 0;
   thread U4* x_vec4 = reinterpret_cast<thread U4*>(x_thread);
   METAL_PRAGMA_UNROLL
   for (int index = 0; index < VALUES_PER_THREAD / 4; index++) {
-    x_vec4[index] = U4(x[4 * index], x[4 * index + 1], x[4 * index + 2], x[4 * index + 3]);
+    U4 v = U4(x[4 * index], x[4 * index + 1], x[4 * index + 2], x[4 * index + 3]);
+    sum += v[0] + v[1] + v[2] + v[3];
+    x_vec4[index] = v;
   }
+  return sum;
 }
 
 template <typename T, typename U, int VALUES_PER_THREAD>
@@ -92,13 +96,18 @@ METAL_FUNC U qdot(const device uint8_t* w, const thread U* x_thread, U scale, U 
 
 // Fold Lloyd-Max bias subtraction out of the per-weight dot path.
 template <typename U, int VALUES_PER_THREAD, int BITS>
-METAL_FUNC U
-qdot_lloyd_max(const device uint8_t* w, const thread U* x_thread, const threadgroup half* codebook, U scale, U bias) {
+METAL_FUNC U qdot_lloyd_max(
+    const device uint8_t* w,
+    const thread U* x_thread,
+    const threadgroup half* codebook,
+    U scale,
+    U bias,
+    U sum
+) {
   static_assert(BITS == 4, "Only int4 Lloyd-Max QMV is supported");
 
   using U4 = vec<U, 4>;
   U codebook_acc = 0;
-  U sum_x = 0;
   const device ushort* weight_words = reinterpret_cast<const device ushort*>(w);
   const thread U4* x_vec4 = reinterpret_cast<const thread U4*>(x_thread);
 
@@ -112,10 +121,9 @@ qdot_lloyd_max(const device uint8_t* w, const thread U* x_thread, const threadgr
            static_cast<U>(codebook[(weight_word >> 12) & 0x0fu]));
     U4 xv = x_vec4[value_idx];
     codebook_acc += dot(xv, codebook_vec4);
-    sum_x += xv[0] + xv[1] + xv[2] + xv[3];
   }
 
-  return scale * (codebook_acc - bias * sum_x);
+  return scale * (codebook_acc - bias * sum);
 }
 
 template <typename U, int VALUES_PER_THREAD, int BITS>
