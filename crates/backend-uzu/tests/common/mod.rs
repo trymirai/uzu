@@ -2,6 +2,7 @@
 
 pub mod assert;
 pub mod audio;
+pub mod env_vars;
 pub mod helpers;
 pub mod matmul;
 pub mod metrics;
@@ -15,14 +16,10 @@ pub fn type_short_name<T>() -> &'static str {
     std::any::type_name::<T>().rsplit("::").next().unwrap()
 }
 
-pub fn env_var_enabled(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("yes") || v.eq_ignore_ascii_case("true"))
-}
-
 pub fn enable_benchmark_gpu_capture_if_requested() {
-    if env_var_enabled("UZU_CAPTURE_BENCH") {
+    if env_vars::enabled(env_vars::UZU_CAPTURE_BENCH) {
         unsafe {
-            std::env::set_var("METAL_CAPTURE_ENABLED", "1");
+            std::env::set_var(env_vars::METAL_CAPTURE_ENABLED, "1");
         }
     }
 }
