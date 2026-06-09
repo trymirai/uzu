@@ -6,11 +6,9 @@ use backend_uzu::{
     session::ChatSession,
 };
 use criterion::{BenchmarkId, Criterion};
+use proc_macros::uzu_bench;
 
-use crate::{
-    common::{metrics::wait_gpu_cooldown, path::get_test_model_path},
-    uzu_bench,
-};
+use crate::common::{metrics::wait_gpu_cooldown, path::get_test_model_path};
 
 fn create_session<B: Backend>() -> ChatSession {
     let model_path = get_test_model_path();

@@ -14,13 +14,11 @@ use backend_uzu::{
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
 use num_traits::Float;
+use proc_macros::uzu_bench;
 
-use crate::{
-    common::{
-        matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
-        type_short_name,
-    },
-    uzu_bench,
+use crate::common::{
+    matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
+    type_short_name,
 };
 
 fn bench_unified_quant_typed<T: ArrayElement + Float>(

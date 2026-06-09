@@ -4,9 +4,10 @@ use backend_uzu::{
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use itertools::iproduct;
+use proc_macros::uzu_bench;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-use crate::{common::type_short_name, uzu_bench};
+use crate::common::type_short_name;
 
 fn get_rms_norm_data(
     seed: u64,

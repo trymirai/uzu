@@ -6,11 +6,9 @@ use backend_uzu::{
     prelude::{DecodingConfig, SamplingMethod},
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
+use proc_macros::uzu_bench;
 
-use crate::{
-    common::{metrics::wait_gpu_cooldown, path::get_test_model_path},
-    uzu_bench,
-};
+use crate::common::{metrics::wait_gpu_cooldown, path::get_test_model_path};
 
 fn create_generator<B: Backend>() -> LanguageModelGenerator<B> {
     let model_path = get_test_model_path();

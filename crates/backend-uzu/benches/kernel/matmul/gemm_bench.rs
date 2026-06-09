@@ -15,13 +15,11 @@ use backend_uzu::{
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use half::bf16;
+use proc_macros::uzu_bench;
 
-use crate::{
-    common::{
-        matmul::{bench_fp_gemm_shapes, iter_encode_loop},
-        type_short_name,
-    },
-    uzu_bench,
+use crate::common::{
+    matmul::{bench_fp_gemm_shapes, iter_encode_loop},
+    type_short_name,
 };
 
 #[uzu_bench]

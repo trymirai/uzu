@@ -8,8 +8,6 @@ fn bench_runner(benches: &[&dyn Fn()]) {
     criterion::runner(benches);
 }
 
-use proc_macros::__internal_uzu_bench as uzu_bench;
-
 #[macro_use]
 #[path = "../tests/common/mod.rs"]
 mod common;
