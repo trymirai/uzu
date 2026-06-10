@@ -7,10 +7,13 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        gpu_types::{
+            QuantizationMethod, QuantizationMode,
+            gemm::{GemmBPrologueKind, GemmDTransform},
+        },
         kernel::{
             Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulTask},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -288,5 +291,56 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         )?;
 
         Ok(output)
+    }
+
+    fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        let (b_prologue, bits, group_size) = match &self.mode {
+            Mode::FullPrecision => (GemmBPrologueKind::FullPrecision, None, None),
+            Mode::Quantized {
+                method,
+                mode,
+                group_size,
+                ..
+            } => {
+                let prologue = match method {
+                    QuantizationMethod::ScaleBias => GemmBPrologueKind::ScaleBiasDequant,
+                    QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
+                    QuantizationMethod::ScaleSymmetric => GemmBPrologueKind::ScaleSymmetricDequant,
+                };
+                (prologue, Some(DataType::from(*mode).size_in_bits() as u32), Some(*group_size))
+            },
+        };
+
+        let mut d_transform = GemmDTransform::empty();
+        if self.biases.is_some() {
+            d_transform |= GemmDTransform::BIAS;
+        }
+        if matches!(
+            &self.mode,
+            Mode::Quantized {
+                output_hadamard_factors: Some(_),
+                ..
+            }
+        ) {
+            d_transform |= GemmDTransform::RHT;
+        }
+
+        let task = MatmulTask {
+            m: 0,
+            n: self.output_dim as u32,
+            k: self.input_dim as u32,
+            b_transpose: true,
+            b_offset: 0,
+            b_leading_dimension: None,
+            b_prologue,
+            bits,
+            group_size,
+            d_transform,
+        };
+        self.kernel.borrow_mut().precompile(context, &task, batch_sizes)
     }
 }

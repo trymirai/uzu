@@ -1,6 +1,7 @@
 use crate::{
     backends::common::{
-        AsBufferRangeRef, Backend, Buffer, Encoder, Kernels, kernel::matmul::arguments::MatmulArguments,
+        AsBufferRangeRef, Backend, Buffer, Encoder, Kernels,
+        kernel::matmul::{arguments::MatmulArguments, task::MatmulTask},
     },
     data_type::DataType,
 };
@@ -19,5 +20,15 @@ pub trait MatmulKernel: Sized {
         &mut self,
         arguments: MatmulArguments<Self::Backend, TB>,
         encoder: &mut Encoder<Self::Backend>,
+    ) -> Result<(), <Self::Backend as Backend>::Error>;
+
+    /// Compiles every pipeline `encode` would select for `task` at each batch
+    /// size, so the first real `encode` hits a warm cache. `task.m` is ignored;
+    /// `precompile` sweeps `m` over `batch_sizes`.
+    fn precompile(
+        &mut self,
+        context: &<Self::Backend as Backend>::Context,
+        task: &MatmulTask,
+        batch_sizes: &[u32],
     ) -> Result<(), <Self::Backend as Backend>::Error>;
 }

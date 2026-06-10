@@ -6,10 +6,13 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::HadamardTransformOrder,
+        gpu_types::{
+            HadamardTransformOrder,
+            gemm::{GemmBPrologueKind, GemmDTransform},
+        },
         kernel::{
             HadamardTransformKernel, Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulTask},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
@@ -253,5 +256,43 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         }
 
         Ok(output)
+    }
+
+    fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.base_linear.precompile(context, batch_sizes)?;
+
+        let down_task = MatmulTask {
+            m: 0,
+            n: self.lora_rank as u32,
+            k: self.input_dim as u32,
+            b_transpose: true,
+            b_offset: 0,
+            b_leading_dimension: None,
+            b_prologue: GemmBPrologueKind::FullPrecision,
+            bits: None,
+            group_size: None,
+            d_transform: GemmDTransform::empty(),
+        };
+        self.adapter_down_kernel.borrow_mut().precompile(context, &down_task, batch_sizes)?;
+
+        let up_task = MatmulTask {
+            m: 0,
+            n: self.output_dim as u32,
+            k: self.lora_rank as u32,
+            b_transpose: true,
+            b_offset: 0,
+            b_leading_dimension: None,
+            b_prologue: GemmBPrologueKind::FullPrecision,
+            bits: None,
+            group_size: None,
+            d_transform: GemmDTransform::ACCUMULATE,
+        };
+        self.adapter_up_kernel.borrow_mut().precompile(context, &up_task, batch_sizes)?;
+
+        Ok(())
     }
 }

@@ -6,10 +6,13 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder, Kernels,
-        gpu_types::{QuantizationMethod, QuantizationMode},
+        gpu_types::{
+            QuantizationMethod, QuantizationMode,
+            gemm::{GemmBPrologueKind, GemmDTransform},
+        },
         kernel::{
             FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulTask},
         },
     },
     config::{
@@ -516,6 +519,73 @@ impl<B: Backend> Embedding<B> {
         };
 
         Ok(output)
+    }
+
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), EmbeddingError<B>> {
+        let (readout, b_prologue, bits, group_size) = match &self.tying {
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::FullPrecision {
+                        readout,
+                        ..
+                    },
+            }
+            | EmbeddingTying::Untied {
+                output_ty:
+                    UntiedEmbeddingReadoutType::FullPrecision {
+                        readout,
+                        ..
+                    },
+                ..
+            } => (readout, GemmBPrologueKind::FullPrecision, None, None),
+            EmbeddingTying::Tied {
+                ty:
+                    TiedEmbeddingType::Quantized {
+                        readout,
+                        readout_config,
+                        ..
+                    },
+            }
+            | EmbeddingTying::Untied {
+                output_ty:
+                    UntiedEmbeddingReadoutType::Quantized {
+                        readout,
+                        readout_config,
+                        ..
+                    },
+                ..
+            } => {
+                let prologue = match readout_config.method {
+                    QuantizationMethod::ScaleBias => GemmBPrologueKind::ScaleBiasDequant,
+                    QuantizationMethod::ScaleZeroPoint => GemmBPrologueKind::ScaleZeroPointDequant,
+                    QuantizationMethod::ScaleSymmetric => GemmBPrologueKind::ScaleSymmetricDequant,
+                };
+                (
+                    readout,
+                    prologue,
+                    Some(DataType::from(readout_config.mode).size_in_bits() as u32),
+                    Some(readout_config.group_size),
+                )
+            },
+        };
+
+        let task = MatmulTask {
+            m: 0,
+            n: self.vocab_size,
+            k: self.model_dim,
+            b_transpose: true,
+            b_offset: 0,
+            b_leading_dimension: None,
+            b_prologue,
+            bits,
+            group_size,
+            d_transform: GemmDTransform::empty(),
+        };
+        readout.borrow_mut().precompile(context, &task, batch_sizes).map_err(EmbeddingError::BackendError)
     }
 
     pub fn encode_readout(

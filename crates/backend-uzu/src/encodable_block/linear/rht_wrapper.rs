@@ -108,4 +108,12 @@ impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
         );
         self.inner_linear.encode(input, batch_dim, encoder)
     }
+
+    fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.inner_linear.precompile(context, batch_sizes)
+    }
 }

@@ -20,3 +20,26 @@ pub enum MixerExecutables<B: Backend> {
         mixer: DeltaNetMixer<B>,
     },
 }
+
+impl<B: Backend> MixerExecutables<B> {
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        match self {
+            MixerExecutables::Attention {
+                attention,
+            } => attention.precompile(context, batch_sizes),
+            MixerExecutables::StateSpace {
+                ..
+            }
+            | MixerExecutables::ShortConv {
+                ..
+            }
+            | MixerExecutables::DeltaNet {
+                ..
+            } => Ok(()),
+        }
+    }
+}

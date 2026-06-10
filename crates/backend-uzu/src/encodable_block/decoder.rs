@@ -344,6 +344,23 @@ impl<B: Backend> Decoder<B> {
         Ok((main, shortcut))
     }
 
+    /// Compiles every matmul pipeline the decoder will use, for each batch size,
+    /// replacing the old forward-pass warmup.
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), DecoderError<B>> {
+        self.embed.precompile(context, batch_sizes)?;
+        for layer in self.layers.iter() {
+            layer.precompile(context, batch_sizes).map_err(DecoderError::BackendError)?;
+        }
+        if let Some(per_layer_embedding) = &self.per_layer_embedding {
+            per_layer_embedding.precompile(context, batch_sizes).map_err(DecoderError::BackendError)?;
+        }
+        Ok(())
+    }
+
     pub fn encode_prefill(
         &self,
         args: DecoderArguments<B>,

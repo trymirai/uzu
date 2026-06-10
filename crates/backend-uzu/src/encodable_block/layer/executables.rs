@@ -313,6 +313,19 @@ impl<B: Backend> LayerExecutables<B> {
         })
     }
 
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.mixer.precompile(context, batch_sizes)?;
+        self.mlp.precompile(context, batch_sizes)?;
+        if let Some(ple_projection) = &self.ple_projection {
+            ple_projection.precompile(context, batch_sizes)?;
+        }
+        Ok(())
+    }
+
     pub fn encode(
         &self,
         args: LayerArguments<B>,
