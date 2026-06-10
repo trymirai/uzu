@@ -13,6 +13,11 @@ const PROBABILITY_MAX: f64 = 1.0;
 const TOP_K_STEP: i64 = 1;
 const TOP_K_MIN: i64 = 1;
 const TOP_K_MAX: i64 = 4096;
+const REPETITION_PENALTY_STEP: f64 = 0.05;
+const REPETITION_PENALTY_MAX: f64 = 2.0;
+const SUFFIX_REPETITION_LENGTH_STEP: i64 = 32;
+const SUFFIX_REPETITION_LENGTH_MIN: i64 = 32;
+const SUFFIX_REPETITION_LENGTH_MAX: i64 = 4096;
 
 pub struct SettingsFlow;
 
@@ -33,6 +38,8 @@ enum Field {
     TopK,
     TopP,
     MinP,
+    RepetitionPenalty,
+    SuffixRepetitionLength,
 }
 
 fn visible_fields(
@@ -45,7 +52,10 @@ fn visible_fields(
     }
     fields.push(Field::SamplingMode);
     if preferences.sampling.mode == SamplingMode::Stochastic {
-        fields.extend([Field::Temperature, Field::TopK, Field::TopP, Field::MinP]);
+        fields.extend([Field::Temperature, Field::TopK, Field::TopP, Field::MinP, Field::RepetitionPenalty]);
+        if preferences.sampling.suffix_repetition_length_enabled() {
+            fields.push(Field::SuffixRepetitionLength);
+        }
     }
     fields
 }
@@ -82,6 +92,20 @@ fn adjust(
             preferences.sampling.min_p =
                 step_f64(preferences.sampling.min_p, delta, PROBABILITY_STEP, 0.0, PROBABILITY_MAX);
         },
+        Field::RepetitionPenalty => {
+            preferences.sampling.repetition_penalty = step_f64(
+                preferences.sampling.repetition_penalty,
+                delta,
+                REPETITION_PENALTY_STEP,
+                1.0,
+                REPETITION_PENALTY_MAX,
+            );
+        },
+        Field::SuffixRepetitionLength => {
+            preferences.sampling.suffix_repetition_length = (preferences.sampling.suffix_repetition_length
+                + delta * SUFFIX_REPETITION_LENGTH_STEP)
+                .clamp(SUFFIX_REPETITION_LENGTH_MIN, SUFFIX_REPETITION_LENGTH_MAX);
+        },
     }
 }
 
@@ -97,6 +121,16 @@ fn toggle(
         Field::TopK => preferences.sampling.top_k_enabled = !preferences.sampling.top_k_enabled,
         Field::TopP => preferences.sampling.top_p_enabled = !preferences.sampling.top_p_enabled,
         Field::MinP => preferences.sampling.min_p_enabled = !preferences.sampling.min_p_enabled,
+        Field::RepetitionPenalty => {
+            preferences.sampling.repetition_penalty_enabled = !preferences.sampling.repetition_penalty_enabled
+        },
+        Field::SuffixRepetitionLength => {
+            assert!(
+                preferences.sampling.suffix_repetition_length_enabled(),
+                "suffix_repetition_length cannot be enabled"
+            );
+            preferences.sampling.suffix_repetition_length_disable();
+        },
     }
 }
 
@@ -258,6 +292,10 @@ fn SettingsFlowView(
             rows.push(field_row(Field::TopK, &preferences, selected, &theme, support, defaults));
             rows.push(field_row(Field::TopP, &preferences, selected, &theme, support, defaults));
             rows.push(field_row(Field::MinP, &preferences, selected, &theme, support, defaults));
+            rows.push(field_row(Field::RepetitionPenalty, &preferences, selected, &theme, support, defaults));
+            if preferences.sampling.suffix_repetition_length_enabled() {
+                rows.push(field_row(Field::SuffixRepetitionLength, &preferences, selected, &theme, support, defaults));
+            }
         },
     }
 
@@ -371,6 +409,32 @@ fn field_row(
             toggle_control(
                 preferences.sampling.min_p_enabled,
                 float_value(preferences.sampling.min_p_enabled, preferences.sampling.min_p, defaults.min_p),
+                is_selected,
+                theme,
+            ),
+        ),
+        Field::RepetitionPenalty => (
+            "Repetition penalty",
+            toggle_control(
+                preferences.sampling.repetition_penalty_enabled,
+                float_value(
+                    preferences.sampling.repetition_penalty_enabled,
+                    preferences.sampling.repetition_penalty,
+                    defaults.repetition_penalty,
+                ),
+                is_selected,
+                theme,
+            ),
+        ),
+        Field::SuffixRepetitionLength => (
+            "Suffix repetition length",
+            toggle_control(
+                preferences.sampling.suffix_repetition_length_enabled(),
+                int_value(
+                    preferences.sampling.suffix_repetition_length_enabled(),
+                    preferences.sampling.suffix_repetition_length,
+                    defaults.suffix_repetition_length,
+                ),
                 is_selected,
                 theme,
             ),
