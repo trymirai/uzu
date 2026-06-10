@@ -1,6 +1,6 @@
 #![cfg(metal_backend)]
 
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 
 use crate::{
     array::ArrayContextExt,

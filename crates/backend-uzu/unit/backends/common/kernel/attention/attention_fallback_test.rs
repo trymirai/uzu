@@ -1,5 +1,5 @@
 use half::bf16;
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 
 use crate::{
     backends::{

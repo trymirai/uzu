@@ -634,6 +634,7 @@ dependencies = [
  "syn 2.0.117",
  "sysinfo",
  "tempfile",
+ "test-macros",
  "test-tag",
  "thiserror 2.0.18",
  "tokenizers",
@@ -6944,6 +6945,13 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-input-types",
  "winapi",
+]
+
+[[package]]
+name = "test-macros"
+version = "0.5.12"
+dependencies = [
+ "proc-macros",
 ]
 
 [[package]]

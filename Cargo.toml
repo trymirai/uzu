@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/proc-macros",
+    "crates/test-macros",
     "crates/bindings-types",
     "crates/bindings",
     "crates/shoji",
@@ -43,6 +44,7 @@ keywords = [
 
 [workspace.dependencies]
 proc-macros = { path = "crates/proc-macros" }
+test-macros = { path = "crates/test-macros" }
 bindings-types = { path = "crates/bindings-types", default-features = false }
 bindings = { path = "crates/bindings", default-features = false }
 shoji = { path = "crates/shoji", default-features = false }

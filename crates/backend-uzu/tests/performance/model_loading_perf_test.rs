@@ -1,5 +1,5 @@
 use backend_uzu::session::{ChatSession, config::DecodingConfig};
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 
 use crate::common::{path::get_test_model_path, perf::run_perf};
 

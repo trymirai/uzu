@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 
 use crate::{
     backends::common::Backend, common::path::get_test_model_path,

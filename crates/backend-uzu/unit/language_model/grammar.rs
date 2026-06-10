@@ -1,9 +1,9 @@
 #![cfg(all(metal_backend, grammar_xgrammar))]
 
 use metal::MTLDevice;
-use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use test_macros::uzu_test;
 use tokenizers::Tokenizer;
 use xgrammar::{DLDevice, DLDeviceType, DLTensor, Grammar, GrammarCompiler, GrammarMatcher, TokenizerInfo};
 

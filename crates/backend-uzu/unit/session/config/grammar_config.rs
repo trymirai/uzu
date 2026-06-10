@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use proc_macros::uzu_test;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use test_macros::uzu_test;
 use test_tag::tag;
 
 use crate::{

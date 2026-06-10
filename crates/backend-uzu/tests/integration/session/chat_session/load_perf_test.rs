@@ -3,7 +3,7 @@
 use std::{path::PathBuf, time::Instant};
 
 use backend_uzu::session::{Session, config::DecodingConfig};
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 use test_tag::tag;
 
 #[ignore = "requires THINKING_TEST_MODEL pointing at a downloaded model"]

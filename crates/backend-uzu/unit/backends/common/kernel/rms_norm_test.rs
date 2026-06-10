@@ -5,8 +5,8 @@ use std::{
 
 use half::{bf16, f16};
 use num_traits::Float;
-use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
+use test_macros::uzu_test;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},

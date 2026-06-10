@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use half::bf16;
 use num_traits::Float;
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,

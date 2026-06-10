@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 
 use crate::speculators::{fixed_token_speculator::FixedTokensSpeculator, speculator::Speculator};
 

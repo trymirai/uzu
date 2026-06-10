@@ -1,4 +1,4 @@
-use proc_macros::uzu_test;
+use test_macros::uzu_test;
 
 use crate::speculators::token_finder::TokenFinder;
 
