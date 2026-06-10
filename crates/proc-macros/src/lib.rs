@@ -4,6 +4,7 @@ mod uzu_test;
 
 use proc_macro::TokenStream;
 
+// CPU kernel DSL
 #[proc_macro_attribute]
 pub fn kernel(
     args: TokenStream,
@@ -12,6 +13,7 @@ pub fn kernel(
     dsl::kernel(args, input)
 }
 
+// Config DSL
 #[proc_macro_attribute]
 pub fn uzu_config_abstract(
     args: TokenStream,
@@ -28,12 +30,13 @@ pub fn uzu_config(
     uzu_config::uzu_config(args, input)
 }
 
+// Test DSL
 #[proc_macro_attribute]
 pub fn uzu_test(
     args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
-    uzu_test::__internal_uzu_test(args, input)
+    uzu_test::uzu_test(args, input)
 }
 
 #[proc_macro_attribute]
@@ -41,13 +44,5 @@ pub fn uzu_bench(
     args: TokenStream,
     input: TokenStream,
 ) -> TokenStream {
-    uzu_test::__internal_uzu_bench(args, input)
-}
-
-#[proc_macro_attribute]
-pub fn uzu_ignore(
-    args: TokenStream,
-    input: TokenStream,
-) -> TokenStream {
-    uzu_test::__internal_uzu_ignored(args, input)
+    uzu_test::uzu_bench(args, input)
 }

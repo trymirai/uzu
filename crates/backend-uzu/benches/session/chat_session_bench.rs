@@ -2,8 +2,11 @@ use std::time::Duration;
 
 use backend_uzu::{
     backends::common::Backend,
-    prelude::{DecodingConfig, Input, Output, RunConfig},
-    session::ChatSession,
+    session::{
+        ChatSession,
+        config::{DecodingConfig, RunConfig},
+        types::{Input, Output},
+    },
 };
 use criterion::{BenchmarkId, Criterion};
 use proc_macros::uzu_bench;

@@ -3,7 +3,7 @@ use std::time::Duration;
 use backend_uzu::{
     _benchmarks::{LanguageModelConfig, LanguageModelGenerator, RunModelResult, TrieCreationConfig, TrieNode},
     backends::common::Backend,
-    prelude::{DecodingConfig, SamplingMethod},
+    session::{config::DecodingConfig, parameter::SamplingMethod},
 };
 use criterion::{BenchmarkId, Criterion, Throughput};
 use proc_macros::uzu_bench;

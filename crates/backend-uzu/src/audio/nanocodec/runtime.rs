@@ -8,6 +8,8 @@ use std::{
 
 use serde::Deserialize;
 
+#[cfg(test)]
+use crate::backends::common::kernel::AudioFsqEncodeKernel;
 use crate::{
     array::{ArrayContextExt, size_for_shape},
     audio::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioResult, AudioTokenGrid},
@@ -16,8 +18,7 @@ use crate::{
         kernel::{
             ActivationKernel, AudioAddKernel, AudioCausalConv1dGroupedKernel, AudioCausalConv1dGroupedResidualKernel,
             AudioCausalConv1dKernel, AudioCausalConvTranspose1dCausalPadKernel, AudioConv1dKernel,
-            AudioFsqDecodeKernel, AudioFsqEncodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel,
-            AudioQuantizerDecodeKernel,
+            AudioFsqDecodeKernel, AudioHalfSnakeKernel, AudioNormNcsKernel, AudioQuantizerDecodeKernel,
         },
     },
     config::{
@@ -44,8 +45,10 @@ mod support;
 
 use loaders::load_audio_runtime_from_tts_config;
 pub(crate) use profile::PendingStreamPcmChunk;
+#[cfg(test)]
+use stream::pack_pcm_to_padded;
 pub use stream::{AudioDecodeStepStats, AudioDecodeStreamState};
-use stream::{extract_delta_from_padded_with_offset_snapshot, pack_pcm_to_padded, unpack_padded_to_pcm};
+use stream::{extract_delta_from_padded_with_offset_snapshot, unpack_padded_to_pcm};
 use structured::{StructuredAudioCodecGraph, StructuredAudioRuntimeResources};
 use support::{DecodedPaddedAudio, checked_product, convert_lengths_to_i32, usize_to_i32};
 
@@ -198,6 +201,7 @@ impl NanoCodecFsqRuntimeConfig {
         self.structured_decoder.as_ref().map(|decoder| decoder.semantic_codebook_size)
     }
 
+    #[cfg(test)]
     pub fn eps(&self) -> f32 {
         self.eps
     }
@@ -369,6 +373,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
         })
     }
 
+    #[cfg(test)]
     fn fsq_encode(
         &self,
         pcm: &AudioPcmBatch,
@@ -748,6 +753,7 @@ impl<B: Backend> NanoCodecFsqRuntime<B> {
 }
 
 impl<B: Backend> AudioCodecRuntime for NanoCodecFsqRuntime<B> {
+    #[cfg(test)]
     fn encode(
         &self,
         pcm: &AudioPcmBatch,

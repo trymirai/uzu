@@ -3,10 +3,11 @@
 use proc_macros::uzu_test;
 
 use crate::{
-    audio::{NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig},
+    audio::{
+        AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid, NanoCodecFsqRuntime, NanoCodecFsqRuntimeConfig,
+    },
     backends::metal::Metal,
     common::audio::fsq_reference::{fsq_decode_reference, fsq_encode_reference},
-    prelude::{AudioCodecRuntime, AudioError, AudioPcmBatch, AudioTokenGrid},
 };
 
 fn create_runtime() -> NanoCodecFsqRuntime<Metal> {
@@ -88,8 +89,7 @@ fn nanocodec_runtime_encode_matches_fsq_reference() {
         runtime.config().num_levels_per_group(),
         runtime.config().dim_base_index(),
         runtime.config().eps(),
-    )
-    .expect("fsq reference encode");
+    );
     let expected_u32: Vec<u32> = expected_i32.into_iter().map(|value| value as u32).collect();
     let expected = AudioTokenGrid::new(
         expected_u32.into_boxed_slice(),
@@ -124,8 +124,7 @@ fn nanocodec_runtime_decode_matches_fsq_reference() {
         encoded.frames(),
         runtime.config().codebook_dim_per_group(),
         runtime.config().num_levels_per_group(),
-    )
-    .expect("fsq reference decode");
+    );
     let expected_samples =
         unpack_reference_output(&reference_padded, runtime.config().channels(), encoded.frames(), encoded.lengths());
 
@@ -178,7 +177,7 @@ fn nanocodec_runtime_encode_rejects_channel_mismatch() {
 
 #[uzu_test]
 fn fsq_decode_reference_masks_values_beyond_lengths() {
-    let output = fsq_decode_reference(&[0, 7, 11, 3, 5, 9], &[2], 1, 2, 3, 2, &[8, 5]).expect("decode");
+    let output = fsq_decode_reference(&[0, 7, 11, 3, 5, 9], &[2], 1, 2, 3, 2, &[8, 5]);
 
     assert_eq!(output.len(), 12);
     let masked_t2 = [output[2], output[5], output[8], output[11]];
@@ -197,8 +196,7 @@ fn fsq_encode_reference_masks_values_beyond_lengths() {
         &[8, 6],
         &[1, 8],
         1e-3,
-    )
-    .expect("encode");
+    );
 
     assert_eq!(tokens.len(), 8);
     assert_eq!(tokens[3], 0);

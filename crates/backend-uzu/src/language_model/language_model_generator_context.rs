@@ -16,10 +16,9 @@ use crate::{
     forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape},
     language_model::rng::PRng,
     parameters::ParameterLoader,
-    prelude::ContextLength,
     session::{
         config::DecodingConfig,
-        parameter::{ConfigResolvableValue, ResolvableValue},
+        parameter::{ConfigResolvableValue, ContextLength, ResolvableValue},
         types::Error,
     },
 };

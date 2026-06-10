@@ -5,7 +5,7 @@ use tokenizers::Tokenizer;
 
 use crate::{
     common::path::get_test_model_path,
-    prelude::{PromptLookupSpeculator, Speculator},
+    speculators::{prompt_lookup_speculator::PromptLookupSpeculator, speculator::Speculator},
 };
 
 fn load_tokenizer() -> Tokenizer {
