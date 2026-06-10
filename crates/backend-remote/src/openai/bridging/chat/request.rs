@@ -58,6 +58,8 @@ pub fn build(
                 top_k: _,
                 top_p,
                 min_p: _,
+                repetition_penalty: _,
+                suffix_repetition_length: _,
             } => {
                 request.temperature = temperature.map(|v| v as f32);
                 request.top_p = top_p.map(|v| v as f32);
