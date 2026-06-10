@@ -1,6 +1,8 @@
+use test_macros::uzu_test;
+
 use super::*;
 
-#[test]
+#[uzu_test]
 fn test_hazard_tracker_simple_compute_sequence() {
     let mut ht = HazardTracker::new();
 

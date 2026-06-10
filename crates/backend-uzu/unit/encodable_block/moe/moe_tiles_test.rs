@@ -1,4 +1,5 @@
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use test_macros::uzu_test;
 
 use crate::{
     backends::common::{
@@ -11,7 +12,7 @@ use crate::{
     encodable_block::mlp::moe::tests::{cpu_tile_counts, cpu_tile_scan},
 };
 
-#[test]
+#[uzu_test]
 fn test_tile_counts_correctness() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -54,7 +55,7 @@ fn test_tile_counts_correctness() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_tile_scan_correctness() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -97,7 +98,7 @@ fn test_tile_scan_correctness() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_tile_edge_cases() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();

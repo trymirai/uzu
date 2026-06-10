@@ -109,9 +109,11 @@ impl Default for TtsRunConfig {
 
 #[cfg(test)]
 mod tests {
+    use test_macros::uzu_test;
+
     use super::{TtsChunkPolicy, TtsNonStreamingMode, TtsRunConfig};
 
-    #[test]
+    #[uzu_test]
     fn default_run_config_matches_production_defaults() {
         let config = TtsRunConfig::default();
         assert!(config.streaming_enabled);
@@ -128,7 +130,7 @@ mod tests {
         assert!((config.chunk_hysteresis_fraction - 0.25).abs() < f64::EPSILON);
     }
 
-    #[test]
+    #[uzu_test]
     fn fixed_chunk_constructor_sets_bounds() {
         let config = TtsRunConfig::fixed_chunk_frames(64);
         assert_eq!(config.chunk_policy, TtsChunkPolicy::Fixed);
@@ -137,7 +139,7 @@ mod tests {
         assert_eq!(config.max_chunk_frames, 64);
     }
 
-    #[test]
+    #[uzu_test]
     fn run_config_validation_rejects_invalid_bounds() {
         let invalid = TtsRunConfig {
             min_chunk_frames: 32,
@@ -147,7 +149,7 @@ mod tests {
         assert!(invalid.validate().is_err());
     }
 
-    #[test]
+    #[uzu_test]
     fn run_config_validation_rejects_zero_initial_chunk() {
         let invalid = TtsRunConfig {
             initial_chunk_frames: 0,
@@ -156,7 +158,7 @@ mod tests {
         assert!(invalid.validate().is_err());
     }
 
-    #[test]
+    #[uzu_test]
     fn run_config_validation_rejects_zero_semantic_cap() {
         let invalid = TtsRunConfig {
             max_semantic_frames: 0,
@@ -165,7 +167,7 @@ mod tests {
         assert!(invalid.validate().is_err());
     }
 
-    #[test]
+    #[uzu_test]
     fn run_config_validation_rejects_zero_workspace_frames() {
         let invalid = TtsRunConfig {
             max_stream_workspace_frames: 0,
@@ -174,7 +176,7 @@ mod tests {
         assert!(invalid.validate().is_err());
     }
 
-    #[test]
+    #[uzu_test]
     fn run_config_validation_rejects_workspace_smaller_than_max_chunk() {
         let invalid = TtsRunConfig {
             max_chunk_frames: 256,

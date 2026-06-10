@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use test_macros::uzu_test;
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
@@ -48,7 +49,7 @@ enum TraceEventType {
     },
 }
 
-#[test]
+#[uzu_test]
 #[ignore]
 fn bench_allocator_generation_trace() {
     let file = BufReader::with_capacity(1 << 20, File::open("/tmp/allocator_trace.jsonl").unwrap());

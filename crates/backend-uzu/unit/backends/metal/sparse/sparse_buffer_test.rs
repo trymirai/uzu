@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use test_macros::uzu_test;
+
 use crate::{
     backends::{
         common::{Backend, SparseBuffer},
@@ -26,7 +28,7 @@ fn pages_for_heaps(
     (heap_offset * pages_per_heap)..((heap_offset + heap_count) * pages_per_heap)
 }
 
-#[test]
+#[uzu_test]
 fn test_mapping_succeeds() {
     let ctx = create_context::<Metal>();
     let capacity = buffer_capacity(ctx.as_ref(), 4);
@@ -36,7 +38,7 @@ fn test_mapping_succeeds() {
     sparse_buffer.map(ctx.as_ref(), &pages).expect("Failed to map sparse buffer");
 }
 
-#[test]
+#[uzu_test]
 fn test_unmapping_succeeds() {
     let ctx = create_context::<Metal>();
     let capacity = buffer_capacity(ctx.as_ref(), 4);
@@ -47,7 +49,7 @@ fn test_unmapping_succeeds() {
     sparse_buffer.unmap(ctx.as_ref(), &pages).expect("Failed to unmap sparse buffer");
 }
 
-#[test]
+#[uzu_test]
 fn test_partial_unmapping_succeeds() {
     let ctx = create_context::<Metal>();
     let capacity = buffer_capacity(ctx.as_ref(), 4);
@@ -59,7 +61,7 @@ fn test_partial_unmapping_succeeds() {
     sparse_buffer.unmap(ctx.as_ref(), &unmapped).expect("Failed to unmap sparse buffer");
 }
 
-#[test]
+#[uzu_test]
 fn test_mapping_uses_minimum_heaps() {
     let ctx = create_context::<Metal>();
     let heap_count = 4;
@@ -74,7 +76,7 @@ fn test_mapping_uses_minimum_heaps() {
     assert_eq!(heaps.heaps_count(), expected, "mapping should allocate the minimum number of heaps");
 }
 
-#[test]
+#[uzu_test]
 fn test_remapping_reuses_freed_pages() {
     let ctx = create_context::<Metal>();
     let capacity = buffer_capacity(ctx.as_ref(), 6);
@@ -96,7 +98,7 @@ fn test_remapping_reuses_freed_pages() {
     );
 }
 
-#[test]
+#[uzu_test]
 fn test_full_unmap_then_remap_reuses_heaps() {
     let ctx = create_context::<Metal>();
     let capacity = buffer_capacity(ctx.as_ref(), 4);
@@ -116,7 +118,7 @@ fn test_full_unmap_then_remap_reuses_heaps() {
     );
 }
 
-#[test]
+#[uzu_test]
 fn test_remapping_same_pages_is_noop() {
     let ctx = create_context::<Metal>();
     let capacity = buffer_capacity(ctx.as_ref(), 4);
@@ -135,7 +137,7 @@ fn test_remapping_same_pages_is_noop() {
     );
 }
 
-#[test]
+#[uzu_test]
 fn test_mapping_multiple_gaps_reserves_pages_between_gaps() {
     let ctx = create_context::<Metal>();
     let pages_per_heap = ctx.sparse_heap_pool().heap_capacity_pages();
@@ -152,7 +154,7 @@ fn test_mapping_multiple_gaps_reserves_pages_between_gaps() {
     );
 }
 
-#[test]
+#[uzu_test]
 fn test_drop_releases_pool_heaps() {
     // Regression: a mapped buffer dropped without an explicit unmap must
     // still release its heap pages back to the shared pool.
@@ -173,7 +175,7 @@ fn test_drop_releases_pool_heaps() {
     );
 }
 
-#[test]
+#[uzu_test]
 fn test_drop_does_not_disturb_other_buffer_mappings() {
     // Dropping one buffer must not unmap heap pages held by another buffer
     // sharing the same pool.
@@ -194,7 +196,7 @@ fn test_drop_does_not_disturb_other_buffer_mappings() {
     assert_eq!(current_heaps, baseline, "dropping a transient buffer must leave keeper buffer's mappings intact",);
 }
 
-#[test]
+#[uzu_test]
 fn test_sequential_mappings_are_compact() {
     let ctx = create_context::<Metal>();
     let capacity = buffer_capacity(ctx.as_ref(), 4);

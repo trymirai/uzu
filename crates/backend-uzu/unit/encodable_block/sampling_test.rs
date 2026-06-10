@@ -9,6 +9,7 @@ use num_traits::{Float, NumCast};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
+use test_macros::uzu_test;
 
 use crate::{
     common::{
@@ -167,7 +168,7 @@ fn sampling_case() -> impl Strategy<Value = SamplingCase> {
     )
 }
 
-#[test]
+#[uzu_test]
 fn test_sampling_prop() {
     let contextes = TestContextes::new();
 
