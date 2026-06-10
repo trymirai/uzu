@@ -89,14 +89,29 @@ fn toggle(
     preferences: &mut Preferences,
     field: Field,
     support: ThinkingSupport,
+    defaults: ModelSamplingDefaults,
 ) {
+    let sampling = &mut preferences.sampling;
     match field {
         Field::Thinking => adjust(preferences, Field::Thinking, 1, support),
-        Field::SamplingMode => preferences.sampling.mode = preferences.sampling.mode.next(),
-        Field::Temperature => preferences.sampling.temperature_enabled = !preferences.sampling.temperature_enabled,
-        Field::TopK => preferences.sampling.top_k_enabled = !preferences.sampling.top_k_enabled,
-        Field::TopP => preferences.sampling.top_p_enabled = !preferences.sampling.top_p_enabled,
-        Field::MinP => preferences.sampling.min_p_enabled = !preferences.sampling.min_p_enabled,
+        Field::SamplingMode => sampling.mode = sampling.mode.next(),
+        Field::Temperature => {
+            toggle_value(&mut sampling.temperature_enabled, &mut sampling.temperature, defaults.temperature)
+        },
+        Field::TopK => toggle_value(&mut sampling.top_k_enabled, &mut sampling.top_k, defaults.top_k),
+        Field::TopP => toggle_value(&mut sampling.top_p_enabled, &mut sampling.top_p, defaults.top_p),
+        Field::MinP => toggle_value(&mut sampling.min_p_enabled, &mut sampling.min_p, defaults.min_p),
+    }
+}
+
+fn toggle_value<T>(
+    enabled: &mut bool,
+    value: &mut T,
+    default: Option<T>,
+) {
+    *enabled = !*enabled;
+    if *enabled && let Some(default) = default {
+        *value = default;
     }
 }
 
@@ -212,7 +227,7 @@ fn SettingsFlowView(
             },
             KeyCode::Char(' ') => {
                 let mut preferences = draft.get();
-                toggle(&mut preferences, field, support);
+                toggle(&mut preferences, field, support, defaults);
                 draft.set(preferences);
             },
             KeyCode::Enter => {
