@@ -591,7 +591,9 @@ export declare class SamplingMethodStochastic {
   topK?: number
   topP?: number
   minP?: number
-  constructor(temperature?: number, topK?: number, topP?: number, minP?: number)
+  repetitionPenalty?: number
+  suffixRepetitionLength?: number
+  constructor(temperature?: number, topK?: number, topP?: number, minP?: number, repetitionPenalty?: number, suffixRepetitionLength?: number)
 }
 
 export declare class SamplingPolicyCustom {
