@@ -1,6 +1,7 @@
 use super::{AudioPcmBatch, AudioResult, AudioTokenGrid};
 
 pub trait AudioCodecRuntime {
+    #[cfg(test)]
     fn encode(
         &self,
         pcm: &AudioPcmBatch,

@@ -62,6 +62,9 @@ pub struct SamplingPreferences {
     pub top_p: f64,
     pub min_p_enabled: bool,
     pub min_p: f64,
+    pub repetition_penalty_enabled: bool,
+    pub repetition_penalty: f64,
+    pub suffix_repetition_length: i64,
 }
 
 impl Default for SamplingPreferences {
@@ -76,11 +79,22 @@ impl Default for SamplingPreferences {
             top_p: 0.95,
             min_p_enabled: false,
             min_p: 0.05,
+            repetition_penalty_enabled: false,
+            repetition_penalty: 1.1,
+            suffix_repetition_length: 1024,
         }
     }
 }
 
 impl SamplingPreferences {
+    pub fn suffix_repetition_length_enabled(&self) -> bool {
+        self.repetition_penalty_enabled
+    }
+
+    pub fn suffix_repetition_length_disable(&mut self) {
+        self.repetition_penalty_enabled = false;
+    }
+
     pub fn policy(&self) -> SamplingPolicy {
         match self.mode {
             SamplingMode::ModelDefault => SamplingPolicy::Default {},
@@ -93,6 +107,10 @@ impl SamplingPreferences {
                     top_k: self.top_k_enabled.then_some(self.top_k),
                     top_p: self.top_p_enabled.then_some(self.top_p),
                     min_p: self.min_p_enabled.then_some(self.min_p),
+                    repetition_penalty: self.repetition_penalty_enabled.then_some(self.repetition_penalty),
+                    suffix_repetition_length: self
+                        .suffix_repetition_length_enabled()
+                        .then_some(self.suffix_repetition_length),
                 },
             },
         }
@@ -115,6 +133,12 @@ impl SamplingPreferences {
                 }
                 if self.min_p_enabled {
                     parts.push(format!("min-p {:.2}", self.min_p));
+                }
+                if self.repetition_penalty_enabled {
+                    parts.push(format!("repetition penalty {:.2}", self.repetition_penalty));
+                }
+                if self.suffix_repetition_length_enabled() {
+                    parts.push(format!("suffix repetition length {:.2}", self.suffix_repetition_length));
                 }
                 if parts.is_empty() {
                     "stochastic".to_string()
@@ -214,12 +238,16 @@ mod tests {
                         top_k,
                         top_p,
                         min_p,
+                        repetition_penalty,
+                        suffix_repetition_length,
                     },
             } => {
                 assert_eq!(temperature, Some(0.7));
                 assert_eq!(top_k, None);
                 assert_eq!(top_p, Some(0.9));
                 assert_eq!(min_p, None);
+                assert_eq!(repetition_penalty, None);
+                assert_eq!(suffix_repetition_length, None);
             },
             _ => panic!("stochastic mode must map to a custom stochastic policy"),
         }

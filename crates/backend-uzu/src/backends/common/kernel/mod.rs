@@ -10,3 +10,7 @@ pub trait Kernels: Sized {
     autogen_kernels!();
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
 }
+
+#[cfg(test)]
+#[path = "../../../../unit/backends/common/kernel/mod.rs"]
+mod tests;

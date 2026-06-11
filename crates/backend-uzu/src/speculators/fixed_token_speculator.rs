@@ -47,3 +47,7 @@ impl Speculator for FixedTokensSpeculator {
         plausible_tokens.into_iter().map(|(k, v)| (k, v / sum)).collect()
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/speculators/fixed_token_speculator.rs"]
+mod tests;

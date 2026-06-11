@@ -98,6 +98,8 @@ pub struct ModelSamplingDefaults {
     pub top_k: Option<i64>,
     pub top_p: Option<f64>,
     pub min_p: Option<f64>,
+    pub repetition_penalty: Option<f64>,
+    pub suffix_repetition_length: Option<i64>,
 }
 
 impl ModelSamplingDefaults {
@@ -114,6 +116,12 @@ impl ModelSamplingDefaults {
         }
         if let Some(value) = self.min_p {
             parts.push(format!("min-p {value:.2}"));
+        }
+        if let Some(value) = self.repetition_penalty {
+            parts.push(format!("repetition penalty {:.2}", value));
+        }
+        if let Some(value) = self.suffix_repetition_length {
+            parts.push(format!("suffix repetition length {:.2}", value));
         }
         if parts.is_empty() {
             "model defaults".to_string()
@@ -169,6 +177,8 @@ impl ModelCapabilities {
             top_k: field("top_k").and_then(Value::as_i64),
             top_p: field("top_p").and_then(Value::as_f64),
             min_p: field("min_p").and_then(Value::as_f64),
+            repetition_penalty: field("repetition_penalty").and_then(Value::as_f64),
+            suffix_repetition_length: field("suffix_repetition_length").and_then(Value::as_i64),
         };
 
         Some(Self {

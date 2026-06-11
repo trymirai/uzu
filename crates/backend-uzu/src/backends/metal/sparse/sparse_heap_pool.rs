@@ -8,13 +8,11 @@ use std::{
 use metal::{MTL4UpdateSparseBufferMappingOperation, MTLBuffer, MTLSparsePageSize, MTLSparseTextureMappingMode};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use crate::{
-    backends::metal::{
-        error::MetalError,
-        metal_extensions::SparsePageSizeExt,
-        sparse::{MetalSparseMappingOpsBatch, sparse_heap::MetalSparseHeap},
-    },
-    prelude::MetalContext,
+use crate::backends::metal::{
+    MetalContext,
+    error::MetalError,
+    metal_extensions::SparsePageSizeExt,
+    sparse::{MetalSparseMappingOpsBatch, sparse_heap::MetalSparseHeap},
 };
 
 pub struct MetalSparseHeapPool {
@@ -176,5 +174,5 @@ impl MetalSparseHeapPool {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/backends/metal/sparse/sparse_heap_pool_test.rs"]
+#[path = "../../../../unit/backends/metal/sparse/sparse_heap_pool_test.rs"]
 mod tests;

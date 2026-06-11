@@ -236,6 +236,8 @@ fn build_reply_config(request: &ChatCompletionRequest) -> Result<ChatReplyConfig
             top_k: request.top_k,
             top_p: request.top_p,
             min_p: None,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
         });
     }
 

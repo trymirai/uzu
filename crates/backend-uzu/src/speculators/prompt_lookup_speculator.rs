@@ -40,3 +40,7 @@ impl Speculator for PromptLookupSpeculator {
         hm
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/speculators/prompt_lookup_speculator.rs"]
+mod tests;

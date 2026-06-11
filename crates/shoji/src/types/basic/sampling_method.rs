@@ -9,5 +9,7 @@ pub enum SamplingMethod {
         top_k: Option<i64>,
         top_p: Option<f64>,
         min_p: Option<f64>,
+        repetition_penalty: Option<f64>,
+        suffix_repetition_length: Option<i64>,
     },
 }
