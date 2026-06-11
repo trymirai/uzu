@@ -1,6 +1,7 @@
 pub mod activation;
 pub mod classifier;
 pub mod decoder;
+pub mod dflash;
 pub mod embedding;
 pub mod linear;
 pub mod mlp;
