@@ -7,8 +7,8 @@ use std::{
 
 use half::bf16;
 use num_traits::Float;
+use proc_macros::uzu_test;
 use rstest::rstest;
-use test_macros::uzu_test;
 
 use crate::{
     array::ArrayElement,

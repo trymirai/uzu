@@ -7,8 +7,8 @@
 //! - Numerical correctness against CPU reference
 
 use half::bf16;
+use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use test_macros::uzu_test;
 
 use super::{
     MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock, cpu_tile_counts,

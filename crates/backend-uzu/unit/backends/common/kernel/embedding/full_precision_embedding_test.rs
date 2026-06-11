@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use half::{bf16, f16};
 use num_traits::Float;
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},

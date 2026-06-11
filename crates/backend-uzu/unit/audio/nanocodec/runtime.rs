@@ -1,6 +1,6 @@
 #![cfg(metal_backend)]
 
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 
 use crate::{
     audio::{

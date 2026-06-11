@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 
 use super::*;
 use crate::utils::VERSION;

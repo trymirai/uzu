@@ -76,7 +76,7 @@ impl OutputParser {
 
 #[cfg(test)]
 mod tests {
-    use test_macros::uzu_test;
+    use proc_macros::uzu_test;
 
     use super::*;
 

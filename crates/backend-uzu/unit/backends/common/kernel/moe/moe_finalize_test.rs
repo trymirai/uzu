@@ -1,7 +1,7 @@
 use half::bf16;
 use num_traits::Float;
+use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use test_macros::uzu_test;
 
 use crate::{
     array::{ArrayContextExt, ArrayElement},

@@ -6,8 +6,8 @@ use std::{
     time::Instant,
 };
 
+use proc_macros::uzu_test;
 use serde::{Deserialize, Serialize};
-use test_macros::uzu_test;
 
 use crate::backends::{
     common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},

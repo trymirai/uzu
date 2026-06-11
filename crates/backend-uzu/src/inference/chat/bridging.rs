@@ -204,8 +204,8 @@ fn build_stats(stats: &Stats) -> ShojiStats {
 
 #[cfg(test)]
 mod tests {
+    use proc_macros::uzu_test;
     use shoji::types::session::chat::ChatMessage;
-    use test_macros::uzu_test;
 
     use super::*;
 

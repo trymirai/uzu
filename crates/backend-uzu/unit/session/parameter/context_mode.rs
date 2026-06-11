@@ -1,4 +1,4 @@
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 use test_tag::tag;
 
 use crate::{

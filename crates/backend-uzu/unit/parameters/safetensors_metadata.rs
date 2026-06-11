@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 
 use crate::{common::path::get_test_weights_path, parameters::safetensors_metadata::read_metadata};
 

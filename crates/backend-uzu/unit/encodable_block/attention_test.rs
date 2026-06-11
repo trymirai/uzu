@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use ndarray::{Array4, s};
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 use test_tag::tag;
 
 use super::{AttentionGemmArguments, AttentionGemmBlock};

@@ -1,7 +1,7 @@
 #![cfg(metal_backend)]
 
 use ndarray::{Array, Array3, s};
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 
 use super::*;
 use crate::{

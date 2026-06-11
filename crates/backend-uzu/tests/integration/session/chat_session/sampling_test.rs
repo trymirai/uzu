@@ -8,7 +8,7 @@ use backend_uzu::session::{
     parameter::{SamplingMethod, SamplingPolicy, SamplingProcessingOrder, SamplingSeed},
     types::{Input, Message, Output},
 };
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 use test_tag::tag;
 
 fn model_path() -> Option<PathBuf> {

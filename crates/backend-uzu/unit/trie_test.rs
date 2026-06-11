@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 
 use crate::{
     language_model::rng::PRng,

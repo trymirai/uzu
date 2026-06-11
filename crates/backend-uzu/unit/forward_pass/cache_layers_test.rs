@@ -2,7 +2,7 @@
 
 use std::{mem::size_of, ops::Range};
 
-use test_macros::uzu_test;
+use proc_macros::uzu_test;
 
 use super::{CacheEntryIndex, CacheLayer, CacheLayers, LayerCacheBinding};
 use crate::{

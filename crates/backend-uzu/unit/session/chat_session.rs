@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use proc_macros::uzu_test;
 use shoji::types::basic::Feature;
-use test_macros::uzu_test;
 use test_tag::tag;
 use tokenizers::Tokenizer;
 

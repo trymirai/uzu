@@ -6,10 +6,10 @@ use backend_uzu::{
     dispatch_dtype,
 };
 use num_traits::{Float, NumCast};
+use proc_macros::uzu_test;
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
-use test_macros::uzu_test;
 
 use crate::{
     common::{
