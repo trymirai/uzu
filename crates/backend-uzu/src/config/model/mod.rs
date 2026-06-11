@@ -11,7 +11,8 @@ pub mod tts_model;
 #[uzu_config_abstract(
     language_model::LanguageModelConfig,
     classifier_model::ClassifierModelConfig,
-    tts_model::TTSModelConfig
+    tts_model::TTSModelConfig,
+    dflash_speculator::DFlashSpeculatorConfig
 )]
 pub struct ModelConfig {
     pub token_codec_config: AnyTokenCodecConfig,
