@@ -18,7 +18,12 @@ pub struct TransformerLayerConfig {
     pub post_mlp_norm_config: Option<NormalizationConfig>,
     pub hidden_dim: Option<usize>,
     pub ple_config: Option<PLELayerConfig>,
+    #[serde(default)]
     pub gemma4_moe_config: Option<Unsupported>,
     pub has_post_layer_scalar: bool,
     pub rope_config: Option<AnyRoPEConfig>,
+    /// Newer lalamo exports declare KV sharing per layer; older bundles carry
+    /// `TransformerConfig::kv_source_per_layer` instead and omit this field.
+    #[serde(default)]
+    pub kv_source_layer_index: Option<usize>,
 }

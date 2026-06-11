@@ -8,6 +8,9 @@ pub struct TransformerConfig {
     pub output_norm_config: NormalizationConfig,
     pub model_dim: usize,
     pub hidden_dim: usize,
+    /// Older lalamo exports; newer ones omit this and set
+    /// `TransformerLayerConfig::kv_source_layer_index` per layer instead.
+    #[serde(default)]
     pub kv_source_per_layer: Option<Box<[usize]>>,
 }
 
@@ -16,16 +19,11 @@ impl TransformerConfig {
         &self,
         layer_index: usize,
     ) -> Option<usize> {
-        if let Some(kv_source_per_layer) = &self.kv_source_per_layer {
-            let source = kv_source_per_layer[layer_index];
-            if source == layer_index {
-                None
-            } else {
-                Some(source)
-            }
-        } else {
-            None
-        }
+        self.kv_source_per_layer
+            .as_ref()
+            .map(|kv_source_per_layer| kv_source_per_layer[layer_index])
+            .or(self.layer_configs[layer_index].kv_source_layer_index)
+            .filter(|&source| source != layer_index)
     }
 
     pub fn kv_source_layer_indices(&self) -> Box<[Option<usize>]> {

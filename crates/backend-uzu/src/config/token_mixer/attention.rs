@@ -6,8 +6,10 @@ use crate::config::{
 };
 
 #[uzu_config]
+#[derive(Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AttentionProjectionMode {
+    #[default]
     Qkv,
     QkSharedValue,
     BorrowedQ,
@@ -34,7 +36,13 @@ pub struct AttentionConfig {
     pub has_out_biases: bool,
     pub gate_projection_config: Option<LinearConfig>,
     pub normalize_values: bool,
+    /// Newer lalamo exports omit this; fused QKV is the standard layout.
+    #[serde(default)]
     pub projection_mode: AttentionProjectionMode,
+    /// Newer lalamo exports mark KV-sharing producer layers; consumers carry
+    /// `kv_source_layer_index`, which is what the runtime keys off.
+    #[serde(default)]
+    pub is_kv_sharing: bool,
 }
 
 impl AttentionConfig {
