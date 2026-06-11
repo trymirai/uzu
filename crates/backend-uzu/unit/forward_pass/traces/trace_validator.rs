@@ -263,6 +263,11 @@ impl<B: Backend> TraceValidator<B> {
             AnyModelConfig::TTSModelConfig(_) => {
                 return Err(Error::InvalidModelConfig("TTS trace validation is not supported".to_string()));
             },
+            AnyModelConfig::DFlashSpeculatorConfig(_) => {
+                return Err(Error::InvalidModelConfig(
+                    "DFlash speculator trace validation is not supported".to_string(),
+                ));
+            },
         };
 
         Ok(Self {
