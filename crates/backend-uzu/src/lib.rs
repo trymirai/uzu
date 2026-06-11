@@ -1,3 +1,6 @@
+#![cfg_attr(test, feature(custom_test_frameworks, test))]
+#![cfg_attr(test, test_runner(crate::harness::uzu_harness))]
+
 // needed for tests to resolve `backend_uzu::` imports
 #[cfg(test)]
 extern crate self as backend_uzu;
@@ -34,3 +37,7 @@ pub mod _benchmarks {
         trie::{TrieCreationConfig, TrieNode},
     };
 }
+
+#[cfg(test)]
+#[path = "../tests/harness/main.rs"]
+mod harness;
