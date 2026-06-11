@@ -1,6 +1,3 @@
-// TODO: remove when implementing a consumer (expect warns once this is used).
-#![expect(dead_code)]
-
 use proc_macros::uzu_config;
 
 use crate::config::{
