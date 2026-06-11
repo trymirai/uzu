@@ -6,10 +6,7 @@ use crate::{
     array::size_for_shape,
     backends::common::{
         Allocation, Backend, Encoder,
-        gpu_types::{
-            HadamardTransformOrder,
-            gemm::{GemmBPrologueKind, GemmDTransform},
-        },
+        gpu_types::HadamardTransformOrder,
         kernel::{
             HadamardTransformKernel, Kernels,
             matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulTask},
@@ -265,32 +262,39 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
     ) -> Result<(), B::Error> {
         self.base_linear.precompile(context, batch_sizes)?;
 
-        let down_task = MatmulTask {
-            m: 0,
-            n: self.lora_rank as u32,
-            k: self.input_dim as u32,
-            b_transpose: true,
-            b_offset: 0,
-            b_leading_dimension: None,
-            b_prologue: GemmBPrologueKind::FullPrecision,
-            bits: None,
-            group_size: None,
-            d_transform: GemmDTransform::empty(),
+        let down_b: MatmulB<'_, B> = MatmulB::FullPrecision {
+            b: &self.adapter_down,
         };
+        let down_task = MatmulTask::new(
+            0,
+            self.lora_rank as u32,
+            self.input_dim as u32,
+            true,
+            0,
+            None,
+            &down_b,
+            &MatmulDOps::none(),
+        );
         self.adapter_down_kernel.borrow_mut().precompile(context, &down_task, batch_sizes)?;
 
-        let up_task = MatmulTask {
-            m: 0,
-            n: self.output_dim as u32,
-            k: self.lora_rank as u32,
-            b_transpose: true,
-            b_offset: 0,
-            b_leading_dimension: None,
-            b_prologue: GemmBPrologueKind::FullPrecision,
-            bits: None,
-            group_size: None,
-            d_transform: GemmDTransform::ACCUMULATE,
+        let up_b: MatmulB<'_, B> = MatmulB::FullPrecision {
+            b: &self.adapter_up,
         };
+        let up_task = MatmulTask::new(
+            0,
+            self.output_dim as u32,
+            self.lora_rank as u32,
+            true,
+            0,
+            None,
+            &up_b,
+            &MatmulDOps {
+                ab_scale: 1.0,
+                accumulate: true,
+                bias: None,
+                rht_factors: None,
+            },
+        );
         self.adapter_up_kernel.borrow_mut().precompile(context, &up_task, batch_sizes)?;
 
         Ok(())

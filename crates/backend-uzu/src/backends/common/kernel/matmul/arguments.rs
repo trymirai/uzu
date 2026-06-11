@@ -17,17 +17,15 @@ pub struct MatmulArguments<'a, B: Backend, TB: AsBufferRangeRef = Allocation<B>>
 
 impl<B: Backend, TB: AsBufferRangeRef> MatmulArguments<'_, B, TB> {
     pub fn task(&self) -> MatmulTask {
-        MatmulTask {
-            m: self.m,
-            n: self.n,
-            k: self.k,
-            b_transpose: self.b_transpose,
-            b_offset: self.b_offset,
-            b_leading_dimension: self.b_leading_dimension,
-            b_prologue: self.b.b_prologue(),
-            bits: self.b.bits_per_b(),
-            group_size: self.b.group_size(),
-            d_transform: self.d_transform.mask(),
-        }
+        MatmulTask::new(
+            self.m,
+            self.n,
+            self.k,
+            self.b_transpose,
+            self.b_offset,
+            self.b_leading_dimension,
+            &self.b,
+            &self.d_transform,
+        )
     }
 }
