@@ -1,15 +1,22 @@
 pub mod gemm;
 pub mod gemv;
 
-pub use self::gemm::{GemmDispatchPath, GemmKernel};
 use self::gemv::{GemvDispatch, GemvSpecialization};
+pub use self::{
+    gemm::{GemmDispatchPath, GemmKernel},
+    gemv::GemvDispatchPath,
+};
 use crate::{
     backends::{
         common::{
             AsBufferRangeRef, Buffer, Encoder,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{
+            Metal,
+            context::{GpuDeviceTier, MetalContext},
+            error::MetalError,
+        },
     },
     data_type::DataType,
 };
@@ -20,6 +27,7 @@ pub struct MatmulMetalKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
+    device_tier: GpuDeviceTier,
 }
 
 impl MatmulKernel for MatmulMetalKernel {
@@ -47,6 +55,7 @@ impl MatmulKernel for MatmulMetalKernel {
             weights_data_type,
             input_data_type,
             output_data_type,
+            device_tier: context.gpu_device_tier(),
         })
     }
 
@@ -60,9 +69,32 @@ impl MatmulKernel for MatmulMetalKernel {
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
+            self.device_tier,
         ) {
             Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
             None => self.gemm.encode(arguments, encoder),
         }
+    }
+}
+
+impl MatmulMetalKernel {
+    pub fn encode_gemv_dispatch_path<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal, TB>,
+        path: GemvDispatchPath,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        let specialization = GemvSpecialization::select(
+            &arguments,
+            self.weights_data_type,
+            self.input_data_type,
+            self.output_data_type,
+            self.device_tier,
+        )
+        .ok_or(MatmulError::<Metal>::UnsupportedLayout {
+            path: "Gemv",
+        })?
+        .with_dispatch_path(path);
+        self.gemv.encode(arguments, specialization, encoder).map_err(MetalError::from)
     }
 }

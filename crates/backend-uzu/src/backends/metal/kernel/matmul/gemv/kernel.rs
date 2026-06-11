@@ -3,6 +3,7 @@ use std::{
     sync::OnceLock,
 };
 
+use super::policy::{self, DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, FP_BLOCK};
 use crate::{
     backends::{
         common::{
@@ -10,13 +11,14 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
+        metal::{
+            Metal,
+            context::{GpuDeviceTier, MetalContext},
+            kernel::GemvMetalKernel,
+        },
     },
     data_type::DataType,
 };
-
-const FP_BLOCK: u32 = 128;
-const QMV_RESULTS_PER_SIMDGROUP: u32 = 4;
 
 const DEFAULT_GEMV_MAX_BATCH: u32 = 8;
 static GEMV_MAX_BATCH: OnceLock<u32> = OnceLock::new();
@@ -28,6 +30,13 @@ fn max_gemv_batch_threshold() -> u32 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GemvDispatchPath {
+    pub k_split: u32,
+    pub results_per_simdgroup: u32,
+    pub num_simdgroups: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GemvSpecialization {
     b_prologue: GemmBPrologueKind,
     group_size: u32,
@@ -35,6 +44,7 @@ pub(crate) struct GemvSpecialization {
     output_transform: GemmDTransform,
     input_aligned: bool,
     k_split: u32,
+    results_per_simdgroup: u32,
     num_simdgroups: u32,
 }
 
@@ -44,6 +54,7 @@ impl GemvSpecialization {
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
+        device_tier: GpuDeviceTier,
     ) -> Option<GemvSpecialization> {
         if !args.b_transpose || args.b_offset != 0 {
             return None;
@@ -64,13 +75,13 @@ impl GemvSpecialization {
             return None;
         }
         if is_quant {
-            if args.n < QMV_RESULTS_PER_SIMDGROUP || args.m >= 5 {
+            if args.n < DEFAULT_RESULTS_PER_SIMDGROUP || args.m >= 5 {
                 return None;
             }
         } else {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
-            if mixed_precision || args.n < QMV_RESULTS_PER_SIMDGROUP || args.m > max_gemv_batch_threshold() {
+            if mixed_precision || args.n < DEFAULT_RESULTS_PER_SIMDGROUP || args.m > max_gemv_batch_threshold() {
                 return None;
             }
         }
@@ -85,11 +96,20 @@ impl GemvSpecialization {
         };
         let input_aligned = args.k.is_multiple_of(block_size);
         let has_rht = args.d_transform.rht_factors.is_some();
-        let num_simdgroups = 8;
         let k_split = if is_quant || has_rht {
             1
         } else {
-            fp_k_split(args.n, args.k, input_aligned)
+            policy::fp_k_split(args.m, args.n, args.k, input_aligned, device_tier)
+        };
+        let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
+        let (num_simdgroups, results_per_simdgroup) = if is_quant && bf16_io {
+            policy::quant_tile(args.m, args.n, args.k, has_rht, device_tier)
+        } else if is_quant || has_rht {
+            // Non-bf16 quant IO and fp+RHT keep the default tile (the only
+            // one instantiated for those modes).
+            (DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP)
+        } else {
+            (DEFAULT_NUM_SIMDGROUPS, policy::fp_results_per_simdgroup(args.m, args.n, args.k, device_tier))
         };
         Some(GemvSpecialization {
             b_prologue: args.b.b_prologue(),
@@ -98,32 +118,38 @@ impl GemvSpecialization {
             output_transform: args.d_transform.mask(),
             input_aligned,
             k_split,
+            results_per_simdgroup,
             num_simdgroups,
         })
+    }
+
+    pub(crate) fn with_dispatch_path(
+        mut self,
+        path: GemvDispatchPath,
+    ) -> Self {
+        assert!(matches!(path.k_split, 1 | 2 | 4 | 8), "GemvDispatchPath::k_split must be one of 1, 2, 4, 8",);
+        assert!(
+            matches!(path.results_per_simdgroup, 1 | 2 | 4 | 8),
+            "GemvDispatchPath::results_per_simdgroup must be one of 1, 2, 4, 8",
+        );
+        assert!(matches!(path.num_simdgroups, 2 | 4 | 8), "GemvDispatchPath::num_simdgroups must be one of 2, 4, 8",);
+        assert!(
+            path.num_simdgroups.is_multiple_of(path.k_split),
+            "GemvDispatchPath::k_split must divide num_simdgroups",
+        );
+        self.k_split = path.k_split;
+        self.results_per_simdgroup = path.results_per_simdgroup;
+        self.num_simdgroups = path.num_simdgroups;
+        self
     }
 }
 
 fn rows_per_threadgroup(
     k_split: u32,
+    results_per_simdgroup: u32,
     num_simdgroups: u32,
 ) -> u32 {
-    (num_simdgroups / k_split) * QMV_RESULTS_PER_SIMDGROUP
-}
-
-fn fp_k_split(
-    n: u32,
-    k: u32,
-    input_aligned: bool,
-) -> u32 {
-    if !input_aligned || n >= 4096 {
-        1
-    } else if k >= 16 * n || n <= 512 {
-        8
-    } else if n <= 1024 || k >= 3072 {
-        4
-    } else {
-        2
-    }
+    (num_simdgroups / k_split) * results_per_simdgroup
 }
 
 pub(crate) struct GemvDispatch {
@@ -166,7 +192,7 @@ impl GemvDispatch {
                     specialization.bits,
                     specialization.k_split,
                     specialization.input_aligned,
-                    QMV_RESULTS_PER_SIMDGROUP,
+                    specialization.results_per_simdgroup,
                     specialization.num_simdgroups,
                     specialization.output_transform,
                 )
@@ -197,7 +223,11 @@ impl GemvDispatch {
             ..
         } = arguments;
 
-        let group_count_x = n.div_ceil(rows_per_threadgroup(specialization.k_split, specialization.num_simdgroups));
+        let group_count_x = n.div_ceil(rows_per_threadgroup(
+            specialization.k_split,
+            specialization.results_per_simdgroup,
+            specialization.num_simdgroups,
+        ));
 
         let context = encoder.context();
         let pipeline = self.get_or_create(context, specialization)?;
@@ -274,5 +304,33 @@ impl GemvDispatch {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_dispatch_path_sets_all_forced_path_fields() {
+        let specialization = GemvSpecialization {
+            b_prologue: GemmBPrologueKind::FullPrecision,
+            group_size: 0,
+            bits: 0,
+            output_transform: GemmDTransform::empty(),
+            input_aligned: true,
+            k_split: 1,
+            results_per_simdgroup: DEFAULT_RESULTS_PER_SIMDGROUP,
+            num_simdgroups: DEFAULT_NUM_SIMDGROUPS,
+        }
+        .with_dispatch_path(GemvDispatchPath {
+            k_split: 8,
+            results_per_simdgroup: 1,
+            num_simdgroups: 8,
+        });
+
+        assert_eq!(specialization.k_split, 8);
+        assert_eq!(specialization.results_per_simdgroup, 1);
+        assert_eq!(specialization.num_simdgroups, 8);
     }
 }
