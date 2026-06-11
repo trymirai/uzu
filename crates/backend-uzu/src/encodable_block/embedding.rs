@@ -518,9 +518,6 @@ impl<B: Backend> Embedding<B> {
         Ok(output)
     }
 
-    /// Resolves the readout matmul kernel and its `b` operand for the active
-    /// tying. `encode_readout` and `precompile` share this so the preheated
-    /// pipeline matches the one encode selects.
     fn readout_kernel_and_b(&self) -> (&RefCell<<B::Kernels as Kernels>::MatmulKernel>, MatmulB<'_, B>) {
         match &self.tying {
             EmbeddingTying::Tied {
