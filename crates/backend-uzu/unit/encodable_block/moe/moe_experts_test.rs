@@ -7,6 +7,7 @@
 //! - Numerical correctness against CPU reference
 
 use half::bf16;
+use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::{
@@ -279,7 +280,7 @@ fn cpu_moe_reference(
     y
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_decode_correctness() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -443,7 +444,7 @@ fn test_two_pass_decode_correctness() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_decode_multi_token() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -527,7 +528,7 @@ fn test_two_pass_decode_multi_token() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_two_pass_prefill_correctness() {
     for_each_non_cpu_backend!(|B| {
         let ctx = create_context::<B>();
@@ -608,7 +609,7 @@ fn test_two_pass_prefill_correctness() {
     });
 }
 
-#[test]
+#[uzu_test]
 fn test_tile_infrastructure() {
     // Test that tile counts/scan/map are computed correctly
     // This is already tested in moe_tiles_test.rs, but we verify here

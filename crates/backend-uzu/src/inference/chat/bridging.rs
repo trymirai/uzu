@@ -204,6 +204,7 @@ fn build_stats(stats: &Stats) -> ShojiStats {
 
 #[cfg(test)]
 mod tests {
+    use proc_macros::uzu_test;
     use shoji::types::session::chat::ChatMessage;
 
     use super::*;
@@ -216,12 +217,12 @@ mod tests {
         ChatMessage::user().with_text("hi".to_string()).with_reasoning_effort(reasoning_effort)
     }
 
-    #[test]
+    #[uzu_test]
     fn enable_thinking_defaults_on_without_effort() {
         assert!(enable_thinking_for(vec![ChatMessage::user().with_text("hi".to_string())]));
     }
 
-    #[test]
+    #[uzu_test]
     fn enable_thinking_follows_latest_turn() {
         let reenabled = vec![
             user(ReasoningEffort::Disabled),
