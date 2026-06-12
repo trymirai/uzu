@@ -1,8 +1,3 @@
-//! Ports the acceptance cases from lalamo `tests/unit/speculator/test_proposal.py`
-//! @ `2cb46e9` (expected values verbatim, minus batch dims and padding), plus
-//! checks for invariants lalamo's tests leave implicit. The inactive-row and
-//! gather_top_k cases are out of scope (batch machinery / top-k logits).
-
 use proc_macros::uzu_test;
 
 use crate::speculators::chain_acceptance::{AcceptedProposal, ChainProposal};
@@ -57,8 +52,7 @@ fn test_eos_in_drafts_truncates_and_suppresses_bonus() {
 
     assert_eq!(accepted.committed_token_ids, vec![11, 12]);
     assert!(accepted.has_eos(&[12]));
-    // EOS truncates the committed output only; all four nodes stay verified
-    // and keep advancing the draft state (common.py:131-134 vs 141-150).
+    // EOS truncates the committed output only; all four nodes stay verified.
     assert_eq!(accepted.num_verified_nodes, 4);
 }
 
