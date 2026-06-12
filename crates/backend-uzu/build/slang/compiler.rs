@@ -3,12 +3,14 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, thread};
 use anyhow::Context;
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt, stream};
-use itertools::Itertools;
 use tokio::{sync::Mutex, task::spawn_blocking};
 use walkdir::WalkDir;
 
 use crate::{
-    common::{codegen::write_tokens, compiler::Compiler, gpu_types::GpuTypes, kernel::Kernel},
+    common::{
+        codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes,
+        identifiers::KernelPath, kernel::Kernel,
+    },
     slang::{
         compiler_internal::{BlockingSlangCompiler, SlangCompilerFields, SlangTarget},
         gpu_types::gpu_type_gen,
@@ -64,7 +66,8 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
     async fn build(
         &self,
         gpu_types: &GpuTypes,
-    ) -> anyhow::Result<HashMap<Box<[Box<str>]>, Box<[Kernel]>>> {
+        _enum_paths: &EnumPaths,
+    ) -> anyhow::Result<HashMap<KernelPath, Box<[Kernel]>>> {
         let gpu_type_map = Arc::new(
             gpu_type_gen(&self.fields.source_directory.join("generated"), gpu_types)
                 .await
@@ -113,6 +116,9 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
         write_tokens(bindgen_tokens, &self.fields.output_directory.with_extension("rs"))
             .context("cannot write global bindgen file")?;
 
-        Ok(kernels)
+        Ok(kernels
+            .into_iter()
+            .map(|(segments, kernels)| (segments.iter().map(|segment| segment.to_string()).collect::<KernelPath>(), kernels))
+            .collect())
     }
 }

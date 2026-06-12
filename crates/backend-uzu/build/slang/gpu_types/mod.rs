@@ -32,7 +32,10 @@ pub async fn gpu_type_gen(
             | GpuType::Struct(GpuTypeStruct {
                 name,
                 ..
-            })) = gpu_type;
+            })) = gpu_type
+            else {
+                continue;
+            };
 
             match gpu_types_map.entry(name.to_string()) {
                 Entry::Occupied(_) => bail!("{name} is duplicated"),
@@ -53,11 +56,16 @@ async fn gpu_type_gen_file(
     let new_contents = gpu_types_file
         .types
         .iter()
-        .map(|gpu_type| match gpu_type {
-            GpuType::Enum(gpu_type_enum) => gpu_type_gen_enum(gpu_type_enum)
-                .with_context(|| format!("Failed to generate bindings for {gpu_type_enum:?}")),
-            GpuType::Struct(gpu_type_struct) => gpu_type_gen_struct(gpu_type_struct)
-                .with_context(|| format!("Failed to generate bindings for {gpu_type_struct:?}")),
+        .filter_map(|gpu_type| match gpu_type {
+            GpuType::Enum(gpu_type_enum) => Some(
+                gpu_type_gen_enum(gpu_type_enum)
+                    .with_context(|| format!("Failed to generate bindings for {gpu_type_enum:?}")),
+            ),
+            GpuType::Struct(gpu_type_struct) => Some(
+                gpu_type_gen_struct(gpu_type_struct)
+                    .with_context(|| format!("Failed to generate bindings for {gpu_type_struct:?}")),
+            ),
+            GpuType::OptionSet(_) => None,
         })
         .process_results(|mut it| it.join("\n\n"))?;
 

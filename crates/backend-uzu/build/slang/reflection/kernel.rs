@@ -91,6 +91,23 @@ impl SlangKernel {
     }
 
     pub fn variants(&self) -> impl Iterator<Item = Vec<(&str, &str)>> {
+        let evaluator = constraints::Evaluator::new(
+            self.parameters
+                .iter()
+                .flat_map(|parameter| match &parameter.ty {
+                    SlangParameterType::Type {
+                        variants,
+                    }
+                    | SlangParameterType::Value {
+                        value_type: _,
+                        variants,
+                    } => variants.as_slice(),
+                    SlangParameterType::GroupShared {
+                        ..
+                    } => &[],
+                })
+                .map(|variant| variant.as_str()),
+        );
         self.parameters
             .iter()
             .filter_map(|parameter| match &parameter.ty {
@@ -107,7 +124,7 @@ impl SlangKernel {
                 } => None,
             })
             .multi_cartesian_product()
-            .filter(|variant| constraints::satisfied(&variant, &self.constraints))
+            .filter(move |variant| evaluator.satisfied(variant, &self.constraints))
     }
 
     pub fn to_common(

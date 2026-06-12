@@ -232,7 +232,7 @@ impl SlangArgument {
                     | SlangBufferAccess::ReadWrite),
                 condition,
             } => Ok(Some(KernelArgument {
-                name: self.name.clone().into_boxed_str(),
+                name: self.name.clone().into_boxed_str().into(),
                 conditional: condition.is_some(),
                 ty: KernelArgumentType::Buffer(match *access_type {
                     SlangBufferAccess::Read {
@@ -250,7 +250,7 @@ impl SlangArgument {
                 },
                 condition,
             } => Ok(Some(KernelArgument {
-                name: self.name.clone().into_boxed_str(),
+                name: self.name.clone().into_boxed_str().into(),
                 conditional: condition.is_some(),
                 ty: KernelArgumentType::Constant(self.rust_type(gpu_type_map)?),
             })),
