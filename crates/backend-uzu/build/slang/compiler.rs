@@ -8,8 +8,8 @@ use walkdir::WalkDir;
 
 use crate::{
     common::{
-        codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes,
-        identifiers::KernelPath, kernel::Kernel,
+        codegen::write_tokens, compiler::Compiler, enum_paths::EnumPaths, gpu_types::GpuTypes, identifiers::KernelPath,
+        kernel::Kernel,
     },
     slang::{
         compiler_internal::{BlockingSlangCompiler, SlangCompilerFields, SlangTarget},
@@ -118,7 +118,9 @@ impl<T: SlangTarget> Compiler for SlangCompiler<T> {
 
         Ok(kernels
             .into_iter()
-            .map(|(segments, kernels)| (segments.iter().map(|segment| segment.to_string()).collect::<KernelPath>(), kernels))
+            .map(|(segments, kernels)| {
+                (segments.iter().map(|segment| segment.to_string()).collect::<KernelPath>(), kernels)
+            })
             .collect())
     }
 }
