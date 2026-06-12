@@ -2,6 +2,8 @@
 
 use std::{mem::size_of, ops::Range};
 
+use proc_macros::uzu_test;
+
 use super::{CacheEntryIndex, CacheLayer, CacheLayers, LayerCacheBinding};
 use crate::{
     array::ArrayContextExt,
@@ -102,7 +104,7 @@ fn make_cache_layers(
     }
 }
 
-#[test]
+#[uzu_test]
 fn test_cache_layers_copy_from_clones_only_live_window_rows() {
     let Some(context) = <Metal as Backend>::Context::new().ok() else {
         return;

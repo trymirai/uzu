@@ -6,6 +6,7 @@ use backend_uzu::{
     dispatch_dtype,
 };
 use num_traits::{Float, NumCast};
+use proc_macros::uzu_test;
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
@@ -167,7 +168,7 @@ fn sampling_case() -> impl Strategy<Value = SamplingCase> {
     )
 }
 
-#[test]
+#[uzu_test]
 fn test_sampling_prop() {
     let contextes = TestContextes::new();
 

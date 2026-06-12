@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use proc_macros::uzu_test;
+
 use crate::{
     language_model::rng::PRng,
     speculators::{empty_speculator::EmptySpeculator, speculator::Speculator},
@@ -45,14 +47,14 @@ fn verify_sprout(
     assert_eq!(flat_trie.token_seeds().collect::<Vec<u64>>(), vec![expected_seed]);
 }
 
-#[test]
+#[uzu_test]
 fn test_trie_manual_sprout() {
     let trie_root = TrieNode::new(0, None, 0);
 
     verify_sprout(&trie_root, 0);
 }
 
-#[test]
+#[uzu_test]
 fn test_trie_from_speculator_sprout() {
     let rng = PRng::new(42);
 
@@ -106,7 +108,7 @@ fn verify_stick(
     }
 }
 
-#[test]
+#[uzu_test]
 fn test_trie_manual_stick() {
     let rng = PRng::new(0);
     let mut trie_root = TrieNode::new(0, None, rng.derive(0));
@@ -120,7 +122,7 @@ fn test_trie_manual_stick() {
     verify_stick(&trie_root, &rng);
 }
 
-#[test]
+#[uzu_test]
 fn test_trie_from_speculator_stick() {
     let rng = PRng::new(42);
 
@@ -176,7 +178,7 @@ fn verify_bush(
     }
 }
 
-#[test]
+#[uzu_test]
 fn test_trie_manual_bush() {
     let rng = PRng::new(0);
     let mut trie_root = TrieNode::new(0, None, rng.derive(0));
@@ -191,7 +193,7 @@ fn test_trie_manual_bush() {
     verify_bush(&trie_root, &rng);
 }
 
-#[test]
+#[uzu_test]
 fn test_trie_from_speculator_bush() {
     let rng = PRng::new(0);
 
@@ -250,7 +252,7 @@ fn verify_tree(
     }
 }
 
-#[test]
+#[uzu_test]
 fn test_trie_manual_tree() {
     let rng = PRng::new(0);
     let mut trie_root = TrieNode::new(0, None, rng.derive(0));

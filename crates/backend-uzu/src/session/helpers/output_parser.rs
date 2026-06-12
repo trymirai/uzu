@@ -76,11 +76,13 @@ impl OutputParser {
 
 #[cfg(test)]
 mod tests {
+    use proc_macros::uzu_test;
+
     use super::*;
 
     const QWEN_REGEX: &str = r"(?s)(?:<think>)?(?P<chain_of_thought>.*?)(?:</think>\s*(?P<response>.*))?\Z";
 
-    #[test]
+    #[uzu_test]
     fn thinking_enabled_splits_on_close_tag() {
         let parser = OutputParser::new(Some(QWEN_REGEX.to_string())).unwrap();
         let parsed = parser.parse("Let me compute.</think>2 + 2 equals 4.".to_string(), true).parsed;
@@ -88,7 +90,7 @@ mod tests {
         assert_eq!(parsed.response.as_deref(), Some("2 + 2 equals 4."));
     }
 
-    #[test]
+    #[uzu_test]
     fn thinking_disabled_keeps_answer_as_response() {
         let parser = OutputParser::new(Some(QWEN_REGEX.to_string())).unwrap();
         let parsed = parser.parse("2 + 2 equals 4.".to_string(), false).parsed;
@@ -96,7 +98,7 @@ mod tests {
         assert_eq!(parsed.response.as_deref(), Some("2 + 2 equals 4."));
     }
 
-    #[test]
+    #[uzu_test]
     fn thinking_disabled_strips_emitted_reasoning_tags() {
         let parser = OutputParser::new(Some(QWEN_REGEX.to_string())).unwrap();
         let parsed = parser.parse("<think>wait, reconsider</think>2 + 2 equals 4.".to_string(), false).parsed;
@@ -104,7 +106,7 @@ mod tests {
         assert_eq!(parsed.response.as_deref(), Some("2 + 2 equals 4."));
     }
 
-    #[test]
+    #[uzu_test]
     fn thinking_enabled_without_close_tag_is_still_reasoning() {
         let parser = OutputParser::new(Some(QWEN_REGEX.to_string())).unwrap();
         let parsed = parser.parse("Let me compute".to_string(), true).parsed;

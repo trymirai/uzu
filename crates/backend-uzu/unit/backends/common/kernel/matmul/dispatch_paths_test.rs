@@ -4,6 +4,7 @@ use std::fmt::{Debug, Display};
 
 use half::bf16;
 use num_traits::Float;
+use proc_macros::uzu_test;
 use rstest::rstest;
 
 use crate::{
@@ -63,6 +64,7 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::base(1.0, false)]
 #[case::ab_scale(0.5, false)]
 #[case::accumulate(1.0, true)]
@@ -74,12 +76,12 @@ fn matches_cpu_reference_bf16(
     run_matrix::<bf16>(|shape| Case::new(shape).with_ab_scale(ab_scale).with_accumulate(accumulate), 1.0);
 }
 
-#[test]
+#[uzu_test]
 fn matches_cpu_reference_f32() {
     run_matrix::<f32>(Case::new, 0.01);
 }
 
-#[test]
+#[uzu_test]
 fn b_transpose_false_bf16() {
     run_matrix::<bf16>(
         |shape| Case {
@@ -95,7 +97,7 @@ fn rht_shapes() -> impl Iterator<Item = crate::common::matmul::Shape> {
     [Shape::new(8, 128, 64), Shape::new(64, 128, 128), Shape::new(128, 2048, 256), Shape::new(33, 128, 64)].into_iter()
 }
 
-#[test]
+#[uzu_test]
 fn rht_parity_bf16() {
     let context = MetalContext::new().expect("Metal context");
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
@@ -113,7 +115,7 @@ fn rht_parity_bf16() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn bias_parity_bf16() {
     use crate::common::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
@@ -133,7 +135,7 @@ fn bias_parity_bf16() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn gemv_fp_partial_output_block_bf16() {
     use crate::common::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
@@ -152,7 +154,7 @@ fn gemv_fp_partial_output_block_bf16() {
     }
 }
 
-#[test]
+#[uzu_test]
 fn gemv_fp_output_transforms_bf16() {
     use crate::common::matmul::Shape;
     let context = MetalContext::new().expect("Metal context");
