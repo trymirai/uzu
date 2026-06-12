@@ -150,13 +150,15 @@ fn build_sampling_policy(sampling_policy: &ShojiSamplingPolicy) -> SamplingPolic
                     top_k,
                     top_p,
                     min_p,
+                    repetition_penalty,
+                    suffix_repetition_length,
                 } => SamplingMethod::Stochastic {
                     temperature: temperature.map(|value| value as f32),
                     top_k: top_k.map(|value| value.max(0) as u32),
                     top_p: top_p.map(|value| value as f32),
                     min_p: min_p.map(|value| value as f32),
-                    repetition_penalty: None,
-                    suffix_repetition_length: None,
+                    repetition_penalty: repetition_penalty.map(|value| value as f32),
+                    suffix_repetition_length: suffix_repetition_length.map(|value| value as usize),
                     processing_order: SamplingProcessingOrder::TemperatureThenFilters,
                 },
             },
@@ -202,6 +204,7 @@ fn build_stats(stats: &Stats) -> ShojiStats {
 
 #[cfg(test)]
 mod tests {
+    use proc_macros::uzu_test;
     use shoji::types::session::chat::ChatMessage;
 
     use super::*;
@@ -214,12 +217,12 @@ mod tests {
         ChatMessage::user().with_text("hi".to_string()).with_reasoning_effort(reasoning_effort)
     }
 
-    #[test]
+    #[uzu_test]
     fn enable_thinking_defaults_on_without_effort() {
         assert!(enable_thinking_for(vec![ChatMessage::user().with_text("hi".to_string())]));
     }
 
-    #[test]
+    #[uzu_test]
     fn enable_thinking_follows_latest_turn() {
         let reenabled = vec![
             user(ReasoningEffort::Disabled),

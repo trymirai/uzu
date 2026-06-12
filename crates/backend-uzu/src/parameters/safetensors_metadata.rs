@@ -125,3 +125,7 @@ pub fn read_metadata(file: &File) -> Result<(usize, HashMetadata), HeaderLoading
     let metadata: HashMetadata = serde_json::from_str(string)?;
     Ok((stop, metadata))
 }
+
+#[cfg(test)]
+#[path = "../../unit/parameters/safetensors_metadata.rs"]
+mod tests;

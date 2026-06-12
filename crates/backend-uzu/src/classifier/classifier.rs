@@ -75,7 +75,7 @@ impl<B: Backend> Classifier<B> {
         })
     }
 
-    #[cfg(feature = "tracing")]
+    #[cfg(all(test, feature = "tracing"))]
     pub fn forward_pass_with_traces(
         &mut self,
         token_ids: &[u64],

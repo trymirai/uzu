@@ -121,8 +121,8 @@ jobs:
       - name: Run tests
         if: ${{ matrix.backend != 'cpu' && matrix.tracing && matrix.grammar || matrix.backend == 'cpu' && !matrix.tracing && !matrix.grammar && matrix.target == 'wasm32-wasip1-threads' }}
         run: |
-          cargo +stable nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
-            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p backend-uzu --lib --test kernel' || '' }}
+          cargo +nightly nextest run --profile=ci --no-default-features $FEATURE_FLAGS \
+            ${{ matrix.target == 'wasm32-wasip1-threads' && '-p backend-uzu backends::common::kernel::tests --lib' || '' }}
 
   validate-bindings:
     name: validate-bindings

@@ -7,13 +7,11 @@ use metal::{
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::{RangeMap, RangeSet};
 
-use crate::{
-    backends::metal::{
-        error::MetalError,
-        metal_extensions::SparsePageSizeExt,
-        sparse::{MetalSparseMappingOpsBatch, sparse_utils::MetalSparseHeapBufferMapping},
-    },
-    prelude::MetalContext,
+use crate::backends::metal::{
+    MetalContext,
+    error::MetalError,
+    metal_extensions::SparsePageSizeExt,
+    sparse::{MetalSparseMappingOpsBatch, sparse_utils::MetalSparseHeapBufferMapping},
 };
 
 pub(crate) struct MetalSparseHeap {

@@ -47,6 +47,8 @@ pub fn build(
                 top_k: _,
                 top_p,
                 min_p: _,
+                repetition_penalty: _,
+                suffix_repetition_length: _,
             } => (temperature.map(|value| value as f32), top_p.map(|value| value as f32)),
         },
     };

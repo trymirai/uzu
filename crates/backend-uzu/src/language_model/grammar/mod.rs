@@ -43,3 +43,7 @@ pub fn create_compiled_grammar(
         Err(Error::GrammarNoBackendAvailable)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/language_model/grammar.rs"]
+mod tests;
