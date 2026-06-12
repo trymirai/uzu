@@ -20,7 +20,7 @@ pub(crate) struct GemvTile {
 const SMALL_G13_HUGE_N: u32 = 32768;
 const SMALL_G13_WIDE_ROW_N: u32 = 6144;
 const DEEP_K: u32 = 8192;
-const FP_LARGE_MIN_SPLIT_K: u32 = 4 * FP_K_BLOCK;
+const FP_LARGE_SPLIT_K_MIN_DEPTH: u32 = 4 * FP_K_BLOCK;
 const FP_K_DEPTH_N_MAX: u32 = 4095;
 const FP_K_DEPTH_DEEP_MIN: u32 = 3072;
 const FP_K_DEPTH_VERY_DEEP_RATIO: u32 = 16;
@@ -28,7 +28,10 @@ const FP_M_BUCKET_MAXES: [u32; 2] = [2, 4];
 const FP_N_BUCKET_MAXES: [u32; 4] = [512, 1024, FP_K_DEPTH_N_MAX, 16384];
 const FP_M_BUCKET_COUNT: usize = FP_M_BUCKET_MAXES.len() + 1;
 const FP_N_BUCKET_COUNT: usize = FP_N_BUCKET_MAXES.len() + 1;
-const FP_K_DEPTH_BUCKET_COUNT: usize = 3;
+const K_DEPTH_REGULAR: usize = 0;
+const K_DEPTH_DEEP: usize = 1;
+const K_DEPTH_VERY_DEEP: usize = 2;
+const FP_K_DEPTH_BUCKET_COUNT: usize = K_DEPTH_VERY_DEEP + 1;
 
 #[rustfmt::skip]
 const FP_PREFERRED_K_SPLIT: [[[u32; FP_K_DEPTH_BUCKET_COUNT]; FP_N_BUCKET_COUNT]; FP_M_BUCKET_COUNT] = [
@@ -160,15 +163,12 @@ pub(crate) fn fp_tile(
     // confirmed wins, so shipped FP policy keeps SG8 and tunes KS/R only.
     let k_split = if !input_aligned {
         1
-    } else if m == 1 && tier == DeviceTier::Large && k < FP_LARGE_MIN_SPLIT_K {
+    } else if m == 1 && tier == DeviceTier::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH {
         1
     } else if m == 1 && tier == DeviceTier::SmallG13 && n >= SMALL_G13_HUGE_N {
         1
     } else {
         // Only m>4 narrow-N rows use the K-depth axis today.
-        const K_DEPTH_REGULAR: usize = 0;
-        const K_DEPTH_DEEP: usize = 1;
-        const K_DEPTH_VERY_DEEP: usize = 2;
         let k_depth_bucket = if m <= 4 || n > FP_K_DEPTH_N_MAX {
             K_DEPTH_REGULAR
         } else if n != 0 && k / n >= FP_K_DEPTH_VERY_DEEP_RATIO {
@@ -184,6 +184,8 @@ pub(crate) fn fp_tile(
         cap_k_split_to_complete_fp_k_blocks(k, preferred)
     };
 
+    // R1 won most single-row FP sweeps; Large devices only switch back to R4
+    // for deep-K rows, while SmallG13 wide rows keep R4.
     let results_per_simdgroup = if tier == DeviceTier::SmallG13 && m == 1 && n >= SMALL_G13_WIDE_ROW_N {
         DEFAULT_RESULTS_PER_SIMDGROUP
     } else if m == 1 && (k <= DEEP_K || tier != DeviceTier::Large) {
