@@ -8,7 +8,7 @@ use std::{
 use backend_uzu::backends::common::{Backend, Context, Encoder};
 use criterion::Bencher;
 
-use crate::common::env_vars;
+use crate::tests::env_vars;
 
 static CAPTURE_TAKEN: AtomicBool = AtomicBool::new(false);
 

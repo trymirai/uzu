@@ -1,6 +1,11 @@
 #![cfg(metal_backend)]
 
-use backend_uzu::{
+use criterion::{BenchmarkId, Criterion, Throughput};
+use half::bf16;
+use num_traits::Float;
+use proc_macros::uzu_bench;
+
+use crate::{
     array::ArrayElement,
     backends::{
         common::{
@@ -10,15 +15,10 @@ use backend_uzu::{
         },
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-};
-use criterion::{BenchmarkId, Criterion, Throughput};
-use half::bf16;
-use num_traits::Float;
-use proc_macros::uzu_bench;
-
-use crate::common::{
-    matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
-    type_short_name,
+    common::{
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
+        type_short_name,
+    },
 };
 
 fn bench_unified_quant_typed<T: ArrayElement + Float>(
