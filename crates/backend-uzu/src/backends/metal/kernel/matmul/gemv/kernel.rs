@@ -3,7 +3,7 @@ use std::{
     sync::OnceLock,
 };
 
-use super::policy::{self, DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP, FP_BLOCK};
+use super::policy::{self, DEFAULT_RESULTS_PER_SIMDGROUP, FP_K_BLOCK};
 use crate::{
     backends::{
         common::{
@@ -77,7 +77,7 @@ impl GemvSpecialization {
 
         let bits = args.b.bits_per_b().unwrap_or(0);
         let block_size = if !is_quant {
-            FP_BLOCK
+            FP_K_BLOCK
         } else if bits == 4 {
             512
         } else {
@@ -91,11 +91,7 @@ impl GemvSpecialization {
         } else if is_quant || has_rht {
             // Non-bf16 quant IO and fp+RHT keep the default tile (the only
             // one instantiated for those modes).
-            policy::GemvTile {
-                num_simdgroups: DEFAULT_NUM_SIMDGROUPS,
-                k_split: 1,
-                results_per_simdgroup: DEFAULT_RESULTS_PER_SIMDGROUP,
-            }
+            policy::DEFAULT_TILE
         } else {
             policy::fp_tile(args.m, args.n, args.k, input_aligned, device_tier)
         };
