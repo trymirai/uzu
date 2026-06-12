@@ -53,6 +53,7 @@ pub struct ChatSession {
 
     tokenizer: Tokenizer,
     stop_token_ids: Vec<i32>,
+    end_of_thinking_token_id: Option<u64>,
     input_processor: Box<dyn InputProcessor>,
     output_parser: OutputParser,
     decoding_config: DecodingConfig,
@@ -114,6 +115,12 @@ impl ChatSession {
         let stop_token_ids: Vec<i32> =
             model_config.generation_config.stop_token_ids.iter().map(|&x| x as i32).collect();
 
+        let end_of_thinking_token_id = token_codec_config
+            .end_of_thinking_tag
+            .as_deref()
+            .and_then(|tag| tokenizer.encode(tag, false).ok())
+            .and_then(|encoding| encoding.get_ids().last().map(|&id| id as u64));
+
         let input_processor = InputProcessorDefault::new(token_codec_config.clone());
 
         let output_parser = OutputParser::new(token_codec_config.output_parser_regex.clone())?;
@@ -125,6 +132,7 @@ impl ChatSession {
             model_config,
             tokenizer,
             stop_token_ids,
+            end_of_thinking_token_id,
             input_processor: Box::new(input_processor),
             output_parser,
             decoding_config,
@@ -231,8 +239,18 @@ impl ChatSession {
 
         let sampling_method = config.sampling_policy.resolve(&self.model_config);
 
+        let grammar_trigger_token_id = if config.enable_thinking {
+            self.end_of_thinking_token_id
+        } else {
+            None
+        };
         let mut compiled_grammar: Option<Box<dyn CompiledGrammar>> = if let Some(ref config) = config.grammar_config {
-            Some(create_compiled_grammar(config, &self.tokenizer, Some(&self.stop_token_ids))?)
+            Some(create_compiled_grammar(
+                config,
+                &self.tokenizer,
+                Some(&self.stop_token_ids),
+                grammar_trigger_token_id,
+            )?)
         } else {
             None
         };

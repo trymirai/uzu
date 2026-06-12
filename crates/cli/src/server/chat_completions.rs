@@ -22,7 +22,7 @@ use uuid::Uuid;
 use uzu::{
     session::chat::{ChatSession, ChatSessionStreamChunk},
     types::{
-        basic::SamplingMethod,
+        basic::{Grammar, ReasoningEffort, SamplingMethod},
         session::chat::{ChatMessage, ChatReplyConfig, ChatReplyFinishReason, ChatReplyStats, ChatRole},
     },
 };
@@ -34,6 +34,41 @@ pub struct OaiMessage {
     pub role: String,
     #[serde(default)]
     pub content: String,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct JsonSchemaSpec {
+    pub schema: serde_json::Value,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub name: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub strict: Option<bool>,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text {},
+    JsonObject {},
+    JsonSchema {
+        json_schema: JsonSchemaSpec,
+    },
+}
+
+impl ResponseFormat {
+    fn to_grammar(&self) -> Option<Grammar> {
+        match self {
+            ResponseFormat::Text {} => None,
+            ResponseFormat::JsonObject {} => Some(Grammar::JsonAny {}),
+            ResponseFormat::JsonSchema {
+                json_schema,
+            } => Some(Grammar::JsonSchema {
+                schema: json_schema.schema.to_string(),
+            }),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -51,6 +86,10 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub top_k: Option<i64>,
+    #[serde(default)]
+    pub response_format: Option<ResponseFormat>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
     #[serde(default)]
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -127,19 +166,31 @@ fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn to_chat_messages(messages: &[OaiMessage]) -> Vec<ChatMessage> {
-    messages
+fn to_chat_messages(
+    messages: &[OaiMessage],
+    reasoning_effort: Option<ReasoningEffort>,
+) -> Vec<ChatMessage> {
+    let mut chat_messages: Vec<ChatMessage> = messages
         .iter()
         .map(|message| {
             let role = ChatRole::from_str(&message.role).unwrap_or(ChatRole::User {});
             ChatMessage::for_role(role).with_text(message.content.clone())
         })
-        .collect()
+        .collect();
+
+    // OpenAI's `reasoning_effort` is request-level; the backend reads it from the most
+    // recent turn, so it is enough to carry it on the final message.
+    if let (Some(effort), Some(last)) = (reasoning_effort, chat_messages.last_mut()) {
+        *last = last.with_reasoning_effort(effort);
+    }
+
+    chat_messages
 }
 
 fn build_reply_config(request: &ChatCompletionRequest) -> ChatReplyConfig {
     let token_limit = request.max_completion_tokens.or(request.max_tokens);
-    let config = ChatReplyConfig::default().with_token_limit(token_limit);
+    let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
+    let config = ChatReplyConfig::default().with_token_limit(token_limit).with_grammar(grammar);
 
     if request.temperature.is_some_and(|temperature| temperature <= 0.0) {
         return config.with_sampling_method(SamplingMethod::Greedy {});
@@ -390,7 +441,9 @@ pub async fn handle_chat_completions(
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
 
-    let messages = to_chat_messages(&request.messages);
+    let reasoning_effort =
+        request.reasoning_effort.as_deref().and_then(|effort| ReasoningEffort::from_str(effort).ok());
+    let messages = to_chat_messages(&request.messages, reasoning_effort);
     let config = build_reply_config(&request);
 
     if is_stream {
@@ -403,5 +456,71 @@ pub async fn handle_chat_completions(
         let session = Arc::clone(&state.session);
         let response = run_blocking(session, messages, config, id, model, created).await;
         ChatCompletionResult::Json(Json(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(json: &str) -> ChatCompletionRequest {
+        serde_json::from_str(json).expect("valid request")
+    }
+
+    #[test]
+    fn json_object_response_format_maps_to_json_any() {
+        let request = parse(r#"{"messages":[],"response_format":{"type":"json_object"}}"#);
+        let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
+        assert_eq!(grammar, Some(Grammar::JsonAny {}));
+    }
+
+    #[test]
+    fn json_schema_response_format_carries_serialized_schema() {
+        let request = parse(
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"country","strict":true,"schema":{"type":"object"}}}}"#,
+        );
+        let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
+        assert_eq!(
+            grammar,
+            Some(Grammar::JsonSchema {
+                schema: r#"{"type":"object"}"#.to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn text_response_format_produces_no_grammar() {
+        let request = parse(r#"{"messages":[],"response_format":{"type":"text"}}"#);
+        assert!(request.response_format.as_ref().and_then(ResponseFormat::to_grammar).is_none());
+    }
+
+    #[test]
+    fn absent_response_format_produces_no_grammar() {
+        let request = parse(r#"{"messages":[]}"#);
+        assert!(request.response_format.is_none());
+    }
+
+    #[test]
+    fn reasoning_effort_parses_known_levels() {
+        let request = parse(r#"{"messages":[],"reasoning_effort":"high"}"#);
+        let effort = request.reasoning_effort.as_deref().and_then(|value| ReasoningEffort::from_str(value).ok());
+        assert_eq!(effort, Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn reasoning_effort_attaches_to_last_message_only() {
+        let messages = vec![
+            OaiMessage {
+                role: "system".to_string(),
+                content: "sys".to_string(),
+            },
+            OaiMessage {
+                role: "user".to_string(),
+                content: "hi".to_string(),
+            },
+        ];
+        let chat_messages = to_chat_messages(&messages, Some(ReasoningEffort::Disabled));
+        assert_eq!(chat_messages[0].reasoning_effort(), None);
+        assert_eq!(chat_messages[1].reasoning_effort(), Some(ReasoningEffort::Disabled));
     }
 }
