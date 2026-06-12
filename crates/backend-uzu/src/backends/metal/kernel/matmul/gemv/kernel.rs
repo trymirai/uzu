@@ -86,17 +86,18 @@ impl GemvSpecialization {
         let input_aligned = args.k.is_multiple_of(block_size);
         let has_rht = args.d_transform.rht_factors.is_some();
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
-        let (k_split, num_simdgroups, results_per_simdgroup) = if is_quant && bf16_io {
-            let (num_simdgroups, results_per_simdgroup) =
-                policy::quant_tile(args.m, args.n, args.k, has_rht, device_tier);
-            (1, num_simdgroups, results_per_simdgroup)
+        let tile = if is_quant && bf16_io {
+            policy::quant_tile(args.m, args.n, args.k, bits, has_rht, device_tier)
         } else if is_quant || has_rht {
             // Non-bf16 quant IO and fp+RHT keep the default tile (the only
             // one instantiated for those modes).
-            (1, DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP)
+            policy::GemvTile {
+                num_simdgroups: DEFAULT_NUM_SIMDGROUPS,
+                k_split: 1,
+                results_per_simdgroup: DEFAULT_RESULTS_PER_SIMDGROUP,
+            }
         } else {
-            let (k_split, results_per_simdgroup) = policy::fp_tile(args.m, args.n, args.k, input_aligned, device_tier);
-            (k_split, DEFAULT_NUM_SIMDGROUPS, results_per_simdgroup)
+            policy::fp_tile(args.m, args.n, args.k, input_aligned, device_tier)
         };
         Some(Self {
             b_prologue: args.b.b_prologue(),
@@ -104,9 +105,9 @@ impl GemvSpecialization {
             bits,
             output_transform: args.d_transform.mask(),
             input_aligned,
-            k_split,
-            results_per_simdgroup,
-            num_simdgroups,
+            k_split: tile.k_split,
+            results_per_simdgroup: tile.results_per_simdgroup,
+            num_simdgroups: tile.num_simdgroups,
         })
     }
 }
