@@ -19,34 +19,33 @@
 //! - **Next context nodes** ([`AcceptedProposal::accepted_node_indices`]): the
 //!   nodes whose target hidden features advance the draft context state.
 //!   Identical to the verified nodes for a chain proposal.
+//!
+//! Distinct from [`crate::trie::FlatTrie::accept`], which walks a speculation
+//! tree and has none of the EOS/bonus/budget/verified-node semantics; the
+//! DFlash integration should reconcile the two rather than grow both.
 
 /// A linear chain proposal awaiting target verification.
 ///
 /// `token_ids[0]` is the last committed token (sampled from the target but
 /// never yet forward-passed through it); the remaining entries are draft
-/// tokens. `token_positions[i]` is the sequence position of `token_ids[i]`,
-/// using lalamo's convention where the position of the last token appended to
-/// the draft context is `last_token_index + 1`
-/// (`lalamo/speculator/common.py:103-118` @ `2cb46e9`).
+/// tokens. `token_positions[i]` is the 1-based sequence position of
+/// `token_ids[i]`, using lalamo's convention where the position of the last
+/// token appended to the draft context is `last_token_index + 1`
+/// (`lalamo/speculator/common.py:59-64,152-155` @ `2cb46e9`).
 pub struct ChainProposal {
     pub token_ids: Box<[u64]>,
     pub token_positions: Box<[usize]>,
 }
 
 /// Result of verifying a [`ChainProposal`] against the target's sampled
-/// tokens (`lalamo/speculator/common.py:41-91` @ `2cb46e9`).
+/// tokens (`lalamo/speculator/common.py:41-86` @ `2cb46e9`). The source node
+/// of committed token `i` is always node `i` for a chain, so lalamo's
+/// `source_indices` is not materialized.
 pub struct AcceptedProposal {
-    /// Committed tokens, in emission order: the verified draft tokens
-    /// (truncated after the first EOS) followed by the bonus token (absent if
-    /// a draft EOS fired), the whole sequence capped to the remaining output
-    /// budget.
+    /// Committed tokens, in emission order.
     pub token_ids: Vec<u64>,
     /// Sequence position of each committed token.
     pub token_positions: Vec<usize>,
-    /// For each committed token, the proposal node whose target logits
-    /// produced it. Trivially `0..len` for a chain proposal; kept explicit
-    /// because per-node data (e.g. top-k logits) is gathered through it.
-    pub source_indices: Vec<usize>,
     /// Number of verified proposal nodes; the next context nodes are
     /// `0..num_accepted_nodes`. Unaffected by EOS or the output budget.
     pub num_accepted_nodes: usize,
@@ -84,12 +83,10 @@ impl ChainProposal {
         // token (common.py:141-150).
         let mut token_ids = Vec::with_capacity(num_accepted_nodes);
         let mut token_positions = Vec::with_capacity(num_accepted_nodes);
-        let mut source_indices = Vec::with_capacity(num_accepted_nodes);
         let mut has_draft_eos = false;
         for source in 0..num_accepted_drafts {
             token_ids.push(self.token_ids[source + 1]);
             token_positions.push(self.token_positions[source + 1]);
-            source_indices.push(source);
             if is_eos(self.token_ids[source + 1]) {
                 has_draft_eos = true;
                 break;
@@ -102,7 +99,6 @@ impl ChainProposal {
             let bonus_source = num_accepted_drafts;
             token_ids.push(sampled_token_ids[bonus_source]);
             token_positions.push(self.token_positions[bonus_source] + 1);
-            source_indices.push(bonus_source);
         }
 
         // Cap the committed output at the remaining budget. Lalamo applies the
@@ -110,12 +106,10 @@ impl ChainProposal {
         // prefix-shaped, so truncation is equivalent.
         token_ids.truncate(remaining_length);
         token_positions.truncate(remaining_length);
-        source_indices.truncate(remaining_length);
 
         AcceptedProposal {
             token_ids,
             token_positions,
-            source_indices,
             num_accepted_nodes,
         }
     }
@@ -142,7 +136,12 @@ impl AcceptedProposal {
     /// never forward-passed). Mirrors `last_token_indices`
     /// (common.py:59-64).
     pub fn last_token_index(&self) -> Option<usize> {
-        self.token_positions.last().map(|position| position - 1)
+        if let Some(position) = self.token_positions.last() {
+            debug_assert!(*position >= 1, "committed token positions are 1-based");
+            Some(position - 1)
+        } else {
+            None
+        }
     }
 
     /// Whether any committed token is an end-of-sequence token

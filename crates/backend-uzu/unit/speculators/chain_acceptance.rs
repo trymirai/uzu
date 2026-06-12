@@ -29,7 +29,6 @@ fn test_full_chain_accepted_with_bonus() {
 
     assert_eq!(accepted.token_ids, vec![11, 12, 13, 14]);
     assert_eq!(accepted.token_positions, vec![6, 7, 8, 9]);
-    assert_eq!(accepted.source_indices, vec![0, 1, 2, 3]);
     assert_eq!(accepted.num_accepted_nodes, 4);
     assert_eq!(accepted.accepted_node_indices(), 0..4);
 }
@@ -40,7 +39,6 @@ fn test_partial_chain_accepted() {
 
     assert_eq!(accepted.token_ids, vec![11, 99]);
     assert_eq!(accepted.token_positions, vec![6, 7]);
-    assert_eq!(accepted.source_indices, vec![0, 1]);
     assert_eq!(accepted.num_accepted_nodes, 2);
 }
 
