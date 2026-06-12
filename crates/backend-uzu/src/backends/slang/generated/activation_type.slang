@@ -1,7 +1,8 @@
 enum ActivationType : uint32_t {
   SILU = 0,
-  GELU = 1,
-  TANH = 2,
-  IDENTITY = 3,
-  SOFTPLUS = 4,
+  GELUApprox = 1,
+  GELUExact = 2,
+  TANH = 3,
+  IDENTITY = 4,
+  SOFTPLUS = 5,
 };
