@@ -1,4 +1,5 @@
 use half::bf16;
+use proc_macros::uzu_test;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeGather};
@@ -18,7 +19,7 @@ use crate::{
 };
 
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_moe_e2e_decode_perf() {
     eprintln!("\n=== End-to-End MoE Performance (DECODE, T=1) ===");
@@ -73,7 +74,7 @@ fn test_moe_e2e_decode_perf() {
 }
 
 // Test E2E MoE performance with timing breakdown (prefill mode, T>1)
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_moe_e2e_prefill_perf() {
     eprintln!("\n=== End-to-End MoE Performance (PREFILL, T>1) ===");
@@ -134,7 +135,7 @@ fn test_moe_e2e_prefill_perf() {
 }
 
 // Test complete MoE pipeline timing breakdown (decode mode, T=1)
-#[test]
+#[uzu_test]
 #[ignore]
 fn test_moe_pipeline_breakdown_decode() {
     for_each_non_cpu_backend!(|B| {
