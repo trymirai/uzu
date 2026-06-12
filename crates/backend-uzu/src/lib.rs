@@ -39,5 +39,5 @@ pub mod _benchmarks {
 }
 
 #[cfg(test)]
-#[path = "../tests/harness/main.rs"]
+#[path = "../tests/harness/mod.rs"]
 mod harness;
