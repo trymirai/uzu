@@ -11,11 +11,7 @@ use crate::{
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
             kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
         },
-        metal::{
-            Metal,
-            context::{GpuDeviceTier, MetalContext},
-            kernel::GemvMetalKernel,
-        },
+        metal::{Metal, context::MetalContext, device_tier::DeviceTier, kernel::GemvMetalKernel},
     },
     data_type::DataType,
 };
@@ -27,13 +23,6 @@ fn max_gemv_batch_threshold() -> u32 {
     *GEMV_MAX_BATCH.get_or_init(|| {
         std::env::var("UZU_GEMV_MAX_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_GEMV_MAX_BATCH)
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GemvDispatchPath {
-    pub k_split: u32,
-    pub results_per_simdgroup: u32,
-    pub num_simdgroups: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -54,7 +43,7 @@ impl GemvSpecialization {
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
-        device_tier: GpuDeviceTier,
+        device_tier: DeviceTier,
     ) -> Option<GemvSpecialization> {
         if !args.b_transpose || args.b_offset != 0 {
             return None;
@@ -96,22 +85,20 @@ impl GemvSpecialization {
         };
         let input_aligned = args.k.is_multiple_of(block_size);
         let has_rht = args.d_transform.rht_factors.is_some();
-        let k_split = if is_quant || has_rht {
-            1
-        } else {
-            policy::fp_k_split(args.m, args.n, args.k, input_aligned, device_tier)
-        };
         let bf16_io = input_data_type == DataType::BF16 && output_data_type == DataType::BF16;
-        let (num_simdgroups, results_per_simdgroup) = if is_quant && bf16_io {
-            policy::quant_tile(args.m, args.n, args.k, has_rht, device_tier)
+        let (k_split, num_simdgroups, results_per_simdgroup) = if is_quant && bf16_io {
+            let (num_simdgroups, results_per_simdgroup) =
+                policy::quant_tile(args.m, args.n, args.k, has_rht, device_tier);
+            (1, num_simdgroups, results_per_simdgroup)
         } else if is_quant || has_rht {
             // Non-bf16 quant IO and fp+RHT keep the default tile (the only
             // one instantiated for those modes).
-            (DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP)
+            (1, DEFAULT_NUM_SIMDGROUPS, DEFAULT_RESULTS_PER_SIMDGROUP)
         } else {
-            (DEFAULT_NUM_SIMDGROUPS, policy::fp_results_per_simdgroup(args.m, args.n, args.k, device_tier))
+            let (k_split, results_per_simdgroup) = policy::fp_tile(args.m, args.n, args.k, input_aligned, device_tier);
+            (k_split, DEFAULT_NUM_SIMDGROUPS, results_per_simdgroup)
         };
-        Some(GemvSpecialization {
+        Some(Self {
             b_prologue: args.b.b_prologue(),
             group_size: args.b.group_size().unwrap_or(0),
             bits,
@@ -121,26 +108,6 @@ impl GemvSpecialization {
             results_per_simdgroup,
             num_simdgroups,
         })
-    }
-
-    pub(crate) fn with_dispatch_path(
-        mut self,
-        path: GemvDispatchPath,
-    ) -> Self {
-        assert!(matches!(path.k_split, 1 | 2 | 4 | 8), "GemvDispatchPath::k_split must be one of 1, 2, 4, 8",);
-        assert!(
-            matches!(path.results_per_simdgroup, 1 | 2 | 4 | 8),
-            "GemvDispatchPath::results_per_simdgroup must be one of 1, 2, 4, 8",
-        );
-        assert!(matches!(path.num_simdgroups, 2 | 4 | 8), "GemvDispatchPath::num_simdgroups must be one of 2, 4, 8",);
-        assert!(
-            path.num_simdgroups.is_multiple_of(path.k_split),
-            "GemvDispatchPath::k_split must divide num_simdgroups",
-        );
-        self.k_split = path.k_split;
-        self.results_per_simdgroup = path.results_per_simdgroup;
-        self.num_simdgroups = path.num_simdgroups;
-        self
     }
 }
 
@@ -304,33 +271,5 @@ impl GemvDispatch {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn with_dispatch_path_sets_all_forced_path_fields() {
-        let specialization = GemvSpecialization {
-            b_prologue: GemmBPrologueKind::FullPrecision,
-            group_size: 0,
-            bits: 0,
-            output_transform: GemmDTransform::empty(),
-            input_aligned: true,
-            k_split: 1,
-            results_per_simdgroup: DEFAULT_RESULTS_PER_SIMDGROUP,
-            num_simdgroups: DEFAULT_NUM_SIMDGROUPS,
-        }
-        .with_dispatch_path(GemvDispatchPath {
-            k_split: 8,
-            results_per_simdgroup: 1,
-            num_simdgroups: 8,
-        });
-
-        assert_eq!(specialization.k_split, 8);
-        assert_eq!(specialization.results_per_simdgroup, 1);
-        assert_eq!(specialization.num_simdgroups, 8);
     }
 }

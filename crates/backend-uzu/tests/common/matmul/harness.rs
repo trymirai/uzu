@@ -1,5 +1,5 @@
 #[cfg(metal_backend)]
-use backend_uzu::backends::metal::{GemmDispatchPath, GemvDispatchPath, Metal, MetalContext};
+use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use backend_uzu::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
@@ -193,20 +193,6 @@ pub fn cpu_reference<T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     .expect("CPU MatmulKernel");
     run::<Cpu, T>(&context, &mut kernel, input, |kernel, args, encoder| {
         kernel.encode(args, encoder).expect("encode failed");
-    })
-}
-
-/// Run the full-precision case through the GEMV kernel with a forced
-/// dispatch path (panics if the shape is rejected by the GEMV selector).
-#[cfg(metal_backend)]
-pub fn run_metal_gemv_path<T: ArrayElement + Float>(
-    context: &MetalContext,
-    kernel: &mut MetalMatmulKernel,
-    input: &Input<T>,
-    path: GemvDispatchPath,
-) -> Vec<T> {
-    run::<Metal, T>(context, kernel, input, |kernel, args, encoder| {
-        kernel.encode_gemv_dispatch_path(args, path, encoder).expect("gemv encode_gemv_dispatch_path failed")
     })
 }
 

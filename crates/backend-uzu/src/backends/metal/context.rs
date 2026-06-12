@@ -17,6 +17,7 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 
 use super::{
     Metal,
+    device_tier::{DeviceTier, device_tier_for_device},
     error::MetalError,
     kernel,
     metal_extensions::{DeviceExt, LibraryPipelineExtensions},
@@ -44,6 +45,7 @@ pub struct MetalContext {
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     pipeline_cache: RefCell<HashMap<String, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     sparse_heap_pool: RefCell<MetalSparseHeapPool>,
+    device_tier: DeviceTier,
     weak_self: Weak<MetalContext>,
     #[cfg(test)]
     timeline_shared_event: Retained<ProtocolObject<dyn MTLSharedEvent>>,
@@ -54,18 +56,8 @@ impl MetalContext {
         self.device.supports_mxu()
     }
 
-    pub fn gpu_core_count(&self) -> u32 {
-        self.gpu_core_count
-    }
-
-    /// False on the M1/A14 (G13) generation, true on M2/A15 and newer.
-    pub fn supports_apple8_family(&self) -> bool {
-        self.device.supports_family(metal::MTLGPUFamily::Apple8)
-    }
-
-    /// False on the M2/A15/A16 generation and older, true on M3/A17 and newer.
-    pub fn supports_apple9_family(&self) -> bool {
-        self.device.supports_family(metal::MTLGPUFamily::Apple9)
+    pub(crate) fn device_tier(&self) -> DeviceTier {
+        self.device_tier
     }
 
     pub(super) fn update_peak_memory_usage(&self) {
@@ -143,6 +135,7 @@ impl Context for MetalContext {
             .map_err(|nserror| MetalError::CannotCreateLibrary(nserror.to_string()))?;
 
         let gpu_core_count = device.gpu_core_count();
+        let device_tier = device_tier_for_device(gpu_core_count, device.as_ref());
 
         let page_size = MTLSparsePageSize::KB256;
         let heap_capacity = Metal::ALLOCATION_GRANULARITY;
@@ -163,6 +156,7 @@ impl Context for MetalContext {
             library,
             pipeline_cache: RefCell::new(HashMap::new()),
             sparse_heap_pool: RefCell::new(sparse_pool),
+            device_tier,
             weak_self: weak_self.clone(),
             #[cfg(test)]
             timeline_shared_event,
@@ -267,77 +261,5 @@ impl Context for MetalContext {
 
     fn sparse_buffers_supported(&self) -> bool {
         self.device.supports_placement_sparse_resources()
-    }
-}
-
-/// GPU size class used to key shape heuristics. Fleet sweep (June 2026,
-/// A18 Pro 5c / M1 8c / M2 Pro 19c / M4 Pro 20c / M3 Max 40c / M4 Max 40c /
-/// M5 Max) showed the deep-k wide-row tile only pays off on Max/Ultra-class
-/// parts; smaller GPUs always prefer single-row tiles for batch-1 decode.
-/// G13 (M1/A14 generation) additionally prefers unsplit wide-row tiles on
-/// huge-n matrices (lm_head: +6.5% for SG8_KS1_R4 over KS8_R1, confirmed
-/// same-run A/B; M2 Pro / M4 Pro / A18 Pro show no such preference).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GpuDeviceTier {
-    /// Phone-class and base/Pro Mac GPUs (< 30 cores), Apple9+ families
-    /// (M3/M4/A17 and newer): prefer small SG2/SG4 quant tiles like the
-    /// Wide tier.
-    Compact,
-    /// M2/A15/A16 generation compacts (Apple8, pre-Apple9): prefer SG8
-    /// quant tiles with reduced R.
-    CompactG14,
-    /// M1/A14 generation (G13): compact and pre-Apple8.
-    CompactG13,
-    /// Max/Ultra-class GPUs (>= 30 cores).
-    Wide,
-}
-
-impl MetalContext {
-    /// GPU size/generation class used to key kernel dispatch heuristics
-    /// (see `gemv::kernel`); detected once from core count + Metal family.
-    pub fn gpu_device_tier(&self) -> GpuDeviceTier {
-        // Test/debug override, e.g. UZU_GPU_TIER=compact_g13.
-        if let Ok(name) = std::env::var("UZU_GPU_TIER") {
-            match name.as_str() {
-                "wide" => return GpuDeviceTier::Wide,
-                "compact" => return GpuDeviceTier::Compact,
-                "compact_g14" => return GpuDeviceTier::CompactG14,
-                "compact_g13" => return GpuDeviceTier::CompactG13,
-                _ => {},
-            }
-        }
-        gpu_device_tier_for(self.gpu_core_count(), self.supports_apple8_family(), self.supports_apple9_family())
-    }
-}
-
-fn gpu_device_tier_for(
-    gpu_core_count: u32,
-    supports_apple8_family: bool,
-    supports_apple9_family: bool,
-) -> GpuDeviceTier {
-    if gpu_core_count >= 30 {
-        GpuDeviceTier::Wide
-    } else if !supports_apple8_family {
-        GpuDeviceTier::CompactG13
-    } else if !supports_apple9_family {
-        GpuDeviceTier::CompactG14
-    } else {
-        GpuDeviceTier::Compact
-    }
-}
-
-#[cfg(test)]
-mod gpu_tier_tests {
-    use super::*;
-
-    #[test]
-    fn gpu_device_tier_detection() {
-        assert_eq!(gpu_device_tier_for(5, true, true), GpuDeviceTier::Compact); // A18 Pro
-        assert_eq!(gpu_device_tier_for(8, false, false), GpuDeviceTier::CompactG13); // M1
-        assert_eq!(gpu_device_tier_for(10, true, false), GpuDeviceTier::CompactG14); // M2
-        assert_eq!(gpu_device_tier_for(19, true, false), GpuDeviceTier::CompactG14); // M2 Pro
-        assert_eq!(gpu_device_tier_for(20, true, true), GpuDeviceTier::Compact); // M4 Pro
-        assert_eq!(gpu_device_tier_for(40, true, true), GpuDeviceTier::Wide); // M3/M4 Max
-        assert_eq!(gpu_device_tier_for(32, false, false), GpuDeviceTier::Wide); // M1 Max stays wide
     }
 }
