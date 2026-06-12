@@ -7,6 +7,9 @@ extern crate self as backend_uzu;
 #[path = "../tests/common/mod.rs"]
 mod common;
 
+#[cfg(test)]
+pub(crate) use proc_macros::__internal_uzu_test as uzu_test;
+
 pub mod array;
 mod audio;
 mod classifier;

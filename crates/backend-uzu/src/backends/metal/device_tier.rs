@@ -43,8 +43,9 @@ fn device_tier_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::uzu_test;
 
-    #[test]
+    #[uzu_test]
     fn device_tier_detection() {
         assert_eq!(device_tier_for(5, true, true), DeviceTier::Small); // A18 Pro
         assert_eq!(device_tier_for(8, false, false), DeviceTier::SmallG13); // M1

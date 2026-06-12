@@ -246,8 +246,9 @@ pub(crate) fn quant_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::uzu_test;
 
-    #[test]
+    #[uzu_test]
     fn fp_policy_cases() {
         #[rustfmt::skip]
         let cases = [
@@ -270,7 +271,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[uzu_test]
     fn quant_policy_cases() {
         #[rustfmt::skip]
         let cases = [
