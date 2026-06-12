@@ -10,6 +10,10 @@ extern crate self as backend_uzu;
 #[path = "../tests/common/mod.rs"]
 mod common;
 
+#[cfg(test)]
+#[path = "../unit/bench_cold_pool_test.rs"]
+mod bench_cold_pool_test;
+
 pub mod array;
 mod audio;
 mod classifier;
