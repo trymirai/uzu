@@ -161,11 +161,11 @@ pub(crate) fn fp_tile(
 ) -> GemvTile {
     // FP sweeps covered SG2/SG4/SG8; SG changes did not produce portable
     // confirmed wins, so shipped FP policy keeps SG8 and tunes KS/R only.
-    let k_split = if !input_aligned {
-        1
-    } else if m == 1 && tier == DeviceTier::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH {
-        1
-    } else if m == 1 && tier == DeviceTier::SmallG13 && n >= SMALL_G13_HUGE_N {
+    let should_disable_k_split = !input_aligned
+        || (m == 1 && tier == DeviceTier::Large && k < FP_LARGE_SPLIT_K_MIN_DEPTH)
+        || (m == 1 && tier == DeviceTier::SmallG13 && n >= SMALL_G13_HUGE_N);
+
+    let k_split = if should_disable_k_split {
         1
     } else {
         // Only m>4 narrow-N rows use the K-depth axis today.
