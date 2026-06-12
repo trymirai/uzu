@@ -236,7 +236,7 @@ func test_kernel_groupshared_ref_entry_float(
   float y;
   if (act == ActivationType::SILU) {
     y = x / (1.0 + exp(-x));
-  } else if (act == ActivationType::GELU) {
+  } else if (act == ActivationType::GELUApprox) {
     y = 0.5 * x * (1.0 + tanh(0.7978845608 * (x + 0.044715 * x * x * x)));
   } else if (act == ActivationType::TANH) {
     y = tanh(x);
@@ -271,9 +271,9 @@ func test_kernel_groupshared_ref_entry_float(
   [[Axis("size", "threadgroup_size")]] uint idx,
 ) {
   float scale;
-  if (mode == QuantizationMode::UINT4) {
+  if (mode == QuantizationMode::U4) {
     scale = 15.0;
-  } else if (mode == QuantizationMode::INT8) {
+  } else if (mode == QuantizationMode::I8) {
     scale = 127.0;
   } else {
     scale = 255.0;
