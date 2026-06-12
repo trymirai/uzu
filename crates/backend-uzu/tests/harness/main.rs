@@ -2,9 +2,17 @@
 
 mod uzu_test;
 
-extern crate test;
+pub extern crate test;
 
-pub fn uzu_harness(tests: &[&test::TestDescAndFn]) {
-    println!("Running uzu-harness {}", tests.len());
-    test::test_main_static(tests)
+pub use uzu_test::UzuTest;
+
+pub fn uzu_harness(tests: &[&UzuTest]) {
+    let tests = tests
+        .iter()
+        .filter_map(|test| match test {
+            UzuTest::Test(test) => Some(*test),
+            UzuTest::Bench(_) => None,
+        })
+        .collect::<Vec<_>>();
+    test::test_main_static(&tests)
 }

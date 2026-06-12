@@ -64,6 +64,7 @@ fn run_matrix<T: ArrayElement + Float + Debug + Display>(
 }
 
 #[rstest]
+#[test_attr(uzu_test)]
 #[case::base(1.0, false)]
 #[case::ab_scale(0.5, false)]
 #[case::accumulate(1.0, true)]
