@@ -1049,3 +1049,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/language_model/language_model_generator_bench.rs"]
+mod tests;

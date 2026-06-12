@@ -150,15 +150,6 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, false> {
             loader: self.loader,
         })
     }
-
-    #[cfg(test)]
-    pub fn unvalidated(self) -> ParameterLeaf<'a, 'leaf, B, true> {
-        ParameterLeaf {
-            key: self.key,
-            metadata: self.metadata,
-            loader: self.loader,
-        }
-    }
 }
 
 impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
