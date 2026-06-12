@@ -181,6 +181,7 @@ impl<'a, 'leaf, B: Backend> ParameterLeaf<'a, 'leaf, B, true> {
         Ok(allocation)
     }
 
+    #[allow(unused)]
     pub fn read_array(&self) -> Result<Array<B>, ParameterLoaderError<B>> {
         let allocation = self.read_allocation()?;
         Ok(unsafe { Array::from_allocation(allocation, 0, self.metadata.shape.as_ref(), self.metadata.data_type) })
