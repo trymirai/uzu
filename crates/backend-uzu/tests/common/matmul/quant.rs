@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
 use backend_uzu::{
@@ -88,6 +90,13 @@ impl<T: ArrayElement + Float> QuantInput<T> {
             quant_method,
             mode: mode_for_bits(bits),
         }
+    }
+
+    pub(crate) fn weight_buffer_bytes(&self) -> usize {
+        self.w_packed.len() * size_of::<u32>()
+            + self.scales.len() * size_of::<T>()
+            + self.biases.as_ref().map_or(0, |biases| biases.len() * size_of::<T>())
+            + self.zero_points.as_ref().map_or(0, Vec::len)
     }
 }
 
