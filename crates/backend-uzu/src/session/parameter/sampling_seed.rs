@@ -2,16 +2,11 @@ use rand::prelude::*;
 
 use crate::session::parameter::ResolvableValue;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum SamplingSeed {
+    #[default]
     Default,
     Custom(u64),
-}
-
-impl Default for SamplingSeed {
-    fn default() -> Self {
-        SamplingSeed::Default
-    }
 }
 
 impl ResolvableValue<u64> for SamplingSeed {

@@ -1,20 +1,26 @@
 mod callback;
-mod config;
+pub mod config;
+mod download_manager;
 mod downloader;
 mod error;
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use backend_remote::openai::Backend as OpenAIBackend;
 use backend_uzu::inference::Backend as UzuBackend;
 pub use callback::{EngineCallback, EngineCallbackType};
 pub use config::EngineConfig;
+pub use download_manager::DownloadManagerType;
 pub use downloader::{Downloader, DownloaderStream, DownloaderStreamUpdate};
 pub use error::EngineError;
-use nagare::{chat::ChatSession, classification::ClassificationSession, text_to_speech::TextToSpeechSession};
+use indexmap::{IndexMap, IndexSet};
+use nagare::{
+    api::Config as ClientConfig,
+    chat::ChatSession,
+    classification::ClassificationSession,
+    telemetry::{Telemetry, TelemetryContext, TelemetryDevice, TelemetryEvent},
+    text_to_speech::TextToSpeechSession,
+};
 use shoji::{
     traits::{Backend, Registry},
     types::{
@@ -35,6 +41,7 @@ use crate::{
         mirai::{Backend as MiraiBackend, Config as MiraiRegistryConfig, Registry as MiraiRegistry},
         openai::{Config as OpenAIConfig, Registry as OpenAIRegistry},
     },
+    settings::Settings,
     storage::{
         Config as StorageConfig, Storage,
         types::{DownloadPhase, DownloadState},
@@ -44,10 +51,12 @@ use crate::{
 #[bindings::export(Class)]
 #[derive(Clone)]
 pub struct Engine {
+    settings: SharedAccess<Option<Settings>>,
     registry: SharedAccess<MergedRegistry>,
     storage: SharedAccess<Storage>,
     backends: SharedAccess<HashMap<String, Arc<dyn Backend>>>,
     callback: SharedAccess<Option<Arc<EngineCallback>>>,
+    telemetry: SharedAccess<Telemetry>,
 }
 
 impl Engine {
@@ -56,18 +65,51 @@ impl Engine {
             message: error.to_string(),
         })?;
 
+        let settings = if let Some(application_identifier) = &config.application_identifier {
+            Some(Settings::new(application_identifier.clone())?)
+        } else {
+            None
+        };
+        let mut config = config;
+        if let Some(settings) = &settings {
+            config.synchronize_with_settings(settings)?;
+        }
+
         let device = Device::new()?;
+
+        let telemetry = SharedAccess::new({
+            let client_config = ClientConfig::new(
+                "https://sdk.trymirai.com/api/v2".to_string(),
+                Duration::from_secs(10),
+                IndexMap::new(),
+            );
+            let context = TelemetryContext::new(
+                env!("CARGO_PKG_VERSION").to_string(),
+                backend_uzu::TOOLCHAIN_VERSION.to_string(),
+                TelemetryDevice {
+                    os_name: device.os_name.clone(),
+                    cpu_name: device.cpu_name.clone(),
+                    memory_total: device.memory_total,
+                    is_environment_sandboxed: crate::device::is_environment_sandboxed(),
+                },
+            );
+            Telemetry::new(client_config, "telemetry/events".to_string(), context)
+        });
+
         let registry = SharedAccess::new(MergedRegistry::new(vec![]));
-        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string());
+        let storage_config = StorageConfig::new(device.clone(), None, "mirai".to_string())
+            .with_download_manager_type(config.download_manager_type.into());
         logs::start(storage_config.cache_path(), &storage_config.log_name(), false);
 
-        let storage = SharedAccess::new(Storage::new(tokio_handle.clone(), storage_config).await?);
+        let storage = SharedAccess::new(Storage::new(tokio_handle, storage_config).await?);
 
         let engine = Self {
+            settings: SharedAccess::new(settings),
             storage,
             registry,
             backends: SharedAccess::new(HashMap::new()),
             callback: SharedAccess::new(None),
+            telemetry,
         };
         engine.spawn_storage_listener().await;
 
@@ -168,7 +210,7 @@ impl Engine {
         registry: Box<dyn Registry<Error = RegistryError>>,
     ) -> Result<(), EngineError> {
         self.registry.lock().await.add(Box::new(CachedRegistry::new(registry)))?;
-        self.handle_registry_resfresh().await?;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -188,7 +230,7 @@ impl Engine {
         registry_identifier: String,
     ) -> Result<(), EngineError> {
         self.registry.lock().await.remove(&registry_identifier)?;
-        self.handle_registry_resfresh().await?;
+        self.handle_registry_refresh().await?;
         Ok(())
     }
 
@@ -250,29 +292,27 @@ impl Engine {
 
     #[bindings::export(Method(Getter))]
     pub async fn model_registries(&self) -> Result<Vec<ModelRegistry>, EngineError> {
-        let mut registries: Vec<_> = self
+        let registries: Vec<_> = self
             .models()
             .await?
             .into_iter()
             .map(|model| model.registry.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        registries.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(registries)
     }
 
     #[bindings::export(Method(Getter))]
     pub async fn model_vendors(&self) -> Result<Vec<ModelVendor>, EngineError> {
-        let mut vendors: Vec<_> = self
+        let vendors: Vec<_> = self
             .model_families()
             .await?
             .into_iter()
             .map(|family| family.vendor.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        vendors.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(vendors)
     }
 
@@ -293,15 +333,14 @@ impl Engine {
 
     #[bindings::export(Method(Getter))]
     pub async fn model_families(&self) -> Result<Vec<ModelFamily>, EngineError> {
-        let mut families: Vec<_> = self
+        let families: Vec<_> = self
             .models()
             .await?
             .into_iter()
             .filter_map(|model| model.family.clone())
-            .collect::<HashSet<_>>()
+            .collect::<IndexSet<_>>()
             .into_iter()
             .collect();
-        families.sort_by(|first, second| first.name().cmp(&second.name()));
         Ok(families)
     }
 
@@ -332,7 +371,7 @@ impl Engine {
         if let Some(model) = self.model_by_repo_id(identifier.clone()).await? {
             return Ok(Some(model));
         }
-        self.model_by_path(identifier.clone()).await
+        self.model_by_path(identifier).await
     }
 
     #[bindings::export(Method)]
@@ -358,10 +397,8 @@ impl Engine {
     ) -> Result<Option<Model>, EngineError> {
         let models = self.models().await?;
         for model in models {
-            if let Some(model_path) = self.model_path(&model).await {
-                if model_path == path {
-                    return Ok(Some(model));
-                }
+            if self.model_path(&model).await.is_some_and(|model_path| model_path == path) {
+                return Ok(Some(model));
             }
         }
         Ok(None)
@@ -375,29 +412,26 @@ impl Engine {
         &self,
         model: &Model,
     ) -> Option<String> {
-        let path = if model.is_local() {
-            if let Some(local_external_path) = model.local_external_path() {
-                Some(local_external_path.clone())
-            } else {
-                let storage = self.storage.lock().await;
-                let state = storage.state(&model.identifier.clone()).await?;
-                match state.phase {
-                    DownloadPhase::Downloaded {} => {
-                        storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
-                    },
-                    DownloadPhase::NotDownloaded {}
-                    | DownloadPhase::Downloading {}
-                    | DownloadPhase::Paused {}
-                    | DownloadPhase::Locked {}
-                    | DownloadPhase::Error {
-                        ..
-                    } => None,
-                }
-            }
-        } else {
-            None
-        };
-        path
+        if !model.is_local() {
+            return None;
+        }
+        if let Some(local_external_path) = model.local_external_path() {
+            return Some(local_external_path);
+        }
+        let storage = self.storage.lock().await;
+        let state = storage.state(&model.identifier).await?;
+        match state.phase {
+            DownloadPhase::Downloaded {} => {
+                storage.config.cache_model_path(model).map(|path| path.to_string_lossy().to_string())
+            },
+            DownloadPhase::NotDownloaded {}
+            | DownloadPhase::Downloading {}
+            | DownloadPhase::Paused {}
+            | DownloadPhase::Locked {}
+            | DownloadPhase::Error {
+                ..
+            } => None,
+        }
     }
 
     #[bindings::export(Method)]
@@ -425,7 +459,7 @@ impl Engine {
             return Ok(DownloaderStream::empty(model.identifier.clone()));
         }
         downloader.resume().await?;
-        Ok(downloader.progress().await?)
+        downloader.progress().await
     }
 
     #[bindings::export(Method)]
@@ -454,10 +488,11 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ChatSession::new(backend.as_ref(), config, model, path).await?;
+            let session =
+                ChatSession::new(backend.clone(), config, model, path, self.telemetry.lock().await.clone()).await?;
             Ok(session)
         } else {
-            return Err(EngineError::BackendNotFound {});
+            Err(EngineError::BackendNotFound {})
         }
     }
 
@@ -470,10 +505,10 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = ClassificationSession::new(backend.as_ref(), model, path).await?;
+            let session = ClassificationSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
-            return Err(EngineError::BackendNotFound {});
+            Err(EngineError::BackendNotFound {})
         }
     }
 
@@ -486,11 +521,19 @@ impl Engine {
         if let Some(backend) = model.backends.first() {
             let backends = self.backends.lock().await;
             let backend = backends.get(&backend.identifier).ok_or(EngineError::BackendNotFound {})?;
-            let session = TextToSpeechSession::new(backend.as_ref(), model, path).await?;
+            let session = TextToSpeechSession::new(backend.clone(), model, path).await?;
             Ok(session)
         } else {
-            return Err(EngineError::BackendNotFound {});
+            Err(EngineError::BackendNotFound {})
         }
+    }
+}
+
+#[bindings::export(Implementation)]
+impl Engine {
+    #[bindings::export(Method)]
+    pub async fn settings(&self) -> Result<Settings, EngineError> {
+        self.settings.lock().await.clone().ok_or(EngineError::SettingsNotAvailable)
     }
 }
 
@@ -499,7 +542,7 @@ impl Engine {
         self.storage.lock().await.subscribe()
     }
 
-    async fn handle_registry_resfresh(&self) -> Result<(), EngineError> {
+    async fn handle_registry_refresh(&self) -> Result<(), EngineError> {
         let models = self.registry.lock().await.models().await?;
         self.storage.lock().await.refresh(models).await?;
         if let Some(callback) = self.callback.lock().await.as_ref().cloned() {
@@ -511,10 +554,29 @@ impl Engine {
     async fn spawn_storage_listener(&self) {
         let mut stream = self.storage_subscribe().await;
         let callback = self.callback.clone();
+        let telemetry = self.telemetry.lock().await.clone();
         tokio::spawn(async move {
+            let mut last_phase: HashMap<String, DownloadPhase> = HashMap::new();
             while let Some(update) = stream.next().await {
-                if update.is_err() {
+                let Ok((id, state)) = update else {
                     continue;
+                };
+                let previous = last_phase.insert(id.clone(), state.phase.clone());
+                let event = match (&previous, &state.phase) {
+                    (prev, DownloadPhase::Downloading {}) if !matches!(prev, Some(DownloadPhase::Downloading {})) => {
+                        Some(TelemetryEvent::ModelDownloadStarted {
+                            model_id: id,
+                        })
+                    },
+                    (Some(DownloadPhase::Downloading {}), DownloadPhase::Downloaded {}) => {
+                        Some(TelemetryEvent::ModelDownloadFinished {
+                            model_id: id,
+                        })
+                    },
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    telemetry.report(event);
                 }
                 if let Some(callback) = callback.lock().await.as_ref().cloned() {
                     callback.on_event();

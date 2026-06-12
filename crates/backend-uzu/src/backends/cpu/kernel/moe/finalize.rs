@@ -1,8 +1,8 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(MoeFinalize)]
 #[variants(T, f32, f16, bf16)]
@@ -37,7 +37,7 @@ pub fn moe_finalize<T: ArrayElement + Float>(
                         if !val.is_finite() {
                             val = 0.0;
                         }
-                        acc = prob * val + acc;
+                        acc += prob * val;
                     }
                 }
                 if !acc.is_finite() {

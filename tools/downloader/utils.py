@@ -4,9 +4,7 @@ import requests
 from rich.progress import Progress
 
 
-def download_file_with_resume(
-    url: str, file_path: Path, progress: Progress, task_id
-) -> None:
+def download_file_with_resume(url: str, file_path: Path, progress: Progress, task_id) -> None:
     part_file_path = file_path.with_suffix(file_path.suffix + ".part")
 
     resume_position = 0

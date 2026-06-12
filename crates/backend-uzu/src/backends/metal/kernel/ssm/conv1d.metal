@@ -4,12 +4,13 @@
 
 using namespace uzu::activation_type;
 
-template <typename T>
-VARIANTS(T, float, half, bfloat)
+template <typename StateT, typename InputT>
+VARIANTS(StateT, float, bfloat)
+VARIANTS(InputT, float, bfloat)
 PUBLIC KERNEL(Conv1dPack)(
-    device const T* state_in,
-    device const T* x,
-    device T* padded,
+    device const StateT* state_in,
+    device const InputT* x,
+    device StateT* padded,
     constant const uint& state_stride,
     constant const uint& row_stride,
     constant const uint& suffix_len,
@@ -24,7 +25,7 @@ PUBLIC KERNEL(Conv1dPack)(
   } else {
     const uint token = row_idx - state_stride;
     const uint x_index = token * row_stride + channel_idx;
-    padded[padded_index] = x[x_index];
+    padded[padded_index] = static_cast<StateT>(x[x_index]);
   }
 }
 
@@ -86,8 +87,7 @@ PUBLIC KERNEL(Conv1dDecode)(
     const uint dst = token_idx * proj_dim + (channel_idx - inner_dim);
     b_out[dst] = activated;
   } else if (channel_idx < inner_dim + 2 * proj_dim) {
-    const uint dst =
-        token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
+    const uint dst = token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
     c_out[dst] = activated;
   }
 
@@ -152,8 +152,7 @@ PUBLIC KERNEL(Conv1dScan)(
       const uint dst = token_idx * proj_dim + (channel_idx - inner_dim);
       b_out[dst] = activated;
     } else if (channel_idx < inner_dim + 2 * proj_dim) {
-      const uint dst =
-          token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
+      const uint dst = token_idx * proj_dim + (channel_idx - inner_dim - proj_dim);
       c_out[dst] = activated;
     }
   } else if (tap_count > 0) {

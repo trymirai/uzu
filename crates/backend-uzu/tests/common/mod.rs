@@ -2,15 +2,36 @@
 
 pub mod assert;
 pub mod audio;
+pub mod env_vars;
 pub mod helpers;
+pub mod matmul;
+pub mod metrics;
 pub mod path;
 pub mod perf;
 pub mod proptest;
+pub mod repeat_speculator;
 
-pub(crate) use proptest::{dispatch_dtype, for_each_context};
+pub(crate) use proptest::for_each_context;
 
 pub fn type_short_name<T>() -> &'static str {
     std::any::type_name::<T>().rsplit("::").next().unwrap()
+}
+
+pub fn enable_benchmark_gpu_capture_if_requested() {
+    if env_vars::enabled(env_vars::UZU_CAPTURE_BENCH) {
+        unsafe {
+            std::env::set_var(env_vars::METAL_CAPTURE_ENABLED, "1");
+        }
+    }
+}
+
+#[cfg(metal_backend)]
+pub fn shared_metal_context() -> std::rc::Rc<backend_uzu::backends::metal::MetalContext> {
+    use backend_uzu::backends::{common::Context, metal::MetalContext};
+    thread_local! {
+        static CTX: std::cell::OnceCell<std::rc::Rc<MetalContext>> = const { std::cell::OnceCell::new() };
+    }
+    CTX.with(|cell| cell.get_or_init(|| MetalContext::new().expect("Metal context")).clone())
 }
 
 /// Invokes `$body` once per available backend, with `$B` bound to each backend type.
@@ -45,21 +66,3 @@ macro_rules! for_each_non_cpu_backend {
     }};
 }
 pub(crate) use for_each_non_cpu_backend;
-
-macro_rules! for_each_float_type {
-    (|$F:ident| $body:expr) => {{
-        {
-            type $F = f32;
-            $body
-        }
-        {
-            type $F = half::f16;
-            $body
-        }
-        {
-            type $F = half::bf16;
-            $body
-        }
-    }};
-}
-pub(crate) use for_each_float_type;

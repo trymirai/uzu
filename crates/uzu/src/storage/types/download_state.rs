@@ -97,6 +97,20 @@ impl DownloadState {
     pub fn can_delete(&self) -> bool {
         self.phase.can_delete()
     }
+
+    #[bindings::export(Method(Getter))]
+    pub fn name(&self) -> String {
+        match &self.phase {
+            DownloadPhase::NotDownloaded {} => "Not Downloaded".to_string(),
+            DownloadPhase::Downloading {} => "Downloading".to_string(),
+            DownloadPhase::Paused {} => "Paused".to_string(),
+            DownloadPhase::Downloaded {} => "Downloaded".to_string(),
+            DownloadPhase::Locked {} => "Locked".to_string(),
+            DownloadPhase::Error {
+                ..
+            } => "Error".to_string(),
+        }
+    }
 }
 
 pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> DownloadState {
@@ -111,14 +125,18 @@ pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> Downloa
     let any_downloaded = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Downloaded));
     let any_downloading = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Downloading));
     let any_paused = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Paused));
-    let any_error = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::Error(_)));
     let any_locked = file_states.iter().any(|f| matches!(f.phase, FileDownloadPhase::LockedByOther(_)));
 
     if all_downloaded {
         return DownloadState::downloaded(total_bytes as i64);
     }
 
-    // Locked takes precedence over other in-progress states
+    if let Some(error_state) = file_states.iter().find(|f| matches!(f.phase, FileDownloadPhase::Error(_)))
+        && let FileDownloadPhase::Error(err) = &error_state.phase
+    {
+        return DownloadState::error(err.clone());
+    }
+
     if any_locked {
         return DownloadState::locked(downloaded_bytes as i64, total_bytes as i64);
     }
@@ -129,14 +147,6 @@ pub fn reduce_file_download_states(file_states: &[FileDownloadState]) -> Downloa
 
     if any_paused {
         return DownloadState::paused(downloaded_bytes as i64, total_bytes as i64);
-    }
-
-    if any_error {
-        if let Some(error_state) = file_states.iter().find(|f| matches!(f.phase, FileDownloadPhase::Error(_))) {
-            if let FileDownloadPhase::Error(err) = &error_state.phase {
-                return DownloadState::error(err.clone());
-            }
-        }
     }
 
     // If some files are downloaded but not all, and nothing is actively

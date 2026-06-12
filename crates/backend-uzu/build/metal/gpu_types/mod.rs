@@ -6,9 +6,11 @@ use itertools::Itertools;
 use crate::common::gpu_types::{GpuType, GpuTypeFile, GpuTypes};
 
 mod gpu_type_enum;
+mod gpu_type_option_set;
 mod gpu_type_struct;
 
 use gpu_type_enum::gpu_type_gen_enum;
+use gpu_type_option_set::gpu_type_gen_option_set;
 use gpu_type_struct::gpu_type_gen_struct;
 
 pub async fn gpu_type_gen(
@@ -38,13 +40,15 @@ async fn gpu_type_gen_file(
                 .with_context(|| format!("Failed to generate bindings for {gpu_type_enum:?}")),
             GpuType::Struct(gpu_type_struct) => gpu_type_gen_struct(gpu_type_struct)
                 .with_context(|| format!("Failed to generate bindings for {gpu_type_struct:?}")),
+            GpuType::OptionSet(gpu_type_option_set) => gpu_type_gen_option_set(gpu_type_option_set)
+                .with_context(|| format!("Failed to generate bindings for {gpu_type_option_set:?}")),
         })
         .process_results(|mut it| it.join("\n\n"))?;
 
     let new_contents = format!(include_str!("template.ht"), module_name = module_name, generated = generated);
 
     // Avoid advancing mtime if the contents are the same
-    if !tokio::fs::read(&file_path).await.is_ok_and(|old_contents| &old_contents == new_contents.as_bytes()) {
+    if !tokio::fs::read(&file_path).await.is_ok_and(|old_contents| old_contents == new_contents.as_bytes()) {
         tokio::fs::write(&file_path, new_contents).await.context("cannot write output")?;
     }
 

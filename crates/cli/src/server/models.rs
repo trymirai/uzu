@@ -1,7 +1,7 @@
 use rocket::{State, get, serde::json::Json};
 use serde::{Deserialize, Serialize};
 
-use crate::server::SessionState;
+use crate::server::ServerState;
 
 #[derive(Serialize, Deserialize)]
 pub struct Model {
@@ -18,7 +18,7 @@ pub struct ModelsResponse {
 }
 
 #[get("/models")]
-pub fn handle_models(state: &State<SessionState>) -> Json<ModelsResponse> {
+pub fn handle_models(state: &State<ServerState>) -> Json<ModelsResponse> {
     Json(ModelsResponse {
         object: "list".to_string(),
         data: vec![Model {

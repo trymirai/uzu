@@ -1,30 +1,26 @@
-use std::{os::raw::c_void, ptr::NonNull};
+use std::any::Any;
 
-use metal::{MTLBuffer, MTLResourceExt};
+use metal::MTLBuffer;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 
-use super::Metal;
-use crate::backends::common::Buffer;
+use crate::backends::{
+    common::{Backend, Buffer},
+    metal::{Metal, sparse::MetalSparseBuffer},
+};
 
-impl Buffer for Retained<ProtocolObject<dyn MTLBuffer>> {
-    type Backend = Metal;
+pub trait BufferDowncastExt: Buffer<Backend = Metal> {
+    fn downcast(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>>;
+}
 
-    fn set_label(
-        &mut self,
-        label: Option<&str>,
-    ) {
-        (**self).set_label(label);
-    }
-
-    fn cpu_ptr(&self) -> NonNull<c_void> {
-        self.contents()
-    }
-
-    fn gpu_ptr(&self) -> usize {
-        self.gpu_address() as usize
-    }
-
-    fn length(&self) -> usize {
-        (**self).length()
+impl<B: Buffer<Backend = Metal>> BufferDowncastExt for B {
+    fn downcast(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
+        let buffer = self as &dyn Any;
+        if let Some(buffer) = buffer.downcast_ref::<<<B as Buffer>::Backend as Backend>::DenseBuffer>() {
+            buffer
+        } else if let Some(buffer) = buffer.downcast_ref::<MetalSparseBuffer>() {
+            buffer.mtl_buffer()
+        } else {
+            unreachable!("Unsupported Metal buffer type")
+        }
     }
 }

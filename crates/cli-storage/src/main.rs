@@ -8,20 +8,59 @@ mod ui;
 
 use std::{io, sync::Arc};
 
+use clap::{Parser, ValueEnum};
 use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use uzu::engine::{Engine, EngineConfig};
+use uzu::engine::{DownloadManagerType, Engine, EngineConfig};
 
 use crate::{app::App, events::EventHandler};
 
+#[derive(Debug, Clone, Parser)]
+struct Cli {
+    #[arg(long, value_enum, default_value_t = DownloadManagerCliType::default())]
+    download_manager: DownloadManagerCliType,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DownloadManagerCliType {
+    Native,
+    Universal,
+}
+
+impl Default for DownloadManagerCliType {
+    fn default() -> Self {
+        DownloadManagerType::default().into()
+    }
+}
+
+impl From<DownloadManagerType> for DownloadManagerCliType {
+    fn from(download_manager_type: DownloadManagerType) -> Self {
+        match download_manager_type {
+            DownloadManagerType::Native => Self::Native,
+            DownloadManagerType::Universal => Self::Universal,
+        }
+    }
+}
+
+impl From<DownloadManagerCliType> for DownloadManagerType {
+    fn from(download_manager_type: DownloadManagerCliType) -> Self {
+        match download_manager_type {
+            DownloadManagerCliType::Native => Self::Native,
+            DownloadManagerCliType::Universal => Self::Universal,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
     dotenvy::dotenv().ok();
     let runtime = tokio::runtime::Handle::current();
-    let engine = Arc::new(Engine::new(EngineConfig::default()).await?);
+    let config = EngineConfig::default().with_download_manager_type(cli.download_manager.into());
+    let engine = Arc::new(Engine::new(config).await?);
 
     // Setup terminal
     enable_raw_mode()?;
@@ -58,19 +97,17 @@ async fn run_app<B: ratatui::backend::Backend>(
     app.spawn_state_listener().await;
 
     loop {
-        terminal
-            .draw(|f| ui::draw(f, &mut app))
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string()))?;
+        terminal.draw(|f| ui::draw(f, &mut app)).map_err(|error| io::Error::other(error.to_string()))?;
 
         if app.should_quit {
             break;
         }
 
         // Handle events
-        if event_handler.poll_event().await? {
-            if let Some(event) = event_handler.next_event() {
-                app.handle_event(event).await;
-            }
+        if event_handler.poll_event().await?
+            && let Some(event) = event_handler.next_event()
+        {
+            app.handle_event(event).await;
         }
 
         // Small delay to reduce CPU usage

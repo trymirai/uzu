@@ -56,6 +56,8 @@ shoji.workspace = true
 hanashi.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
 indexmap.workspace = true
 reqwest.workspace = true
@@ -75,6 +77,12 @@ serde-wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+uuid.workspace = true
+
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
 pyo3-build-config = { workspace = true, optional = true }
+
+[lints]
+workspace = true

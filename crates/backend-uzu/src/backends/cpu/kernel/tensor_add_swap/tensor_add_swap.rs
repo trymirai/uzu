@@ -1,8 +1,8 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(TensorAddSwap)]
 #[variants(T, f32, f16, bf16)]

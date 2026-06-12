@@ -1,15 +1,15 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
 };
 
 #[kernel(AttentionSinglePass)]
 #[variants(T, f32, f16, bf16)]
-#[variants(HEAD_DIM, 64, 128, 256)]
+#[variants(HEAD_DIM, 64, 128, 256, 512)]
 pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
     queries: *const T,
     keys: *const T,
@@ -25,7 +25,7 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
     scale: f32,
     #[optional(is_trie)] trie: Option<*const TrieNode>,
     #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
-    #[optional(has_sinks)] sinks: Option<*const f32>,
+    #[optional(has_sinks)] sinks: Option<*const T>,
     num_heads: u32,
     suffix_length: u32,
     #[specialize] has_sinks: bool,
@@ -34,6 +34,9 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
     #[specialize] is_trie: bool,
     #[specialize] is_sliding_window: bool,
 ) {
+    assert_eq!(ring_params.is_some(), is_kv_cache_ring);
+    assert_eq!(sliding_window_size.is_some(), is_sliding_window);
+
     let value_dim = HEAD_DIM;
 
     let prefix_length = sequence_length - suffix_length;
@@ -72,7 +75,7 @@ pub fn attention_single_pass<T: ArrayElement + Float, const HEAD_DIM: u32>(
             let mut sum_exp_score = 0.0f32;
             if has_sinks {
                 let q_head_idx = head_idx % num_heads;
-                max_score = unsafe { *sinks.unwrap().add(q_head_idx as usize) };
+                max_score = unsafe { *sinks.unwrap().add(q_head_idx as usize) }.to_f32().unwrap();
                 sum_exp_score = 1.0;
             }
 

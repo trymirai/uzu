@@ -1,9 +1,9 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::{common::gpu_types::trie::TrieNode, cpu::kernel::attention::mask::should_use_key},
 };
 
@@ -20,7 +20,7 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
     #[optional(is_kv_cache_ring)] ring_params: Option<crate::backends::common::gpu_types::ring::RingParams>,
     #[optional(is_trie)] trie: Option<*const TrieNode>,
     #[optional(is_sliding_window)] sliding_window_size: Option<u32>,
-    #[optional(has_sinks)] sinks: Option<*const f32>,
+    #[optional(has_sinks)] sinks: Option<*const T>,
     num_heads: u32,
     suffix_length: u32,
     #[specialize] align_q: bool,
@@ -31,6 +31,11 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
     #[specialize] is_sliding_window: bool,
     #[specialize] has_sinks: bool,
 ) {
+    assert_eq!(suffix_length, params.q_len);
+    assert_eq!(align_q, params.q_rem == 0);
+    assert_eq!(align_k, params.k_rem == 0);
+    assert_eq!(sliding_window_size.is_some(), is_sliding_window);
+
     let q_len = params.q_len as usize;
     let k_len = params.k_len as usize;
     let head_dim = BD as usize;
@@ -72,7 +77,7 @@ pub fn attention_gemm<T: ArrayElement + Float, const BK: u32, const BD: u32>(
 
             // Initialize with attention sinks if present
             if has_sinks {
-                max_score = unsafe { *sinks.unwrap().add(head_idx) };
+                max_score = unsafe { *sinks.unwrap().add(head_idx) }.to_f32().unwrap();
                 sum_exp = 1.0;
             }
 

@@ -1,141 +1,72 @@
 const fs = require('fs');
 const path = require('path');
 
-function extractExportsFromDts(dtsPath) {
-    const content = fs.readFileSync(dtsPath, 'utf8');
+function unique(items) {
+    return [...new Set(items)];
+}
 
-    // Extract class exports
-    const classMatches = content.match(/export declare class (\w+)/g) || [];
-    const classes = classMatches.map((match) => match.replace('export declare class ', ''));
+function extractRuntimeExportsFromCommonJs(commonJsPath) {
+    const content = fs.readFileSync(commonJsPath, 'utf8');
+    const exportRegex = /^\s*module\.exports\.([A-Za-z_$][\w$]*)\s*=/gm;
+    const exports = [];
+    let match;
 
-    // Extract enum exports
-    const enumMatches = content.match(/export declare const enum (\w+)/g) || [];
-    const enums = enumMatches.map((match) => match.replace('export declare const enum ', ''));
-
-    // Extract function exports
-    const functionMatches = content.match(/export declare function (\w+)/g) || [];
-    const functions = functionMatches.map((match) => match.replace('export declare function ', ''));
-
-    // Extract interface exports (including multi-line)
-    const interfaceRegex = /export interface (\w+)/g;
-    const interfaces = [];
-    let interfaceMatch;
-    while ((interfaceMatch = interfaceRegex.exec(content)) !== null) {
-        interfaces.push(interfaceMatch[1]);
+    while ((match = exportRegex.exec(content)) !== null) {
+        exports.push(match[1]);
     }
 
-    // Extract type alias exports (including multi-line union types)
-    const typeRegex = /export type (\w+)\s*=/g;
-    const types = [];
-    let typeMatch;
-    while ((typeMatch = typeRegex.exec(content)) !== null) {
-        types.push(typeMatch[1]);
-    }
-
-    // Note: Interfaces and type aliases are TypeScript constructs and won't be available at runtime
-    // from the native module. Only classes, enums, and functions are actually exported from .node files.
-    // However, we'll track them for completeness and potential future use.
-
-    const runtimeExports = [...classes, ...enums, ...functions];
-    const typeOnlyExports = [...interfaces, ...types];
-
-    return {
-        runtime: runtimeExports,
-        typeOnly: typeOnlyExports,
-        all: [...runtimeExports, ...typeOnlyExports],
-    };
+    return unique(exports);
 }
 
-function generateCommonJsWrapper(exports, outputPath) {
-    const template = `// Auto-generated NAPI wrapper for uzu native module
-// Currently supports only Apple Silicon (arm64) on macOS
-// Other platforms may be added in future releases
+function generateEsmWrapper(runtimeExports, outputPath) {
+    const namedExports = runtimeExports
+        .map((runtimeExport) => `export const ${runtimeExport} = cjs.${runtimeExport};`)
+        .join('\n');
+    const content = `// Auto-generated ESM adapter for the NAPI-RS CommonJS wrapper.
+// Keep platform and architecture resolution in index.js.
 
-const { createRequire } = require('module');
+import cjs from './index.js';
 
-const require_ = createRequire(__filename);
+export default cjs;
 
-// Check for Apple Silicon support only
-if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-  throw new Error(\`This package only supports Apple Silicon (arm64) on macOS. Current platform: \${process.platform}-\${process.arch}\`);
+${namedExports}
+`;
+
+    fs.writeFileSync(outputPath, content);
 }
 
-let nativeBinding = null;
-
-try {
-  nativeBinding = require_('./uzu.node');
-} catch (e) {
-  throw new Error(\`Failed to load native binding: \${e.message}\`);
-}
-
-// Re-export all runtime exports
-const {
-${exports.map((exp) => `  ${exp}`).join(',\n')}
-} = nativeBinding;
-
-module.exports = {
-${exports.map((exp) => `  ${exp}`).join(',\n')}
-};`;
-
-    fs.writeFileSync(outputPath, template);
-}
-
-function generateEsmWrapper(exports, outputPath) {
-    const template = `// Auto-generated NAPI wrapper for uzu native module
-// Currently supports only Apple Silicon (arm64) on macOS
-// Other platforms may be added in future releases
-
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-
-// Check for Apple Silicon support only
-if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-  throw new Error(\`This package only supports Apple Silicon (arm64) on macOS. Current platform: \${process.platform}-\${process.arch}\`);
-}
-
-let nativeBinding = null;
-
-try {
-  nativeBinding = require('./uzu.node');
-} catch (e) {
-  throw new Error(\`Failed to load native binding: \${e.message}\`);
-}
-
-// Re-export all runtime exports as named exports  
-export const {
-${exports.map((exp) => `  ${exp}`).join(',\n')}
-} = nativeBinding;
-
-// Also provide default export
-export default nativeBinding;`;
-
-    fs.writeFileSync(outputPath, template);
+function generateEsmDeclarations(commonJsDeclarationsPath, outputPath) {
+    fs.copyFileSync(commonJsDeclarationsPath, outputPath);
 }
 
 function main() {
-    const srcDir = path.join(__dirname, '../../src');
-    const napiDir = path.join(srcDir, 'napi');
-    const dtsPath = path.join(napiDir, 'uzu.d.ts');
+    const napiDir = path.join(__dirname, '../../src/napi');
+    const commonJsPath = path.join(napiDir, 'index.js');
+    const commonJsDeclarationsPath = path.join(napiDir, 'index.d.ts');
+    const esmPath = path.join(napiDir, 'index.mjs');
+    const esmDeclarationsPath = path.join(napiDir, 'index.d.mts');
 
-    if (!fs.existsSync(dtsPath)) {
-        console.error('TypeScript definitions file not found:', dtsPath);
+    if (!fs.existsSync(commonJsPath)) {
+        console.error('NAPI file not found:', commonJsPath);
         process.exit(1);
     }
 
-    const exportInfo = extractExportsFromDts(dtsPath);
-    console.log('Found runtime exports:', exportInfo.runtime);
-    console.log('Found type-only exports:', exportInfo.typeOnly);
+    if (!fs.existsSync(commonJsDeclarationsPath)) {
+        console.error('NAPI declarations file not found:', commonJsDeclarationsPath);
+        process.exit(1);
+    }
 
-    const cjsPath = path.join(napiDir, 'uzu.js');
-    const esmPath = path.join(napiDir, 'uzu.mjs');
+    const runtimeExports = extractRuntimeExportsFromCommonJs(commonJsPath);
+    if (runtimeExports.length === 0) {
+        console.error('No runtime exports found in:', commonJsPath);
+        process.exit(1);
+    }
 
-    // Use all exports (runtime + type-only) for the wrappers
-    generateCommonJsWrapper(exportInfo.all, cjsPath);
-    generateEsmWrapper(exportInfo.all, esmPath);
+    generateEsmWrapper(runtimeExports, esmPath);
+    generateEsmDeclarations(commonJsDeclarationsPath, esmDeclarationsPath);
 
-    console.log('Generated:', cjsPath);
-    console.log('Generated:', esmPath);
+    console.log(`Generated ${esmPath} with ${runtimeExports.length} named exports`);
+    console.log(`Generated ${esmDeclarationsPath}`);
 }
 
 if (require.main === module) {
@@ -143,7 +74,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-    extractExportsFromDts,
-    generateCommonJsWrapper,
+    extractRuntimeExportsFromCommonJs,
+    generateEsmDeclarations,
     generateEsmWrapper,
 };

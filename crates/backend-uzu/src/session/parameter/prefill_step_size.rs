@@ -1,4 +1,4 @@
-use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
+use crate::{config::model::language_model::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
 fn env_prefill_step_size_default_override() -> Option<usize> {
     static OVERRIDE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
@@ -12,17 +12,12 @@ fn env_prefill_step_size_default_override() -> Option<usize> {
     })
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum PrefillStepSize {
+    #[default]
     Default,
     Maximal,
     Custom(usize),
-}
-
-impl Default for PrefillStepSize {
-    fn default() -> Self {
-        PrefillStepSize::Default
-    }
 }
 
 impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
@@ -31,17 +26,15 @@ impl ConfigResolvableValue<LanguageModelConfig, usize> for PrefillStepSize {
         config: &LanguageModelConfig,
     ) -> usize {
         let default_limit: usize = 4096;
-        let model_context_length = config.model_config.transformer_config.context_length;
+        let model_context_length =
+            config.decoder_config.transformer_config.max_sequence_length().unwrap_or(default_limit);
 
         let minimal_sliding_window_size = config
-            .decoder_config()
-            .ok()
-            .and_then(|dc| dc.sliding_window_sizes)
-            .as_deref()
-            .into_iter()
-            .flatten()
-            .flatten()
-            .copied()
+            .decoder_config
+            .transformer_config
+            .layer_configs
+            .iter()
+            .filter_map(|l| l.mixer_config.sliding_window_size())
             .min()
             .unwrap_or(usize::MAX);
 

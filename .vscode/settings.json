@@ -13,11 +13,7 @@
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
   },
-  "rust-analyzer.check.workspace": false,
-  "rust-analyzer.cargo.allTargets": false,
-  "rust-analyzer.check.noDefaultFeatures": true,
   "rust-analyzer.testExplorer": true,
-  "rust-analyzer.cargo.buildScripts.enable": true,
   "rust-analyzer.procMacro.enable": true,
   "[metal]": {
     "editor.formatOnSave": true,

@@ -107,36 +107,9 @@ impl Default for TtsRunConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TtsPerformanceConfig {
-    pub streaming: TtsRunConfig,
-    pub non_streaming: TtsRunConfig,
-    pub non_streaming_chunked_threshold_frames: usize,
-}
-
-impl Default for TtsPerformanceConfig {
-    fn default() -> Self {
-        let streaming = TtsRunConfig::default();
-        let non_streaming = TtsRunConfig {
-            streaming_enabled: false,
-            chunk_policy: TtsChunkPolicy::Fixed,
-            non_streaming_mode: TtsNonStreamingMode::ChunkedIfNeeded,
-            initial_chunk_frames: 128,
-            min_chunk_frames: 128,
-            max_chunk_frames: 128,
-            ..TtsRunConfig::default()
-        };
-        Self {
-            streaming,
-            non_streaming,
-            non_streaming_chunked_threshold_frames: 4096,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{TtsChunkPolicy, TtsNonStreamingMode, TtsPerformanceConfig, TtsRunConfig};
+    use super::{TtsChunkPolicy, TtsNonStreamingMode, TtsRunConfig};
 
     #[test]
     fn default_run_config_matches_production_defaults() {
@@ -209,14 +182,5 @@ mod tests {
             ..TtsRunConfig::default()
         };
         assert!(invalid.validate_stream_decode().is_err());
-    }
-
-    #[test]
-    fn performance_config_defaults_are_consistent() {
-        let config = TtsPerformanceConfig::default();
-        assert_eq!(config.streaming.chunk_policy, TtsChunkPolicy::Adaptive);
-        assert_eq!(config.non_streaming.chunk_policy, TtsChunkPolicy::Fixed);
-        assert_eq!(config.non_streaming.min_chunk_frames, config.non_streaming.max_chunk_frames);
-        assert_eq!(config.non_streaming.non_streaming_mode, TtsNonStreamingMode::ChunkedIfNeeded);
     }
 }

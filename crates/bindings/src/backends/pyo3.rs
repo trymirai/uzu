@@ -359,18 +359,14 @@ fn type_path_last_ident(ty: &syn::Type) -> Option<&Ident> {
 }
 
 fn unwrap_result(ty: &syn::Type) -> &syn::Type {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(last) = type_path.path.segments.last() {
-            if last.ident == "Result" {
-                if let syn::PathArguments::AngleBracketed(arguments) = &last.arguments {
-                    if let Some(syn::GenericArgument::Type(inner)) =
-                        arguments.args.iter().find(|argument| matches!(argument, syn::GenericArgument::Type(_)))
-                    {
-                        return inner;
-                    }
-                }
-            }
-        }
+    if let syn::Type::Path(type_path) = ty
+        && let Some(last) = type_path.path.segments.last()
+        && last.ident == "Result"
+        && let syn::PathArguments::AngleBracketed(arguments) = &last.arguments
+        && let Some(syn::GenericArgument::Type(inner)) =
+            arguments.args.iter().find(|argument| matches!(argument, syn::GenericArgument::Type(_)))
+    {
+        return inner;
     }
     ty
 }

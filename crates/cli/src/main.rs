@@ -1,80 +1,69 @@
-use clap::{CommandFactory, Parser, Subcommand};
-use cli::handlers::{handle_bench, handle_run, handle_serve};
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+
+mod bench;
+mod server;
 
 #[derive(Parser)]
+#[command(name = "cli", bin_name = "cli")]
 struct Cli {
+    /// Identifier of the model to start with (e.g. "Qwen/Qwen3-0.6B").
+    #[arg(long, value_name = "MODEL")]
+    model: Option<String>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a model with the specified path
-    Run {
-        /// Folder with model's files
-        model_path: String,
-        /// Prefill step size
-        prefill_step_size: Option<usize>,
-        // Seed
-        #[arg(long)]
-        seed: Option<u64>,
-        // Speculator
-        #[arg(long)]
-        speculator: Option<String>,
-        /// Non-interactive mode: run a single message and exit
-        #[arg(long, short)]
-        message: Option<String>,
-        #[arg(long, short)]
-        no_thinking: bool,
-    },
-    /// Start a server with the specified model path
-    Serve {
-        /// Folder with model's files
-        model_path: String,
-        /// Prefill step size
-        prefill_step_size: Option<usize>,
-    },
-    /// Run benchmarks for the specified model
     Bench {
-        /// Folder with model's files
         model_path: String,
-        /// Path to the task file
         task_path: String,
-        /// Path to the output file
         output_path: String,
+    },
+    Server {
+        #[arg(long, value_name = "MODEL")]
+        model: String,
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
     },
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Run {
-            model_path,
-            prefill_step_size,
-            seed,
-            speculator,
-            message,
-            no_thinking,
-        }) => {
-            handle_run(model_path, 2048, prefill_step_size, seed, speculator, message, no_thinking);
-        },
-        Some(Commands::Serve {
-            model_path,
-            prefill_step_size,
-        }) => {
-            handle_serve(model_path, prefill_step_size);
-        },
         Some(Commands::Bench {
             model_path,
             task_path,
             output_path,
-        }) => {
-            let _ = handle_bench(model_path, task_path, output_path);
-        },
-        None => {
-            let mut cmd = Cli::command();
-            cmd.print_help().unwrap();
-        },
+        }) => bench::run_bench(model_path, task_path, output_path)?,
+        Some(Commands::Server {
+            model,
+            port,
+            host,
+        }) => server::run_server(model, host, port).await?,
+        None => run_interactive(cli.model).await?,
     }
+
+    Ok(())
+}
+
+#[cfg(feature = "capability-cli")]
+async fn run_interactive(model: Option<String>) -> Result<()> {
+    use uzu::{cli::CliApplication, engine::EngineConfig};
+
+    let engine_config = EngineConfig::default().with_application_identifier("com.trymirai.cli".to_string());
+    let application = CliApplication::create(engine_config).await?;
+    application.run_with_model(model).await?;
+
+    Ok(())
+}
+
+#[cfg(not(feature = "capability-cli"))]
+async fn run_interactive(_model: Option<String>) -> Result<()> {
+    Ok(())
 }

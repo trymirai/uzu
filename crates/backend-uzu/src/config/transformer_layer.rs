@@ -1,25 +1,21 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-use super::{AttentionConfig, MLPConfig, MixerConfig, NormalizationConfig};
+use crate::config::{
+    mlp::AnyMLPConfig, normalization::NormalizationConfig, per_layer_embedding::PLELayerConfig, rope::AnyRoPEConfig,
+    token_mixer::AnyTokenMixerConfig,
+};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TransformerLayerConfig {
-    #[serde(alias = "pre_mixer_norm_config")]
-    pub pre_attention_norm_config: Option<NormalizationConfig>,
-    pub mixer_config: MixerConfig,
-    #[serde(alias = "post_mixer_norm_config")]
-    pub post_attention_norm_config: Option<NormalizationConfig>,
+    pub pre_mixer_norm_config: Option<NormalizationConfig>,
+    pub mixer_config: AnyTokenMixerConfig,
+    pub post_mixer_norm_config: Option<NormalizationConfig>,
     pub pre_mlp_norm_config: NormalizationConfig,
-    pub mlp_config: MLPConfig,
+    pub mlp_config: AnyMLPConfig,
     pub post_mlp_norm_config: Option<NormalizationConfig>,
+    pub hidden_dim: Option<usize>,
+    pub ple_config: Option<PLELayerConfig>,
+    pub has_post_layer_scalar: bool,
+    pub kv_source_layer_index: Option<usize>,
+    pub rope_config: Option<AnyRoPEConfig>,
 }
-
-impl TransformerLayerConfig {
-    pub fn attention_config(&self) -> Option<&AttentionConfig> {
-        self.mixer_config.as_attention()
-    }
-}
-
-#[cfg(test)]
-#[path = "../../tests/unit/config/transformer_layer_test.rs"]
-mod tests;

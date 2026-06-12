@@ -58,31 +58,31 @@ pub fn gumbel_float(
     -f32::ln(-f32::ln(uniform_float(key, (offset, word))))
 }
 
-const BLOCK_SIZE: u32 = 1024;
-const GRAIN_SIZE: u32 = 64;
-const BLOCKGRAIN_SIZE: u32 = BLOCK_SIZE * GRAIN_SIZE;
+const THREADGROUP_SIZE: u32 = 1024;
 const WORDS_PER_OFFSET: u32 = 4;
 
-pub fn revidx(logit_idx: u32) -> (u32, u32) {
-    let global_idx = logit_idx / BLOCKGRAIN_SIZE;
-    let logit_idx_in_blockgrain = logit_idx % BLOCKGRAIN_SIZE;
-    let grain_idx = logit_idx_in_blockgrain / BLOCK_SIZE;
-    let local_idx = logit_idx_in_blockgrain % BLOCK_SIZE;
+pub fn revidx(
+    logit_idx: u32,
+    vocab_size: u32,
+) -> (u32, u32) {
+    let thread_idx = logit_idx % THREADGROUP_SIZE;
+    let thread_offset = vocab_size.div_ceil(THREADGROUP_SIZE * WORDS_PER_OFFSET) * thread_idx;
 
-    let rng_offset = (global_idx * BLOCK_SIZE + local_idx) * (GRAIN_SIZE + WORDS_PER_OFFSET - 1) / WORDS_PER_OFFSET
-        + grain_idx / WORDS_PER_OFFSET;
-    let rng_word = grain_idx % WORDS_PER_OFFSET;
+    let block_idx = logit_idx / THREADGROUP_SIZE;
+    let block_idx_offset = block_idx / WORDS_PER_OFFSET;
+    let block_idx_word = block_idx % WORDS_PER_OFFSET;
 
-    (rng_offset, rng_word)
+    (thread_offset + block_idx_offset, block_idx_word)
 }
 
 pub fn speculator_sample(
     seed: u64,
+    vocab_size: usize,
     speculator_probs: &HashMap<u64, f32>,
 ) -> Option<u64> {
     speculator_probs
         .iter()
-        .map(|(&k, &v)| (k, f32::ln(v) + gumbel_float(seed, revidx(k as u32))))
-        .max_by(|(_ak, av), (_bk, bv)| f32::total_cmp(av, bv))
-        .map(|(k, _v)| k)
+        .map(|(&k, &v)| (k, f32::ln(v) + gumbel_float(seed, revidx(k as u32, vocab_size as u32))))
+        .max_by(|(_, av), (_, bv)| f32::total_cmp(av, bv))
+        .map(|(k, _)| k)
 }

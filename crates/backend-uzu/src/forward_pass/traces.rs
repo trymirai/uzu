@@ -1,29 +1,15 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
-    DataType,
     array::{Array, ArrayContextExt},
     backends::common::Backend,
     forward_pass::model_shape::ModelShape,
 };
 
-fn create_trace_array<B: Backend>(
-    context: &B::Context,
-    shape: &[usize],
-    data_type: DataType,
-    label: &str,
-) -> Array<B> {
-    context.create_array_uninitialized(shape, data_type, label)
-}
-
 fn create_layer_results<B: Backend>(
     context: &B::Context,
     model_shape: &ModelShape,
     suffix_length: usize,
-) -> Vec<Rc<RefCell<LayerActivationTrace<B>>>> {
-    (0..model_shape.num_layers)
-        .map(|_| Rc::new(RefCell::new(LayerActivationTrace::new(context, model_shape, suffix_length))))
-        .collect()
+) -> Box<[LayerActivationTrace<B>]> {
+    (0..model_shape.num_layers).map(|_| LayerActivationTrace::new(context, model_shape, suffix_length)).collect()
 }
 
 pub struct LayerActivationTrace<B: Backend> {
@@ -45,26 +31,25 @@ impl<B: Backend> LayerActivationTrace<B> {
         suffix_length: usize,
     ) -> Self {
         let main_shape = model_shape.main_shape(suffix_length);
-        let activation_data_type = model_shape.activation_data_type();
-        let main = |label| create_trace_array(context, &main_shape, activation_data_type, label);
+        let main = || context.create_array_uninitialized(&main_shape, model_shape.data_type);
 
         Self {
-            inputs: main("layer_activation_trace_inputs"),
-            pre_attention_norm: main("layer_activation_trace_pre_attention_norm"),
-            attention: main("layer_activation_trace_attention"),
-            post_attention_norm: main("layer_activation_trace_post_attention_norm"),
-            mlp_inputs: main("layer_activation_trace_mlp_inputs"),
-            pre_mlp_norm: main("layer_activation_trace_pre_mlp_norm"),
-            mlp: main("layer_activation_trace_mlp"),
-            post_mlp_norm: main("layer_activation_trace_post_mlp_norm"),
-            outputs: main("layer_activation_trace_outputs"),
+            inputs: main(),
+            pre_attention_norm: main(),
+            attention: main(),
+            post_attention_norm: main(),
+            mlp_inputs: main(),
+            pre_mlp_norm: main(),
+            mlp: main(),
+            post_mlp_norm: main(),
+            outputs: main(),
         }
     }
 }
 
 pub struct ActivationTrace<B: Backend> {
     pub embedding_norm: Option<Array<B>>,
-    pub layer_results: Vec<Rc<RefCell<LayerActivationTrace<B>>>>,
+    pub layer_results: Box<[LayerActivationTrace<B>]>,
     pub output_norm: Array<B>,
     pub output_pooling: Option<Array<B>>,
     pub logits: Array<B>,
@@ -76,21 +61,15 @@ impl<B: Backend> ActivationTrace<B> {
         model_shape: &ModelShape,
         suffix_length: usize,
     ) -> Self {
-        let activation_data_type = model_shape.activation_data_type();
         let main_shape = model_shape.main_shape(suffix_length);
         let layer_results = create_layer_results(context, model_shape, suffix_length);
 
         Self {
             embedding_norm: None,
             layer_results,
-            output_norm: create_trace_array(context, &main_shape, activation_data_type, "activation_trace_output_norm"),
+            output_norm: context.create_array_uninitialized(&main_shape, model_shape.data_type),
             output_pooling: None,
-            logits: create_trace_array(
-                context,
-                &model_shape.logits_shape(suffix_length),
-                activation_data_type,
-                "activation_trace_logits",
-            ),
+            logits: context.create_array_uninitialized(&model_shape.logits_shape(suffix_length), model_shape.data_type),
         }
     }
 
@@ -100,35 +79,28 @@ impl<B: Backend> ActivationTrace<B> {
         suffix_length: usize,
         num_labels: usize,
     ) -> Self {
-        let activation_data_type = model_shape.activation_data_type();
         let main_shape = model_shape.main_shape(suffix_length);
         let layer_results = create_layer_results(context, model_shape, suffix_length);
         let model_dim = model_shape.main_shape(1)[1];
 
         Self {
-            embedding_norm: Some(create_trace_array(
-                context,
-                &main_shape,
-                activation_data_type,
-                "activation_trace_embedding_norm",
-            )),
+            embedding_norm: Some(context.create_array_uninitialized(&main_shape, model_shape.data_type)),
             layer_results,
-            output_norm: create_trace_array(context, &main_shape, activation_data_type, "activation_trace_output_norm"),
-            output_pooling: Some(create_trace_array(
-                context,
-                &[1, model_dim],
-                activation_data_type,
-                "activation_trace_output_pooling",
-            )),
-            logits: create_trace_array(context, &[1, num_labels], activation_data_type, "activation_trace_logits"),
+            output_norm: context.create_array_uninitialized(&main_shape, model_shape.data_type),
+            output_pooling: Some(context.create_array_uninitialized(&[1, model_dim], model_shape.data_type)),
+            logits: context.create_array_uninitialized(&[1, num_labels], model_shape.data_type),
         }
     }
 
-    pub fn embedding_norm(&self) -> &Array<B> {
-        self.embedding_norm.as_ref().expect("embedding_norm is only available for classifier traces")
+    pub fn embedding_norm_mut(&mut self) -> &mut Array<B> {
+        self.embedding_norm.as_mut().expect("embedding_norm is only available for classifier traces")
     }
 
-    pub fn output_pooling(&self) -> &Array<B> {
-        self.output_pooling.as_ref().expect("output_pooling is only available for classifier traces")
+    pub fn output_pooling_mut(&mut self) -> &mut Array<B> {
+        self.output_pooling.as_mut().expect("output_pooling is only available for classifier traces")
     }
 }
+
+#[cfg(all(test, feature = "tracing"))]
+#[path = "../../unit/forward_pass/traces/mod.rs"]
+mod tests;

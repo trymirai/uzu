@@ -6,21 +6,11 @@ use crate::types::{
 };
 
 #[bindings::export(Structure(Class))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ChatConfig {
     pub context_length: ContextLength,
     pub sampling_seed: SamplingSeed,
     pub speculation_preset: Option<ChatSpeculationPreset>,
-}
-
-impl Default for ChatConfig {
-    fn default() -> Self {
-        Self {
-            context_length: ContextLength::default(),
-            sampling_seed: SamplingSeed::default(),
-            speculation_preset: None,
-        }
-    }
 }
 
 #[bindings::export(Implementation)]

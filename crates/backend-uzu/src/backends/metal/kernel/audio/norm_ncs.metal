@@ -10,11 +10,11 @@ using namespace metal;
 
 template <typename T>
 void norm_ncs(
-    device const T* input,     // [B, C, T]
-    device const T* scales,    // [C]
-    device const T* bias,      // [C]
-    device T* output,          // [B, C, T]
-    device const int* lengths, // [B]
+    device const T* input,      // [B, C, T]
+    device const float* scales, // [C]
+    device const float* bias,   // [C]
+    device T* output,           // [B, C, T]
+    device const int* lengths,  // [B]
     const constant int& channels,
     const constant int& seq_len,
     const constant float& epsilon,
@@ -48,9 +48,11 @@ void norm_ncs(
     }
   }
 
-  const float sum = threadgroup_cooperative_reduce<
-      SimdReduceSum<float>,
-      AUDIO_NORM_NCS_BLOCK_SIZE>(partial_sum, shared_mean, thread_context);
+  const float sum = threadgroup_cooperative_reduce<SimdReduceSum<float>, AUDIO_NORM_NCS_BLOCK_SIZE>(
+      partial_sum,
+      shared_mean,
+      thread_context
+  );
   const float mean = (subtract_mean != 0) ? (sum / (float)channels) : 0.0f;
 
   float partial_variance = 0.0f;
@@ -61,9 +63,7 @@ void norm_ncs(
     partial_variance += centered * centered;
   }
 
-  const float variance_sum = threadgroup_cooperative_reduce<
-      SimdReduceSum<float>,
-      AUDIO_NORM_NCS_BLOCK_SIZE>(
+  const float variance_sum = threadgroup_cooperative_reduce<SimdReduceSum<float>, AUDIO_NORM_NCS_BLOCK_SIZE>(
       partial_variance,
       shared_variance,
       thread_context
@@ -83,8 +83,8 @@ template <typename T>
 VARIANTS(T, float, half, bfloat)
 PUBLIC KERNEL(AudioNormNcs)(
     device const T* input,
-    device const T* scales,
-    device const T* bias,
+    device const float* scales,
+    device const float* bias,
     device T* output,
     device const int* lengths,
     const constant int& channels,

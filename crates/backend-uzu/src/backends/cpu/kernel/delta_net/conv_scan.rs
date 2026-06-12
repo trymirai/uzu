@@ -1,8 +1,8 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
-use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
+use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
 
 // Multi-token causal conv1d with SiLU for DeltaNet.
 // Reads from conv_padded (Conv1dPack output), writes conv'd+SiLU'd values
@@ -16,11 +16,11 @@ use crate::{ArrayElement, backends::common::gpu_types::ActivationType};
 #[kernel(DeltaNetConvScan)]
 #[variants(T, f32, f16, bf16)]
 pub fn delta_net_conv_scan<T: ArrayElement + Float>(
-    conv_padded: *const T,
-    conv_weight: *const T,
-    #[optional(has_bias)] bias: Option<*const T>,
+    conv_padded: *const f32,
+    conv_weight: *const f32,
+    #[optional(has_bias)] bias: Option<*const f32>,
     in_proj: *mut T,
-    state_out: *mut T,
+    state_out: *mut f32,
     suffix_len: u32,
     kernel_size: u32,
     row_stride: u32,
@@ -41,7 +41,7 @@ pub fn delta_net_conv_scan<T: ArrayElement + Float>(
             let w_offset = channel * kernel_size;
 
             let mut acc = if has_bias {
-                unsafe { (*bias.unwrap().add(channel)).to_f32().unwrap() }
+                unsafe { *bias.unwrap().add(channel) }
             } else {
                 0.0f32
             };
@@ -49,8 +49,8 @@ pub fn delta_net_conv_scan<T: ArrayElement + Float>(
             for tap in 0..kernel_size {
                 let padded_row = token + tap;
                 let padded_idx = padded_row * row_stride + channel;
-                let sample = unsafe { (*conv_padded.add(padded_idx)).to_f32().unwrap() };
-                acc += unsafe { (*conv_weight.add(w_offset + tap)).to_f32().unwrap() } * sample;
+                let sample = unsafe { *conv_padded.add(padded_idx) };
+                acc += unsafe { *conv_weight.add(w_offset + tap) } * sample;
             }
 
             unsafe {
@@ -64,9 +64,9 @@ pub fn delta_net_conv_scan<T: ArrayElement + Float>(
         for tap in 0..state_stride {
             let padded_row = suffix_len + tap;
             let padded_idx = padded_row * row_stride + channel;
-            let sample = unsafe { (*conv_padded.add(padded_idx)).to_f32().unwrap() };
+            let sample = unsafe { *conv_padded.add(padded_idx) };
             unsafe {
-                *state_out.add(channel * state_stride + tap) = T::from(sample).unwrap();
+                *state_out.add(channel * state_stride + tap) = sample;
             }
         }
     }

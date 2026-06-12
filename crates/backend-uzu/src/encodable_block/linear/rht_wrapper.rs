@@ -1,80 +1,93 @@
-use std::ops::DerefMut;
-
 use thiserror::Error;
 
-use super::{Linear, LinearBlockError};
+use super::{Linear, OutputHadamardLinearError};
 use crate::{
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
+        gpu_types::HadamardTransformOrder,
         kernel::{HadamardTransformKernel, Kernels},
     },
-    config::LinearConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
+    config::weight_matrix::{
+        AnyWeightMatrixSpec,
+        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+    },
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum RHTLinearWrapperError<B: Backend> {
     #[error("Inner linear error: {0}")]
-    InnerLinearError(#[from] Box<LinearBlockError<B>>),
+    InnerLinearError(#[from] OutputHadamardLinearError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
+    #[error("Unsupported RHT linear configuration: {0}")]
+    UnsupportedConfiguration(String),
 }
 
 pub struct RHTLinearWrapper<B: Backend> {
     input_hadamard_kernel: <B::Kernels as Kernels>::HadamardTransformKernel,
-    input_factors: B::Buffer,
+    input_factors: Allocation<B>,
     inner_linear: Box<dyn Linear<B>>,
     input_dimension: usize,
-    input_array_id: ArrayId,
 }
 
 impl<B: Backend> RHTLinearWrapper<B> {
     pub fn new(
         context: &B::Context,
-        block_size: usize,
-        inner_config: &LinearConfig,
         input_dimension: usize,
         output_dimension: usize,
-        parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
+        has_biases: bool,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        parameter_tree: &ParameterTree<B>,
     ) -> Result<Self, RHTLinearWrapperError<B>> {
-        assert!(block_size == 32, "only block size 32 hadamard is supported");
+        let weights_tree = parameter_tree.subtree("weights")?;
+        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+            adapter_spec: None,
+            incoherence_block_size: Some(32),
+            incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+            ..
+        }) = &spec
+        else {
+            return Err(RHTLinearWrapperError::UnsupportedConfiguration(format!("{spec:?}")));
+        };
 
-        let data_type = inner_config.activation_precision().into();
-
-        let input_factors_leaf = parameter_tree.leaf("input_factors")?;
-        let output_factors_leaf = parameter_tree.leaf("output_factors")?;
-
-        let input_factors = input_factors_leaf.read_buffer()?;
-        let output_factors = output_factors_leaf.read_buffer()?;
-
-        let input_hadamard_kernel = <B::Kernels as Kernels>::HadamardTransformKernel::new(context, data_type)
-            .map_err(RHTLinearWrapperError::BackendError)?;
-
-        let inner_linear_tree = parameter_tree.subtree("inner_linear")?;
-
-        let inner_linear = <dyn Linear<B>>::new_with_output_hadamard(
+        let input_factors = weights_tree
+            .leaf("incoherence_signs.input_signs")?
+            .validate(&[input_dimension], DataType::I32)?
+            .read_allocation()?;
+        let output_factors = weights_tree
+            .leaf("incoherence_signs.output_signs")?
+            .validate(&[output_dimension], DataType::I32)?
+            .read_allocation()?;
+        let input_hadamard_kernel = <B::Kernels as Kernels>::HadamardTransformKernel::new(
             context,
-            inner_config,
-            input_array_id,
-            output_array_id,
-            &inner_linear_tree,
+            input_data_type,
+            HadamardTransformOrder::Input,
+        )
+        .map_err(RHTLinearWrapperError::BackendError)?;
+        let inner_linear = <dyn Linear<B>>::new_with_output_hadamard_mixed_precision(
+            context,
+            parameter_tree,
             output_factors,
             input_dimension,
             output_dimension,
-        )
-        .map_err(|e| RHTLinearWrapperError::InnerLinearError(Box::new(e)))?;
+            has_biases,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+        )?;
 
         Ok(Self {
             input_hadamard_kernel,
             input_factors,
             inner_linear,
             input_dimension,
-            input_array_id,
         })
     }
 }
@@ -82,20 +95,17 @@ impl<B: Backend> RHTLinearWrapper<B> {
 impl<B: Backend> Linear<B> for RHTLinearWrapper<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        mut input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error> {
-        // Input Hadamard
-        let input_array = state.array(self.input_array_id);
+    ) -> Result<Allocation<B>, B::Error> {
         self.input_hadamard_kernel.encode(
-            input_array.buffer().borrow_mut().deref_mut(),
+            &mut input,
             &self.input_factors,
             self.input_dimension as u32,
-            state.active_row_count() as u32,
+            batch_dim as u32,
             encoder,
         );
-
-        // Matmul with fused output Hadamard
-        self.inner_linear.encode(state, encoder)
+        self.inner_linear.encode(input, batch_dim, encoder)
     }
 }

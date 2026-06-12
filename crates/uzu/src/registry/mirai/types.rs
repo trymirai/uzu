@@ -8,7 +8,7 @@ use shoji::types::{
 };
 
 fn get_metadata(
-    metadatas: &Vec<Metadata>,
+    metadatas: &[Metadata],
     identifier: String,
 ) -> Option<Metadata> {
     metadatas.iter().find(|metadata| metadata.identifier == identifier).cloned()
@@ -24,13 +24,13 @@ pub struct Registry {
 impl Registry {
     fn to(
         &self,
-        metadatas: &Vec<Metadata>,
+        metadatas: &[Metadata],
     ) -> Option<ModelRegistry> {
         let metadata = get_metadata(metadatas, self.metadata_id.clone())?;
-        return Some(ModelRegistry {
+        Some(ModelRegistry {
             identifier: self.id.clone(),
-            metadata: metadata,
-        });
+            metadata,
+        })
     }
 }
 
@@ -45,14 +45,14 @@ pub struct Backend {
 impl Backend {
     fn to(
         &self,
-        metadatas: &Vec<Metadata>,
+        metadatas: &[Metadata],
     ) -> Option<ModelBackend> {
         let metadata = get_metadata(metadatas, self.metadata_id.clone())?;
-        return Some(ModelBackend {
+        Some(ModelBackend {
             identifier: self.id.clone(),
             version: self.version.clone(),
-            metadata: metadata,
-        });
+            metadata,
+        })
     }
 }
 
@@ -66,13 +66,13 @@ pub struct Vendor {
 impl Vendor {
     fn to(
         &self,
-        metadatas: &Vec<Metadata>,
+        metadatas: &[Metadata],
     ) -> Option<ModelVendor> {
         let metadata = get_metadata(metadatas, self.metadata_id.clone())?;
-        return Some(ModelVendor {
+        Some(ModelVendor {
             identifier: self.id.clone(),
-            metadata: metadata,
-        });
+            metadata,
+        })
     }
 }
 
@@ -87,15 +87,15 @@ pub struct Family {
 impl Family {
     fn to(
         &self,
-        metadatas: &Vec<Metadata>,
+        metadatas: &[Metadata],
     ) -> Option<ModelFamily> {
         let vendor = self.vendor.to(metadatas)?;
         let metadata = get_metadata(metadatas, self.metadata_id.clone())?;
-        return Some(ModelFamily {
+        Some(ModelFamily {
             identifier: self.id.clone(),
-            vendor: vendor,
-            metadata: metadata,
-        });
+            vendor,
+            metadata,
+        })
     }
 }
 
@@ -111,15 +111,15 @@ pub struct Properties {
 impl Properties {
     fn to(
         &self,
-        metadatas: &Vec<Metadata>,
+        metadatas: &[Metadata],
     ) -> Option<ModelProperties> {
         let metadata = get_metadata(metadatas, self.metadata_id.clone())?;
-        return Some(ModelProperties {
+        Some(ModelProperties {
             identifier: self.id.clone(),
             size: self.size,
             version: self.version.clone(),
-            metadata: metadata,
-        });
+            metadata,
+        })
     }
 }
 
@@ -136,17 +136,17 @@ pub struct Quantization {
 impl Quantization {
     fn to(
         &self,
-        metadatas: &Vec<Metadata>,
+        metadatas: &[Metadata],
     ) -> Option<ModelQuantization> {
         let vendor = self.vendor.to(metadatas)?;
         let metadata = get_metadata(metadatas, self.metadata_id.clone())?;
-        return Some(ModelQuantization {
+        Some(ModelQuantization {
             identifier: self.id.clone(),
             method: self.method.clone(),
             bits_per_weight: self.bits_per_weight,
-            vendor: vendor,
-            metadata: metadata,
-        });
+            vendor,
+            metadata,
+        })
     }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -165,7 +165,7 @@ pub struct ResponseModel {
 impl ResponseModel {
     fn to(
         &self,
-        metadatas: &Vec<Metadata>,
+        metadatas: &[Metadata],
     ) -> Option<Model> {
         let registry = self.registry.to(metadatas)?;
         let backends = self.backends.iter().flat_map(|backend| backend.to(metadatas)).collect::<Vec<_>>();
@@ -186,16 +186,16 @@ impl ResponseModel {
         };
         let specializations = self.specializations.clone();
         let accessibility = self.accessibility.clone();
-        return Some(Model {
+        Some(Model {
             identifier: self.id.clone(),
-            registry: registry,
-            backends: backends,
-            family: family,
-            properties: properties,
-            quantization: quantization,
-            specializations: specializations,
-            accessibility: accessibility,
-        });
+            registry,
+            backends,
+            family,
+            properties,
+            quantization,
+            specializations,
+            accessibility,
+        })
     }
 }
 
@@ -213,6 +213,6 @@ impl Response {
         if models.len() != self.models.len() {
             return None;
         }
-        return Some(models);
+        Some(models)
     }
 }

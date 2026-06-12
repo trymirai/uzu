@@ -28,7 +28,7 @@ impl LanguageBackend for RustLanguageBackend {
     }
 
     fn expects_prebuild_for_run(&self) -> bool {
-        return false;
+        false
     }
 
     fn build_targets(

@@ -142,12 +142,8 @@ impl LanguageBackend for SwiftLanguageBackend {
             .run()?;
 
         let (checksum, _) = Command::swift_compute_checksum(zip_path.clone()).output()?;
-        let checksum = checksum
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .last()
-            .context("Empty checksum output")?
-            .to_string();
+        let checksum =
+            checksum.lines().rfind(|line| !line.trim().is_empty()).context("Empty checksum output")?.to_string();
 
         let source_package_swift = paths.bindings_for_language_path(Language::Swift).join("Package.swift");
         let body = fs::read_to_string(&source_package_swift)
@@ -241,10 +237,10 @@ fn find_static_lib(slice_path: &Path) -> Result<PathBuf> {
             if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("a") {
                 return Some(path);
             }
-            if path.is_dir() {
-                if let Some(found) = walk(&path) {
-                    return Some(found);
-                }
+            if path.is_dir()
+                && let Some(found) = walk(&path)
+            {
+                return Some(found);
             }
         }
         None

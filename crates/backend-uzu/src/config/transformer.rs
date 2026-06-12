@@ -1,25 +1,22 @@
-use serde::{Deserialize, Serialize};
+use proc_macros::uzu_config;
 
-use super::{NormalizationConfig, RoPEConfig, TransformerLayerConfig};
+use crate::config::{normalization::NormalizationConfig, transformer_layer::TransformerLayerConfig};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[uzu_config]
 pub struct TransformerConfig {
-    pub global_rope_config: Option<RoPEConfig>,
-    pub local_rope_config: Option<RoPEConfig>,
-    pub layer_configs: Vec<TransformerLayerConfig>,
+    pub layer_configs: Box<[TransformerLayerConfig]>,
     pub output_norm_config: NormalizationConfig,
-
     pub model_dim: usize,
     pub hidden_dim: usize,
-    #[serde(default)]
-    pub num_heads: Option<usize>,
-    #[serde(default)]
-    pub num_groups: Option<usize>,
-    #[serde(default)]
-    pub head_dim: Option<usize>,
-    #[serde(default)]
-    pub attention_scale: Option<f32>,
-    #[serde(default)]
-    pub num_layers: Option<usize>,
-    pub context_length: usize,
+}
+
+impl TransformerConfig {
+    pub fn max_sequence_length(&self) -> Option<usize> {
+        self.layer_configs
+            .iter()
+            .filter_map(|layer_config| {
+                layer_config.rope_config.as_ref().map(|rope_config| *rope_config.max_sequence_length())
+            })
+            .max()
+    }
 }

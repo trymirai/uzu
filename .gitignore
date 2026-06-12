@@ -4,6 +4,9 @@
 *.proptest-regressions
 .idea/
 
+# Nix
+result
+
 # Metal traces
 *.gputrace
 *.trace
@@ -31,3 +34,4 @@ tools/gpu_trace/*.json
 .build/
 .swiftpm/
 Package.resolved
+.dinghy.toml

@@ -1,6 +1,6 @@
 use std::{
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
     thread,
 };
@@ -30,10 +30,10 @@ impl Command {
 
     pub fn with_current_path(
         &self,
-        path: &PathBuf,
+        path: &Path,
     ) -> Self {
         Self {
-            current_path: Some(path.clone()),
+            current_path: Some(path.to_path_buf()),
             ..self.clone()
         }
     }
@@ -407,6 +407,16 @@ impl Command {
 
     pub fn xcodebuild_download_metal_toolchain() -> Self {
         Self::xcodebuild().with_arguments(vec!["-downloadComponent".to_string(), "MetalToolchain".to_string()])
+    }
+
+    pub fn cmake_setup() -> Self {
+        Self::new("sh").with_argument("-c").with_argument("cmake --version >/dev/null 2>&1 || brew install cmake")
+    }
+
+    pub fn clang_format_setup() -> Self {
+        Self::new("sh")
+            .with_argument("-c")
+            .with_argument("clang-format --version >/dev/null 2>&1 || brew install clang-format")
     }
 
     pub fn xcodebuild_create_xcframework(

@@ -1,87 +1,92 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
 use crate::{
-    DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder, Kernels,
+        Allocation, Backend, Encoder, Kernels,
+        gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
-            FullPrecisionEmbeddingLookupKernel, ManualKernels, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
-            quant_matmul::{
-                QuantizedMatmulArguments, QuantizedMatmulConfiguration, QuantizedMatmulError,
-                QuantizedMatmulKernelEncodable, QuantizedMatmulType,
-            },
+            FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
-    config::EmbeddingConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
-    parameters::{ParameterLeaf, ParameterLoaderError, ParameterTree},
+    config::{
+        embedding::AnyEmbeddingConfig,
+        weight_matrix::{
+            AnyWeightMatrixSpec, Layout,
+            full_precision_spec::FullPrecisionSpec,
+            hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+            int_spec::IntSpec,
+            mlx_spec::MLXSpec,
+        },
+    },
+    data_type::DataType,
+    forward_pass::model_shape::ModelShape,
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum EmbeddingError<B: Backend> {
     #[error("Backend error: {0}")]
     BackendError(#[source] B::Error),
-    #[error("Matmul error: {0}")]
-    MatmulError(#[from] MatmulError<B>),
-    #[error("QuantizedMatmul error: {0}")]
-    QuantizedMatmulError(#[from] QuantizedMatmulError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
     #[error("Unsupported configuration: {0}")]
     UnsupportedConfiguration(String),
-    #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
-    InvalidTensor {
-        shape: Box<[usize]>,
-        data_type: DataType,
-        expected_shape: Box<[usize]>,
-        expected_data_type: DataType,
-    },
+}
+
+struct ReadoutQuantConfig {
+    method: QuantizationMethod,
+    mode: QuantizationMode,
+    group_size: u32,
 }
 
 enum TiedEmbeddingType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
-        readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
+        quantization_method: QuantizationMethod,
+        output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
-        readout: QuantizedMatmulKernelEncodable<B>,
+        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout_config: ReadoutQuantConfig,
     },
 }
 
 enum UntiedEmbeddingLookupType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
+        weights: Allocation<B>,
         lookup: <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
+        quantization_method: QuantizationMethod,
+        output_hadamard_factors: Option<Allocation<B>>,
         lookup: <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel,
     },
 }
 
 enum UntiedEmbeddingReadoutType<B: Backend> {
     FullPrecision {
-        weights: B::Buffer,
-        readout: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
+        weights: Allocation<B>,
+        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
     },
     Quantized {
-        weights: B::Buffer,
-        scales: B::Buffer,
-        biases: B::Buffer,
-        readout: QuantizedMatmulKernelEncodable<B>,
+        weights: Allocation<B>,
+        scales: Allocation<B>,
+        zero_points_or_biases: Option<Allocation<B>>,
+        readout: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+        readout_config: ReadoutQuantConfig,
     },
 }
 
@@ -98,56 +103,15 @@ enum EmbeddingTying<B: Backend> {
 pub struct Embedding<B: Backend> {
     tying: EmbeddingTying<B>,
     input_scale: f32,
+    data_type: DataType,
+    logit_soft_cap: Option<LogitSoftCap<B>>,
     vocab_size: u32,
     model_dim: u32,
 }
 
-struct UntiedWeightKeys {
-    lookup_weights: &'static str,
-    lookup_scales: &'static str,
-    lookup_biases: &'static str,
-    readout_weights: &'static str,
-    readout_scales: &'static str,
-    readout_biases: &'static str,
-}
-
-const SHARED_TREE_UNTIED_KEYS: UntiedWeightKeys = UntiedWeightKeys {
-    lookup_weights: "input_weights",
-    lookup_scales: "input_scales",
-    lookup_biases: "input_biases",
-    readout_weights: "output_weights",
-    readout_scales: "output_scales",
-    readout_biases: "output_biases",
-};
-
-#[cfg(metal_backend)]
-const SPLIT_TREE_UNTIED_KEYS: UntiedWeightKeys = UntiedWeightKeys {
-    lookup_weights: "weights",
-    lookup_scales: "scales",
-    lookup_biases: "biases",
-    readout_weights: "weights",
-    readout_scales: "scales",
-    readout_biases: "biases",
-};
-
-fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
-    weights_leaf: &ParameterLeaf<'file, 'context, 'leaf, B::Context>,
-    expected_shape: [usize; 2],
-    expected_data_type: DataType,
-) -> Result<(), EmbeddingError<B>> {
-    let shape = weights_leaf.shape();
-    let data_type = weights_leaf.data_type();
-
-    if (shape, data_type) != (expected_shape.as_ref(), expected_data_type) {
-        return Err(EmbeddingError::InvalidTensor {
-            shape: shape.into(),
-            data_type: weights_leaf.data_type(),
-            expected_shape: expected_shape.into(),
-            expected_data_type,
-        });
-    }
-
-    Ok(())
+struct LogitSoftCap<B: Backend> {
+    value: f32,
+    kernel: <B::Kernels as Kernels>::LogitSoftCapKernel,
 }
 
 impl<B: Backend> Embedding<B> {
@@ -155,353 +119,328 @@ impl<B: Backend> Embedding<B> {
         context: &B::Context,
         vocab_size: u32,
         model_dim: u32,
-        config: &EmbeddingConfig,
-        parameter_tree: &ParameterTree<B::Context>,
-    ) -> Result<Self, EmbeddingError<B>> {
-        Self::new_with_weight_trees(
-            context,
-            vocab_size,
-            model_dim,
-            config,
-            parameter_tree,
-            parameter_tree,
-            &SHARED_TREE_UNTIED_KEYS,
-        )
-    }
+        config: &AnyEmbeddingConfig,
+        parameter_tree: &ParameterTree<B>,
+        model_shape: &ModelShape,
+    ) -> Result<(Self, Option<Allocation<B>>), EmbeddingError<B>> {
+        let (tying, readout_input_hadamard_factors) = match config {
+            AnyEmbeddingConfig::TiedEmbeddingConfig(_) => {
+                let embedding_tree = parameter_tree.subtree("embedding")?;
+                let embedding_spec = embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
-    #[cfg(metal_backend)]
-    pub(crate) fn new_with_lookup_and_readout_trees(
-        context: &B::Context,
-        vocab_size: u32,
-        model_dim: u32,
-        config: &EmbeddingConfig,
-        lookup_tree: &ParameterTree<B::Context>,
-        readout_tree: &ParameterTree<B::Context>,
-    ) -> Result<Self, EmbeddingError<B>> {
-        Self::new_with_weight_trees(
-            context,
-            vocab_size,
-            model_dim,
-            config,
-            lookup_tree,
-            readout_tree,
-            &SPLIT_TREE_UNTIED_KEYS,
-        )
-    }
+                let (ty, readout_input_hadamard_factors) = match embedding_spec {
+                    AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
+                        layout: Layout::InputOutput,
+                        ..
+                    }) => {
+                        let weights = embedding_tree
+                            .leaf("weights")?
+                            .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
+                            .read_allocation()?;
 
-    fn new_with_weight_trees(
-        context: &B::Context,
-        vocab_size: u32,
-        model_dim: u32,
-        config: &EmbeddingConfig,
-        lookup_tree: &ParameterTree<B::Context>,
-        readout_tree: &ParameterTree<B::Context>,
-        untied_keys: &UntiedWeightKeys,
-    ) -> Result<Self, EmbeddingError<B>> {
-        let common = config.common();
+                        let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(
+                            context,
+                            model_shape.data_type,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        let readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
+                            context,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        let readout = RefCell::new(readout_kernel);
 
-        let tying = match config {
-            EmbeddingConfig::Tied {
-                common: _,
-                precision,
-            } => {
-                let data_type = (*precision).into();
-
-                let weights_leaf = lookup_tree.leaf("weights")?;
-                validate_tensor(&weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let weights = weights_leaf.read_buffer()?;
-
-                let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
-                    .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?);
-
-                EmbeddingTying::Tied {
-                    ty: TiedEmbeddingType::FullPrecision {
-                        weights,
-                        lookup,
-                        readout,
+                        (
+                            TiedEmbeddingType::FullPrecision {
+                                weights,
+                                lookup,
+                                readout,
+                            },
+                            None,
+                        )
                     },
-                }
-            },
-            EmbeddingConfig::Untied {
-                common: _,
-                precision,
-            } => {
-                let data_type = (*precision).into();
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            input_quantization_from_spec(spec)?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &embedding_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            model_shape.data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
 
-                let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
-                validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-                let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
-                validate_tensor(&output_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
+                        let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+                            context,
+                            model_shape.data_type,
+                            group_size as u32,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            false,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        let (readout, readout_config) = quantized_readout(
+                            context,
+                            model_shape.data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let output_weights = output_weights_leaf.read_buffer()?;
-
-                let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
-                    .map_err(EmbeddingError::BackendError)?;
-                let readout = RefCell::new(<B::Kernels as ManualKernels>::MatmulKernel::new(context, data_type)?);
-
-                EmbeddingTying::Untied {
-                    input_ty: UntiedEmbeddingLookupType::FullPrecision {
-                        weights: input_weights,
-                        lookup,
+                        (
+                            TiedEmbeddingType::Quantized {
+                                weights,
+                                scales,
+                                zero_points_or_biases,
+                                quantization_method,
+                                output_hadamard_factors: None,
+                                lookup,
+                                readout,
+                                readout_config,
+                            },
+                            None,
+                        )
                     },
-                    output_ty: UntiedEmbeddingReadoutType::FullPrecision {
-                        weights: output_weights,
-                        readout,
+                    AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                        quantization_spec,
+                        adapter_spec: None,
+                        incoherence_block_size: Some(32),
+                        incoherence_processing_mode: IncoherenceProcessingMode::Output,
+                        ..
+                    }) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            input_quantization_from_spec(*quantization_spec)?;
+                        let quantized_tree = embedding_tree.subtree("quantized")?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &quantized_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            model_shape.data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+
+                        let incoherence_signs_tree = embedding_tree.subtree("incoherence_signs")?;
+                        let output_hadamard_factors = Some(
+                            incoherence_signs_tree
+                                .leaf("output_signs")?
+                                .validate(&[model_dim as usize], DataType::I32)?
+                                .read_allocation()?,
+                        );
+                        let readout_input_hadamard_factors = Some(
+                            incoherence_signs_tree
+                                .leaf("output_signs")?
+                                .validate(&[model_dim as usize], DataType::I32)?
+                                .read_allocation()?,
+                        );
+                        let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+                            context,
+                            model_shape.data_type,
+                            group_size as u32,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            true,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        let (readout, readout_config) = quantized_readout(
+                            context,
+                            model_shape.data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+
+                        (
+                            TiedEmbeddingType::Quantized {
+                                weights,
+                                scales,
+                                zero_points_or_biases,
+                                quantization_method,
+                                output_hadamard_factors,
+                                lookup,
+                                readout,
+                                readout_config,
+                            },
+                            readout_input_hadamard_factors,
+                        )
                     },
-                }
-            },
-            EmbeddingConfig::MLXQuantizedTied {
-                common: _,
-                group_size,
-                embedding_quantization_mode,
-                activation_quantization_mode,
-                activation_precision,
-            } => {
-                let data_type = (*activation_precision).into();
+                    spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
+                };
 
-                let packing_divisor = embedding_quantization_mode.packing_divisor();
-                let storage_data_type = embedding_quantization_mode.storage_type();
-
-                let num_groups = (model_dim as usize).div_ceil(*group_size);
-
-                let weights_leaf = lookup_tree.leaf("weights")?;
-                validate_tensor(
-                    &weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
-                let scales_leaf = lookup_tree.leaf("scales")?;
-                validate_tensor(&scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let biases_leaf = lookup_tree.leaf("biases")?;
-                validate_tensor(&biases_leaf, [vocab_size as usize, num_groups], data_type)?;
-
-                let weights = weights_leaf.read_buffer()?;
-                let scales = scales_leaf.read_buffer()?;
-                let biases = biases_leaf.read_buffer()?;
-
-                let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
-                    context,
-                    data_type,
-                    *group_size as u32,
-                    (*embedding_quantization_mode).into(),
+                (
+                    EmbeddingTying::Tied {
+                        ty,
+                    },
+                    readout_input_hadamard_factors,
                 )
-                .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
-                    context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
-                        use_hadamard: false,
-                    },
-                )?;
-
-                if let Some(activation_quantization_mode) = activation_quantization_mode {
-                    return Err(EmbeddingError::UnsupportedConfiguration(format!(
-                        "activation_quantization_mode={activation_quantization_mode:?}"
-                    )));
-                }
-
-                EmbeddingTying::Tied {
-                    ty: TiedEmbeddingType::Quantized {
-                        weights,
-                        scales,
-                        biases,
-                        lookup,
-                        readout,
-                    },
-                }
             },
-            EmbeddingConfig::MLXQuantizedUntied {
-                common: _,
-                group_size,
-                embedding_quantization_mode,
-                activation_quantization_mode,
-                activation_precision,
-            } => {
-                let data_type = (*activation_precision).into();
+            AnyEmbeddingConfig::UntiedEmbeddingConfig(_) => {
+                let input_embedding_tree = parameter_tree.subtree("input_embedding")?;
+                let input_embedding_spec = input_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
-                let packing_divisor = embedding_quantization_mode.packing_divisor();
-                let storage_data_type = embedding_quantization_mode.storage_type();
+                let input_ty = match input_embedding_spec {
+                    AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
+                        layout: Layout::InputOutput,
+                        ..
+                    }) => {
+                        let weights = input_embedding_tree
+                            .leaf("weights")?
+                            .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
+                            .read_allocation()?;
 
-                let num_groups = (model_dim as usize).div_ceil(*group_size);
+                        let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(
+                            context,
+                            model_shape.data_type,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
 
-                let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
-                validate_tensor(
-                    &input_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
-                let input_scales_leaf = lookup_tree.leaf(untied_keys.lookup_scales)?;
-                validate_tensor(&input_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let input_biases_leaf = lookup_tree.leaf(untied_keys.lookup_biases)?;
-                validate_tensor(&input_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
+                        UntiedEmbeddingLookupType::FullPrecision {
+                            weights,
+                            lookup,
+                        }
+                    },
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            input_quantization_from_spec(spec)?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &input_embedding_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            model_shape.data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
 
-                let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
-                let output_scales_leaf = readout_tree.leaf(untied_keys.readout_scales)?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
+                        let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
+                            context,
+                            model_shape.data_type,
+                            group_size as u32,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            false,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
 
-                let input_weights = input_weights_leaf.read_buffer()?;
-                let input_scales = input_scales_leaf.read_buffer()?;
-                let input_biases = input_biases_leaf.read_buffer()?;
+                        UntiedEmbeddingLookupType::Quantized {
+                            weights,
+                            scales,
+                            zero_points_or_biases,
+                            quantization_method,
+                            output_hadamard_factors: None,
+                            lookup,
+                        }
+                    },
+                    spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
+                };
 
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
+                let output_embedding_tree = parameter_tree.subtree("output_embedding")?;
+                let output_embedding_spec = output_embedding_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
 
-                let lookup = <B::Kernels as Kernels>::QuantizedEmbeddingLookupKernel::new(
-                    context,
-                    data_type,
-                    *group_size as u32,
-                    (*embedding_quantization_mode).into(),
+                let output_ty = match output_embedding_spec {
+                    AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
+                        layout: Layout::OutputInput,
+                        ..
+                    }) => {
+                        let weights = output_embedding_tree
+                            .leaf("weights")?
+                            .validate(&[vocab_size as usize, model_dim as usize], model_shape.data_type)?
+                            .read_allocation()?;
+                        let readout_kernel = <B::Kernels as Kernels>::MatmulKernel::new(
+                            context,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                            model_shape.data_type,
+                        )
+                        .map_err(EmbeddingError::BackendError)?;
+                        let readout = RefCell::new(readout_kernel);
+
+                        UntiedEmbeddingReadoutType::FullPrecision {
+                            weights,
+                            readout,
+                        }
+                    },
+                    spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                        let (embedding_quantization_mode, group_size, quantization_method) =
+                            output_quantization_from_spec(spec)?;
+                        let (weights, scales, zero_points_or_biases) = load_quantized_embedding_parts(
+                            &output_embedding_tree,
+                            vocab_size as usize,
+                            model_dim as usize,
+                            model_shape.data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+                        let (readout, readout_config) = quantized_readout(
+                            context,
+                            model_shape.data_type,
+                            embedding_quantization_mode,
+                            quantization_method,
+                            group_size,
+                        )?;
+
+                        UntiedEmbeddingReadoutType::Quantized {
+                            weights,
+                            scales,
+                            zero_points_or_biases,
+                            readout,
+                            readout_config,
+                        }
+                    },
+                    spec => return Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
+                };
+
+                (
+                    EmbeddingTying::Untied {
+                        input_ty,
+                        output_ty,
+                    },
+                    None,
                 )
-                .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
-                    context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
-                        use_hadamard: false,
-                    },
-                )?;
-
-                if let Some(activation_quantization_mode) = activation_quantization_mode {
-                    return Err(EmbeddingError::UnsupportedConfiguration(format!(
-                        "activation_quantization_mode={activation_quantization_mode:?}"
-                    )));
-                }
-
-                EmbeddingTying::Untied {
-                    input_ty: UntiedEmbeddingLookupType::Quantized {
-                        weights: input_weights,
-                        scales: input_scales,
-                        biases: input_biases,
-                        lookup,
-                    },
-                    output_ty: UntiedEmbeddingReadoutType::Quantized {
-                        weights: output_weights,
-                        scales: output_scales,
-                        biases: output_biases,
-                        readout,
-                    },
-                }
-            },
-            EmbeddingConfig::MLXSemiQuantizedUntied {
-                common: _,
-                group_size,
-                embedding_quantization_mode,
-                activation_quantization_mode,
-                activation_precision,
-            } => {
-                let data_type = (*activation_precision).into();
-
-                let packing_divisor = embedding_quantization_mode.packing_divisor();
-                let storage_data_type = embedding_quantization_mode.storage_type();
-
-                let num_groups = (model_dim as usize).div_ceil(*group_size);
-
-                let input_weights_leaf = lookup_tree.leaf(untied_keys.lookup_weights)?;
-                validate_tensor(&input_weights_leaf, [vocab_size as usize, model_dim as usize], data_type)?;
-
-                let output_weights_leaf = readout_tree.leaf(untied_keys.readout_weights)?;
-                validate_tensor(
-                    &output_weights_leaf,
-                    [vocab_size as usize, model_dim as usize / packing_divisor],
-                    storage_data_type,
-                )?;
-                let output_scales_leaf = readout_tree.leaf(untied_keys.readout_scales)?;
-                validate_tensor(&output_scales_leaf, [vocab_size as usize, num_groups], data_type)?;
-                let output_biases_leaf = readout_tree.leaf(untied_keys.readout_biases)?;
-                validate_tensor(&output_biases_leaf, [vocab_size as usize, num_groups], data_type)?;
-
-                let input_weights = input_weights_leaf.read_buffer()?;
-
-                let output_weights = output_weights_leaf.read_buffer()?;
-                let output_scales = output_scales_leaf.read_buffer()?;
-                let output_biases = output_biases_leaf.read_buffer()?;
-
-                let lookup = <B::Kernels as Kernels>::FullPrecisionEmbeddingLookupKernel::new(context, data_type)
-                    .map_err(EmbeddingError::BackendError)?;
-                let readout = QuantizedMatmulKernelEncodable::new(
-                    context,
-                    QuantizedMatmulConfiguration {
-                        data_type,
-                        group_size: *group_size,
-                        input_dim: model_dim as usize,
-                        output_dim: vocab_size as usize,
-                        mode: *embedding_quantization_mode,
-                        quantization_type: QuantizedMatmulType::Mlx,
-                        use_hadamard: false,
-                    },
-                )?;
-
-                if let Some(activation_quantization_mode) = activation_quantization_mode {
-                    return Err(EmbeddingError::UnsupportedConfiguration(format!(
-                        "activation_quantization_mode={activation_quantization_mode:?}"
-                    )));
-                }
-
-                EmbeddingTying::Untied {
-                    input_ty: UntiedEmbeddingLookupType::FullPrecision {
-                        weights: input_weights,
-                        lookup,
-                    },
-                    output_ty: UntiedEmbeddingReadoutType::Quantized {
-                        weights: output_weights,
-                        scales: output_scales,
-                        biases: output_biases,
-                        readout,
-                    },
-                }
             },
         };
 
-        let input_scale = common.input_scale.unwrap_or(1.0);
+        let input_scale = config.input_scale().unwrap_or(1.0);
+        let logit_soft_cap = if let Some(value) = *config.logit_soft_cap() {
+            let kernel = <B::Kernels as Kernels>::LogitSoftCapKernel::new(context, model_shape.data_type)
+                .map_err(EmbeddingError::BackendError)?;
+            Some(LogitSoftCap {
+                value,
+                kernel,
+            })
+        } else {
+            None
+        };
 
-        if let Some(logit_soft_cap) = common.logit_soft_cap {
-            return Err(EmbeddingError::UnsupportedConfiguration(format!("logit_soft_cap={logit_soft_cap:?}")));
-        }
-
-        Ok(Self {
-            tying,
-            input_scale,
-            vocab_size,
-            model_dim,
-        })
+        Ok((
+            Self {
+                tying,
+                input_scale,
+                data_type: model_shape.data_type,
+                logit_soft_cap,
+                vocab_size,
+                model_dim,
+            },
+            readout_input_hadamard_factors,
+        ))
     }
 
     pub fn encode_lookup(
         &self,
-        state: &mut ForwardPassState<B>,
+        token_ids: &Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), EmbeddingError<B>> {
-        let batch_dim = state.active_row_count() as u32;
-
-        let token_ids_array = state.array(ArrayId::TokenIds);
-        let token_ids_buffer_rc = token_ids_array.buffer();
-        let token_ids_buffer_borrow = token_ids_buffer_rc.borrow();
-        let token_ids = token_ids_buffer_borrow.deref();
-
-        let output_array = state.array(ArrayId::Main);
-        let output_buffer_rc = output_array.buffer();
-        let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
-        let output = output_buffer_borrow.deref_mut();
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        let mut output = encoder
+            .allocate_scratch(size_for_shape(&[batch_dim, self.model_dim as usize], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
+        let batch_dim = batch_dim as u32;
 
         match &self.tying {
             EmbeddingTying::Tied {
@@ -522,7 +461,7 @@ impl<B: Backend> Embedding<B> {
             } => lookup.encode(
                 token_ids,
                 weights,
-                output,
+                &mut output,
                 batch_dim,
                 self.vocab_size,
                 self.model_dim,
@@ -534,9 +473,12 @@ impl<B: Backend> Embedding<B> {
                     TiedEmbeddingType::Quantized {
                         weights,
                         scales,
-                        biases,
+                        zero_points_or_biases,
+                        quantization_method,
+                        output_hadamard_factors,
                         lookup,
                         readout: _,
+                        readout_config: _,
                     },
             }
             | EmbeddingTying::Untied {
@@ -544,17 +486,26 @@ impl<B: Backend> Embedding<B> {
                     UntiedEmbeddingLookupType::Quantized {
                         weights,
                         scales,
-                        biases,
+                        zero_points_or_biases,
+                        quantization_method,
+                        output_hadamard_factors,
                         lookup,
                     },
                 output_ty: _,
             } => {
+                let (zero_points, biases) = match quantization_method {
+                    QuantizationMethod::ScaleBias => (None, zero_points_or_biases.as_ref()),
+                    QuantizationMethod::ScaleZeroPoint => (zero_points_or_biases.as_ref(), None),
+                    QuantizationMethod::ScaleSymmetric => (None, None),
+                };
                 lookup.encode(
                     token_ids,
                     weights,
                     scales,
+                    zero_points,
                     biases,
-                    output,
+                    &mut output,
+                    output_hadamard_factors.as_ref(),
                     batch_dim,
                     self.vocab_size,
                     self.model_dim,
@@ -564,31 +515,19 @@ impl<B: Backend> Embedding<B> {
             },
         };
 
-        Ok(())
+        Ok(output)
     }
 
     pub fn encode_readout(
         &self,
-        state: &mut ForwardPassState<B>,
+        batch_dim: usize,
+        input_allocation: &Allocation<B>,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), EmbeddingError<B>> {
-        let batch_dim = state.sampling_length();
-
-        if batch_dim == 0 {
-            return Ok(());
-        }
-
-        let input_array = state.array(ArrayId::Main);
-        let input_buffer_rc = input_array.buffer();
-        let input_buffer_borrow = input_buffer_rc.borrow();
-        let input = input_buffer_borrow.deref();
-
-        let output_array = state.array(ArrayId::Logits);
-        let output_buffer_rc = output_array.buffer();
-        let mut output_buffer_borrow = output_buffer_rc.borrow_mut();
-        let output = output_buffer_borrow.deref_mut();
-
-        let input_offset = state.sampling_start() * self.model_dim as usize * input_array.data_type().size_in_bytes();
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        let mut output_allocation = encoder
+            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
 
         match &self.tying {
             EmbeddingTying::Tied {
@@ -607,32 +546,39 @@ impl<B: Backend> Embedding<B> {
                         readout,
                     },
             } => {
-                let input_dim = self.model_dim as usize;
-                let output_dim = self.vocab_size as usize;
-                readout.borrow_mut().encode(
-                    state.context(),
-                    MatmulArguments {
-                        a: input,
-                        a_offset: input_offset as u64,
-                        b: weights,
-                        ab_scale: 1.0,
-                        c: MatmulArgumentC::None,
-                        d: output,
-                        batch_dim: batch_dim as u32,
-                        input_dim: input_dim as u32,
-                        output_dim: output_dim as u32,
-                    },
-                    encoder,
-                );
+                readout
+                    .borrow_mut()
+                    .encode(
+                        MatmulArguments {
+                            a: input_allocation,
+                            a_offset: 0,
+                            b: MatmulB::FullPrecision {
+                                b: weights,
+                            },
+                            b_offset: 0,
+                            b_leading_dimension: None,
+                            b_transpose: true,
+                            d: &mut output_allocation,
+                            d_transform: MatmulDOps::none(),
+                            m: batch_dim as u32,
+                            n: self.vocab_size,
+                            k: self.model_dim,
+                        },
+                        encoder,
+                    )
+                    .map_err(EmbeddingError::BackendError)?;
             },
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::Quantized {
                         weights,
                         scales,
-                        biases,
+                        zero_points_or_biases,
+                        quantization_method: _,
+                        output_hadamard_factors: _,
                         lookup: _,
                         readout,
+                        readout_config,
                     },
             }
             | EmbeddingTying::Untied {
@@ -641,26 +587,194 @@ impl<B: Backend> Embedding<B> {
                     UntiedEmbeddingReadoutType::Quantized {
                         weights,
                         scales,
-                        biases,
+                        zero_points_or_biases,
                         readout,
+                        readout_config,
                     },
             } => {
-                readout.encode(
-                    encoder,
-                    QuantizedMatmulArguments {
-                        a_buffer: input,
-                        a_offset: input_offset,
-                        b_buffer: weights,
-                        scales_buffer: scales,
-                        zero_points_or_biases_buffer: biases,
-                        output_buffer: output,
-                        hadamard_factors: None,
-                        batch_dim,
+                let b: MatmulB<'_, B> = match readout_config.method {
+                    QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
+                        b: weights,
+                        scales,
+                        biases: zero_points_or_biases.as_ref().expect("ScaleBias quantization requires biases"),
+                        mode: readout_config.mode,
+                        group_size: readout_config.group_size,
                     },
-                )?;
+                    QuantizationMethod::ScaleZeroPoint => MatmulB::ScaleZeroPointDequant {
+                        b: weights,
+                        scales,
+                        zero_points: zero_points_or_biases
+                            .as_ref()
+                            .expect("ScaleZeroPoint quantization requires zero_points"),
+                        mode: readout_config.mode,
+                        group_size: readout_config.group_size,
+                    },
+                    QuantizationMethod::ScaleSymmetric => MatmulB::ScaleSymmetricDequant {
+                        b: weights,
+                        scales,
+                        mode: readout_config.mode,
+                        group_size: readout_config.group_size,
+                    },
+                };
+                readout
+                    .borrow_mut()
+                    .encode(
+                        MatmulArguments {
+                            a: input_allocation,
+                            a_offset: 0,
+                            b,
+                            b_offset: 0,
+                            b_leading_dimension: None,
+                            b_transpose: true,
+                            d: &mut output_allocation,
+                            d_transform: MatmulDOps::none(),
+                            m: batch_dim as u32,
+                            n: self.vocab_size,
+                            k: self.model_dim,
+                        },
+                        encoder,
+                    )
+                    .map_err(EmbeddingError::BackendError)?;
             },
         };
 
-        Ok(())
+        if let Some(logit_soft_cap) = &self.logit_soft_cap {
+            logit_soft_cap.kernel.encode(
+                &mut output_allocation,
+                (batch_dim * self.vocab_size as usize) as u32,
+                logit_soft_cap.value,
+                encoder,
+            );
+        }
+
+        Ok(output_allocation)
     }
+}
+
+fn input_quantization_from_spec<B: Backend>(
+    spec: AnyWeightMatrixSpec
+) -> Result<(QuantizationMode, usize, QuantizationMethod), EmbeddingError<B>> {
+    match spec {
+        AnyWeightMatrixSpec::MLXSpec(MLXSpec {
+            bits,
+            group_size,
+            layout: Layout::InputOutput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            bits,
+            group_size,
+            is_symmetric: false,
+            layout: Layout::InputOutput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            bits,
+            group_size,
+            is_symmetric: true,
+            layout: Layout::InputOutput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
+        spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
+    }
+}
+
+fn output_quantization_from_spec<B: Backend>(
+    spec: AnyWeightMatrixSpec
+) -> Result<(QuantizationMode, usize, QuantizationMethod), EmbeddingError<B>> {
+    match spec {
+        AnyWeightMatrixSpec::MLXSpec(MLXSpec {
+            bits,
+            group_size,
+            layout: Layout::OutputInput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleBias),
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            bits,
+            group_size,
+            is_symmetric: false,
+            layout: Layout::OutputInput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleZeroPoint),
+        AnyWeightMatrixSpec::IntSpec(IntSpec {
+            bits,
+            group_size,
+            is_symmetric: true,
+            layout: Layout::OutputInput,
+            ..
+        }) => quantization_mode(bits, group_size, QuantizationMethod::ScaleSymmetric),
+        spec => Err(EmbeddingError::UnsupportedConfiguration(format!("{spec:?}"))),
+    }
+}
+
+fn quantization_mode<B: Backend>(
+    bits: u32,
+    group_size: usize,
+    method: QuantizationMethod,
+) -> Result<(QuantizationMode, usize, QuantizationMethod), EmbeddingError<B>> {
+    let mode = match bits {
+        4 => QuantizationMode::U4,
+        8 => QuantizationMode::U8,
+        _ => {
+            return Err(EmbeddingError::UnsupportedConfiguration(format!(
+                "{method:?} bits={bits}, group_size={group_size}"
+            )));
+        },
+    };
+    Ok((mode, group_size, method))
+}
+
+fn load_quantized_embedding_parts<B: Backend>(
+    tree: &ParameterTree<B>,
+    vocab_size: usize,
+    model_dim: usize,
+    data_type: DataType,
+    quantization_mode: QuantizationMode,
+    quantization_method: QuantizationMethod,
+    group_size: usize,
+) -> Result<(Allocation<B>, Allocation<B>, Option<Allocation<B>>), EmbeddingError<B>> {
+    let packing_divisor = quantization_mode.packing_divisor();
+    let storage_data_type = quantization_mode.storage_type();
+    let num_groups = model_dim.div_ceil(group_size);
+
+    let weights = tree
+        .leaf("weights")?
+        .validate(&[vocab_size, model_dim / packing_divisor], storage_data_type)?
+        .read_allocation()?;
+    let scales = tree.leaf("scales")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?;
+    let zero_points_or_biases = match quantization_method {
+        QuantizationMethod::ScaleBias => {
+            Some(tree.leaf("biases")?.validate(&[vocab_size, num_groups], data_type)?.read_allocation()?)
+        },
+        QuantizationMethod::ScaleZeroPoint => {
+            let expected_zero_points_entries = num_groups.div_ceil(packing_divisor);
+            Some(
+                tree.leaf("zero_points")?
+                    .validate(&[vocab_size, expected_zero_points_entries], storage_data_type)?
+                    .read_allocation()?,
+            )
+        },
+        QuantizationMethod::ScaleSymmetric => None,
+    };
+
+    Ok((weights, scales, zero_points_or_biases))
+}
+
+fn quantized_readout<B: Backend>(
+    context: &B::Context,
+    data_type: DataType,
+    mode: QuantizationMode,
+    method: QuantizationMethod,
+    group_size: usize,
+) -> Result<(RefCell<<B::Kernels as Kernels>::MatmulKernel>, ReadoutQuantConfig), EmbeddingError<B>> {
+    let readout = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+        .map_err(EmbeddingError::BackendError)?;
+    Ok((
+        RefCell::new(readout),
+        ReadoutQuantConfig {
+            method,
+            mode,
+            group_size: group_size as u32,
+        },
+    ))
 }
