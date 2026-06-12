@@ -1,6 +1,3 @@
-/// A linear chain proposal awaiting target verification: the last committed
-/// token (never yet forward-passed through the target) followed by draft
-/// tokens. Positions are 1-based.
 pub struct ChainProposal {
     pub token_ids: Box<[u64]>,
     pub token_positions: Box<[usize]>,
@@ -9,7 +6,6 @@ pub struct ChainProposal {
 pub struct AcceptedProposal {
     pub committed_token_ids: Vec<u64>,
     pub committed_token_positions: Vec<usize>,
-    /// Not reduced by EOS or the output budget, unlike the committed tokens.
     pub num_verified_nodes: usize,
 }
 
@@ -22,11 +18,9 @@ impl ChainProposal {
         eos_token_ids: &[u64],
     ) -> AcceptedProposal {
         let num_nodes = self.token_ids.len();
-        assert!(num_nodes > 0, "chain proposal must contain at least the last committed token");
-        assert_eq!(self.token_positions.len(), num_nodes, "token_positions length must match token_ids");
-        assert_eq!(sampled_token_ids.len(), num_nodes, "expected one sampled token per proposal node");
-
-        let is_eos = |token: u64| eos_token_ids.contains(&token);
+        debug_assert!(num_nodes > 0, "chain proposal must contain at least the last committed token");
+        debug_assert_eq!(self.token_positions.len(), num_nodes, "token_positions length must match token_ids");
+        debug_assert_eq!(sampled_token_ids.len(), num_nodes, "expected one sampled token per proposal node");
 
         let num_verified_drafts =
             (0..num_nodes - 1).take_while(|&i| self.token_ids[i + 1] == sampled_token_ids[i]).count();
@@ -36,10 +30,10 @@ impl ChainProposal {
         let mut committed_token_positions = Vec::with_capacity(num_verified_nodes);
         let mut has_draft_eos = false;
         for draft in 0..num_verified_drafts {
-            let token = self.token_ids[draft + 1];
-            committed_token_ids.push(token);
+            let token_id = self.token_ids[draft + 1];
+            committed_token_ids.push(token_id);
             committed_token_positions.push(self.token_positions[draft + 1]);
-            if is_eos(token) {
+            if eos_token_ids.contains(&token_id) {
                 has_draft_eos = true;
                 break;
             }
@@ -71,9 +65,8 @@ impl AcceptedProposal {
         self.committed_token_ids.last().copied()
     }
 
-    /// The last position the draft context can cover: the bonus token was
-    /// never forward-passed.
-    pub fn last_token_index(&self) -> Option<usize> {
+    /// One behind the last committed token (the bonus, not yet forward-passed).
+    pub fn last_covered_position(&self) -> Option<usize> {
         if let Some(position) = self.committed_token_positions.last() {
             debug_assert!(*position >= 1, "committed token positions are 1-based");
             Some(position - 1)

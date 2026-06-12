@@ -90,7 +90,7 @@ fn test_zero_remaining_length_commits_nothing() {
     assert!(accepted.committed_token_ids.is_empty());
     assert_eq!(accepted.num_verified_nodes, 2);
     assert_eq!(accepted.last_token_id(), None);
-    assert_eq!(accepted.last_token_index(), None);
+    assert_eq!(accepted.last_covered_position(), None);
 }
 
 #[uzu_test]
@@ -111,7 +111,7 @@ fn test_last_token_id_and_index() {
     let accepted = accept(&[11, 99, 13, 14], NO_EOS);
 
     assert_eq!(accepted.last_token_id(), Some(99));
-    assert_eq!(accepted.last_token_index(), Some(6));
+    assert_eq!(accepted.last_covered_position(), Some(6));
 }
 
 #[uzu_test]
