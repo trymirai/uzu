@@ -64,9 +64,18 @@ pub fn uzu_bench(
 ) -> TokenStream {
     let func = parse_macro_input!(input as ItemFn);
 
+    let name = &func.sig.ident;
+    let const_name = format_ident!("__UZU_BENCH_CASE_{}", name);
+
     quote! {
-        #[::criterion_macro::criterion]
         #func
+
+        #[test_case]
+        #[allow(non_upper_case_globals)]
+        const #const_name: crate::harness::UzuTest = crate::harness::UzuTest::Bench(&|| {
+            let mut criterion = ::criterion::Criterion::default().configure_from_args();
+            #name(&mut criterion);
+        });
     }
     .into()
 }
