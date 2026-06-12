@@ -20,7 +20,7 @@ use tokenizers::Tokenizer;
 use crate::{
     inference::Error,
     session::{
-        config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig},
+        config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig, StructuredOutput},
         parameter::{ContextLength, SamplingMethod, SamplingPolicy, SamplingProcessingOrder, SamplingSeed},
         types::{FinishReason, Input, Message, Output, Role, Stats},
     },
@@ -171,7 +171,10 @@ fn build_grammar(grammar: &Option<ShojiGrammar>) -> Option<GrammarConfig> {
         Some(ShojiGrammar::JsonAny {}) => Some(GrammarConfig::builtin_json()),
         Some(ShojiGrammar::JsonSchema {
             schema,
-        }) => Some(GrammarConfig::json_schema_simple(schema.clone())),
+        }) => Some(match GrammarConfig::structured_output_from_schema(schema) {
+            StructuredOutput::Schema(schema) => GrammarConfig::json_schema_simple(schema),
+            StructuredOutput::AnyJson => GrammarConfig::builtin_json(),
+        }),
         Some(ShojiGrammar::Regex {
             pattern,
         }) => Some(GrammarConfig::regex(pattern.clone(), false)),
