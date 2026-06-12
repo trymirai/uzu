@@ -1,6 +1,8 @@
+use proc_macros::uzu_test;
+
 use super::{AudioError, AudioTokenGrid};
 
-#[test]
+#[uzu_test]
 fn token_grid_get_reads_expected_slots() {
     let grid = AudioTokenGrid::new(
         vec![
@@ -21,7 +23,7 @@ fn token_grid_get_reads_expected_slots() {
     assert_eq!(grid.get(1, 1, 1), 7);
 }
 
-#[test]
+#[uzu_test]
 fn invalid_grid_shape_is_rejected() {
     let error = AudioTokenGrid::new(vec![0, 1, 2].into_boxed_slice(), 1, 2, 2, vec![2].into_boxed_slice())
         .expect_err("shape mismatch should fail");
