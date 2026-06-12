@@ -45,7 +45,7 @@ pub fn build(
         request.reasoning_effort = Some(effort);
     }
     if let Some(token_limit) = config.token_limit {
-        request.max_completion_tokens = Some(token_limit as u32);
+        request.max_completion_tokens = Some(token_limit);
     }
     match &config.sampling_policy {
         SamplingPolicy::Default {} => {},
@@ -58,6 +58,8 @@ pub fn build(
                 top_k: _,
                 top_p,
                 min_p: _,
+                repetition_penalty: _,
+                suffix_repetition_length: _,
             } => {
                 request.temperature = temperature.map(|v| v as f32);
                 request.top_p = top_p.map(|v| v as f32);

@@ -1,128 +1,166 @@
-use std::{
-    cell::RefCell,
-    ops::{Deref, DerefMut},
-};
+use std::cell::RefCell;
 
 use thiserror::Error;
 
 use crate::{
-    DataType,
+    array::size_for_shape,
     backends::common::{
-        Backend, Encoder,
+        Allocation, Backend, Encoder,
+        gpu_types::HadamardTransformOrder,
         kernel::{
-            ManualKernels,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulError, MatmulKernel},
+            HadamardTransformKernel, Kernels,
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
-    config::QuantizationConfig,
+    config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
+    data_type::DataType,
     encodable_block::{
         Linear,
-        linear::{LinearBlockError, QuantizedLinear, QuantizedLinearError},
+        linear::{LinearMatmul, LinearMatmulError},
     },
-    forward_pass::state::{ArrayId, ForwardPassState},
-    prelude::{ParameterLeaf, ParameterLoaderError, ParameterTree},
+    parameters::{ParameterLoaderError, ParameterTree},
 };
 
 #[derive(Debug, Error)]
 pub enum QLoRALinearWrapperError<B: Backend> {
-    #[error("Inner linear error: {0}")]
-    InnerLinearError(#[from] Box<LinearBlockError<B>>),
-    #[error("Quantized linear error: {0}")]
-    QuantizedLinearError(#[from] QuantizedLinearError<B>),
+    #[error("LinearMatmul error: {0}")]
+    LinearMatmulError(#[from] LinearMatmulError<B>),
     #[error("Parameter loader error: {0}")]
     ParameterLoaderError(#[from] ParameterLoaderError<B>),
-    #[error("Invalid tensor: got {shape:?} @ {data_type:?}, expected {expected_shape:?} @ {expected_data_type:?}")]
-    InvalidTensor {
-        shape: Box<[usize]>,
-        data_type: DataType,
-        expected_shape: Box<[usize]>,
-        expected_data_type: DataType,
-    },
-    #[error("Matmul error: {0}")]
-    MatmulError(#[from] MatmulError<B>),
+    #[error("Backend error: {0}")]
+    BackendError(#[source] B::Error),
+    #[error("Unsupported QLoRA linear configuration: {0}")]
+    UnsupportedConfiguration(String),
 }
 
 pub struct QLoRALinearWrapper<B: Backend> {
-    base_linear: QuantizedLinear<B>,
-    adapter_kernel: RefCell<<B::Kernels as ManualKernels>::MatmulKernel>,
-    adapter_down: B::Buffer,
-    adapter_up: B::Buffer,
+    base_linear: LinearMatmul<B>,
+    input_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
+    output_hadamard: Option<(<B::Kernels as Kernels>::HadamardTransformKernel, Allocation<B>)>,
+    adapter_down_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    adapter_up_kernel: RefCell<<B::Kernels as Kernels>::MatmulKernel>,
+    adapter_down: Allocation<B>,
+    adapter_up: Allocation<B>,
     input_dim: usize,
     output_dim: usize,
     lora_rank: usize,
-    lora_scale: f32,
-    input_array_id: ArrayId,
-    output_array_id: ArrayId,
-}
-
-// TODO: figure out how to make this generic over QLoRAWrapperError::InvalidTensor or make one global "Invalid Tensor" error and make this a common helper
-fn validate_tensor<'file, 'context, 'leaf, B: Backend>(
-    weights_leaf: &ParameterLeaf<'file, 'context, 'leaf, B::Context>,
-    expected_shape: [usize; 2],
-    expected_data_type: DataType,
-) -> Result<(), QLoRALinearWrapperError<B>> {
-    let shape = weights_leaf.shape();
-    let data_type = weights_leaf.data_type();
-
-    if (shape, data_type) != (expected_shape.as_ref(), expected_data_type) {
-        return Err(QLoRALinearWrapperError::InvalidTensor {
-            shape: shape.into(),
-            data_type: weights_leaf.data_type(),
-            expected_shape: expected_shape.into(),
-            expected_data_type,
-        });
-    }
-
-    Ok(())
+    weights_data_type: DataType,
+    input_data_type: DataType,
 }
 
 impl<B: Backend> QLoRALinearWrapper<B> {
     pub fn new(
         context: &B::Context,
-        quantization: &QuantizationConfig,
-        lora_rank: usize,
-        lora_scale: f32,
+        quantization_spec: AnyWeightMatrixSpec,
+        adapter_spec: LowRankSpec,
+        incoherence_block_size: Option<usize>,
+        incoherence_processing_mode: IncoherenceProcessingMode,
         input_dim: usize,
         output_dim: usize,
-        parameter_tree: &ParameterTree<B::Context>,
-        output_quantized_hadamard_factors: Option<B::Buffer>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        weights_tree: &ParameterTree<B>,
     ) -> Result<Self, QLoRALinearWrapperError<B>> {
-        let data_type = quantization.activation_precision.into();
+        let use_incoherence_signs = match (incoherence_block_size, incoherence_processing_mode) {
+            (None, _) => false,
+            (Some(32), IncoherenceProcessingMode::InputOutput) => true,
+            (incoherence_block_size, incoherence_processing_mode) => {
+                return Err(QLoRALinearWrapperError::UnsupportedConfiguration(format!(
+                    "incoherence block_size={incoherence_block_size:?}, processing_mode={incoherence_processing_mode:?}"
+                )));
+            },
+        };
 
-        let base_linear = QuantizedLinear::new(
+        let quantized_tree = weights_tree.subtree("quantized")?;
+        let base_linear = LinearMatmul::quantized(
             context,
-            quantization,
+            quantization_spec,
             input_dim,
             output_dim,
-            parameter_tree,
-            input_array_id,
-            output_array_id,
-            output_quantized_hadamard_factors,
+            weights_data_type,
+            input_data_type,
+            output_data_type,
+            &quantized_tree,
+            None,
+            None,
         )?;
-        let adapter_kernel =
-            RefCell::new(<<B::Kernels as ManualKernels>::MatmulKernel as MatmulKernel>::new(context, data_type)?);
 
-        let adapter_down_leaf = parameter_tree.leaf("down_weights")?;
-        validate_tensor(&adapter_down_leaf, [lora_rank as usize, input_dim as usize], data_type)?;
-        let adapter_down = adapter_down_leaf.read_buffer()?;
+        let (input_hadamard, output_hadamard) = if use_incoherence_signs {
+            let input_factors = weights_tree
+                .leaf("incoherence_signs.input_signs")?
+                .validate(&[input_dim], DataType::I32)?
+                .read_allocation()?;
+            let output_factors = weights_tree
+                .leaf("incoherence_signs.output_signs")?
+                .validate(&[output_dim], DataType::I32)?
+                .read_allocation()?;
+            (
+                Some((
+                    <B::Kernels as Kernels>::HadamardTransformKernel::new(
+                        context,
+                        input_data_type,
+                        HadamardTransformOrder::Input,
+                    )
+                    .map_err(QLoRALinearWrapperError::BackendError)?,
+                    input_factors,
+                )),
+                Some((
+                    <B::Kernels as Kernels>::HadamardTransformKernel::new(
+                        context,
+                        output_data_type,
+                        HadamardTransformOrder::Output,
+                    )
+                    .map_err(QLoRALinearWrapperError::BackendError)?,
+                    output_factors,
+                )),
+            )
+        } else {
+            (None, None)
+        };
 
-        let adapter_up_leaf = parameter_tree.leaf("up_weights")?;
-        validate_tensor(&adapter_up_leaf, [output_dim, lora_rank as usize], data_type)?;
-        let adapter_up = adapter_up_leaf.read_buffer()?;
+        let adapter_down_kernel = RefCell::new(
+            <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
+                context,
+                weights_data_type,
+                input_data_type,
+                weights_data_type,
+            )
+            .map_err(QLoRALinearWrapperError::BackendError)?,
+        );
+        let adapter_up_kernel = RefCell::new(
+            <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::new(
+                context,
+                weights_data_type,
+                weights_data_type,
+                output_data_type,
+            )
+            .map_err(QLoRALinearWrapperError::BackendError)?,
+        );
+
+        let adapter_down = weights_tree
+            .leaf("adapter.down_projection")?
+            .validate(&[adapter_spec.rank, input_dim], weights_data_type)?
+            .read_allocation()?;
+
+        let adapter_up = weights_tree
+            .leaf("adapter.up_projection")?
+            .validate(&[output_dim, adapter_spec.rank], weights_data_type)?
+            .read_allocation()?;
 
         Ok(Self {
             base_linear,
-            adapter_kernel,
+            input_hadamard,
+            output_hadamard,
+            adapter_down_kernel,
+            adapter_up_kernel,
             adapter_down,
             adapter_up,
             input_dim,
             output_dim,
-            lora_rank,
-            lora_scale,
-            input_array_id,
-            output_array_id,
+            lora_rank: adapter_spec.rank,
+            weights_data_type,
+            input_data_type,
         })
     }
 }
@@ -130,50 +168,90 @@ impl<B: Backend> QLoRALinearWrapper<B> {
 impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), <B as Backend>::Error> {
-        self.base_linear.encode(state, encoder)?;
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut intermediate =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.lora_rank], self.weights_data_type))?;
 
-        let mut adapter_kernel = self.adapter_kernel.borrow_mut();
-        let batch_dim = state.active_row_count();
+        {
+            let mut adapter_kernel = self.adapter_down_kernel.borrow_mut();
+            adapter_kernel.encode(
+                MatmulArguments {
+                    a: &input,
+                    a_offset: 0,
+                    b: MatmulB::FullPrecision {
+                        b: &self.adapter_down,
+                    },
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut intermediate,
+                    d_transform: MatmulDOps::none(),
+                    m: batch_dim as u32,
+                    n: self.lora_rank as u32,
+                    k: self.input_dim as u32,
+                },
+                encoder,
+            )?;
+        }
 
-        let intermediate_array = state.common_aux.lora_intermediate.as_ref().unwrap();
-        let input_array = state.array(self.input_array_id);
-        let output_array = state.array(self.output_array_id);
+        let base_input = if let Some((input_hadamard_kernel, input_factors)) = &self.input_hadamard {
+            let mut base_input =
+                encoder.allocate_scratch(size_for_shape(&[batch_dim, self.input_dim], self.input_data_type))?;
+            encoder.encode_copy(&input, .., &mut base_input, ..);
+            input_hadamard_kernel.encode(
+                &mut base_input,
+                input_factors,
+                self.input_dim as u32,
+                batch_dim as u32,
+                encoder,
+            );
+            base_input
+        } else {
+            input
+        };
 
-        adapter_kernel.encode(
-            state.context(),
-            MatmulArguments {
-                a: input_array.buffer().borrow().deref(),
-                a_offset: 0,
-                b: &self.adapter_down,
-                ab_scale: 1.0,
-                c: MatmulArgumentC::None,
-                d: intermediate_array.buffer().borrow_mut().deref_mut(),
-                batch_dim: batch_dim as u32,
-                input_dim: self.input_dim as u32,
-                output_dim: self.lora_rank as u32,
-            },
-            encoder,
-        );
+        let mut output = self.base_linear.encode(base_input, batch_dim, encoder)?;
 
-        adapter_kernel.encode(
-            state.context(),
-            MatmulArguments {
-                a: intermediate_array.buffer().borrow().deref(),
-                a_offset: 0,
-                b: &self.adapter_up,
-                ab_scale: self.lora_scale,
-                c: MatmulArgumentC::Accumulate,
-                d: output_array.buffer().borrow_mut().deref_mut(),
-                batch_dim: batch_dim as u32,
-                input_dim: self.lora_rank as u32,
-                output_dim: self.output_dim as u32,
-            },
-            encoder,
-        );
+        {
+            let mut adapter_kernel = self.adapter_up_kernel.borrow_mut();
+            adapter_kernel.encode(
+                MatmulArguments {
+                    a: &intermediate,
+                    a_offset: 0,
+                    b: MatmulB::FullPrecision {
+                        b: &self.adapter_up,
+                    },
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output,
+                    d_transform: MatmulDOps {
+                        ab_scale: 1.0,
+                        accumulate: true,
+                        bias: None,
+                        rht_factors: None,
+                    },
+                    m: batch_dim as u32,
+                    n: self.output_dim as u32,
+                    k: self.lora_rank as u32,
+                },
+                encoder,
+            )?;
+        }
 
-        Ok(())
+        if let Some((output_hadamard_kernel, output_factors)) = &self.output_hadamard {
+            output_hadamard_kernel.encode(
+                &mut output,
+                output_factors,
+                self.output_dim as u32,
+                batch_dim as u32,
+                encoder,
+            );
+        }
+
+        Ok(output)
     }
 }

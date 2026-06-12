@@ -44,7 +44,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
     return;
 
   // Each simdgroup outputs one hidden element
-  const uint h_idx = h_block_idx * 4 + thread_context.threadgroup_index;
+  const uint h_idx = h_block_idx * 4 + thread_context.simdgroup_index;
   if (h_idx >= d_ff)
     return;
 
@@ -56,8 +56,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
 
   device const T* x_ptr = x_perm + x_row_base;
   device const T* w_up_row = w13_all + w13_base + (ulong)h_idx * (ulong)d_model;
-  device const T* w_gate_row =
-      w13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
+  device const T* w_gate_row = w13_all + w13_base + (ulong)(d_ff + h_idx) * (ulong)d_model;
 
   float acc_up = 0.0f;
   float acc_gate = 0.0f;
@@ -66,19 +65,17 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
   const uint vec_iters = d_model / 128;
 
   for (uint i = 0; i < vec_iters; ++i) {
-    uint base_idx = i * 128 + thread_context.simdgroup_index * 4;
+    uint base_idx = i * 128 + thread_context.simd_lane_id * 4;
 
     device const T* x_vec = reinterpret_cast<device const T*>(x_ptr + base_idx);
-    device const T* w_up_vec =
-        reinterpret_cast<device const T*>(w_up_row + base_idx);
+    device const T* w_up_vec = reinterpret_cast<device const T*>(w_up_row + base_idx);
     acc_up += float(x_vec[0]) * float(w_up_vec[0]);
     acc_up += float(x_vec[1]) * float(w_up_vec[1]);
     acc_up += float(x_vec[2]) * float(w_up_vec[2]);
     acc_up += float(x_vec[3]) * float(w_up_vec[3]);
 
     if (gating_sel > 1) {
-      device const T* w_gate_vec =
-          reinterpret_cast<device const T*>(w_gate_row + base_idx);
+      device const T* w_gate_vec = reinterpret_cast<device const T*>(w_gate_row + base_idx);
       acc_gate += float(x_vec[0]) * float(w_gate_vec[0]);
       acc_gate += float(x_vec[1]) * float(w_gate_vec[1]);
       acc_gate += float(x_vec[2]) * float(w_gate_vec[2]);
@@ -87,7 +84,7 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
   }
 
   // Handle leftover elements
-  uint leftover_start = vec_iters * 128 + thread_context.simdgroup_index;
+  uint leftover_start = vec_iters * 128 + thread_context.simd_lane_id;
   for (uint idx = leftover_start; idx < d_model; idx += 32) {
     float xv = float(x_ptr[idx]);
     acc_up += xv * float(w_up_row[idx]);
@@ -103,20 +100,17 @@ PUBLIC KERNEL(MoeExpertsDecodePassA)(
   }
 
   // Lane 0 applies activation and writes result
-  if (thread_context.simdgroup_index == 0) {
+  if (thread_context.simd_lane_id == 0) {
     float up_val = acc_up + float(up_biases[bias_base + h_idx]);
     up_val = clamp(up_val, up_clip_min, up_clip_max);
 
     float activated;
     if (gating_sel <= 1) {
-      activated = (gating_sel == 0) ? activate_gelu(up_val)
-                                    : activate_silu_alpha(up_val, silu_alpha);
+      activated = (gating_sel == 0) ? activate_gelu(up_val) : activate_silu_alpha(up_val, silu_alpha);
     } else {
       float gate_val = acc_gate + float(up_biases[bias_base + d_ff + h_idx]);
       gate_val = clamp(gate_val, gate_clip_min, gate_clip_max);
-      float gate_act = (gating_sel == 2)
-                           ? activate_silu_alpha(gate_val, silu_alpha)
-                           : activate_gelu(gate_val);
+      float gate_act = (gating_sel == 2) ? activate_silu_alpha(gate_val, silu_alpha) : activate_gelu(gate_val);
       activated = gate_act * up_val;
     }
 
@@ -151,8 +145,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
   const uint row_idx = tgpig_y;
 
   // Each simdgroup computes one output column
-  const uint my_col =
-      tgpig_x * SIMDGROUPS_PER_TG + thread_context.threadgroup_index;
+  const uint my_col = tgpig_x * SIMDGROUPS_PER_TG + thread_context.simdgroup_index;
   if (my_col >= d_model)
     return;
 
@@ -160,8 +153,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Base addresses for this output column
   const ulong hidden_base = (ulong)row_idx * (ulong)d_ff;
-  const ulong w2_col_base = (ulong)expert_idx * (ulong)d_model * (ulong)d_ff +
-                            (ulong)my_col * (ulong)d_ff;
+  const ulong w2_col_base = (ulong)expert_idx * (ulong)d_model * (ulong)d_ff + (ulong)my_col * (ulong)d_ff;
 
   // Dual accumulators for ILP: breaks FMA dependency chains
   AccumT acc0 = AccumT(0.0);
@@ -173,8 +165,7 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
   const uint k_vec_iters = k_iters / 8;
 
   for (uint iter = 0; iter < k_vec_iters; ++iter) {
-    const uint k_base =
-        iter * (8 * THREADS_PER_SIMD) + thread_context.simdgroup_index;
+    const uint k_base = iter * (8 * THREADS_PER_SIMD) + thread_context.simd_lane_id;
 
     // hidden: stride-32 per lane, already f32 from Pass A
     const AccumT h0 = hidden[hidden_base + k_base + 0 * THREADS_PER_SIMD];
@@ -187,22 +178,14 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
     const AccumT h7 = hidden[hidden_base + k_base + 7 * THREADS_PER_SIMD];
 
     // W2: lane-coalesced
-    const AccumT w0 =
-        AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
-    const AccumT w1 =
-        AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
-    const AccumT w2 =
-        AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
-    const AccumT w3 =
-        AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
-    const AccumT w4 =
-        AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
-    const AccumT w5 =
-        AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
-    const AccumT w6 =
-        AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
-    const AccumT w7 =
-        AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
+    const AccumT w0 = AccumT(w2_all[w2_col_base + k_base + 0 * THREADS_PER_SIMD]);
+    const AccumT w1 = AccumT(w2_all[w2_col_base + k_base + 1 * THREADS_PER_SIMD]);
+    const AccumT w2 = AccumT(w2_all[w2_col_base + k_base + 2 * THREADS_PER_SIMD]);
+    const AccumT w3 = AccumT(w2_all[w2_col_base + k_base + 3 * THREADS_PER_SIMD]);
+    const AccumT w4 = AccumT(w2_all[w2_col_base + k_base + 4 * THREADS_PER_SIMD]);
+    const AccumT w5 = AccumT(w2_all[w2_col_base + k_base + 5 * THREADS_PER_SIMD]);
+    const AccumT w6 = AccumT(w2_all[w2_col_base + k_base + 6 * THREADS_PER_SIMD]);
+    const AccumT w7 = AccumT(w2_all[w2_col_base + k_base + 7 * THREADS_PER_SIMD]);
 
     // dual trees for ILP
     acc0 = fma(h0, w0, acc0);
@@ -220,28 +203,22 @@ PUBLIC KERNEL(MoeExpertsDecodeDownFused2D)(
 
   // Handle remaining full iterations
   for (uint iter = k_vec_iters * 8; iter < k_iters; ++iter) {
-    const uint k = iter * THREADS_PER_SIMD + thread_context.simdgroup_index;
-    acc =
-        fma(AccumT(hidden[hidden_base + k]),
-            AccumT(w2_all[w2_col_base + k]),
-            acc);
+    const uint k = iter * THREADS_PER_SIMD + thread_context.simd_lane_id;
+    acc = fma(AccumT(hidden[hidden_base + k]), AccumT(w2_all[w2_col_base + k]), acc);
   }
 
   // Handle leftover elements (d_ff % 32)
   const uint leftover_start = k_iters * THREADS_PER_SIMD;
-  if (leftover_start + thread_context.simdgroup_index < d_ff) {
-    const uint k = leftover_start + thread_context.simdgroup_index;
-    acc =
-        fma(AccumT(hidden[hidden_base + k]),
-            AccumT(w2_all[w2_col_base + k]),
-            acc);
+  if (leftover_start + thread_context.simd_lane_id < d_ff) {
+    const uint k = leftover_start + thread_context.simd_lane_id;
+    acc = fma(AccumT(hidden[hidden_base + k]), AccumT(w2_all[w2_col_base + k]), acc);
   }
 
   // Simdgroup reduction
   AccumT result = simd_sum(acc);
 
   // Lane 0 writes result
-  if (thread_context.simdgroup_index == 0) {
+  if (thread_context.simd_lane_id == 0) {
     const ulong bias_idx = (ulong)expert_idx * (ulong)d_model + (ulong)my_col;
     result += AccumT(down_biases[bias_idx]);
 

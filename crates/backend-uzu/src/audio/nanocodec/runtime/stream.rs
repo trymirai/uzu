@@ -383,6 +383,7 @@ pub(super) fn extract_delta_from_padded_with_offset_snapshot(
     })
 }
 
+#[cfg(test)]
 pub(super) fn pack_pcm_to_padded(
     pcm: &AudioPcmBatch,
     expected_channels: usize,

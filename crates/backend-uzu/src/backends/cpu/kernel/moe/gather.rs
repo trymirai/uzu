@@ -1,8 +1,8 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 fn moe_gather<T: ArrayElement + Float>(
     x: *const T,
@@ -15,6 +15,11 @@ fn moe_gather<T: ArrayElement + Float>(
 ) {
     let total_rows = unsafe { *sumk_buf } as usize;
     let d_model = d_model as usize;
+    let t = t as usize;
+    let k = k as usize;
+    let routed_capacity = t.checked_mul(k).expect("routed token count overflow");
+    assert!(total_rows <= routed_capacity);
+
     if total_rows == 0 || d_model == 0 {
         return;
     }
@@ -25,6 +30,7 @@ fn moe_gather<T: ArrayElement + Float>(
             if token < 0 {
                 continue;
             }
+            assert!((token as usize) < t);
             let src = x.add(token as usize * d_model);
             let dst = x_perm.add(row * d_model);
             for col in 0..d_model {

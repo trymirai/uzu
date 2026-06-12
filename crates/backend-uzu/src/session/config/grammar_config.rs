@@ -58,10 +58,7 @@ impl GrammarConfig {
         Self::BuiltinJson
     }
 
-    pub fn from_json_schema_type<T>() -> Result<Self, String>
-    where
-        T: JsonSchema,
-    {
+    pub fn from_json_schema_type<T: JsonSchema>() -> Result<Self, String> {
         let schema_root = schemars::schema_for!(T);
         let schema_str =
             serde_json::to_string(&schema_root).map_err(|e| format!("Failed to serialize schema: {}", e))?;
@@ -75,15 +72,12 @@ impl GrammarConfig {
         })
     }
 
-    pub fn from_json_schema_type_with_config<T>(
+    pub fn from_json_schema_type_with_config<T: JsonSchema>(
         any_whitespace: bool,
         indent: Option<i32>,
         separators: Option<(String, String)>,
         strict_mode: bool,
-    ) -> Result<Self, String>
-    where
-        T: JsonSchema,
-    {
+    ) -> Result<Self, String> {
         let schema_root = schemars::schema_for!(T);
         let schema_str =
             serde_json::to_string(&schema_root).map_err(|e| format!("Failed to serialize schema: {}", e))?;
@@ -97,3 +91,7 @@ impl GrammarConfig {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/session/config/grammar_config.rs"]
+mod tests;

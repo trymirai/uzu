@@ -1,7 +1,4 @@
-use dsl::kernel;
-use num_traits::Float;
-
-use crate::ArrayElement;
+use proc_macros::kernel;
 
 #[kernel(MoePassATileCounts)]
 pub fn moe_pass_a_tile_counts(

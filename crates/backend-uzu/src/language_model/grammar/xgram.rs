@@ -7,7 +7,11 @@ use xgrammar::{
     TokenizerInfo,
 };
 
-use crate::{DataType, language_model::grammar::CompiledGrammar, prelude::Error, session::config::GrammarConfig};
+use crate::{
+    data_type::DataType,
+    language_model::grammar::CompiledGrammar,
+    session::{config::GrammarConfig, types::Error},
+};
 
 enum CompiledGrammarEngagementState {
     Always,
@@ -77,7 +81,7 @@ impl CompiledXGrammar {
         trigger_token_id: Option<u64>,
         tokenizer_info: &TokenizerInfo,
     ) -> Result<Self, Error> {
-        let vocab_size = tokenizer_info.vocab_size() as usize;
+        let vocab_size = tokenizer_info.vocab_size();
 
         let grammar = match config {
             GrammarConfig::JsonSchema {
@@ -89,21 +93,17 @@ impl CompiledXGrammar {
             } => {
                 let separators_ref = separators.as_ref().map(|(a, b)| (a.as_str(), b.as_str()));
                 Grammar::from_json_schema(schema, *any_whitespace, *indent, separators_ref, *strict_mode, None, false)
-                    .map_err(|error_message| Error::GrammarError(error_message))?
+                    .map_err(Error::GrammarError)?
             },
             GrammarConfig::Regex {
                 pattern,
                 print_converted_ebnf,
-            } => Grammar::from_regex(pattern, *print_converted_ebnf)
-                .map_err(|error_message| Error::GrammarError(error_message))?,
+            } => Grammar::from_regex(pattern, *print_converted_ebnf).map_err(Error::GrammarError)?,
             GrammarConfig::BuiltinJson => Grammar::builtin_json_grammar(),
         };
-        let mut compiler = GrammarCompiler::new(tokenizer_info, 8, true, -1)
-            .map_err(|error_message| Error::GrammarError(error_message))?;
-        let compiled =
-            compiler.compile_grammar(&grammar).map_err(|error_message| Error::GrammarError(error_message))?;
-        let matcher = GrammarMatcher::new(&compiled, None, true, -1)
-            .map_err(|error_message| Error::GrammarError(error_message))?;
+        let mut compiler = GrammarCompiler::new(tokenizer_info, 8, true, -1).map_err(Error::GrammarError)?;
+        let compiled = compiler.compile_grammar(&grammar).map_err(Error::GrammarError)?;
+        let matcher = GrammarMatcher::new(&compiled, None, true, -1).map_err(Error::GrammarError)?;
 
         let engagement_state = if let Some(trigger_token_id) = trigger_token_id {
             CompiledGrammarEngagementState::Triggered {

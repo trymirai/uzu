@@ -27,10 +27,8 @@ PUBLIC KERNEL(KVCacheUpdate) (
     // Offset = token_idx * num_heads * head_dim +
     //          head_idx * head_dim + channel_idx
     const uint head_offset = head_idx * head_dim;
-    const uint sourceIdx =
-        swaps[i].source * num_heads * head_dim + head_offset + channel_idx;
-    const uint destIdx =
-        swaps[i].destination * num_heads * head_dim + head_offset + channel_idx;
+    const uint sourceIdx = swaps[i].source * num_heads * head_dim + head_offset + channel_idx;
+    const uint destIdx = swaps[i].destination * num_heads * head_dim + head_offset + channel_idx;
 
     swap(in_place_keys, sourceIdx, destIdx);
     swap(in_place_values, sourceIdx, destIdx);

@@ -1,16 +1,16 @@
-#![allow(non_snake_case)]
+use crate::backends::common::Backend;
+
+pub mod matmul;
 
 include!(concat!(env!("OUT_DIR"), "/traits.rs"));
 
-pub trait ManualKernels: Kernels {
+pub trait Kernels: Sized {
+    type Backend: Backend<Kernels = Self>;
+
+    autogen_kernels!();
     type MatmulKernel: matmul::MatmulKernel<Backend = Self::Backend>;
 }
 
-pub mod attention;
-pub mod kv_cache_update;
-pub mod matmul;
-pub mod mlp_gate_act_mul;
-pub mod moe;
-pub mod quant_matmul;
-pub mod sampling;
-pub mod ssd_prefill;
+#[cfg(test)]
+#[path = "../../../../unit/backends/common/kernel/mod.rs"]
+mod tests;

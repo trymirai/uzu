@@ -1,10 +1,5 @@
-use backend_uzu::prelude::{AudioError, AudioResult};
-
-fn checked_product(values: &[usize]) -> AudioResult<usize> {
-    values
-        .iter()
-        .try_fold(1usize, |acc, &value| acc.checked_mul(value))
-        .ok_or(AudioError::Runtime("dimension product overflow".to_string()))
+fn checked_product(values: &[usize]) -> usize {
+    values.iter().try_fold(1usize, |acc, &value| acc.checked_mul(value)).expect("dimension product overflow")
 }
 
 fn round_ties_to_even(value: f32) -> f32 {
@@ -13,9 +8,7 @@ fn round_ties_to_even(value: f32) -> f32 {
 
     if fraction < 0.5 {
         floor
-    } else if fraction > 0.5 {
-        floor + 1.0
-    } else if (floor as i64 & 1) != 0 {
+    } else if fraction > 0.5 || (floor as i64 & 1) != 0 {
         floor + 1.0
     } else {
         floor
@@ -29,41 +22,19 @@ fn validate_fsq_common(
     codebook_dim: usize,
     num_levels: &[i32],
     lengths: &[i32],
-) -> AudioResult<()> {
-    if num_groups == 0 || codebook_dim == 0 {
-        return Err(AudioError::InvalidTokenCardinality);
-    }
-
-    if num_levels.len() != codebook_dim {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: codebook_dim,
-            actual_tokens: num_levels.len(),
-        });
-    }
+) {
+    assert!(num_groups != 0 && codebook_dim != 0, "invalid group/codebook configuration");
+    assert_eq!(num_levels.len(), codebook_dim, "num_levels size mismatch");
 
     for &levels in num_levels {
-        if levels <= 1 {
-            return Err(AudioError::InvalidTokenCardinality);
-        }
+        assert!(levels > 1, "invalid levels {levels}");
     }
 
-    if lengths.len() != batch_size {
-        return Err(AudioError::InvalidTokenLengths {
-            expected_lengths: batch_size,
-            actual_lengths: lengths.len(),
-        });
-    }
+    assert_eq!(lengths.len(), batch_size, "lengths count mismatch");
 
     for &length in lengths {
-        if length < 0 || length as usize > seq_len {
-            return Err(AudioError::InvalidTokenLengthValue {
-                length: length.max(0) as usize,
-                frames: seq_len,
-            });
-        }
+        assert!(length >= 0 && length as usize <= seq_len, "invalid length {length} for {seq_len} frames");
     }
-
-    Ok(())
 }
 
 pub fn fsq_decode_reference(
@@ -74,18 +45,11 @@ pub fn fsq_decode_reference(
     seq_len: usize,
     codebook_dim: usize,
     num_levels: &[i32],
-) -> AudioResult<Vec<f32>> {
-    validate_fsq_common(batch_size, num_groups, seq_len, codebook_dim, num_levels, lengths)?;
+) -> Vec<f32> {
+    validate_fsq_common(batch_size, num_groups, seq_len, codebook_dim, num_levels, lengths);
+    assert_eq!(tokens.len(), checked_product(&[batch_size, num_groups, seq_len]), "tokens size mismatch");
 
-    let expected_tokens = checked_product(&[batch_size, num_groups, seq_len])?;
-    if tokens.len() != expected_tokens {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens,
-            actual_tokens: tokens.len(),
-        });
-    }
-
-    let output_len = checked_product(&[batch_size, num_groups * codebook_dim, seq_len])?;
+    let output_len = checked_product(&[batch_size, num_groups * codebook_dim, seq_len]);
     let mut output = vec![0.0_f32; output_len];
 
     for batch in 0..batch_size {
@@ -116,14 +80,13 @@ pub fn fsq_decode_reference(
                     let output_index = (batch * (num_groups * codebook_dim) + channel) * seq_len + time;
                     output[output_index] = value;
 
-                    base =
-                        base.checked_mul(levels).ok_or(AudioError::Runtime("fsq decode base overflow".to_string()))?;
+                    base = base.checked_mul(levels).expect("fsq decode base overflow");
                 }
             }
         }
     }
 
-    Ok(output)
+    output
 }
 
 pub fn fsq_encode_reference(
@@ -136,25 +99,12 @@ pub fn fsq_encode_reference(
     num_levels: &[i32],
     dim_base_index: &[i32],
     eps: f32,
-) -> AudioResult<Vec<i32>> {
-    validate_fsq_common(batch_size, num_groups, seq_len, codebook_dim, num_levels, lengths)?;
+) -> Vec<i32> {
+    validate_fsq_common(batch_size, num_groups, seq_len, codebook_dim, num_levels, lengths);
+    assert_eq!(dim_base_index.len(), codebook_dim, "dim_base_index size mismatch");
+    assert_eq!(input.len(), checked_product(&[batch_size, num_groups * codebook_dim, seq_len]), "input size mismatch");
 
-    if dim_base_index.len() != codebook_dim {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: codebook_dim,
-            actual_tokens: dim_base_index.len(),
-        });
-    }
-
-    let expected_input = checked_product(&[batch_size, num_groups * codebook_dim, seq_len])?;
-    if input.len() != expected_input {
-        return Err(AudioError::InvalidTokenShape {
-            expected_tokens: expected_input,
-            actual_tokens: input.len(),
-        });
-    }
-
-    let output_len = checked_product(&[batch_size, num_groups, seq_len])?;
+    let output_len = checked_product(&[batch_size, num_groups, seq_len]);
     let mut tokens = vec![0_i32; output_len];
 
     for batch in 0..batch_size {
@@ -193,5 +143,5 @@ pub fn fsq_encode_reference(
         }
     }
 
-    Ok(tokens)
+    tokens
 }

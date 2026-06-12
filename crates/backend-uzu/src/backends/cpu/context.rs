@@ -1,14 +1,7 @@
-use std::{
-    cell::UnsafeCell,
-    path::Path,
-    pin::Pin,
-    rc::Rc,
-    sync::{atomic::AtomicU64, mpsc},
-    thread,
-};
+use std::{cell::UnsafeCell, path::Path, pin::Pin, rc::Rc, sync::mpsc, thread};
 
 use crate::backends::{
-    common::{Allocation, AllocationPool, AllocationType, Allocator, Context},
+    common::{Allocation, AllocationPool, AllocationType, Allocator, Backend, Context},
     cpu::{Cpu, command_buffer::CpuCommandBufferInitial, error::CpuError},
 };
 
@@ -38,16 +31,8 @@ impl Context for CpuContext {
     fn recommended_async_batch_size(
         &self,
         _model_path: &Path,
-    ) -> usize {
-        1
-    }
-
-    fn is_high_performance(&self) -> bool {
-        false
-    }
-
-    fn debug_active(&self) -> bool {
-        false
+    ) -> Result<usize, CpuError> {
+        Ok(1)
     }
 
     fn create_buffer(
@@ -76,8 +61,11 @@ impl Context for CpuContext {
         Ok(CpuCommandBufferInitial::new(self.command_queue.clone()))
     }
 
-    fn create_event(&self) -> Result<Pin<Box<AtomicU64>>, CpuError> {
-        Ok(Box::pin(AtomicU64::new(0)))
+    fn create_sparse_buffer(
+        &self,
+        _capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error> {
+        Err(CpuError::NotSupported)
     }
 
     fn peak_memory_usage(&self) -> Option<usize> {
@@ -88,12 +76,16 @@ impl Context for CpuContext {
 
     fn start_capture(
         &self,
-        _trace_path: &std::path::Path,
+        _trace_path: &Path,
     ) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
     }
 
     fn stop_capture(&self) -> Result<(), CpuError> {
         Err(CpuError::NotSupported)
+    }
+
+    fn sparse_buffers_supported(&self) -> bool {
+        false
     }
 }

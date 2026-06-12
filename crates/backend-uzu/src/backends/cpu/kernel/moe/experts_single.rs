@@ -1,9 +1,9 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
 use crate::{
-    ArrayElement,
+    array::ArrayElement,
     backends::common::gpu_types::{ActivationType, activation_silu_alpha},
 };
 
@@ -65,7 +65,7 @@ pub fn moe_experts_decode_single_pass_a<T: ArrayElement + Float>(
                 let up_val = (acc_up + unsafe { *biases.add(bias_base + h_idx) }.to_f32().unwrap())
                     .clamp(up_clip_min, up_clip_max);
                 if gating_sel == 0 {
-                    ActivationType::GELU.activate(up_val)
+                    ActivationType::GELUApprox.activate(up_val)
                 } else {
                     activation_silu_alpha(up_val, silu_alpha)
                 }
@@ -77,7 +77,7 @@ pub fn moe_experts_decode_single_pass_a<T: ArrayElement + Float>(
                 let gate_act = if gating_sel == 2 {
                     activation_silu_alpha(gate_val, silu_alpha)
                 } else {
-                    ActivationType::GELU.activate(gate_val)
+                    ActivationType::GELUApprox.activate(gate_val)
                 };
                 gate_act * up_val
             };

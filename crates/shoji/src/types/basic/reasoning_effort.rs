@@ -6,7 +6,7 @@ use std::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 #[bindings::export(Enumeration)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReasoningEffort {
     Disabled,
     Default,
@@ -58,6 +58,6 @@ impl Serialize for ReasoningEffort {
 impl<'d> Deserialize<'d> for ReasoningEffort {
     fn deserialize<D: Deserializer<'d>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Ok(ReasoningEffort::from_str(&name).map_err(de::Error::custom)?)
+        ReasoningEffort::from_str(&name).map_err(de::Error::custom)
     }
 }

@@ -1,15 +1,13 @@
 #include <metal_stdlib>
 #include "../activation/activations.h"
+#include "../common/defines.h"
 #include "../common/dsl.h"
 #include "../common/thread_context.h"
-#include "../quant_matmul/mma.h"
 
 // ------------------------ helpers ------------------------
 static inline uint ceil_div(uint a, uint b) { return (a + b - 1u) / b; }
 
-static inline uint linear_tid(uint3 tid, uint3 tpg) {
-  return tid.z * (tpg.x * tpg.y) + tid.y * tpg.x + tid.x;
-}
+static inline uint linear_tid(uint3 tid, uint3 tpg) { return tid.z * (tpg.x * tpg.y) + tid.y * tpg.x + tid.x; }
 
 template <typename T>
 inline void store_vec4(device T* dst, ulong base, float4 vals) {
@@ -98,23 +96,21 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
   const uint m_rows = min(Bm, seg_len - row_tg_off);
   const uint n_cols = min(Bn, d_ff - col_tg_off);
 
-  const ulong x_base =
-      ((ulong)tile_seg_start + (ulong)row_tg_off) * (ulong)d_model;
-  const ulong w13_expert_base =
-      (ulong)expert_idx * (ulong)(2 * d_ff) * (ulong)d_model;
+  const ulong x_base = ((ulong)tile_seg_start + (ulong)row_tg_off) * (ulong)d_model;
+  const ulong w13_expert_base = (ulong)expert_idx * (ulong)(2 * d_ff) * (ulong)d_model;
   const ulong bias_base = (ulong)expert_idx * (ulong)(2 * d_ff);
 
   // simdgroup tile mapping
   const uint sg_col_count = Bn / SgBn;
-  const uint row_sg = thread_context.threadgroup_index / sg_col_count;
-  const uint col_sg = thread_context.threadgroup_index % sg_col_count;
+  const uint row_sg = thread_context.simdgroup_index / sg_col_count;
+  const uint col_sg = thread_context.simdgroup_index % sg_col_count;
   const uint row_sg_off = row_sg * SgBm;
   const uint col_sg_off = col_sg * SgBn;
 
   // Guard against misconfigured TG sizes
   constexpr uint SG_TILE = 8; // simdgroup fragment dimension (8x8)
   constexpr uint SG_EXPECTED = (Bm / SG_TILE) * (Bn / SG_TILE);
-  if (thread_context.threadgroup_index >= SG_EXPECTED)
+  if (thread_context.simdgroup_index >= SG_EXPECTED)
     return;
 
   // partial accumulators (8x8 tiles per simdgroup)
@@ -128,8 +124,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
     }
   }
 
-  const uint threads_total =
-      threads_per_tg.x * threads_per_tg.y * threads_per_tg.z;
+  const uint threads_total = threads_per_tg.x * threads_per_tg.y * threads_per_tg.z;
   const uint lin = linear_tid(local_tid, threads_per_tg);
 
   // K-loop (tile along D)
@@ -157,13 +152,10 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
 
           if (r < m_rows && col_base < valid_k) {
             // Safe to read - at least first element is valid
-            const ulong base =
-                x_base + (ulong)r * (ulong)d_model + (ulong)(k_off + col_base);
+            const ulong base = x_base + (ulong)r * (ulong)d_model + (ulong)(k_off + col_base);
             METAL_PRAGMA_UNROLL
             for (uint j = 0; j < vec_size; j++) {
-              dst[j] = (col_base + j < valid_k)
-                           ? static_cast<T>(float(x_perm[base + j]))
-                           : static_cast<T>(0.0f);
+              dst[j] = (col_base + j < valid_k) ? static_cast<T>(float(x_perm[base + j])) : static_cast<T>(0.0f);
             }
           } else {
             // Row out of bounds or entire vec8 chunk is out of K bounds
@@ -198,21 +190,14 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
           if (n < n_cols && col_base < valid_k) {
             // Safe to read - at least first element is valid
             const uint gcol = col_tg_off + n;
-            const ulong up_base = w13_expert_base +
-                                  (ulong)gcol * (ulong)d_model +
-                                  (ulong)(k_off + col_base);
-            const ulong gate_base = w13_expert_base +
-                                    (ulong)(d_ff + gcol) * (ulong)d_model +
-                                    (ulong)(k_off + col_base);
+            const ulong up_base = w13_expert_base + (ulong)gcol * (ulong)d_model + (ulong)(k_off + col_base);
+            const ulong gate_base = w13_expert_base + (ulong)(d_ff + gcol) * (ulong)d_model + (ulong)(k_off + col_base);
             METAL_PRAGMA_UNROLL
             for (uint j = 0; j < vec_size; j++) {
-              up_dst[j] = (col_base + j < valid_k)
-                              ? static_cast<T>(float(w13_all[up_base + j]))
-                              : static_cast<T>(0.0f);
+              up_dst[j] = (col_base + j < valid_k) ? static_cast<T>(float(w13_all[up_base + j])) : static_cast<T>(0.0f);
               if (gating_sel > 1u) {
-                gt_dst[j] = (col_base + j < valid_k)
-                                ? static_cast<T>(float(w13_all[gate_base + j]))
-                                : static_cast<T>(0.0f);
+                gt_dst[j] =
+                    (col_base + j < valid_k) ? static_cast<T>(float(w13_all[gate_base + j])) : static_cast<T>(0.0f);
               }
             }
           } else {
@@ -244,35 +229,13 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
           const uint c_idx = n_sub / SG_TILE;
           const uint tile = r_idx * (SgBn / SG_TILE) + c_idx;
           metal::simdgroup_matrix<T, 8, 8> rhs_up;
-          simdgroup_load(
-              rhs_up,
-              Wk_up,
-              W_LD,
-              ulong2(kk, col_sg_off + n_sub),
-              true
-          );
-          simdgroup_multiply_accumulate(
-              OutUp[tile],
-              lhs_frag,
-              rhs_up,
-              OutUp[tile]
-          );
+          simdgroup_load(rhs_up, Wk_up, W_LD, ulong2(kk, col_sg_off + n_sub), true);
+          simdgroup_multiply_accumulate(OutUp[tile], lhs_frag, rhs_up, OutUp[tile]);
 
           if (gating_sel > 1u) {
             metal::simdgroup_matrix<T, 8, 8> rhs_gate;
-            simdgroup_load(
-                rhs_gate,
-                Wk_gate,
-                W_LD,
-                ulong2(kk, col_sg_off + n_sub),
-                true
-            );
-            simdgroup_multiply_accumulate(
-                OutGate[tile],
-                lhs_frag,
-                rhs_gate,
-                OutGate[tile]
-            );
+            simdgroup_load(rhs_gate, Wk_gate, W_LD, ulong2(kk, col_sg_off + n_sub), true);
+            simdgroup_multiply_accumulate(OutGate[tile], lhs_frag, rhs_gate, OutGate[tile]);
           }
         }
       }
@@ -283,19 +246,16 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
   // Note: bias layout is [up | gate] in contiguous FF chunks.
   for (uint c_local = lin; c_local < Bn; c_local += threads_total) {
     const uint c_global = col_tg_off + c_local;
-    bias_up[c_local] =
-        (c_global < d_ff) ? float(up_biases[bias_base + c_global]) : 0.0f;
+    bias_up[c_local] = (c_global < d_ff) ? float(up_biases[bias_base + c_global]) : 0.0f;
     if (gating_sel > 1u) {
-      bias_gate[c_local] = (c_global < d_ff)
-                               ? float(up_biases[bias_base + d_ff + c_global])
-                               : 0.0f;
+      bias_gate[c_local] = (c_global < d_ff) ? float(up_biases[bias_base + d_ff + c_global]) : 0.0f;
     }
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // ---- Epilogue: activation/gating → hidden_out (f32) ----
-  const uint sg_lane_start = thread_context.threadgroup_index * 32;
+  const uint sg_lane_start = thread_context.simdgroup_index * 32;
   const uint sg_lane_end = sg_lane_start + 32;
   if (lin < sg_lane_start || lin >= sg_lane_end)
     return;
@@ -335,21 +295,13 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
       const ulong out_row = seg_start + row_tg_off + local_row;
 
       if (col0 < n_cols) {
-        float up_v =
-            clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
+        float up_v = clamp(up_frag[0] + bias_up[col0], up_clip_min, up_clip_max);
         float out_val;
         if (gating_sel <= 1u) {
-          out_val = (gating_sel == 0u) ? activate_gelu(up_v)
-                                       : activate_silu_alpha(up_v, silu_alpha);
+          out_val = (gating_sel == 0u) ? activate_gelu(up_v) : activate_silu_alpha(up_v, silu_alpha);
         } else {
-          float gate_v = clamp(
-              gate_frag_0 + bias_gate[col0],
-              gate_clip_min,
-              gate_clip_max
-          );
-          const float gate_act = (gating_sel == 2u)
-                                     ? activate_silu_alpha(gate_v, silu_alpha)
-                                     : activate_gelu(gate_v);
+          float gate_v = clamp(gate_frag_0 + bias_gate[col0], gate_clip_min, gate_clip_max);
+          const float gate_act = (gating_sel == 2u) ? activate_silu_alpha(gate_v, silu_alpha) : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col0;
@@ -357,21 +309,13 @@ PUBLIC KERNEL(MoeExpertsPrefillPassA)(
       }
 
       if (col1 < n_cols) {
-        float up_v =
-            clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
+        float up_v = clamp(up_frag[1] + bias_up[col1], up_clip_min, up_clip_max);
         float out_val;
         if (gating_sel <= 1u) {
-          out_val = (gating_sel == 0u) ? activate_gelu(up_v)
-                                       : activate_silu_alpha(up_v, silu_alpha);
+          out_val = (gating_sel == 0u) ? activate_gelu(up_v) : activate_silu_alpha(up_v, silu_alpha);
         } else {
-          float gate_v = clamp(
-              gate_frag_1 + bias_gate[col1],
-              gate_clip_min,
-              gate_clip_max
-          );
-          const float gate_act = (gating_sel == 2u)
-                                     ? activate_silu_alpha(gate_v, silu_alpha)
-                                     : activate_gelu(gate_v);
+          float gate_v = clamp(gate_frag_1 + bias_gate[col1], gate_clip_min, gate_clip_max);
+          const float gate_act = (gating_sel == 2u) ? activate_silu_alpha(gate_v, silu_alpha) : activate_gelu(gate_v);
           out_val = gate_act * up_v;
         }
         const ulong out_col = col_tg_off + col1;
@@ -448,14 +392,14 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   const ulong bias_base = (ulong)expert_idx * (ulong)d_model;
 
   // 2×2 simdgroup layout for 16×64 output (each sg handles 8×32)
-  const uint row_sg = thread_context.threadgroup_index / 2; // 0-1 → rows
-  const uint col_sg = thread_context.threadgroup_index % 2; // 0-1 → cols
+  const uint row_sg = thread_context.simdgroup_index / 2; // 0-1 → rows
+  const uint col_sg = thread_context.simdgroup_index % 2; // 0-1 → cols
   const uint row_sg_off = row_sg * SgBm;
   const uint col_sg_off = col_sg * SgBn;
 
   // Guard against excessive simdgroups
   constexpr uint SG_EXPECTED = (PASSB_BM / SgBm) * (PASSB_BN / SgBn);
-  if (thread_context.threadgroup_index >= SG_EXPECTED)
+  if (thread_context.simdgroup_index >= SG_EXPECTED)
     return;
 
   // 4 accumulators per simdgroup: 1×4 layout of 8×8 tiles
@@ -489,8 +433,7 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
       threadgroup float* my_dst = Hs + h_bi * H_LD + h_bj;
       if (h_bi < m_rows && h_bj < valid_k) {
         // Safe to read - at least first element is valid
-        device const float* my_src =
-            hidden + h_base + (ulong)h_bi * (ulong)d_ff + (ulong)(k_off + h_bj);
+        device const float* my_src = hidden + h_base + (ulong)h_bi * (ulong)d_ff + (ulong)(k_off + h_bj);
         METAL_PRAGMA_UNROLL
         for (uint j = 0; j < H_VEC; j++) {
           my_dst[j] = (h_bj + j < valid_k) ? my_src[j] : 0.0f;
@@ -512,13 +455,10 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
         if (row < n_cols && w_bj < valid_k) {
           // Safe to read - at least first element is valid
           const uint gcol = col_tg_off + row;
-          device const T* my_src = w2_all + w2_expert_base +
-                                   (ulong)gcol * (ulong)d_ff +
-                                   (ulong)(k_off + w_bj);
+          device const T* my_src = w2_all + w2_expert_base + (ulong)gcol * (ulong)d_ff + (ulong)(k_off + w_bj);
           METAL_PRAGMA_UNROLL
           for (uint j = 0; j < W_VEC; j++) {
-            my_dst[j] = (w_bj + j < valid_k) ? static_cast<T>(float(my_src[j]))
-                                             : static_cast<T>(0.0f);
+            my_dst[j] = (w_bj + j < valid_k) ? static_cast<T>(float(my_src[j])) : static_cast<T>(0.0f);
           }
         } else {
           METAL_PRAGMA_UNROLL
@@ -556,18 +496,15 @@ PUBLIC KERNEL(MoeExpertsPrefillPassB)(
   // ---- Bias tile (cooperative load) ----
   for (uint c_local = lin; c_local < Bn; c_local += TGP_SIZE) {
     const uint c_global = col_tg_off + c_local;
-    bias_tile[c_local] =
-        (c_global < d_model) ? float(down_biases[bias_base + c_global]) : 0.0f;
+    bias_tile[c_local] = (c_global < d_model) ? float(down_biases[bias_base + c_global]) : 0.0f;
   }
 
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
   // ---- Writeout with fragment extraction ----
-  const uint lane_qid = thread_context.simdgroup_index >> 2;
-  const uint lane_row =
-      (lane_qid & 4u) + ((thread_context.simdgroup_index >> 1) & 3u);
-  const uint lane_col_base =
-      ((lane_qid & 2u) * 2u) + ((thread_context.simdgroup_index & 1u) * 2u);
+  const uint lane_qid = thread_context.simd_lane_id >> 2;
+  const uint lane_row = (lane_qid & 4u) + ((thread_context.simd_lane_id >> 1) & 3u);
+  const uint lane_col_base = ((lane_qid & 2u) * 2u) + ((thread_context.simd_lane_id & 1u) * 2u);
 
   const uint local_row = row_sg_off + lane_row;
   if (local_row >= m_rows)

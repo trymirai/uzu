@@ -1,4 +1,4 @@
-use crate::{config::LanguageModelConfig, session::parameter::ConfigResolvableValue};
+use crate::{config::model::language_model::LanguageModelConfig, session::parameter::ConfigResolvableValue};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SamplingProcessingOrder {
@@ -14,14 +14,10 @@ pub enum SamplingMethod {
         top_k: Option<u32>,
         top_p: Option<f32>,
         min_p: Option<f32>,
+        repetition_penalty: Option<f32>,
+        suffix_repetition_length: Option<usize>,
         processing_order: SamplingProcessingOrder,
     },
-}
-
-impl Default for SamplingMethod {
-    fn default() -> Self {
-        SamplingMethod::Greedy
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,12 +26,6 @@ pub enum SamplingPolicy {
     Custom {
         value: SamplingMethod,
     },
-}
-
-impl Default for SamplingPolicy {
-    fn default() -> Self {
-        SamplingPolicy::Default
-    }
 }
 
 impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod> for SamplingPolicy {
@@ -50,6 +40,8 @@ impl ConfigResolvableValue<LanguageModelConfig, SamplingMethod> for SamplingPoli
                 top_k: generation_config.top_k,
                 top_p: generation_config.top_p,
                 min_p: generation_config.min_p,
+                repetition_penalty: generation_config.repetition_penalty,
+                suffix_repetition_length: generation_config.suffix_repetition_length,
                 processing_order: SamplingProcessingOrder::TemperatureThenFilters,
             },
             SamplingPolicy::Custom {

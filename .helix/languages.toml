@@ -1,0 +1,32 @@
+[[language]]
+name = "c"
+file-types = []
+
+[[language]]
+name = "cpp"
+file-types = []
+
+[[language]]
+name = "metal"
+scope = "source.metal"
+injection-regex = "metal"
+file-types = ["metal", "h"]
+grammar = "cpp"
+language-servers = ["metal-analyzer"]
+auto-format = true
+comment-tokens = ["//"]
+
+[language.block-comment-tokens]
+start = "/*"
+end = "*/"
+
+[language.formatter]
+command = "clang-format"
+args = []
+
+[language.indent]
+tab-width = 2
+unit = "  "
+
+[language-server.metal-analyzer]
+command = "metal-analyzer"

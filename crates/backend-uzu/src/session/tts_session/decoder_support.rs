@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) type PreInjectionEncodeCallback<'a, B> =
-    dyn FnMut(&TokenDecoderRunner<B>, &ForwardPassState<B>, &mut Encoder<B>) -> Result<(), Error> + 'a;
+    dyn FnMut(&mut TokenDecoderRunner<B>, &mut Encoder<B>) -> Result<(), Error> + 'a;
 
 pub(super) enum EmbeddingInjection {
     None,
@@ -37,6 +37,8 @@ impl TextSamplingState {
                 top_k: None,
                 top_p: Some(top_p),
                 min_p: None,
+                repetition_penalty: None,
+                suffix_repetition_length: None,
                 processing_order: SamplingProcessingOrder::FiltersThenTemperature,
             }
         };
@@ -187,7 +189,7 @@ pub(super) struct StreamingTokenAccumulator {
 impl StreamingTokenAccumulator {
     pub(super) fn new(num_codebooks: usize) -> Result<Self, Error> {
         if num_codebooks == 0 {
-            return Err(Error::UnableToLoadConfig);
+            return Err(Error::InvalidModelConfig("TTS num_codebooks must be greater than 0".to_string()));
         }
         Ok(Self {
             by_codebook: vec![Vec::new(); num_codebooks],
@@ -229,14 +231,13 @@ impl StreamingTokenAccumulator {
             tokens.extend_from_slice(&codebook[frame_start..frame_end]);
         }
 
-        AudioTokenGrid::new(
+        Ok(AudioTokenGrid::new(
             tokens.into_boxed_slice(),
             1,
             self.by_codebook.len(),
             range_frames,
             vec![range_frames].into_boxed_slice(),
-        )
-        .map_err(Error::from)
+        )?)
     }
 }
 
@@ -273,8 +274,7 @@ pub(super) fn slice_grid_range(
         lengths.push(length.saturating_sub(frame_start).min(range_frames));
     }
 
-    AudioTokenGrid::new(tokens.into_boxed_slice(), batch_size, codebooks, range_frames, lengths.into_boxed_slice())
-        .map_err(Error::from)
+    Ok(AudioTokenGrid::new(tokens.into_boxed_slice(), batch_size, codebooks, range_frames, lengths.into_boxed_slice())?)
 }
 
 pub(super) fn accumulate_audio_decode_step_stats(
@@ -362,7 +362,7 @@ impl<'a, F: FnMut(&AudioPcmBatch)> StreamingSynthesisState<'a, F> {
             let ready_frames = pending.ready_frames;
             let next_chunk_frames = pending.next_chunk_frames;
             let submission_decode_duration = pending.submission_decode_duration;
-            let _ = self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
+            self.pending_chunk.take().ok_or(Error::GenerateFailed)?;
             (
                 step_stats,
                 ready_frames,
@@ -441,14 +441,10 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         }
 
         let config_path = model_path.join("config.json");
-        if !config_path.exists() {
-            return Err(Error::UnableToLoadConfig);
-        }
-        let config_file = File::open(&config_path).map_err(|_| Error::UnableToLoadConfig)?;
-        let model_metadata: ModelMetadata =
-            serde_json::from_reader(std::io::BufReader::new(config_file)).map_err(|_| Error::UnableToLoadConfig)?;
+        let config_file = File::open(&config_path)?;
+        let model_config: TTSModelConfig = serde_json::from_reader(BufReader::new(config_file))?;
 
-        Self::from_model_metadata_with_options(model_path, model_metadata, options)
+        Self::from_model_config_with_options(model_path, model_config, options)
     }
 
     pub fn last_execution_stats(&self) -> Option<TtsExecutionStats> {
@@ -459,24 +455,21 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         self.audio.sample_rate()
     }
 
-    fn from_model_metadata_with_options(
+    fn from_model_config_with_options(
         model_path: PathBuf,
-        model_metadata: ModelMetadata,
+        model_config: TTSModelConfig,
         options: TtsSessionOptions,
     ) -> Result<Self, Error> {
         let tokenizer_path = model_path.join("tokenizer.json");
-        if !tokenizer_path.exists() {
-            return Err(Error::UnableToLoadTokenizer);
-        }
-        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|_| Error::UnableToLoadTokenizer)?;
+        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(Error::UnableToLoadTokenizer)?;
 
-        let loaded_runtime = load_tts_runtime(&model_path, &model_metadata, &options)?;
+        let loaded_runtime = load_tts_runtime(&model_path, &model_config, &options)?;
 
         Ok(Self {
             tokenizer,
             audio: loaded_runtime.audio,
             audio_decoder: loaded_runtime.audio_decoder,
-            message_processor_config: loaded_runtime.message_processor_config,
+            token_codec_config: loaded_runtime.token_codec_config,
             text_decoder: loaded_runtime.text_decoder,
             last_execution_stats: None,
         })
@@ -489,73 +482,81 @@ impl<B: Backend + Send + Sync> TtsSession<B> {
         let messages = input
             .get_messages()
             .into_iter()
-            .map(|message| message.resolve(&self.message_processor_config))
+            .map(|message| message.resolve(&self.token_codec_config))
             .collect::<Vec<_>>();
 
         let template_name = "tts_prompt_template";
         let mut environment = Environment::new();
         environment
-            .add_template(template_name, self.message_processor_config.prompt_template.as_str())
-            .map_err(|_| Error::UnableToLoadPromptTemplate)?;
-        let template = environment.get_template(template_name).map_err(|_| Error::UnableToLoadPromptTemplate)?;
+            .add_template(template_name, self.token_codec_config.prompt_template.as_str())
+            .map_err(Error::UnableToLoadPromptTemplate)?;
+        let template = environment.get_template(template_name).map_err(Error::UnableToLoadPromptTemplate)?;
 
         let result = template
             .render(context!(
                 messages => messages
             ))
-            .map_err(|_| Error::UnableToRenderPromptTemplate)?;
+            .map_err(Error::UnableToRenderPromptTemplate)?;
 
         Ok(normalize_rendered_prompt(
             result,
-            self.message_processor_config.prompt_template.as_str(),
-            self.message_processor_config.drop_initial_newline,
+            self.token_codec_config.prompt_template.as_str(),
+            self.token_codec_config.drop_initial_newline,
         ))
     }
 }
 
 pub(super) fn semantic_token_to_code(
     semantic_token: u64,
-    semantic_begin: i64,
-    semantic_end: i64,
+    semantic_begin: u64,
+    semantic_end: u64,
     token_upper_bound: usize,
 ) -> u32 {
     if semantic_begin > semantic_end || token_upper_bound == 0 {
         return 0;
     }
 
-    let semantic = semantic_token as i64;
-    if semantic < semantic_begin || semantic > semantic_end {
+    if semantic_token < semantic_begin || semantic_token > semantic_end {
         return 0;
     }
 
-    let relative = usize::try_from(semantic - semantic_begin).unwrap_or(0);
+    let relative = usize::try_from(semantic_token - semantic_begin).unwrap_or(0);
     let clamped = relative.min(token_upper_bound.saturating_sub(1));
     u32::try_from(clamped).unwrap_or(0)
 }
 
 pub(super) fn build_semantic_sampling_mask_row(
     vocab_size: usize,
-    semantic_begin: i64,
-    semantic_end: i64,
-    im_end: i64,
+    semantic_begin: u64,
+    semantic_end: u64,
+    im_end: u64,
 ) -> Result<Box<[u32]>, Error> {
     if vocab_size == 0 || semantic_begin > semantic_end {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidModelConfig(format!(
+            "invalid semantic sampling mask range: vocab_size={vocab_size}, semantic_begin={semantic_begin}, semantic_end={semantic_end}",
+        )));
     }
 
-    let max_token_id = i64::try_from(vocab_size.saturating_sub(1)).map_err(|_| Error::UnableToLoadConfig)?;
-    if semantic_begin < 0 || semantic_end < 0 || semantic_end > max_token_id || im_end < 0 || im_end > max_token_id {
-        return Err(Error::UnableToLoadConfig);
+    let max_token_id = u64::try_from(vocab_size.saturating_sub(1)).map_err(|_| {
+        Error::InvalidModelConfig(format!("vocab_size={vocab_size} cannot be represented as a token id"))
+    })?;
+    if semantic_end > max_token_id || im_end > max_token_id {
+        return Err(Error::InvalidModelConfig(format!(
+            "semantic sampling mask token id exceeds vocab: semantic_end={semantic_end}, im_end={im_end}, max_token_id={max_token_id}",
+        )));
     }
 
     let row_words = vocab_size.div_ceil(32);
     let mut mask = vec![0_u32; row_words];
     for token_index in semantic_begin..=semantic_end {
-        let token = usize::try_from(token_index).map_err(|_| Error::UnableToLoadConfig)?;
+        let token = usize::try_from(token_index).map_err(|_| {
+            Error::InvalidModelConfig(format!("semantic token id {token_index} cannot be represented as usize"))
+        })?;
         let word = token / 32;
         mask[word] |= 2_u32.pow((token % 32) as u32);
     }
-    let im_end_token = usize::try_from(im_end).map_err(|_| Error::UnableToLoadConfig)?;
+    let im_end_token = usize::try_from(im_end)
+        .map_err(|_| Error::InvalidModelConfig(format!("im_end token id {im_end} cannot be represented as usize")))?;
     let word = im_end_token / 32;
     mask[word] |= 2_u32.pow((im_end_token % 32) as u32);
     Ok(mask.into_boxed_slice())
@@ -563,15 +564,16 @@ pub(super) fn build_semantic_sampling_mask_row(
 
 pub(super) fn clear_token_in_sampling_mask(
     mask: &mut [u32],
-    token: i64,
+    token: u64,
 ) -> Result<(), Error> {
-    if token < 0 {
-        return Err(Error::UnableToLoadConfig);
-    }
-    let token = usize::try_from(token).map_err(|_| Error::UnableToLoadConfig)?;
+    let token = usize::try_from(token)
+        .map_err(|_| Error::InvalidModelConfig(format!("token id {token} cannot be represented as usize")))?;
     let word = token / 32;
     if word >= mask.len() {
-        return Err(Error::UnableToLoadConfig);
+        return Err(Error::InvalidModelConfig(format!(
+            "token id {token} is outside sampling mask with {} words",
+            mask.len(),
+        )));
     }
     mask[word] &= !2_u32.pow((token % 32) as u32);
     Ok(())

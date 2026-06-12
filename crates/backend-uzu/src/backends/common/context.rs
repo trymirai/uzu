@@ -1,4 +1,4 @@
-use std::{env, path::Path, rc::Rc};
+use std::{path::Path, rc::Rc};
 
 use crate::backends::common::{Allocation, AllocationPool, AllocationType, Backend, CommandBuffer};
 
@@ -10,11 +10,7 @@ pub trait Context: Sized {
     fn recommended_async_batch_size(
         &self,
         model_path: &Path,
-    ) -> usize;
-
-    fn is_high_performance(&self) -> bool;
-
-    fn debug_active(&self) -> bool;
+    ) -> Result<usize, <Self::Backend as Backend>::Error>;
 
     fn create_command_buffer(
         &self
@@ -23,7 +19,7 @@ pub trait Context: Sized {
     fn create_buffer(
         &self,
         size: usize,
-    ) -> Result<<Self::Backend as Backend>::Buffer, <Self::Backend as Backend>::Error>;
+    ) -> Result<<Self::Backend as Backend>::DenseBuffer, <Self::Backend as Backend>::Error>;
 
     fn create_allocation(
         &self,
@@ -36,7 +32,10 @@ pub trait Context: Sized {
         reusable: bool,
     ) -> AllocationPool<Self::Backend>;
 
-    fn create_event(&self) -> Result<<Self::Backend as Backend>::Event, <Self::Backend as Backend>::Error>;
+    fn create_sparse_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<<Self::Backend as Backend>::SparseBuffer, <Self::Backend as Backend>::Error>;
 
     fn peak_memory_usage(&self) -> Option<usize>;
 
@@ -49,7 +48,5 @@ pub trait Context: Sized {
 
     fn stop_capture(&self) -> Result<(), <Self::Backend as Backend>::Error>;
 
-    fn tf32_enabled() -> bool {
-        env::var("UZU_TF32").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
-    }
+    fn sparse_buffers_supported(&self) -> bool;
 }

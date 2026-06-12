@@ -11,6 +11,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     fs::File,
+    io::BufReader,
     path::{Path, PathBuf},
     rc::Rc,
     time::Instant,
@@ -24,8 +25,6 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tokenizers::Tokenizer;
 
 use crate::{
-    DataType,
-    array::ArrayContextExt,
     audio::{
         AudioCodecRuntime, AudioGenerationContext, AudioPcmBatch, AudioTokenGrid,
         nanocodec::{AudioDecodeStepStats, AudioDecodeStreamState},
@@ -33,20 +32,14 @@ use crate::{
     backends::common::{
         Backend, Context as BackendContext, Encoder, Kernels,
         kernel::{
-            EmbeddingRowsSumKernel, ManualKernels, TensorAddScaleKernel, TensorCopyKernel, TokenCopySampledKernel,
-            TokenCopyToResultsKernel,
-            kv_cache_update::KVCacheUpdate,
-            matmul::{MatmulArgumentC, MatmulArguments, MatmulKernel},
+            EmbeddingRowsSumKernel, TensorAddScaleKernel, TokenCopySampledKernel,
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
     },
-    config::{InnerModelConfig, ModelMetadata, TtsMessageProcessorConfig},
-    encodable_block::{Decoder, EncodingParameters, Sampling as GpuSampling},
-    forward_pass::{
-        cache_layers::CacheLayers,
-        model_shape::ModelShape,
-        scratch_buffers::ScratchBuffers,
-        state::{ArrayId, ForwardPassState, SharedBuffers},
-    },
+    config::{model::tts_model::TTSModelConfig, token_codec::tts_codec::TTSCodecConfig},
+    data_type::DataType,
+    encodable_block::{Decoder, KVCacheUpdate, Sampling as GpuSampling},
+    forward_pass::{cache_layers::CacheLayers, model_shape::ModelShape},
     parameters::ParameterLoader,
     session::{
         config::{TextDecoderRuntimeConfig, TextSamplingConfig, TtsChunkPolicy, TtsRunConfig, TtsSessionOptions},
@@ -92,7 +85,7 @@ pub struct TtsSession<B: Backend> {
     tokenizer: Tokenizer,
     audio: AudioGenerationContext<B>,
     audio_decoder: Box<dyn AudioDecoderBackend>,
-    message_processor_config: TtsMessageProcessorConfig,
+    token_codec_config: TTSCodecConfig,
     text_decoder: Box<dyn SemanticDecoderBackend>,
     last_execution_stats: Option<TtsExecutionStats>,
 }
@@ -219,12 +212,12 @@ impl<B: Backend> PendingAudioChunkBackend for NanoCodecPendingAudioChunk<B> {
         }
 
         let pending = self.inner.take().ok_or(Error::GenerateFailed)?;
-        pending.resolve().map(Some).map_err(Error::from)
+        Ok(Some(pending.resolve()?))
     }
 
     fn resolve(mut self: Box<Self>) -> Result<AudioPcmBatch, Error> {
         let pending = self.inner.take().ok_or(Error::GenerateFailed)?;
-        pending.resolve().map_err(Error::from)
+        Ok(pending.resolve()?)
     }
 }
 

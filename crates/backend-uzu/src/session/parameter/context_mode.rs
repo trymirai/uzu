@@ -1,7 +1,8 @@
 use crate::session::types::Input;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum ContextMode {
+    #[default]
     None,
     Static {
         input: Input,
@@ -9,8 +10,6 @@ pub enum ContextMode {
     Dynamic,
 }
 
-impl Default for ContextMode {
-    fn default() -> Self {
-        ContextMode::None
-    }
-}
+#[cfg(test)]
+#[path = "../../../unit/session/parameter/context_mode.rs"]
+mod tests;

@@ -9,24 +9,18 @@ use std::{
 };
 
 pub use config::Config;
-use download_manager::{
-    FileCheck, FileDownloadManager, FileDownloadManagerType, FileDownloadPhase, create_download_manager,
-};
+use download_manager::{FileCheck, FileDownloadManager, FileDownloadPhase};
 pub use error::StorageError;
 use futures_util::future::join_all;
 use shoji::types::{
     basic::File,
     model::{Model, ModelAccessibility, ModelReference},
 };
-use tokio::{
-    runtime::Handle,
-    sync::broadcast::{Sender, channel},
-};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::{runtime::Handle as TokioHandle, sync::broadcast::channel as tokio_broadcast_channel};
 
 use crate::{
     helpers::SharedAccess,
-    storage::types::{DownloadPhase, DownloadState, Item},
+    storage::types::{DownloadPhase, DownloadState, Item, StorageDownloadEventSender, StorageDownloadEventStream},
 };
 
 pub struct Storage {
@@ -34,13 +28,13 @@ pub struct Storage {
 
     download_manager: SharedAccess<Arc<dyn FileDownloadManager>>,
     items: SharedAccess<HashMap<String, Item>>,
-    items_broadcast_sender: Sender<(String, DownloadState)>,
-    handle: Handle,
+    items_broadcast_sender: StorageDownloadEventSender,
+    handle: TokioHandle,
 }
 
 impl Storage {
     pub async fn new(
-        tokio_handle: Handle,
+        tokio_handle: TokioHandle,
         config: Config,
     ) -> Result<Self, StorageError> {
         create_dir_all(config.cache_path()).map_err(|_| StorageError::UnableToCreateDirectory {
@@ -48,20 +42,16 @@ impl Storage {
         })?;
 
         let download_manager = SharedAccess::new(Arc::from(
-            create_download_manager(
-                FileDownloadManagerType::default(),
-                Some(config.name.clone()),
-                tokio_handle.clone(),
-            )
-            .await
-            .map_err(|error| StorageError::DownloadManager {
-                message: error.to_string(),
-            })?,
+            <dyn FileDownloadManager>::new(config.download_manager_type, tokio_handle.clone()).await.map_err(
+                |error| StorageError::DownloadManager {
+                    message: error.to_string(),
+                },
+            )?,
         ));
 
         let items = SharedAccess::new(HashMap::new());
 
-        let (items_broadcast_sender, _) = channel(256);
+        let (items_broadcast_sender, _) = tokio_broadcast_channel(256);
 
         let storage = Self {
             config,
@@ -92,7 +82,9 @@ impl Storage {
         for task in existing_file_tasks {
             let task_state = task.state().await;
             if matches!(task_state.phase, FileDownloadPhase::Error(_)) {
+                let download_id = task.download_id();
                 let _ = task.cancel().await;
+                let _ = download_manager.remove_file_task(download_id).await;
             } else {
                 active_file_tasks.push(task);
             }
@@ -106,6 +98,9 @@ impl Storage {
             .collect();
         for identifier in stale_model_identifiers {
             if let Some(item) = items.remove(&identifier) {
+                if let Err(error) = item.detach_active_downloads().await {
+                    tracing::warn!(?error, identifier, "failed to detach stale model file tasks");
+                }
                 item.stop_listening().await;
             }
         }
@@ -198,8 +193,8 @@ impl Storage {
         Ok(())
     }
 
-    pub fn subscribe(&self) -> BroadcastStream<(String, DownloadState)> {
-        BroadcastStream::new(self.items_broadcast_sender.subscribe())
+    pub fn subscribe(&self) -> StorageDownloadEventStream {
+        StorageDownloadEventStream::new(self.items_broadcast_sender.subscribe())
     }
 
     pub async fn get(

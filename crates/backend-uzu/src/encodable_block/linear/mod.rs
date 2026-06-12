@@ -1,206 +1,275 @@
-mod full_precision;
+mod matmul;
 mod qlora_wrapper;
-mod quantized;
 mod rht_wrapper;
 
-pub use full_precision::{FullPrecisionLinear, FullPrecisionLinearError};
+pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use qlora_wrapper::{QLoRALinearWrapper, QLoRALinearWrapperError};
-pub use quantized::{QuantizedLinear, QuantizedLinearError};
 pub use rht_wrapper::{RHTLinearWrapper, RHTLinearWrapperError};
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Encoder},
-    config::LinearConfig,
-    forward_pass::state::{ArrayId, ForwardPassState},
+    backends::common::{Allocation, Backend, Encoder},
+    config::weight_matrix::{
+        AnyWeightMatrixSpec, Layout,
+        full_precision_spec::FullPrecisionSpec,
+        hybrid_spec::{HybridSpec, IncoherenceProcessingMode},
+    },
+    data_type::DataType,
     parameters::{ParameterLoaderError, ParameterTree},
 };
 
 pub trait Linear<B: Backend> {
     fn encode(
         &self,
-        state: &mut ForwardPassState<B>,
+        input: Allocation<B>,
+        batch_dim: usize,
         encoder: &mut Encoder<B>,
-    ) -> Result<(), B::Error>;
+    ) -> Result<Allocation<B>, B::Error>;
 }
 
 #[derive(Debug, Error)]
 pub enum LinearBlockError<B: Backend> {
-    #[error("QuantizedLinear error: {0}")]
-    QuantizedLinearError(#[from] QuantizedLinearError<B>),
-    #[error("FullPrecisionLinear error: {0}")]
-    FullPrecisionLinearError(#[from] FullPrecisionLinearError<B>),
-    #[error("RHTLinearWrapper error: {0}")]
-    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
+    #[error("LinearMatmul error: {0}")]
+    LinearMatmulError(#[from] LinearMatmulError<B>),
+    #[error("Output hadamard linear error: {0}")]
+    OutputHadamardLinearError(#[from] OutputHadamardLinearError<B>),
     #[error("QLoRALinearWrapper error: {0}")]
     QLoRALinearWrapperError(#[from] QLoRALinearWrapperError<B>),
+    #[error("RHTLinearWrapper error: {0}")]
+    RHTLinearWrapperError(#[from] RHTLinearWrapperError<B>),
     #[error("Parameter loading error: {0}")]
     ParameterError(#[from] ParameterLoaderError<B>),
+    #[error("Unsupported linear configuration: {0}")]
+    UnsupportedConfiguration(String),
+}
+
+#[derive(Debug, Error)]
+pub enum OutputHadamardLinearError<B: Backend> {
+    #[error("LinearMatmul error: {0}")]
+    LinearMatmulError(#[from] LinearMatmulError<B>),
+    #[error("Parameter loading error: {0}")]
+    ParameterError(#[from] ParameterLoaderError<B>),
+    #[error("Unsupported linear configuration: {0}")]
+    UnsupportedConfiguration(String),
 }
 
 impl<B: Backend> dyn Linear<B> {
-    pub fn new<const N: usize>(
-        config: &LinearConfig,
-        _has_biases: bool,
+    pub fn new_mixed_precision<const N: usize>(
         input_dimension: usize,
         output_dimensions: [usize; N],
+        has_biases: bool,
         context: &B::Context,
-        parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        parameter_tree: &ParameterTree<B>,
     ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
         let output_dimension_sum: usize = output_dimensions.iter().sum();
-        match config {
-            LinearConfig::Quantized(quantization_config) | LinearConfig::MLXQuantized(quantization_config) => {
-                let block = QuantizedLinear::new(
+        let weights_tree = parameter_tree.subtree("weights")?;
+        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        match spec {
+            AnyWeightMatrixSpec::FullPrecisionSpec(FullPrecisionSpec {
+                layout: Layout::OutputInput,
+                ..
+            }) => {
+                let block = LinearMatmul::full_precision(
                     context,
-                    quantization_config,
                     input_dimension,
                     output_dimension_sum,
+                    has_biases,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
                     parameter_tree,
-                    input_array_id,
-                    output_array_id,
+                )?;
+                Ok(Box::new(block))
+            },
+            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                adapter_spec: None,
+                incoherence_block_size: Some(32),
+                incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+                ..
+            }) => Ok(Box::new(RHTLinearWrapper::new(
+                context,
+                input_dimension,
+                output_dimension_sum,
+                has_biases,
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+                parameter_tree,
+            )?)),
+            AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+                quantization_spec,
+                adapter_spec: Some(adapter_spec),
+                incoherence_block_size,
+                incoherence_processing_mode,
+                ..
+            }) => {
+                assert!(!has_biases, "QLoRA linear with biases is not supported");
+                let adapter_spec = *adapter_spec;
+                let AnyWeightMatrixSpec::LowRankSpec(adapter_spec) = adapter_spec else {
+                    return Err(LinearBlockError::UnsupportedConfiguration(format!("{adapter_spec:?}")));
+                };
+                Ok(Box::new(QLoRALinearWrapper::new(
+                    context,
+                    *quantization_spec,
+                    adapter_spec,
+                    incoherence_block_size,
+                    incoherence_processing_mode,
+                    input_dimension,
+                    output_dimension_sum,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    &weights_tree,
+                )?))
+            },
+            spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                let block = LinearMatmul::quantized(
+                    context,
+                    spec,
+                    input_dimension,
+                    output_dimension_sum,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    &weights_tree,
+                    has_biases.then_some(parameter_tree),
                     None,
                 )?;
                 Ok(Box::new(block))
             },
-            LinearConfig::FullPrecision {
-                precision,
-            } => {
-                let block = FullPrecisionLinear::new(
-                    context,
-                    (*precision).into(),
-                    input_dimension,
-                    output_dimension_sum,
-                    parameter_tree,
-                    input_array_id,
-                    output_array_id,
-                )?;
-                Ok(Box::new(block))
-            },
-            LinearConfig::QLoRA {
-                quantization,
-                lora_rank,
-                lora_scale,
-            } => {
-                let block = QLoRALinearWrapper::new(
-                    context,
-                    quantization,
-                    *lora_rank,
-                    *lora_scale,
-                    input_dimension,
-                    output_dimension_sum,
-                    parameter_tree,
-                    None,
-                    input_array_id,
-                    output_array_id,
-                )?;
-                Ok(Box::new(block))
-            },
-            LinearConfig::RHTLinearWrapper {
-                block_size,
-                inner_config,
-            } => {
-                let block = RHTLinearWrapper::new(
-                    context,
-                    *block_size,
-                    inner_config,
-                    input_dimension,
-                    output_dimension_sum,
-                    parameter_tree,
-                    input_array_id,
-                    output_array_id,
-                )?;
-                Ok(Box::new(block))
-            },
+            spec => Err(LinearBlockError::UnsupportedConfiguration(format!("{spec:?}"))),
         }
     }
 
-    pub fn new_with_output_hadamard(
+    pub fn new<const N: usize>(
+        input_dimension: usize,
+        output_dimensions: [usize; N],
+        has_biases: bool,
         context: &B::Context,
-        config: &LinearConfig,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-        parameter_tree: &ParameterTree<B::Context>,
-        output_factors: B::Buffer,
+        data_type: DataType,
+        parameter_tree: &ParameterTree<B>,
+    ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
+        Self::new_mixed_precision(
+            input_dimension,
+            output_dimensions,
+            has_biases,
+            context,
+            data_type,
+            data_type,
+            data_type,
+            parameter_tree,
+        )
+    }
+
+    pub fn new_with_output_hadamard_mixed_precision(
+        context: &B::Context,
+        parameter_tree: &ParameterTree<B>,
+        output_factors: Allocation<B>,
         input_dim: usize,
         output_dim: usize,
-    ) -> Result<Box<dyn Linear<B>>, LinearBlockError<B>> {
-        match config {
-            LinearConfig::Quantized(config) | LinearConfig::MLXQuantized(config) => Ok(Box::new(QuantizedLinear::new(
+        has_biases: bool,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+    ) -> Result<Box<dyn Linear<B>>, OutputHadamardLinearError<B>> {
+        let weights_tree = parameter_tree.subtree("weights")?.subtree("quantized")?;
+        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        match spec {
+            spec @ (AnyWeightMatrixSpec::MLXSpec(_) | AnyWeightMatrixSpec::IntSpec(_)) => {
+                Ok(Box::new(LinearMatmul::quantized(
+                    context,
+                    spec,
+                    input_dim,
+                    output_dim,
+                    weights_data_type,
+                    input_data_type,
+                    output_data_type,
+                    &weights_tree,
+                    has_biases.then_some(parameter_tree),
+                    Some(output_factors),
+                )?))
+            },
+            spec => Err(OutputHadamardLinearError::UnsupportedConfiguration(format!(
+                "{spec:?} doesn't support fused output hadamard"
+            ))),
+        }
+    }
+
+    pub fn new_extracting_input_hadamard_mixed_precision<const N: usize>(
+        input_dimension: usize,
+        output_dimensions: [usize; N],
+        has_biases: bool,
+        context: &B::Context,
+        weights_data_type: DataType,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        parameter_tree: &ParameterTree<B>,
+    ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
+        let output_dimension_sum: usize = output_dimensions.iter().sum();
+        let weights_tree = parameter_tree.subtree("weights")?;
+        let spec = weights_tree.metadata::<AnyWeightMatrixSpec>("spec")?;
+        if let AnyWeightMatrixSpec::HybridSpec(HybridSpec {
+            adapter_spec: None,
+            incoherence_block_size: Some(32),
+            incoherence_processing_mode: IncoherenceProcessingMode::InputOutput,
+            ..
+        }) = spec
+        {
+            let input_factors = weights_tree
+                .leaf("incoherence_signs.input_signs")?
+                .validate(&[input_dimension], DataType::I32)?
+                .read_allocation()?;
+            let output_factors = weights_tree
+                .leaf("incoherence_signs.output_signs")?
+                .validate(&[output_dimension_sum], DataType::I32)?
+                .read_allocation()?;
+            let inner_linear = Self::new_with_output_hadamard_mixed_precision(
                 context,
-                config,
-                input_dim,
-                output_dim,
                 parameter_tree,
-                input_array_id,
-                output_array_id,
-                Some(output_factors),
-            )?)),
-            LinearConfig::QLoRA {
-                quantization,
-                lora_rank,
-                lora_scale,
-            } => Ok(Box::new(QLoRALinearWrapper::new(
+                output_factors,
+                input_dimension,
+                output_dimension_sum,
+                has_biases,
+                weights_data_type,
+                input_data_type,
+                output_data_type,
+            )?;
+            Ok((inner_linear, Some(input_factors)))
+        } else {
+            let linear = Self::new_mixed_precision(
+                input_dimension,
+                output_dimensions,
+                has_biases,
                 context,
-                quantization,
-                *lora_rank,
-                *lora_scale,
-                input_dim,
-                output_dim,
+                weights_data_type,
+                input_data_type,
+                output_data_type,
                 parameter_tree,
-                Some(output_factors),
-                input_array_id,
-                output_array_id,
-            )?)),
-            inner_config => unimplemented!("{inner_config:?} doesn't support fused output hadamard"),
+            )?;
+            Ok((linear, None))
         }
     }
 
     pub fn new_extracting_input_hadamard<const N: usize>(
-        config: &LinearConfig,
-        _has_biases: bool,
         input_dimension: usize,
         output_dimensions: [usize; N],
+        has_biases: bool,
         context: &B::Context,
-        parameter_tree: &ParameterTree<B::Context>,
-        input_array_id: ArrayId,
-        output_array_id: ArrayId,
-    ) -> Result<(Box<dyn Linear<B>>, Option<B::Buffer>), LinearBlockError<B>> {
-        let output_dimension_sum: usize = output_dimensions.iter().sum();
-        match config {
-            LinearConfig::RHTLinearWrapper {
-                inner_config,
-                ..
-            } => {
-                let input_factors = parameter_tree.leaf("input_factors")?.read_buffer()?;
-                let output_factors = parameter_tree.leaf("output_factors")?.read_buffer()?;
-                let inner_tree = parameter_tree.subtree("inner_linear")?;
-                let inner_linear = Self::new_with_output_hadamard(
-                    context,
-                    inner_config,
-                    input_array_id,
-                    output_array_id,
-                    &inner_tree,
-                    output_factors,
-                    input_dimension,
-                    output_dimension_sum,
-                )?;
-                Ok((inner_linear, Some(input_factors)))
-            },
-            other => {
-                let linear = Self::new(
-                    other,
-                    _has_biases,
-                    input_dimension,
-                    output_dimensions,
-                    context,
-                    parameter_tree,
-                    input_array_id,
-                    output_array_id,
-                )?;
-                Ok((linear, None))
-            },
-        }
+        data_type: DataType,
+        parameter_tree: &ParameterTree<B>,
+    ) -> Result<(Box<dyn Linear<B>>, Option<Allocation<B>>), LinearBlockError<B>> {
+        Self::new_extracting_input_hadamard_mixed_precision(
+            input_dimension,
+            output_dimensions,
+            has_biases,
+            context,
+            data_type,
+            data_type,
+            data_type,
+            parameter_tree,
+        )
     }
 }

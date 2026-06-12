@@ -1,26 +1,21 @@
-use std::{cell::UnsafeCell, os::raw::c_void, pin::Pin, ptr::NonNull};
+use std::{any::Any, cell::UnsafeCell, pin::Pin};
 
-use super::Cpu;
-use crate::backends::common::Buffer;
+use crate::backends::{
+    common::{Backend, Buffer},
+    cpu::Cpu,
+};
 
-impl Buffer for UnsafeCell<Pin<Box<[u8]>>> {
-    type Backend = Cpu;
+pub trait BufferDowncastExt: Buffer<Backend = Cpu> {
+    fn downcast(&self) -> &UnsafeCell<Pin<Box<[u8]>>>;
+}
 
-    fn set_label(
-        &mut self,
-        _label: Option<&str>,
-    ) {
-    }
-
-    fn cpu_ptr(&self) -> NonNull<c_void> {
-        unsafe { NonNull::new_unchecked((&*self.get()).as_ptr() as *mut c_void) }
-    }
-
-    fn gpu_ptr(&self) -> usize {
-        unsafe { &*self.get() }.as_ptr().addr()
-    }
-
-    fn length(&self) -> usize {
-        unsafe { &*self.get() }.len()
+impl<B: Buffer<Backend = Cpu>> BufferDowncastExt for B {
+    fn downcast(&self) -> &UnsafeCell<Pin<Box<[u8]>>> {
+        let buffer = self as &dyn Any;
+        if let Some(buffer) = buffer.downcast_ref::<<<B as Buffer>::Backend as Backend>::DenseBuffer>() {
+            buffer
+        } else {
+            unreachable!("Unsupported Cpu buffer type")
+        }
     }
 }

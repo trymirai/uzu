@@ -97,11 +97,12 @@ impl TrieNode {
         seed: &PRng,
         mut compiled_grammar: Option<&mut (dyn CompiledGrammar + 'static)>,
         speculator: &dyn Speculator,
+        vocab_size: usize,
         creation_config: &TrieCreationConfig,
         max_length: usize,
     ) -> Self {
         assert!(max_length >= 1, "can't have zero sized trie");
-        assert!(prefix.len() >= 1, "need seed node");
+        assert!(!prefix.is_empty(), "need seed node");
 
         let prefix_length = prefix.len();
         let mut speculated_suffix = prefix.to_vec();
@@ -119,7 +120,9 @@ impl TrieNode {
 
         while length < max_length {
             // Guuumbel speculator trick: both speculator and llm sample via gumbel max trick using the same noise for increased acceptance rate
-            if let Some(next_speculated_token) = speculator_sample(cur_node.seed(), &cur_node_speculator_weights) {
+            if let Some(next_speculated_token) =
+                speculator_sample(cur_node.seed(), vocab_size, &cur_node_speculator_weights)
+            {
                 // Add speculated token to the trie
                 let mask = if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
                     if compiled_grammar.accept_token(next_speculated_token).is_err() {
@@ -153,10 +156,10 @@ impl TrieNode {
             } else if let Some(next_node_token) = next_node.take() {
                 // Out of speculated tokens for this node, move onto the likeliest next node
                 speculated_suffix.push(next_node_token);
-                if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
-                    if compiled_grammar.accept_token(next_node_token).is_err() {
-                        break;
-                    }
+                if let Some(compiled_grammar) = compiled_grammar.as_deref_mut()
+                    && compiled_grammar.accept_token(next_node_token).is_err()
+                {
+                    break;
                 }
                 height += 1;
                 cur_node = cur_node.get_mut(next_node_token).unwrap();
@@ -169,7 +172,7 @@ impl TrieNode {
             };
         }
 
-        if let Some(compiled_grammar) = compiled_grammar.as_deref_mut() {
+        if let Some(compiled_grammar) = compiled_grammar {
             compiled_grammar.rollback(height);
         }
 
@@ -295,5 +298,5 @@ impl<'a> FlatTrie<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/trie_test.rs"]
+#[path = "../unit/trie_test.rs"]
 mod tests;

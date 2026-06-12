@@ -24,11 +24,14 @@ PUBLIC KERNEL(RMSNorm)(
     constant uint& element_count,
     constant float& epsilon,
     constant float& scale_offset,
+    constant float& post_layer_scalar,
     const bool in_place SPECIALIZE,
     const bool full_layer SPECIALIZE,
     const bool copy_to_shortcut SPECIALIZE,
     const bool residual_add SPECIALIZE,
     const bool use_hadamard SPECIALIZE,
+    const bool scale_residual_sum SPECIALIZE,
+    const bool scale_output SPECIALIZE,
     threadgroup AccumT shared_sum[METAL_SIMD_SIZE],
     const ThreadContext thread_context,
     const uint batch_idx GROUPS(batch_size),
@@ -57,6 +60,9 @@ PUBLIC KERNEL(RMSNorm)(
     if (copy_to_shortcut) {
       if (residual_add) {
         val += shortcut[i];
+        if (scale_residual_sum) {
+          val = static_cast<InputT>(static_cast<float>(val) * post_layer_scalar);
+        }
       }
       shortcut[i] = val;
     }
@@ -65,18 +71,14 @@ PUBLIC KERNEL(RMSNorm)(
   }
 
   // Step 2 - threads reduce their partial sums of squares
-  AccumT total_sum_of_squares =
-      threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
-          thread_sum_of_squares,
-          shared_sum,
-          thread_context
-      );
+  AccumT total_sum_of_squares = threadgroup_cooperative_reduce<SimdReduceSum<AccumT>, BLOCK_SIZE>(
+      thread_sum_of_squares,
+      shared_sum,
+      thread_context
+  );
 
   // And pre-calculate rms_inv
-  AccumT rms_inv = rsqrt(
-      total_sum_of_squares / static_cast<AccumT>(element_count) +
-      static_cast<AccumT>(epsilon)
-  );
+  AccumT rms_inv = rsqrt(total_sum_of_squares / static_cast<AccumT>(element_count) + static_cast<AccumT>(epsilon));
 
   // Step 3 - elementwise normalization
   for (uint i = thread_in_row; i < element_count; i += BLOCK_SIZE) {
@@ -89,8 +91,7 @@ PUBLIC KERNEL(RMSNorm)(
       x = static_cast<AccumT>(input[i]);
     }
 
-    AccumT scale =
-        static_cast<AccumT>(scales[i]) + static_cast<AccumT>(scale_offset);
+    AccumT scale = static_cast<AccumT>(scales[i]) + static_cast<AccumT>(scale_offset);
 
     // If full_layer, normalize and scale in AccumT, cast to OutputT at the end
     // If not, cast to OutputT after normalize, scale in OutputT
@@ -102,11 +103,15 @@ PUBLIC KERNEL(RMSNorm)(
     }
 
     if (use_hadamard) {
-      val = static_cast<OutputT>(simdgroup_random_hadamard_transform(
+      val = static_cast<OutputT>(simdgroup_input_random_hadamard_transform(
           static_cast<ushort>(thread_in_row % METAL_SIMD_SIZE),
           val,
           hadamard_factors[i]
       ));
+    }
+
+    if (scale_output) {
+      val = static_cast<OutputT>(static_cast<float>(val) * post_layer_scalar);
     }
 
     output[i] = val;

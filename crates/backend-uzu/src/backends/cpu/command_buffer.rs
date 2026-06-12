@@ -1,21 +1,15 @@
 use std::{
-    cell::UnsafeCell,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
-    thread,
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
 use crate::{
     backends::{
         common::{
-            AccessFlags, CommandBuffer, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable,
-            CommandBufferInitial, CommandBufferPending,
+            AccessFlags, Buffer, BufferRangeMut, BufferRangeRef, CommandBuffer, CommandBufferCompleted,
+            CommandBufferEncoding, CommandBufferExecutable, CommandBufferInitial, CommandBufferPending,
         },
-        cpu::{Cpu, error::CpuError},
+        cpu::{Cpu, buffer::BufferDowncastExt, error::CpuError},
     },
     utils::pointers::{SendPtr, SendPtrMut},
 };
@@ -74,33 +68,34 @@ impl CpuCommandBufferEncoding {
 impl CommandBufferEncoding for CpuCommandBufferEncoding {
     type CommandBuffer = CpuCommandBuffer;
 
-    fn encode_copy(
+    fn encode_copy<Src: Buffer<Backend = Cpu>, Dst: Buffer<Backend = Cpu>>(
         &mut self,
-        src: &UnsafeCell<Pin<Box<[u8]>>>,
-        src_range: std::ops::Range<usize>,
-        dst: &mut UnsafeCell<Pin<Box<[u8]>>>,
-        dst_range: std::ops::Range<usize>,
+        src: BufferRangeRef<Src>,
+        dst: BufferRangeMut<Dst>,
     ) {
-        let size = src_range.end - src_range.start;
-        assert_eq!(size, dst_range.end - dst_range.start);
-        assert!(unsafe { &*src.get() }.len() >= src_range.end);
-        assert!(dst.get_mut().len() >= dst_range.end);
+        let src_range = src.range();
+        let dst_range = dst.range();
+        assert_eq!(src_range.len(), dst_range.len());
 
-        let src_ptr = SendPtr(unsafe { (&*src.get()).as_ptr().add(src_range.start) });
-        let dst_ptr = SendPtrMut(unsafe { dst.get_mut().as_mut_ptr().add(dst_range.start) });
+        let src_buffer = src.buffer().downcast();
+        let src_ptr = SendPtr(unsafe { (&*src_buffer.get()).as_ptr().add(src_range.start) });
+
+        let dst_buffer = dst.buffer().downcast();
+        let dst_ptr = SendPtrMut(unsafe { (&mut *dst_buffer.get()).as_mut_ptr().add(dst_range.start) });
+
         self.push_command(move || unsafe {
-            std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), size);
+            std::ptr::copy(src_ptr.as_ptr(), dst_ptr.as_ptr(), src_range.len());
         });
     }
 
-    fn encode_fill(
+    fn encode_fill<Dst: Buffer<Backend = Cpu>>(
         &mut self,
-        dst: &mut UnsafeCell<Pin<Box<[u8]>>>,
-        range: std::ops::Range<usize>,
+        dst: BufferRangeMut<Dst>,
         value: u8,
     ) {
+        let range = dst.range();
         let size = range.end - range.start;
-        let dst = SendPtrMut(dst.get_mut()[range].as_ptr() as *mut u8);
+        let dst = SendPtrMut(unsafe { (&mut *dst.buffer().downcast().get()).as_mut_ptr().add(range.start) });
         self.push_command(move || unsafe {
             dst.as_ptr().write_bytes(value, size);
         });
@@ -111,30 +106,6 @@ impl CommandBufferEncoding for CpuCommandBufferEncoding {
         _after: AccessFlags,
         _before: AccessFlags,
     ) {
-    }
-
-    fn encode_wait_for_event(
-        &mut self,
-        event: &Pin<Box<AtomicU64>>,
-        value: u64,
-    ) {
-        let event = SendPtr(event.as_ref().get_ref() as *const AtomicU64);
-        self.push_command(move || unsafe {
-            while (&*event.as_ptr()).load(Ordering::Acquire) < value {
-                thread::yield_now();
-            }
-        })
-    }
-
-    fn encode_signal_event(
-        &mut self,
-        event: &Pin<Box<AtomicU64>>,
-        value: u64,
-    ) {
-        let event = SendPtr(event.as_ref().get_ref() as *const AtomicU64);
-        self.push_command(Box::new(move || unsafe {
-            (&*event.as_ptr()).store(value, Ordering::Release);
-        }))
     }
 
     fn add_completion_handler(
@@ -201,7 +172,7 @@ impl CommandBufferPending for CpuCommandBufferPending {
     type CommandBuffer = CpuCommandBuffer;
 
     fn wait_until_completed(self) -> Result<CpuCommandBufferCompleted, CpuError> {
-        self.return_receiver.recv().map_err(CpuError::CommandBufferExecutionFailed)
+        Ok(self.return_receiver.recv()?)
     }
 }
 

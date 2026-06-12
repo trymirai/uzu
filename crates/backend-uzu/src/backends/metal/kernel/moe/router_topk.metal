@@ -43,27 +43,16 @@ PUBLIC KERNEL(MoeRouterTopK)(
   const device ScalarT* x_vec = input + (ulong)token_idx * (ulong)vecs * 4;
 
   for (uint c = lid; c < vecs; c += THREADS_PER_TG) {
-    x_cache[c] = float4(
-        x_vec[c * 4 + 0],
-        x_vec[c * 4 + 1],
-        x_vec[c * 4 + 2],
-        x_vec[c * 4 + 3]
-    );
+    x_cache[c] = float4(x_vec[c * 4 + 0], x_vec[c * 4 + 1], x_vec[c * 4 + 2], x_vec[c * 4 + 3]);
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (uint row = thread_context.threadgroup_index; row < e;
-       row += thread_context.simdgroups_per_threadgroup) {
+  for (uint row = thread_context.simdgroup_index; row < e; row += thread_context.simdgroups_per_threadgroup) {
     const device ScalarT* w_vec = weight + (ulong)row * (ulong)vecs * 4;
 
     float4 accum4 = float4(0.0f);
-    for (uint c = thread_context.simdgroup_index; c < vecs; c += 32u) {
-      const float4 wv = float4(
-          w_vec[c * 4 + 0],
-          w_vec[c * 4 + 1],
-          w_vec[c * 4 + 2],
-          w_vec[c * 4 + 3]
-      );
+    for (uint c = thread_context.simd_lane_id; c < vecs; c += 32u) {
+      const float4 wv = float4(w_vec[c * 4 + 0], w_vec[c * 4 + 1], w_vec[c * 4 + 2], w_vec[c * 4 + 3]);
       const float4 xv = x_cache[c];
       accum4 = fma(wv, xv, accum4);
     }
@@ -89,27 +78,18 @@ PUBLIC KERNEL(MoeRouterTopK)(
     uint local_idx = 0xFFFFFFFFu;
     for (uint row = lid; row < e; row += THREADS_PER_TG) {
       float candidate = logits_shared[row];
-      if (candidate > local_best ||
-          (candidate == local_best && row < local_idx)) {
+      if (candidate > local_best || (candidate == local_best && row < local_idx)) {
         local_best = candidate;
         local_idx = row;
       }
     }
 
     float max_val =
-        threadgroup_cooperative_reduce<SimdReduceMax<float>, THREADS_PER_TG>(
-            local_best,
-            reduce_tmp,
-            thread_context
-        );
+        threadgroup_cooperative_reduce<SimdReduceMax<float>, THREADS_PER_TG>(local_best, reduce_tmp, thread_context);
 
     uint candidate_id = (local_best == max_val) ? local_idx : 0xFFFFFFFFu;
     uint best_idx =
-        threadgroup_cooperative_reduce<SimdReduceMin<uint>, THREADS_PER_TG>(
-            candidate_id,
-            reduce_tmp_u,
-            thread_context
-        );
+        threadgroup_cooperative_reduce<SimdReduceMin<uint>, THREADS_PER_TG>(candidate_id, reduce_tmp_u, thread_context);
 
     if (lid == 0) {
       shared_best_idx[0] = best_idx;
@@ -143,9 +123,7 @@ PUBLIC KERNEL(MoeRouterTopK)(
     float default_prob = 1.0f / float(effective_k);
     float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : default_prob;
     for (uint i = 0; i < effective_k; ++i) {
-      float prob = (sum_exp > 0.0f)
-                       ? exp(float(out_probs[i]) - max_logit) * inv_sum
-                       : default_prob;
+      float prob = (sum_exp > 0.0f) ? exp(float(out_probs[i]) - max_logit) * inv_sum : default_prob;
       out_probs[i] = static_cast<ScalarT>(prob);
     }
     for (uint i = effective_k; i < k; ++i) {

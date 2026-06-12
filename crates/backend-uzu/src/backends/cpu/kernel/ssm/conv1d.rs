@@ -1,15 +1,16 @@
-use dsl::kernel;
 use half::{bf16, f16};
 use num_traits::Float;
+use proc_macros::kernel;
 
-use crate::ArrayElement;
+use crate::array::ArrayElement;
 
 #[kernel(Conv1dPack)]
-#[variants(T, f32, f16, bf16)]
-pub fn conv1d_pack<T: ArrayElement + Float>(
-    state_in: *const T,
-    x: *const T,
-    padded: *mut T,
+#[variants(StateT, f32, bf16)]
+#[variants(InputT, f32, bf16)]
+pub fn conv1d_pack<StateT: ArrayElement + Float, InputT: ArrayElement + Float>(
+    state_in: *const StateT,
+    x: *const InputT,
+    padded: *mut StateT,
     state_stride: u32,
     row_stride: u32,
     suffix_len: u32,
@@ -30,7 +31,7 @@ pub fn conv1d_pack<T: ArrayElement + Float>(
                 } else {
                     let token = row_idx - state_stride;
                     let x_index = token * row_stride + channel_idx;
-                    *padded.add(padded_index) = *x.add(x_index);
+                    *padded.add(padded_index) = StateT::from((*x.add(x_index)).to_f32().unwrap()).unwrap();
                 }
             }
         }

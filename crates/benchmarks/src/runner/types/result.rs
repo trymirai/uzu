@@ -1,4 +1,4 @@
-use backend_uzu::ConfigDataType;
+use backend_uzu::data_type::DataType;
 use serde::{Deserialize, Serialize};
 
 use crate::runner::types::{Device, Task};
@@ -9,8 +9,8 @@ pub struct Result {
     pub device: Device,
     pub engine_version: String,
     pub timestamp: u64,
-    pub precision: Option<ConfigDataType>,
-    pub memory_used: Option<u64>,
+    pub data_type: DataType,
+    pub memory_used: Option<usize>,
     pub tokens_count_input: u64,
     pub tokens_count_output: u64,
     pub time_to_first_token: f64,

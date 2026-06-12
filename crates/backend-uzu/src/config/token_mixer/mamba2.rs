@@ -1,0 +1,32 @@
+use proc_macros::uzu_config;
+
+use crate::config::{
+    activation::AnyActivation, linear::LinearConfig, token_mixer::convolutions::SeparableCausalConvConfig,
+};
+
+#[uzu_config(super::TokenMixerConfig)]
+pub struct Mamba2Config {
+    pub in_projection_config: LinearConfig,
+    pub out_projection_config: LinearConfig,
+    pub conv_config: SeparableCausalConvConfig,
+    pub activation: AnyActivation,
+
+    pub kernel_size: usize,
+    pub num_heads: usize,
+    pub num_groups: usize,
+    pub head_dim: usize,
+    pub state_dim: usize,
+
+    pub has_in_biases: bool,
+    pub has_out_biases: bool,
+}
+
+impl Mamba2Config {
+    pub fn inner_dim(&self) -> usize {
+        self.num_heads * self.head_dim
+    }
+
+    pub fn conv_dim(&self) -> usize {
+        self.inner_dim() + 2 * self.num_groups * self.state_dim
+    }
+}

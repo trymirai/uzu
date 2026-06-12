@@ -96,10 +96,10 @@ fn render_section(
         state.select(None);
     } else if state.selected().is_none() {
         state.select(Some(0));
-    } else if let Some(selected) = state.selected() {
-        if selected >= section_models.len() {
-            state.select(Some(section_models.len().saturating_sub(1)));
-        }
+    } else if let Some(selected) = state.selected()
+        && selected >= section_models.len()
+    {
+        state.select(Some(section_models.len().saturating_sub(1)));
     }
 
     frame.render_stateful_widget(list, area, state);
@@ -253,7 +253,7 @@ fn render_downloading_model(
         )))
         .gauge_style(gauge_style)
         .label(label)
-        .ratio(progress.min(1.0).max(0.0));
+        .ratio(progress.clamp(0.0, 1.0));
 
     frame.render_widget(gauge, area);
 }

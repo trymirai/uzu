@@ -36,19 +36,16 @@ use crate::{
     session::{TtsSession, config::TtsRunConfig, types::Input},
 };
 
-#[cfg(metal_backend)]
-type UzuTtsSession = TtsSession<Metal>;
-
 pub struct Instance {
     #[cfg(metal_backend)]
-    session_container: Container<UzuTtsSession>,
+    session_container: Container<TtsSession<Metal>>,
 }
 
 impl Instance {
     #[cfg(metal_backend)]
     pub fn new(reference: String) -> Result<Self, Error> {
         let model_path = std::path::PathBuf::from(reference);
-        let session = UzuTtsSession::new(model_path).map_err(Error::from)?;
+        let session = TtsSession::<Metal>::new(model_path)?;
         Ok(Self {
             session_container: Container::new(session),
         })
@@ -109,7 +106,7 @@ impl InstanceTrait for Instance {
 
 #[cfg(metal_backend)]
 fn run(
-    session_container: Container<UzuTtsSession>,
+    session_container: Container<TtsSession<Metal>>,
     input: Input,
     _cancel_token: CancellationToken,
     sender: UnboundedSender<Result<ShojiPcmBatch, BackendError>>,

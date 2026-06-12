@@ -102,11 +102,11 @@ impl Config {
                 } => *limit,
                 _ => None,
             })
-            .map_or(true, |limit| limit > 1);
+            .is_none_or(|limit| limit > 1);
 
         let supports_disable_reasoning = rendering
             .get_rendering_field_for_block_type(&ChatContentBlockType::ReasoningEffort)
-            .map_or(false, |field| match &field.config {
+            .is_some_and(|field| match &field.config {
                 FieldConfig::Unique {
                     mapping: Some(mapping),
                     ..

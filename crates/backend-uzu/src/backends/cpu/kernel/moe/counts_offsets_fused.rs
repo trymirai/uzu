@@ -1,7 +1,4 @@
-use dsl::kernel;
-use num_traits::Float;
-
-use crate::ArrayElement;
+use proc_macros::kernel;
 
 #[kernel(MoeCountsOffsetsFused)]
 pub fn moe_counts_offsets_fused(
