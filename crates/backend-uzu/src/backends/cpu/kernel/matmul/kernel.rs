@@ -6,7 +6,7 @@ use crate::{
             gpu_types::HadamardTransformOrder,
             kernel::{
                 HadamardTransformKernel,
-                matmul::{MatmulArguments, MatmulError, MatmulKernel},
+                matmul::{MatmulArguments, MatmulError, MatmulKernel, MatmulTask},
             },
         },
         cpu::{Cpu, context::CpuContext, error::CpuError},
@@ -207,6 +207,15 @@ impl MatmulKernel for MatmulCpuKernel {
             self.hadamard.encode(d, factors, n, m, encoder);
         }
 
+        Ok(())
+    }
+
+    fn precompile(
+        &mut self,
+        _context: &CpuContext,
+        _task: &MatmulTask,
+        _batch_sizes: &[u32],
+    ) -> Result<(), CpuError> {
         Ok(())
     }
 }

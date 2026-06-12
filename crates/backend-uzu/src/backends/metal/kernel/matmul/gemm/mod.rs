@@ -3,4 +3,4 @@ mod kernel;
 mod specialization;
 
 pub use error::GemmSpecializationError;
-pub use kernel::{GemmDispatchPath, GemmKernel};
+pub use kernel::{GemmDispatchPath, GemmDispatchPlan, GemmKernel};

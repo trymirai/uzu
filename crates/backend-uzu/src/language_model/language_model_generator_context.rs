@@ -145,6 +145,13 @@ impl<B: Backend> LanguageModelGeneratorContext<B> {
         let executables = Decoder::new(context.as_ref(), &model_config.decoder_config, &root_loader_view, &model_shape)
             .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
 
+        // Runtime batch dim never exceeds max_suffix_length (buffers are sized to
+        // it), so enumerating 1..=max_suffix_length preheats every matmul exactly.
+        let batch_sizes: Vec<u32> = (1..=max_suffix_length as u32).collect();
+        executables
+            .precompile(context.as_ref(), &batch_sizes)
+            .map_err(|error| Error::UnableToCreateDecoder(Box::new(error)))?;
+
         let cache_layers = Rc::new(RefCell::new(CacheLayers::new(
             context.as_ref(),
             &model_shape,

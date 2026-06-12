@@ -8,7 +8,7 @@ use crate::{
         common::{
             Allocation, AsBufferRangeRef, Buffer, Encoder,
             gpu_types::gemm::{GemmBPrologueKind, GemmDTransform},
-            kernel::matmul::{MatmulArguments, MatmulB, MatmulError},
+            kernel::matmul::{MatmulArguments, MatmulB, MatmulError, MatmulTask},
         },
         metal::{Metal, context::MetalContext, kernel::GemvMetalKernel},
     },
@@ -39,43 +39,45 @@ pub(crate) struct GemvSpecialization {
 }
 
 impl GemvSpecialization {
-    pub(crate) fn select<TB: AsBufferRangeRef>(
-        args: &MatmulArguments<Metal, TB>,
+    pub(crate) fn select(
+        task: &MatmulTask,
         weights_data_type: DataType,
         input_data_type: DataType,
         output_data_type: DataType,
     ) -> Option<GemvSpecialization> {
-        if !args.b_transpose || args.b_offset != 0 {
+        if !task.b_transpose || task.b_offset != 0 {
             return None;
         }
-        let is_quant = !matches!(args.b, MatmulB::FullPrecision { .. });
+        let is_quant = task.b_prologue != GemmBPrologueKind::FullPrecision;
         let bad_leading_dimension = if is_quant {
-            args.b_leading_dimension.is_some()
+            task.b_leading_dimension.is_some()
         } else {
-            args.b_leading_dimension.is_some_and(|ld| ld != args.k)
+            task.b_leading_dimension.is_some_and(|ld| ld != task.k)
         };
         if bad_leading_dimension {
             return None;
         }
-        if args.d_transform.accumulate && !args.n.is_multiple_of(32) {
+        let accumulate = task.d_transform.contains(GemmDTransform::ACCUMULATE);
+        let has_rht = task.d_transform.contains(GemmDTransform::RHT);
+        if accumulate && !task.n.is_multiple_of(32) {
             return None;
         }
-        if args.d_transform.rht_factors.is_some() && !args.n.is_multiple_of(32) {
+        if has_rht && !task.n.is_multiple_of(32) {
             return None;
         }
         if is_quant {
-            if args.n < QMV_RESULTS_PER_SIMDGROUP || args.m >= 5 {
+            if task.n < QMV_RESULTS_PER_SIMDGROUP || task.m >= 5 {
                 return None;
             }
         } else {
             let mixed_precision = weights_data_type == DataType::F32
                 && (input_data_type != DataType::F32 || output_data_type != DataType::F32);
-            if mixed_precision || args.n < QMV_RESULTS_PER_SIMDGROUP || args.m > max_gemv_batch_threshold() {
+            if mixed_precision || task.n < QMV_RESULTS_PER_SIMDGROUP || task.m > max_gemv_batch_threshold() {
                 return None;
             }
         }
 
-        let bits = args.b.bits_per_b().unwrap_or(0);
+        let bits = task.bits.unwrap_or(0);
         let block_size = if !is_quant {
             FP_BLOCK
         } else if bits == 4 {
@@ -83,19 +85,18 @@ impl GemvSpecialization {
         } else {
             256
         };
-        let input_aligned = args.k.is_multiple_of(block_size);
-        let has_rht = args.d_transform.rht_factors.is_some();
+        let input_aligned = task.k.is_multiple_of(block_size);
         let num_simdgroups = 8;
         let k_split = if is_quant || has_rht {
             1
         } else {
-            fp_k_split(args.n, args.k, input_aligned)
+            fp_k_split(task.n, task.k, input_aligned)
         };
         Some(GemvSpecialization {
-            b_prologue: args.b.b_prologue(),
-            group_size: args.b.group_size().unwrap_or(0),
+            b_prologue: task.b_prologue,
+            group_size: task.group_size.unwrap_or(0),
             bits,
-            output_transform: args.d_transform.mask(),
+            output_transform: task.d_transform,
             input_aligned,
             k_split,
             num_simdgroups,
@@ -148,7 +149,7 @@ impl GemvDispatch {
         })
     }
 
-    fn get_or_create(
+    pub(crate) fn get_or_create(
         &mut self,
         context: &MetalContext,
         specialization: GemvSpecialization,

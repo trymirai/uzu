@@ -34,4 +34,13 @@ impl<B: Backend> Mlp<B> for DenseMlp<B> {
         let hidden = self.gate.encode(encoder, &fused_up, batch_dim)?;
         self.down.encode(hidden, batch_dim, encoder)
     }
+
+    fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.up.precompile(context, batch_sizes)?;
+        self.down.precompile(context, batch_sizes)
+    }
 }

@@ -107,6 +107,14 @@ impl<B: Backend> PerLayerEmbedding<B> {
         })
     }
 
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.model_projection.precompile(context, batch_sizes)
+    }
+
     pub fn encode(
         &self,
         token_ids: &Allocation<B>,
@@ -227,6 +235,15 @@ impl<B: Backend> PerLayerEmbeddingProjection<B> {
             post_layer_scalar,
             data_type,
         })
+    }
+
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.gate.precompile(context, batch_sizes)?;
+        self.projection.precompile(context, batch_sizes)
     }
 
     pub fn encode(

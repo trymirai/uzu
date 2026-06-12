@@ -325,6 +325,20 @@ impl<B: Backend> Attention<B> {
         KernelVariant::SinglePass
     }
 
+    // Only the projection matmuls; the score/value GEMMs and flash-attention
+    // kernels depend on KV length and stay lazily compiled.
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.qkv_projection.precompile(context, batch_sizes)?;
+        if let Some(gate_projection) = &self.gate_projection {
+            gate_projection.precompile(context, batch_sizes)?;
+        }
+        self.out_projection.precompile(context, batch_sizes)
+    }
+
     pub fn encode(
         &self,
         token_subtrie_ranges: Option<&Allocation<B>>,

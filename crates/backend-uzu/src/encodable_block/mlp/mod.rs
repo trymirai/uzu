@@ -22,6 +22,14 @@ pub trait Mlp<B: Backend> {
         batch_dim: usize,
         encoder: &mut Encoder<B>,
     ) -> Result<Allocation<B>, B::Error>;
+
+    fn precompile(
+        &self,
+        _context: &B::Context,
+        _batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]

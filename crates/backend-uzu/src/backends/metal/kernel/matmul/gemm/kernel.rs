@@ -11,7 +11,7 @@ use crate::{
             },
             kernel::{
                 HadamardTransformKernel, Kernels, TensorAddBiasKernel,
-                matmul::{MatmulArguments, MatmulB, MatmulError},
+                matmul::{MatmulArguments, MatmulB, MatmulError, MatmulTask},
             },
         },
         metal::{
@@ -29,6 +29,18 @@ use crate::{
 pub enum GemmDispatchPath {
     Simdgroup,
     Mxu,
+}
+
+/// The buffer-free outcome of GEMM selection, shared by [`GemmKernel::dispatch`]
+/// (encode) and [`GemmKernel::resolve`] (precompile). When `split_k > 1`, `spec`
+/// is the split-K partial-product spec and `reduce_transform` is `Some`.
+#[derive(Debug, Clone, Copy)]
+pub struct GemmDispatchPlan {
+    pub(crate) use_mxu: bool,
+    pub(crate) tiling: GemmTiling,
+    pub(crate) split_k: u32,
+    pub(crate) spec: GemmSpecialization,
+    pub(crate) reduce_transform: Option<GemmDTransform>,
 }
 
 pub struct GemmKernel {
@@ -107,31 +119,21 @@ impl GemmKernel {
         }
     }
 
-    pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
-        &mut self,
-        arguments: MatmulArguments<'a, Metal, TB>,
-        encoder: &mut Encoder<Metal>,
-    ) -> Result<(), MetalError> {
-        let mxu_eligible_for_quant = match &arguments.b {
-            MatmulB::FullPrecision {
-                ..
-            } => true,
-            MatmulB::ScaleBiasDequant {
-                ..
-            }
-            | MatmulB::ScaleZeroPointDequant {
-                ..
-            }
-            | MatmulB::ScaleSymmetricDequant {
-                ..
-            } => {
-                arguments.b_transpose
-                    && arguments.b_leading_dimension.is_none_or(|ld| ld == arguments.k)
-                    && arguments.b_offset == 0
-                    && arguments.k.is_multiple_of(select_mxu_tiling(arguments.m, arguments.n).block_k())
+    pub(crate) fn pick_path(
+        &self,
+        task: &MatmulTask,
+        mxu_supported: bool,
+    ) -> GemmDispatchPath {
+        let mxu_eligible_for_quant = match task.b_prologue {
+            GemmBPrologueKind::FullPrecision => true,
+            _ => {
+                task.b_transpose
+                    && task.b_leading_dimension.is_none_or(|ld| ld == task.k)
+                    && task.b_offset == 0
+                    && task.k.is_multiple_of(select_mxu_tiling(task.m, task.n).block_k())
             },
         };
-        let path = if encoder.context().device.supports_mxu()
+        if mxu_supported
             && [self.weights_data_type, self.input_data_type, self.output_data_type]
                 .into_iter()
                 .all(|data_type| matches!(data_type, DataType::BF16 | DataType::F32))
@@ -140,7 +142,135 @@ impl GemmKernel {
             GemmDispatchPath::Mxu
         } else {
             GemmDispatchPath::Simdgroup
+        }
+    }
+
+    pub(crate) fn plan(
+        &self,
+        task: &MatmulTask,
+        path: GemmDispatchPath,
+    ) -> Result<GemmDispatchPlan, MetalError> {
+        let use_mxu = matches!(path, GemmDispatchPath::Mxu);
+        let is_quant = task.b_prologue != GemmBPrologueKind::FullPrecision;
+        let output_transform = task.d_transform;
+        let b_prologue = task.b_prologue;
+        let bits_per_b = task.bits;
+        let group_size = task.group_size;
+        let (m, n, k) = (task.m, task.n, task.k);
+
+        if is_quant {
+            if output_transform.contains(GemmDTransform::ACCUMULATE) {
+                return Err(MatmulError::UnsupportedDOp {
+                    bit: GemmDTransform::ACCUMULATE,
+                    path: "QuantGemm",
+                }
+                .into());
+            }
+            assert!(
+                !output_transform.contains(GemmDTransform::BIAS | GemmDTransform::RHT),
+                "QuantGemm with both output bias and output RHT is not supported: bias must be applied after RHT",
+            );
+            if !task.b_transpose || task.b_leading_dimension.is_some() || task.b_offset != 0 {
+                return Err(MatmulError::UnsupportedLayout {
+                    path: "QuantGemm",
+                }
+                .into());
+            }
+        }
+
+        let tiling = if is_quant {
+            if use_mxu {
+                select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
+            } else {
+                select_quant_tiling(m, n, group_size.unwrap_or(0))
+            }
+        } else if use_mxu {
+            select_mxu_tiling(m, n)
+        } else {
+            select_simdgroup_tiling(m, n, k)
         };
+
+        let alignment =
+            GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
+
+        let split_k_eligible = if is_quant {
+            true
+        } else {
+            task.b_transpose && task.b_leading_dimension.is_none() && task.b_offset == 0
+        };
+        let zero_point_4bit = matches!(b_prologue, GemmBPrologueKind::ScaleZeroPointDequant) && bits_per_b == Some(4);
+        let full_precision = !is_quant;
+        let split_k = if split_k_eligible {
+            select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), full_precision, zero_point_4bit)
+        } else {
+            1
+        };
+        let use_split_k =
+            split_k > 1 && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type);
+
+        let (spec, split_k, reduce_transform) = if use_split_k {
+            let sk_alignment =
+                GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
+            let part_spec = GemmSpecialization {
+                weights_data_type: self.weights_data_type,
+                tiling,
+                use_mxu,
+                output_transform: GemmDTransform::empty(),
+                alignment: sk_alignment,
+                transpose_b: true,
+                b_prologue,
+                bits_per_b,
+                group_size,
+            };
+            let reduce = output_transform
+                .intersection(GemmDTransform::SCALE | GemmDTransform::ACCUMULATE | GemmDTransform::BIAS);
+            (part_spec, split_k, Some(reduce))
+        } else {
+            let main_spec = GemmSpecialization {
+                weights_data_type: self.weights_data_type,
+                tiling,
+                use_mxu,
+                output_transform,
+                alignment,
+                transpose_b: if is_quant {
+                    true
+                } else {
+                    task.b_transpose
+                },
+                b_prologue,
+                bits_per_b,
+                group_size,
+            };
+            (main_spec, 1, None)
+        };
+        spec.validate()?;
+        Ok(GemmDispatchPlan {
+            use_mxu,
+            tiling,
+            split_k,
+            spec,
+            reduce_transform,
+        })
+    }
+
+    pub(crate) fn resolve(
+        &mut self,
+        context: &MetalContext,
+        plan: &GemmDispatchPlan,
+    ) -> Result<(), MetalError> {
+        self.get_or_create(context, plan.spec)?;
+        if let Some(reduce) = plan.reduce_transform {
+            self.get_or_create_split_k_reduce(context, reduce)?;
+        }
+        Ok(())
+    }
+
+    pub fn encode<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal, TB>,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        let path = self.pick_path(&arguments.task(), encoder.context().device.supports_mxu());
         self.encode_dispatch_path(arguments, path, encoder)
     }
 
@@ -150,7 +280,18 @@ impl GemmKernel {
         path: GemmDispatchPath,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        if matches!(path, GemmDispatchPath::Mxu) {
+        let plan = self.plan(&arguments.task(), path)?;
+        self.dispatch(arguments, plan, encoder)
+    }
+
+    pub(crate) fn dispatch<'a, TB: AsBufferRangeRef<Buffer: Buffer<Backend = Metal>>>(
+        &mut self,
+        arguments: MatmulArguments<'a, Metal, TB>,
+        plan: GemmDispatchPlan,
+        encoder: &mut Encoder<Metal>,
+    ) -> Result<(), MetalError> {
+        let use_mxu = plan.use_mxu;
+        if use_mxu {
             assert!(
                 encoder.context().device.supports_mxu(),
                 "GemmDispatchPath::Mxu requested on hardware without MXU support",
@@ -166,36 +307,10 @@ impl GemmKernel {
             );
         }
 
-        let is_quant = !matches!(arguments.b, MatmulB::FullPrecision { .. });
-        if is_quant {
-            let d_mask = arguments.d_transform.mask();
-            if d_mask.contains(GemmDTransform::ACCUMULATE) {
-                return Err(MatmulError::UnsupportedDOp {
-                    bit: GemmDTransform::ACCUMULATE,
-                    path: "QuantGemm",
-                }
-                .into());
-            }
-            assert!(
-                !d_mask.contains(GemmDTransform::BIAS | GemmDTransform::RHT),
-                "QuantGemm with both output bias and output RHT is not supported: bias must be applied after RHT",
-            );
-            if !arguments.b_transpose || arguments.b_leading_dimension.is_some() || arguments.b_offset != 0 {
-                return Err(MatmulError::UnsupportedLayout {
-                    path: "QuantGemm",
-                }
-                .into());
-            }
-        }
-
         let ab_scale = arguments.d_transform.ab_scale;
         let output_bias = arguments.d_transform.bias;
         let rht_factors = arguments.d_transform.rht_factors;
         let output_transform = arguments.d_transform.mask();
-
-        let b_prologue = arguments.b.b_prologue();
-        let bits_per_b = arguments.b.bits_per_b();
-        let group_size = arguments.b.group_size();
 
         let MatmulArguments {
             a,
@@ -211,18 +326,12 @@ impl GemmKernel {
             ..
         } = arguments;
 
-        let use_mxu = matches!(path, GemmDispatchPath::Mxu);
+        let tiling = plan.tiling;
 
         match b {
             MatmulB::FullPrecision {
                 b: weights,
             } => {
-                let tiling = if use_mxu {
-                    select_mxu_tiling(m, n)
-                } else {
-                    select_simdgroup_tiling(m, n, k)
-                };
-
                 let threadgroups_per_row = n.div_ceil(tiling.block_n());
                 let threadgroups_per_column = m.div_ceil(tiling.block_m());
 
@@ -242,39 +351,30 @@ impl GemmKernel {
                     (false, threadgroups_per_row, threadgroups_per_column)
                 };
 
-                let alignment =
-                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
-
-                if b_transpose && b_leading_dimension.is_none() && b_offset == 0 {
-                    let split_k = select_split_k(m, n, k, tiling, use_mxu, 0, true, false);
-                    if split_k > 1
-                        && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
-                    {
-                        return self.encode_split_k(
-                            a,
-                            a_offset,
-                            weights,
-                            b_offset,
-                            None,
-                            None,
-                            None,
-                            &mut *d,
-                            m,
-                            n,
-                            k,
-                            ab_scale,
-                            use_mxu,
-                            tiling,
-                            b_prologue,
-                            bits_per_b,
-                            group_size,
-                            split_k,
-                            output_transform,
-                            output_bias,
-                            rht_factors,
-                            encoder,
-                        );
-                    }
+                if let Some(reduce_transform) = plan.reduce_transform {
+                    return self.encode_split_k(
+                        a,
+                        a_offset,
+                        weights,
+                        b_offset,
+                        None,
+                        None,
+                        None,
+                        &mut *d,
+                        m,
+                        n,
+                        k,
+                        ab_scale,
+                        plan.spec,
+                        plan.tiling,
+                        plan.use_mxu,
+                        plan.split_k,
+                        output_transform,
+                        reduce_transform,
+                        output_bias,
+                        rht_factors,
+                        encoder,
+                    );
                 }
 
                 let default_ldb = if b_transpose {
@@ -296,19 +396,7 @@ impl GemmKernel {
                     ab_scale,
                 };
 
-                let specialization = GemmSpecialization {
-                    weights_data_type: self.weights_data_type,
-                    tiling,
-                    use_mxu,
-                    output_transform,
-                    alignment,
-                    transpose_b: b_transpose,
-                    b_prologue,
-                    bits_per_b,
-                    group_size,
-                };
-                specialization.validate()?;
-                let kernel = self.get_or_create(encoder.context(), specialization)?;
+                let kernel = self.get_or_create(encoder.context(), plan.spec)?;
                 kernel.encode(
                     (a, a_offset),
                     (weights, b_offset),
@@ -355,22 +443,12 @@ impl GemmKernel {
                     _ => unreachable!(),
                 };
 
-                let tiling = if use_mxu {
-                    select_mxu_quant_tiling(m, n, group_size.unwrap_or(0))
-                } else {
-                    select_quant_tiling(m, n, group_size.unwrap_or(0))
-                };
-                let alignment =
-                    GemmAlignment::new(m % tiling.block_m() == 0, n % tiling.block_n() == 0, k % tiling.block_k() == 0);
+                let group_size = plan.spec.group_size;
                 let params = quant_params(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), ab_scale);
                 let group_count_x = n.div_ceil(tiling.block_n());
                 let group_count_y = m.div_ceil(tiling.block_m());
 
-                let zero_point_4bit = zero_points.is_some() && bits_per_b == Some(4);
-                let split_k = select_split_k(m, n, k, tiling, use_mxu, group_size.unwrap_or(0), false, zero_point_4bit);
-                if split_k > 1
-                    && split_k_output_supported(output_transform, n, self.weights_data_type, self.output_data_type)
-                {
+                if let Some(reduce_transform) = plan.reduce_transform {
                     return self.encode_split_k(
                         a,
                         a_offset,
@@ -384,32 +462,19 @@ impl GemmKernel {
                         n,
                         k,
                         ab_scale,
-                        use_mxu,
-                        tiling,
-                        b_prologue,
-                        bits_per_b,
-                        group_size,
-                        split_k,
+                        plan.spec,
+                        plan.tiling,
+                        plan.use_mxu,
+                        plan.split_k,
                         output_transform,
+                        reduce_transform,
                         output_bias,
                         rht_factors,
                         encoder,
                     );
                 }
 
-                let specialization = GemmSpecialization {
-                    weights_data_type: self.weights_data_type,
-                    tiling,
-                    use_mxu,
-                    output_transform,
-                    alignment,
-                    transpose_b: true,
-                    b_prologue,
-                    bits_per_b,
-                    group_size,
-                };
-                specialization.validate()?;
-                let kernel = self.get_or_create(encoder.context(), specialization)?;
+                let kernel = self.get_or_create(encoder.context(), plan.spec)?;
                 kernel.encode(
                     (a, a_offset),
                     (weights, b_offset),
@@ -449,36 +514,22 @@ impl GemmKernel {
         n: u32,
         k: u32,
         ab_scale: f32,
-        use_mxu: bool,
+        part_spec: GemmSpecialization,
         tiling: GemmTiling,
-        b_prologue: GemmBPrologueKind,
-        bits_per_b: Option<u32>,
-        group_size: Option<u32>,
+        use_mxu: bool,
         split_k: u32,
         output_transform: GemmDTransform,
+        reduce_transform: GemmDTransform,
         output_bias: Option<&Allocation<Metal>>,
         rht_factors: Option<&Allocation<Metal>>,
         encoder: &mut Encoder<Metal>,
     ) -> Result<(), MetalError> {
-        let full_precision = matches!(b_prologue, GemmBPrologueKind::FullPrecision);
+        let full_precision = matches!(part_spec.b_prologue, GemmBPrologueKind::FullPrecision);
+        let group_size = part_spec.group_size.unwrap_or(0);
         let kp = k / split_k;
-        let k_step = split_k_step(tiling, use_mxu, group_size.unwrap_or(0), full_precision).unwrap_or(1);
+        let k_step = split_k_step(tiling, use_mxu, group_size, full_precision).unwrap_or(1);
         let base_gx = n.div_ceil(tiling.block_n());
         let base_gy = m.div_ceil(tiling.block_m());
-        let alignment =
-            GemmAlignment::new(m.is_multiple_of(tiling.block_m()), n.is_multiple_of(tiling.block_n()), true);
-        let part_spec = GemmSpecialization {
-            weights_data_type: self.weights_data_type,
-            tiling,
-            use_mxu,
-            output_transform: GemmDTransform::empty(),
-            alignment,
-            transpose_b: true,
-            b_prologue,
-            bits_per_b,
-            group_size,
-        };
-        part_spec.validate()?;
 
         let elem = (m as usize) * (n as usize);
         let slice_bytes = elem * self.output_data_type.size_in_bytes();
@@ -516,8 +567,6 @@ impl GemmKernel {
 
         debug_assert_eq!(elem % 4, 0, "split-K reduce requires M*N divisible by 4");
         let group_count = ((elem as u32) / 4).div_ceil(256);
-        let reduce_transform =
-            output_transform.intersection(GemmDTransform::SCALE | GemmDTransform::ACCUMULATE | GemmDTransform::BIAS);
         let bias_arg = if reduce_transform.contains(GemmDTransform::BIAS) {
             output_bias
         } else {

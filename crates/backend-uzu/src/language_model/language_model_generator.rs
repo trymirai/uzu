@@ -679,7 +679,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
 
         let context = LanguageModelGeneratorContext::new(model_path, &decoding_config, model_config)?;
 
-        let mut generator = Self {
+        Ok(Self {
             decoding_config,
             tokens: Vec::new(),
             context,
@@ -687,31 +687,7 @@ impl<B: Backend> LanguageModelGenerator<B> {
             async_token_ids: None,
             registered_prefix_len: 0,
             gpu_capture,
-        };
-        generator.warmup();
-        Ok(generator)
-    }
-
-    fn warmup(&mut self) {
-        if let Err(error) = self.run_warmup() {
-            eprintln!("uzu: model warmup skipped (kernels will compile on first use): {error}");
-        }
-        self.reset_state();
-    }
-
-    fn run_warmup(&mut self) -> Result<(), Error> {
-        let context_length = self.context.get_context_length(&self.decoding_config);
-        let first = 64.min(context_length.saturating_sub(1)).max(1);
-        self.prefill(vec![0u64; first], None, SamplingMethod::Greedy, 0, true)?;
-        self.generate(None, SamplingMethod::Greedy)?;
-        for &len in &[65usize, 16] {
-            let offset = self.tokens.len();
-            if offset + len >= context_length {
-                break;
-            }
-            self.prefill(vec![0u64; len], None, SamplingMethod::Greedy, offset, false)?;
-        }
-        Ok(())
+        })
     }
 
     fn repetition_penalty_config(sampling_method: SamplingMethod) -> Option<(f32, usize)> {

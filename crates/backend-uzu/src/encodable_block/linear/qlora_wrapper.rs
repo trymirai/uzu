@@ -9,7 +9,7 @@ use crate::{
         gpu_types::HadamardTransformOrder,
         kernel::{
             HadamardTransformKernel, Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulTask},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, hybrid_spec::IncoherenceProcessingMode, low_rank_spec::LowRankSpec},
@@ -253,5 +253,50 @@ impl<B: Backend> Linear<B> for QLoRALinearWrapper<B> {
         }
 
         Ok(output)
+    }
+
+    fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        self.base_linear.precompile(context, batch_sizes)?;
+
+        let down_b: MatmulB<'_, B> = MatmulB::FullPrecision {
+            b: &self.adapter_down,
+        };
+        let down_task = MatmulTask::new(
+            0,
+            self.lora_rank as u32,
+            self.input_dim as u32,
+            true,
+            0,
+            None,
+            &down_b,
+            &MatmulDOps::none(),
+        );
+        self.adapter_down_kernel.borrow_mut().precompile(context, &down_task, batch_sizes)?;
+
+        let up_b: MatmulB<'_, B> = MatmulB::FullPrecision {
+            b: &self.adapter_up,
+        };
+        let up_task = MatmulTask::new(
+            0,
+            self.output_dim as u32,
+            self.lora_rank as u32,
+            true,
+            0,
+            None,
+            &up_b,
+            &MatmulDOps {
+                ab_scale: 1.0,
+                accumulate: true,
+                bias: None,
+                rht_factors: None,
+            },
+        );
+        self.adapter_up_kernel.borrow_mut().precompile(context, &up_task, batch_sizes)?;
+
+        Ok(())
     }
 }

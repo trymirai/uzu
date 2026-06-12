@@ -9,7 +9,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             FullPrecisionEmbeddingLookupKernel, LogitSoftCapKernel, QuantizedEmbeddingLookupKernel,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulTask},
         },
     },
     config::{
@@ -518,71 +518,41 @@ impl<B: Backend> Embedding<B> {
         Ok(output)
     }
 
-    pub fn encode_readout(
-        &self,
-        batch_dim: usize,
-        input_allocation: &Allocation<B>,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, EmbeddingError<B>> {
-        assert!(batch_dim > 0, "Embedding readout requires at least one row");
-        let mut output_allocation = encoder
-            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], self.data_type))
-            .map_err(EmbeddingError::BackendError)?;
-
+    fn readout_kernel_and_b(&self) -> (&RefCell<<B::Kernels as Kernels>::MatmulKernel>, MatmulB<'_, B>) {
         match &self.tying {
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::FullPrecision {
                         weights,
-                        lookup: _,
                         readout,
+                        ..
                     },
             }
             | EmbeddingTying::Untied {
-                input_ty: _,
                 output_ty:
                     UntiedEmbeddingReadoutType::FullPrecision {
                         weights,
                         readout,
                     },
-            } => {
-                readout
-                    .borrow_mut()
-                    .encode(
-                        MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
-                            b: MatmulB::FullPrecision {
-                                b: weights,
-                            },
-                            b_offset: 0,
-                            b_leading_dimension: None,
-                            b_transpose: true,
-                            d: &mut output_allocation,
-                            d_transform: MatmulDOps::none(),
-                            m: batch_dim as u32,
-                            n: self.vocab_size,
-                            k: self.model_dim,
-                        },
-                        encoder,
-                    )
-                    .map_err(EmbeddingError::BackendError)?;
-            },
+                ..
+            } => (
+                readout,
+                MatmulB::FullPrecision {
+                    b: weights,
+                },
+            ),
             EmbeddingTying::Tied {
                 ty:
                     TiedEmbeddingType::Quantized {
                         weights,
                         scales,
                         zero_points_or_biases,
-                        quantization_method: _,
-                        output_hadamard_factors: _,
-                        lookup: _,
                         readout,
                         readout_config,
+                        ..
                     },
             }
             | EmbeddingTying::Untied {
-                input_ty: _,
                 output_ty:
                     UntiedEmbeddingReadoutType::Quantized {
                         weights,
@@ -591,8 +561,9 @@ impl<B: Backend> Embedding<B> {
                         readout,
                         readout_config,
                     },
+                ..
             } => {
-                let b: MatmulB<'_, B> = match readout_config.method {
+                let b = match readout_config.method {
                     QuantizationMethod::ScaleBias => MatmulB::ScaleBiasDequant {
                         b: weights,
                         scales,
@@ -616,27 +587,52 @@ impl<B: Backend> Embedding<B> {
                         group_size: readout_config.group_size,
                     },
                 };
-                readout
-                    .borrow_mut()
-                    .encode(
-                        MatmulArguments {
-                            a: input_allocation,
-                            a_offset: 0,
-                            b,
-                            b_offset: 0,
-                            b_leading_dimension: None,
-                            b_transpose: true,
-                            d: &mut output_allocation,
-                            d_transform: MatmulDOps::none(),
-                            m: batch_dim as u32,
-                            n: self.vocab_size,
-                            k: self.model_dim,
-                        },
-                        encoder,
-                    )
-                    .map_err(EmbeddingError::BackendError)?;
+                (readout, b)
             },
-        };
+        }
+    }
+
+    pub fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), EmbeddingError<B>> {
+        let (readout, b) = self.readout_kernel_and_b();
+        let task = MatmulTask::new(0, self.vocab_size, self.model_dim, true, 0, None, &b, &MatmulDOps::none());
+        readout.borrow_mut().precompile(context, &task, batch_sizes).map_err(EmbeddingError::BackendError)
+    }
+
+    pub fn encode_readout(
+        &self,
+        batch_dim: usize,
+        input_allocation: &Allocation<B>,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, EmbeddingError<B>> {
+        assert!(batch_dim > 0, "Embedding readout requires at least one row");
+        let mut output_allocation = encoder
+            .allocate_scratch(size_for_shape(&[batch_dim, self.vocab_size as usize], self.data_type))
+            .map_err(EmbeddingError::BackendError)?;
+
+        let (readout, b) = self.readout_kernel_and_b();
+        readout
+            .borrow_mut()
+            .encode(
+                MatmulArguments {
+                    a: input_allocation,
+                    a_offset: 0,
+                    b,
+                    b_offset: 0,
+                    b_leading_dimension: None,
+                    b_transpose: true,
+                    d: &mut output_allocation,
+                    d_transform: MatmulDOps::none(),
+                    m: batch_dim as u32,
+                    n: self.vocab_size,
+                    k: self.model_dim,
+                },
+                encoder,
+            )
+            .map_err(EmbeddingError::BackendError)?;
 
         if let Some(logit_soft_cap) = &self.logit_soft_cap {
             logit_soft_cap.kernel.encode(

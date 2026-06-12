@@ -10,7 +10,7 @@ use crate::{
         gpu_types::{QuantizationMethod, QuantizationMode},
         kernel::{
             Kernels,
-            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel, MatmulTask},
         },
     },
     config::weight_matrix::{AnyWeightMatrixSpec, Layout, int_spec::IntSpec, mlx_spec::MLXSpec},
@@ -191,35 +191,9 @@ impl<B: Backend> LinearMatmul<B> {
             },
         })
     }
-}
 
-fn load_biases<B: Backend>(
-    weights_data_type: DataType,
-    output_data_type: DataType,
-    output_dim: usize,
-    parameter_tree: Option<&ParameterTree<B>>,
-) -> Result<Option<Allocation<B>>, LinearMatmulError<B>> {
-    if parameter_tree.is_some() && weights_data_type != output_data_type {
-        return Err(LinearMatmulError::UnsupportedConfiguration(format!(
-            "mixed precision linear with biases is not supported: weights={weights_data_type:?}, output={output_data_type:?}",
-        )));
-    }
-    Ok(parameter_tree
-        .map(|tree| tree.leaf("biases")?.validate(&[output_dim], weights_data_type)?.read_allocation())
-        .transpose()?)
-}
-
-impl<B: Backend> Linear<B> for LinearMatmul<B> {
-    fn encode(
-        &self,
-        input: Allocation<B>,
-        batch_dim: usize,
-        encoder: &mut Encoder<B>,
-    ) -> Result<Allocation<B>, B::Error> {
-        let mut output =
-            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
-
-        let b = match &self.mode {
+    fn matmul_b(&self) -> MatmulB<'_, B> {
+        match &self.mode {
             Mode::FullPrecision => MatmulB::FullPrecision {
                 b: &self.weights,
             },
@@ -254,8 +228,10 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
                     group_size: *group_size,
                 },
             },
-        };
+        }
+    }
 
+    fn d_ops(&self) -> MatmulDOps<'_, B> {
         let rht_factors = match &self.mode {
             Mode::Quantized {
                 output_hadamard_factors: Some(factors),
@@ -263,23 +239,51 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             } => Some(factors),
             _ => None,
         };
-        let d_transform = MatmulDOps {
+        MatmulDOps {
             ab_scale: 1.0,
             accumulate: false,
             bias: self.biases.as_ref(),
             rht_factors,
-        };
+        }
+    }
+}
+
+fn load_biases<B: Backend>(
+    weights_data_type: DataType,
+    output_data_type: DataType,
+    output_dim: usize,
+    parameter_tree: Option<&ParameterTree<B>>,
+) -> Result<Option<Allocation<B>>, LinearMatmulError<B>> {
+    if parameter_tree.is_some() && weights_data_type != output_data_type {
+        return Err(LinearMatmulError::UnsupportedConfiguration(format!(
+            "mixed precision linear with biases is not supported: weights={weights_data_type:?}, output={output_data_type:?}",
+        )));
+    }
+    Ok(parameter_tree
+        .map(|tree| tree.leaf("biases")?.validate(&[output_dim], weights_data_type)?.read_allocation())
+        .transpose()?)
+}
+
+impl<B: Backend> Linear<B> for LinearMatmul<B> {
+    fn encode(
+        &self,
+        input: Allocation<B>,
+        batch_dim: usize,
+        encoder: &mut Encoder<B>,
+    ) -> Result<Allocation<B>, B::Error> {
+        let mut output =
+            encoder.allocate_scratch(size_for_shape(&[batch_dim, self.output_dim], self.output_data_type))?;
 
         self.kernel.borrow_mut().encode(
             MatmulArguments {
                 a: &input,
                 a_offset: 0,
-                b,
+                b: self.matmul_b(),
                 b_offset: 0,
                 b_leading_dimension: None,
                 b_transpose: true,
                 d: &mut output,
-                d_transform,
+                d_transform: self.d_ops(),
                 m: batch_dim as u32,
                 n: self.output_dim as u32,
                 k: self.input_dim as u32,
@@ -288,5 +292,23 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         )?;
 
         Ok(output)
+    }
+
+    fn precompile(
+        &self,
+        context: &B::Context,
+        batch_sizes: &[u32],
+    ) -> Result<(), B::Error> {
+        let task = MatmulTask::new(
+            0,
+            self.output_dim as u32,
+            self.input_dim as u32,
+            true,
+            0,
+            None,
+            &self.matmul_b(),
+            &self.d_ops(),
+        );
+        self.kernel.borrow_mut().precompile(context, &task, batch_sizes)
     }
 }
