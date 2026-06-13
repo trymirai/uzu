@@ -13,9 +13,11 @@ use crate::{
         },
         cpu::Cpu,
     },
-    common::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 const NUM_HEADS: u32 = 4;

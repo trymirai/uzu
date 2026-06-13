@@ -49,7 +49,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&padded)
+    crate::tests::helpers::allocation_to_vec(&padded)
 }
 
 /// Build test input for ShortConvPack.

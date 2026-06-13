@@ -66,7 +66,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::common::helpers::allocation_to_vec(&out), crate::common::helpers::allocation_to_vec(&state_out))
+    (crate::tests::helpers::allocation_to_vec(&out), crate::tests::helpers::allocation_to_vec(&state_out))
 }
 
 fn get_test_data_basic<T: ArrayElement + Float>(

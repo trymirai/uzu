@@ -9,9 +9,8 @@ use crate::{
         common::{Backend, Encoder, Kernels, kernel::MoeFinalizeKernel},
         cpu::Cpu,
     },
-    common::helpers::create_context,
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{assert::assert_eq_float, helpers::create_context},
 };
 
 struct Input<T: ArrayElement + Float> {
@@ -44,7 +43,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&y_out)
+    crate::tests::helpers::allocation_to_vec(&y_out)
 }
 
 fn test_finalize_internal(

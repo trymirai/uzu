@@ -19,9 +19,11 @@ use crate::{
         Encoder,
         gpu_types::{ActivationType, activation_silu_alpha},
     },
-    common::helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
+    },
 };
 
 /// Test data for MoE experts

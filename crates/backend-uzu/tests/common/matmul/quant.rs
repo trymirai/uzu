@@ -17,7 +17,7 @@ use backend_uzu::{
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-use super::super::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
+use crate::tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
 
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,

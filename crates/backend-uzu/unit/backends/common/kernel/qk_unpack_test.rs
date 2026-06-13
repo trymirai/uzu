@@ -46,7 +46,7 @@ fn run<T: ArrayElement + Float + Debug + Display, B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::common::helpers::allocation_to_vec(&queries), crate::common::helpers::allocation_to_vec(&keys))
+    (crate::tests::helpers::allocation_to_vec(&queries), crate::tests::helpers::allocation_to_vec(&keys))
 }
 
 fn check<T: ArrayElement + Float + Debug + Display>(

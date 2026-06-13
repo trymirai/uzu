@@ -138,9 +138,9 @@ fn get_first_pass_output<T: ArrayElement + Float, B: Backend>(input: &FirstPassI
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
     FirstPassOutput {
-        partials: crate::common::helpers::allocation_to_vec(&partials),
-        sums: crate::common::helpers::allocation_to_vec(&sums),
-        maxs: crate::common::helpers::allocation_to_vec(&maxs),
+        partials: crate::tests::helpers::allocation_to_vec(&partials),
+        sums: crate::tests::helpers::allocation_to_vec(&sums),
+        maxs: crate::tests::helpers::allocation_to_vec(&maxs),
     }
 }
 
@@ -217,7 +217,7 @@ fn get_second_pass_output<T: ArrayElement + Float, B: Backend>(input: &SecondPas
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&output)
+    crate::tests::helpers::allocation_to_vec(&output)
 }
 
 // --- First pass tests ---

@@ -10,8 +10,10 @@ use crate::{
         common::{Backend, Encoder},
         cpu::Cpu,
     },
-    common::helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {

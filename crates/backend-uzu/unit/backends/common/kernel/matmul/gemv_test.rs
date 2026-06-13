@@ -17,8 +17,10 @@ use crate::{
         },
         cpu::Cpu,
     },
-    common::helpers::{alloc_allocation_with_data, allocation_to_vec},
-    tests::assert::assert_eq_float,
+    tests::{
+        assert::assert_eq_float,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {

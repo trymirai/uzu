@@ -156,7 +156,7 @@ fn get_output<
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    crate::common::helpers::allocation_to_vec(&qkv)
+    crate::tests::helpers::allocation_to_vec(&qkv)
 }
 
 fn test_internal<

@@ -24,10 +24,8 @@ use crate::{
         cpu::Cpu,
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-    common::{
-        helpers::allocation_to_vec,
-        matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
-    },
+    common::matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+    tests::helpers::allocation_to_vec,
 };
 
 fn check_tolerance(
@@ -187,7 +185,7 @@ fn parity_bf16_gs32_4bit_mlx_with_bias() {
     let bias_t: Vec<bf16> = bias_f32.iter().map(|&v| bf16::from_f32(v)).collect();
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let bias_pp_buf = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let bias_pp_buf = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -239,7 +237,7 @@ fn parity_bf16_gemv_qmv_fused_scale_bias() {
         .collect();
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let bias_buf = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let bias_buf = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -318,8 +316,8 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     // Hadamard pass transforms the result) — the same order GEMV uses.
     let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &input);
-    let cpu_rht = crate::common::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
-    let cpu_bias = crate::common::helpers::alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &bias_t);
+    let cpu_rht = crate::tests::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
+    let cpu_bias = crate::tests::helpers::alloc_allocation_with_data::<Cpu, bf16>(&cpu_context, &bias_t);
     let mut cpu_matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &cpu_context,
         bf16::data_type(),
@@ -340,8 +338,8 @@ fn parity_bf16_gemv_quant_rht_with_bias() {
     let reference = allocation_to_vec::<Cpu, bf16>(&cpu_buffers.y);
 
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let metal_rht = crate::common::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
-    let metal_bias = crate::common::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
+    let metal_rht = crate::tests::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
+    let metal_bias = crate::tests::helpers::alloc_allocation_with_data::<Metal, bf16>(&context, &bias_t);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),
@@ -382,7 +380,7 @@ fn parity_bf16_gemv_quant_rht() {
     // CPU reference applies the RHT through the CPU matmul kernel.
     let cpu_context = <Cpu as Backend>::Context::new().expect("Cpu context");
     let mut cpu_buffers = QuantBuffers::<Cpu, bf16>::allocate(&cpu_context, &input);
-    let cpu_rht = crate::common::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
+    let cpu_rht = crate::tests::helpers::alloc_allocation_with_data::<Cpu, i32>(&cpu_context, &rht);
     let mut cpu_matmul = <<Cpu as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &cpu_context,
         bf16::data_type(),
@@ -404,7 +402,7 @@ fn parity_bf16_gemv_quant_rht() {
 
     // Metal GEMV: m = 1 quant routes to GEMV, RHT selects the 8-simdgroup (32-row) layout.
     let mut buffers = QuantBuffers::<Metal, bf16>::allocate(&context, &input);
-    let metal_rht = crate::common::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
+    let metal_rht = crate::tests::helpers::alloc_allocation_with_data::<Metal, i32>(&context, &rht);
     let mut matmul = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),

@@ -6,10 +6,10 @@ use crate::{
         Backend, Encoder, Kernels,
         kernel::{MoeTileCountsKernel, MoeTileScanKernel},
     },
-    common::helpers::{
+    encodable_block::mlp::moe::tests::{cpu_tile_counts, cpu_tile_scan},
+    tests::helpers::{
         alloc_allocation, alloc_allocation_with_data, allocation_prefix_to_vec, allocation_to_vec, create_context,
     },
-    encodable_block::mlp::moe::tests::{cpu_tile_counts, cpu_tile_scan},
 };
 
 #[uzu_test]

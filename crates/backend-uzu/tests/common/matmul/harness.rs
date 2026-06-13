@@ -4,7 +4,7 @@ use backend_uzu::{
     array::{ArrayContextExt, ArrayElement},
     backends::{
         common::{
-            Allocation, AllocationType, AsBufferRangeRef, Backend, Buffer, Context, Encoder,
+            AllocationType, Backend, Context, Encoder,
             kernel::{
                 Kernels,
                 matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
@@ -15,10 +15,8 @@ use backend_uzu::{
 };
 use num_traits::Float;
 
-use super::{
-    super::helpers::{alloc_allocation_with_data, allocation_to_vec},
-    Shape,
-};
+use super::Shape;
+use crate::tests::helpers::{alloc_allocation_with_data, allocation_to_vec};
 
 #[cfg(metal_backend)]
 pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;

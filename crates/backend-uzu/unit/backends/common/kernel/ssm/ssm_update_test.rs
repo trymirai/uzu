@@ -132,8 +132,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: crate::common::helpers::allocation_to_vec(&y),
-            next_state: crate::common::helpers::allocation_to_vec(&next_state),
+            y: crate::tests::helpers::allocation_to_vec(&y),
+            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
         }
     } else {
         let state_array = context.create_array_from(&[ns_size], &input.state);
@@ -164,8 +164,8 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
         encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
         Output {
-            y: crate::common::helpers::allocation_to_vec(&y),
-            next_state: crate::common::helpers::allocation_to_vec(&next_state),
+            y: crate::tests::helpers::allocation_to_vec(&y),
+            next_state: crate::tests::helpers::allocation_to_vec(&next_state),
         }
     }
 }

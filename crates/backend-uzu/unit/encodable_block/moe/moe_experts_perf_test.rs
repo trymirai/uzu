@@ -7,8 +7,8 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExpertsTwoPassPrefillBlock};
 use crate::{
     backends::common::{Backend, Encoder},
-    common::helpers::{alloc_allocation_with_data, create_context},
     data_type::DataType,
+    tests::helpers::{alloc_allocation_with_data, create_context},
 };
 
 fn build_offsets(

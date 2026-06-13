@@ -86,9 +86,9 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Output<T
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
     Output {
-        conv_out: crate::common::helpers::allocation_to_vec(&conv_out),
-        z_out: crate::common::helpers::allocation_to_vec(&z_out),
-        dt_out: crate::common::helpers::allocation_to_vec(&dt_out),
+        conv_out: crate::tests::helpers::allocation_to_vec(&conv_out),
+        z_out: crate::tests::helpers::allocation_to_vec(&z_out),
+        dt_out: crate::tests::helpers::allocation_to_vec(&dt_out),
     }
 }
 

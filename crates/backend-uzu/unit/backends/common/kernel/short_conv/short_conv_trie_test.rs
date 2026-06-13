@@ -80,7 +80,7 @@ fn get_output<T: ArrayElement + Float, B: Backend>(input: &Input<T>) -> (Vec<T>,
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    (crate::common::helpers::allocation_to_vec(&out), crate::common::helpers::allocation_to_vec(&suffix_state))
+    (crate::tests::helpers::allocation_to_vec(&out), crate::tests::helpers::allocation_to_vec(&suffix_state))
 }
 
 /// Linear chain: node 0 has parent -1 (root), node i has parent i-1.

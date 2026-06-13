@@ -1,7 +1,6 @@
 #![allow(dead_code, unused_imports, unused_macros)]
 
 pub mod audio;
-pub mod helpers;
 pub mod matmul;
 pub mod metrics;
 pub mod path;

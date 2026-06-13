@@ -51,8 +51,8 @@ fn run_conv_update<B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let out = crate::common::helpers::allocation_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
-    let new_state = crate::common::helpers::allocation_to_vec::<B, f32>(&state_allocation);
+    let out = crate::tests::helpers::allocation_prefix_to_vec::<B, f32>(&in_out, conv_dim as usize);
+    let new_state = crate::tests::helpers::allocation_to_vec::<B, f32>(&state_allocation);
     (out, new_state)
 }
 
@@ -99,8 +99,8 @@ fn run_delta_net_update<B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let out = crate::common::helpers::allocation_to_vec::<B, f32>(&out);
-    let new_state = crate::common::helpers::allocation_to_vec::<B, f32>(&state_allocation);
+    let out = crate::tests::helpers::allocation_to_vec::<B, f32>(&out);
+    let new_state = crate::tests::helpers::allocation_to_vec::<B, f32>(&state_allocation);
     (out, new_state)
 }
 
@@ -222,14 +222,14 @@ fn test_delta_net_conv_scan() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let in_proj_result: Vec<bf16> = crate::common::helpers::allocation_to_vec(&in_proj_array);
+    let in_proj_result: Vec<bf16> = crate::tests::helpers::allocation_to_vec(&in_proj_array);
     let in_proj_result: Vec<f32> = in_proj_result.into_iter().map(f32::from).collect();
     let mut scan_outputs = vec![0.0f32; suffix_len * conv_dim];
     for t in 0..suffix_len {
         scan_outputs[t * conv_dim..(t + 1) * conv_dim]
             .copy_from_slice(&in_proj_result[t * total_proj_dim..t * total_proj_dim + conv_dim]);
     }
-    let scan_state: Vec<f32> = crate::common::helpers::allocation_to_vec(&state_out_array);
+    let scan_state: Vec<f32> = crate::tests::helpers::allocation_to_vec(&state_out_array);
 
     assert_close(&ref_outputs, &scan_outputs, 1e-4, 1e-3, "ConvScan output");
     assert_close(&ref_state, &scan_state, 1e-5, 1e-4, "ConvScan state");
@@ -388,9 +388,9 @@ fn run_prefill_with_norm_gate_typed<T: ArrayElement>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let out: Vec<T> = crate::common::helpers::allocation_to_vec(&out_array);
+    let out: Vec<T> = crate::tests::helpers::allocation_to_vec(&out_array);
     let out = out.into_iter().map(|value| value.to_f32().expect("output to f32")).collect();
-    let state = crate::common::helpers::allocation_to_vec(&state_array);
+    let state = crate::tests::helpers::allocation_to_vec(&state_array);
     (out, state)
 }
 
@@ -527,10 +527,10 @@ fn test_delta_net_prefill_prep() {
     );
     cpu_enc.end_encoding().submit().wait_until_completed().unwrap();
 
-    let ref_q: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_q);
-    let ref_k: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_k);
-    let ref_beta: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_beta);
-    let ref_decay: Vec<f32> = crate::common::helpers::allocation_to_vec(&cpu_decay);
+    let ref_q: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_q);
+    let ref_k: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_k);
+    let ref_beta: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_beta);
+    let ref_decay: Vec<f32> = crate::tests::helpers::allocation_to_vec(&cpu_decay);
 
     // Metal
     let context = <Metal as Backend>::Context::new().expect("context");
@@ -568,10 +568,10 @@ fn test_delta_net_prefill_prep() {
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let gpu_q: Vec<f32> = crate::common::helpers::allocation_to_vec(&q_norm_array);
-    let gpu_k: Vec<f32> = crate::common::helpers::allocation_to_vec(&k_norm_array);
-    let gpu_beta: Vec<f32> = crate::common::helpers::allocation_to_vec(&beta_array);
-    let gpu_decay: Vec<f32> = crate::common::helpers::allocation_to_vec(&decay_array);
+    let gpu_q: Vec<f32> = crate::tests::helpers::allocation_to_vec(&q_norm_array);
+    let gpu_k: Vec<f32> = crate::tests::helpers::allocation_to_vec(&k_norm_array);
+    let gpu_beta: Vec<f32> = crate::tests::helpers::allocation_to_vec(&beta_array);
+    let gpu_decay: Vec<f32> = crate::tests::helpers::allocation_to_vec(&decay_array);
 
     assert_close(&gpu_q, &ref_q, 1e-4, 1e-3, "prep q_norm");
     assert_close(&gpu_k, &ref_k, 1e-4, 1e-3, "prep k_norm");

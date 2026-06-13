@@ -136,11 +136,11 @@ fn get_output<T: ArrayElement + Float, B: Backend>(
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    let queries = crate::common::helpers::allocation_to_vec(&rotated_queries);
+    let queries = crate::tests::helpers::allocation_to_vec(&rotated_queries);
     let keys = if query_only {
         None
     } else {
-        Some(crate::common::helpers::allocation_to_vec(&rotated_keys))
+        Some(crate::tests::helpers::allocation_to_vec(&rotated_keys))
     };
     (queries, keys)
 }

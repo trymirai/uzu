@@ -72,7 +72,7 @@ fn get_output<B: Backend, T: ArrayElement + Float>(input: &Input<T>) -> Vec<T> {
     );
     encoder.end_encoding().submit().wait_until_completed().expect("Failed to wait command buffer");
 
-    crate::common::helpers::allocation_to_vec(&padded)
+    crate::tests::helpers::allocation_to_vec(&padded)
 }
 
 fn get_test_data<T: ArrayElement + Float>(

@@ -150,7 +150,7 @@ fn get_output<
     );
     encoder.end_encoding().submit().wait_until_completed().unwrap();
 
-    crate::common::helpers::allocation_to_vec(&output)
+    crate::tests::helpers::allocation_to_vec(&output)
 }
 
 fn test_internal<
