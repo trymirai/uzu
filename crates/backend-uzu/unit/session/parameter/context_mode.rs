@@ -2,7 +2,6 @@ use proc_macros::uzu_test;
 use test_tag::tag;
 
 use crate::{
-    common::path::get_test_model_path,
     session::{
         Session,
         config::{DecodingConfig, RunConfig, SpeculatorConfig},
@@ -11,6 +10,7 @@ use crate::{
         },
         types::{Input, Message, Output},
     },
+    tests::path::get_test_model_path,
 };
 
 fn build_decoding_config() -> DecodingConfig {

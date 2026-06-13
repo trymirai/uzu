@@ -2,7 +2,7 @@ use std::fs::File;
 
 use proc_macros::uzu_test;
 
-use crate::{common::path::get_test_weights_path, parameters::safetensors_metadata::read_metadata};
+use crate::{parameters::safetensors_metadata::read_metadata, tests::path::get_test_weights_path};
 
 #[uzu_test]
 fn test_metadata_loading() {

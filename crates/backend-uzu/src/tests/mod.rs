@@ -5,6 +5,7 @@ pub mod assert;
 pub mod env_vars;
 pub mod helpers;
 pub mod metrics;
+pub mod path;
 pub mod perf;
 pub mod util;
 

@@ -13,8 +13,8 @@ use crate::{
         common::{AllocationType, Backend, Context},
         metal::Metal,
     },
-    common::path::get_test_model_path,
     data_type::DataType,
+    tests::path::get_test_model_path,
 };
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

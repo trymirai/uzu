@@ -6,9 +6,9 @@ use test_tag::tag;
 
 use crate::{
     backends::common::{Backend, Context},
-    common::path::get_test_weights_path,
     data_type::DataType,
     parameters::{ParameterLoader, safetensors_metadata::read_metadata},
+    tests::path::get_test_weights_path,
 };
 
 const EMBEDDING_PATH: &str = "decoder.embedding.embedding.weights";

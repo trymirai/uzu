@@ -2,7 +2,6 @@
 
 pub mod audio;
 pub mod matmul;
-pub mod path;
 pub mod proptest;
 
 pub(crate) use proptest::for_each_context;

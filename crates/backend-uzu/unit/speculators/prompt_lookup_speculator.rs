@@ -4,8 +4,8 @@ use proc_macros::uzu_test;
 use tokenizers::Tokenizer;
 
 use crate::{
-    common::path::get_test_model_path,
     speculators::{prompt_lookup_speculator::PromptLookupSpeculator, speculator::Speculator},
+    tests::path::get_test_model_path,
 };
 
 fn load_tokenizer() -> Tokenizer {

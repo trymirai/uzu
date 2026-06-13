@@ -6,7 +6,6 @@ use test_tag::tag;
 use tokenizers::Tokenizer;
 
 use crate::{
-    common::path::get_test_model_path,
     session::{
         Session,
         config::{DecodingConfig, RunConfig, SpeculatorConfig},
@@ -14,6 +13,7 @@ use crate::{
         types::{Input, Message, Output},
     },
     speculators::{fixed_token_speculator::FixedTokensSpeculator, prompt_lookup_speculator::PromptLookupSpeculator},
+    tests::path::get_test_model_path,
 };
 
 fn build_decoding_config() -> DecodingConfig {
