@@ -11,7 +11,7 @@ use test_tag::tag;
 use crate::{
     session::{
         Session,
-        config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig},
+        config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig, StructuredOutput},
         parameter::{SamplingPolicy, SamplingSeed},
         types::Input,
     },
@@ -108,4 +108,49 @@ fn test_grammar_json_schema_with_speculator() {
         number_of_speculated_tokens: 16,
         speculator: Arc::new(RepeatSpeculator),
     });
+}
+
+fn unwrapped_schema(raw: &str) -> String {
+    match GrammarConfig::structured_output_from_schema(raw) {
+        StructuredOutput::Schema(schema) => schema,
+        StructuredOutput::AnyJson => panic!("expected schema for: {raw}"),
+    }
+}
+
+#[uzu_test]
+fn unwraps_nested_response_format_envelope() {
+    let raw = r#"{"type":"json_schema","json_schema":{"name":"person","strict":true,"schema":{"type":"object","properties":{"name":{"type":"string"}}}}}"#;
+    let normalized: serde_json::Value = serde_json::from_str(&unwrapped_schema(raw)).unwrap();
+    assert_eq!(normalized, serde_json::json!({"type":"object","properties":{"name":{"type":"string"}}}));
+}
+
+#[uzu_test]
+fn unwraps_flattened_response_format_envelope() {
+    let raw = r#"{"type":"json_schema","name":"person","schema":{"type":"object"}}"#;
+    let normalized: serde_json::Value = serde_json::from_str(&unwrapped_schema(raw)).unwrap();
+    assert_eq!(normalized, serde_json::json!({"type":"object"}));
+}
+
+#[uzu_test]
+fn unwraps_bare_inner_json_schema_object() {
+    let raw = r#"{"name":"person","schema":{"type":"object"}}"#;
+    let normalized: serde_json::Value = serde_json::from_str(&unwrapped_schema(raw)).unwrap();
+    assert_eq!(normalized, serde_json::json!({"type":"object"}));
+}
+
+#[uzu_test]
+fn json_object_maps_to_any_json() {
+    assert_eq!(GrammarConfig::structured_output_from_schema(r#"{"type":"json_object"}"#), StructuredOutput::AnyJson,);
+}
+
+#[uzu_test]
+fn passes_through_bare_json_schema() {
+    let raw = r#"{"type":"object","properties":{"schema":{"type":"string"}}}"#;
+    let normalized: serde_json::Value = serde_json::from_str(&unwrapped_schema(raw)).unwrap();
+    assert_eq!(normalized, serde_json::from_str::<serde_json::Value>(raw).unwrap());
+}
+
+#[uzu_test]
+fn passes_through_unparseable_input() {
+    assert_eq!(unwrapped_schema("not json"), "not json");
 }
