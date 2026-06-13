@@ -6,7 +6,6 @@ pub mod helpers;
 pub mod matmul;
 pub mod metrics;
 pub mod path;
-pub mod perf;
 pub mod proptest;
 
 pub(crate) use proptest::for_each_context;

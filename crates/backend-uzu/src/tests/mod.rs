@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod env_vars;
+pub mod perf;
 pub mod util;
 
 pub extern crate test;

@@ -11,11 +11,9 @@ use crate::{
             MoeScatterBucketsMapKernel,
         },
     },
-    common::{
-        helpers::{alloc_allocation, alloc_allocation_with_data, create_context},
-        perf::run_perf_with_warmup,
-    },
+    common::helpers::{alloc_allocation, alloc_allocation_with_data, create_context},
     data_type::DataType,
+    tests::perf::run_perf_with_warmup,
 };
 
 // Test E2E MoE performance with timing breakdown (decode mode, T=1)
