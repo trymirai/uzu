@@ -6952,6 +6952,8 @@ version = "0.5.12"
 dependencies = [
  "criterion",
  "macmon",
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]

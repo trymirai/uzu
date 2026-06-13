@@ -10,7 +10,7 @@ pub fn uzu_harness(tests: &[&UzuTest]) {
     let benchmarks = args.contains(&"--bench".to_string());
     if benchmarks {
         #[cfg(target_os = "ios")]
-        crate::common::path::ios_set_current_dir();
+        crate::path::ios_set_current_dir();
         enable_benchmark_gpu_capture_if_requested();
         let bench_tests: Vec<&dyn Fn()> = tests
             .iter()
