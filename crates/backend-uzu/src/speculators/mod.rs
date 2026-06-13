@@ -5,3 +5,6 @@ pub mod ngram_speculator;
 pub mod prompt_lookup_speculator;
 pub mod speculator;
 pub mod token_finder;
+
+#[cfg(test)]
+pub mod repeat_speculator;

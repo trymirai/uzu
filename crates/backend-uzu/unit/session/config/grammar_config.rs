@@ -8,13 +8,14 @@ use serde::{Deserialize, Serialize};
 use test_tag::tag;
 
 use crate::{
-    common::{path::get_test_model_path, repeat_speculator::RepeatSpeculator},
+    common::path::get_test_model_path,
     session::{
         Session,
         config::{DecodingConfig, GrammarConfig, RunConfig, SpeculatorConfig},
         parameter::{SamplingPolicy, SamplingSeed},
         types::Input,
     },
+    speculators::repeat_speculator::RepeatSpeculator,
 };
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
