@@ -9,7 +9,7 @@ use crate::{
             AsBufferRangeRef, Buffer, Encoder,
             kernel::matmul::{MatmulArguments, MatmulError, MatmulKernel},
         },
-        metal::{Metal, context::MetalContext, error::MetalError},
+        metal::{Metal, context::MetalContext, device_tier::DeviceTier, error::MetalError},
     },
     data_type::DataType,
 };
@@ -20,6 +20,7 @@ pub struct MatmulMetalKernel {
     weights_data_type: DataType,
     input_data_type: DataType,
     output_data_type: DataType,
+    device_tier: DeviceTier,
 }
 
 impl MatmulKernel for MatmulMetalKernel {
@@ -47,6 +48,7 @@ impl MatmulKernel for MatmulMetalKernel {
             weights_data_type,
             input_data_type,
             output_data_type,
+            device_tier: context.device_tier(),
         })
     }
 
@@ -60,6 +62,7 @@ impl MatmulKernel for MatmulMetalKernel {
             self.weights_data_type,
             self.input_data_type,
             self.output_data_type,
+            self.device_tier,
         ) {
             Some(spec) => self.gemv.encode(arguments, spec, encoder).map_err(MetalError::from),
             None => self.gemm.encode(arguments, encoder),
