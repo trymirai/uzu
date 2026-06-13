@@ -8,6 +8,7 @@ use std::{
 use rocket::{
     Request, State,
     futures::Stream,
+    http::Status,
     post,
     response::{
         Responder,
@@ -37,23 +38,12 @@ pub struct OaiMessage {
 }
 
 #[derive(Deserialize, Clone)]
-pub struct JsonSchemaSpec {
-    pub schema: serde_json::Value,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub name: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub strict: Option<bool>,
-}
-
-#[derive(Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseFormat {
     Text {},
     JsonObject {},
     JsonSchema {
-        json_schema: JsonSchemaSpec,
+        json_schema: serde_json::Value,
     },
 }
 
@@ -65,7 +55,7 @@ impl ResponseFormat {
             ResponseFormat::JsonSchema {
                 json_schema,
             } => Some(Grammar::JsonSchema {
-                schema: json_schema.schema.to_string(),
+                schema: json_schema.to_string(),
             }),
         }
     }
@@ -119,6 +109,21 @@ pub struct ChatCompletionResponse {
     pub usage: ChatCompletionUsage,
 }
 
+#[derive(Serialize, Clone)]
+pub struct ChatCompletionErrorBody {
+    pub message: String,
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ChatCompletionErrorResponse {
+    pub error: ChatCompletionErrorBody,
+}
+
 #[derive(Serialize)]
 struct StreamDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -147,6 +152,7 @@ struct ChatCompletionChunk {
 
 pub enum ChatCompletionResult {
     Json(Json<ChatCompletionResponse>),
+    Error(Status, Json<ChatCompletionErrorResponse>),
     Stream(EventStream<Pin<Box<dyn Stream<Item = Event> + Send>>>),
 }
 
@@ -157,6 +163,9 @@ impl<'r> Responder<'r, 'r> for ChatCompletionResult {
     ) -> rocket::response::Result<'r> {
         match self {
             ChatCompletionResult::Json(json) => json.respond_to(request),
+            ChatCompletionResult::Error(status, json) => {
+                rocket::response::status::Custom(status, json).respond_to(request)
+            },
             ChatCompletionResult::Stream(stream) => stream.respond_to(request),
         }
     }
@@ -250,6 +259,20 @@ fn error_response(
             finish_reason: "stop".to_string(),
         }],
         usage: ChatCompletionUsage::default(),
+    }
+}
+
+fn bad_request_error(
+    message: impl Into<String>,
+    param: Option<&str>,
+) -> ChatCompletionErrorResponse {
+    ChatCompletionErrorResponse {
+        error: ChatCompletionErrorBody {
+            message: message.into(),
+            r#type: "invalid_request_error".to_string(),
+            param: param.map(str::to_string),
+            code: None,
+        },
     }
 }
 
@@ -441,8 +464,18 @@ pub async fn handle_chat_completions(
     let model = state.model_name.clone();
     let is_stream = request.stream.unwrap_or(false);
 
-    let reasoning_effort =
-        request.reasoning_effort.as_deref().and_then(|effort| ReasoningEffort::from_str(effort).ok());
+    let reasoning_effort = match request.reasoning_effort.as_deref() {
+        Some(effort) => match ReasoningEffort::from_openai(effort) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                return ChatCompletionResult::Error(
+                    Status::BadRequest,
+                    Json(bad_request_error(message, Some("reasoning_effort"))),
+                );
+            },
+        },
+        None => None,
+    };
     let messages = to_chat_messages(&request.messages, reasoning_effort);
     let config = build_reply_config(&request);
 
@@ -480,10 +513,31 @@ mod tests {
             r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"name":"country","strict":true,"schema":{"type":"object"}}}}"#,
         );
         let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
+        let expected_schema =
+            serde_json::from_str::<serde_json::Value>(r#"{"name":"country","strict":true,"schema":{"type":"object"}}"#)
+                .expect("valid json_schema payload")
+                .to_string();
         assert_eq!(
             grammar,
             Some(Grammar::JsonSchema {
-                schema: r#"{"type":"object"}"#.to_string(),
+                schema: expected_schema,
+            })
+        );
+    }
+
+    #[test]
+    fn json_schema_response_format_passes_through_arbitrary_payload() {
+        let request = parse(
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{"foo":[1,2],"nested":{"enabled":true}}}}"#,
+        );
+        let grammar = request.response_format.as_ref().and_then(ResponseFormat::to_grammar);
+        let expected_schema = serde_json::from_str::<serde_json::Value>(r#"{"foo":[1,2],"nested":{"enabled":true}}"#)
+            .expect("valid json_schema payload")
+            .to_string();
+        assert_eq!(
+            grammar,
+            Some(Grammar::JsonSchema {
+                schema: expected_schema,
             })
         );
     }
@@ -505,6 +559,27 @@ mod tests {
         let request = parse(r#"{"messages":[],"reasoning_effort":"high"}"#);
         let effort = request.reasoning_effort.as_deref().and_then(|value| ReasoningEffort::from_str(value).ok());
         assert_eq!(effort, Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn reasoning_effort_maps_openai_none_to_disabled() {
+        let request = parse(r#"{"messages":[],"reasoning_effort":"none"}"#);
+        let effort = request.reasoning_effort.as_deref().map(ReasoningEffort::from_openai);
+        assert_eq!(effort, Some(Ok(ReasoningEffort::Disabled)));
+    }
+
+    #[test]
+    fn reasoning_effort_maps_openai_minimal_to_low() {
+        let request = parse(r#"{"messages":[],"reasoning_effort":"minimal"}"#);
+        let effort = request.reasoning_effort.as_deref().map(ReasoningEffort::from_openai);
+        assert_eq!(effort, Some(Ok(ReasoningEffort::Low)));
+    }
+
+    #[test]
+    fn reasoning_effort_rejects_unknown_value() {
+        let request = parse(r#"{"messages":[],"reasoning_effort":"turbo"}"#);
+        let effort = request.reasoning_effort.as_deref().map(ReasoningEffort::from_openai);
+        assert!(matches!(effort, Some(Err(_))));
     }
 
     #[test]
