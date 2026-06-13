@@ -15,10 +15,8 @@ use crate::{
         },
         metal::{Metal, MetalContext},
     },
-    common::{
-        matmul::{QuantBuffers, QuantInput, iter_encode_loop, quant_arguments, qwen3_layer_shapes},
-        type_short_name,
-    },
+    common::type_short_name,
+    tests::matmul::{QuantBuffers, QuantInput, iter_encode_loop, quant_arguments, qwen3_layer_shapes},
 };
 
 fn bench_qwen3_layers_typed<T: ArrayElement + Float>(

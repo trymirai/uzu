@@ -15,10 +15,8 @@ use crate::{
         },
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-    common::{
-        matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
-        type_short_name,
-    },
+    common::type_short_name,
+    tests::matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
 };
 
 fn bench_unified_quant_typed<T: ArrayElement + Float>(

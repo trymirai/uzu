@@ -16,10 +16,8 @@ use crate::{
         },
         metal::{GemmDispatchPath, Metal},
     },
-    common::{
-        matmul::{bench_fp_gemm_shapes, iter_encode_loop},
-        type_short_name,
-    },
+    common::type_short_name,
+    tests::matmul::{bench_fp_gemm_shapes, iter_encode_loop},
 };
 
 #[uzu_bench]

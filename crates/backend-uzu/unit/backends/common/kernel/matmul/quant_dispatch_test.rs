@@ -24,8 +24,10 @@ use crate::{
         cpu::Cpu,
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-    common::matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
-    tests::helpers::allocation_to_vec,
+    tests::{
+        helpers::allocation_to_vec,
+        matmul::{QuantBuffers, QuantInput, quant_arguments, run_quant_cpu, run_quant_metal},
+    },
 };
 
 fn check_tolerance(
