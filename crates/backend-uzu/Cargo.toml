@@ -53,7 +53,7 @@ xgrammar = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-tag.workspace = true
-test-runner.workspace = true
+test-runner = { workspace = true, features = ["nightly-harness"] }
 proptest.workspace = true
 criterion.workspace = true
 criterion-macro.workspace = true

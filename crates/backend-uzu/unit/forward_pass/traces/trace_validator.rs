@@ -21,7 +21,6 @@ use crate::{
     array::{Array, ArrayElement},
     backends::common::{Allocation, AllocationType, Backend, Context, Encoder},
     classifier::{ActivationTrace, Classifier},
-    common,
     config::model::AnyModelConfig,
     data_type::DataType,
     encodable_block::DecoderDecodeInput,
@@ -33,6 +32,7 @@ use crate::{
         parameter::{AsyncBatchSize, ConfigResolvableValue, ContextLength, ContextMode, PrefillStepSize, SamplingSeed},
         types::Error,
     },
+    tests::helpers::sparse_buffer_read_allocation,
 };
 
 fn argmax<T: ArrayElement>(input: &[T]) -> usize {
@@ -375,7 +375,7 @@ impl<B: Backend> TraceValidator<B> {
                     Self::read_required_array(&traces_view, &trace_shapes, &keys_path, ctx.model_shape.data_type);
                 let size = shape.iter().product::<usize>() * ctx.model_shape.data_type.size_in_bytes();
                 let keys = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-                    tests::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.keys, size)
+                    sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.keys, size)
                 } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
                     let mut allocation = ctx
                         .context
@@ -404,7 +404,7 @@ impl<B: Backend> TraceValidator<B> {
                 let expected =
                     Self::read_required_array(&traces_view, &trace_shapes, &values_path, ctx.model_shape.data_type);
                 let values = if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::SparseBuffer>>() {
-                    tests::helpers::sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.values, size)
+                    sparse_buffer_read_allocation(ctx.context.as_ref(), &layer.values, size)
                 } else if let Some(layer) = kv.as_any().downcast_ref::<KVCacheLayer<B, B::DenseBuffer>>() {
                     let mut allocation = ctx
                         .context

@@ -5,7 +5,6 @@ mod array;
 mod audio;
 mod classifier;
 mod config;
-mod data_type;
 mod encodable_block;
 mod forward_pass;
 mod language_model;
@@ -15,6 +14,7 @@ mod trie;
 mod utils;
 
 pub mod backends;
+pub mod data_type;
 pub mod inference;
 pub mod session;
 
