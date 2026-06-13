@@ -8,7 +8,10 @@ use super::{MoeExpertsTwoPassArguments, MoeExpertsTwoPassDecodeBlock, MoeExperts
 use crate::{
     backends::common::{Backend, Encoder},
     data_type::DataType,
-    tests::helpers::{alloc_allocation_with_data, create_context},
+    tests::{
+        for_each_non_cpu_backend,
+        helpers::{alloc_allocation_with_data, create_context},
+    },
 };
 
 fn build_offsets(

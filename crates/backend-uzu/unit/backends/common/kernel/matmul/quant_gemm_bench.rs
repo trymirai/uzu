@@ -15,8 +15,10 @@ use crate::{
         },
         metal::{GemmDispatchPath, Metal, MetalContext},
     },
-    common::type_short_name,
-    tests::matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
+    tests::{
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemm_shapes, iter_encode_loop, quant_arguments},
+        util::type_short_name,
+    },
 };
 
 fn bench_unified_quant_typed<T: ArrayElement + Float>(
@@ -69,7 +71,7 @@ fn bench_unified_quant_typed<T: ArrayElement + Float>(
 
 #[uzu_bench]
 fn bench_unified_quantized_gemm(c: &mut Criterion) {
-    let context = crate::common::shared_metal_context();
+    let context = crate::tests::util::shared_metal_context();
     bench_unified_quant_typed::<bf16>(c, &context, "ScaleBias_BF16_gs64", 64, 4, QuantizationMethod::ScaleBias);
     bench_unified_quant_typed::<bf16>(c, &context, "ZP_BF16_gs64", 64, 4, QuantizationMethod::ScaleZeroPoint);
     bench_unified_quant_typed::<bf16>(c, &context, "ScaleBias_BF16_gs128", 128, 4, QuantizationMethod::ScaleBias);

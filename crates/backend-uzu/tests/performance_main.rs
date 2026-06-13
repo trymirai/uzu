@@ -4,5 +4,4 @@
 #[path = "../src/tests/mod.rs"]
 mod tests;
 
-mod common;
 mod performance;

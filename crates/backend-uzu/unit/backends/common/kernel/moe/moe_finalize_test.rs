@@ -10,7 +10,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::{assert::assert_eq_float, helpers::create_context},
+    tests::{assert::assert_eq_float, for_each_non_cpu_backend, helpers::create_context},
 };
 
 struct Input<T: ArrayElement + Float> {

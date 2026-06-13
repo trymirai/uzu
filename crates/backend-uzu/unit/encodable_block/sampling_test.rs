@@ -12,11 +12,10 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use rand_distr::Normal;
 
 use crate::{
-    common::for_each_context,
     data_type::DataType,
     encodable_block::Sampling,
     session::parameter::{SamplingMethod, SamplingProcessingOrder},
-    tests::proptest::{ComparableTestResults, TestContextes, kernel_data_type},
+    tests::proptest::{ComparableTestResults, TestContextes, for_each_context, kernel_data_type},
 };
 
 struct SamplingTestResults(Vec<u32>);

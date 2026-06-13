@@ -15,7 +15,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{assert::assert_eq_float, for_each_non_cpu_backend},
 };
 
 static BOOL_ALL: &[bool] = &[true, false];

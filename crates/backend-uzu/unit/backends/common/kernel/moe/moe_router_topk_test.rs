@@ -12,7 +12,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::helpers::create_context,
+    tests::{for_each_non_cpu_backend, helpers::create_context},
 };
 
 fn get_output<B: Backend, T: ArrayElement + Float>(

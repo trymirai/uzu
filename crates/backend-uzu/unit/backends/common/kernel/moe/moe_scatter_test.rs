@@ -16,7 +16,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::helpers::create_context,
+    tests::{for_each_non_cpu_backend, helpers::create_context},
 };
 
 fn cpu_expert_buckets<T: ArrayElement + Float>(

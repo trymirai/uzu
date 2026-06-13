@@ -15,8 +15,10 @@ use crate::{
         },
         metal::{Metal, MetalContext},
     },
-    common::type_short_name,
-    tests::matmul::{QuantBuffers, QuantInput, iter_encode_loop, quant_arguments, qwen3_layer_shapes},
+    tests::{
+        matmul::{QuantBuffers, QuantInput, iter_encode_loop, quant_arguments, qwen3_layer_shapes},
+        util::type_short_name,
+    },
 };
 
 fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
@@ -51,7 +53,7 @@ fn bench_qwen3_layers_typed<T: ArrayElement + Float>(
 
 #[uzu_bench]
 fn bench_qwen3_layers(c: &mut Criterion) {
-    let context = crate::common::shared_metal_context();
+    let context = crate::tests::util::shared_metal_context();
     bench_qwen3_layers_typed::<bf16>(c, &context, "ScaleBias_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleBias);
     bench_qwen3_layers_typed::<bf16>(c, &context, "ZP_BF16_gs128_4b", 128, 4, QuantizationMethod::ScaleZeroPoint);
 }

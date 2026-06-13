@@ -6,7 +6,7 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::common::{Allocation, Backend, Context, Encoder, Kernels, kernel::RMSNormKernel},
-    common::type_short_name,
+    tests::{for_each_backend, util::type_short_name},
 };
 
 fn get_rms_norm_data(

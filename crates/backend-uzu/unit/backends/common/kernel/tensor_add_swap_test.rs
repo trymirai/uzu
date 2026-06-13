@@ -7,7 +7,10 @@ use proc_macros::uzu_test;
 use crate::{
     array::ArrayElement,
     backends::common::{Backend, Context, Encoder, Kernels, kernel::TensorAddSwapKernel},
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    tests::{
+        for_each_backend,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 struct Input<T: ArrayElement + Float> {

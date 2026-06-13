@@ -13,6 +13,7 @@ use crate::{
     },
     data_type::DataType,
     tests::{
+        for_each_non_cpu_backend,
         helpers::{alloc_allocation, alloc_allocation_with_data, create_context},
         perf::run_perf_with_warmup,
     },

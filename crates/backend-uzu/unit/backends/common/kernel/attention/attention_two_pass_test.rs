@@ -14,7 +14,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{assert::assert_eq_float, for_each_non_cpu_backend},
 };
 
 const TOTAL_BLOCKS_COUNT: u32 = 32;

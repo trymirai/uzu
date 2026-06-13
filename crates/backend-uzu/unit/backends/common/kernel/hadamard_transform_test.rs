@@ -9,6 +9,7 @@ use crate::{
     backends::common::{
         Backend, Context, Encoder, Kernels, gpu_types::HadamardTransformOrder, kernel::HadamardTransformKernel,
     },
+    tests::for_each_non_cpu_backend,
 };
 
 const BLOCK_SIZE: usize = 32;

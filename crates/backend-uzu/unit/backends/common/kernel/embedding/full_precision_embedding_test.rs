@@ -7,6 +7,7 @@ use proc_macros::uzu_test;
 use crate::{
     array::{ArrayContextExt, ArrayElement},
     backends::common::{Backend, Context, Encoder, Kernels, kernel::FullPrecisionEmbeddingLookupKernel},
+    tests::for_each_backend,
 };
 
 struct Input<T: ArrayElement + Float> {

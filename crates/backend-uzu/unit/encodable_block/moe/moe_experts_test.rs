@@ -22,6 +22,7 @@ use crate::{
     data_type::DataType,
     tests::{
         assert::assert_eq_float,
+        for_each_non_cpu_backend,
         helpers::{alloc_allocation_with_data, allocation_prefix_to_vec, create_context},
     },
 };

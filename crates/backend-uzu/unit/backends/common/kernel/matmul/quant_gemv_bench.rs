@@ -10,8 +10,11 @@ use crate::{
         gpu_types::QuantizationMethod,
         kernel::{Kernels, matmul::MatmulKernel},
     },
-    common::type_short_name,
-    tests::matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop_named, quant_arguments},
+    tests::{
+        for_each_backend,
+        matmul::{QuantBuffers, QuantInput, bench_quant_gemv_shapes, iter_encode_loop_named, quant_arguments},
+        util::type_short_name,
+    },
 };
 
 fn bench_gemv_typed<B: Backend, T: ArrayElement + Float>(

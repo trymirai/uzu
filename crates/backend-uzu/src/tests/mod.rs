@@ -1,6 +1,8 @@
 #![cfg(test)]
 #![allow(dead_code, unused_imports, unused_macros)]
 
+pub extern crate test;
+
 pub mod assert;
 pub mod audio;
 pub mod env_vars;
@@ -12,38 +14,39 @@ pub mod perf;
 pub mod proptest;
 pub mod util;
 
-pub extern crate test;
+mod harness;
 
-use crate::tests::util::enable_benchmark_gpu_capture_if_requested;
+pub use harness::{UzuTest, uzu_harness};
 
-pub enum UzuTest {
-    Bench(&'static dyn Fn()),
-    Test(&'static test::TestDescAndFn),
+/// Invokes `$body` once per available backend, with `$B` bound to each backend type.
+macro_rules! for_each_backend {
+    (|$B:ident| $body:expr) => {{
+        {
+            type $B = crate::backends::cpu::Cpu;
+            $body
+        }
+        #[cfg(metal_backend)]
+        {
+            type $B = crate::backends::metal::Metal;
+            $body
+        }
+    }};
 }
+pub(crate) use for_each_backend;
 
-pub fn uzu_harness(tests: &[&UzuTest]) {
-    let args = std::env::args().collect::<Vec<String>>();
-    let benchmarks = args.contains(&"--bench".to_string());
-    if benchmarks {
-        #[cfg(target_os = "ios")]
-        crate::common::path::ios_set_current_dir();
-        enable_benchmark_gpu_capture_if_requested();
-        let bench_tests: Vec<&dyn Fn()> = tests
-            .iter()
-            .filter_map(|test| match test {
-                UzuTest::Bench(test) => Some(*test),
-                UzuTest::Test(_) => None,
-            })
-            .collect::<Vec<_>>();
-        criterion::runner(bench_tests.as_slice());
-    } else {
-        let default_tests: Vec<&test::TestDescAndFn> = tests
-            .iter()
-            .filter_map(|test| match test {
-                UzuTest::Bench(_) => None,
-                UzuTest::Test(test) => Some(*test),
-            })
-            .collect::<Vec<_>>();
-        test::test_main_static(&default_tests)
-    }
+macro_rules! for_each_non_cpu_backend {
+    (|$B:ident| $body:expr) => {{
+        #[cfg(metal_backend)]
+        {
+            type $B = crate::backends::metal::Metal;
+            $body
+        }
+        {
+            if false {
+                type $B = crate::backends::cpu::Cpu;
+                $body
+            }
+        }
+    }};
 }
+pub(crate) use for_each_non_cpu_backend;

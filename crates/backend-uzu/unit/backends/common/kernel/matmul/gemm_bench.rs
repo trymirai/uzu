@@ -16,13 +16,15 @@ use crate::{
         },
         metal::{GemmDispatchPath, Metal},
     },
-    common::type_short_name,
-    tests::matmul::{bench_fp_gemm_shapes, iter_encode_loop},
+    tests::{
+        matmul::{bench_fp_gemm_shapes, iter_encode_loop},
+        util::type_short_name,
+    },
 };
 
 #[uzu_bench]
 fn bench_gemm(c: &mut Criterion) {
-    let context = crate::common::shared_metal_context();
+    let context = crate::tests::util::shared_metal_context();
     let mut kernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel::new(
         &context,
         bf16::data_type(),

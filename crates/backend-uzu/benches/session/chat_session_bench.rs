@@ -12,6 +12,8 @@ use backend_uzu::{
 use criterion::{BenchmarkId, Criterion};
 use proc_macros::uzu_bench;
 
+use crate::tests::for_each_non_cpu_backend;
+
 fn create_session<B: Backend>() -> ChatSession {
     let model_path = get_test_model_path();
     let decoding_config = DecodingConfig::default();

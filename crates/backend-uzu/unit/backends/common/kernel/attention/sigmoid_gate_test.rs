@@ -10,6 +10,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::SigmoidGateKernel},
         cpu::Cpu,
     },
+    tests::for_each_non_cpu_backend,
 };
 
 struct Config {

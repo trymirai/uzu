@@ -8,7 +8,7 @@ use crate::{
     backends::common::{Backend, Context},
     data_type::DataType,
     parameters::{ParameterLoader, safetensors_metadata::read_metadata},
-    tests::path::get_test_weights_path,
+    tests::{for_each_backend, path::get_test_weights_path},
 };
 
 const EMBEDDING_PATH: &str = "decoder.embedding.embedding.weights";

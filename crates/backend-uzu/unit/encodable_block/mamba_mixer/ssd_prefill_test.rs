@@ -4,7 +4,10 @@ use super::{SSDPrefillArguments, SSDPrefillBlock, SSDPrefillMode};
 use crate::{
     backends::common::{Backend, Context, Encoder, Kernels, gpu_types::ActivationType, kernel::Conv1dScanKernel},
     data_type::DataType,
-    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
+    tests::{
+        for_each_non_cpu_backend,
+        helpers::{alloc_allocation_with_data, allocation_to_vec},
+    },
 };
 
 fn ssd_prefill_cpu_reference(

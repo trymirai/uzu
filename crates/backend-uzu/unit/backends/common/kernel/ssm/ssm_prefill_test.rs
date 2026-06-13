@@ -14,7 +14,7 @@ use crate::{
         cpu::Cpu,
     },
     data_type::DataType,
-    tests::assert::assert_eq_float,
+    tests::{assert::assert_eq_float, for_each_non_cpu_backend},
 };
 
 struct Input<T: ArrayElement + Float> {

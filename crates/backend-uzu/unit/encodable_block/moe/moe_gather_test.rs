@@ -12,6 +12,7 @@ use crate::{
     },
     tests::{
         assert::assert_eq_float,
+        for_each_non_cpu_backend,
         helpers::{alloc_allocation_with_data, allocation_to_vec, create_context},
     },
 };

@@ -7,6 +7,7 @@ use crate::{
         common::{Backend, Context, Encoder, Kernels, kernel::MoeCountsOffsetsFusedKernel},
         cpu::Cpu,
     },
+    tests::{for_each_backend, for_each_non_cpu_backend},
 };
 
 fn gen_random_topk_ids(
