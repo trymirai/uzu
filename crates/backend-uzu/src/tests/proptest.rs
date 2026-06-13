@@ -39,7 +39,7 @@ pub struct TestResults<T> {
 
 macro_rules! for_each_context {
     ($CONTEXTES:ident, |$CONTEXT_NAME:ident: $CONTEXT_TYPE:ident| $body:expr) => {
-        crate::common::proptest::TestResults {
+        crate::tests::proptest::TestResults {
             cpu: ({
                 type $CONTEXT_TYPE =
                     <backend_uzu::backends::cpu::Cpu as backend_uzu::backends::common::Backend>::Context;
