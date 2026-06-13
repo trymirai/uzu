@@ -1,23 +1,23 @@
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
-use backend_uzu::{
-    array::ArrayElement,
-    backends::{
-        common::{
-            Allocation, Backend, Context, Encoder,
-            gpu_types::{QuantizationMethod, QuantizationMode},
-            kernel::{
-                Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
-            },
+use backend_uzu::backends::{
+    common::{
+        Allocation, Backend, Context, Encoder,
+        gpu_types::{QuantizationMethod, QuantizationMode},
+        kernel::{
+            Kernels,
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
-        cpu::Cpu,
     },
+    cpu::Cpu,
 };
 use num_traits::Float;
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
-use crate::tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec};
+use crate::{
+    array::ArrayElement,
+    tests::helpers::{alloc_allocation, alloc_allocation_with_data, allocation_to_vec},
+};
 
 pub struct QuantInput<T: ArrayElement + Float> {
     pub w_packed: Vec<u32>,

@@ -1,22 +1,22 @@
 #[cfg(metal_backend)]
 use backend_uzu::backends::metal::{GemmDispatchPath, Metal, MetalContext};
-use backend_uzu::{
-    array::{ArrayContextExt, ArrayElement},
-    backends::{
-        common::{
-            AllocationType, Backend, Context, Encoder,
-            kernel::{
-                Kernels,
-                matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
-            },
+use backend_uzu::backends::{
+    common::{
+        AllocationType, Backend, Context, Encoder,
+        kernel::{
+            Kernels,
+            matmul::{MatmulArguments, MatmulB, MatmulDOps, MatmulKernel},
         },
-        cpu::Cpu,
     },
+    cpu::Cpu,
 };
 use num_traits::Float;
 
 use super::Shape;
-use crate::tests::helpers::{alloc_allocation_with_data, allocation_to_vec};
+use crate::{
+    array::{ArrayContextExt, ArrayElement},
+    tests::helpers::{alloc_allocation_with_data, allocation_to_vec},
+};
 
 #[cfg(metal_backend)]
 pub type MetalMatmulKernel = <<Metal as Backend>::Kernels as Kernels>::MatmulKernel;

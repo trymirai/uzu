@@ -4,7 +4,6 @@ use proc_macros::uzu_test;
 use crate::tests::{path::get_test_model_path, perf::run_perf};
 
 #[uzu_test]
-#[ignore]
 fn test_perf_model_loading() {
     let perf_results = run_perf("Model loading", 10, || {
         let model_path = get_test_model_path();
