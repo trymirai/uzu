@@ -1,12 +1,19 @@
-use backend_uzu::session::{ChatSession, config::DecodingConfig};
-use proc_macros::uzu_test;
-use test_runner::{path::get_test_model_path, perf::run_perf};
+use std::time::Duration;
 
-#[uzu_test]
-fn test_perf_model_loading() {
-    let perf_results = run_perf("Model loading", 10, || {
-        let model_path = get_test_model_path();
-        let _ = ChatSession::new(model_path, DecodingConfig::default());
+use backend_uzu::session::{ChatSession, config::DecodingConfig};
+use criterion::{BenchmarkId, Criterion};
+use proc_macros::uzu_bench;
+use test_runner::path::get_test_model_path;
+
+#[uzu_bench]
+fn bench_model_loading(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Model loading");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    group.bench_function(BenchmarkId::from_parameter("test model path"), |b| {
+        b.iter(|| {
+            let model_path = get_test_model_path();
+            let _ = ChatSession::new(model_path, DecodingConfig::default());
+        });
     });
-    perf_results.print();
 }
